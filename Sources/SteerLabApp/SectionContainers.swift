@@ -150,6 +150,21 @@ enum DataSectionRouting {
 struct ComputeSectionView: View {
     @Bindable var service: ChatService
 
+    // SPLIT-VIEW MINIMUM HEIGHT (UI audit 2026-09-06, headline 8). This view
+    // sits DIRECTLY in the HSplitView column (`ChatView.detailSplit`) with no
+    // ScrollView, so every row above the Divider contributes to the column's
+    // reported minimum — and a minimum that moves mid-display-cycle is fatal
+    // on macOS 27 (the 2026-08-05 crash class; `ServerJobsPanelView.jobsRegion`
+    // carries the incident write-up).
+    //
+    // Of the two repairs the audit offered, this file takes CONSTANT-HEIGHT
+    // SLOTS rather than wrapping the rows in a fixed-frame ScrollView: the
+    // three credential rows must stay visible without scrolling, and the slot
+    // idiom is already the one the jobs panel below uses. So every row here
+    // renders the same number of lines in every state — one-line captions
+    // with the full text in `.help` or behind an ⓘ, per-model detail in a
+    // popover, and conditional messages as always-present slots that go
+    // transparent instead of disappearing.
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -173,6 +188,10 @@ struct ComputeSectionView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    // The status can be a long failure sentence; the group
+                    // help below explains the section, so without this the
+                    // truncated text has no full-text carrier.
+                    .help(statusLine)
             }
             Spacer()
             if service.cluster.computeTarget == .server {
@@ -182,58 +201,67 @@ struct ComputeSectionView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .help(
-            "switch the compute target with the Compute selector in the window "
-                + "toolbar; this section shows the active target's jobs and logs")
+        .help(headerHelp)
+    }
+
+    /// One name for the control that switches this — "Compute", the toolbar's
+    /// own word — and an honest sentence for the Local target, which has no
+    /// server jobs to show.
+    private var headerHelp: String {
+        switch service.cluster.computeTarget {
+        case .local:
+            return "switch where this workspace computes with the Compute "
+                + "selector in the window toolbar — on Local (MLX) everything "
+                + "runs inside this app, so the jobs list below stays empty"
+        case .server:
+            return "switch where this workspace computes with the Compute "
+                + "selector in the window toolbar — the list below shows the "
+                + "active target's jobs and logs"
+        }
     }
 
     /// Standing unpaired-server warning (the root-incident guard): when the
     /// active server's artifact root is not this app's data workspace, every
     /// server-side authoring/build/run write lands elsewhere — say so HERE,
     /// permanently, instead of letting a run refusal be the first hint.
-    @ViewBuilder
+    ///
+    /// One constant slot, three states (UI audit 2026-09-06): the mismatch
+    /// warning, the remote-root description, and nothing used to be three
+    /// different heights, arriving with async cluster state — see the
+    /// split-view note on `body`. Same font, same line count, same padding in
+    /// every branch; the full text lives in `.help`.
     private var pairingWarningRow: some View {
-        if let warning = service.cluster.activeServerPairingWarning {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                // Bounded height: this row appears/disappears with async
-                // cluster state inside a split-view column whose minimum
-                // height must stay small and stable (the 2026-08-05 crash
-                // class — see ServerJobsPanelView.jobsRegion). Two lines
-                // max; .help below carries the full text.
-                Label(warning, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout)
-                    .foregroundStyle(.orange)
-                    .textSelection(.enabled)
-                    .lineLimit(2)
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(pairingWarningBackground)
-            .help(
-                "the server's /api/info root differs from this app's data "
-                    + "workspace — restart it with serve --root <workspace> "
-                    + "(or STEERLAB_ROOT) so both engines share one artifact tree")
-        } else if let description = service.cluster.activeServerPairingDescription {
-            // Remote server: not a mismatch — just name the authoritative
-            // tree so "where do server writes land" never needs a guess.
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Label(description, systemImage: "externaldrive.connected.to.line.below")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .lineLimit(2)
-                    .help(description)
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 4)
+        let warning = service.cluster.activeServerPairingWarning
+        let description = service.cluster.activeServerPairingDescription
+        let text = warning ?? description ?? ""
+        let isWarning = warning != nil
+        let tint: Color = isWarning ? .orange : .secondary
+        let background: Color = isWarning ? Color.orange.opacity(0.10) : .clear
+        return HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Label(
+                text.isEmpty ? " " : text,
+                systemImage: isWarning
+                    ? "exclamationmark.triangle.fill"
+                    : "externaldrive.connected.to.line.below")
+                .font(.callout)
+                .foregroundStyle(tint)
+                .textSelection(.enabled)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .opacity(text.isEmpty ? 0 : 1)
+                .accessibilityHidden(text.isEmpty)
+                .help(isWarning ? Self.pairingMismatchHelp : text)
+            Spacer()
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(background)
     }
 
-    private var pairingWarningBackground: some ShapeStyle {
-        Color.orange.opacity(0.10)
-    }
+    private static let pairingMismatchHelp: String =
+        "the server's /api/info root differs from this app's data workspace — "
+        + "restart it with serve --root <workspace> (or STEERLAB_ROOT) so both "
+        + "engines share one artifact tree"
 
     private var statusLine: String {
         let models = service.workspaceModelOptions.count
@@ -247,49 +275,99 @@ struct ComputeSectionView: View {
     }
 }
 
-/// The workspace's chat-template capability records (2026-09-05): one line
-/// per probed model — what its template does with a system turn, whether it
-/// has a thinking switch, which reasoning-effort levels it accepts — with any
-/// human override shown beside the detected value. Read from
-/// `prompts/models/` of the active workspace, which both engines share, so
-/// the row is the same whichever substrate computed the record.
+/// The workspace's chat-template capability records (2026-09-05): what each
+/// probed model's template does with a system turn, whether it has a thinking
+/// switch, which reasoning-effort levels it accepts, with any human override
+/// shown beside the detected value. Read from `prompts/models/` of the active
+/// workspace, which both engines share, so the row is the same whichever
+/// substrate computed the record.
+///
+/// ONE LINE, ALWAYS (UI audit 2026-09-06, headline 8): this used to render one
+/// two-line `Text` per probed model, growing by up to 2 × N lines at the
+/// moment the server's model list landed — an async change to the split-view
+/// column's minimum height, which is the documented crash shape. The per-model
+/// detail moved into a popover and the tooltip.
 private struct ModelCapabilitiesRow: View {
     @Bindable var service: ChatService
     @State private var records: [(path: String, record: ModelCapabilities.Record)] = []
+    @State private var showingRecords = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 8) {
-                Text("Model capabilities")
-                    .font(.callout)
-                Spacer()
-                Button("Refresh") { refresh() }
-                    .controlSize(.small)
-            }
-            if records.isEmpty {
-                Text("no probed chat-template record in this workspace yet — one is "
-                    + "written when a model is installed or first loaded here "
-                    + "(prompts/models/); until then declarations are gated on the "
-                    + "model id and say so")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(records, id: \.path) { entry in
-                    let view = entry.record.effective(path: entry.path)
-                    Text(Self.line(for: view))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .lineLimit(2)
-                        .help(view.summaryLines.joined(separator: "\n")
-                            .replacingOccurrences(of: "**", with: ""))
-                }
-            }
+        HStack(spacing: 8) {
+            Text("Model capabilities")
+                .font(.callout)
+            Text(summaryLine)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .help(detailText)
+            Spacer()
+            Button("Show records") { showingRecords = true }
+                .controlSize(.small)
+                .disabled(records.isEmpty)
+                .help(records.isEmpty
+                    ? "nothing has been probed in this workspace yet, so there "
+                        + "is no record to show"
+                    : "list every probed model's record — what its chat "
+                        + "template does with a system turn, its thinking "
+                        + "switch, and the effort levels it accepts")
+                .popover(isPresented: $showingRecords) { recordsPopover }
+            Button("Re-read records") { refresh() }
+                .controlSize(.small)
+                .help("re-read prompts/models/ in this workspace — it reads "
+                    + "what is already on disk; nothing is probed or downloaded")
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
         .onAppear { refresh() }
         .onChange(of: service.workspaceModelOptions.count) { _, _ in refresh() }
+    }
+
+    private var summaryLine: String {
+        guard !records.isEmpty else {
+            return "nothing probed yet — support is read from the model name"
+        }
+        return "\(records.count) probed model\(records.count == 1 ? "" : "s")"
+    }
+
+    private var detailText: String {
+        guard !records.isEmpty else { return Self.emptyExplanation }
+        return records
+            .map { Self.line(for: $0.record.effective(path: $0.path)) }
+            .joined(separator: "\n")
+    }
+
+    private static let emptyExplanation: String =
+        "No chat-template record has been probed in this workspace yet. One is "
+        + "written under prompts/models/ when a model is installed or first "
+        + "loaded here; until then the app decides what a model supports from "
+        + "its name alone, and each declaration says so."
+
+    /// Fixed frame: a popover is outside the column's layout, but a popover
+    /// that resizes as records land is its own kind of jumpy — it scrolls.
+    private var recordsPopover: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(records, id: \.path) { entry in
+                    let view = entry.record.effective(path: entry.path)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(Self.line(for: view))
+                            .font(.caption)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(Self.detail(for: view))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(width: 460, height: 260)
     }
 
     /// One line per record: the detected facts, an override marked beside
@@ -316,6 +394,13 @@ private struct ModelCapabilitiesRow: View {
         return parts.joined(separator: " · ")
     }
 
+    /// The record's own summary, with the Markdown emphasis SwiftUI would not
+    /// parse here stripped out.
+    static func detail(for view: ModelCapabilities) -> String {
+        view.summaryLines.joined(separator: "\n")
+            .replacingOccurrences(of: "**", with: "")
+    }
+
     private func refresh() {
         records = ModelCapabilitiesStore.list(root: ExperimentStore.workspaceRoot)
             .filter { $0.record.source == .probe }
@@ -338,19 +423,67 @@ private struct KeyStoredBadge: View {
     }
 }
 
+/// The credential rows' ONE caption line: the current notice when there is
+/// one (a Keychain failure, a cluster sync outcome), otherwise the resting
+/// status, with the custody policy behind the ⓘ.
+///
+/// One line in every state (UI audit 2026-09-06, headline 8). These rows sit
+/// directly in the Compute split-view column, so both shapes they used to
+/// have were hazards: a 40-to-70-word `.caption2` paragraph that reflowed to
+/// a different number of lines with the window width, and a message row that
+/// appeared and disappeared with an async Keychain write or cluster sync.
+/// Either moves the column's reported minimum height mid-display-cycle — the
+/// 2026-08-05 crash class. Plain `Text`, never a `Label`, so an icon's
+/// metrics cannot move it either; a problem is orange AND says so in words,
+/// never colour alone.
+private struct CredentialStatusRow: View {
+    let status: String
+    var notice: String?
+    var noticeIsProblem: Bool = true
+    let policy: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(notice ?? status)
+                .font(.caption2)
+                .foregroundStyle(
+                    notice != nil && noticeIsProblem ? Color.orange : Color.secondary)
+                .textSelection(.enabled)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(notice ?? status)
+            InfoButton(text: policy)
+            Spacer()
+        }
+    }
+}
+
+/// The sentence every credential row shows when the Keychain refuses a write.
+/// Before the 2026-09-06 audit all three rows cleared the field and reported
+/// "no key stored", which is what the row also says when nothing was ever
+/// typed.
+private enum CredentialWriteFailure {
+    static let keychain: String =
+        "could not write to the Keychain — nothing was stored; unlock the "
+        + "login keychain (or grant this app access to it) and Save again"
+}
+
 /// The ONE place the app takes the researcher's Anthropic API key. Writes
 /// go to the macOS Keychain through `AnthropicKeyStore` (never plaintext
 /// UserDefaults); the stored secret is never echoed back into the field.
 private struct ClaudeAPIKeyRow: View {
     @State private var draft = ""
     @State private var hasStoredKey = false
+    @State private var writeFailed = false
+    @State private var confirmingClear = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             fieldRow
-            Text(statusCaption)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            CredentialStatusRow(
+                status: statusCaption,
+                notice: writeFailed ? CredentialWriteFailure.keychain : nil,
+                policy: Self.custodyPolicy)
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
@@ -365,45 +498,66 @@ private struct ClaudeAPIKeyRow: View {
             SecureField("sk-ant-…", text: $draft)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 280)
+                .accessibilityLabel("Claude API key")
+                .help("paste an Anthropic API key (console.anthropic.com → API "
+                    + "keys); Save puts it in this Mac's Keychain and it is "
+                    + "never read back into this field")
             Button("Save") { save() }
                 .controlSize(.small)
                 .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .help("store the key in the macOS Keychain")
-            Button("Clear") { clear() }
+            Button("Clear") { confirmingClear = true }
                 .controlSize(.small)
                 .disabled(!hasStoredKey)
                 .help("delete the stored key from the macOS Keychain")
+                .confirmationDialog(
+                    "Delete the stored Claude API key?",
+                    isPresented: $confirmingClear,
+                    titleVisibility: .visible
+                ) {
+                    Button("Delete key", role: .destructive) { clear() }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Claude judging and stimulus generation stop working "
+                        + "on this Mac until a key is entered again, and the "
+                        + "key cannot be read back out of the Keychain first.")
+                }
             Spacer()
         }
     }
 
     private var statusCaption: String {
         var text = hasStoredKey ? "a key is stored" : "no key stored"
+        text += " · Keychain only, never sent to a server"
         if AnthropicKeyStore.environmentOverrides() {
-            text += " · ANTHROPIC_API_KEY is set in this app's environment and wins"
+            text += " · ANTHROPIC_API_KEY in this app's environment wins"
         }
-        // Key-custody policy (2026-07-18): the key lives in this Mac's
-        // Keychain and NEVER goes to the cluster — Claude judging always
-        // runs here, against downloaded run artifacts; cluster-side judging
-        // uses local-model judges.
-        text += " — stored in the macOS Keychain and never sent to a "
-            + "server: Claude judging, stimulus generation, and sweep "
-            + "credential checks all run on THIS Mac (cluster generations "
-            + "are judged here after download; pin a local judge for "
-            + "cluster-side judging)"
         return text
     }
 
+    // Key-custody policy (2026-07-18): the key lives in this Mac's Keychain
+    // and NEVER goes to the cluster — Claude judging always runs here, against
+    // downloaded run artifacts; cluster-side judging uses local-model judges.
+    private static let custodyPolicy: String =
+        "The key is stored in this Mac's Keychain and is never sent to a "
+        + "server. Claude judging, stimulus generation, and sweep credential "
+        + "checks all run here: generations produced on the cluster are judged "
+        + "on this Mac after they are downloaded. To judge on the cluster "
+        + "instead, pin a local judge model. ANTHROPIC_API_KEY set in this "
+        + "app's environment wins over the stored key."
+
     private func save() {
-        ClaudeStimulusGenerator.saveAPIKey(draft)
+        let stored = ClaudeStimulusGenerator.saveAPIKey(draft)
         draft = ""
         refresh()
+        writeFailed = !stored
     }
 
     private func clear() {
-        ClaudeStimulusGenerator.saveAPIKey("")
+        _ = ClaudeStimulusGenerator.saveAPIKey("")
         draft = ""
         refresh()
+        writeFailed = false
     }
 
     private func refresh() {
@@ -412,7 +566,7 @@ private struct ClaudeAPIKeyRow: View {
 }
 
 /// The EXTERNAL judge key (key-custody design, seamless-pipeline extension
-/// 2026-07-19): a dedicated, ideally spend-CAPPED OpenRouter or Anthropic
+/// 2026-07-19): a dedicated, ideally spend-capped OpenRouter or Anthropic
 /// key that enables INLINE external judging on the cluster. Distinct from
 /// the personal Claude key above, which never leaves this Mac. Stored in
 /// the Keychain (`JudgeKeyStore`); synced to `~/.steerlab/judge-key` (mode
@@ -423,19 +577,19 @@ private struct ExternalJudgeKeyRow: View {
     @State private var draft = ""
     @State private var kind = "openrouter"
     @State private var hasStoredKey = false
+    @State private var writeFailed = false
+    @State private var syncNote = ""
+    @State private var isSyncing = false
+    @State private var confirmingClear = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             fieldRow
-            Text(statusCaption)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            if let sync = service.judgeKeySyncResult, !sync.isEmpty {
-                Label(sync, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-                    .textSelection(.enabled)
-            }
+            CredentialStatusRow(
+                status: statusCaption,
+                notice: notice,
+                noticeIsProblem: noticeIsProblem,
+                policy: Self.custodyPolicy)
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
@@ -447,53 +601,126 @@ private struct ExternalJudgeKeyRow: View {
             KeyStoredBadge(isStored: hasStoredKey)
             Text("External judge key")
                 .font(.callout)
-            Picker("", selection: $kind) {
+            Picker("Judge key provider", selection: $kind) {
                 Text("OpenRouter").tag("openrouter")
                 Text("Anthropic").tag("anthropic")
             }
             .labelsHidden()
             .frame(width: 110)
+            .accessibilityLabel("Judge key provider")
+            .help("which service issued the key — decides how the cluster's "
+                + "inline judge authenticates with it")
             SecureField(kind == "openrouter" ? "sk-or-…" : "sk-ant-…",
                         text: $draft)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 220)
+                .accessibilityLabel("External judge key")
+                .help("paste the dedicated judging key; Save stores it in this "
+                    + "Mac's Keychain and pushes it to the cluster, and it is "
+                    + "never read back into this field")
             Button("Save") { save() }
                 .controlSize(.small)
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(isSyncing
+                    || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .help("store in the macOS Keychain and push to the cluster "
                     + "(~/.steerlab/judge-key, mode 600) at every connect")
-            Button("Clear") { clear() }
+            Button("Clear") { confirmingClear = true }
                 .controlSize(.small)
-                .disabled(!hasStoredKey)
+                .disabled(isSyncing || !hasStoredKey)
                 .help("delete from the Keychain AND remove from the cluster "
                     + "at the next sync")
+                .confirmationDialog(
+                    "Delete the external judge key?",
+                    isPresented: $confirmingClear,
+                    titleVisibility: .visible
+                ) {
+                    Button("Delete key", role: .destructive) { clear() }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("It is removed from this Mac's Keychain now and from "
+                        + "the cluster at the next sync, so unattended "
+                        + "pipelines lose inline external judging until a key "
+                        + "is entered again.")
+                }
             Spacer()
         }
     }
 
-    private var statusCaption: String {
-        let stored = hasStoredKey
-            ? "a \(JudgeKeyStore.stored()?.kind ?? "") key is stored"
-            : "no key stored — cluster-side external judging defers to this Mac"
-        return stored
-            + " · use a dedicated SPEND-CAPPED key, never a personal one: it "
-            + "is pushed to the cluster (mode 600 in $HOME) at every connect "
-            + "to enable inline judging in unattended pipelines; clearing it "
-            + "here also removes it from the cluster"
+    /// The sync outcome, when there is one: "syncing…" while the push runs,
+    /// then either the cluster's warning or a positive "pushed at <time>".
+    /// A successful push sets `judgeKeySyncResult` to the EMPTY string, which
+    /// rendered as nothing at all before the 2026-09-06 audit — silence and
+    /// success looked identical.
+    private var notice: String? {
+        if writeFailed { return CredentialWriteFailure.keychain }
+        if isSyncing {
+            return "syncing the key to \(service.cluster.substrateLabel)…"
+        }
+        let warning = service.judgeKeySyncResult ?? ""
+        if !warning.isEmpty { return warning }
+        return syncNote.isEmpty ? nil : syncNote
     }
 
+    /// Only a real warning is orange: "syncing…" and "pushed at …" are news.
+    private var noticeIsProblem: Bool {
+        if writeFailed { return true }
+        if isSyncing { return false }
+        return !(service.judgeKeySyncResult ?? "").isEmpty
+    }
+
+    private var statusCaption: String {
+        guard hasStoredKey else {
+            return "no key stored · cluster-side external judging defers to this Mac"
+        }
+        let storedKind = JudgeKeyStore.stored()?.kind ?? ""
+        return "a \(storedKind) key is stored · pushed to the cluster at every connect"
+    }
+
+    private static let custodyPolicy: String =
+        "Use a dedicated, spend-capped key here, never a personal one: unlike "
+        + "the Claude key above, this one is pushed to the cluster (mode 600 "
+        + "in $HOME) at every connect, so unattended pipelines can judge "
+        + "inline. Clearing it here also removes it from the cluster at the "
+        + "next sync."
+
     private func save() {
-        JudgeKeyStore.save(kind: kind, key: draft)
+        let stored = JudgeKeyStore.save(kind: kind, key: draft)
         draft = ""
         refresh()
-        Task { await service.syncJudgeKeyNow() }
+        writeFailed = !stored
+        guard stored else { return }
+        sync(outcome: "pushed")
     }
 
     private func clear() {
         JudgeKeyStore.delete()
         refresh()
-        Task { await service.syncJudgeKeyNow() }
+        writeFailed = false
+        sync(outcome: "removed")
     }
+
+    /// Push (or removal) with a busy state and a positive confirmation — both
+    /// missing before the 2026-09-06 audit.
+    private func sync(outcome: String) {
+        guard !isSyncing else { return }
+        isSyncing = true
+        syncNote = ""
+        Task {
+            await service.syncJudgeKeyNow()
+            isSyncing = false
+            if (service.judgeKeySyncResult ?? "").isEmpty {
+                syncNote = "\(outcome) to \(service.cluster.substrateLabel) at "
+                    + Self.clock.string(from: Date())
+            }
+        }
+    }
+
+    private static let clock: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter
+    }()
 
     private func refresh() {
         hasStoredKey = JudgeKeyStore.stored() != nil
@@ -511,20 +738,15 @@ private struct ExternalJudgeKeyRow: View {
 private struct HuggingFaceTokenRow: View {
     @State private var draft = ""
     @State private var hasStoredToken = false
-    @State private var fileError: String?
+    @State private var saveError: String?
+    @State private var confirmingClear = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             fieldRow
-            Text(statusCaption)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            if let fileError {
-                Label(fileError, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-                    .textSelection(.enabled)
-            }
+            CredentialStatusRow(
+                status: statusCaption, notice: saveError,
+                policy: Self.tokenPolicy)
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
@@ -539,16 +761,33 @@ private struct HuggingFaceTokenRow: View {
             SecureField("hf_…", text: $draft)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 280)
+                .accessibilityLabel("Hugging Face token")
+                .help("paste a read token (huggingface.co → Settings → Access "
+                    + "Tokens); Save stores it in this Mac's Keychain and "
+                    + "writes the hub's own token file, and it is never read "
+                    + "back into this field")
             Button("Save") { save() }
                 .controlSize(.small)
                 .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .help("store in the macOS Keychain and write "
                     + "~/.cache/huggingface/token for local downloads")
-            Button("Clear") { clear() }
+            Button("Clear") { confirmingClear = true }
                 .controlSize(.small)
                 .disabled(!hasStoredToken)
                 .help("delete from the Keychain; the hub token file is "
                     + "removed only if it holds this same token")
+                .confirmationDialog(
+                    "Delete the stored Hugging Face token?",
+                    isPresented: $confirmingClear,
+                    titleVisibility: .visible
+                ) {
+                    Button("Delete token", role: .destructive) { clear() }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Downloads of gated models stop authenticating on "
+                        + "this Mac until a token is entered again. The "
+                        + "cluster's own copy is unaffected.")
+                }
             Spacer()
         }
     }
@@ -556,29 +795,32 @@ private struct HuggingFaceTokenRow: View {
     private var statusCaption: String {
         var text = hasStoredToken ? "a token is stored" : "no token stored"
         if HuggingFaceTokenStore.environmentOverrides() {
-            text += " · HF_TOKEN is set in this app's environment and wins"
+            text += " · HF_TOKEN in this app's environment wins"
         } else if !hasStoredToken, HuggingFaceTokenStore.hubFileExists() {
             // hf auth login was run independently — downloads work; the
             // badge is honest about the Keychain, this line about reality.
-            text += " · but ~/.cache/huggingface/token exists (hf auth "
-                + "login), so downloads authenticate"
+            text += " · but ~/.cache/huggingface/token exists, so downloads "
+                + "still authenticate"
         }
-        text += " — a READ token from huggingface.co → Settings → Access "
-            + "Tokens; gated models (Gemma) also need their license accepted "
-            + "by the same account. Saved to the Keychain and written to "
-            + "~/.cache/huggingface/token so the local engine can download; "
-            + "the cluster's copy installs from the connection menu"
         return text
     }
 
+    private static let tokenPolicy: String =
+        "A read token from huggingface.co → Settings → Access Tokens. Gated "
+        + "models (Gemma, for instance) also need their licence accepted by "
+        + "the same account. Saving writes both copies this Mac owns — the "
+        + "Keychain and ~/.cache/huggingface/token — so the local engine can "
+        + "download; the cluster's copy is installed from the connection "
+        + "menu. HF_TOKEN set in this app's environment wins over both."
+
     private func save() {
-        fileError = HuggingFaceTokenStore.save(draft)
+        saveError = HuggingFaceTokenStore.save(draft)
         draft = ""
         refresh()
     }
 
     private func clear() {
-        fileError = HuggingFaceTokenStore.save("")
+        saveError = HuggingFaceTokenStore.save("")
         draft = ""
         refresh()
     }
