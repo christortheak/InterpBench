@@ -425,7 +425,7 @@
           "help": ""
         },
         {
-          "id": "targetTrain",
+          "id": "datasets.targetTrain",
           "label": "Survey items",
           "kind": "fileRef",
           "required": true,

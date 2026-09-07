@@ -79,3 +79,31 @@ def test_sae_roster_plan_pins_only_unchanged_draft(tmp_path):
 
     fresh=sae_authoring.pin_plan('s',path,str(tmp_path))
     assert sae_authoring.pin('s',path,str(tmp_path),fresh['planSHA256'])['changed'] is False
+
+
+def test_every_interview_field_is_a_key_its_owner_accepts():
+    """The form can only publish what the owner's parser accepts. A field id
+    the owner does not know (the 2026-09-07 gradient `targetTrain` defect)
+    makes every request from that interview unexecutable, so the owner's
+    unknown-key refusal must never fire on an interview-shaped config."""
+    from steerlab_server.experiment import managed_methods, optvec_campaign, science_catalog
+    source = json.loads(science_catalog.resource('workflows.json'))
+    placeholders = {'text': 'x', 'integer': 1, 'number': 1.0, 'boolean': True, 'integers': [1], 'numbers': [1.0],
+                    'artifact': 'runs/a/v', 'artifacts': ['runs/a/v', 'runs/a/w'], 'file': 'runs/a', 'files': ['runs/a', 'runs/b'],
+                    'fileRef': {'path': 'items.jsonl', 'sha256': '0' * 64}, 'documentFile': {}}
+    for item in source['operations']:
+        if item['id'] not in managed_methods.METHODS and item['id'] != 'optvec-campaign':
+            continue
+        config = {}
+        for field in item['fields']:
+            value = placeholders[field['kind']]
+            if field['id'] == 'modelID': value = 'example/model'
+            if field['id'] == 'revision': value = 'a' * 40
+            cursor = config; names = field['id'].split('.')
+            for name in names[:-1]: cursor = cursor.setdefault(name, {})
+            cursor[names[-1]] = value
+        try:
+            if item['id'] == 'optvec-campaign': optvec_campaign.OptVecCampaignConfig.from_dict(config)
+            else: managed_methods.config_owner(item['id'], config)
+        except Exception as exc:  # value refusals are fine; unknown keys are not
+            assert 'unknown' not in str(exc).lower(), item['id'] + ': ' + str(exc)

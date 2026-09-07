@@ -22,6 +22,17 @@ migration that rewrites frozen bytes.
 - Existing advanced scientific HTTP actions are callable through both remote
   clients and the app's shared method catalog. Route/service authority is checked
   against the maintained census; Python-engine-only methods remain explicit.
+- Thirteen managed scientific operations (style rescoring, SAE family report and
+  qualification record, OptVec train/eval/geometry/fracture/interpret/family/
+  gradient/mint/campaign, and J-space as its own `jspace` operation) share one
+  interview source: `science interview/draft/publish` on both clients and the
+  app's method form resolve conceptual answers into an exact request with pinned
+  input bytes, publish create-only under `requests/<name>/`, and execute through
+  the existing plan/submit path with a root-scoped config validation that loads
+  no model. Campaigns materialize first; `POST /api/science/campaign/{job}/{action}`
+  reviews, tops up or cancels cells explicitly. `science sae-check/sae-show/
+  sae-pin-plan/sae-pin` inspect and pin SAE rosters offline. Imported J-lens
+  records resolve their canonical converted tensor in a relocated workspace.
 
 - Reviewed cluster profiles can be accepted through `cluster sites accept`, the
   setup wizard, and Mac `/api/cluster/sites/guide|review|accept`. Acceptance pins
