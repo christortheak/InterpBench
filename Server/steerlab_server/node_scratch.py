@@ -362,6 +362,21 @@ def render_wrapper(*, environ=None, resources=None) -> str:
     or the checkpoint signal, because those belong to a job that reconstructs
     its runtime from the bundle env and this one does not. An operator edits
     the walltime and memory at the top; the trap is not theirs to edit.
+
+    It also gets NO TERM trap, and that is deliberate (2026-09-07, when the
+    study renderer gained one). The study script runs its child in the
+    background and traps TERM to forward it and bound the wait, so that the
+    shell outlives the child and reaches its EXIT trap before the
+    scheduler's ``KillWait`` SIGKILL. This wrapper runs the payload in the
+    FOREGROUND — its status is the job's — and bash defers a trapped signal
+    until a foreground command returns; a TERM trap here would therefore
+    fire only once the payload had died, which under a cancel means never
+    (the SIGKILL that ends the payload ends the shell with it). Untrapped,
+    the cancel's TERM does the right thing on its own: bash leaves at once
+    through its EXIT trap (bash runs the EXIT trap on a fatal signal), so
+    ``cleanup_node_scratch`` removes the stage directory while Slurm's own
+    TERM-then-KILL winds the payload down. The payload is being killed
+    regardless, so removing its staging from under it costs nothing.
     """
     from .api.executors import SlurmResources, combined_gres
 
@@ -422,6 +437,10 @@ def render_wrapper(*, environ=None, resources=None) -> str:
     lines += cleanup_lines(environ=env)
     lines += [
         "",
+        "# No TERM trap on purpose: the payload runs in the foreground, so a",
+        "# trapped cancel would wait for it and die with it under KillWait's",
+        "# SIGKILL. Untrapped, a cancel's TERM ends this shell through the",
+        "# EXIT trap above at once (see node_scratch.render_wrapper).",
         "# ---- the payload: the only variable in this script --------------",
         'echo "SteerLab ad-hoc job on $(hostname) at $(date -Is)"',
         '"$@"',

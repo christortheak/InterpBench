@@ -12,6 +12,18 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- A cancelled Slurm job now cleans up its node-local scratch. The rendered
+  sbatch script traps the cancel's SIGTERM separately from the walltime
+  USR1: it forwards TERM to the child and bounds the wait (15 s by default,
+  `STEERLAB_SLURM_TERM_GRACE_SECONDS`, well inside the scheduler's KillWait),
+  SIGKILLing a child that is still winding down so the script exits through
+  its own EXIT trap — stage-directory removal, then the job-end marker —
+  instead of dying with the child under KillWait's SIGKILL, which left a
+  staged model behind. Exit-status semantics are unchanged (85 when the child
+  checkpointed in time, the child's own status otherwise); the `exec` launch
+  path still installs no trap, and the ad-hoc wrapper deliberately keeps
+  none on TERM.
+
 ## [0.9.6] — 2026-09-07
 
 - Scoped MLX sampling for ordinary, saved-agent and multi-agent measured runs,

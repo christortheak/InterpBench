@@ -1219,6 +1219,8 @@ def _resources_from_dict(data: dict, experiment: str, verb: str) -> SlurmResourc
     defaults.cpus_per_task = int(data.get("cpusPerTask", defaults.cpus_per_task))
     defaults.signal_seconds = int(data.get("signalSeconds", defaults.signal_seconds))
     defaults.signal_target = data.get("signalTarget", defaults.signal_target)
+    defaults.term_grace_seconds = int(
+        data.get("termGraceSeconds", defaults.term_grace_seconds))
     defaults.use_srun = bool(data.get("useSrun", defaults.use_srun))
     defaults.export_none = bool(data.get("exportNone", defaults.export_none))
     defaults.account = data.get("account", defaults.account)

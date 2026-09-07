@@ -340,10 +340,15 @@ def test_unknown_required_header_token_is_reported(tmp_path, monkeypatch):
 def test_script_collects_child_status_and_exits_with_it(tmp_path, monkeypatch):
     _clear_site_env(monkeypatch)
     script = _script(tmp_path, SlurmResources(signal_seconds=600))
-    # The trap only forwards — it must NOT reap the child, or the main wait
-    # loop could never recover the real exit status (85 vs 128+sig).
-    trap_block = script.split("trap checkpoint USR1 TERM")[0]
+    # The traps only forward — they must NOT reap the child, or the main wait
+    # loop could never recover the real exit status (85 vs 128+sig). USR1 and
+    # TERM are trapped SEPARATELY since 2026-09-07: a cancel's TERM bounds the
+    # wait so the EXIT trap runs (test_cancel_reaches_exit_trap.py).
+    trap_block = script.split("trap terminate TERM")[0]
+    assert "trap checkpoint USR1\n" in trap_block
+    assert "trap checkpoint USR1 TERM" not in script
     assert 'kill -USR1 "${STEERLAB_CHILD_PID}"' in trap_block
+    assert 'kill -TERM "${STEERLAB_CHILD_PID}"' in trap_block
     assert 'wait "${STEERLAB_CHILD_PID}" || true' not in trap_block
     # The main loop re-waits through signal interruptions and propagates the
     # child's own status as the job's exit code.

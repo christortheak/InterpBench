@@ -782,6 +782,7 @@ reached.
 | `STEERLAB_SLURM_CPUS_PER_TASK` | `4` |
 | `STEERLAB_SLURM_SIGNAL_SECONDS` | `600` (`0` emits no `--signal`) |
 | `STEERLAB_SLURM_SIGNAL_TARGET` | `step`; `batch-forward`/`batch-direct` emit `--signal=B:USR1@N` |
+| `STEERLAB_SLURM_TERM_GRACE_SECONDS` | `15`. How long the rendered script gives its child after a cancel's SIGTERM before SIGKILLing it itself, so the script exits through its EXIT trap (node-scratch cleanup, job-end marker) instead of dying with the child under the scheduler's `KillWait` SIGKILL. Must sit well inside the site's `KillWait` (Slurm's default is 30 s); an engine default, not a profile fact |
 | `STEERLAB_SLURM_EXPORT_MODE` | `none` → `#SBATCH --export=NONE`; `all` omits the header |
 | `STEERLAB_AUTO_RESUBMIT` | false |
 | `STEERLAB_AUTO_RESUBMIT_LIMIT` | `5`, counted from the root job |

@@ -188,6 +188,14 @@ def _parse_resubmit_limit(raw: str | None) -> int:
 _SCRATCH_GRES_RE = re.compile(r"^[A-Za-z0-9_:.\-]+$")
 
 
+#: Seconds the rendered sbatch script gives its child after a cancel's
+#: SIGTERM before it SIGKILLs the child itself (``SlurmResources
+#: .term_grace_seconds``). Slurm follows its own SIGTERM with SIGKILL to the
+#: WHOLE step after ``KillWait`` — 30 s by default — and a batch shell killed
+#: that way runs no EXIT trap, so the bound has to land well inside it.
+DEFAULT_TERM_GRACE_SECONDS = 15
+
+
 @dataclass
 class SlurmResources:
     job_name: str = "steerlab"
@@ -208,6 +216,15 @@ class SlurmResources:
     cpus_per_task: int = 4
     signal_seconds: int = 600
     signal_target: str = "step"  # step | batch-forward | batch-direct
+    # How long the rendered script gives its child to wind down after a
+    # cancel (SIGTERM) before it SIGKILLs the child itself, so the script
+    # exits through its own EXIT trap — node-scratch cleanup, then the
+    # job-end marker — instead of dying with the child under the
+    # scheduler's KillWait SIGKILL (2026-09-07, 52 GB left on a node).
+    # Must sit WELL INSIDE the site's KillWait (Slurm's default is 30 s);
+    # no site profile field names KillWait, so this is an env-tunable
+    # engine default rather than a profile fact.
+    term_grace_seconds: int = DEFAULT_TERM_GRACE_SECONDS
     use_srun: bool = True
     export_none: bool = True
     account: str | None = None
@@ -285,6 +302,8 @@ class SlurmResources:
             signal_seconds=_parse_int_env("STEERLAB_SLURM_SIGNAL_SECONDS", 600),
             signal_target=(
                 os.environ.get("STEERLAB_SLURM_SIGNAL_TARGET") or "").strip() or "step",
+            term_grace_seconds=_parse_int_env(
+                "STEERLAB_SLURM_TERM_GRACE_SECONDS", DEFAULT_TERM_GRACE_SECONDS),
             # `--export=NONE` unless the site says otherwise; the renderer emits
             # the key only for the non-default "all".
             export_none=export_mode != "all",
@@ -1010,11 +1029,19 @@ def job_end_marker_lines(bundle_dir: str) -> list[str]:
 
     The marker is written only under a real Slurm job (``$SLURM_JOB_ID``
     set), so a bundle executed by hand outside the scheduler leaves nothing
-    that could be mistaken for one. A job the scheduler kills outright — a
-    SIGKILL after the checkpoint grace period, a node failure — never runs
-    the trap and writes no marker; a reader falls back to ``squeue``/``sacct``
-    for those. The ``exec`` path (``use_srun`` off) replaces the shell and
-    fires no EXIT trap either, so it writes no marker for the same reason.
+    that could be mistaken for one. A job the scheduler kills outright never
+    runs the trap and writes no marker; a reader falls back to
+    ``squeue``/``sacct`` for those. What "outright" covers has narrowed
+    (2026-09-07): a plain ``scancel`` used to be one of these, because the
+    script forwarded the cancel's SIGTERM as a checkpoint and kept waiting,
+    so a child slower than the scheduler's ``KillWait`` took the shell down
+    with it under SIGKILL. The script now bounds that wait itself
+    (``SlurmResources.term_grace_seconds``, inside ``KillWait``), so a
+    cancelled job exits through this trap and writes its marker. What is
+    left is a node failure, a ``KillWait`` shorter than the grace bound, or
+    a ``scancel --signal=KILL``. The ``exec`` path (``use_srun`` off)
+    replaces the shell and fires no EXIT trap at all, so it writes no marker
+    for the same reason.
     """
     return [
         "",
@@ -1106,20 +1133,7 @@ def render_slurm_script(bundle: JobBundle) -> str:
         "  source \"${STEERLAB_VENV}/bin/activate\"",
         "fi",
     ])
-    lines.extend([
-        "",
-        "# Forward the walltime-warning/drain signal to the child, which",
-        "# checkpoints (fsync + resume-state.json) and exits 85. The trap must",
-        "# NOT wait/reap here: the main wait loop below owns status collection.",
-        "checkpoint() {",
-        "  echo \"SteerLab checkpoint signal received at $(date -Is)\"",
-        "  if [ -n \"${STEERLAB_CHILD_PID:-}\" ]; then",
-        "    kill -USR1 \"${STEERLAB_CHILD_PID}\" 2>/dev/null || true",
-        "  fi",
-        "}",
-        "trap checkpoint USR1 TERM",
-        "",
-    ])
+    lines.extend(signal_trap_lines(res.term_grace_seconds))
     command = " ".join(shlex.quote(part) for part in bundle.command)
     if res.use_srun:
         lines.extend([
@@ -1136,12 +1150,102 @@ def render_slurm_script(bundle: JobBundle) -> str:
             "  STEERLAB_CHILD_STATUS=$?",
             "done",
             "set -e",
+            "# The child is gone; a cancel watchdog still sleeping has nothing",
+            "# left to kill.",
+            "if [ -n \"${STEERLAB_TERM_WATCHDOG_PID:-}\" ]; then",
+            "  kill \"${STEERLAB_TERM_WATCHDOG_PID}\" 2>/dev/null || true",
+            "fi",
             "echo \"SteerLab child exited with status ${STEERLAB_CHILD_STATUS} at $(date -Is)\"",
             "exit \"${STEERLAB_CHILD_STATUS}\"",
         ])
     else:
+        # `exec` replaces the shell: no trap installed above — checkpoint,
+        # cancel, node-scratch cleanup, job-end marker — survives it. That is
+        # the documented cost of this path (job_end_marker_lines), not an
+        # oversight; a site that wants any of them runs through srun.
         lines.append(f"exec {command}")
     return "\n".join(lines) + "\n"
+
+
+def signal_trap_lines(term_grace_seconds: int) -> list[str]:
+    """The script block that answers the scheduler's two signals.
+
+    USR1 is the walltime warning (``--signal=B:USR1@<signal_seconds>``): it
+    is forwarded to the child, which checkpoints (fsync + resume-state.json)
+    and exits 85, and the shell keeps waiting — the main wait loop records
+    that status as the job's.
+
+    TERM is a cancel. A plain ``scancel`` — the engine's own cancel path,
+    ``SlurmExecutor.cancel`` — sends SIGTERM to every process in the job and
+    follows it with SIGKILL to the whole step after ``KillWait`` (30 s on
+    the site where this was observed, and Slurm's default). Until
+    2026-09-07 TERM was forwarded exactly like USR1 and the shell kept
+    waiting; a child that took longer than ``KillWait`` to wind down (a 27B
+    model mid-generation) was SIGKILLed together with the batch shell, no
+    EXIT trap ran, and the staged model stayed on the node — 52 GB, on a
+    real job, CANCELLED with signal 9 at +29 s. So TERM is forwarded as
+    TERM (the child parks and exits 85 for TERM just as for USR1), and a
+    watchdog starts a bounded wait — ``term_grace_seconds``, well inside
+    ``KillWait`` — after which the child is SIGKILLed if it is still alive.
+    Either way the main ``wait`` returns, the script exits normally, and the
+    EXIT trap runs: node-scratch cleanup, then the job-end marker.
+
+    Neither trap waits or reaps: the main wait loop owns status collection,
+    so the recorded status is the child's — 85 when it checkpointed in time,
+    128+9 when the watchdog had to kill it. A TERM that arrives before the
+    child exists (during module loads) leaves at once through the EXIT trap
+    with 128+15; there is nothing to wind down and the allocation is being
+    torn down anyway.
+    """
+    if term_grace_seconds < 0:
+        raise ValueError(
+            "STEERLAB_SLURM_TERM_GRACE_SECONDS / term_grace_seconds must be a "
+            f"non-negative number of seconds, not {term_grace_seconds}")
+    grace = int(term_grace_seconds)
+    return [
+        "",
+        "# Two signals, two answers (see executors.signal_trap_lines).",
+        "# USR1 is the walltime warning: forward it and keep waiting — the",
+        "# child checkpoints (fsync + resume-state.json) and exits 85, which",
+        "# the main wait loop below records. Neither trap waits/reaps here:",
+        "# the main wait loop owns status collection.",
+        "checkpoint() {",
+        "  echo \"SteerLab checkpoint signal received at $(date -Is)\"",
+        "  if [ -n \"${STEERLAB_CHILD_PID:-}\" ]; then",
+        "    kill -USR1 \"${STEERLAB_CHILD_PID}\" 2>/dev/null || true",
+        "  fi",
+        "}",
+        "# TERM is a cancel (a plain scancel). Slurm follows its SIGTERM with",
+        "# SIGKILL to the whole step after KillWait, and a batch shell killed",
+        "# that way runs no EXIT trap — so the staged model would stay on the",
+        "# node. Forward TERM, then bound the wait ourselves, well inside",
+        "# KillWait: if the child is still alive when the grace runs out it",
+        "# is SIGKILLed, the wait loop returns, and this script exits through",
+        "# its EXIT trap (node-scratch cleanup, then the job-end marker).",
+        f"STEERLAB_TERM_GRACE_SECONDS={grace}",
+        "STEERLAB_TERM_WATCHDOG_PID=",
+        "terminate() {",
+        "  echo \"SteerLab termination signal received at $(date -Is); the child has ${STEERLAB_TERM_GRACE_SECONDS}s to wind down\"",
+        "  if [ -z \"${STEERLAB_CHILD_PID:-}\" ]; then",
+        "    # No child yet: nothing to wind down, leave through the EXIT trap.",
+        "    exit 143",
+        "  fi",
+        "  kill -TERM \"${STEERLAB_CHILD_PID}\" 2>/dev/null || true",
+        "  if [ -z \"${STEERLAB_TERM_WATCHDOG_PID}\" ]; then",
+        "    (",
+        "      sleep \"${STEERLAB_TERM_GRACE_SECONDS}\"",
+        "      if kill -0 \"${STEERLAB_CHILD_PID}\" 2>/dev/null; then",
+        "        echo \"SteerLab child still alive ${STEERLAB_TERM_GRACE_SECONDS}s after termination; killing it at $(date -Is)\"",
+        "        kill -KILL \"${STEERLAB_CHILD_PID}\" 2>/dev/null || true",
+        "      fi",
+        "    ) &",
+        "    STEERLAB_TERM_WATCHDOG_PID=$!",
+        "  fi",
+        "}",
+        "trap checkpoint USR1",
+        "trap terminate TERM",
+        "",
+    ]
 
 
 def _sbatch_value(value: str) -> str:

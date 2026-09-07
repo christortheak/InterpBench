@@ -238,11 +238,12 @@ def test_rendered_script_carries_the_node_scratch_cleanup_trap(tmp_path, fake_sl
         script = handle.read()
     assert "cleanup_node_scratch() {" in script
     assert "trap cleanup_node_scratch EXIT" in script
-    # It composes with the checkpoint trap rather than replacing it, and is
+    # It composes with the signal traps rather than replacing them, and is
     # registered after the env exports it reads.
-    assert "trap checkpoint USR1 TERM" in script
+    assert "trap checkpoint USR1\n" in script
+    assert "trap terminate TERM" in script
     assert script.index("export SLURM_EXPORT_ENV=ALL") < script.index(
-        "trap cleanup_node_scratch EXIT") < script.index("trap checkpoint USR1 TERM")
+        "trap cleanup_node_scratch EXIT") < script.index("trap checkpoint USR1\n")
 
 
 def test_cleanup_only_fires_for_a_job_scoped_stage_dir():
