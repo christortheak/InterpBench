@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "order": 5,
+  "catalog": {
+    "id": "reader-fit",
+    "method": "readers",
+    "title": "Reader Fit",
+    "engineCLI": null,
+    "mac": "Read this guide; use the named existing pane/API or engine CLI.",
+    "http": "POST /api/reader/fit",
+    "compute": "existingOwner",
+    "outputs": [
+      "See the selected operation public response and immutable artifact records."
+    ],
+    "restriction": "Workbench role; reader training is separate from held-out scoring.",
+    "actions": [
+      {
+        "id": "post-reader-fit",
+        "method": "POST",
+        "path": "/api/reader/fit",
+        "serviceRole": "workbench",
+        "authorityReason": "Fits a reader and persists it under prompts/ and runs/. Instrument authoring over the live workspace."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  }
+}

@@ -547,11 +547,11 @@
           "label": "Observation layers (comma-separated)",
           "kind": "integers",
           "required": false,
-          "help": "Only fitted source layers at or above injection; leave blank for the engine\u2019s eligible ladder."
+          "help": "Only fitted source layers at or above injection; leave blank for the engine’s eligible ladder."
         },
         {
           "id": "alphaMultiple",
-          "label": "Multiple of the artifact\u2019s own norm",
+          "label": "Multiple of the artifact’s own norm",
           "kind": "number",
           "required": true,
           "help": "This is not ordinary residual-norm alpha.",

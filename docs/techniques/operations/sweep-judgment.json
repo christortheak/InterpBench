@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "order": 3,
+  "catalog": {
+    "id": "sweep-judgment",
+    "method": "judging",
+    "title": "Sweep Judgment",
+    "engineCLI": "steerlab-server experiment complete-sweep-judgment <study> --awaiting-run <run> --judgments <file> --json",
+    "mac": "Read this guide; use the named existing pane/API or engine CLI.",
+    "http": "POST /api/experiment/{name}/sweep/complete-judgment",
+    "compute": "existingOwner",
+    "outputs": [
+      "See the selected operation public response and immutable artifact records."
+    ],
+    "restriction": "CPU; can append a recommendation to a draft.",
+    "actions": [
+      {
+        "id": "post-experiment-name-sweep-complete-judgment",
+        "method": "POST",
+        "path": "/api/experiment/{name}/sweep/complete-judgment",
+        "serviceRole": "both",
+        "authorityReason": "Phase 2 of the same fork: the judgments come back and are stamped into the run directory the runner produced. Both, for the same reason as its `awaiting` half."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  }
+}

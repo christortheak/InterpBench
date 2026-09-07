@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "order": 10,
+  "catalog": {
+    "id": "sae-candidates",
+    "method": "sae",
+    "title": "Inspect and pin an SAE roster",
+    "engineCLI": "steerlab-server sae --help",
+    "mac": "Research methods: Inspect or pin SAE roster. Both clients: science sae-check/sae-pin-plan/sae-pin.",
+    "http": "POST /api/science/workspace/{action}",
+    "compute": "cpu",
+    "outputs": [
+      "See the selected operation public response and immutable artifact records."
+    ],
+    "restriction": "Workbench-only authorship. Inspect warnings, review external manifest and roster hashes, then pin the unchanged draft. Pinning is neither qualification nor promotion.",
+    "actions": [
+      {
+        "id": "post-science-workspace",
+        "method": "POST",
+        "path": "/api/science/workspace/{action}",
+        "serviceRole": "workbench",
+        "authorityReason": "Author and publish local scientific requests, review and pin SAE rosters, or verify/import local custody; runner staging remains isolated execution."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  }
+}

@@ -1419,6 +1419,8 @@ public enum RepEReader {
                     extractionRendering: extractionRendering)
             artifact.finalTestAccuracy = try pairAccuracy(probe: probe, positive: posTest, negative: negTest)
             artifact.finalTestPairCount = finalTest.isEmpty ? nil : finalTest.count
+            // Admission already rejected exact training/non-training overlap.
+            // This stamps that the check ran, not an additional measurement.
             artifact.splitOverlap = ["exactDuplicatesAcrossSplits": 0]
             artifacts.append(artifact)
         }

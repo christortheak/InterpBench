@@ -74,6 +74,7 @@
       "guide": "multi-agent.md"
     }
   ],
+  "scope": "Discovery and guidance, not execution or scientific qualification. engineCLI is a command reference or null; http lists existing method/path references or is null. Null means no direct interface. mac describes the supported Mac command or app/engine handoff. Engine-only operations require that engine and its declared compute environment.",
   "operations": [
     {
       "id": "stability",
@@ -286,7 +287,7 @@
           "method": "POST",
           "path": "/api/reader/score",
           "serviceRole": "workbench",
-          "authorityReason": "Exact RepE reader inference over the resident model \u2014 proxied to the interactive worker."
+          "authorityReason": "Exact RepE reader inference over the resident model — proxied to the interactive worker."
         }
       ],
       "access": {
@@ -321,7 +322,7 @@
           "method": "POST",
           "path": "/api/finetune/train",
           "serviceRole": "runner",
-          "authorityReason": "Runs the LoRA training itself \u2014 GPU compute this deployment executes."
+          "authorityReason": "Runs the LoRA training itself — GPU compute this deployment executes."
         },
         {
           "id": "post-finetune-submit",
@@ -363,7 +364,7 @@
           "method": "POST",
           "path": "/api/jlens/lenses/acquire",
           "serviceRole": "workbench",
-          "authorityReason": "Fetches a lens into the HF cache. A cache fetch in shape, but the only consumer is the J-lens workbench \u2014 no batch verb needs a lens."
+          "authorityReason": "Fetches a lens into the HF cache. A cache fetch in shape, but the only consumer is the J-lens workbench — no batch verb needs a lens."
         },
         {
           "id": "post-jlens-lenses-import",
@@ -405,7 +406,7 @@
           "method": "POST",
           "path": "/api/jlens/g0",
           "serviceRole": "workbench",
-          "authorityReason": "The G0 feasibility gate \u2014 loads the model and generates, for the app's lens screen."
+          "authorityReason": "The G0 feasibility gate — loads the model and generates, for the app's lens screen."
         },
         {
           "id": "post-jlens-probe",
@@ -968,6 +969,5 @@
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
       }
     }
-  ],
-  "scope": "Discovery and guidance, not execution or scientific qualification. engineCLI is a command reference or null; http lists existing method/path references or is null. Null means no direct interface. mac describes the supported Mac command or app/engine handoff. Engine-only operations require that engine and its declared compute environment."
+  ]
 }

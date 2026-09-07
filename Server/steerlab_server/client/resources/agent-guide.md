@@ -835,8 +835,7 @@ the template accepts it (Qwen3-14B/-32B ignore the level: declare `on`), and
 boolean still reads (`true` meant the template's default effort, xhigh) and is
 never rewritten. A stochastic replication arm is `--samples-per-item 25
 --temperature 0.7 --max-tokens 1024 --seed-policy derivedSHA256` — legal to
-declare locally; §7's greedy-only rule then routes the run to the server
-engine. The joint rules (`samplesPerItem > 1` needs `temperature > 0` and
+declare and run on either engine with scoped per-record seeds (§7). The joint rules (`samplesPerItem > 1` needs `temperature > 0` and
 seedPolicy `derivedSHA256`) surface at `verify`, not here, so the fields can
 be declared one flag at a time.
 
@@ -1209,16 +1208,17 @@ performing the repair first.**
 
 ## 7. Which engine runs what
 
-Two compute engines read and write the same artifacts. Measured runs on the
-**local** engine are **greedy only**: the study runner requires
-`temperature == 0` and rejects more than one seed, because the local generator
-cannot pin a per-run sampling seed. `seeds` is recorded for provenance and does
-not affect local generation — every local generation record stamps
-`seedInert: true`. A manifest needing `temperature > 0` or
-`samplesPerItem > 1` belongs on the **server** engine, which seeds per record
-and writes one record per (condition, prompt, sampleIndex). For categorical
-outcomes prefer the answer-token/logprob instrument over sampled prose on
-either engine: deterministic and temperature-free.
+**Sampling on either engine.** Local Swift/MLX and Python measured runs use
+record-local seeded streams. Positive-temperature runs with `samplesPerItem > 1`
+derive seeds from study hash, condition, prompt ID and sample index; otherwise
+ordinary runs enumerate the declared seeds. Multi-agent turns deliberately use
+an empty condition in that derivation, sharing streams across conditions.
+Greedy generation makes no RNG draws and stamps its seed inert; repeated greedy
+seeds are not independent observations. Equal seeds across backends do not
+promise equal tokens, and GPU repeatability depends on the exact model and
+runtime configuration. Preserve the sampling provenance and consult
+[the qualification record](TECHNIQUE-PARITY-QUALIFICATION.md) for measured scope.
+For categorical outcomes, answer-token/logprob instruments remain temperature-free.
 
 Activations do not transfer between engines. Vectors must be **re-extracted and
 re-validated on whichever engine a study runs on** — the parity claim is

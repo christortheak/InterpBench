@@ -87,19 +87,21 @@ adapter recognizes. It never changes a prior output.
 
 ## Registration and input closure
 
-In `experiment/managed_methods.py`, add this entry to `METHODS`:
+Create `docs/techniques/operations/example-row-count.json`. Its `binding` object is:
 
 ```python
-'example-row-count': Method('example_row_count', 'RowCountConfig', 'count', 'cpu'),
+{'module': 'example_row_count', 'config_class': 'RowCountConfig', 'function': 'count', 'compute': 'cpu'}
 ```
 
-No `managed_inputs.py` edit is needed: `itemsFile` is already in `FILES`.
+Use `inputRoleProfile: "managed-v1"` and `inputRoles: {}`: `itemsFile` is
+already a file role. Set `schemaVersion: 1`, `order` to the next unused catalog
+index, and `interviewOrder` to the next unused interview index.
 For any other input key, inspect and test its closure explicitly. The config
 is CPU-only and contains no `modelID`; it needs no model download or CUDA/MLX.
 
 ## Interview and catalog additions
 
-Append this entry to `workflows.json`'s `operations`:
+Put this object under `interview` in that same specification:
 
 ```json
 {
@@ -117,7 +119,7 @@ Append this entry to `workflows.json`'s `operations`:
 ```
 
 For a concrete catalog delta, copy the existing `optvec-family` operation in
-`catalog.json`, then replace these fields; keep its existing science plan/submit
+the existing operation spec, then replace these fields in its `catalog` object; keep its existing science plan/submit
 actions and access envelope unchanged:
 
 ```json

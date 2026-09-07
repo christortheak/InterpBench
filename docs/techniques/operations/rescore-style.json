@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "order": 2,
+  "catalog": {
+    "id": "rescore-style",
+    "method": "style",
+    "title": "Rescore recorded style",
+    "engineCLI": "steerlab-server experiment rescore-style <study> --source <run> --json",
+    "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+    "http": "POST /api/science/plan; POST /api/science/submit",
+    "compute": "cpu",
+    "outputs": [
+      "runDirectory",
+      "reasoning-style.csv",
+      "reasoning-style.json"
+    ],
+    "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal.",
+    "actions": [
+      {
+        "id": "post-science-plan",
+        "method": "POST",
+        "path": "/api/science/plan",
+        "serviceRole": "both",
+        "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+      },
+      {
+        "id": "post-science-submit",
+        "method": "POST",
+        "path": "/api/science/submit",
+        "serviceRole": "both",
+        "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  },
+  "interview": {
+    "id": "rescore-style",
+    "title": "Rescore existing generations for style",
+    "method": "style",
+    "purpose": "Apply a pinned reasoning-style taxonomy to a completed generation run.",
+    "fields": [
+      {
+        "id": "experiment",
+        "label": "Study name",
+        "kind": "text",
+        "required": true,
+        "help": ""
+      },
+      {
+        "id": "sourceRun",
+        "label": "Completed generation run",
+        "kind": "file",
+        "required": true,
+        "help": ""
+      }
+    ],
+    "claimBoundary": "Rescoring changes measurement, not the original generations. The source epoch gate still applies.",
+    "questions": [
+      "Which taxonomy is pinned, and why does it measure the intended construct?",
+      "Is this a planned measurement or a post-hoc analysis?"
+    ]
+  },
+  "interviewOrder": 9,
+  "inputRoleProfile": "managed-v1",
+  "inputRoles": {},
+  "binding": {
+    "special": "rescore-style"
+  }
+}

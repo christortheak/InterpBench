@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "order": 17,
+  "catalog": {
+    "id": "optvec-campaign",
+    "method": "optimization",
+    "title": "OptVec campaign",
+    "engineCLI": "steerlab-server optvec campaign --help",
+    "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+    "http": "POST /api/science/plan; POST /api/science/submit; POST /api/science/campaign/{job_id}/{action}",
+    "compute": "cpu",
+    "outputs": [
+      "Operation report and its provenance; inspect the declared run/config output."
+    ],
+    "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal. The first job materializes the campaign only. Cell submission and monitoring remain separate campaign operations. Use action status/plan with an empty body. Submit/cancel require the reviewed planSHA256 and confirmAction true. This performs one explicit queue top-up, never an unattended submission loop. After all cells finish, the ordinary science-export/fetch path captures the campaign and nested cell outputs.",
+    "actions": [
+      {
+        "id": "post-science-plan",
+        "method": "POST",
+        "path": "/api/science/plan",
+        "serviceRole": "both",
+        "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+      },
+      {
+        "id": "post-science-submit",
+        "method": "POST",
+        "path": "/api/science/submit",
+        "serviceRole": "both",
+        "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+      },
+      {
+        "id": "post-science-campaign",
+        "method": "POST",
+        "path": "/api/science/campaign/{job_id}/{action}",
+        "serviceRole": "both",
+        "authorityReason": "Review and coordinate cells of a staged scientific campaign; numerical training remains runner execution."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  },
+  "interview": {
+    "id": "optvec-campaign",
+    "title": "Prepare an optimization campaign",
+    "method": "optimization",
+    "purpose": "Materialize a reviewed grid of training cells; scheduler top-up is a separate explicit action.",
+    "fields": [
+      {
+        "id": "name",
+        "label": "Campaign name",
+        "kind": "text",
+        "required": true,
+        "help": ""
+      },
+      {
+        "id": "baseConfig",
+        "label": "Reviewed base training configuration",
+        "kind": "documentFile",
+        "required": true,
+        "help": ""
+      },
+      {
+        "id": "grid",
+        "label": "Reviewed grid of layers, seeds and conditions",
+        "kind": "documentFile",
+        "required": true,
+        "help": ""
+      },
+      {
+        "id": "slurm",
+        "label": "Reviewed scheduler settings",
+        "kind": "documentFile",
+        "required": true,
+        "help": ""
+      }
+    ],
+    "claimBoundary": "A materialized campaign is not completed training. Cell outcomes and uncertain submissions remain individually visible.",
+    "questions": [
+      "Which axes and stopping/attempt budgets were chosen before results?",
+      "Which resource and queue policies apply to every cell?"
+    ]
+  },
+  "interviewOrder": 12,
+  "inputRoleProfile": "managed-v1",
+  "inputRoles": {},
+  "binding": {
+    "special": "optvec-campaign"
+  }
+}

@@ -45,6 +45,12 @@ jobs:
             requirements-linux-x86_64.lock > /tmp/ci-lock.txt
           pip install -r /tmp/ci-lock.txt
           pip install -e ".[all]"
+      - name: Check shared declarations and exercise the technique guide
+        env:
+          HF_HUB_OFFLINE: "1"
+        run: |
+          python scripts/ci/check-generated.py
+          python scripts/ci/qualify-technique-example.py
       - name: Run the server suite
         working-directory: Server
         env:

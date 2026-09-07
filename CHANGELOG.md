@@ -12,6 +12,17 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Scoped MLX sampling for ordinary, saved-agent and multi-agent measured runs,
+  including reasoning budgets. Run records carry effective seeds and sample
+  indices; new provenance records the model/runtime configuration. Stochastic
+  designs retain the researcher's backend choice. Python sampling restores MPS
+  state and serializes overlapping scoped worker records. Historical runs remain
+  unchanged; seeded execution is not a claim of cross-backend token equality.
+- Technique declarations now live in small per-operation specifications, with
+  one regeneration/check entry point and an exercised disposable extension.
+  Backend probes record limited local evidence and provide a reproducible CUDA
+  handoff; the inventory continues to distinguish implementation from qualification.
+
 - Native scientific parity: reader final-test rows stay outside fitting and
   selection, with optional app authoring controls and preserved evidence-role
   fields; measured ordinary/saved-agent runs record intervention scope; native

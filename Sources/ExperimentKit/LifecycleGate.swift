@@ -87,10 +87,6 @@ public enum LifecycleGate: String, CaseIterable, Sendable, Codable {
     /// `data check` found blocking data requirements.
     case dataReadiness
 
-    /// The local greedy-only sampling policy: `temperature > 0`, or more than
-    /// one seed, on the MLX substrate that pins no per-run seed.
-    case samplingPolicy
-
     /// A logprob/ordinal arm declared with thinking mode on — the answer would
     /// be a marginal over reasoning paths.
     case thinkingModeConflict
@@ -385,13 +381,6 @@ public enum RefusalSiteRegistry {
             origin: "StudyDataReadiness.summary → ExperimentCLIRunner data check",
             repairAction: "author the files named by result.blockers[].path, "
                 + "then steerlab-cli data check <name>"),
-        .init(
-            gate: .samplingPolicy,
-            verbs: ["experiment run"],
-            origin: "ExperimentTasks.requireGreedyLocalDesign",
-            repairAction: "set the study temperature to 0 and one seed for the "
-                + "local engine, or submit the study to the Python server "
-                + "(steerlab-cli remote submit-bundle …), which seeds per record"),
         .init(
             gate: .thinkingModeConflict,
             verbs: ["experiment verify", "experiment run"],

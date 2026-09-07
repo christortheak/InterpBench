@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "order": 16,
+  "catalog": {
+    "id": "optvec-fracture",
+    "method": "optimization",
+    "title": "OptVec fracture",
+    "engineCLI": "steerlab-server optvec fracture --help",
+    "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+    "http": "POST /api/science/plan; POST /api/science/submit",
+    "compute": "cpu",
+    "outputs": [
+      "Operation report and its provenance; inspect the declared run/config output."
+    ],
+    "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal.",
+    "actions": [
+      {
+        "id": "post-science-plan",
+        "method": "POST",
+        "path": "/api/science/plan",
+        "serviceRole": "both",
+        "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+      },
+      {
+        "id": "post-science-submit",
+        "method": "POST",
+        "path": "/api/science/submit",
+        "serviceRole": "both",
+        "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  },
+  "interview": {
+    "id": "optvec-fracture",
+    "title": "Describe solution basins",
+    "method": "optimization",
+    "purpose": "Describe similarity and multiplicity among declared intervention artifacts.",
+    "fields": [
+      {
+        "id": "artifacts",
+        "label": "Vector artifacts, one per line",
+        "kind": "artifacts",
+        "required": true,
+        "help": ""
+      },
+      {
+        "id": "layer",
+        "label": "Layer (optional consistency check)",
+        "kind": "integer",
+        "required": false,
+        "help": ""
+      },
+      {
+        "id": "items",
+        "label": "Artifact-to-item grouping",
+        "kind": "documentFile",
+        "required": false,
+        "help": "Choose a JSON map prepared from declared item identities; never infer grouping from filenames."
+      },
+      {
+        "id": "gradients",
+        "label": "Optional gradient tensor file",
+        "kind": "file",
+        "required": false,
+        "help": ""
+      },
+      {
+        "id": "threshold",
+        "label": "Clustering cosine threshold",
+        "kind": "number",
+        "required": false,
+        "help": "",
+        "default": "0.8"
+      },
+      {
+        "id": "name",
+        "label": "Name for this reading",
+        "kind": "text",
+        "required": false,
+        "help": "A new immutable result will be created."
+      }
+    ],
+    "claimBoundary": "Geometric similarity or clustering is not behavioral equivalence or a calibrated statistical test.",
+    "questions": [
+      "Which independent solutions are being compared?",
+      "What would similarity or separation mean for the research question?"
+    ]
+  },
+  "interviewOrder": 3,
+  "inputRoleProfile": "managed-v1",
+  "inputRoles": {},
+  "binding": {
+    "module": "optvec_geometry",
+    "config_class": "OptVecFractureConfig",
+    "function": "fracture",
+    "compute": "cpu"
+  }
+}

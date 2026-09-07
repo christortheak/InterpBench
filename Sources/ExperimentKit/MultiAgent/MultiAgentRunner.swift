@@ -6,6 +6,8 @@ import SteeringKit
 
 public struct MultiAgentTurnResult: Codable, Identifiable, Sendable, Equatable {
     public var id: String { turnID }
+    public var seed: UInt64? = nil
+    public var promptTokenCount: Int? = nil
     public let turnID: String
     public let turnIndex: Int
     public let title: String
@@ -71,8 +73,10 @@ public struct MultiAgentTurnResult: Codable, Identifiable, Sendable, Equatable {
         endpoint: TurnEndpointStamp? = nil, promptRenderer: String? = nil,
         voiceLint: VoiceLintStamp? = nil,
         systemPromptComposition: PanelSystemPromptCompositionStamp? = nil,
-        finishReason: String? = nil
+        finishReason: String? = nil, seed: UInt64? = nil, promptTokenCount: Int? = nil
     ) {
+        self.seed = seed
+        self.promptTokenCount = promptTokenCount
         self.turnID = turnID
         self.turnIndex = turnIndex
         self.title = title
@@ -108,9 +112,7 @@ public struct MultiAgentRunReport: Codable, Sendable, Equatable {
     /// decode; absent means the greedy, single-replicate era.
     public let temperature: Double?
     public let replicateIndex: Int?
-    /// "greedy" locally at temperature 0; "seedInert" for a warm LOCAL run —
-    /// varied but not re-runnable, because MLX exposes no per-run sampling
-    /// seed. The server stamps "derivedSHA256" for its warm runs.
+    /// "greedy" at temperature zero, otherwise "derivedSHA256".
     public let seedPolicy: String?
 }
 
@@ -164,17 +166,12 @@ public enum MultiAgentRunner {
         defaultRevision: String? = nil,
         temperature: Double? = nil,
         replicateIndex: Int = 0,
+        experimentHash: String? = nil,
         progress: MultiAgentRunProgressHandler? = nil
     ) async throws -> URL {
         try validate(scenario)
-        // Positive temperature is supported here (mlx-swift-lm samples warm
-        // through CategoricalSampler/TopPSampler — the Playground has always
-        // used it). What local MLX cannot do is SEED that sampling:
-        // GenerateParameters exposes no per-run seed, so a warm local
-        // transcript is varied but not re-runnable, and every record stays
-        // stamped `seedInert: true`. That is the documented substrate
-        // difference — stochastic evidence comes from the server, which seeds
-        // per turn — not a reason to refuse an exploratory warm run.
+        // Measured turns use a record-local stream shared across conditions.
+        // Standalone exploratory panels derive identity from the scenario hash.
         // `temperature` overrides the scenario's authoring value: a STUDY
         // manifest owns measured-run sampling policy.
         let effectiveTemperature = temperature ?? scenario.temperature
@@ -301,14 +298,26 @@ public enum MultiAgentRunner {
                 // discards the stream's own stop reason, and a panel turn's
                 // budget is the TURN's — so this is the only place the
                 // classification can honestly be made.
+                let turnSeed = StudySampling.deriveSeed(
+                    experimentHash: experimentHash ?? scenarioHash, condition: "",
+                    promptID: turn.id, sampleIndex: replicateIndex)
                 let measured: ExperimentTasks.MeasuredGeneration
                 do {
+                    let modelKey = Data("\(modelID)|\(runtime.revision ?? "")".utf8)
+                    let modelStamp = SHA256.hash(data: modelKey).map { String(format: "%02x", $0) }.joined()
+                    let provenanceDirectory = runDirectory.appending(components: "sampling-models", modelStamp)
+                    if !FileManager.default.fileExists(atPath: provenanceDirectory.path) {
+                        try FileManager.default.createDirectory(at: provenanceDirectory, withIntermediateDirectories: true)
+                        try await RunSamplingProvenance.write(container: runtime.container, modelID: modelID,
+                            revision: runtime.revision, to: provenanceDirectory)
+                    }
                     measured = try await ExperimentTasks.generateMeasured(
                         runtime.container,
                         prompt: prompt,
                         modelID: modelID,
                         maxTokens: turnMaxTokens,
                         temperature: effectiveTemperature,
+                        seed: turnSeed,
                         injections: injections,
                         promptMode: promptMode,
                         systemPrompt: systemPrompt,
@@ -378,7 +387,8 @@ public enum MultiAgentRunner {
                     systemPromptComposition: systemComposition,
                     // The stream's own account of why this turn ended,
                     // against the TURN's budget. Same seam, same fsync.
-                    finishReason: measured.finishReason)
+                    finishReason: measured.finishReason, seed: turnSeed,
+                    promptTokenCount: measured.promptTokenCount)
                 results.append(result)
                 // Flush BEFORE the next turn starts: an unflushed transcript
                 // is a transcript replayed from turn 1.
@@ -426,7 +436,7 @@ public enum MultiAgentRunner {
             warnings: warnings,
             temperature: effectiveTemperature,
             replicateIndex: replicateIndex,
-            seedPolicy: effectiveTemperature > 0 ? "seedInert" : "greedy")
+            seedPolicy: effectiveTemperature > 0 ? "derivedSHA256" : "greedy")
         try encoder.encode(report).write(to: runDirectory.appending(component: "report.json"))
 
         // turns.jsonl is already complete — it was appended turn by turn.

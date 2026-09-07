@@ -195,7 +195,9 @@ public enum ExperimentTasks {
             experimentHash: ExperimentStore.manifestHash(experiment),
             temperature: generates ? experiment.temperature : nil,
             samplesPerItem: generates ? (experiment.samplesPerItem ?? 1) : nil,
-            seedPolicy: generates ? (experiment.seedPolicy ?? "manifestSeeds") : nil,
+            seedPolicy: generates ? (task == "multi-agent-run"
+                ? (experiment.temperature > 0 ? "derivedSHA256" : "manifestSeeds")
+                : StudySampling.policy(experiment)) : nil,
             notes: inertNote.map { ["inertConceptMachinery": $0] } ?? [:],
             // The seeded evaluate subsample (2026-08-29), stamped so the run
             // is self-describing from its own config.json: a reader who finds
@@ -1750,6 +1752,7 @@ public enum ExperimentTasks {
     /// first-enumerated option (`Judicial.parseChoice`). Server twin: the
     /// sampled loop's `token_ids_out` count against the manifest's budget.
     struct MeasuredGeneration {
+        var promptTokenCount: Int? = nil
         let text: String
         /// Why the decode ended, in the closed cross-engine vocabulary
         /// (`FinishReason`). Stamped on every generation record.
@@ -1835,6 +1838,7 @@ public enum ExperimentTasks {
     static func generateMeasured(
         _ container: ModelContainer, prompt: String, modelID: String, maxTokens: Int,
         temperature: Double = 0,
+        seed: UInt64? = nil,
         injections: [CellInjection] = [],
         promptMode: ExperimentManifest.PromptMode = .chatAssistant,
         systemPrompt: String? = nil,
@@ -1885,11 +1889,10 @@ public enum ExperimentTasks {
         if let budget {
             return try await generateWithReasoningBudget(
                 container, input: input, parameters: parameters,
-                budget: budget, onChunk: onChunk)
+                budget: budget, seed: seed, onChunk: onChunk)
         }
-        let stream = try await container.generate(
-            input: input,
-            parameters: parameters)
+        let stream = try await SeededGeneration.chunks(
+            container: container, input: input, parameters: parameters, seed: seed)
         var text = ""
         var lastProgressCount = 0
         // Defaults to `stop`: a stream that reported no `.info` event told us
@@ -1916,7 +1919,7 @@ public enum ExperimentTasks {
         if let onChunk, text.count != lastProgressCount {
             await onChunk(text)
         }
-        return MeasuredGeneration(text: text, finishReason: finishReason)
+        return MeasuredGeneration(promptTokenCount: promptTokenCount, text: text, finishReason: finishReason)
     }
 
     /// The token-by-token decode under a declared reasoning budget: the same
@@ -1932,8 +1935,10 @@ public enum ExperimentTasks {
     static func generateWithReasoningBudget(
         _ container: ModelContainer, input: LMInput,
         parameters: GenerateParameters, budget: ReasoningBudget,
+        seed: UInt64? = nil,
         onChunk: GenerationChunkHandler? = nil
     ) async throws -> MeasuredGeneration {
+        let promptTokenCount = input.text.tokens.size
         struct Outcome: Sendable {
             let text: String
             let tokens: [Int]
@@ -1942,9 +1947,12 @@ public enum ExperimentTasks {
         }
         let outcome: Outcome = try await container.perform(nonSendable: input) {
             context, input in
-            let stream = try MLXLMCommon.generateTokens(
-                input: input, parameters: parameters, context: context,
-                includeStopToken: true)
+            let iterator = try SeededGeneration.iterator(
+                input: input, context: context, parameters: parameters, seed: seed)
+            let stream = MLXLMCommon.generateTokenTask(
+                promptTokenCount: input.text.tokens.size,
+                modelConfiguration: context.configuration, tokenizer: context.tokenizer,
+                iterator: iterator, includeStopToken: true).0
             var detokenizer = NaiveStreamingDetokenizer(tokenizer: context.tokenizer)
             var rule = budget
             var text = ""
@@ -1988,7 +1996,7 @@ public enum ExperimentTasks {
             finishReason = budget.finishReason(
                 tokens: outcome.tokens, stopIDs: outcome.stopIDs)
         }
-        return MeasuredGeneration(text: text, finishReason: finishReason)
+        return MeasuredGeneration(promptTokenCount: promptTokenCount, text: text, finishReason: finishReason)
     }
 
     public static func preparedPromptTokenCount(
@@ -3074,6 +3082,8 @@ public enum ExperimentTasks {
         qwenThinkingEnabled: Bool,
         condition: String,
         seed: UInt64,
+        sampleIndex: Int? = nil,
+        promptTokenCount: Int? = nil,
         promptIndex: Int,
         prompt: StudyPrompt,
         output: String,
@@ -3108,7 +3118,10 @@ public enum ExperimentTasks {
             qwenThinkingEnabled: qwenThinkingEnabled,
             condition: condition,
             seed: seed,
-            seedInert: true,
+            seedInert: manifest.temperature == 0,
+            seedPolicy: sampleIndex == nil ? nil : StudySampling.policy(manifest),
+            sampleIndex: sampleIndex,
+            promptTokenCount: promptTokenCount,
             promptIndex: promptIndex,
             promptID: prompt.id,
             prompt: prompt.text,
@@ -3427,10 +3440,13 @@ public enum ExperimentTasks {
                 cancel: cancel,
                 progress: progress)
         }
-        try requireGreedyLocalDesign(manifest)
 
         let container = try await loadContainer(pinning: &manifest)
         let runDirectory = try makeRunDirectory(experiment: manifest, task: "run")
+        if ExecutionPlan.resolve(instruments: manifest.outcomeInstruments).samplingIsOperative {
+            try await RunSamplingProvenance.write(container: container, modelID: manifest.modelID,
+                revision: manifest.modelRevision, to: runDirectory)
+        }
         await progress?(.runDirectory(runDirectory.path))
         // Inert concept machinery is inert here too: a compare-agents
         // study never re-derives carried concepts' vectors (whose stimuli
@@ -3707,8 +3723,10 @@ public enum ExperimentTasks {
             }
 
             guard wantsSampled else { continue }
-            for (seedIndex, seed) in manifest.seeds.enumerated() {
+            for seedIndex in 0..<StudySampling.count(manifest) {
                 for (index, prompt) in taskPrompts.prompts.enumerated() {
+                    let seed = StudySampling.seed(manifest, experimentHash: experimentHash,
+                        condition: condition.name, promptID: prompt.id, sampleIndex: seedIndex)
                     if await cancel.observed(
                         at: "\(condition.name) seed \(seed) prompt "
                             + "\(index + 1)/\(taskPrompts.prompts.count)")
@@ -3724,6 +3742,7 @@ public enum ExperimentTasks {
                     let generation = try await generateMeasured(
                         container, prompt: prompt.text, modelID: manifest.modelID,
                         maxTokens: manifest.maxTokens, temperature: manifest.temperature,
+                        seed: seed,
                         injections: conditionInjections,
                         promptMode: manifest.promptMode ?? .chatAssistant,
                         systemPrompt: armSystemPrompt.effective,
@@ -3779,7 +3798,7 @@ public enum ExperimentTasks {
                         systemPromptComposition: armSystemPrompt.stamp,
                         qwenThinkingEnabled: manifest.qwenThinkingEnabled ?? false,
                         condition: condition.name,
-                        seed: seed,
+                        seed: seed, sampleIndex: seedIndex, promptTokenCount: generation.promptTokenCount,
                         promptIndex: index + 1,
                         prompt: prompt,
                         output: output,
@@ -3805,7 +3824,7 @@ public enum ExperimentTasks {
                             ReportChoiceReadout(
                                 condition: condition.name,
                                 promptID: record.promptID,
-                                sampleIndex: seed,
+                                sampleIndex: UInt64(seedIndex),
                                 source: "parsed",
                                 selected: selected,
                                 target: record.target))
@@ -3829,7 +3848,7 @@ public enum ExperimentTasks {
                     // small. Server twin: the end of `_execute_condition`'s
                     // per-prompt sample loop.
                     if let ceiling = manifest.maxLengthStoppedFraction,
-                        seedIndex == manifest.seeds.count - 1
+                        seedIndex == StudySampling.count(manifest) - 1
                     {
                         let cell = truncationCell(
                             rows: rows, condition: condition.name,
@@ -3954,13 +3973,6 @@ public enum ExperimentTasks {
         cancel: CancelPoller = CancelPoller(nil),
         progress: StudyTaskProgressHandler?
     ) async throws -> URL {
-        // Deliberately NOT gated by `requireGreedyLocalDesign` (which the
-        // ordinary and variant study paths call): a warm multi-agent run is
-        // supported locally as EXPLORATION. MLX samples warm fine; what it
-        // cannot do is seed, so every record here stays `seedInert: true` and
-        // the transcripts are varied but not re-runnable. Stochastic EVIDENCE
-        // comes from the server, which seeds per turn — see
-        // MULTI-AGENT-SUBSTRATE-PARITY-PLAN § A5.
         guard manifest.temperature >= 0 else {
             throw ExperimentError(
                 reason: "temperature must be >= 0, got \(manifest.temperature)")
@@ -4037,7 +4049,7 @@ public enum ExperimentTasks {
                 stripInterventions: condition.strip,
                 defaultRevision: manifest.modelRevision,
                 temperature: manifest.temperature,
-                replicateIndex: replicate) { event in
+                replicateIndex: replicate, experimentHash: experimentHash) { event in
                     switch event {
                     case .turnChunk(_, _, _, let output):
                         await progress?(
@@ -4064,7 +4076,7 @@ public enum ExperimentTasks {
                     MultiAgentTurnResult.self, from: Data(line.utf8))
                 let row = MetricRow(
                     condition: condition.name,
-                    seed: manifest.seeds.first ?? 20260610,
+                    seed: turn.seed ?? (manifest.seeds.first ?? 20260610),
                     promptIndex: turn.turnIndex - 1,
                     promptID: turn.turnID,
                     wordCount: wordCount(turn.output),
@@ -4094,8 +4106,10 @@ public enum ExperimentTasks {
                     qwenThinkingEnabled: false,
                     condition: condition.name,
                     seed: row.seed,
-                    // Local MLX cannot pin a sampling seed, warm or not.
-                    seedInert: true,
+                    seedInert: manifest.temperature == 0,
+                    seedPolicy: manifest.temperature > 0 ? "derivedSHA256" : "greedy",
+                    sampleIndex: replicate,
+                    promptTokenCount: turn.promptTokenCount,
                     promptIndex: row.promptIndex,
                     promptID: row.promptID,
                     prompt: turn.prompt,
@@ -4291,7 +4305,7 @@ public enum ExperimentTasks {
 
         // Pair on (replicate, turn id): the same script position in the same
         // play-through index. Never on the seed — the server derives per-turn
-        // seeds that include the CONDITION, so seeds differ across arms by
+        // seeds with an empty condition, shared across arms by
         // design.
         var baseline: [String: MetricRow] = [:]
         for row in rows where row.condition == "baseline" {
@@ -4358,55 +4372,6 @@ public enum ExperimentTasks {
         return parts.joined(separator: "\n\n")
     }
 
-    /// The local measured-run sampling gate (CLAUDE.md › Sampling &
-    /// measurement policy): local MLX runs are GREEDY-ONLY — the MLX
-    /// generator does not pin a per-run sampling seed, so a positive
-    /// temperature would produce unreproducible records. Shared by the
-    /// ordinary and variant (saved-agent) study paths; stochastic designs
-    /// route to the Python server (`SubstrateRouting`), which seeds
-    /// PyTorch per record. Extracted so the refusal is unit-testable.
-    /// The repair for the local greedy-only policy (WP0 step 7): the study
-    /// either becomes deterministic here, or it moves to the substrate that
-    /// seeds per record. Both are commands — the stay-local arm became one
-    /// when `set-sampling` landed (before it, no CLI verb set the
-    /// temperature, so the repair could only say "edit the manifest").
-    static func samplingPolicyRepair(_ name: String) -> String {
-        "steerlab-cli remote package \(name) && steerlab-cli remote "
-            + "submit-bundle <bundle> --verb run (--site <id> | --url <server>)"
-            + "  — the Python server seeds PyTorch per record; the local MLX "
-            + "generator pins no per-run seed, so a stochastic study runs "
-            + "there. To stay local instead: steerlab-cli experiment "
-            + "duplicate \(name) \(name)-v2 && steerlab-cli experiment "
-            + "set-sampling \(name)-v2 --temperature 0, set one seed, and "
-            + "re-freeze."
-    }
-
-    static func requireGreedyLocalDesign(_ manifest: ExperimentManifest) throws {
-        // E1: the greedy requirement exists because the MLX generator has no
-        // per-run sampling seed. A study that never SAMPLES is unaffected by
-        // that limitation, so a deterministic-instrument study must not be
-        // refused over a temperature nothing reads. The advisory below still
-        // says the declared value is inert.
-        guard ExecutionPlan.resolve(instruments: manifest.outcomeInstruments)
-            .samplingIsOperative
-        else { return }
-        if manifest.temperature == 0, manifest.seeds.count > 1 {
-            throw ExperimentError.refusing(
-                .samplingPolicy,
-                "temperature 0 is greedy and ignores seeds; use exactly one seed "
-                    + "or raise the temperature after stochastic sampling is implemented",
-                repair: Self.samplingPolicyRepair(manifest.name))
-        }
-        guard manifest.temperature == 0 else {
-            throw ExperimentError.refusing(
-                .samplingPolicy,
-                "study execution currently requires temperature 0 because "
-                    + "mlx-swift-lm GenerateParameters does not expose a per-run seed; "
-                    + "set the study temperature to 0 for reproducible greedy runs",
-                repair: Self.samplingPolicyRepair(manifest.name))
-        }
-    }
-
     private static func runVariantComparison(
         manifest: ExperimentManifest,
         taskPrompts: (file: String, hash: String, prompts: [StudyPrompt]),
@@ -4414,13 +4379,11 @@ public enum ExperimentTasks {
         cancel: CancelPoller = CancelPoller(nil),
         progress: StudyTaskProgressHandler?
     ) async throws -> URL {
-        try requireGreedyLocalDesign(manifest)
         // Study-owned sampling (2026-07-21): the STUDY manifest owns the
         // measured-run sampling policy for every condition; a saved agent's
         // stored temperature is a Playground convenience, non-operative in
-        // measured runs (this engine generates greedy at the manifest's
-        // required temperature 0 for every condition, and stamps the
-        // artifact value as `agentPlaygroundTemperature` provenance). The
+        // measured runs (every condition uses the manifest temperature and records
+        // the artifact value as `agentPlaygroundTemperature` provenance). The
         // historical artifact-temperature refusal policed a dead field —
         // and would wrongly refuse agents saved from a warm Playground.
         for condition in conditions {
@@ -4434,6 +4397,10 @@ public enum ExperimentTasks {
         var pinnedManifest = manifest
         let container = try await loadContainer(pinning: &pinnedManifest)
         let runDirectory = try makeRunDirectory(experiment: pinnedManifest, task: "run")
+        if ExecutionPlan.resolve(instruments: pinnedManifest.outcomeInstruments).samplingIsOperative {
+            try await RunSamplingProvenance.write(container: container, modelID: pinnedManifest.modelID,
+                revision: pinnedManifest.modelRevision, to: runDirectory)
+        }
         await progress?(.runDirectory(runDirectory.path))
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -4685,10 +4652,11 @@ public enum ExperimentTasks {
                     }
                 }
                 if wantsSampled, !cancelled {
-                    seedLoop: for (seedIndex, seed) in pinnedManifest.seeds
-                        .enumerated()
+                    seedLoop: for seedIndex in 0..<StudySampling.count(pinnedManifest)
                     {
                         for (index, prompt) in taskPrompts.prompts.enumerated() {
+                            let seed = StudySampling.seed(pinnedManifest, experimentHash: experimentHash,
+                                condition: condition.name, promptID: prompt.id, sampleIndex: seedIndex)
                             if await cancel.observed(
                                 at: "\(condition.name) seed \(seed) prompt "
                                     + "\(index + 1)/\(taskPrompts.prompts.count)")
@@ -4706,12 +4674,16 @@ public enum ExperimentTasks {
                                 prompt: prompt.text,
                                 modelID: pinnedManifest.modelID,
                                 maxTokens: pinnedManifest.maxTokens,
-                                temperature: 0,
+                                temperature: pinnedManifest.temperature,
+                                seed: seed,
                                 injections: conditionInjections,
                                 promptMode: promptMode,
                                 systemPrompt: systemPrompt,
                                 qwenThinkingEnabled: qwenThinking,
-                                transcript: prompt.transcript
+                                transcript: prompt.transcript,
+                                reasoningEffort: StudySampling.reasoningEffort(pinnedManifest,
+                                    variantThinking: condition.variant == nil ? nil : qwenThinking),
+                                reasoningMaxTokens: pinnedManifest.reasoningMaxTokens
                             ) { output in
                                 await progress?(
                                     .generationChunk(
@@ -4767,7 +4739,7 @@ public enum ExperimentTasks {
                                 systemPromptComposition: armSystemPrompt.stamp,
                                 qwenThinkingEnabled: qwenThinking,
                                 condition: condition.name,
-                                seed: seed,
+                                seed: seed, sampleIndex: seedIndex, promptTokenCount: generation.promptTokenCount,
                                 promptIndex: index + 1,
                                 prompt: prompt,
                                 output: output,
@@ -4789,7 +4761,7 @@ public enum ExperimentTasks {
                                     ReportChoiceReadout(
                                         condition: condition.name,
                                         promptID: record.promptID,
-                                        sampleIndex: seed,
+                                        sampleIndex: UInt64(seedIndex),
                                         source: "parsed",
                                         selected: selected,
                                         target: record.target))
@@ -4805,7 +4777,7 @@ public enum ExperimentTasks {
                             // condition type, exactly as the record contract
                             // is one rule.
                             if let ceiling = pinnedManifest.maxLengthStoppedFraction,
-                                seedIndex == pinnedManifest.seeds.count - 1
+                                seedIndex == StudySampling.count(pinnedManifest) - 1
                             {
                                 let cell = truncationCell(
                                     rows: rows, condition: condition.name,

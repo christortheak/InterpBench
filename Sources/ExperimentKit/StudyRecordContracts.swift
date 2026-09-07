@@ -98,11 +98,12 @@ extension ExperimentTasks {
         let qwenThinkingEnabled: Bool
         let condition: String
         let seed: UInt64
-        /// true on local MLX runs: generation is greedy and the MLX sampler
-        /// takes no per-run seed, so the recorded seed is provenance only —
-        /// never read it as causally meaningful (CLAUDE.md › Sampling &
-        /// measurement policy). Server-written records omit this field.
+        /// True when temperature zero makes the declared seed inert. Historical
+        /// records retain their original stamp; warm measured runs now seed MLX.
         let seedInert: Bool?
+        var seedPolicy: String? = nil
+        var sampleIndex: Int? = nil
+        var promptTokenCount: Int? = nil
         let promptIndex: Int
         let promptID: String
         let prompt: String

@@ -1,0 +1,156 @@
+{
+  "schemaVersion": 1,
+  "order": 11,
+  "catalog": {
+    "id": "optvec-train",
+    "method": "optimization",
+    "title": "OptVec train",
+    "engineCLI": "steerlab-server optvec train --help",
+    "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+    "http": "POST /api/science/plan; POST /api/science/submit",
+    "compute": "gpu",
+    "outputs": [
+      "Operation report and its provenance; inspect the declared run/config output."
+    ],
+    "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal.",
+    "actions": [
+      {
+        "id": "post-science-plan",
+        "method": "POST",
+        "path": "/api/science/plan",
+        "serviceRole": "both",
+        "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+      },
+      {
+        "id": "post-science-submit",
+        "method": "POST",
+        "path": "/api/science/submit",
+        "serviceRole": "both",
+        "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  },
+  "interview": {
+    "id": "optvec-train",
+    "title": "Train an optimized intervention",
+    "method": "optimization",
+    "purpose": "Change a declared behavior while preserving specified anchors and capability.",
+    "fields": [
+      {
+        "id": "modelID",
+        "label": "Model to execute",
+        "kind": "text",
+        "required": true,
+        "help": "Choose the prepared model; this does not acquire weights."
+      },
+      {
+        "id": "revision",
+        "label": "Model commit",
+        "kind": "text",
+        "required": true,
+        "help": "Inspect the immutable 40-character model commit. Never type a guessed pin."
+      },
+      {
+        "id": "layer",
+        "label": "Injection layer",
+        "kind": "integer",
+        "required": true,
+        "help": ""
+      },
+      {
+        "id": "alphaNormFactor",
+        "label": "Dose in residual-norm units",
+        "kind": "number",
+        "required": false,
+        "help": "Multiplied by the residual norm; this is not the J-space artifact-norm multiple.",
+        "default": "0.1"
+      },
+      {
+        "id": "residualNormArtifact",
+        "label": "Artifact supplying the residual norm",
+        "kind": "artifact",
+        "required": false,
+        "help": "Choose an inspected artifact with a residual norm table, or explicitly provide alphaAbsolute under advanced settings."
+      },
+      {
+        "id": "datasets.targetTrain",
+        "label": "Target training items",
+        "kind": "fileRef",
+        "required": true,
+        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+      },
+      {
+        "id": "datasets.targetVal",
+        "label": "Selection / validation items",
+        "kind": "fileRef",
+        "required": false,
+        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+      },
+      {
+        "id": "datasets.anchorTrain",
+        "label": "Behaviors to preserve",
+        "kind": "fileRef",
+        "required": true,
+        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+      },
+      {
+        "id": "datasets.anchorVal",
+        "label": "Anchor validation items",
+        "kind": "fileRef",
+        "required": false,
+        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+      },
+      {
+        "id": "datasets.capabilityTrain",
+        "label": "Capability training controls",
+        "kind": "fileRef",
+        "required": true,
+        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+      },
+      {
+        "id": "stepsMax",
+        "label": "Maximum optimization steps",
+        "kind": "integer",
+        "required": false,
+        "help": "",
+        "default": "500"
+      },
+      {
+        "id": "seed",
+        "label": "Random seed",
+        "kind": "integer",
+        "required": false,
+        "help": "Record the seed before execution.",
+        "default": "0"
+      },
+      {
+        "id": "name",
+        "label": "Name for this reading",
+        "kind": "text",
+        "required": false,
+        "help": "A new immutable result will be created."
+      }
+    ],
+    "claimBoundary": "Training objective improvement is not held-out behavioral validation.",
+    "questions": [
+      "What behavior should change, and in which direction?",
+      "Which judgments and capabilities must remain stable?",
+      "Is checkpoint selection based on validation, or are fixed steps predeclared? Keep final test data separate."
+    ]
+  },
+  "interviewOrder": 0,
+  "inputRoleProfile": "managed-v1",
+  "inputRoles": {},
+  "binding": {
+    "module": "optvec_train",
+    "config_class": "OptVecTrainConfig",
+    "function": "train",
+    "compute": "gpu"
+  }
+}

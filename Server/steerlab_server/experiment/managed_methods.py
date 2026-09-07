@@ -20,18 +20,10 @@ class Method:
     compute: str
 
 
-METHODS = {
-    'optvec-train': Method('optvec_train', 'OptVecTrainConfig', 'train', 'gpu'),
-    'optvec-eval': Method('optvec_eval', 'OptVecEvalConfig', 'evaluate', 'gpu'),
-    'optvec-geometry': Method('optvec_geometry', 'OptVecGeometryConfig', 'geometry', 'cpu'),
-    'optvec-fracture': Method('optvec_geometry', 'OptVecFractureConfig', 'fracture', 'cpu'),
-    'optvec-interpret': Method('optvec_interpret', 'OptVecInterpretConfig', 'interpret', 'gpu'),
-    'optvec-family': Method('optvec_interpret', 'FamilySummaryConfig', 'family_summary', 'cpu'),
-    'optvec-gradient': Method('optvec_gradient', 'OptVecGradientConfig', 'survey', 'gpu'),
-    'jspace': Method('optvec_jspace', 'OptVecJSpaceConfig', 'analyze', 'gpu'),
-    'sae-family-report': Method('family_report', 'FamilyReportConfig', 'report', 'cpu'),
-}
-SPECIAL = {'rescore-style', 'sae-qualification-record', 'optvec-gradient-mint', 'optvec-campaign'}
+from .operation_bindings import BINDINGS, SPECIAL
+
+METHODS = {name: Method(**binding) for name, binding in BINDINGS.items()}
+
 OPERATIONS = frozenset(METHODS) | SPECIAL
 
 

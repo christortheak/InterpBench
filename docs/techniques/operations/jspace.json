@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "order": 18,
+  "catalog": {
+    "id": "jspace",
+    "method": "jspace",
+    "title": "J-space analysis",
+    "engineCLI": "steerlab-server optvec jspace --help",
+    "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+    "http": "POST /api/science/plan; POST /api/science/submit",
+    "compute": "gpu",
+    "outputs": [
+      "Operation report and its provenance; inspect the declared run/config output."
+    ],
+    "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal. The batch owner currently requires OptVec artifact layer/dose metadata; J-space remains a separate method.",
+    "actions": [
+      {
+        "id": "post-science-plan",
+        "method": "POST",
+        "path": "/api/science/plan",
+        "serviceRole": "both",
+        "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+      },
+      {
+        "id": "post-science-submit",
+        "method": "POST",
+        "path": "/api/science/submit",
+        "serviceRole": "both",
+        "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  },
+  "interview": {
+    "id": "jspace",
+    "title": "Analyze an intervention in J-space",
+    "method": "jspace",
+    "purpose": "Inspect downstream residual changes through an imported J-lens. This does not optimize or train a vector.",
+    "fields": [
+      {
+        "id": "modelID",
+        "label": "Model to execute",
+        "kind": "text",
+        "required": true,
+        "help": "Choose the prepared model; this does not acquire weights."
+      },
+      {
+        "id": "revision",
+        "label": "Model commit",
+        "kind": "text",
+        "required": true,
+        "help": "Inspect the immutable 40-character model commit. Never type a guessed pin."
+      },
+      {
+        "id": "vectorArtifacts",
+        "label": "Intervention artifacts, one per line",
+        "kind": "artifacts",
+        "required": true,
+        "help": ""
+      },
+      {
+        "id": "lensID",
+        "label": "Imported J-lens ID",
+        "kind": "text",
+        "required": true,
+        "help": ""
+      },
+      {
+        "id": "probeItems",
+        "label": "Pinned choice-row probes",
+        "kind": "fileRef",
+        "required": true,
+        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+      },
+      {
+        "id": "observationLayers",
+        "label": "Observation layers (comma-separated)",
+        "kind": "integers",
+        "required": false,
+        "help": "Only fitted source layers at or above injection; leave blank for the engine’s eligible ladder."
+      },
+      {
+        "id": "alphaMultiple",
+        "label": "Multiple of the artifact’s own norm",
+        "kind": "number",
+        "required": true,
+        "help": "This is not ordinary residual-norm alpha.",
+        "default": "1"
+      },
+      {
+        "id": "nullSeed",
+        "label": "Matched-direction null seed",
+        "kind": "integer",
+        "required": false,
+        "help": "",
+        "default": "20260810"
+      },
+      {
+        "id": "nullDraws",
+        "label": "Matched-direction comparisons",
+        "kind": "integer",
+        "required": false,
+        "help": "",
+        "default": "1"
+      },
+      {
+        "id": "name",
+        "label": "Name for this reading",
+        "kind": "text",
+        "required": false,
+        "help": "A new immutable result will be created."
+      }
+    ],
+    "claimBoundary": "Arithmetic fidelity, predictive readout and behavioral/causal evidence are different. This operation supplies no behavioral causal test; null draws are comparators, not calibrated p-values. The current batch implementation requires OptVec artifact metadata for layer and dose; other artifact types are not yet accepted.",
+    "questions": [
+      "Which intervention, lens and probe distribution answer the question?",
+      "What observation layers and dose are justified?",
+      "What separate controlled behavioral study will test any causal interpretation?"
+    ]
+  },
+  "interviewOrder": 8,
+  "inputRoleProfile": "managed-v1",
+  "inputRoles": {},
+  "binding": {
+    "module": "optvec_jspace",
+    "config_class": "OptVecJSpaceConfig",
+    "function": "analyze",
+    "compute": "gpu"
+  }
+}

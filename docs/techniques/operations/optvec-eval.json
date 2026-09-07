@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "order": 12,
+  "catalog": {
+    "id": "optvec-eval",
+    "method": "optimization",
+    "title": "OptVec eval",
+    "engineCLI": "steerlab-server optvec eval --help",
+    "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+    "http": "POST /api/science/plan; POST /api/science/submit",
+    "compute": "gpu",
+    "outputs": [
+      "Operation report and its provenance; inspect the declared run/config output."
+    ],
+    "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal.",
+    "actions": [
+      {
+        "id": "post-science-plan",
+        "method": "POST",
+        "path": "/api/science/plan",
+        "serviceRole": "both",
+        "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+      },
+      {
+        "id": "post-science-submit",
+        "method": "POST",
+        "path": "/api/science/submit",
+        "serviceRole": "both",
+        "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  },
+  "interview": {
+    "id": "optvec-eval",
+    "title": "Evaluate an optimized intervention",
+    "method": "optimization",
+    "purpose": "Measure held-out behavior, capability costs and dose dependence.",
+    "fields": [
+      {
+        "id": "modelID",
+        "label": "Model to execute",
+        "kind": "text",
+        "required": true,
+        "help": "Choose the prepared model; this does not acquire weights."
+      },
+      {
+        "id": "revision",
+        "label": "Model commit",
+        "kind": "text",
+        "required": true,
+        "help": "Inspect the immutable 40-character model commit. Never type a guessed pin."
+      },
+      {
+        "id": "vectorArtifact",
+        "label": "Intervention to test",
+        "kind": "artifact",
+        "required": true,
+        "help": ""
+      },
+      {
+        "id": "datasets.targetTest",
+        "label": "Held-out target test items",
+        "kind": "fileRef",
+        "required": true,
+        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+      },
+      {
+        "id": "datasets.anchorTest",
+        "label": "Held-out anchor items",
+        "kind": "fileRef",
+        "required": false,
+        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+      },
+      {
+        "id": "datasets.capabilityEval",
+        "label": "Held-out capability items",
+        "kind": "fileRef",
+        "required": false,
+        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+      },
+      {
+        "id": "neutralTexts",
+        "label": "Neutral fluency texts",
+        "kind": "fileRef",
+        "required": false,
+        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+      },
+      {
+        "id": "alphaMultiples",
+        "label": "Multiples of the trained dose",
+        "kind": "numbers",
+        "required": true,
+        "help": "",
+        "default": "0.5, 1, 2"
+      },
+      {
+        "id": "seed",
+        "label": "Random seed",
+        "kind": "integer",
+        "required": false,
+        "help": "Record the seed before execution.",
+        "default": "0"
+      },
+      {
+        "id": "name",
+        "label": "Name for this reading",
+        "kind": "text",
+        "required": false,
+        "help": "A new immutable result will be created."
+      }
+    ],
+    "claimBoundary": "Test results cannot be reused to select the training checkpoint without declaring that selection.",
+    "questions": [
+      "Which files were kept out of training and checkpoint selection?",
+      "Which dose grid and controls were fixed before seeing these results?"
+    ]
+  },
+  "interviewOrder": 1,
+  "inputRoleProfile": "managed-v1",
+  "inputRoles": {},
+  "binding": {
+    "module": "optvec_eval",
+    "config_class": "OptVecEvalConfig",
+    "function": "evaluate",
+    "compute": "gpu"
+  }
+}

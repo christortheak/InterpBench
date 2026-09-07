@@ -54,23 +54,23 @@ struct SubstrateRoutingTests {
         #expect(decision.localHint?.contains("Local (MLX)") == true)
     }
 
-    // MARK: Stochastic pinning (server-only by design — kind, up front)
+    // MARK: Stochastic designs retain the selected backend
 
-    @Test func stochasticTemperaturePinsTheServer() {
+    @Test func stochasticTemperaturePreservesTheLocalChoice() {
         let decision = SubstrateRouting.decide(
             inputs(temperature: 0.7, serverScope: false, connected: true,
                    userSelection: .thisMac))
-        #expect(decision.selection == .server)  // the override loses to the design
-        #expect(decision.pinnedToServer)
-        #expect(decision.stochasticNote?.contains("server") == true)
+        #expect(decision.selection == .thisMac)
+        #expect(!decision.pinnedToServer)
+        #expect(decision.stochasticNote?.contains("seeded") == true)
         #expect(decision.runBlockedReason == nil)  // connected → runnable
     }
 
-    @Test func multiSamplePinsTheServerToo() {
+    @Test func multiSamplePreservesTheLocalDefault() {
         let decision = SubstrateRouting.decide(
             inputs(temperature: 0, samplesPerItem: 8, connected: true))
-        #expect(decision.selection == .server)
-        #expect(decision.pinnedToServer)
+        #expect(decision.selection == .thisMac)
+        #expect(!decision.pinnedToServer)
         // Greedy single-sample stays free.
         let plain = SubstrateRouting.decide(inputs(temperature: 0, samplesPerItem: 1))
         #expect(!plain.pinnedToServer)
@@ -94,14 +94,13 @@ struct SubstrateRoutingTests {
         #expect(decision.runBlockedReason != nil)
     }
 
-    @Test func stochasticWithoutAConnectionIsPinnedAndBlockedNotErrored() {
-        // The design pins the server; with nothing connected the Run button
-        // is disabled with the connect-first reason — never a later error.
+    @Test func stochasticLocalRunDoesNotRequireAServer() {
+        // Local seeded generation needs no connected server.
         let decision = SubstrateRouting.decide(inputs(temperature: 1.0, connected: false))
-        #expect(decision.selection == .server)
-        #expect(decision.pinnedToServer)
+        #expect(decision.selection == .thisMac)
+        #expect(!decision.pinnedToServer)
         #expect(decision.stochasticNote != nil)
-        #expect(decision.runBlockedReason?.contains("connect") == true)
+        #expect(decision.runBlockedReason == nil)
     }
 
     // MARK: Button label says what it does
@@ -302,46 +301,5 @@ struct SubstrateRoutingTests {
                     variantConditionCount: 2, verb: verb,
                     capabilities: old) == nil)
         }
-    }
-
-    // MARK: Local MLX measured runs stay greedy-only (acceptance 9)
-
-    @Test func localMeasuredRunsStillRefusePositiveTemperature() {
-        // The local gate is untouched by study-owned sampling: MLX has no
-        // per-run sampling seed, so stochastic designs route to the server.
-        var manifest = ExperimentManifest(
-            name: "greedy-gate", description: "d", modelID: "test/model")
-        manifest.temperature = 0.7
-        do {
-            try ExperimentTasks.requireGreedyLocalDesign(manifest)
-            Issue.record("expected the greedy-only refusal")
-        } catch let error as ExperimentError {
-            #expect(error.reason.contains("does not expose a per-run seed"))
-            #expect(error.reason.contains("temperature 0"))
-        } catch {
-            Issue.record("unexpected error type: \(error)")
-        }
-    }
-
-    @Test func localMeasuredRunsRefuseMultipleSeedsAtTemperatureZero() {
-        var manifest = ExperimentManifest(
-            name: "greedy-seeds", description: "d", modelID: "test/model")
-        manifest.temperature = 0
-        manifest.seeds = [1, 2]
-        do {
-            try ExperimentTasks.requireGreedyLocalDesign(manifest)
-            Issue.record("expected the redundant-seeds refusal")
-        } catch let error as ExperimentError {
-            #expect(error.reason.contains("ignores seeds"))
-        } catch {
-            Issue.record("unexpected error type: \(error)")
-        }
-    }
-
-    @Test func greedySingleSeedDesignPassesTheLocalGate() throws {
-        var manifest = ExperimentManifest(
-            name: "greedy-ok", description: "d", modelID: "test/model")
-        manifest.temperature = 0
-        try ExperimentTasks.requireGreedyLocalDesign(manifest)
     }
 }

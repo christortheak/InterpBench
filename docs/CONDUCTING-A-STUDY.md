@@ -998,17 +998,17 @@ promotion under this gate as "monotone in the observed direction".
 
 ## 6. Measured-run policy: which substrate supports which claim
 
-**Local (Swift/MLX) measured runs are greedy-only.** The study runner requires
-`temperature == 0` and rejects more than one seed, because the local generator
-cannot pin a per-run sampling seed; `manifest.seeds` is recorded for provenance
-but does *not* affect local generation, and every local record stamps
-`seedInert: true`. A local measured run is an honest, reproducible **N = 1
-deterministic cell** per condition × item, so a "20-seed" local run is one
-sample counted twenty times and must never masquerade as an N. **Stochastic
-studies belong on the Python engine**, which seeds per record and writes one
-record per (condition, prompt, sampleIndex) plus per-item distribution
-summaries — while **categorical endpoints sidestep the question**, the
-log-probability instruments being temperature-free on either engine.
+**Sampling on either engine.** Local Swift/MLX and Python measured runs use
+record-local seeded streams. Positive-temperature runs with `samplesPerItem > 1`
+derive seeds from study hash, condition, prompt ID and sample index; otherwise
+ordinary runs enumerate the declared seeds. Multi-agent turns deliberately use
+an empty condition in that derivation, sharing streams across conditions.
+Greedy generation makes no RNG draws and stamps its seed inert; repeated greedy
+seeds are not independent observations. Equal seeds across backends do not
+promise equal tokens, and GPU repeatability depends on the exact model and
+runtime configuration. Preserve the sampling provenance and consult
+[the qualification record](TECHNIQUE-PARITY-QUALIFICATION.md) for measured scope.
+For categorical outcomes, answer-token/logprob instruments remain temperature-free.
 
 **Vectors do not transfer between engines.** CUDA/HF activations do not
 byte-match MLX/Metal, so a study's vectors must be **re-extracted and

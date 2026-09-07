@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "order": 7,
+  "catalog": {
+    "id": "finetune",
+    "method": "finetuning",
+    "title": "Finetune",
+    "engineCLI": "steerlab-server finetune --help",
+    "mac": "Read this guide; use the named existing pane/API or engine CLI.",
+    "http": "POST /api/finetune/plan; POST /api/finetune/train; POST /api/finetune/submit",
+    "compute": "existingOwner",
+    "outputs": [
+      "See the selected operation public response and immutable artifact records."
+    ],
+    "restriction": "Plan is workbench authorship; train/submit are execution. Model recipes differ.",
+    "actions": [
+      {
+        "id": "post-finetune-plan",
+        "method": "POST",
+        "path": "/api/finetune/plan",
+        "serviceRole": "workbench",
+        "authorityReason": "Normalizes a v2 request into the PLAN a researcher confirms in the app, reading caller-named workspace files. Nothing is scheduled and nothing is spent; it is the confirmation step, not the job."
+      },
+      {
+        "id": "post-finetune-train",
+        "method": "POST",
+        "path": "/api/finetune/train",
+        "serviceRole": "runner",
+        "authorityReason": "Runs the LoRA training itself — GPU compute this deployment executes."
+      },
+      {
+        "id": "post-finetune-submit",
+        "method": "POST",
+        "path": "/api/finetune/submit",
+        "serviceRole": "runner",
+        "authorityReason": "The evidence-grade fine-tune path: a hash-pinned bundle submitted as a Slurm job. Submission and scheduling, in the runner's vocabulary."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  }
+}

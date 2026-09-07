@@ -5,6 +5,7 @@ exactly what they would serially, and a seeded record never perturbs the
 process-global RNG stream around it."""
 
 import torch
+import pytest
 
 from steerlab_server.experiment import tasks
 import steerlab_server.experiment.sampling as sampling
@@ -56,3 +57,40 @@ def test_greedy_records_never_touch_the_rng():
     with sampling.seeded_generation(0.0, 42):
         pass  # greedy: no seeding, no fork
     assert torch.rand(3).tolist() == expected
+
+
+def test_overlapping_worker_records_are_serialized():
+    from concurrent.futures import ThreadPoolExecutor
+    import time
+    def draw(seed):
+        with sampling.seeded_generation(.7, seed):
+            first = torch.rand(3).tolist()
+            time.sleep(.01)  # Give the other worker a chance to enter its scope.
+            return first + torch.rand(3).tolist()
+    expected = [draw(10), draw(20)]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert list(pool.map(draw, [10, 20])) == expected
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason='actual MPS required')
+def test_mps_state_restores_on_success_failure_and_nested_scopes():
+    original = torch.mps.get_rng_state().clone()
+    try:
+        for fails in (False, True):
+            before = torch.mps.get_rng_state().clone()
+            try:
+                with sampling.seeded_generation(.7, 99):
+                    first = torch.rand(16, device='mps').cpu()
+                    with sampling.seeded_generation(.7, 12):
+                        torch.rand(32, device='mps').cpu()
+                    second = torch.rand(16, device='mps').cpu()
+                    if fails:
+                        raise ValueError('fixture')
+            except ValueError:
+                pass
+            assert torch.equal(before, torch.mps.get_rng_state())
+            with sampling.seeded_generation(.7, 99):
+                assert torch.equal(first, torch.rand(16, device='mps').cpu())
+                assert torch.equal(second, torch.rand(16, device='mps').cpu())
+    finally:
+        torch.mps.set_rng_state(original)

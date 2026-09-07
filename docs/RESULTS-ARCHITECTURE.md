@@ -61,8 +61,8 @@ and the endpoint that carries each:
 - **Variance shifts** — does the intervention make the model *inconsistent*
   rather than biased? Per-item spread across `samplesPerItem` is an endpoint in
   its own right: leaving the mean alone while doubling the spread is induced
-  unreliability, invisible to mean endpoints. Python engine only — local runs are
-  greedy-only (ONBOARDING §7).
+  unreliability, invisible to mean endpoints. Both engines can collect seeded
+  samples; verify which distribution summaries the selected analysis exposes.
 - **Dose shape** — monotone drift, threshold, or collapse. Promotion rules
   usually *require* dose-monotonicity, but a non-monotone shape is a result to
   report, not merely a gate to fail; collapse shows up as parse-failure rate and

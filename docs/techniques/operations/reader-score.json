@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "order": 6,
+  "catalog": {
+    "id": "reader-score",
+    "method": "readers",
+    "title": "Reader Score",
+    "engineCLI": null,
+    "mac": "Read this guide; use the named existing pane/API or engine CLI.",
+    "http": "POST /api/reader/score",
+    "compute": "existingOwner",
+    "outputs": [
+      "See the selected operation public response and immutable artifact records."
+    ],
+    "restriction": "Workbench role; use the exact fitted reader/model identity.",
+    "actions": [
+      {
+        "id": "post-reader-score",
+        "method": "POST",
+        "path": "/api/reader/score",
+        "serviceRole": "workbench",
+        "authorityReason": "Exact RepE reader inference over the resident model — proxied to the interactive worker."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  }
+}

@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "catalog": {
+    "schemaVersion": 1,
+    "methods": [
+      {
+        "id": "extraction",
+        "title": "Choose and extract a steering direction",
+        "purpose": "Compare declared activation populations before testing an intervention.",
+        "guide": "extraction.md"
+      },
+      {
+        "id": "readers",
+        "title": "Train and use an activation reader",
+        "purpose": "Measure an activation-based instrument separately from an intervention.",
+        "guide": "readers.md"
+      },
+      {
+        "id": "optimization",
+        "title": "Optimize a steering vector",
+        "purpose": "Train an intervention against a declared objective and evaluate it on separate data.",
+        "guide": "optimization.md"
+      },
+      {
+        "id": "finetuning",
+        "title": "Prepare and compare fine-tuned adapters",
+        "purpose": "Separate training-recipe choices from subsequent study claims.",
+        "guide": "finetuning.md"
+      },
+      {
+        "id": "jlens",
+        "title": "Acquire and qualify a J-lens",
+        "purpose": "Inspect a lens under its model, layer and token constraints.",
+        "guide": "jlens.md"
+      },
+      {
+        "id": "jspace",
+        "title": "Inspect an intervention in J-space",
+        "purpose": "Separate arithmetic fidelity, readout predictiveness and causal evidence.",
+        "guide": "jspace.md"
+      },
+      {
+        "id": "sae",
+        "title": "Analyze and import SAE features",
+        "purpose": "Preserve feature identity and the import/normalization convention.",
+        "guide": "sae.md"
+      },
+      {
+        "id": "stability",
+        "title": "Diagnose extraction stability",
+        "purpose": "Check sensitivity to resampling without mistaking it for behavioral validation.",
+        "guide": "stability.md"
+      },
+      {
+        "id": "batteries",
+        "title": "Measure capability and generation health",
+        "purpose": "Keep the standalone floor battery distinct from a study control.",
+        "guide": "batteries.md"
+      },
+      {
+        "id": "judging",
+        "title": "Complete deferred judgments",
+        "purpose": "Maintain blinding, packet identity and the declared judge panel.",
+        "guide": "judging.md"
+      },
+      {
+        "id": "style",
+        "title": "Rescore recorded generations",
+        "purpose": "Compute declared style features without rerunning generation.",
+        "guide": "style.md"
+      },
+      {
+        "id": "multi-agent",
+        "title": "Design a multi-agent study",
+        "purpose": "Declare interaction structure and controls before casting agents.",
+        "guide": "multi-agent.md"
+      }
+    ],
+    "scope": "Discovery and guidance, not execution or scientific qualification. engineCLI is a command reference or null; http lists existing method/path references or is null. Null means no direct interface. mac describes the supported Mac command or app/engine handoff. Engine-only operations require that engine and its declared compute environment."
+  },
+  "workflows": {
+    "schemaVersion": 1,
+    "answerSchema": {
+      "purpose": "Research question in plain language",
+      "claim": "Proposed claim and its limits",
+      "controls": "Comparisons and controls",
+      "selection": "Training/selection/test separation or explanation of why it does not apply",
+      "fields": "Map of field IDs to text values. Omitted or blank optional fields use the interview default when present; required fields cannot be blank. Integers preserve their values without floating-point conversion.",
+      "advanced": "Optional original config fields; cannot overwrite form fields"
+    }
+  },
+  "inputRoleProfiles": {
+    "managed-v1": {
+      "artifact": "artifact",
+      "reference": "artifact",
+      "residualNormArtifact": "artifact",
+      "vectorArtifact": "artifact",
+      "artifacts": "artifacts",
+      "libraryVectorPaths": "artifacts",
+      "priorVectorPaths": "artifacts",
+      "vectorArtifacts": "artifacts",
+      "vectorPaths": "artifacts",
+      "analyze": "file",
+      "gradients": "file",
+      "itemsFile": "file",
+      "path": "file",
+      "sourceRun": "file",
+      "surveyRun": "file",
+      "interpretRuns": "trees",
+      "jlensLensID": "lens",
+      "lensID": "lens"
+    }
+  }
+}

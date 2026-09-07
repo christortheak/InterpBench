@@ -73,30 +73,36 @@ comes after the guide is tested.
    `managed_methods.execute` passes `root` and `log` only if the entry function
    declares them. Return a result object, including the published output path
    expected by evidence export, rather than just printing a report.
-2. **Execution registration.** Add a `Method(module, config_class, function,
-   compute)` entry to `METHODS`. `cpu` means execution beside the controller;
+2. **Execution registration.** Add `docs/techniques/operations/<id>.json` with
+   `catalog`, `interview`, `binding`, ordering and input roles. The `binding`
+   declares `module`, `config_class`, `function`, and `compute`; the generated
+   registry constructs `METHODS`. `cpu` means execution beside the controller;
    `gpu` requires `modelID` plus an immutable 40-hex `revision`. In a controller
    profile, model work requires its Slurm executor; elsewhere it follows the
    profile. This routing is in `api/scientific_execution.py`, not the registry.
    `SPECIAL` has explicit dispatch and validation branches: adding a name there
    alone does not implement it. Prefer the ordinary `METHODS` path.
-3. **Input closure.** Inspect `experiment/managed_inputs.py`. `ARTIFACTS`,
-   `ARTIFACT_LISTS`, `FILES`, `TREES`, and `LENSES` identify references recursively.
+3. **Input closure.** Inspect `experiment/managed_inputs.py`. The spec names
+   an `inputRoleProfile` and per-operation `inputRoles` overrides. Roles are
+   `artifact`, `artifacts`, `file`, `trees`, and `lens`; matching is recursive
+   by key. `managed-v1` preserves the existing vocabulary. A new key belongs
+   in the operation override, not in every operation's shared vocabulary.
    An unfamiliar key is not automatically a captured dependency. Add an explicit
    role or owner-specific inventory when necessary; never infer a file from an
    arbitrary string. Include sidecars and discovered files that affect results.
    Prove the package is complete on an isolated runner, and that changed bytes
    between review and execution cannot silently change the job.
-4. **Interview.** Add the operation to
-   `WorkspaceSeed/prompts/method-guides/workflows.json`. Field IDs are the owner's
+4. **Interview.** Put the interview in the operation spec. The shared
+   `WorkspaceSeed/prompts/method-guides/workflows.json` is generated. Field IDs are the owner's
    config paths, including nesting: `datasets.targetTrain`, not `targetTrain`.
    Kinds are `text`, `integer`, `number`, `boolean`, `integers`, `numbers`,
    `artifact`, `artifacts`, `file`, `files`, `fileRef`, or `documentFile`.
    Defaults and answers are text; `fileRef` becomes `{path, sha256}` while
    `documentFile` loads JSON. Optional blank values use the interview default.
    `advanced` cannot override a form answer. Both clients use this resource.
-5. **Catalog.** Add the operation under an existing method in `catalog.json`,
-   or add a method and its guide. Record actual outputs, limitations, command
+5. **Catalog.** Put the catalog row in the same operation spec. Add new method
+   categories in `docs/techniques/registry.json` and author their Markdown guide
+   under `WorkspaceSeed/prompts/method-guides/`. The catalog JSON is generated. Record actual outputs, limitations, command
    references and HTTP actions. A route reference must exist in the census.
    Existing `/api/science/plan` and `/api/science/submit` usually need no new verb
    or route. Never copy another operation's output description without checking.
@@ -211,21 +217,21 @@ workspace bootstrap next, Python source identity last. A scientific AST baseline
 is not a generated resource and must never be refreshed by these commands.
 
 ```sh
-python scripts/ci/check-science-resources.py --write
-python scripts/ci/check-study-interviews.py --write
-python scripts/ci/check-workspace-bootstrap.py --write
-python scripts/ci/check-substrates.py --write
-python scripts/ci/check-client-assembly-reference.py --write
-python scripts/ci/check-python-client-identity.py --write
+python scripts/ci/check-generated.py --list
+python scripts/ci/check-generated.py --write
+python scripts/ci/check-generated.py --audits
 ```
 
-For a changed CLI synopsis also run the matching source-built executable:
+For Swift reference regions, pass `--cli /absolute/path/to/source-built/steerlab-cli`
+to the same command. For a changed engine CLI synopsis also run its matching executable:
 `steerlab-cli docs cli-reference --write` (Swift regions) and
 `steerlab-server docs cli-reference --write` (engine regions). The client assembly
 regions use the Python script above. Do not use a stale installed executable.
 
 | Check under `scripts/ci/` | What it establishes / baseline | Repair for a legitimate change |
 | --- | --- | --- |
+| `check-operation-specs.py` | Per-operation specs → catalog/interviews/bindings/input-role maps | Edit one operation spec and regenerate; the fixture census must still cover it. |
+| `check-sampling-dependencies.py` | Package.resolved → compiled sampling provenance | Regenerate after a reviewed dependency change. |
 | `check-science-resources.py` | WorkspaceSeed ↔ Python seed ↔ `ScienceResourceText.swift`; registry/interview census and catalog routes | Edit maintained sources, then `--write`. |
 | `check-study-interviews.py` | Shared study prompts ↔ Python seed ↔ `StudyInterviewText.swift` | Edit WorkspaceSeed, then `--write`. |
 | `check-workspace-bootstrap.py` | Exact seed inventory, packaged copies, agent draft, compiled bootstrap | Update `client/resources/workspace.json` for new seed files; `--write`. |

@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "order": 1,
+  "catalog": {
+    "id": "battery",
+    "method": "batteries",
+    "title": "Standalone capability battery",
+    "engineCLI": "steerlab-server battery run <battery-file> --agent baseline --model <model> --revision <revision> --json",
+    "mac": "Server Jobs: Scientific diagnostic; or steerlab-cli remote science-plan/science-submit <request.json> --site <id> --json.",
+    "http": "POST /api/science/plan; POST /api/science/submit",
+    "compute": "model",
+    "outputs": [
+      "runDirectory",
+      "battery.jsonl",
+      "battery-report.json"
+    ],
+    "restriction": "Use science input-plan/package, permitted upload, then science-stage for isolated execution copies; export/fetch and science verify-custody bring completed evidence home. Remote execution requires pinned model commits and the exact planSHA256. Queue-time input drift refuses before loading. Uses the declared local or Slurm executor; no checkpoint resume. Plan and submit in the same controller session; a controller restart needs a new plan. Format 3 remains separate from study-pinnable controls.",
+    "actions": [
+      {
+        "id": "post-science-plan",
+        "method": "POST",
+        "path": "/api/science/plan",
+        "serviceRole": "both",
+        "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+      },
+      {
+        "id": "post-science-submit",
+        "method": "POST",
+        "path": "/api/science/submit",
+        "serviceRole": "both",
+        "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  }
+}

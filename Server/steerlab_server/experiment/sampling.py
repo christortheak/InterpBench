@@ -6,6 +6,12 @@ state is touched only when entering a non-greedy generation scope.
 from __future__ import annotations
 import hashlib
 from contextlib import contextmanager
+from threading import RLock
+
+
+# torch's default generators are process-global. Forking alone does not
+# serialize overlapping scopes on different worker threads.
+_generation_lock = RLock()
 
 
 def derive_seed(experiment_hash: str, condition: str, prompt_id: str,
@@ -32,11 +38,13 @@ def seeded_generation(temperature: float, seed: int):
 
     ``torch.manual_seed`` mutates PROCESS-GLOBAL RNG state, so two concurrent
     seeded studies interleaving records would corrupt each other's sample
-    streams. Fork the global RNG state (CPU + every visible CUDA device) for
-    the duration of one record's generation and seed INSIDE the fork: the
+    streams. Serialize overlapping scoped records and save the global RNG
+    state (CPU, every visible CUDA device, and MPS) for the duration of one
+    record's generation and seed INSIDE the scope: the
     record draws exactly the stream its seed names, and the global state is
     restored on exit — interleaved seeded records draw identically to serial
-    ones. Greedy records (``temperature <= 0``) never touch the RNG at all
+    ones. Unrelated code that bypasses this scope must not mutate torch's
+    generators concurrently. Greedy records (``temperature <= 0``) never touch the RNG at all
     (preserves the resume byte-equality contract unchanged).
     """
     if not temperature or temperature <= 0:
@@ -44,7 +52,15 @@ def seeded_generation(temperature: float, seed: int):
         return
     import torch
 
-    devices = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else []
-    with torch.random.fork_rng(devices=devices):
-        torch.manual_seed(seed)
-        yield
+    with _generation_lock:
+        devices = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else []
+        # fork_rng defaults to CUDA and does not restore MPS, although
+        # manual_seed seeds MPS too. Restore it explicitly on every exit.
+        mps_state = torch.mps.get_rng_state() if torch.backends.mps.is_available() else None
+        try:
+            with torch.random.fork_rng(devices=devices):
+                torch.manual_seed(seed)
+                yield
+        finally:
+            if mps_state is not None:
+                torch.mps.set_rng_state(mps_state)

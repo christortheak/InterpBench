@@ -66,8 +66,8 @@ struct ExecutionPlanTests {
         #expect(!decision.pinnedToServer)
     }
 
-    @Test func aGeneratingStudyIsStillPinnedByRealStochasticity() {
-        // The rule that was right stays right.
+    @Test func aGeneratingStudyOffersSeededLocalSampling() {
+        // Stochasticity remains an advisory; it no longer forces a server.
         #expect(
             SubstrateRouting.isStochastic(
                 temperature: 0.7, samplesPerItem: 1,
@@ -80,8 +80,8 @@ struct ExecutionPlanTests {
             .init(
                 temperature: 0.7, outcomeInstruments: ["sampledText"],
                 siteRegistered: true, serverConnected: true))
-        #expect(decision.selection == .server)
-        #expect(decision.pinnedToServer)
+        #expect(decision.selection == .thisMac)
+        #expect(!decision.pinnedToServer)
     }
 
     /// Callers that pass no instruments must behave exactly as before.
@@ -126,23 +126,5 @@ struct ExecutionPlanTests {
             ExecutionPlan.inertSamplingAdvisory(
                 instruments: ["answerTokenLogprob"], temperature: 0,
                 samplesPerItem: 1) == nil)
-    }
-
-    // MARK: the engine gate
-
-    @Test func aLocalDeterministicStudyIsNotRefusedOverATemperatureNothingReads() throws {
-        // The greedy requirement exists because the MLX generator has no
-        // per-run sampling seed. A study that never samples is unaffected.
-        var manifest = ExperimentManifest(
-            name: "e1", description: "", modelID: "test/model")
-        manifest.temperature = 0.7
-        manifest.outcomeInstruments = ["answerTokenLogprob"]
-        try ExperimentTasks.requireGreedyLocalDesign(manifest)
-
-        // ...but a generating study still is.
-        manifest.outcomeInstruments = ["sampledText"]
-        #expect(throws: (any Error).self) {
-            try ExperimentTasks.requireGreedyLocalDesign(manifest)
-        }
     }
 }

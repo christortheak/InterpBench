@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "order": 8,
+  "catalog": {
+    "id": "jlens",
+    "method": "jlens",
+    "title": "Jlens",
+    "engineCLI": "steerlab-server jlens --help",
+    "mac": "Read this guide; use the named existing pane/API or engine CLI.",
+    "http": "GET /api/jlens/lenses; POST /api/jlens/lenses/acquire; POST /api/jlens/lenses/import; POST /api/jlens/token-options; POST /api/jlens/decode-tokens; POST /api/jlens/directions/derive; POST /api/jlens/qualify; POST /api/jlens/g0; POST /api/jlens/probe; POST /api/jlens/report; POST /api/jlens/support",
+    "compute": "existingOwner",
+    "outputs": [
+      "See the selected operation public response and immutable artifact records."
+    ],
+    "restriction": "Existing J-lens workbench; qualify model/lens/layer/token applicability.",
+    "actions": [
+      {
+        "id": "get-jlens-lenses",
+        "method": "GET",
+        "path": "/api/jlens/lenses",
+        "serviceRole": "workbench",
+        "authorityReason": "Imported-lens catalog, read-only. Catalog browsing."
+      },
+      {
+        "id": "post-jlens-lenses-acquire",
+        "method": "POST",
+        "path": "/api/jlens/lenses/acquire",
+        "serviceRole": "workbench",
+        "authorityReason": "Fetches a lens into the HF cache. A cache fetch in shape, but the only consumer is the J-lens workbench — no batch verb needs a lens."
+      },
+      {
+        "id": "post-jlens-lenses-import",
+        "method": "POST",
+        "path": "/api/jlens/lenses/import",
+        "serviceRole": "workbench",
+        "authorityReason": "Converts a cached lens into the workspace lens store. A write into the live workspace's instrument set."
+      },
+      {
+        "id": "post-jlens-token-options",
+        "method": "POST",
+        "path": "/api/jlens/token-options",
+        "serviceRole": "workbench",
+        "authorityReason": "Tokenizer-only candidates for a typed string, so the app can offer a choice before anyone commits to a token id."
+      },
+      {
+        "id": "post-jlens-decode-tokens",
+        "method": "POST",
+        "path": "/api/jlens/decode-tokens",
+        "serviceRole": "workbench",
+        "authorityReason": "Tokenizer-only ids to pieces, for rendering a trace in the app."
+      },
+      {
+        "id": "post-jlens-directions-derive",
+        "method": "POST",
+        "path": "/api/jlens/directions/derive",
+        "serviceRole": "workbench",
+        "authorityReason": "Derives a model-depth direction for one exact token and writes the artifact. Interactive instrument authoring."
+      },
+      {
+        "id": "post-jlens-qualify",
+        "method": "POST",
+        "path": "/api/jlens/qualify",
+        "serviceRole": "workbench",
+        "authorityReason": "Accepts a lens against one exact runtime and records the qualification on the lens. Instrument authoring."
+      },
+      {
+        "id": "post-jlens-g0",
+        "method": "POST",
+        "path": "/api/jlens/g0",
+        "serviceRole": "workbench",
+        "authorityReason": "The G0 feasibility gate — loads the model and generates, for the app's lens screen."
+      },
+      {
+        "id": "post-jlens-probe",
+        "method": "POST",
+        "path": "/api/jlens/probe",
+        "serviceRole": "workbench",
+        "authorityReason": "Position-resolved readout over ONE prompt. The interactive probe."
+      },
+      {
+        "id": "post-jlens-report",
+        "method": "POST",
+        "path": "/api/jlens/report",
+        "serviceRole": "workbench",
+        "authorityReason": "Rolls a completed run's J-lens trace up into its report. It reads a run directory the runner produced, but producing the interpretability report the app renders is a workbench act over that evidence."
+      },
+      {
+        "id": "post-jlens-support",
+        "method": "POST",
+        "path": "/api/jlens/support",
+        "serviceRole": "workbench",
+        "authorityReason": "Reads an existing concept vector back as J-lens token atoms and writes a readout run. Interactive analysis."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  }
+}

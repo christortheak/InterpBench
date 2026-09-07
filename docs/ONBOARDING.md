@@ -634,13 +634,17 @@ result licenses you to claim.
   is **judged classification against a pinned rubric**, with marker density
   reported beside it as the diagnostic it is.
 
-**Sampling policy, which surprises people.** Local Swift/MLX measured runs are
-**greedy-only**: the runner requires `temperature == 0` and one seed, because
-the MLX generator cannot yet pin a per-run sampling seed. A manifest's seed is
-recorded for provenance and stamped `seedInert: true` — never read a local run's
-seed as causally meaningful. **Stochastic studies belong on the Python engine**,
-which seeds per record and writes one record per (condition, prompt, sample
-index).
+**Sampling on either engine.** Local Swift/MLX and Python measured runs use
+record-local seeded streams. Positive-temperature runs with `samplesPerItem > 1`
+derive seeds from study hash, condition, prompt ID and sample index; otherwise
+ordinary runs enumerate the declared seeds. Multi-agent turns deliberately use
+an empty condition in that derivation, sharing streams across conditions.
+Greedy generation makes no RNG draws and stamps its seed inert; repeated greedy
+seeds are not independent observations. Equal seeds across backends do not
+promise equal tokens, and GPU repeatability depends on the exact model and
+runtime configuration. Preserve the sampling provenance and consult
+[the qualification record](TECHNIQUE-PARITY-QUALIFICATION.md) for measured scope.
+For categorical outcomes, answer-token/logprob instruments remain temperature-free.
 
 ---
 

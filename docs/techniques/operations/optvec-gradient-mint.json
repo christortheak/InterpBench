@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "order": 20,
+  "catalog": {
+    "id": "optvec-gradient-mint",
+    "method": "optimization",
+    "title": "Mint a gradient comparison vector",
+    "engineCLI": "steerlab-server optvec gradient mint --help",
+    "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+    "http": "POST /api/science/plan; POST /api/science/submit",
+    "compute": "cpu",
+    "outputs": [
+      "Diagnostic path and per-layer stability summary"
+    ],
+    "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal.",
+    "actions": [
+      {
+        "id": "post-science-plan",
+        "method": "POST",
+        "path": "/api/science/plan",
+        "serviceRole": "both",
+        "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+      },
+      {
+        "id": "post-science-submit",
+        "method": "POST",
+        "path": "/api/science/submit",
+        "serviceRole": "both",
+        "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  },
+  "interview": {
+    "id": "optvec-gradient-mint",
+    "title": "Publish one surveyed direction",
+    "method": "optimization",
+    "purpose": "Create a new vector artifact from an explicitly selected survey item.",
+    "fields": [
+      {
+        "id": "surveyRun",
+        "label": "Completed gradient survey run",
+        "kind": "file",
+        "required": true,
+        "help": ""
+      },
+      {
+        "id": "itemID",
+        "label": "Explicit item ID",
+        "kind": "text",
+        "required": true,
+        "help": ""
+      },
+      {
+        "id": "name",
+        "label": "Name for this reading",
+        "kind": "text",
+        "required": false,
+        "help": "A new immutable result will be created."
+      }
+    ],
+    "claimBoundary": "Selecting an item after inspection is a selection decision; record the rationale before downstream testing.",
+    "questions": [
+      "Why was this item selected, and where will its direction be tested independently?"
+    ]
+  },
+  "interviewOrder": 7,
+  "inputRoleProfile": "managed-v1",
+  "inputRoles": {},
+  "binding": {
+    "special": "optvec-gradient-mint"
+  }
+}

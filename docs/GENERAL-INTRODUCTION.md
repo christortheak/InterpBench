@@ -402,12 +402,17 @@ One pass through the middle of the funnel, concretely:
 Then duplicate, expand to a confirmation design on held-out items, and repeat
 under stricter correction — with a second model family as the robustness check.
 
-**One sampling rule surprises people.** Local Swift/MLX measured runs are
-**greedy-only**: the runner requires `temperature == 0` and a single seed,
-because the MLX generator cannot yet pin a per-run sampling seed. A local run
-records its nominal seeds but stamps them inert — never read one as causally
-meaningful. Stochastic studies belong on the Python engine, which seeds per
-record and writes one record per condition, prompt, and sample index.
+**Sampling on either engine.** Local Swift/MLX and Python measured runs use
+record-local seeded streams. Positive-temperature runs with `samplesPerItem > 1`
+derive seeds from study hash, condition, prompt ID and sample index; otherwise
+ordinary runs enumerate the declared seeds. Multi-agent turns deliberately use
+an empty condition in that derivation, sharing streams across conditions.
+Greedy generation makes no RNG draws and stamps its seed inert; repeated greedy
+seeds are not independent observations. Equal seeds across backends do not
+promise equal tokens, and GPU repeatability depends on the exact model and
+runtime configuration. Preserve the sampling provenance and consult
+[the qualification record](TECHNIQUE-PARITY-QUALIFICATION.md) for measured scope.
+For categorical outcomes, answer-token/logprob instruments remain temperature-free.
 
 *Deeper: [CONDUCTING-A-STUDY.md](CONDUCTING-A-STUDY.md) (the working rulebook);
 [ONBOARDING.md](ONBOARDING.md) (commands, a first session).*

@@ -8,11 +8,8 @@ import Observation
 /// unit-tested, none of it lives in SwiftUI:
 ///
 /// - The picker defaults to the ACTIVE scope (substrate-as-workspace).
-/// - A stochastic design (declared `temperature > 0` or `samplesPerItem > 1`)
-///   pins the selection to the server with an explanatory note — stochastic
-///   measured runs are server-only by design (the MLX generator has no
-///   per-run sampling seed), and the UI enforces that kindly up front,
-///   never as an error later.
+/// - Stochastic designs retain the researcher's backend choice and show a
+///   concise note about scoped seeds and numerical repeatability.
 /// - With no connected cluster site, the server option greys out with a
 ///   "connect first" hint instead of failing at submit time.
 public enum SubstrateRouting {
@@ -67,14 +64,13 @@ public enum SubstrateRouting {
     public struct Decision: Sendable, Equatable {
         /// Effective selection after the rules run.
         public var selection: Substrate
-        /// The design pinned the selection to the server (picker disabled).
+        /// Whether the picker is pinned. Sampling alone never pins it.
         public var pinnedToServer: Bool
         /// Label for the server arm of the picker (site name when known).
         public var serverLabel: String
         /// Whether the server arm is selectable (registered AND connected).
         public var serverSelectable: Bool
-        /// One-line explanation shown when a stochastic design auto-selects
-        /// the server. Informational — never an error.
+        /// One-line repeatability guidance for stochastic designs.
         public var stochasticNote: String?
         /// Hint on the greyed server arm ("connect first").
         public var serverHint: String?
@@ -110,18 +106,12 @@ public enum SubstrateRouting {
         let serverLabel = (trimmedName?.isEmpty == false ? trimmedName : nil) ?? "Server"
         let serverSelectable = inputs.siteRegistered && inputs.serverConnected
 
-        var selection: Substrate
-        if stochastic {
-            selection = .server
-        } else {
-            selection =
-                inputs.userSelection
-                ?? (inputs.activeWorkspaceIsServer ? .server : .thisMac)
-        }
+        let selection = inputs.userSelection
+            ?? (inputs.activeWorkspaceIsServer ? Substrate.server : .thisMac)
 
         var decision = Decision(
             selection: selection,
-            pinnedToServer: stochastic,
+            pinnedToServer: false,
             serverLabel: serverLabel,
             serverSelectable: serverSelectable,
             stochasticNote: nil,
@@ -131,9 +121,9 @@ public enum SubstrateRouting {
 
         if stochastic {
             decision.stochasticNote =
-                "stochastic design (temperature > 0 or samplesPerItem > 1) runs on "
-                + "the server by design — local measured runs are greedy-only, so "
-                + "the substrate is preselected"
+                "Sampling uses a separate seeded stream per record. Repeatability depends "
+                + "on the backend and model configuration; equal seeds across backends "
+                + "do not imply equal token draws."
         }
         if !serverSelectable {
             decision.serverHint =

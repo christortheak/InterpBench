@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "order": 15,
+  "catalog": {
+    "id": "optvec-family",
+    "method": "optimization",
+    "title": "OptVec family",
+    "engineCLI": "steerlab-server optvec family --help",
+    "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+    "http": "POST /api/science/plan; POST /api/science/submit",
+    "compute": "cpu",
+    "outputs": [
+      "Operation report and its provenance; inspect the declared run/config output."
+    ],
+    "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal.",
+    "actions": [
+      {
+        "id": "post-science-plan",
+        "method": "POST",
+        "path": "/api/science/plan",
+        "serviceRole": "both",
+        "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+      },
+      {
+        "id": "post-science-submit",
+        "method": "POST",
+        "path": "/api/science/submit",
+        "serviceRole": "both",
+        "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  },
+  "interview": {
+    "id": "optvec-family",
+    "title": "Summarize interpretation readings",
+    "method": "optimization",
+    "purpose": "Compare multiple completed interpretation reports.",
+    "fields": [
+      {
+        "id": "interpretRuns",
+        "label": "Interpretation runs, one per line",
+        "kind": "files",
+        "required": true,
+        "help": ""
+      },
+      {
+        "id": "matchNullPercentile",
+        "label": "Descriptive match percentile",
+        "kind": "number",
+        "required": false,
+        "help": "",
+        "default": "95"
+      },
+      {
+        "id": "name",
+        "label": "Name for this reading",
+        "kind": "text",
+        "required": false,
+        "help": "A new immutable result will be created."
+      }
+    ],
+    "claimBoundary": "A family summary reports descriptive matches; it does not establish a causal taxonomy.",
+    "questions": [
+      "Which completed interpretation readings belong in this family?"
+    ]
+  },
+  "interviewOrder": 5,
+  "inputRoleProfile": "managed-v1",
+  "inputRoles": {},
+  "binding": {
+    "module": "optvec_interpret",
+    "config_class": "FamilySummaryConfig",
+    "function": "family_summary",
+    "compute": "cpu"
+  }
+}

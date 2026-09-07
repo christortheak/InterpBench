@@ -92,7 +92,7 @@ import Testing
             "statusImmutable", "pinDrift", "manifestEpoch", "promotionEpoch",
             "promotionEvidence", "artifactPin", "sweepInputDrift",
             "sweepSelectionRule", "sweepJudgeCapacity", "dataReadiness",
-            "samplingPolicy", "thinkingModeConflict", "inertConditions",
+            "thinkingModeConflict", "inertConditions",
             "responseFormat", "confirmationPool", "confirmationAgentShape",
             "parityThreshold", "missingPrerequisite", "armsCleared", "staleManifest",
             "conceptInUse", "sweepGridRule", "lengthStopped",

@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "order": 9,
+  "catalog": {
+    "id": "gemmascope",
+    "method": "sae",
+    "title": "Gemmascope",
+    "engineCLI": "steerlab-server gemmascope import-id --help",
+    "mac": "Read this guide; use the named existing pane/API or engine CLI.",
+    "http": "GET /api/gemmascope/info; POST /api/gemmascope/run; POST /api/gemmascope/import; POST /api/gemmascope/import-id",
+    "compute": "existingOwner",
+    "outputs": [
+      "See the selected operation public response and immutable artifact records."
+    ],
+    "restriction": "Existing Gemma Scope workbench; preserve import convention and qualification.",
+    "actions": [
+      {
+        "id": "get-gemmascope-info",
+        "method": "GET",
+        "path": "/api/gemmascope/info",
+        "serviceRole": "workbench",
+        "authorityReason": "Which Gemma Scope releases this deployment can reach. Catalog."
+      },
+      {
+        "id": "post-gemmascope-run",
+        "method": "POST",
+        "path": "/api/gemmascope/run",
+        "serviceRole": "workbench",
+        "authorityReason": "Runs the SAE analysis that produces a candidate report for the app."
+      },
+      {
+        "id": "post-gemmascope-import",
+        "method": "POST",
+        "path": "/api/gemmascope/import",
+        "serviceRole": "workbench",
+        "authorityReason": "Imports a feature from a cosine report as a vector artifact. An artifact write into the live workspace."
+      },
+      {
+        "id": "post-gemmascope-import-id",
+        "method": "POST",
+        "path": "/api/gemmascope/import-id",
+        "serviceRole": "workbench",
+        "authorityReason": "Imports a feature BY ID, going online to Hugging Face. Same destination and same caller as its report-based sibling."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  }
+}

@@ -321,22 +321,6 @@ import Testing
         }
     }
 
-    @Test func theGreedyOnlyPolicyCarriesItsGate() throws {
-        var manifest = ExperimentManifest(name: "hot", description: "", modelID: "m")
-        manifest.temperature = 0.7
-        do {
-            try ExperimentTasks.requireGreedyLocalDesign(manifest)
-            Issue.record("expected a sampling-policy refusal")
-        } catch let error as ExperimentError {
-            let refusal = try #require(error.lifecycleRefusal)
-            #expect(refusal.gate == .samplingPolicy)
-            // The repair names the SUBSTRATE that can honour the declaration,
-            // which is the fact an agent has no way to know: the local MLX
-            // generator pins no per-run seed.
-            #expect(refusal.repairAction.contains("steerlab-cli remote submit-bundle"))
-        }
-    }
-
     /// 2026-08-18, the ONBOARDING verification pass: `pin-rubric` against a
     /// path that is not on disk (a typo, or a workspace with no
     /// `prompts/rubrics/` yet) let Foundation's own error out unhandled. The

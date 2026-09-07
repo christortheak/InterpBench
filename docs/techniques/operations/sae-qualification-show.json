@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "order": 23,
+  "catalog": {
+    "id": "sae-qualification-show",
+    "method": "sae",
+    "title": "Inspect an SAE qualification record",
+    "engineCLI": "steerlab-server sae qualification show <path> --json",
+    "mac": "Research methods: Inspect or pin SAE roster; Show qualification record. Both clients: science sae-show.",
+    "http": "POST /api/science/workspace/{action}",
+    "compute": "cpu",
+    "outputs": [
+      "See the selected operation public response and immutable artifact records."
+    ],
+    "restriction": "Read-only inspection of existing recorded qualification. No status is inferred beyond the record.",
+    "actions": [
+      {
+        "id": "post-science-workspace",
+        "method": "POST",
+        "path": "/api/science/workspace/{action}",
+        "serviceRole": "workbench",
+        "authorityReason": "Author and publish local scientific requests, review and pin SAE rosters, or verify/import local custody; runner staging remains isolated execution."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  }
+}

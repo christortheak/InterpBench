@@ -50,8 +50,8 @@ owners, not mechanically inferred from CLI counts.
 | --- | --- | --- | --- |
 | Five extraction recipes | `experiment/extraction_workflow.py`, `steering/vector_math.py` | `ConceptBuilder`, `ExtractionRecipe`, `SteeringVectorMath` | Mathematical/identity tests exist; a configuration-specific MPS comparison remains to be measured. |
 | Additive injection / ablation | `steering/injector.py`, `ablator.py`, `plan.py` | `VectorInjector`, `SubspaceAblator`, `InterventionPlan` | Shared mechanics and scope descriptors; native ordinary/saved-agent measured runs now stamp the scope sidecar. Hardware comparison remains unqualified. |
-| Standard measured generation | `experiment/condition_execution.py`, `sampling.py` | `ExperimentTasks` | Python records effective seed policy; current native measured runs are greedy-only. |
-| Multi-agent measured generation | `experiment/multi_agent.py` | `MultiAgentRunner`, `ExperimentTasks` | Python derives seeds per turn with common streams across conditions; native measured sampling remains greedy-only. |
+| Standard measured generation | `experiment/condition_execution.py`, `sampling.py` | `ExperimentTasks` | Both engines record effective per-record seed policy. Native MLX has scoped streams; see [local measurements](TECHNIQUE-PARITY-QUALIFICATION.md). |
+| Multi-agent measured generation | `experiment/multi_agent.py` | `MultiAgentRunner`, `ExperimentTasks` | Both engines derive seeds per turn with common streams across conditions. Live full-transcript qualification remains pending. |
 | Sweep, run and analysis | Python stage owners via `experiment/tasks.py` | `ExperimentTasks` and stage owners | Same surface intent does not establish identical numerical output; inspect artifacts and effective configuration. |
 | LoRA training | `experiment/lora_train.py` | `FineTuneTrainer` | See the explicit recipe/scale comparability matrix in TRAINING-RECIPES.md. |
 | Workspace/study/design authoring | Portable client owners | Native owners plus shared Python diagnostics | CPU work; source identity and shared fixtures establish specific contract equivalence, not model qualification. |

@@ -3,22 +3,19 @@ import json
 from pathlib import Path
 from . import diagnostic_archives as archives, managed_methods, paths
 
-ARTIFACTS = {'vectorArtifact', 'residualNormArtifact', 'artifact', 'reference'}
-ARTIFACT_LISTS = {'vectorArtifacts', 'priorVectorPaths', 'libraryVectorPaths', 'vectorPaths', 'artifacts'}
-FILES = {'path', 'gradients', 'sourceRun', 'surveyRun', 'analyze', 'itemsFile'}
-TREES = {'interpretRuns'}
-LENSES = {'lensID', 'jlensLensID'}
+from .operation_bindings import INPUT_ROLES
 
 
 def inventory(operation, config, root):
     root = Path(root).resolve(); files = set()
+    roles = INPUT_ROLES[operation]
     def add(reference, artifact=False):
         archives.parts(reference)
         candidates = [reference + '.json', reference + '.safetensors'] if artifact else [reference]
         for candidate in candidates: files.update(archives.files_in(root, candidate))
     def walk(value, key=''):
         if value is None: return
-        if key in LENSES:
+        if roles.get(key) == 'lens':
             archives.parts(value)
             if '/' in value: raise archives.Refusal('Lens IDs must be single components.')
             directory = Path(paths.jlens_lens_directory(value, str(root)))
@@ -32,17 +29,17 @@ def inventory(operation, config, root):
             add(relative)
             if archives.file_hash(archives.ordinary(root, relative)) != converted.get('sha256'):
                 raise archives.Refusal('Converted lens bytes differ from the imported hash; re-import or restore the lens.')
-        elif key in ARTIFACTS and isinstance(value, str): add(value, artifact=True)
-        elif key in FILES and isinstance(value, str):
+        elif roles.get(key) == 'artifact' and isinstance(value, str): add(value, artifact=True)
+        elif roles.get(key) == 'file' and isinstance(value, str):
             add(value)
             if key == 'gradients':
                 for candidate in (str(Path(value).with_suffix('.json')), str(Path(value).parent / 'gradients.json')):
                     if archives.ordinary(root, candidate, missing=True).exists(): add(candidate)
-        elif key in ARTIFACT_LISTS and isinstance(value, list):
+        elif roles.get(key) == 'artifacts' and isinstance(value, list):
             for item in value:
                 if isinstance(item, str): add(item, artifact=True)
                 else: walk(item)
-        elif key in TREES and isinstance(value, list):
+        elif roles.get(key) == 'trees' and isinstance(value, list):
             for item in value: add(item)
         elif isinstance(value, dict):
             if isinstance(value.get('path'), str) and value.get('sha256'):
