@@ -2985,6 +2985,7 @@ public final class ExperimentPanel {
     /// surface its verify() result loudly.
     @discardableResult
     public func importStudyJSON(_ text: String, reviewed: StudyPackAuthoring.Preview) -> Bool {
+        clearFormError(.studyImport)
         do {
             let imported = try StudyPackAuthoring.apply(Data(text.utf8),
                 workspaceRoot: URL(fileURLWithPath: reviewed.workspaceRoot), expectedReviewSHA256: reviewed.reviewSHA256)
@@ -3010,9 +3011,14 @@ public final class ExperimentPanel {
             }
             return true
         } catch {
-            note(
-                "Couldn't complete the study import. Inspect the named destination before retrying. Details: \(error)",
-                severity: .error)
+            // Inline as well as through the bell: the paste sheet is modal,
+            // so a refusal that only reaches the status line at the bottom of
+            // the form lands behind it (UI audit 2026-09-06, headline 9).
+            refuse(
+                .studyImport,
+                "Couldn't complete the study import. Inspect the named "
+                    + "destination before retrying. Details: "
+                    + error.localizedDescription)
             return false
         }
     }

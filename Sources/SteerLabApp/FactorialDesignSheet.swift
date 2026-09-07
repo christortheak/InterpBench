@@ -180,13 +180,27 @@ private struct FactorialDesignSheet: View {
             .frame(minWidth: 640, minHeight: 320)
             Toggle(
                 "Counterbalance option order (each cell emitted twice, "
-                    + "options reversed, orderFlipped recorded)",
+                    + "options reversed, and the flipped order recorded per "
+                    + "item)",
                 isOn: $counterbalance)
                 .font(.caption)
+                .help(
+                    "guards against order effects: every cell is emitted a "
+                        + "second time with its options in reverse, and each "
+                        + "item records which order it carried, so the two can "
+                        + "be compared. Doubles the item count; a target "
+                        + "follows its own option")
             countAndPreview
             footer
         }
         .padding(16)
+        // A refusal describes the design that was refused. Editing the design
+        // afterwards left it on screen contradicting the live preview
+        // (UI audit 2026-09-06).
+        .onChange(of: designSignature) { _, _ in
+            problem = nil
+            loadProblem = nil
+        }
         .fileImporter(
             isPresented: $showLoadPicker, allowedContentTypes: [.json]
         ) { result in
@@ -236,6 +250,10 @@ private struct FactorialDesignSheet: View {
                 }
                 Button("Add factor") { factors.append(FactorDraft()) }
                     .controlSize(.small)
+                    .help(
+                        "one more thing to vary — every level of every factor "
+                            + "is crossed with every other, so each factor "
+                            + "multiplies the cell count")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -259,6 +277,10 @@ private struct FactorialDesignSheet: View {
                     templates.append(draft)
                 }
                 .controlSize(.small)
+                .help(
+                    "one more prompt wording — every template is generated at "
+                        + "every combination of levels, so templates multiply "
+                        + "the cell count too")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -282,9 +304,14 @@ private struct FactorialDesignSheet: View {
             case .success(let items):
                 previewList(items)
             case .failure(let error):
-                Label("\(error)", systemImage: "xmark.octagon")
+                // localizedDescription, not "\(error)": interpolating an error
+                // into a Label goes through the deprecated debug-description
+                // path (a build warning) and shows the researcher a Swift type
+                // dump (UI audit 2026-09-06, headline 17).
+                Label(error.localizedDescription, systemImage: "xmark.octagon")
                     .font(.caption)
                     .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             }
         }
@@ -339,10 +366,22 @@ private struct FactorialDesignSheet: View {
                     .disabled(designDocument == nil)
                     .help("save the design spec as JSON to reload or share")
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .help("close without generating; no file is written")
                 Button("Generate & Pin") { generate() }
                     .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
                     .disabled(!generatable)
+                    .help(
+                        generatable
+                            ? "writes the generated items to this study's "
+                                + "task-prompts destination, pins the file's "
+                                + "hash, and saves the design spec beside it "
+                                + "as provenance"
+                            : "the design above has to generate cleanly first "
+                                + "— the message under the preview says what "
+                                + "is missing")
             }
         }
     }
@@ -350,6 +389,20 @@ private struct FactorialDesignSheet: View {
     private var generatable: Bool {
         guard case .success(let design) = built else { return false }
         return (try? design.generate()) != nil
+    }
+
+    /// Cheap change key for the whole edited design — the drafts are not
+    /// Equatable, and `onChange` only needs to know that something moved.
+    private var designSignature: String {
+        let factorPart = factors.map { factor in
+            factor.name + "|"
+                + factor.levels.map { "\($0.name)~\($0.substitutionsText)" }
+                .joined(separator: ";")
+        }.joined(separator: "/")
+        let templatePart = templates.map { template in
+            "\(template.templateID)~\(template.text)~\(template.optionsText)~\(template.target)"
+        }.joined(separator: "/")
+        return "\(counterbalance)#\(replaceExisting)#\(factorPart)#\(templatePart)"
     }
 
     private var designDocument: DesignJSONDocument? {
@@ -384,7 +437,7 @@ private struct FactorialDesignSheet: View {
                 templates = loaded.templates
                 counterbalance = loaded.counterbalance
             } catch {
-                loadProblem = "\(error)"
+                loadProblem = error.localizedDescription
             }
         case .failure(let error):
             loadProblem = error.localizedDescription
@@ -402,14 +455,23 @@ private struct FactorEditor: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 TextField("factor name (e.g. anchor)", text: $factor.name)
-                    .frame(maxWidth: 220)
+                    .frame(minWidth: 120, maxWidth: 220)
+                    .help(
+                        "what this factor is called in the per-item factors "
+                            + "label the generator writes — a name, not a "
+                            + "placeholder; the {{VAR}} names live on the "
+                            + "levels below")
                 Button("Add level") { factor.levels.append(LevelDraft()) }
                     .controlSize(.small)
+                    .help(
+                        "one more value this factor takes — every level is "
+                            + "crossed with every other factor's levels")
                 Button(role: .destructive, action: onRemove) {
                     Image(systemName: "trash")
                 }
                 .controlSize(.small)
                 .help("remove this factor")
+                .accessibilityLabel("Remove factor")
             }
             ForEach($factor.levels) { $level in
                 LevelEditor(
@@ -431,7 +493,10 @@ private struct LevelEditor: View {
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
             TextField("level (e.g. high)", text: $level.name)
-                .frame(width: 140)
+                .frame(minWidth: 100, idealWidth: 140)
+                .help(
+                    "this level's name in the per-item factors label — the "
+                        + "text it substitutes is set line by line beside it")
             TextField(
                 "VAR = replacement text (one per line)",
                 text: $level.substitutionsText, axis: .vertical)
@@ -445,6 +510,7 @@ private struct LevelEditor: View {
             }
             .controlSize(.small)
             .help("remove this level")
+            .accessibilityLabel("Remove level")
         }
         .padding(.leading, 12)
     }
@@ -458,16 +524,26 @@ private struct TemplateEditor: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 TextField("template id (e.g. t1)", text: $template.templateID)
-                    .frame(maxWidth: 160)
+                    .frame(minWidth: 100, maxWidth: 160)
+                    .help(
+                        "short id that prefixes every item this template "
+                            + "generates, so a result can be traced back to "
+                            + "the wording it came from — must be unique")
                 Button(role: .destructive, action: onRemove) {
                     Image(systemName: "trash")
                 }
                 .controlSize(.small)
                 .help("remove this template")
+                .accessibilityLabel("Remove template")
             }
             TextEditor(text: $template.text)
                 .font(.system(.caption, design: .monospaced))
                 .frame(minHeight: 70)
+                .help(
+                    "the prompt wording, with {{VAR}} placeholders the levels "
+                        + "fill — the generator emits literal, fully "
+                        + "substituted text, so nothing is expanded at run "
+                        + "time")
                 .overlay(alignment: .topLeading) {
                     if template.text.isEmpty {
                         Text("Prompt text with {{VAR}} placeholders…")
@@ -484,6 +560,11 @@ private struct TemplateEditor: View {
                     text: $template.optionsText, axis: .vertical)
                     .font(.system(.caption, design: .monospaced))
                     .lineLimit(1...4)
+                    .help(
+                        "the categorical answers this item offers — what the "
+                            + "answer-token instrument scores, and what the "
+                            + "counterbalance toggle reverses. Leave empty for "
+                            + "a free-text item")
                 TextField("target (optional)", text: $template.target)
                     .font(.system(.caption, design: .monospaced))
                     .frame(maxWidth: 200)

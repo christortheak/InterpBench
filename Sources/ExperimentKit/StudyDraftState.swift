@@ -205,6 +205,13 @@ public final class StudyDraftState {
         case promotion
         case rename
         case template
+        /// Advanced "Create Draft" — a name collision has to answer AT the
+        /// control, not only in the status line at the bottom of the form
+        /// (UI audit 2026-09-06).
+        case createStudy
+        /// "Import as Draft" in the Paste Study JSON sheet: the sheet is
+        /// modal, so a refusal routed only to the status line lands behind it.
+        case studyImport
     }
 
     public struct JudgeKindStash: Sendable, Equatable {

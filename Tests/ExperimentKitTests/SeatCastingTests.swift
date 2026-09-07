@@ -203,7 +203,7 @@ import Testing
             #expect(state.occupants["seat-reviewer"] == .baseline)
             let advisory = try #require(state.advisories.first)
             #expect(advisory.contains("read-only"))
-            #expect(advisory.contains("Panels editor"))
+            #expect(advisory.contains("Multi-Agent"))
         }
     }
 

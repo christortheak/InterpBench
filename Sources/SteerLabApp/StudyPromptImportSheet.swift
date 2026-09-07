@@ -41,6 +41,9 @@ struct ImportJSONLSheet: View {
             TextEditor(text: $text)
                 .font(.system(.caption, design: .monospaced))
                 .frame(minWidth: 480, minHeight: 220)
+                .help(
+                    "one JSON record per line; the preview below parses as you "
+                        + "type and names the first line it cannot read")
 
             HStack {
                 Button("Choose File…") { showFilePicker = true }
@@ -81,12 +84,23 @@ struct ImportJSONLSheet: View {
 
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .help("close without importing; no file is written")
                 Button("Import & Pin") {
                     if onImport(text) { dismiss() }
                 }
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
                 .disabled(!importable)
+                .help(
+                    importable
+                        ? "writes these records as a new immutable input "
+                            + "version, makes it the study's prompts file, and "
+                            + "pins its hash — one action from paste to pinned"
+                        : "the records above have to parse, and a draft study "
+                            + "has to be selected, before anything can be "
+                            + "pinned")
             }
         }
         .padding(16)
