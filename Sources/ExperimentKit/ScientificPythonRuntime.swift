@@ -26,7 +26,7 @@ public enum ScientificPythonRuntime {
     }
 
     public static let setupHint =
-        "Install the lightweight Python client environment at ~/Library/Application Support/SteerLab/client-runtime "
-        + "or set STEERLAB_CLIENT_PYTHON to its absolute interpreter path. Follow docs/PYTHON-CLIENT-RUNTIME.md in the matching release. "
-        + "Authoring does not require starting a model server. Rebuild or reinstall the Mac client and Python payload together."
+        "Open Workspace → Research Setup in the app, or run steerlab-cli setup plan, then setup apply with its --expect hash and --yes. "
+        + "This installs the lightweight client without a model server. An explicit STEERLAB_CLIENT_PYTHON override must be repaired or removed separately. "
+        + "For development source mismatches, rebuild the Mac client and payload together. See docs/PYTHON-CLIENT-RUNTIME.md."
 }

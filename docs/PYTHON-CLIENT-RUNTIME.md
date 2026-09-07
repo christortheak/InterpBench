@@ -1,82 +1,74 @@
-# Mac scientific workspace actions: Python client runtime
+# Client runtime, setup and source identity
 
-The Mac app and `steerlab-cli` use the shared Python authoring and archive owners
-for method interviews, request publication, SAE authoring, input packaging and
-local evidence custody. These operations need Python and the lightweight client
-dependencies. They do not need a running model server or the GPU dependencies.
+The Mac app and CLI call shared Python owners for method interviews, request
+publication, SAE authoring, input packaging and evidence custody. These operations
+need the lightweight client environment; they do not need a model server.
+
+## First setup
+
+In the app, use **Workspace → Research Setup**. The screen checks readiness,
+shows the install plan and lets the researcher approve setup. Missing Python is
+handled by the release's installer. The Mac CLI offers the same operations:
+
+```text
+steerlab-cli setup inspect --json
+steerlab-cli setup plan --json
+steerlab-cli setup apply --expect <planSHA256> --yes --json
+```
+
+The app-free client exposes `steerlab setup inspect`, `setup plan`, `setup apply`
+and `setup repair` with the same preconditions. Before any client is installed,
+use the extracted release's `install-client.sh`; see [CLIENT-FIRST-RUN.md](CLIENT-FIRST-RUN.md).
+All setup operations are local process/CLI operations. They are deliberately not
+HTTP mutations exposed by a remote runner. Readiness can also be inspected through
+the existing local diagnostic process adapter (`setup-inspect`).
+
+`plan` performs no downloads or installation. Apply and repair require the exact
+plan hash and explicit approval. Downloads and package installation occur in a
+new managed environment outside the app and workspace. Source and dependency
+checks must pass before activation. Setup logs from the Mac are retained under
+`~/Library/Application Support/SteerLab/client-setup-logs`; CLI progress uses stderr.
+Models, GPU runtimes, SSH credentials and cluster configuration remain separate.
 
 ## Source and environment selection
 
-A release build reads Python source from its own immutable `ServerPayload`
-resource. A development build uses the existing `CodeResources` selection rules.
-The interpreter is selected in this order:
+A release uses the Python source in its own `ServerPayload`. A development build
+uses `CodeResources`' checkout selection. Interpreter selection remains:
 
-1. `STEERLAB_CLIENT_PYTHON`, if set to an absolute interpreter path. An invalid
-   explicit choice refuses rather than falling back to another environment.
-2. `~/Library/Application Support/SteerLab/client-runtime/bin/python`, when
-   installed and executable.
-3. The existing checkout's `Server/.venv.nosync/bin/python`, for development and
-   installations that already use the full local engine.
+1. `STEERLAB_CLIENT_PYTHON`, when explicitly set to an absolute path. An invalid
+   override refuses; installing the default environment does not override it.
+2. `~/Library/Application Support/SteerLab/client-runtime/bin/python`.
+3. The checkout's `Server/.venv.nosync/bin/python` for development.
 
-The client starts with the selected source as its sole `PYTHONPATH`, disables
-user site packages and bytecode writes, clears `PYTHONHOME`, and uses a temporary
-working directory. It does not create a venv inside, or write caches into, the
-signed app. A checkout is not required for the first two interpreter paths.
-The local model server and stimulus-screen runtime are separate; this change
-does not migrate those features.
+The release includes `ServerPayload/client-release`, built before signing.
+Development builds can use `STEERLAB_CLIENT_RELEASE=<release-directory>` after
+building a matching artifact with `scripts/build-client-release.py`. The Mac
+refuses an installer whose source identity differs from its compiled constant.
+No developer checkout is needed by the released app or app-free client.
 
-## First client-only setup from an installed app
+The app sets the selected source as the only PYTHONPATH, disables user site
+packages and bytecode writes, clears PYTHONHOME and uses a temporary cwd. Neither
+Python caches nor installer build metadata are written into the signed bundle.
+The model-server and stimulus-screen runtimes are separate installations.
 
-Use Python 3.10 or newer. The example below is for a new client environment;
-choose the actual installed app path first. Installation may download the
-client dependencies (`numpy`, `safetensors`, `httpx` and their dependencies).
-Do not install the `[runner]` or `[all]` extras for authoring alone.
+## Compatibility and qualification
 
-```sh
-client_app="/Applications/SteerLab.app"
-client_env="$HOME/Library/Application Support/SteerLab/client-runtime"
-# Stop if this already exists; inspect or deliberately update it separately.
-test ! -e "$client_env" || exit 1
-client_stage="$(mktemp -d /private/tmp/steerlab-client-install.XXXXXX)"
-cp -R "$client_app/Contents/Resources/ServerPayload" "$client_stage/Server"
-python3 -m venv "$client_env"
-"$client_env/bin/python" -m pip install "$client_stage/Server"
-"$client_env/bin/python" -m steerlab_server.client_cli --version
-```
+The Mac's compiled SHA-256 covers shipped Python source and client resources,
+including workspace seeds and installer policy. It is verified before shared
+workspace actions. A source mismatch in development requires a rebuild. A release
+bundles its matching sources; a researcher does not need to match a separate
+checkout to it. The installed interpreter supplies dependencies while the Mac
+continues to use its own bundled source.
 
-Copying the payload to scratch keeps pip's build metadata out of the signed app.
-Retain the installation output if setup fails; rerun setup only after inspecting
-the partial environment. Once installation succeeds, the temporary source copy
-may be removed. The app discovers the default environment without a shell
-variable. For a custom location, make `STEERLAB_CLIENT_PYTHON` available to the
-process launching the app or CLI; setting it in an unrelated shell does not
-configure an already running GUI app.
+Dependency versions are not a substitute for source identity. The supported
+installer uses the committed hashed client lock. Existing manually managed
+interpreters are checked for working client imports by `setup inspect`; they are
+not rewritten or silently upgraded. Request-specific scientific validation still
+happens at review and execution time. `authoringReady` is not model qualification.
 
-## Compatibility and release procedure
-
-The compiled Mac client carries a SHA-256 identity of all shipped Python source
-files and packaged workspace seeds. The Python process recomputes it before
-workspace dispatch. Missing or different identities refuse with an update
-repair before the requested action runs. A release number or Git branch name
-alone does not establish compatibility. Dependency versions are not part of
-this source identity; their supported installation and qualification remain
-separate checks.
-
-After Python or seed changes:
-
-1. Regenerate shared resources first, then run
-   `python3 scripts/ci/check-python-client-identity.py --write`.
-2. Build the Mac app and CLI and stage their payload from those same sources.
-   Run the identity gate, both full suites and the app build before review.
-3. Deploy the matching app/CLI and payload together; update the client
-   environment if dependency requirements changed. Development users still
-   using a checkout must also update that checkout before rebuilding.
-4. Verify a method interview and an evidence import in a disposable workspace.
-   A typo in the import root must refuse without creating it.
-
-Tests exercise an extracted release payload with no checkout or venv inside it,
-through both Python and the Mac adapter, and reject modified source before
-operation dispatch. This is not a clean-machine installer or interactive GUI
-qualification. Before wider launch, qualify the setup above on a Mac without a
-checkout, including missing dependencies, offline failure, app upgrades and
-repairs. Automatic one-click client provisioning is not implemented here.
+After Python/resource changes, regenerate the resource copies and
+`scripts/ci/check-python-client-identity.py --write`, then rebuild the Mac targets
+and client release together. The app build and release builder enforce the identity
+gate. Both full suites, release install/repair smoke tests and independent review
+are required before landing. Fresh-machine Mac UI and Linux release qualification
+must pass before wider distribution; local developer tests alone do not prove it.

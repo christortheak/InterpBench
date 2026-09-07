@@ -14,7 +14,8 @@ MODEL_SPECS = tuple(s for s in client_cli.CLIENT_VERB_SPECS if s.family == "mode
 from steerlab_server.client.science_commands import VERB_SPECS as SCIENCE_SPECS
 REMOTE_SPECS = tuple(s for s in client_cli.CLIENT_VERB_SPECS if s.family == "runner" and s.verb in ("science-stage", "science-export", "science-fetch", "science-call", "cleanup-plan", "cleanup-apply", "science-plan", "science-submit", "recovery", "recover", "resubmit", "reconcile"))
 from steerlab_server.client.bootstrap_commands import VERB_SPECS as BOOTSTRAP_SPECS
-VERB_SPECS = (*BOOTSTRAP_SPECS, *REMOTE_SPECS, *SCIENCE_SPECS, *ASSEMBLY_SPECS, *DESIGN_SPECS, *AUTHORING_SPECS, *MODEL_SPECS)
+from steerlab_server.client.setup_commands import VERB_SPECS as SETUP_SPECS
+VERB_SPECS = (*SETUP_SPECS, *BOOTSTRAP_SPECS, *REMOTE_SPECS, *SCIENCE_SPECS, *ASSEMBLY_SPECS, *DESIGN_SPECS, *AUTHORING_SPECS, *MODEL_SPECS)
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--write", action="store_true")

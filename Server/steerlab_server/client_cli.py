@@ -114,7 +114,7 @@ import os
 import sys
 
 from . import cli_envelope as envelope
-from .client import study_assembly, design_commands, authoring_commands, model_commands, science_commands, bootstrap_commands
+from .client import study_assembly, design_commands, authoring_commands, model_commands, science_commands, bootstrap_commands, setup_commands
 from .cli_envelope import (HELP_FLAG, JSON_FLAG, OUT_FLAG, CLIResult,
                            UsageError, VerbSpec)
 
@@ -252,6 +252,7 @@ def _authoring_prompt_kinds():
 
 CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
     *bootstrap_commands.VERB_SPECS,
+    *setup_commands.VERB_SPECS,
     *science_commands.VERB_SPECS,
     *study_assembly.VERB_SPECS,
     *design_commands.VERB_SPECS,
@@ -543,7 +544,7 @@ SOLO_FAMILIES: dict = {"run": "run"}
 #: a SEPARATE family precisely so the exclusion is a line in a table rather
 #: than a judgement call about a flag name.
 AUTHORING_FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "pack", "design", "agent", "panel",
-                                       "model", "workspace")
+                                       "model", "workspace", "setup")
 
 #: The generation-prompt emitter. NOT in :data:`AUTHORING_FAMILIES` despite
 #: its name, and the distinction is the point: an authoring family WRITES into
@@ -573,7 +574,7 @@ RUN_FAMILY = "run"
 #: shipped one, so a caller with no workspace still gets the shipped prompt
 #: rather than a refusal about a study they never named.
 WORKSPACE_OPTIONAL_FAMILIES: frozenset = frozenset(
-    {RUNNER_FAMILY, AUTHORING_PROMPT_FAMILY, "science"})
+    {RUNNER_FAMILY, AUTHORING_PROMPT_FAMILY, "science", "setup"})
 
 #: The global flag that names the workspace. Declared here rather than on each
 #: spec because it is lifted before the family is chosen — every verb takes it,
@@ -4115,7 +4116,7 @@ def _iso(value) -> str | None:
         return None
 
 
-HANDLERS = {"workspace": bootstrap_commands.run, "science": science_commands.run, "experiment": _experiment, "concept": _concept, "bundle": _bundle,
+HANDLERS = {"setup": setup_commands.run, "workspace": bootstrap_commands.run, "science": science_commands.run, "experiment": _experiment, "concept": _concept, "bundle": _bundle,
             "pack": study_assembly.run, "design": design_commands.run, "agent": lambda i: authoring_commands.run(i) if i.spec.verb == "list" else design_commands.run(i), "panel": authoring_commands.run,
             "model": _model,
             "authoring": _authoring_prompt, "runner": _runner, "run": _run}
@@ -4424,7 +4425,7 @@ def main(argv: list | None = None) -> int:
                 raise
         invocation.document_stream = document_stream
         with envelope._StdoutToStderr() if invocation.json else _NullContext():
-            outcome = HANDLERS[family](invocation)
+            outcome = setup_commands.run(invocation, root=os.environ["STEERLAB_ROOT"] if resolved else None) if family == "setup" else HANDLERS[family](invocation)
         document = _envelope_for_result(label, outcome)
     except ServeCompleted as served:
         # `runner serve` emitted a STARTUP envelope before it started serving

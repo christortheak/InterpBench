@@ -12,6 +12,11 @@ def validate(invocation, count):
 
 
 def workspace_action(action, payload):
+    if action == 'setup-inspect':
+        if not isinstance(payload, dict) or payload.keys() - {'workspaceRoot'} or ('workspaceRoot' in payload and (not isinstance(payload['workspaceRoot'], str) or not payload['workspaceRoot'])):
+            raise archives.Refusal('Readiness accepts only an optional workspaceRoot string.')
+        from . import setup
+        return setup.inspect(payload.get('workspaceRoot'))
     required = {
         'sae-check': {'path'}, 'sae-show': {'path'},
         'sae-pin-plan': {'path', 'experiment'}, 'sae-pin': {'path', 'experiment', 'planSHA256'},

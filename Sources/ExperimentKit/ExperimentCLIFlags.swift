@@ -297,6 +297,12 @@ public enum ExperimentCLIParser {
                 + "directories (default home ~/SteerLab).",
             valueFlags: ["--home"]),
 
+        // Lightweight client setup, independent of model execution.
+        .init(namespace: "setup", verb: "inspect", purpose: "Inspect client and workspace readiness; execution is assessed separately."),
+        .init(namespace: "setup", verb: "plan", purpose: "Review client setup without downloading anything.", valueFlags: ["--release", "--runtime"]),
+        .init(namespace: "setup", verb: "apply", purpose: "Install the lightweight client from an approved current plan.", booleanFlags: ["--yes"], valueFlags: ["--release", "--runtime", "--expect"], requiredFlags: ["--expect", "--yes"]),
+        .init(namespace: "setup", verb: "repair", purpose: "Activate a verified new environment while retaining the old one.", booleanFlags: ["--yes"], valueFlags: ["--release", "--runtime", "--expect"], requiredFlags: ["--expect", "--yes"]),
+
         // workspace
         .init(
             namespace: "workspace", verb: "init", positional: "<path>",

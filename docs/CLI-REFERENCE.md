@@ -192,6 +192,10 @@ The command table below is checked against the declared client verb specs.
 <!-- BEGIN CLIENT-STUDY-ASSEMBLY -->
 
 ```text
+steerlab setup inspect
+steerlab setup plan [--release <value>] [--runtime <value>]
+steerlab setup apply --expect <value> --yes [--release <value>] [--runtime <value>]
+steerlab setup repair --expect <value> --yes [--release <value>] [--runtime <value>]
 steerlab workspace init <directory> [--no-git]
 steerlab workspace inspect
 steerlab workspace handoff

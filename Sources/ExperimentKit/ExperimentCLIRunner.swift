@@ -181,6 +181,7 @@ public struct ExperimentCLIRunner: Sendable {
             let result: ExperimentCLIResult
             switch namespace {
             case "init": result = try runInitCommand(invocation)
+            case "setup": result = try await ClientSetupCLI.run(invocation)
             case "workspace": result = try runWorkspaceCommand(invocation)
             case "data": result = try runDataCommand(invocation)
             case "vectors": result = try await runVectorsCommand(invocation)
