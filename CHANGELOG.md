@@ -12,6 +12,17 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Researcher first run. The app opens Research Setup on an incomplete setup
+  and keeps it in the Workspace menu; the app-free release ships a wheel, a
+  hashed dependency lock and a pre-Python installer (`install-client.sh plan`,
+  then `install --expect <planSHA256> --yes`) that downloads a verified uv and
+  managed CPython, installs the lightweight client into an isolated environment
+  and activates it atomically, never replacing a directory it did not create.
+  Both clients gain `workspace init/inspect/handoff` and
+  `setup start/inspect/plan/apply/repair`; `steerlab setup start <dir> --create`
+  creates a complete workspace and returns readiness plus an agent handoff.
+  The workspace seed and agent guide are generated from one manifest for both
+  clients and packaged into the Python client. See `docs/CLIENT-FIRST-RUN.md`.
 - Shared method interviews resolve blank optional answers to their declared
   defaults; every managed interview is tested through its real config validator.
   Evidence import requires an existing destination workspace.

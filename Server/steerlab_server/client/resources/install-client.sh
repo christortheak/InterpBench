@@ -15,6 +15,9 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 json() { printf '%s' "$1" | awk 'BEGIN {printf "\""} {if (NR>1) printf "\\n"; gsub(/\\/,"\\\\"); gsub(/\"/,"\\\""); gsub(/\t/,"\\t"); gsub(/\r/,"\\r"); printf "%s",$0} END {printf "\""}'; }
+# Managed tool versions, defined once for the displayed plan and the installation.
+python_version=3.12.14
+uv_version=0.12.5
 refused=no
 refuse() { refused=yes; printf '{"ok":false,"changed":false,"reason":'; json "$1"; printf ',"repairAction":'; json "$2"; printf '}\n'; exit 65; }
 hash() { if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d ' ' -f1; else shasum -a 256 | cut -d ' ' -f1; fi; }
@@ -50,7 +53,7 @@ fi
 plan_hash=$({ printf '%s\000' "$runtime" "$state" "$platform"; readlink "$runtime" || true; for item in install-client.sh runtime-helper.py client-requirements.lock source.sha256; do hash < "$release/$item"; done; hash < "$wheel"; if [ -f "$runtime/.steerlab-client.json" ]; then hash < "$runtime/.steerlab-client.json"; fi; } | hash)
 if [ "$operation" = plan ]; then
     printf '{"ok":true,"changed":false,"planSHA256":"%s","runtime":' "$plan_hash"; json "$runtime"
-    printf ',"state":"%s","python":"3.12.14","uv":"0.12.5","platform":"%s","requiresApproval":true,"actions":["Download verified uv and managed Python","Install the locked lightweight client into an isolated environment","Verify imports and source identity, then activate the environment"],"execution":"Models and runner setup remain separate; no models are downloaded.","repairAction":"Review this plan, then run install or repair with --expect <planSHA256> --yes."}\n' "$state" "$platform"
+    printf ',"state":"%s","python":"%s","uv":"%s","platform":"%s","requiresApproval":true,"actions":["Download verified uv and managed Python","Install the locked lightweight client into an isolated environment","Verify imports and source identity, then activate the environment"],"execution":"Models and runner setup remain separate; no models are downloaded.","repairAction":"Review this plan, then run install or repair with --expect <planSHA256> --yes."}\n' "$state" "$python_version" "$uv_version" "$platform"
     exit 0
 fi
 case "$operation" in install|repair) ;; *) refuse 'Unknown setup operation.' 'Use plan, install, or repair.' ;; esac
@@ -72,14 +75,14 @@ cp "$release/install-client.sh" "$release/runtime-helper.py" "$release/client-re
 copied=$(/bin/sh "$stage/release/install-client.sh" plan --runtime "$runtime")
 printf '%s' "$copied" | grep -F "\"planSHA256\":\"$expected\"" >/dev/null || refuse 'Release files changed while staging.' 'Review a fresh release plan.'
 printf 'Downloading verified client tools…\n' >&2
-curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 "https://github.com/astral-sh/uv/releases/download/0.12.5/uv-$platform.tar.gz" -o "$stage/uv.tar.gz"
+curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 "https://github.com/astral-sh/uv/releases/download/$uv_version/uv-$platform.tar.gz" -o "$stage/uv.tar.gz"
 [ "$(hash < "$stage/uv.tar.gz")" = "$uv_sha" ] || refuse 'Downloaded uv checksum mismatch.' 'Retry from the original release; do not bypass verification.'
 tar -xzf "$stage/uv.tar.gz" -C "$stage"
 uv="$stage/uv-$platform/uv"
 export UV_CACHE_DIR="$stage/cache" UV_PYTHON_INSTALL_DIR="$stage/python" UV_NO_CONFIG=1 UV_PYTHON_PREFERENCE=only-managed
 unset PYTHONPATH PYTHONHOME UV_INDEX_URL UV_EXTRA_INDEX_URL UV_DEFAULT_INDEX UV_INDEX UV_FIND_LINKS UV_PYTHON UV_PROJECT_ENVIRONMENT VIRTUAL_ENV || true
 printf 'Preparing Python and installing the lightweight client…\n' >&2
-"$uv" venv --no-project --python 3.12.14 "$stage/venv" >&2
+"$uv" venv --no-project --python "$python_version" "$stage/venv" >&2
 "$uv" pip sync --python "$stage/venv/bin/python" --require-hashes --only-binary :all: --default-index https://pypi.org/simple "$stage/release/client-requirements.lock" >&2
 set -- "$stage/release"/*.whl
 "$uv" pip install --python "$stage/venv/bin/python" --no-deps "$1" >&2
