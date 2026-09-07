@@ -66,7 +66,8 @@ Setup is local; no remotely callable HTTP installation mutation was added.
   No runner extra, torch, transformers or FastAPI is installed.
 - The runtime and its interpreter stay at their created paths. Activation changes
   a public symlink only after imports, seed presence and source identity verify.
-  Old managed environments are retained. An ordinary existing directory is never
+  The Mac pins the managed environment’s real directory for each process, so
+  later activation cannot change its dependency search paths. Old managed environments are retained. An ordinary existing directory is never
   replaced. Download/verification failures preserve the previous active runtime.
 - Apply/repair require the reviewed plan hash plus explicit approval. A lock
   serializes installers; state and release bytes are checked again before activation.
@@ -103,10 +104,15 @@ namespace, help and command-reference gates include the new verbs.
 Validation on the completed implementation:
 
 - Python: 6,166 passed, 9 skipped, 8 warnings.
-- Xcode beta: 277 SteeringKit and 4,601 ExperimentKit tests passed; app build passed.
+- Xcode beta: 277 SteeringKit and 4,602 ExperimentKit tests passed; app build passed.
 - Resource, interview, client-reference and compiled-identity gates passed.
 - All 11 audited scientific owner ASTs remain unchanged; lens-consumer and task
   parser mutation controls passed; bridge gates passed in normal and release modes.
+- An ad-hoc signed Release bundle was assembled in temporary scratch; signature,
+  resource-manifest verification and its bundled setup plan passed without GUI
+  launch or installation. Resource verification used the explicit
+  `--root <app>/Contents/Resources`: the pre-existing bundled helper default points
+  at Helpers, which has no resource manifest. That default is a separate follow-up.
 - Mac CLI smoke: setup start, readiness and both emitted discovery commands passed.
 - Release install/repair, method interview and draft authoring are qualified in
   disposable macOS scratch without a checkout or GPU dependencies. Linux CI is

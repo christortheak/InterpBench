@@ -9,10 +9,27 @@ import Testing
         defer { try? FileManager.default.removeItem(at: root) }
         let installed = root.appending(path: "bin/python")
         try FileManager.default.createSymbolicLink(at: installed, withDestinationURL: URL(filePath: "/usr/bin/true"))
-        #expect(ScientificPythonRuntime.resolve(environment: [:], clientEnvironment: root, checkoutPython: nil) == installed)
+        #expect(ScientificPythonRuntime.resolve(environment: [:], clientEnvironment: root, checkoutPython: nil) == root.resolvingSymlinksInPath().appending(path: "bin/python"))
         #expect(ScientificPythonRuntime.resolve(environment: ["STEERLAB_CLIENT_PYTHON": "relative/python"], clientEnvironment: root, checkoutPython: installed) == nil)
         let missing = root.appending(component: "missing")
         #expect(ScientificPythonRuntime.resolve(environment: ["STEERLAB_CLIENT_PYTHON": missing.path], clientEnvironment: root, checkoutPython: installed) == missing)
+    }
+
+    @Test func managedSelectionPinsTheVenvDirectoryAcrossActivation() throws {
+        let root = FileManager.default.temporaryDirectory.appending(component: UUID().uuidString).resolvingSymlinksInPath()
+        let old = root.appending(component: "old"), new = root.appending(component: "new")
+        defer { try? FileManager.default.removeItem(at: root) }
+        for environment in [old, new] {
+            try FileManager.default.createDirectory(at: environment.appending(component: "bin"), withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(at: environment.appending(path: "bin/python"), withDestinationURL: URL(filePath: "/usr/bin/true"))
+        }
+        let current = root.appending(component: "client-runtime")
+        try FileManager.default.createSymbolicLink(at: current, withDestinationURL: old)
+        let selected = try #require(ScientificPythonRuntime.resolve(environment: [:], clientEnvironment: current, checkoutPython: nil))
+        try FileManager.default.removeItem(at: current)
+        try FileManager.default.createSymbolicLink(at: current, withDestinationURL: new)
+        #expect(selected == old.appending(path: "bin/python"))
+        #expect(ScientificPythonRuntime.resolve(environment: [:], clientEnvironment: current, checkoutPython: nil) == new.appending(path: "bin/python"))
     }
 
     private func sourceFromReleaseBundle(_ bundle: URL) throws -> URL {

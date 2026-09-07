@@ -20,7 +20,11 @@ public enum ScientificPythonRuntime {
             guard path.hasPrefix("/") else { return nil }
             return URL(filePath: path)
         }
-        let installed = clientEnvironment.appending(path: "bin/python")
+        // Resolve the environment directory, not the interpreter symlink (the
+        // latter would escape the venv into its base Python installation).
+        // A running process must keep its dependency paths after activation
+        // switches the public client-runtime link to another environment.
+        let installed = clientEnvironment.resolvingSymlinksInPath().appending(path: "bin/python")
         if FileManager.default.isExecutableFile(atPath: installed.path) { return installed }
         return checkoutPython
     }
