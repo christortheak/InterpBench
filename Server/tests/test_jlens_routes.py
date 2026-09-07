@@ -7,6 +7,8 @@ local loopback dev process.
 """
 
 import os
+import threading
+import time
 
 import pytest
 
@@ -24,6 +26,58 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("STEERLAB_ROOT", str(tmp_path / "ws"))
     monkeypatch.setenv("STEERLAB_METADATA_ROOT", str(tmp_path / "meta"))
     return TestClient(app_mod.app)
+
+
+# --- worker lifetime -----------------------------------------------------------
+#
+# The durable verbs return a job id and keep working on a daemon thread. A
+# test that returned while its worker was still loading a model left that
+# load racing later tests on the shared torch runtime — two ``job-*`` threads
+# alive at once, one inside ``Module.to``, aborted the interpreter partway
+# through this module (intermittently: several runs a day were green). Every
+# submitting test therefore stubs the heavy owner AND waits for its job to
+# reach a terminal state, and the fixture below turns any worker that
+# outlives its test into a plain failure instead of a later crash.
+
+_TERMINAL = {"succeeded", "failed", "cancelled", "cancelledResumable", "parked"}
+
+
+def _wait_for_job(client, job_id, timeout=10.0):
+    """Poll the job until it is terminal; the worker's stub has then run and
+    nothing of this test is left executing on a background thread."""
+    deadline = time.monotonic() + timeout
+    payload = None
+    while time.monotonic() < deadline:
+        payload = client.get(f"/api/jobs/{job_id}").json()
+        if payload.get("status") in _TERMINAL and payload.get("finishedAt"):
+            return payload
+        time.sleep(0.02)
+    raise AssertionError(f"job {job_id} never reached a terminal state: {payload}")
+
+
+def _job_threads():
+    return {t for t in threading.enumerate() if t.name.startswith("job-")}
+
+
+@pytest.fixture(autouse=True)
+def _no_worker_outlives_its_test():
+    """A job worker started by a test must be gone when the test is.
+
+    Runs after the test body: any ``job-*`` thread the test started is given
+    a moment to finish its terminal bookkeeping (the store update after
+    ``finishedAt``), and one still alive after that is a test that forgot to
+    stub or wait — reported here, where the cause is visible, rather than as
+    an interpreter abort in whichever test happens to load a model next.
+    """
+    before = _job_threads()
+    yield
+    started = _job_threads() - before
+    for thread in started:
+        thread.join(timeout=5.0)
+    alive = sorted(t.name for t in started if t.is_alive())
+    assert not alive, (
+        f"job worker thread(s) outlived the test: {alive} — the test must "
+        f"stub the heavy owner and wait for the job to finish")
 
 
 def _import_a_lens(tmp_path, model_id="google/gemma-3-4b-it"):
@@ -131,6 +185,12 @@ def test_both_verbs_submit_durable_jobs(client, tmp_path, monkeypatch):
                        json={"modelID": "google/gemma-3-4b-it"})
     assert resp.status_code == 200
     assert "jobId" in resp.json()
+    # Wait inside the test: the fake is a monkeypatch, and a worker that ran
+    # after teardown would call the real acquire (and go online).
+    job = _wait_for_job(client, resp.json()["jobId"])
+    assert job["status"] == "succeeded", job
+    assert seen["acquired"] == "google/gemma-3-4b-it"
+    assert job["result"]["snapshot"] == str(tmp_path / "snap")
 
 
 def test_job_kinds_are_declared_in_the_capability_vocabulary(client):
@@ -179,15 +239,35 @@ def test_qualify_rejects_a_malformed_layer_list(client, tmp_path):
     assert "list of integers" in resp.json()["detail"]
 
 
-def test_qualify_submits_a_durable_job(client, tmp_path):
+def test_qualify_submits_a_durable_job(client, tmp_path, monkeypatch):
     """A GPU job: the checks are about the numerics the model actually
-    presents, which geometry alone cannot see."""
+    presents, which geometry alone cannot see. The route's contract is the
+    submission and the hand-off of its arguments; the owner itself (a real
+    model load) is stubbed so no load runs on a background thread."""
+    from steerlab_server.jlens import qualification
+
+    seen = {}
+
+    def _fake_qualify(lens_id, model_id, **kw):
+        seen["lens"], seen["model"] = lens_id, model_id
+        seen["kwargs"] = kw
+        return {"qualificationID": "q-test", "passed": True,
+                "blockingFailures": [], "tier": "testing"}
+
+    monkeypatch.setattr(qualification, "qualify", _fake_qualify)
     _import_a_lens(tmp_path)
+    lens_id = importer.lens_id_for("google/gemma-3-4b-it")
     resp = client.post("/api/jlens/qualify",
-                       json={"lensID": importer.lens_id_for(
-                                 "google/gemma-3-4b-it"),
-                             "modelID": "google/gemma-3-4b-it"})
+                       json={"lensID": lens_id,
+                             "modelID": "google/gemma-3-4b-it",
+                             "layers": [0, 1]})
     assert resp.status_code == 200 and "jobId" in resp.json()
+    job = _wait_for_job(client, resp.json()["jobId"])
+    assert job["status"] == "succeeded", job
+    assert job["result"]["qualificationID"] == "q-test"
+    assert (seen["lens"], seen["model"]) == (lens_id, "google/gemma-3-4b-it")
+    assert seen["kwargs"]["layers"] == [0, 1]
+    assert callable(seen["kwargs"]["log"])
 
 
 def test_report_404s_for_a_directory_that_does_not_exist(client):
@@ -250,12 +330,30 @@ def test_probe_404s_before_submitting_when_the_lens_is_not_imported(client):
     assert "jobId" not in resp.json()
 
 
-def test_probe_submits_a_durable_job(client, tmp_path):
+def test_probe_submits_a_durable_job(client, tmp_path, monkeypatch):
+    """Same shape as qualify: the owner loads the model, so it is stubbed and
+    the job is waited for before the test returns."""
+    from steerlab_server.jlens import probe as probe_mod
+
+    seen = {}
+
+    def _fake_probe(model_id, *, prompt, **kw):
+        seen["model"], seen["prompt"], seen["kwargs"] = model_id, prompt, kw
+        return {"claim": "stubbed", "evidenceTier": "testing",
+                "runDirectory": "runs/probe-test"}
+
+    monkeypatch.setattr(probe_mod, "probe", _fake_probe)
     _import_a_lens(tmp_path)
     resp = client.post("/api/jlens/probe",
                        json={"modelID": "google/gemma-3-4b-it",
                              "prompt": "hello", "layers": [0, 1]})
     assert resp.status_code == 200 and "jobId" in resp.json()
+    job = _wait_for_job(client, resp.json()["jobId"])
+    assert job["status"] == "succeeded", job
+    assert job["result"]["runDirectory"] == "runs/probe-test"
+    assert (seen["model"], seen["prompt"]) == ("google/gemma-3-4b-it", "hello")
+    assert seen["kwargs"]["layers"] == [0, 1]
+    assert seen["kwargs"]["top_k"] == 10
 
 
 def test_qualify_contains_caller_named_file_inputs(client, tmp_path):
