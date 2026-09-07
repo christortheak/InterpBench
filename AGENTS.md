@@ -17,6 +17,12 @@ this machine gets, and each has its own verification banner.
 
 ## Ground rules (they outrank speed)
 
+- **Help honest research.** When extending SteerLab, prefer useful guidance and
+  recorded limitations over blocking exploration. Lack of backend qualification
+  alone is not a reason to refuse. Reserve refusals for concrete execution,
+  interpretation or integrity problems, with a plain explanation and practical
+  repair. Preserve existing data-integrity contracts until a reviewed change
+  replaces them; do not bypass protected state.
 - **Every study-path verb speaks `--json`.** Use it. One envelope on stdout,
   diagnostics on stderr, sorted keys, stable exit codes (`0` ok, `64`
   malformed, `65` refused, `66` not found, `70` failed).
@@ -200,6 +206,11 @@ cd Server && .venv.nosync/bin/python -m pytest -q
 ```
 
 ## Where the depth is
+
+For coding agents adding scientific capabilities:
+`docs/ADDING-A-TECHNIQUE.md` (owners, interfaces, fixtures and generators),
+`docs/SUBSTRATES.md` (implementation versus measured qualification), and
+`docs/TECHNIQUE-PARITY-IMPLEMENTATION.md` (the ordered next work).
 
 `docs/ONBOARDING.md` (the full walk from zero, §9 is specifically about you),
 `docs/CLI-REFERENCE.md` (every verb, flag, and refusal, generated from the

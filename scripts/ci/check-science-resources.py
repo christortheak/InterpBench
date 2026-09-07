@@ -61,3 +61,9 @@ for operation in workflows['operations']:
     assert len({f['id'] for f in operation['fields']}) == len(operation['fields'])
     assert all(f['kind'] in {'text','integer','number','boolean','integers','numbers','artifact','artifacts','file','files','fileRef','documentFile'} for f in operation['fields'])
 print('Shared interviews cover every managed method with distinct catalog categories.')
+
+# The documented substrate table covers this same operation census. It informs
+# researchers; it is never consulted to admit or reject an execution request.
+import subprocess
+subprocess.run([sys.executable, str(root / 'scripts/ci/check-substrates.py'),
+                *(['--write'] if args.write else [])], check=True)

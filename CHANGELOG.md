@@ -12,6 +12,13 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Technique-extension guide and backend parity foundation. A disposable managed
+  operation example, catalog-checked substrate inventory, and ordered execution
+  plan distinguish implementation, artifact compatibility and measured scientific
+  evidence. Qualification guides exploration rather than adding permission gates;
+  the sampling plan preserves ordinary and multi-agent seed policies explicitly.
+  No scientific arithmetic or existing artifact identity changes in this slice.
+
 - Researcher first run. The app opens Research Setup on an incomplete setup
   and keeps it in the Workspace menu; the app-free release ships a wheel, a
   hashed dependency lock and a pre-Python installer (`install-client.sh plan`,

@@ -31,6 +31,8 @@ jobs:
           python-version: "3.12"
       - name: Enforce Swift bridge retirement budget and 1.0 gate
         run: python scripts/ci/check-swift-bridge-retirement.py
+      - name: Check documented substrate coverage
+        run: python scripts/ci/check-substrates.py
       - name: Install engine (CPU torch + locked dependencies)
         working-directory: Server
         # Same shape as scripts/bootstrap.sh: torch is substrate-owned (CPU
