@@ -105,17 +105,26 @@ public enum AnthropicKeyStore {
     /// Save the key to the Keychain; empty/whitespace-only means DELETE.
     /// Either way the legacy plaintext slot is cleared — after any explicit
     /// save, the Keychain is the only at-rest location.
+    ///
+    /// Returns whether the key is now at rest as asked. A refused Keychain
+    /// write used to be discarded here, so the settings row cleared its field
+    /// and reported "no key stored" — the same thing it says when nothing was
+    /// ever typed (UI audit 2026-09-06). Deleting always reports true: an
+    /// absent key is the requested state.
+    @discardableResult
     public static func save(
         _ key: String,
         storage: any AnthropicKeyStorage = KeychainAnthropicKeyStorage()
-    ) {
+    ) -> Bool {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        var stored = true
         if trimmed.isEmpty {
             storage.deleteKeychain()
         } else {
-            _ = storage.writeKeychain(trimmed)
+            stored = storage.writeKeychain(trimmed)
         }
         storage.deleteLegacyDefaults()
+        return stored
     }
 }
 

@@ -33,6 +33,14 @@ final class ComputeChoiceAccessory {
             trackingMode: .selectOne, target: nil, action: nil)
         control.selectedSegment =
             WorkspaceCompute.allCases.firstIndex(of: selected) ?? 0
+        // AppKit does not adopt the sibling NSTextField as this control's
+        // name, so VoiceOver announced an unnamed segmented control and the
+        // pointer got no tooltip (UI audit 2026-09-06).
+        control.toolTip =
+            "which engine this new workspace's studies run on — changeable "
+            + "later from the Workspace menu"
+        control.setAccessibilityLabel("Computes on")
+        control.setAccessibilityTitleUIElement(label)
 
         let caption = NSTextField(
             wrappingLabelWithString:
