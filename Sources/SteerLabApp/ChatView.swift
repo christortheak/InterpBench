@@ -382,14 +382,20 @@ struct ChatView: View {
 
     // MARK: Chat column
 
+    /// "Reset Chat" is irreversible, so it asks first whenever there is a
+    /// transcript to lose.
+    @State private var confirmingResetChat = false
+    /// Save Agent's own outcome + busy flag: `FineTuningPanel.status` is a
+    /// shared single slot (training progress writes it too), so Playground
+    /// snapshots the line THIS action produced instead of mirroring the
+    /// panel and showing an unrelated message.
+    @State private var isSavingAgent = false
+    @State private var saveAgentStatus: String?
+
     private var chatColumn: some View {
         VStack(spacing: 0) {
             if let error = service.errorMessage {
-                Text(error)
-                    .foregroundStyle(.white)
-                    .padding(6)
-                    .frame(maxWidth: .infinity)
-                    .background(.red.opacity(0.8))
+                errorBanner(error)
             }
 
             transcriptToolbar
@@ -409,8 +415,8 @@ struct ChatView: View {
                         ForEach(service.conversationTranscript) { message in
                             MessageBubble(
                                 message: message,
-                                copyAction: {
-                                    copyToClipboard(service.transcriptTurnText(message))
+                                copyText: {
+                                    service.transcriptTurnText(message)
                                 },
                                 editAction: service.canEditTranscriptMessage(message)
                                     ? { beginEditingTurn(message) }
@@ -477,7 +483,7 @@ struct ChatView: View {
                     .labelsHidden()
                     .fixedSize()
                     .help(
-                        "Send as User generates a reply (or Seed appends the "
+                        "send as User generates a reply (or Seed appends the "
                             + "user turn without generating); send as Assistant "
                             + "seeds the text into the transcript as the "
                             + "model's own prior turn (no generation)")
@@ -494,12 +500,19 @@ struct ChatView: View {
                     )
                     .frame(minHeight: 34, maxHeight: 92)
                         .disabled(!canSendPrompt)
+                        .accessibilityLabel("Message")
+                        .accessibilityValue(activeDraftText)
+                        .help(composerBoxHelp)
 
                     if service.isGenerating {
                         ProgressView()
                             .controlSize(.small)
                         Button("Stop", role: .destructive) { service.stopGeneration() }
                             .keyboardShortcut(".", modifiers: .command)
+                            .help(
+                                "stop generating (⌘.) — the text produced so "
+                                    + "far stays in the transcript and in the "
+                                    + "session's history")
                     } else if service.composerRole == .assistant {
                         Button("Seed", action: sendDraft)
                             .keyboardShortcut(.return, modifiers: .command)
@@ -508,21 +521,21 @@ struct ChatView: View {
                                     || activeDraftText.isEmpty)
                             .help(
                                 service.seedUnavailableReason
-                                    ?? "Append this text as an assistant turn "
-                                    + "without generating")
+                                    ?? "append this text as an assistant turn "
+                                    + "without generating — the model treats it "
+                                    + "as its own prior turn")
                         Button("Continue") {
-                            let text = activeDraftText
-                            draft = ""
-                            stagedLongPrompt = nil
-                            seededTurnHintShown = true
-                            service.continueSeededAssistantTurn(text)
+                            submitDraft {
+                                seededTurnHintShown = true
+                                service.continueSeededAssistantTurn($0)
+                            }
                         }
                         .disabled(
                             service.continuationUnavailableReason != nil
                                 || activeDraftText.isEmpty)
                         .help(
                             service.continuationUnavailableReason
-                                ?? "Seed this text as an INCOMPLETE assistant "
+                                ?? "seed this text as an INCOMPLETE assistant "
                                 + "turn and have the model continue it mid-turn "
                                 + "(prefill)")
                     } else {
@@ -533,67 +546,29 @@ struct ChatView: View {
                                     || service.turnConstraintReason(for: .user) != nil)
                             .help(
                                 service.turnConstraintReason(for: .user)
-                                    ?? "Send this text as a user turn and generate a reply")
+                                    ?? composerUnavailableReason
+                                    ?? "send this text as a user turn and "
+                                    + "generate a reply")
                         // Seed works for BOTH roles: in User mode it appends
                         // the turn WITHOUT generating — scripted transcripts,
                         // and the canonical first move on user-first templates
                         // (gemma-3) before seeding an assistant reply.
                         Button("Seed") {
-                            let text = activeDraftText
-                            draft = ""
-                            stagedLongPrompt = nil
-                            seededTurnHintShown = true
-                            service.seedUserTurn(text)
+                            submitDraft {
+                                seededTurnHintShown = true
+                                service.seedUserTurn($0)
+                            }
                         }
                         .disabled(
                             service.seedUserUnavailableReason != nil
                                 || activeDraftText.isEmpty)
                         .help(
                             service.seedUserUnavailableReason
-                                ?? "Append this text as a user turn without "
+                                ?? "append this text as a user turn without "
                                 + "generating (build a scripted transcript)")
                     }
                 }
-                if service.composerRole == .user,
-                    let reason = service.turnConstraintReason(for: .user)
-                {
-                    HStack {
-                        Text(reason)
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                        Spacer()
-                    }
-                }
-                if service.composerRole == .assistant, !seededTurnHintShown {
-                    HStack {
-                        Text(
-                            "Seeding puts words in the model's mouth: the model "
-                                + "will treat this text as its own prior turn "
-                                + "(rendered through its real chat template). "
-                                + "Seeded turns are badged in the transcript.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                    }
-                }
-                if service.composerRole == .assistant,
-                    let reason = service.seedUnavailableReason
-                {
-                    HStack {
-                        Text(reason)
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                        Spacer()
-                    }
-                }
-                if !activeDraftText.isEmpty {
-                    HStack {
-                        Text(draftSizeText)
-                            .font(.caption2)
-                            .foregroundStyle(activeDraftText.count >= ChatService.longPromptStudyPathCharacterThreshold ? .orange : .secondary)
-                        Spacer()
-                    }
-                }
+                composerCaptions
             }
             .padding(10)
         }
@@ -614,6 +589,99 @@ struct ChatView: View {
                     service.restartConversationFromUser(id: target.id, newText: $0)
                 })
         }
+    }
+
+    /// The composer's conditional captions — the turn-constraint refusal,
+    /// the one-time seeding hint, the seed refusal, the draft-size line —
+    /// in ONE line-capped container. They sit directly in a split-view
+    /// column, so their height must not grow with the length of a server
+    /// message (macOS 27 split-view rule); each line caps at two lines and
+    /// keeps its full text in the tooltip.
+    @ViewBuilder
+    private var composerCaptions: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if service.composerRole == .user,
+                let reason = service.turnConstraintReason(for: .user)
+            {
+                composerCaption(reason, tone: .orange)
+            }
+            if service.composerRole == .assistant, !seededTurnHintShown {
+                composerCaption(seedingHint, tone: .secondary)
+            }
+            if service.composerRole == .assistant,
+                let reason = service.seedUnavailableReason
+            {
+                composerCaption(reason, tone: .orange)
+            }
+            if !activeDraftText.isEmpty {
+                composerCaption(draftSizeText, tone: draftSizeTone)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func composerCaption(_ text: String, tone: Color) -> some View {
+        Text(text)
+            .font(.caption2)
+            .foregroundStyle(tone)
+            .lineLimit(2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .help(text)
+    }
+
+    private var seedingHint: String {
+        "Seeding puts words in the model's mouth: the model will treat this "
+            + "text as its own prior turn (rendered through its real chat "
+            + "template). Seeded turns are badged in the transcript."
+    }
+
+    private var draftSizeTone: Color {
+        activeDraftText.count >= ChatService.longPromptStudyPathCharacterThreshold
+            ? .orange : .secondary
+    }
+
+    /// What the box itself does — Return sends, Shift-Return keeps typing,
+    /// and a very long paste is staged as a whole prompt rather than pasted
+    /// into the field.
+    private var composerBoxHelp: String {
+        if stagedLongPrompt != nil {
+            return "a long prompt is staged below — Discard staged prompt to "
+                + "type here again"
+        }
+        return "Return sends, Shift-Return starts a new line; pasting more "
+            + "than \(ChatService.longPromptStudyPathCharacterThreshold.formatted()) "
+            + "characters stages the paste as a long prompt instead of "
+            + "filling the box"
+    }
+
+    /// Send / seed / edit / download failures. Selectable (a refusal is
+    /// usually something to paste into a note or a bug report) and
+    /// dismissable — it used to persist until the next successful action
+    /// with no way to clear it. Line-capped so this column's minimum height
+    /// cannot grow with the message length (split-view rule); the whole text
+    /// stays reachable by selection and in the tooltip.
+    private func errorBanner(_ error: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .accessibilityHidden(true)
+            Text(error)
+                .textSelection(.enabled)
+                .lineLimit(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                service.errorMessage = nil
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.borderless)
+            .help("dismiss this message — nothing is undone or retried")
+            .accessibilityLabel("Dismiss message")
+        }
+        .foregroundStyle(.white)
+        .padding(6)
+        .frame(maxWidth: .infinity)
+        .background(.red.opacity(0.8))
+        .help(error)
     }
 
     private func beginEditingTurn(_ message: ChatService.ChatMessage) {
@@ -660,6 +728,7 @@ struct ChatView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .help(panel.name)
                 }
                 Spacer()
                 if panel.isRunning {
@@ -670,18 +739,20 @@ struct ChatView: View {
                     } label: {
                         Label("Stop", systemImage: "stop.fill")
                     }
-                    .help("Stop the active multi-agent run after the current generation observes cancellation.")
+                    .help(
+                        "stop this multi-agent run after the current "
+                            + "generation finishes — turns already written "
+                            + "stay in the run directory")
                 }
-                Button {
-                    copyToClipboard(multiAgentRunMarkdown(panel))
-                } label: {
-                    Label("Copy Run", systemImage: "doc.on.doc")
-                }
-                .disabled(
-                    panel.liveTurnResults.isEmpty && panel.liveActiveTurn == nil
-                        && panel.liveRunWarnings.isEmpty
-                        && panel.liveRunFailure == nil)
-                .help("Copy the visible multi-agent run transcript.")
+                CopyButton(
+                    "Copy Run",
+                    help: "copy the visible multi-agent run — its turns, "
+                        + "warnings, and failure — to the clipboard as Markdown"
+                ) { multiAgentRunMarkdown(panel) }
+                    .disabled(
+                        panel.liveTurnResults.isEmpty && panel.liveActiveTurn == nil
+                            && panel.liveRunWarnings.isEmpty
+                            && panel.liveRunFailure == nil)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -692,41 +763,54 @@ struct ChatView: View {
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(liveRunDirectory)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if let failure = panel.liveRunFailure {
-                Text(failure)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 8)
-            }
-            if !panel.liveRunWarnings.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(panel.liveRunWarnings.enumerated()), id: \.offset) { _, warning in
-                        Text(warning.message)
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                            .textSelection(.enabled)
-                    }
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
             }
 
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
-                        if panel.liveTurnResults.isEmpty && panel.liveActiveTurn == nil {
+                        // Failure and warnings live INSIDE the scroll view:
+                        // above it they were conditional, unbounded rows
+                        // directly in a split-view column, whose minimum
+                        // height then moved with async state (macOS 27
+                        // split-view rule).
+                        if let failure = panel.liveRunFailure {
+                            Text(failure)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .textSelection(.enabled)
+                                .padding(10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    .red.opacity(0.08),
+                                    in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        if !panel.liveRunWarnings.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(
+                                    Array(panel.liveRunWarnings.enumerated()),
+                                    id: \.offset
+                                ) { _, warning in
+                                    Text(warning.message)
+                                        .font(.caption)
+                                        .foregroundStyle(.orange)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                .orange.opacity(0.08),
+                                in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        if panel.liveTurnResults.isEmpty, panel.liveActiveTurn == nil,
+                            panel.liveRunFailure == nil
+                        {
                             ContentUnavailableView(
                                 "No run yet",
                                 systemImage: "person.3.sequence",
@@ -769,23 +853,23 @@ struct ChatView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .help(panel.robustnessTargetName ?? "no agent chosen yet")
                 }
                 Spacer()
                 if panel.isRobustnessRunning {
                     ProgressView()
                         .controlSize(.small)
                 }
-                Button {
-                    copyToClipboard(variantRobustnessMarkdown(panel))
-                } label: {
-                    Label("Copy", systemImage: "doc.on.doc")
-                }
-                .disabled(
-                    panel.liveRobustnessOutputs.isEmpty
-                        && panel.liveRobustnessJudgments.isEmpty
-                        && panel.robustnessReport == nil
-                        && panel.liveRobustnessFailure == nil)
-                .help("Copy the visible robustness outputs and summary.")
+                CopyButton(
+                    "Copy Outputs",
+                    help: "copy the visible robustness outputs, judge results, "
+                        + "and summary to the clipboard as Markdown"
+                ) { variantRobustnessMarkdown(panel) }
+                    .disabled(
+                        panel.liveRobustnessOutputs.isEmpty
+                            && panel.liveRobustnessJudgments.isEmpty
+                            && panel.robustnessReport == nil
+                            && panel.liveRobustnessFailure == nil)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -796,25 +880,9 @@ struct ChatView: View {
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if let failure = panel.liveRobustnessFailure {
-                Text(failure)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 8)
-            }
-            if let judgeStatus = panel.liveRobustnessJudgeStatus {
-                Text(judgeStatus)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(path)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -823,7 +891,32 @@ struct ChatView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
-                        if panel.liveRobustnessOutputs.isEmpty && panel.robustnessReport == nil {
+                        // Inside the scroll view, not above it: as
+                        // conditional multi-line rows in a split-view column
+                        // these moved the column's minimum height with async
+                        // state (macOS 27 split-view rule).
+                        if let failure = panel.liveRobustnessFailure {
+                            Text(failure)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .textSelection(.enabled)
+                                .padding(10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    .red.opacity(0.08),
+                                    in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        if let judgeStatus = panel.liveRobustnessJudgeStatus {
+                            Text(judgeStatus)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        if panel.liveRobustnessOutputs.isEmpty,
+                            panel.robustnessReport == nil,
+                            panel.liveRobustnessFailure == nil
+                        {
                             ContentUnavailableView(
                                 "No robustness output yet",
                                 systemImage: "checklist.checked",
@@ -875,34 +968,73 @@ struct ChatView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
-            Button("Reset Chat") { service.resetChat() }
-                // Same predicate as Send: server-mode chats (remote model or
-                // variant, no local model loaded) must be resettable too.
-                .disabled(!canSendPrompt)
-                .help("clear the conversation and its KV cache; steering settings are kept")
-            Button {
-                copyToClipboard(service.transcriptMarkdown())
-            } label: {
-                Label("Copy Transcript", systemImage: "doc.on.doc")
+            Button("Reset Chat") {
+                if service.conversationTranscript.isEmpty {
+                    resetChat()
+                } else {
+                    confirmingResetChat = true
+                }
             }
+            // Same predicate as Send: server-mode chats (remote model or
+            // agent, no local model loaded) must be resettable too.
+            .disabled(!canSendPrompt)
+            .help(
+                "clear the conversation and its KV cache and dismiss the "
+                    + "error banner; steering settings are kept. Asks first "
+                    + "when the transcript has turns")
             // The export carries conversation turns only, so an activity log
             // alone must not enable it.
-            .disabled(service.conversationTranscript.isEmpty)
-            .help("Copy the full steering transcript with current model, adapter, vector, and probe settings.")
+            CopyButton(
+                "Copy Transcript",
+                help: "copy the full Playground transcript, with the current "
+                    + "model, adapter, vector, and probe settings, to the "
+                    + "clipboard"
+            ) { service.transcriptMarkdown() }
+                .disabled(service.conversationTranscript.isEmpty)
             Button {
                 downloadTranscript()
             } label: {
                 Label("Download Transcript", systemImage: "square.and.arrow.down")
             }
             .disabled(service.conversationTranscript.isEmpty)
-            .help("Save the full steering transcript as a Markdown file.")
+            .help("save the full Playground transcript as a Markdown file")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(.quaternary.opacity(0.35))
+        .confirmationDialog(
+            "Clear this chat transcript?",
+            isPresented: $confirmingResetChat,
+            titleVisibility: .visible
+        ) {
+            Button("Clear Transcript", role: .destructive) { resetChat() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(resetChatConsequence)
+        }
+    }
+
+    private var resetChatConsequence: String {
+        let count = service.conversationTranscript.count
+        return "\(count) turn\(count == 1 ? "" : "s") and the session's KV "
+            + "cache are discarded — this cannot be undone. The loaded model, "
+            + "the selected agent, and every steering setting are kept. Copy "
+            + "or download the transcript first if you need it."
+    }
+
+    /// Reset clears the error banner too: a refusal from the conversation
+    /// just discarded survived the reset and read as a fresh failure.
+    private func resetChat() {
+        service.errorMessage = nil
+        service.resetChat()
     }
 
     private var inputPlaceholder: String {
+        // A staged long prompt makes the box read-only: say THAT, instead of
+        // inviting a message the box will not accept.
+        if stagedLongPrompt != nil {
+            return "long prompt staged — Discard staged prompt to type here"
+        }
         // Server mode generates remotely: local model state is irrelevant.
         if service.cluster.computeTarget == .server {
             let serverReady =
@@ -922,18 +1054,68 @@ struct ChatView: View {
         }
     }
 
+    /// Return in the composer, and the Send/Seed buttons, run through here.
+    ///
+    /// It used to clear `draft` BEFORE calling the service, and the key
+    /// handler submitted without consulting the buttons' disabled predicate
+    /// — so a refused send (consecutive user turns on a user-first template,
+    /// a server without `chat.seededTurns`) destroyed the typed text and
+    /// left only the red banner. Now the same predicate the button reads
+    /// gates the submit, and the draft is cleared only once the service has
+    /// actually accepted the turn.
     private func sendDraft() {
-        let text = activeDraftText
-        draft = ""
-        stagedLongPrompt = nil
+        guard !activeDraftText.isEmpty else { return }
         switch service.composerRole {
         case .user:
-            service.send(text)
+            if let reason = composerUnavailableReason
+                ?? service.turnConstraintReason(for: .user)
+            {
+                service.errorMessage = reason
+                return
+            }
+            submitDraft { service.send($0) }
         case .assistant:
+            if let reason = service.seedUnavailableReason {
+                service.errorMessage = reason
+                return
+            }
             // Seed only — the whole point: the turn enters the transcript
             // without generating; the NEXT user turn replays it as history.
-            service.seedAssistantTurn(text)
-            seededTurnHintShown = true
+            submitDraft {
+                service.seedAssistantTurn($0)
+                seededTurnHintShown = true
+            }
+        }
+    }
+
+    /// Runs one composer action and clears the draft ONLY if the transcript
+    /// grew, i.e. the service accepted the turn. Every send/seed entry point
+    /// in `ChatService` early-returns with `errorMessage` set on a refusal;
+    /// the typed text must survive that.
+    private func submitDraft(_ action: (String) -> Void) {
+        let text = activeDraftText
+        let before = service.conversationTranscript.count
+        action(text)
+        guard service.conversationTranscript.count > before else { return }
+        draft = ""
+        stagedLongPrompt = nil
+    }
+
+    /// Why the composer cannot send at all right now (nil = it can) — the
+    /// same rule `canSendPrompt` encodes, said in words so Return does not
+    /// fail silently.
+    private var composerUnavailableReason: String? {
+        if service.isGenerating { return "wait for the current generation to finish" }
+        switch service.cluster.computeTarget {
+        case .local:
+            return service.state == .ready
+                ? nil : "load a model before sending a turn"
+        case .server:
+            return service.serverHasLoadedModel
+                || service.selectedRemoteVariantPath != nil
+                ? nil
+                : "load a server model or select a server agent before "
+                    + "sending a turn"
         }
     }
 
@@ -942,18 +1124,13 @@ struct ChatView: View {
         let words = text.split(whereSeparator: \.isWhitespace).count
         let route =
             text.count >= ChatService.longPromptStudyPathCharacterThreshold
-            ? " · long prompt uses chunked study path"
+            ? " · sent in chunks, like a study prompt"
             : ""
         return "\(text.count.formatted()) chars · ~\(words.formatted()) words\(route)"
     }
 
     private var activeDraftText: String {
         stagedLongPrompt ?? draft
-    }
-
-    private func copyToClipboard(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
     }
 
     private func multiAgentRunMarkdown(_ panel: MultiAgentPanel) -> String {
@@ -1057,7 +1234,9 @@ struct ChatView: View {
         do {
             try service.transcriptMarkdown().write(to: url, atomically: true, encoding: .utf8)
         } catch {
-            service.errorMessage = "could not save transcript: \(error)"
+            service.errorMessage =
+                "could not save the transcript to \(url.lastPathComponent): "
+                + error.localizedDescription
         }
     }
 
@@ -1175,9 +1354,11 @@ struct ChatView: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                // Carries the full, untruncated line: the model id in the
+                // middle is exactly what the truncation eats.
                 .help(
-                    "the workspace is global; switch it with the Compute "
-                        + "selector in the window toolbar")
+                    computeStatusLine + " — the workspace is global; switch "
+                        + "it with the Compute selector in the window toolbar")
             }
             // A server load that would really be a multi-GB download asks
             // first (field incident 2026-08-29: an uncached 27B silently
@@ -1214,7 +1395,7 @@ struct ChatView: View {
             // Broken into small @ViewBuilder chunks: one flat Section body
             // with this many conditional controls exceeds the type-checker's
             // budget (the classic SwiftUI too-complex-expression failure).
-            Section("Steering") {
+            Section("Steering controls") {
                 variantPickerControls
                 injectionMasterControls
                 adapterControls
@@ -1234,7 +1415,7 @@ struct ChatView: View {
             }
 
             Section {
-                Button("Add vector") { service.addSlot() }
+                Button("Add Vector") { service.addSlot() }
                     .disabled(workspaceVectorsEmpty || !service.steeringEnabled)
                     .help(
                         "add another steering box (inherits this one's settings). All "
@@ -1249,21 +1430,56 @@ struct ChatView: View {
                     text: Binding(
                         get: { service.fineTuning.variantName },
                         set: { service.fineTuning.variantName = $0 }))
-                Button("Save Agent") {
+                    .help(
+                        "the name this agent gets in Agents › Library; it also "
+                            + "names the definition file, so keep it short and "
+                            + "distinct")
+                Button(isSavingAgent ? "Saving…" : "Save Agent") {
+                    guard !isSavingAgent else { return }
                     // Async: the server-workspace path may refresh the vector
                     // catalog once before deciding to save or refuse.
-                    Task { await service.fineTuning.captureVariant() }
+                    isSavingAgent = true
+                    saveAgentStatus = nil
+                    Task {
+                        await service.fineTuning.captureVariant()
+                        // The panel's status slot is shared; snapshot the
+                        // line THIS action just wrote.
+                        saveAgentStatus = service.fineTuning.status
+                        isSavingAgent = false
+                    }
                 }
                 // Workspace-runnable gate, not local-only state: in a server
                 // workspace the button is live exactly when chatting is.
-                .disabled(!service.workspaceHasRunnableModel)
+                .disabled(!service.workspaceHasRunnableModel || isSavingAgent)
                 .help(
                     isServerWorkspace
-                        ? "save the current Steering tab configuration as an "
+                        ? "save the Playground's current configuration as an "
                             + "agent definition (git-versioned recipe, stored "
                             + "locally) recording the server base model and server "
                             + "vector/adapter refs"
-                        : "save the current Steering tab configuration as an agent (variant artifact)")
+                        : "save the Playground's current configuration as an "
+                            + "agent definition (stored locally as a variant "
+                            + "artifact); it appears in Agents › Library")
+                // The gate, visible rather than only in the tooltip.
+                if !service.workspaceHasRunnableModel {
+                    Text(
+                        isServerWorkspace
+                            ? "load a server model, or select a server agent, "
+                                + "before saving — the definition records what "
+                                + "it was built on"
+                            : "load a model before saving — the definition "
+                                + "records the base model it was built on")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+                // The outcome, where the action is. It used to land only in
+                // the Agents section's status line and the bell.
+                if let saveAgentStatus {
+                    Text(saveAgentStatus)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
             }
 
             if workspaceVectorsEmpty {
@@ -1274,7 +1490,9 @@ struct ChatView: View {
                                 + "selected model. Extract one in Data (it runs as "
                                 + "a server job), then Refresh artifacts."
                             : service.state == .ready
-                                ? "No vectors for this model in runs/. Extract one with:\nsteerlab-cli --config prompts/configs/toy-french.json"
+                                ? "No vectors for this model in runs/. Extract one with:\n"
+                                    + "steerlab-cli --config prompts/configs/toy-french.json\n"
+                                    + "then Refresh artifacts."
                                 : "Load a model to see its vectors."
                     )
                     .font(.caption)
@@ -1430,7 +1648,8 @@ struct ChatView: View {
     private var layerBandHelp: String {
         var help =
             "shared by all boxes: inject across N consecutive layers centered "
-            + "on each box's layer"
+            + "on each box's layer (1–11, odd values only — a band is "
+            + "symmetric around its center)"
         if isServerWorkspace {
             help += " (the agent spec's bandWidth — applied server-side)"
         }
@@ -1464,7 +1683,8 @@ struct ChatView: View {
             ? "includes the selected server-side LoRA adapter in the "
                 + "composed agent spec (applied on the server)"
             : "loads the selected LoRA/DoRA adapter for the next generation and "
-                + "unloads it afterward; adapter artifacts are registered in Fine-Tuning"
+                + "unloads it afterward; adapter artifacts are registered in "
+                + "Data › Adapter Training"
     }
 
     /// Adapter toggle + workspace-scoped adapter picker (strict availability:
@@ -1490,8 +1710,9 @@ struct ChatView: View {
             .help("LoRA adapters found on \(service.cluster.substrateLabel)")
             if service.adaptersEnabled, service.serverAdapterOptions.isEmpty {
                 Text(
-                    "No adapters on the server. Train one in Fine-Tuning "
-                        + "(server job) or upload an agent that carries one."
+                    "No adapters on the server. Train one in Data › Adapter "
+                        + "Training (it runs as a server job), or upload an "
+                        + "agent that carries one."
                 )
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -1564,7 +1785,7 @@ struct ChatView: View {
 
         serverAvailabilityCaption(
             "neutral-direction removal",
-            reason: "no server neutral-basis catalog yet; a seeded variant's "
+            reason: "no server neutral-basis catalog yet; a seeded agent's "
                 + "basis pin is kept in composed specs")
 
         Toggle(
@@ -1599,9 +1820,10 @@ struct ChatView: View {
             .help(
                 "records residual activations while the assistant generates and "
                     + "highlights streamed token chunks using the selected trained "
-                    + "reading probe, or vector cosine if no trained probe is selected. "
-                    + "Blue = aligned, red = opposite. "
-                    + "Available for chat-mode generations.")
+                    + "reading probe, or vector cosine if no trained probe is "
+                    + "selected — blue with a solid underline is aligned, red "
+                    + "with a dashed underline is opposite. Chat-mode "
+                    + "generations only")
         Picker(
             "Probe",
             selection: Binding<String?>(
@@ -1648,18 +1870,22 @@ struct ChatView: View {
             .help("optional system instruction for chat mode, or text prepended in raw mode")
 
         // Temperature stays enabled on server workspaces: server chat
-        // honors it (/api/generate/stream and variant chat both take
+        // honors it (/api/generate/stream and agent chat both take
         // `temperature`), so an "unavailable" caption would be false.
-        LabeledContent("Temperature") {
-            Slider(value: $service.temperature, in: 0 ... 1.5, step: 0.1)
-        }
-        .help("sampling temperature for interactive steering; defaults to the study value, 0")
+        // The shared row, not a bare slider: 0 and 0.1 are one step apart
+        // and looked identical with no readout (finding 7a).
+        TemperatureRow(
+            value: $service.temperature,
+            help: "sampling temperature for this Playground chat only — it "
+                + "does not change any study's declared temperature. 0 is "
+                + "greedy decoding; higher values sample more freely")
 
         Toggle("Qwen thinking mode", isOn: $service.qwenThinkingEnabled)
             .disabled(!service.selectedModelID.lowercased().contains("qwen"))
             .help(
-                "Qwen-only chat-template option. Studies default to no-think; toggling "
-                    + "this resets the chat because the rendered prompt format changes")
+                "a Qwen-only chat-template option; studies default to "
+                    + "no-think. Toggling this resets the chat, because the "
+                    + "rendered prompt format changes")
 
         Button("Refresh artifacts") {
             if isServerWorkspace {
@@ -1668,7 +1894,6 @@ struct ChatView: View {
                 service.refreshVectors()
             }
         }
-        .controlSize(.small)
         .help(refreshArtifactsHelp)
     }
 
@@ -1676,7 +1901,7 @@ struct ChatView: View {
         isServerWorkspace
             ? "re-fetch the server's vector catalog and adapter listing"
             : "rescan runs/ for vectors, probes, neutral bases, adapters, "
-                + "and model variants created by the app, web app, or CLI"
+                + "and agents created by this app or by steerlab-cli"
     }
 
     /// Honest inline disabling (design correction): controls with no server
@@ -1788,10 +2013,12 @@ struct ChatView: View {
         let record = service.serverVectorRecord(for: value)
         Section(service.serverSlotConcept(for: value) ?? "vector") {
             HStack(spacing: 6) {
-                Toggle("", isOn: slot.enabled)
+                Toggle("Include this vector", isOn: slot.enabled)
                     .labelsHidden()
-                    .help("include this vector in the composed variant spec")
-                Picker("", selection: slot.vectorID) {
+                    .help(
+                        "include this vector in the composed agent spec the "
+                            + "server applies")
+                Picker("Vector", selection: slot.vectorID) {
                     Text("none").tag(String?.none)
                     // A seeded ref missing from the catalog listing stays
                     // selectable by its server path, so an untouched seed
@@ -1810,6 +2037,9 @@ struct ChatView: View {
                     }
                 }
                 .labelsHidden()
+                .help(
+                    "which of the server's vectors this box injects; picking "
+                        + "one adopts the artifact's own layer, α, and units")
                 .onChange(of: value.vectorID) {
                     // Layer AND alpha AND units: selecting a vector adopts what
                     // the artifact knows about itself (SlotAlphaDefault).
@@ -1823,6 +2053,7 @@ struct ChatView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .help("remove this steering box (the last box clears instead)")
+                .accessibilityLabel("Remove this steering box")
             }
 
             slotModePicker(slot)
@@ -1836,7 +2067,8 @@ struct ChatView: View {
                 }
                 .help(
                     "band center for this vector. Mid-network layers usually steer "
-                        + "best — see the norm-by-layer curve in the Concepts panel")
+                        + "best — see the norm-by-layer curve in Data › "
+                        + "Concepts & Vectors")
 
                 HStack {
                     Text(alphaFieldLabel)
@@ -1876,7 +2108,7 @@ struct ChatView: View {
                     .foregroundStyle(.secondary)
                     .help(
                         "provenance from the server catalog — the injection itself "
-                            + "runs server-side through the composed variant spec")
+                            + "runs server-side through the composed agent spec")
                 if let preview = service.serverInjectionPreview(for: value) {
                     Text(injectionPreviewLine(preview))
                         .font(.caption2.monospacedDigit())
@@ -1956,10 +2188,10 @@ struct ChatView: View {
         let artifact = service.artifact(for: value)
         Section(artifact?.sidecar.concept ?? "vector") {
             HStack(spacing: 6) {
-                Toggle("", isOn: slot.enabled)
+                Toggle("Include this vector", isOn: slot.enabled)
                     .labelsHidden()
                     .help("include this vector in the injected sum")
-                Picker("", selection: slot.vectorID) {
+                Picker("Vector", selection: slot.vectorID) {
                     Text("none").tag(VectorArtifact.ID?.none)
                     ForEach(service.compatibleVectorsGrouped, id: \.concept) { group in
                         Section(group.concept) {
@@ -1975,6 +2207,9 @@ struct ChatView: View {
                     }
                 }
                 .labelsHidden()
+                .help(
+                    "which vector artifact this box injects; picking one "
+                        + "adopts the artifact's own layer, α, and units")
                 .onChange(of: value.vectorID) {
                     // Layer AND alpha AND units: selecting a vector adopts what
                     // the artifact knows about itself (SlotAlphaDefault).
@@ -1988,6 +2223,7 @@ struct ChatView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .help("remove this steering box (the last box clears instead)")
+                .accessibilityLabel("Remove this steering box")
             }
 
             slotModePicker(slot)
@@ -2005,10 +2241,13 @@ struct ChatView: View {
                 }
                 .help(
                     fixedLayer.map {
-                        "Gemma Scope SAE feature vectors are tied to their source residual-stream layer L\($0); band width is ignored for this slot."
+                        "fixed: Gemma Scope SAE feature vectors are tied to "
+                            + "their source residual-stream layer L\($0), and "
+                            + "band width is ignored for this box"
                     }
                         ?? "band center for this vector. Mid-network layers usually steer "
-                        + "best — see the norm-by-layer curve in the Concepts panel")
+                        + "best — see the norm-by-layer curve in Data › "
+                        + "Concepts & Vectors")
 
                 HStack {
                     Text(alphaFieldLabel)
@@ -2068,6 +2307,11 @@ struct ChatView: View {
                 .controlSize(.mini)
                 .disabled(service.concepts.isWorking)
                 .help(normBackfillOfferHelp)
+            if service.concepts.isWorking {
+                Text("another concept job is running — wait for it to finish")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
         }
     }
 
@@ -2265,7 +2509,13 @@ struct ChatView: View {
 
 struct MessageBubble: View {
     let message: ChatService.ChatMessage
-    let copyAction: () -> Void
+    /// What the copy affordance puts on the clipboard.
+    let copyText: () -> String
+    /// What this bubble IS, for the copy affordance's wording: transcript
+    /// bubbles are turns, the Activity feed's bubbles are log entries — and
+    /// offering "Copy this turn" on a build log is exactly the chat/feed
+    /// confusion the split of the two panes exists to prevent.
+    var copyNoun: String = "turn"
     /// Context-menu "Edit turn…" (nil = not editable, e.g. live logs).
     var editAction: (() -> Void)? = nil
     /// Context-menu "Remove turn" — only offered for the LAST transcript
@@ -2323,14 +2573,20 @@ struct MessageBubble: View {
                         }
                         .buttonStyle(.borderless)
                         .controlSize(.small)
-                        .help("Edit this turn")
+                        .help(
+                            "edit this \(copyNoun)'s text — the original stays "
+                                + "available under the bubble and the turn is "
+                                + "badged as edited")
+                        .accessibilityLabel("Edit this \(copyNoun)")
                     }
-                    Button(action: copyAction) {
+                    CopyButton(
+                        help: "copy this \(copyNoun)'s text to the clipboard",
+                        text: { copyText() }
+                    ) {
                         Image(systemName: "doc.on.doc")
                     }
                     .buttonStyle(.borderless)
                     .controlSize(.small)
-                    .help("Copy this turn")
                     if let provenanceBadge {
                         Text(provenanceBadge)
                             .font(.caption2.weight(.semibold))
@@ -2357,12 +2613,12 @@ struct MessageBubble: View {
                                     .orange.opacity(0.55),
                                     style: StrokeStyle(lineWidth: 1, dash: [5, 3])))
                     .contextMenu {
-                        Button("Copy turn", action: copyAction)
+                        Button("Copy \(copyNoun)") { _ = Clipboard.copy(copyText()) }
                         if let editAction {
-                            Button("Edit turn…", action: editAction)
+                            Button("Edit \(copyNoun)…", action: editAction)
                         }
                         if let removeAction {
-                            Button("Remove turn", role: .destructive, action: removeAction)
+                            Button("Remove \(copyNoun)", role: .destructive, action: removeAction)
                         }
                     }
                 if let original = message.originalText {
@@ -2373,10 +2629,19 @@ struct MessageBubble: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.top, 4)
                     } label: {
-                        Label("Original turn (not in context)", systemImage: "clock.arrow.circlepath")
+                        // Not "not in context": that read as if the text had
+                        // gone missing. It is the pre-edit version, kept for
+                        // provenance and no longer sent to the model.
+                        Label(
+                            "Before edit (the model no longer sees this)",
+                            systemImage: "clock.arrow.circlepath")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    .help(
+                        "the text of this \(copyNoun) before it was edited — "
+                            + "kept as provenance and included in copies and "
+                            + "exports, but not sent to the model")
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 4)
                 }
@@ -2421,6 +2686,9 @@ struct MessageBubble: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            .help(
+                "show the whole prompt — long prompts are collapsed so one "
+                    + "of them cannot bury the rest of the transcript")
         } else {
             Text(message.text)
         }
@@ -2461,6 +2729,18 @@ private struct TranscriptTurnEditor: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
                         .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1))
+                .help(
+                    "the text of this turn as the model will see it; the "
+                        + "version before the edit is kept under the turn in "
+                        + "the transcript")
+                .accessibilityLabel("Turn text")
+            // The branching buttons truncate the conversation, and that is
+            // not something to discover afterwards: say it in the sheet, not
+            // only in a tooltip.
+            Text(truncationConsequence)
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
             if let branchUnavailableReason {
                 Label(branchUnavailableReason, systemImage: "exclamationmark.triangle")
                     .font(.caption)
@@ -2470,12 +2750,22 @@ private struct TranscriptTurnEditor: View {
             HStack {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
+                    .help("close without changing this turn")
                 Spacer()
+                // ⌘↩ belongs on the SAFE action: it used to fire the most
+                // consequential branch (truncate everything after this turn
+                // and regenerate) on a reflex Return.
                 Button("Save as is") {
                     onSave(text)
                     dismiss()
                 }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
                 .disabled(!validText)
+                .help(
+                    "save the edited text and leave the rest of the "
+                        + "conversation exactly as it is — later turns stay "
+                        + "in context and nothing regenerates")
                 switch role {
                 case .assistant:
                     Button("Return control to user") {
@@ -2483,23 +2773,49 @@ private struct TranscriptTurnEditor: View {
                         dismiss()
                     }
                     .disabled(!validText)
+                    .help(
+                        "save this as the model's last word, DELETE every "
+                            + "later turn, and hand the composer back to you "
+                            + "as User — nothing regenerates")
                     Button("Continue generation from here") {
                         onContinueAssistant(text)
                         dismiss()
                     }
-                    .keyboardShortcut(.defaultAction)
                     .disabled(!validText || branchUnavailableReason != nil)
+                    .help(
+                        branchUnavailableReason
+                            ?? "save this text as an unfinished assistant turn, "
+                            + "DELETE every later turn, and have the model "
+                            + "carry on mid-turn from here (prefill)")
                 case .user:
                     Button("Restart conversation from here") {
                         onRestartUser(text)
                         dismiss()
                     }
-                    .keyboardShortcut(.defaultAction)
                     .disabled(!validText || branchUnavailableReason != nil)
+                    .help(
+                        branchUnavailableReason
+                            ?? "save this user turn, DELETE every later turn, "
+                            + "and generate a fresh reply to it")
                 }
             }
         }
         .padding(18)
+    }
+
+    /// What the branching buttons do to the turns AFTER this one — the
+    /// consequence the sheet never stated. They delete those turns outright,
+    /// so the sheet says "deleted", not "dropped from context".
+    private var truncationConsequence: String {
+        let actions =
+            role == .assistant
+            ? "Return control to user and Continue generation from here"
+            : "Restart conversation from here"
+        return "\(actions) delete every turn after this one from the "
+            + "transcript — they cannot be recovered. Copy or download the "
+            + "transcript first if you need them. Save as is keeps the whole "
+            + "conversation and changes only this turn's text (the version "
+            + "before the edit stays under the turn)."
     }
 }
 
@@ -2575,6 +2891,8 @@ private struct VariantRobustnessOutputBubble: View {
                 if output.isComplete {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
+                        .help("this output finished generating")
+                        .accessibilityLabel("Finished")
                 } else {
                     ProgressView()
                         .controlSize(.small)
@@ -2642,6 +2960,9 @@ private struct VariantRobustnessSummaryCard: View {
                             }
                             .padding(.vertical, 4)
                         }
+                        .help(
+                            "this judgment's confidence, its stated reason, "
+                                + "and any structured fields the judge returned")
                     }
                 }
             }
@@ -2650,10 +2971,15 @@ private struct VariantRobustnessSummaryCard: View {
                     .font(.caption)
                     .foregroundStyle(.green)
             } else {
-                ForEach(report.warnings, id: \.self) { warning in
+                // Indexed, not `id: \.self`: two identical warnings are two
+                // findings and both must render.
+                ForEach(Array(report.warnings.enumerated()), id: \.offset) { _, warning in
                     Label(warning, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .help(warning)
                 }
             }
         }
@@ -2757,8 +3083,13 @@ private struct StagedLongPromptCard: View {
                     .lineLimit(4)
             }
             Spacer()
-            Button("Clear", action: clear)
+            // Not "Clear": that is Reset Chat's verb, and this throws away
+            // one staged paste, not the conversation.
+            Button("Discard staged prompt", action: clear)
                 .buttonStyle(.borderless)
+                .help(
+                    "throw away this staged paste and type in the box again — "
+                        + "the conversation is untouched")
         }
         .padding(8)
         .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
@@ -2903,15 +3234,22 @@ private struct ProbeHighlightedText: View {
         for span in spans {
             var part = AttributedString(span.text)
             let opacity = span.opacity
+            let aligned = (span.score ?? 0) >= 0
             if opacity > 0 {
                 part.backgroundColor =
-                    (span.score ?? 0) >= 0
+                    aligned
                     ? Color.blue.opacity(opacity)
                     : Color.red.opacity(opacity)
             }
             part.foregroundColor = .primary
+            // The SIGN must not be colour-only: a solid rule under aligned
+            // text, a dashed one under opposite text, so the two are
+            // distinguishable without colour vision.
             if opacity > 0.28 {
-                part.underlineStyle = .single
+                part.underlineStyle =
+                    aligned
+                    ? Text.LineStyle.single
+                    : Text.LineStyle(pattern: .dash, color: nil)
             }
             result += part
         }
@@ -2926,7 +3264,8 @@ private struct ProbeHighlightedText: View {
     }
 
     private var legend: String {
-        "Probe highlight: blue aligned, red opposite; fixed scale, max |score| "
+        "Probe highlight: blue with a solid underline = aligned, red with a "
+            + "dashed underline = opposite; fixed scale, max |score| "
             + maxMagnitude.formatted(.number.precision(.fractionLength(3)))
     }
 }
