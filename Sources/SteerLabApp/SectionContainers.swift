@@ -275,7 +275,9 @@ struct ComputeSectionView: View {
         let modelText = "\(models) model\(models == 1 ? "" : "s") available"
         switch service.cluster.computeTarget {
         case .local:
-            return "in-process MLX · \(modelText)"
+            // One spelling for the local engine everywhere, the same one
+            // `substrateLabel` answers (2026-09-06 audit, headline 18).
+            return "Local (MLX) · \(modelText)"
         case .server:
             return "\(service.cluster.status ?? "not connected") · \(modelText)"
         }

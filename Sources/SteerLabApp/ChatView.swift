@@ -308,12 +308,17 @@ struct ChatView: View {
     }
 
     /// Substrate-first window subtitle (live-testing finding: which
-    /// substrate is active must be unmistakable): "MLX (local) — …" or
+    /// substrate is active must be unmistakable): "Local (MLX) — …" or
     /// "Server: <label> — …" ahead of the model/connection detail.
+    ///
+    /// One spelling for the local engine everywhere — the same one
+    /// `ClusterConnectionStore.substrateLabel` answers (2026-09-06 audit,
+    /// headline 18: "MLX (local)", "Local (MLX)", "MLX", "in-process MLX"
+    /// were four spellings of one thing).
     private var subtitle: String {
         switch service.cluster.computeTarget {
         case .local:
-            return "MLX (local) — " + localSubtitleDetail
+            return "Local (MLX) — " + localSubtitleDetail
         case .server:
             // Connection line ONLY: activity is a full sentence and lives
             // in the transcript status card + the Model section, where it
