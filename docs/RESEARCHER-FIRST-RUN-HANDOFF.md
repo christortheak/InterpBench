@@ -1,6 +1,7 @@
 # Researcher first-run implementation handoff
 
-Branch: `codex/researcher-first-run`. Base: main at `7284463`.
+Branch: `codex/researcher-first-run`. Started from main at `7284463`;
+main’s subsequent documentation-only commit `6c8703c` is integrated as well.
 Main, installed apps, user client environments and running studies are unchanged.
 This branch is for the maintainer's coding/audit agents to review and integrate.
 
