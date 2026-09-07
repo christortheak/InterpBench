@@ -1609,7 +1609,13 @@ public final class ExperimentPanel {
             guard generation == remoteOptimizationsGeneration, environment.isCurrent(context) else { return }
             remoteOptimizations = []
             let substrate = cluster?.substrateLabel ?? "server"
-            note("could not list optimizations on \(substrate): \(error)", severity: .error)
+            // `localizedDescription`, never the raw error: this is the site
+            // that printed a whole `NSURLErrorDomain … _kCFStreamErrorCodeKey=61`
+            // paragraph into the Optimizations card (2026-09-06 audit,
+            // headline 17). URLError answers with a plain sentence.
+            note(
+                "could not list optimizations on \(substrate): "
+                    + error.localizedDescription, severity: .error)
         }
     }
 
