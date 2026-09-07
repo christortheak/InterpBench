@@ -15,8 +15,46 @@ public enum InjectionModeCopy {
 
     public static let alphaHelp =
         "α in units of the layer's residual-stream norm, so it is comparable "
-        + "across concepts and layers. The layer is widened by the variant's "
-        + "band width."
+        + "across concepts and layers. The layer is widened by the agent's "
+        + "layer band."
+
+    /// α's help FOLLOWING the units the surface is actually in. The
+    /// unconditional `alphaHelp` above asserted norm units even where the
+    /// caller's "Alpha in residual-norm units" toggle was off, which made the
+    /// tooltip wrong exactly where the number was most easily misread (audit
+    /// 2026-09-06, headline 11): a 0.4 in norm units and a 0.4 raw differ by
+    /// roughly the residual-norm/vector-norm ratio.
+    public static func alphaHelp(normUnits: Bool) -> String {
+        normUnits
+            ? alphaHelp
+                + " A tenth of a norm (0.1) is the usual starting dose; at or "
+                + "above 1 the injection is as large as the whole residual "
+                + "stream and coherence collapses."
+            : "α is the literal coefficient on the vector (injected Δnorm = "
+                + "α × ‖v‖), NOT a fraction of the residual-stream norm — "
+                + "turn on \"Alpha in residual-norm units\" above for the "
+                + "comparable denomination. The layer is widened by the "
+                + "agent's layer band."
+    }
+
+    /// The steering α a surface should START from, in the denomination it is
+    /// actually in. `SlotAlphaDefault` owns both numbers; this only picks
+    /// between them so no surface carries a raw-unit literal into a
+    /// norm-unit field. (λ's default is
+    /// `ChatService.SteerSlot.defaultAblationStrength` — main-actor state,
+    /// so the view picks that one.)
+    public static func defaultSteeringAlpha(normUnits: Bool) -> Double {
+        normUnits
+            ? SlotAlphaDefault.normUnitsDefault
+            : SlotAlphaDefault.rawUnitsDefault
+    }
+
+    /// The α field's label, carrying its denomination — "Alpha" alone is
+    /// unit-blind, and the two readings differ by roughly the
+    /// residual-norm/vector-norm ratio.
+    public static func alphaLabel(normUnits: Bool) -> String {
+        normUnits ? "Alpha (norm units)" : "Alpha (raw)"
+    }
 
     public static let lambdaHelp =
         "λ = 1 removes the concept completely. Below 1 removes part of it. "

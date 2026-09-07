@@ -18,6 +18,9 @@ struct SeedsListControls: View {
     let panel: ExperimentPanel
     @State private var seedsText: String = ""
     @State private var errorText: String?
+    /// "Set" greying out was the only sign the write landed; a study author
+    /// changing seeds on purpose deserves to be told it happened.
+    @State private var confirmationText: String?
 
     private var isDraft: Bool { manifest.status == .draft }
 
@@ -34,9 +37,10 @@ struct SeedsListControls: View {
                     "seeds (comma-separated, e.g. 20260610, 20260611)",
                     text: $seedsText)
                     .onSubmit { commit() }
+                    .help(Self.seedsHelp)
                 Button("Set") { commit() }
                     .disabled(!isDraft || seedsText == storedSeedsText)
-                    .help(Self.seedsHelp)
+                    .help(setButtonHelp)
             }
             .font(.caption)
             .disabled(!isDraft)
@@ -45,14 +49,37 @@ struct SeedsListControls: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let confirmationText {
+                Label(confirmationText, systemImage: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .onAppear { seedsText = storedSeedsText }
         .onChange(of: manifest.name) { seedsText = storedSeedsText }
+        // The field used to seed on appear and on a NAME change only, so a
+        // seed list written by another path on the same draft left this row
+        // showing the old value. Adopt the new stored list whenever the field
+        // is not carrying an unsaved edit.
+        .onChange(of: storedSeedsText) { previous, current in
+            if seedsText == previous { seedsText = current }
+        }
+        .onChange(of: seedsText) {
+            errorText = nil
+            confirmationText = nil
+        }
     }
 
     private var storedSeedsText: String {
         manifest.seeds.map(String.init).joined(separator: ", ")
+    }
+
+    private var setButtonHelp: String {
+        isDraft
+            ? "write this list into the draft's manifest — " + Self.seedsHelp
+            : "the study is frozen; its seed list is pinned data — duplicate "
+                + "the study to change it"
     }
 
     private func commit() {
@@ -64,6 +91,7 @@ struct SeedsListControls: View {
         for part in parts {
             guard let seed = UInt64(part) else {
                 errorText = "'\(part)' is not a whole number seed"
+                confirmationText = nil
                 return
             }
             seeds.append(seed)
@@ -72,12 +100,16 @@ struct SeedsListControls: View {
             _ = try ExperimentStore.setSeeds(
                 seeds, experimentName: manifest.name)
             errorText = nil
+            confirmationText =
+                "seed list set — \(seeds.count) seed"
+                + (seeds.count == 1 ? "" : "s")
             panel.refresh()
         } catch {
+            confirmationText = nil
             errorText =
                 "Couldn't set the seed list — the study must still be a "
                 + "draft, the list non-empty, and every seed distinct. "
-                + "Details: \(error)"
+                + "Details: \(error.localizedDescription)"
         }
     }
 }

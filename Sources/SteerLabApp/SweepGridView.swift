@@ -52,8 +52,11 @@ struct SweepGridView: View {
     @ViewBuilder
     private func cellView(_ cell: SweepGridPresentation.Cell?) -> some View {
         if let cell {
-            Text(format(cell.score))
+            // The winner was marked by an accent BORDER and a stronger fill —
+            // colour alone. The star and the bold weight say it too.
+            Text(cellText(cell))
                 .font(.caption2.monospacedDigit())
+                .fontWeight(cell.state == .winner ? .bold : .regular)
                 // Measured but ineligible: hiding it would misrepresent the
                 // sweep, showing it plain would misrepresent the result.
                 .strikethrough(cell.isStruckThrough)
@@ -67,9 +70,21 @@ struct SweepGridView: View {
                             cell.state == .winner ? Color.accentColor : .clear,
                             lineWidth: 1.5))
                 .help(tooltip(cell))
+                // VoiceOver reads the number alone otherwise — the state,
+                // the layer and the α are all in the tooltip's sentence.
+                .accessibilityLabel(tooltip(cell))
         } else {
-            Text("—").font(.caption2).foregroundStyle(.tertiary)
+            Text("—")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .accessibilityLabel("no cell measured at this layer and alpha")
         }
+    }
+
+    /// Winners carry a star so the selection survives greyscale, a colour
+    /// vision difference, and a screenshot pasted into a document.
+    private func cellText(_ cell: SweepGridPresentation.Cell) -> String {
+        cell.state == .winner ? "★" + format(cell.score) : format(cell.score)
     }
 
     private func background(_ cell: SweepGridPresentation.Cell) -> Color {
@@ -100,6 +115,12 @@ struct SweepGridView: View {
 
     @ViewBuilder
     private var footer: some View {
+        // The legend, so neither mark rests on colour or on hovering.
+        Text("★ selected by the declared criterion · struck through = failed "
+            + "a constraint (measured, never eligible)")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
         if let baseline = grid.baseline {
             Text("baseline (no injection): \(format(baseline.score))")
                 .font(.caption2)
