@@ -31,8 +31,31 @@ struct PipelineComposerSection: View {
     @State private var syncedFor: String?
     @State private var reviewed: DraftAuthoringSnapshot?
     @State private var authoringMessage: String?
+    /// Set when "Discard Edits and Reload" was pressed on a dirty editor —
+    /// released by the dialog.
+    @State private var confirmDiscard = false
+    /// Set when "Declare pipeline" was switched OFF — the removal writes the
+    /// manifest, so it asks first.
+    @State private var confirmRemoveDeclaration = false
 
     private var isDraft: Bool { manifest.status == .draft }
+
+    /// The declaration as it stands ON DISK — the reference for `isDirty`.
+    private var savedDraft: PipelineDraft? {
+        PipelineDraft.parse(manifest.pipeline)
+    }
+
+    /// Does the editor hold stages or gates that are not in the manifest?
+    ///
+    /// Run submits the SAVED chain (`manifest.pipeline`), so an editor that
+    /// disagrees with disk is the sweep editor's "finding 5" wearing a
+    /// different label: the researcher presses Run believing they are running
+    /// what they can see.
+    private var isDirty: Bool {
+        guard isDraft else { return false }
+        guard let savedDraft else { return declared }
+        return !declared || draft != savedDraft
+    }
 
     private var visibleStages: [String] {
         PipelineDraft.allStages.filter {
@@ -61,9 +84,11 @@ struct PipelineComposerSection: View {
         Section("Pipeline (chain runner)") {
             if isDraft {
                 if let authoringMessage {
-                    Text(authoringMessage).font(.caption).foregroundStyle(.orange)
+                    Text(authoringMessage)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .textSelection(.enabled)
                 }
-                Button("Discard pipeline edits and reload") { syncFromManifest(force: true) }
                 editor
             } else if let existing = PipelineDraft.parse(manifest.pipeline) {
                 frozenSummary(existing)
@@ -137,6 +162,36 @@ struct PipelineComposerSection: View {
     (fine for exploration, loud advisory at freeze).
     """
 
+    /// One line per stage, on the checkbox itself — the ⓘ popover carries the
+    /// same list, but a tooltip is what a hovering hand finds.
+    private static func stageHelp(_ stage: String) -> String {
+        switch stage {
+        case "extract":
+            "include the extract stage — re-derive each concept's steering "
+                + "vector from its pinned stimuli"
+        case "validate":
+            "include the validate stage — score held-out validation scenarios "
+                + "and cross-concept cosines (what the validation gates read)"
+        case "sweep":
+            "include the sweep stage — try the layer×alpha grid on dev "
+                + "prompts and let the declared rule pick each winning cell"
+        case "promote":
+            "include the promote stage — mint each winning cell as a named "
+                + "agent with a birth certificate"
+        case "run":
+            "include the run stage — the study itself: every task prompt × "
+                + "condition, paired to baseline, with the capability battery"
+        case "evaluate":
+            "include the evaluate stage — blinded A/B judging of this chain's "
+                + "own run (needs run in the same chain)"
+        case "analyze":
+            "include the analyze stage — effect sizes, corrections and "
+                + "residuals over this chain's run (needs run in the chain)"
+        default:
+            "include the \(stage) stage in the chain"
+        }
+    }
+
     private var runButtonLabel: String {
         isDraft ? "Run Draft Pipeline (exploratory)" : "Run Frozen Pipeline"
     }
@@ -173,8 +228,9 @@ struct PipelineComposerSection: View {
                 Task { await panel.runPipelineRemotely() }
             }
         }
-        .disabled(!savedViolations.isEmpty)
+        .disabled(!savedViolations.isEmpty || isDirty)
         .help(Self.runHelp)
+        runDisabledReason
         // The submission's live outcome, INLINE where the button was
         // pressed (2026-07-19 paper cut: failures previously surfaced
         // only inside the collapsed Remote options).
@@ -186,19 +242,68 @@ struct PipelineComposerSection: View {
         }
     }
 
+    /// Why Run is grey, beside the button — never a silently disabled
+    /// control. The SAVED block's violations are what gate the run, and they
+    /// are not the same list the editor above renders (that one follows the
+    /// draft, and goes empty the moment the researcher fixes it — before
+    /// saving).
+    @ViewBuilder
+    private var runDisabledReason: some View {
+        if !savedViolations.isEmpty {
+            ForEach(savedViolations, id: \.self) { violation in
+                Label(violation, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            Text(isDraft
+                ? "the SAVED chain is what Run submits, and it is not legal "
+                    + "yet — fix the editor above, then Save Pipeline"
+                : "the frozen chain is not legal on this engine — duplicate "
+                    + "the study to declare a runnable one")
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if isDirty {
+            Label(
+                "unsaved edits — Run executes the SAVED chain, not what is on "
+                    + "screen; Save Pipeline first",
+                systemImage: "pencil.circle.fill")
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     @ViewBuilder
     private var editor: some View {
         Toggle("Declare pipeline", isOn: declareBinding)
             .help(
                 "the chain runs as one cluster submission and is preregistered "
                     + "with the study — stages and gates are manifest data, "
-                    + "declared before anything runs")
+                    + "declared before anything runs; switching this OFF "
+                    + "deletes the declaration from the manifest and asks first")
+            .confirmationDialog(
+                "Remove the pipeline declaration from '\(manifest.name)'?",
+                isPresented: $confirmRemoveDeclaration
+            ) {
+                Button("Remove the declaration", role: .destructive) {
+                    saveDeclaration(nil)
+                }
+                Button("Keep it", role: .cancel) {}
+            } message: {
+                Text("This writes the manifest immediately: the declared "
+                    + "stages and gates are deleted from the study, and Run "
+                    + "Pipeline disappears until a chain is declared again.")
+            }
         if declared {
             HStack(spacing: 10) {
                 ForEach(visibleStages, id: \.self) { stage in
                     Toggle(stage, isOn: stageBinding(stage))
                         .toggleStyle(.checkbox)
                         .font(.caption)
+                        .help(Self.stageHelp(stage))
                 }
                 InfoButton(text: Self.stageInfo)
             }
@@ -225,7 +330,10 @@ struct PipelineComposerSection: View {
                     hint: "0.8",
                     binding: thresholdBinding(\.maxCrossConceptCosine),
                     caption: "abort if any two concepts' vectors exceed this "
-                        + "|cosine| similarity (0–1; empty = no cap)")
+                        + "|cosine| similarity (0–1; empty = no cap)",
+                    help: "stop the chain after validate when two concepts' "
+                        + "vectors have collapsed into one direction — 0–1, "
+                        + "empty declares no cap")
             }
             if draft.stages.contains("sweep") {
                 Toggle(
@@ -268,11 +376,53 @@ struct PipelineComposerSection: View {
                 Text(violation)
                     .font(.caption2)
                     .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Button("Save Pipeline") {
-                saveDeclaration(draft)
+            HStack(spacing: 8) {
+                Button(isDirty ? "Save Pipeline (unsaved edits)" : "Save Pipeline") {
+                    saveDeclaration(draft)
+                }
+                .disabled(!draftViolations.isEmpty)
+                .help(
+                    "writes these stages and gates into the study manifest as "
+                        + "declared data — draft-only, and freeze pins it; Run "
+                        + "Pipeline submits whatever is saved here")
+                // Below Save, never above it: this throws the edits away, and
+                // the first control in a section is where the primary action
+                // is expected.
+                Button("Discard Edits and Reload") {
+                    if isDirty {
+                        confirmDiscard = true
+                    } else {
+                        syncFromManifest(force: true)
+                    }
+                }
+                .help(
+                    "re-reads the saved declaration from the manifest, "
+                        + "throwing away the unsaved stage and gate edits in "
+                        + "this editor (it asks first when there are any)")
+                .confirmationDialog(
+                    "Discard the unsaved pipeline edits to '\(manifest.name)'?",
+                    isPresented: $confirmDiscard
+                ) {
+                    Button("Discard and reload", role: .destructive) {
+                        syncFromManifest(force: true)
+                    }
+                    Button("Keep editing", role: .cancel) {}
+                } message: {
+                    Text("The stages and gates you have changed here are not "
+                        + "in the manifest and cannot be recovered. The saved "
+                        + "declaration is re-read from disk.")
+                }
+                Spacer()
             }
-            .disabled(!draftViolations.isEmpty)
+            if !draftViolations.isEmpty {
+                Text("Save is disabled while the declaration above would be "
+                    + "refused at freeze — the list names what is missing.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -301,29 +451,61 @@ struct PipelineComposerSection: View {
     private var promotionRuleEditor: some View {
         @Bindable var draft = panel.draft
         @Bindable var panel = panel
+        // Its own sub-header: these four fields are a DIFFERENT declaration
+        // from the chain above, with a different Save. Without the header the
+        // section read as one form with two save buttons.
+        HStack(spacing: 6) {
+            Text("Promotion rule — the screen→confirm gate")
+                .font(.caption.bold())
+            InfoButton(text: Self.promotionInfo)
+            Spacer()
+        }
+        .padding(.top, 4)
         HStack(spacing: 8) {
             TextField(
                 "promotion FDR threshold (e.g. 0.05)",
                 text: $draft.promotionFDRText)
                 .frame(maxWidth: 220)
+                .help(
+                    "the concept's screening q-value (BH-FDR across the "
+                        + "screen) must fall below this before its promoted "
+                        + "agent enters a confirmation study — leave empty for "
+                        + "no threshold")
             Toggle("dose-monotone", isOn: $draft.promotionDoseMonotone)
                 .toggleStyle(.checkbox)
+                .help(
+                    "require the effect to grow with α across the sweep's "
+                        + "ladder rather than appear at one cell only")
             Toggle(
                 "exceeds random floor",
                 isOn: $draft.promotionExceedsRandomFloor)
                 .toggleStyle(.checkbox)
-            InfoButton(text: Self.promotionInfo)
+                .help(
+                    "require the effect to beat the matched-norm random "
+                        + "control's — a specificity test against that "
+                        + "comparator, not a causal claim on its own")
         }
         .disabled(!isDraft)
         TextField(
             "capability gate (free text, e.g. battery within 0.05 of baseline)",
             text: $draft.promotionCapabilityGateText)
             .disabled(!isDraft)
+            .help(
+                "the capability-battery condition the promoted agent must "
+                    + "hold, in your own words — declared manifest data the "
+                    + "analysis layer reads; it changes no prompt and is never "
+                    + "sent to any model")
         if isDraft {
             Button("Save Promotion Rule") { panel.savePromotionRule() }
                 .help(
-                    "writes the screen→confirm promotion gate into the "
-                        + "manifest (draft-only; the analysis layer reads it)")
+                    "writes these four promotion-rule fields into the manifest "
+                        + "(draft-only; the analysis layer reads it) — the "
+                        + "chain above has its own Save Pipeline")
+            Text("Save Pipeline covers the stages and gates; Save Promotion "
+                + "Rule covers these four fields.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -362,13 +544,15 @@ struct PipelineComposerSection: View {
     /// underneath.
     @ViewBuilder
     private func gateRow(
-        label: String, hint: String, binding: Binding<String>, caption: String
+        label: String, hint: String, binding: Binding<String>, caption: String,
+        help: String
     ) -> some View {
         LabeledContent(label) {
             TextField(hint, text: binding)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 64)
                 .multilineTextAlignment(.trailing)
+                .help(help)
         }
         .font(.caption)
         Text(caption)
@@ -377,12 +561,22 @@ struct PipelineComposerSection: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
+    /// Switching the toggle ON only opens the editor (nothing is written
+    /// until Save Pipeline). Switching it OFF DELETES the declaration from
+    /// the manifest on disk, so it asks first and `declared` stays true until
+    /// the dialog confirms.
     private var declareBinding: Binding<Bool> {
         Binding(
             get: { declared },
             set: { enabled in
-                if enabled { declared = true }
-                else { saveDeclaration(nil) }
+                if enabled {
+                    declared = true
+                } else if manifest.pipeline == nil {
+                    // Nothing on disk to remove — just collapse the editor.
+                    declared = false
+                } else {
+                    confirmRemoveDeclaration = true
+                }
             })
     }
 
@@ -433,7 +627,10 @@ struct PipelineComposerSection: View {
                 caption: "abort after validate unless EVERY concept's "
                     + "TRANSFER accuracy (held-out items at the "
                     + "extraction-derived threshold) reaches this (0–1; "
-                    + "empty = no floor)")
+                    + "empty = no floor)",
+                help: "the legacy transfer-accuracy floor every concept must "
+                    + "reach or the chain stops after validate — 0–1, empty "
+                    + "declares no floor")
         } else {
             gateRow(
                 label: "Declared minimum",
@@ -441,7 +638,10 @@ struct PipelineComposerSection: View {
                 binding: thresholdBinding(\.accuracyFloorMinimum),
                 caption: "abort after validate unless EVERY concept's "
                     + "declared metric reaches this (0–1; required while a "
-                    + "metric is selected)")
+                    + "metric is selected)",
+                help: "the number the metric picked above must reach for "
+                    + "every concept or the chain stops after validate — 0–1, "
+                    + "required while a metric is selected")
         }
     }
 
@@ -511,7 +711,8 @@ struct PipelineComposerSection: View {
             authoringMessage = nil
         } catch {
             reviewed = nil
-            authoringMessage = "Could not read the pipeline declaration: \(error)"
+            authoringMessage = "Could not read the pipeline declaration: "
+                + error.localizedDescription
         }
     }
 }
