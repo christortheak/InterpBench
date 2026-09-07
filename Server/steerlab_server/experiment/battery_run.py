@@ -824,7 +824,7 @@ def execute(battery_file: str, agent_values: list[str], *,
             alpha_units: str = DEFAULT_ALPHA_UNITS,
             dtype: str | None = None, device: str | None = None,
             root: str | None = None, model_provider=None,
-            model_release=None, log=None) -> dict:
+            model_release=None, log=None, on_run_created=None) -> dict:
     """Run the battery against every agent and write the run directory.
 
     Returns the report dict; the run directory is ``result["runDirectory"]``.
@@ -843,6 +843,8 @@ def execute(battery_file: str, agent_values: list[str], *,
     # directory is minted only now, which is the rule that keeps a refused
     # invocation from leaving an empty immutable run behind.
     run_directory = paths.make_unique_run_directory(RUN_SLUG, root)
+    if on_run_created is not None:
+        on_run_created(run_directory)
     records_path = os.path.join(run_directory, RECORDS_FILENAME)
 
     _log(f"battery run: '{spec.path}' sha256 {spec.digest} — format "

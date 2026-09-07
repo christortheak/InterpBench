@@ -32,6 +32,7 @@ public enum ClusterCLIVerb: String, CaseIterable, Sendable, Equatable {
     case sitesImport = "sites import"
     case sitesGuide = "sites guide"
     case sitesReview = "sites review"
+    case sitesAccept = "sites accept"
     /// WP5 §3.3: read the complete generated environment and scheduler
     /// commands BEFORE anything runs. Read-only and offline — it touches no
     /// shell, no scheduler, and no network; it renders the saved profile.
@@ -79,7 +80,7 @@ public enum ClusterCLIVerb: String, CaseIterable, Sendable, Equatable {
     /// Registry-wide and offline document-authoring commands need no saved site.
     public var requiresSite: Bool {
         switch self {
-        case .sitesList, .sitesImport, .sitesGuide, .sitesReview: false
+        case .sitesList, .sitesImport, .sitesGuide, .sitesReview, .sitesAccept: false
         default: true
         }
     }
@@ -152,6 +153,7 @@ public enum ClusterCLIVerb: String, CaseIterable, Sendable, Equatable {
         var flags: Set<String> = []
         switch self {
         case .sitesExport: flags.insert("--out")
+        case .sitesAccept: flags.insert("--draft-sha256")
         case .preview: flags.insert("--job-class")
         case .bootstrapApply: flags.insert("--plan-hash")
         // Every controller verb may name a job explicitly; without it they use
@@ -178,7 +180,7 @@ public enum ClusterCLIVerb: String, CaseIterable, Sendable, Equatable {
         // profile data, so accepting one here would show an environment the
         // stored site does not imply — the exact confusion the preview exists
         // to remove.
-        case .sitesList, .sitesShow, .sitesExport, .sitesImport, .sitesGuide, .sitesReview, .preview,
+        case .sitesList, .sitesShow, .sitesExport, .sitesImport, .sitesGuide, .sitesReview, .sitesAccept, .preview,
             .authCommand, .authOpen, .authStatus, .authClose,
             // `import` reads the site's declared storage roots and its ssh
             // transport, and nothing else the provisioning overrides carry
@@ -210,7 +212,7 @@ public enum ClusterCLIVerb: String, CaseIterable, Sendable, Equatable {
     public var positional: String {
         switch self {
         case .sitesImport: "<profile.json>"
-        case .sitesReview: "<draft.json>"
+        case .sitesReview, .sitesAccept: "<draft.json>"
         default: ""
         }
     }
@@ -226,6 +228,7 @@ public enum ClusterCLIVerb: String, CaseIterable, Sendable, Equatable {
         case .sitesExport: "Write the site's profile — never a credential — to a file."
         case .sitesImport: "Upsert a site profile by its canonical remote identity."
         case .sitesGuide: "Print cluster-document authoring and review prompts with the companion format."
+        case .sitesAccept: "Import the exact reviewed companion and retain its cited evidence; never replace a saved site."
         case .sitesReview: "Check a sourced profile draft and render its plan without importing or connecting."
         case .preview:
             "Render the environment and scheduler commands this site will run."
@@ -287,7 +290,7 @@ public enum ClusterCLIVerb: String, CaseIterable, Sendable, Equatable {
             // `--site` is required wherever it is accepted, so it is not
             // optional-bracketed: an agent reading the synopsis must be able
             // to see the difference.
-            parts.append(flag == "--site" ? spelling : "[\(spelling)]")
+            parts.append(flag == "--site" || (self == .sitesAccept && flag == "--draft-sha256") ? spelling : "[\(spelling)]")
         }
         return parts.joined(separator: " ")
     }
@@ -471,6 +474,7 @@ public struct ClusterCLIInvocation: Sendable, Equatable {
     /// the template, and no second controller joins the queue.
     public var renderOnly: Bool
     public var planHash: String?
+    public var draftSHA256: String?
     public var jobID: String?
     public var outPath: String?
     /// `preview --job-class <class>`: narrow the header pane to one class. Nil
@@ -707,6 +711,7 @@ public enum ClusterCLIParser {
                     invocation.since = normalized
                 case "--out": invocation.outPath = value
                 case "--plan-hash": invocation.planHash = value
+                case "--draft-sha256": invocation.draftSHA256 = value
                 case "--job-id": invocation.jobID = value
                 default: invocation.overrides.apply(flag: word, value: value)
                 }
@@ -753,8 +758,10 @@ public enum ClusterCLIParser {
         case .sitesImport where invocation.positional == nil:
             throw ClusterCLIError.missingArgument(
                 verb: matched.verb, what: "a profile JSON path")
-        case .sitesReview where invocation.positional == nil:
+        case .sitesReview where invocation.positional == nil, .sitesAccept where invocation.positional == nil:
             throw ClusterCLIError.missingArgument(verb: matched.verb, what: "a companion draft JSON path")
+        case .sitesAccept where invocation.draftSHA256 == nil:
+            throw ClusterCLIError.missingArgument(verb: matched.verb, what: "--draft-sha256 <reviewed SHA-256>")
         case .sitesGuide where invocation.positional != nil:
             throw ClusterCLIError.unexpectedArgument(invocation.positional!)
         case .sitesExport where invocation.outPath == nil:

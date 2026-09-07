@@ -46,6 +46,10 @@ R, W, B = Role.RUNNER, Role.WORKBENCH, Role.BOTH
 
 #: THE CENSUS. Every (method, template) the app serves must appear here.
 CENSUS: tuple[RouteRole, ...] = (
+    _r("POST", "/api/science/plan", B, "Inspect staged standalone diagnostic inputs and execution resources without execution or authorship."),
+    _r("POST", "/api/science/submit", B, "Execute a reviewed standalone diagnostic and retain its scientific output type."),
+    _r("GET", "/api/jobs/{job_id}/recovery", B, "Read controller ownership evidence and its external review token."),
+    _r("POST", "/api/jobs/{job_id}/recover", B, "Record an explicit owner-exited attestation through the existing recovery gate."),
     _r("GET", "/api/science/catalog", B, "Read shipped method guidance and explicit supported operation mappings; no execution."),
     _r("GET", "/api/science/guide/{method}", B, "Read one shipped method guide; no workspace access."),
     _r("GET", "/api/science/operation/{operation}", B, "Read an operation's public interfaces and restrictions; no execution."),

@@ -668,6 +668,10 @@ def test_there_is_no_token_flag_on_any_runner_verb():
             # it — a false positive that would have to be silenced somehow,
             # and silencing a secret guard is worse than tightening it.
             if "token" in flag.lstrip("-").split("-"):
+                # This one public SHA-256 is a concurrency precondition, never
+                # an authentication credential; all other token flags stay paths.
+                if (spec.label, flag) == ("runner recover", "--review-token"):
+                    continue
                 assert flag == "--token-file", (
                     f"{spec.label} declares {flag} — the only token spelling "
                     "on this surface is --token-file (a path, not a secret)")

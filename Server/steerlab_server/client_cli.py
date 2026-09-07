@@ -431,6 +431,12 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
     # verification: the adapter supports it for a library caller who must,
     # but turning off certificate checking should take more than one word on
     # a command line.
+    VerbSpec("runner", "science-plan", positional="<request.json>", purpose="Review staged standalone battery or stability inputs and runner resources.", value_flags=_RUNNER_FLAGS, required_flags=frozenset({"--runner"})),
+    VerbSpec("runner", "science-submit", positional="<request.json>", purpose="Submit the exact reviewed standalone diagnostic; use runner jobs and logs to reconnect.", value_flags=_RUNNER_FLAGS | {"--plan-sha256"}, required_flags=frozenset({"--runner", "--plan-sha256"})),
+    VerbSpec("runner", "resubmit", positional="<job-id>", purpose="Resume an eligible checkpointed or cancelled-resumable job through its existing gate.", value_flags=_RUNNER_FLAGS | {"--walltime"}, required_flags=frozenset({"--runner"})),
+    VerbSpec("runner", "reconcile", purpose="Fold all known child records and run the existing merge pass on this endpoint.", value_flags=_RUNNER_FLAGS, required_flags=frozenset({"--runner"})),
+    VerbSpec("runner", "recovery", positional="<job-id>", purpose="Inspect job ownership and the external recovery review token.", value_flags=_RUNNER_FLAGS, required_flags=frozenset({"--runner"})),
+    VerbSpec("runner", "recover", positional="<job-id>", purpose="Attest that the recorded owner exited and request gated recovery.", value_flags=_RUNNER_FLAGS | {"--review-token", "--reason"}, boolean_flags=frozenset({"--confirm-owner-exited"}), required_flags=frozenset({"--runner", "--review-token", "--reason", "--confirm-owner-exited"})),
     VerbSpec("runner", "capabilities",
              purpose="Ask a runner what it is and what it can execute.",
              value_flags=_RUNNER_FLAGS,
@@ -2991,6 +2997,10 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
     spec = invocation.spec
     verb = spec.verb
     args = invocation.positionals
+
+    if verb in {"science-plan", "science-submit", "resubmit", "recovery", "recover", "reconcile"}:
+        from .client.remote_workflows import run
+        return run(client, invocation, common)
 
     if verb == "capabilities":
         document = client.info()

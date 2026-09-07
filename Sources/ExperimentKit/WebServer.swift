@@ -763,6 +763,10 @@ public final class SteerLabWebServer: Sendable {
             if response.succeeded { service.experiments.refresh() }
             return Response(status: response.status, body: response.body)
 
+        case ("GET", "/api/cluster/sites/guide"), ("POST", "/api/cluster/sites/review"), ("POST", "/api/cluster/sites/accept"):
+            let response = ClusterProfileHTTP.perform(String(path.split(separator: "/").last!), body: body)
+            return Response(status: response.status, body: response.body)
+
         case ("GET", "/api/science/catalog"):
             let response = ScienceCatalog.http(kind: "catalog", id: nil)
             return Response(status: response.status, body: response.body)

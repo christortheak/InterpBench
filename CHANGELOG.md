@@ -12,6 +12,20 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Reviewed cluster profiles can be accepted through `cluster sites accept`, the
+  setup wizard, and Mac `/api/cluster/sites/guide|review|accept`. Acceptance pins
+  companion bytes, retains citations privately, and refuses replacement.
+- Standalone battery and stability jobs now have `/api/science/plan|submit`,
+  Python `runner science-plan|science-submit`, Mac `remote science-plan|science-submit`,
+  and Server Jobs controls. Plans bind staged inputs and declared resources;
+  queued input drift refuses. Output types are preserved and these jobs do not
+  support checkpoint resumption. Partial battery output locations remain visible.
+- Controller recovery is exposed through both remote clients, HTTP and the app,
+  using the existing ownership review and explicit attestation gates. Python
+  `runner resubmit` joins the existing checkpoint-resume API and app controls.
+- The scientific catalog/reference gate now checks engine dispatch declarations,
+  including family help references, instead of checking resource copies alone.
+
 - Shipped scientific method guidance: `science list`, `science guide <method>` and
   `science operation <operation>` on both `steerlab-cli` and `steerlab`, the same
   catalog and twelve guides over `GET /api/science/catalog|guide/{method}|operation/{operation}`

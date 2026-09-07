@@ -146,4 +146,50 @@ import Testing
         #expect(throws: ClusterCLIError.self) { try ClusterCLIParser.parse(["sites", "guide", "unexpected"]) }
         #expect(throws: ClusterCLIError.self) { try ClusterCLIParser.parse(["sites", "review", "/private/draft.json", "--env-prefix", "/tmp/env"]) }
     }
+    @Test func acceptancePinsBytesRetainsEvidenceAndNeverReplaces() throws {
+        let root = FileManager.default.temporaryDirectory.appending(component: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = ClusterSiteRepository(directory: root.appending(component: "sites"), legacyRegistryData: { nil })
+        let data = try JSONEncoder().encode(draft(profile()))
+        let checked = try ClusterProfileCoauthoring.review(data: data)
+        #expect(throws: ClusterProfileAcceptance.Refusal.self) {
+            try ClusterProfileAcceptance.accept(data: data + Data(" ".utf8), expectedSHA256: checked.draftSHA256, repository: repository)
+        }
+        #expect(!FileManager.default.fileExists(atPath: root.path))
+        let accepted = try ClusterProfileAcceptance.accept(data: data, expectedSHA256: checked.draftSHA256, repository: repository)
+        #expect(try Data(contentsOf: URL(filePath: accepted.evidencePath)) == data)
+        #expect(try repository.site(id: accepted.site.id)?.profile == profile())
+        let original = try Data(contentsOf: repository.fileURL(forSite: accepted.site.id))
+        #expect(throws: ClusterLifecycleError.self) {
+            try ClusterProfileAcceptance.accept(data: data, expectedSHA256: checked.draftSHA256, repository: repository)
+        }
+        #expect(try Data(contentsOf: repository.fileURL(forSite: accepted.site.id)) == original)
+        let incomplete = try JSONEncoder().encode(ClusterProfileCoauthoring.guide().draftExample)
+        #expect(throws: ClusterProfileAcceptance.Refusal.self) {
+            try ClusterProfileAcceptance.accept(data: incomplete, expectedSHA256: ClusterSupportPaths.sha256Hex(incomplete), repository: repository)
+        }
+        #expect(throws: ClusterCLIError.self) { try ClusterCLIParser.parse(["sites", "accept", "draft.json"]) }
+        let invocation = try ClusterCLIParser.parse(["sites", "accept", "draft.json", "--draft-sha256", checked.draftSHA256])
+        #expect(invocation.draftSHA256 == checked.draftSHA256 && !invocation.verb.requiresSite)
+        #expect(throws: ClusterCLIError.self) { try ClusterCLIParser.parse(["sites", "accept", "draft.json", "--draft-sha256", checked.draftSHA256, "--force"]) }
+    }
+
+    @Test func httpReviewAndAcceptanceUseIdenticalCompanionBytes() throws {
+        let root = FileManager.default.temporaryDirectory.appending(component: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = ClusterSiteRepository(directory: root.appending(component: "sites"), legacyRegistryData: { nil })
+        let data = try JSONEncoder().encode(draft(profile()))
+        let text = String(decoding: data, as: UTF8.self)
+        let reviewed = ClusterProfileHTTP.perform("review", body: try JSONSerialization.data(withJSONObject: ["draftText": text]), repository: repository)
+        #expect(reviewed.status == "200 OK")
+        let object = try #require(JSONSerialization.jsonObject(with: reviewed.body) as? [String: Any])
+        let digest = try #require(object["draftSHA256"] as? String)
+        let stale = ClusterProfileHTTP.perform("accept", body: try JSONSerialization.data(withJSONObject: ["draftText": text + " ", "draftSHA256": digest]), repository: repository)
+        #expect(stale.status != "200 OK")
+        #expect(!FileManager.default.fileExists(atPath: root.path))
+        let accepted = ClusterProfileHTTP.perform("accept", body: try JSONSerialization.data(withJSONObject: ["draftText": text, "draftSHA256": digest]), repository: repository)
+        #expect(accepted.status == "200 OK")
+        #expect(try repository.sites().count == 1)
+    }
+
 }

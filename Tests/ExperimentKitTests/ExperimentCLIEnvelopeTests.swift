@@ -761,6 +761,7 @@ import Testing
             // agent path; their human output is unchanged.
             "panel list", "panel check", "panel compile", "panel inspect", "panel import",
             "experiment set-pipeline", "design expand",
+            "remote science-plan", "remote science-submit", "remote recovery", "remote recover", "remote reconcile",
             "remote model-plan", "remote model-install", "remote model-status", "remote model-cancel",
             // The chat-template capability record (2026-09-05): shown, probed
             // from the pinned template through this Mac's tokenizer, or

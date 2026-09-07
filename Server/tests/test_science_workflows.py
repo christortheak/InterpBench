@@ -33,7 +33,8 @@ def test_shipped_resources_are_complete_and_gated():
                 assert route in routes, (operation['id'], route)
     assert {o['id'] for o in catalog['operations'] if o['id'].startswith('optvec-')} == {
         'optvec-' + v for v in ('train', 'eval', 'geometry', 'interpret', 'family', 'jspace', 'gradient', 'fracture', 'campaign')}
-    assert all(science_catalog.operation(v)['http'] is None for v in ('stability', 'battery', 'rescore-style'))
+    assert science_catalog.operation('rescore-style')['http'] is None
+    assert all(science_catalog.operation(v)['http'] == 'POST /api/science/plan; POST /api/science/submit' for v in ('stability', 'battery'))
 
 
 def test_client_and_http_return_the_same_shipped_reference(tmp_path, monkeypatch, capsys):
@@ -146,3 +147,19 @@ def test_evaluate_cli_json_and_existing_instruction_warning(tmp_path, monkeypatc
     assert cli.main(args) == 0
     second = json.loads(capsys.readouterr().out)
     assert second['changed'] is False and second['result']['reused'] is True
+
+
+def test_catalog_engine_census_rejects_unknown_verbs_and_families():
+    import importlib.util
+    path = ROOT / 'scripts/ci/science_cli_census.py'
+    spec = importlib.util.spec_from_file_location('science_cli_census', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    source = (ROOT / 'Server/steerlab_server/cli.py').read_text()
+    module.check_catalog(science_catalog.catalog(), source)
+    for command in ('steerlab-server optvec imaginary --help',
+                    'steerlab-server imaginary --help',
+                    'steerlab-server experiment imaginary study --json',
+                    'steerlab-server battery imaginary --json'):
+        with pytest.raises(AssertionError):
+            module.check_catalog({'operations': [{'id': 'invalid', 'engineCLI': command}]}, source)

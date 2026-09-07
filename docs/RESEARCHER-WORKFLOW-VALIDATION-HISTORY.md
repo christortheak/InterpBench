@@ -1159,3 +1159,54 @@ interactive app QA, cluster operation, app installation or engine deployment
 was performed. No main checkout changes or merge were made. Existing frozen
 studies and run artifacts were not migrated; the new operation catalog grants
 no unsupported execution authority.
+
+
+## Cluster onboarding and remote scientific execution — 2026-09-06
+
+Branch `codex/cluster-execution-workflow`, based on landed main `73bfbd7`.
+See [the slice handoff](CLUSTER-EXECUTION-WORKFLOW-HANDOFF.md) for public paths,
+boundaries, auditor feedback and the maintainer's review gate.
+
+Final validation:
+
+- Python: **6,076 passed, 9 skipped, 8 warnings**, 157.45 seconds;
+  `/private/tmp/cluster-execution-python-final.log`.
+- Serial Xcode beta: **277 SteeringKit + 4,589 ExperimentKit passed**,
+  `TEST SUCCEEDED`; `/private/tmp/cluster-execution-swift-complete.log`.
+  The app/CLI also built successfully; the suite executes real Python client
+  parity checks from this venv-less worktree using the exported interpreter.
+- Scientific catalog, study interviews, Python client reference, all generated
+  engine and Swift CLI reference regions, normal/release bridge gates and public
+  tree scan pass. The catalog checks actual engine verb declarations, with
+  invented-family and invented-verb negative controls.
+- `audit-stability-preflight.py` proves the extracted stability admission block
+  and numerical/output tail unchanged against `73bfbd7`, with negative controls.
+  It also proves battery execution unchanged apart from the explicit optional
+  output-created callback. Historical public-boundary, lazy-import and task-prompt
+  parser AST audits pass; the boundary proof verifies 3,436 function bodies.
+- Final diff review added pins for vector sidecar bytes, disabled diagnostic
+  automatic resubmission under both resource spellings, and retained scheduler
+  timestamps/identity. The source/read-only planning checks and real local
+  cancellation and numeric-owner tests pass without loading real model weights.
+- Command-entry tests exposed and corrected a Python dispatch placement error
+  that adapter-only tests missed. All six new Python runner verbs now execute
+  through `client_cli.main` against a captured mock HTTP transport. Missing
+  recovery attestation refuses before HTTP. Mac command tests cover flags before
+  the job positional, missing/extra positionals and duplicate flags. The new
+  cancellation fixture atomically publishes its record before cancellation can
+  observe it, matching the race repair from the preceding review.
+- The implementation diff was read locally. Independent maintainer review through
+  the user remains required before landing; there is no self-merge.
+
+Full suite commands use the same absolute Python interpreter as the preceding
+entry, exported before Xcode as `TEST_RUNNER_STEERLAB_TEST_PYTHON`, with
+`DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer` and
+`TOOLCHAINS=com.apple.dt.toolchain.Metal.32023.920.1`. Derived data stays in
+`/private/tmp/interpbench-workflow-xcode`; Xcode testing is serial and sets
+`CLANG_COVERAGE_MAPPING=NO`. Python uses `PYTHONPATH=Server HF_HUB_OFFLINE=1`.
+
+No live cluster, scheduler allocation, model installation, real study, interactive
+app qualification, app installation or engine deployment was performed. These
+software checks establish neither memory fit nor scientific qualification.
+Frozen study bytes and existing runs are not migrated. Standalone input/output
+transport composition and verified custody/cleanup remain separate work.

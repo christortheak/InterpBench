@@ -994,25 +994,28 @@ public struct ClusterSiteRepository: Sendable {
         _ profile: ClusterSiteProfile, force: Bool = false, now: Date = Date(),
         warn: (String) -> Void = { _ in }
     ) throws -> ClusterSiteRecord {
-        let document = try load()
-        let identity = ClusterConnectionStore.canonicalKey(
-            ClusterConnectionStore.registryKey(forProfile: profile))
-        let existing = document.sites.first { $0.canonicalIdentity == identity }
-        // The LOGIN verdict is decided first, and deliberately: "this profile
-        // would strand you at Duo" is a more useful thing to be told than
-        // "there is already a file here", and a --force that then hit the
-        // login refusal would have taught the researcher to reach for --force.
-        if case .refuse(let user, let host, let source) = Self.sshLoginFinding(
-            incoming: profile, existing: existing?.profile) {
-            throw ClusterLifecycleError.sshLoginDropped(
-                siteID: existing?.id ?? (profile.name.isEmpty ? host : profile.name),
-                host: host, expectedUser: user, source: source)
+        return try ManifestFileTransaction.withLock(manifestURL: directoryURL,
+            workspaceRoot: directoryURL.deletingLastPathComponent()) {
+            let document = try load()
+            let identity = ClusterConnectionStore.canonicalKey(
+                ClusterConnectionStore.registryKey(forProfile: profile))
+            let existing = document.sites.first { $0.canonicalIdentity == identity }
+            // The LOGIN verdict is decided first, and deliberately: "this profile
+            // would strand you at Duo" is a more useful thing to be told than
+            // "there is already a file here", and a --force that then hit the
+            // login refusal would have taught the researcher to reach for --force.
+            if case .refuse(let user, let host, let source) = Self.sshLoginFinding(
+                incoming: profile, existing: existing?.profile) {
+                throw ClusterLifecycleError.sshLoginDropped(
+                    siteID: existing?.id ?? (profile.name.isEmpty ? host : profile.name),
+                    host: host, expectedUser: user, source: source)
+            }
+            if !force, let existing {
+                throw ClusterLifecycleError.siteFileExists(
+                    siteID: existing.id, path: fileURL(forSite: existing.id).path)
+            }
+            return try upsert(profile: profile, now: now, warn: warn)
         }
-        if !force, let existing {
-            throw ClusterLifecycleError.siteFileExists(
-                siteID: existing.id, path: fileURL(forSite: existing.id).path)
-        }
-        return try upsert(profile: profile, now: now, warn: warn)
     }
 
     /// Decode-then-import, for the callers that hold bytes rather than a

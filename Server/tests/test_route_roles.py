@@ -125,6 +125,12 @@ def test_every_entry_uses_the_methods_and_templates_the_router_declares():
 #: ``test_the_adapters_endpoint_scan_finds_nothing_undeclared`` below, which
 #: reads the adapter's source rather than trusting this list.
 _ADAPTER_ROUTES = (
+    ("POST", "/api/science/plan"),
+    ("POST", "/api/science/submit"),
+    ("POST", "/api/jobs/reconcile"),
+    ("POST", "/api/jobs/{job_id}/resubmit"),
+    ("GET", "/api/jobs/{job_id}/recovery"),
+    ("POST", "/api/jobs/{job_id}/recover"),
     ("GET", "/api/models/plan"),
     ("POST", "/api/models/install"),
     ("GET", "/api/info"),

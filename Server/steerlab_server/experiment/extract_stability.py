@@ -234,23 +234,11 @@ def _layer_entry(layer: int, stability: vm.DirectionStability) -> dict:
     return entry
 
 
-def run(experiment: str, concept: str, *, root: str | None = None,
-        resamples: int = DEFAULT_RESAMPLES, fraction: float = DEFAULT_FRACTION,
-        seed: int = DEFAULT_SEED,
-        order_shuffles: int = DEFAULT_ORDER_SHUFFLES,
-        dtype: str | None = None, device: str | None = None,
-        log=None) -> dict:
-    """Capture one extraction's rows and diagnose the direction's stability.
-
-    Returns the written document (its ``directory`` and ``path`` keys name
-    where it landed). Raises :class:`ExtractStabilityError` for every refusal
-    this verb owns; a model that will not load, or stimuli that will not read,
-    raise their own exceptions and reach the envelope as failures.
-    """
-    from ..steering import extractor, model_loader
+def preflight(experiment: str, concept: str, *, root: str | None = None,
+              resamples: int = DEFAULT_RESAMPLES, fraction: float = DEFAULT_FRACTION) -> dict:
+    """Resolve the diagnostic inputs and cheap admission gates without loading weights."""
     from .manifest import Manifest
 
-    log = log or (lambda _line: None)
     _safe_component(concept, what="concept")
     manifest = Manifest.load(experiment, root)
     ref = _resolve_concept(manifest, concept)
@@ -300,6 +288,37 @@ def run(experiment: str, concept: str, *, root: str | None = None,
             code="usage", state="blocked",
             repair_action="raise --fraction, or extract this concept from more "
                           "stimuli")
+
+    return {'manifest': manifest, 'ref': ref, 'method': method, 'positive': positive, 'negative': negative, 'stimulus_provenance': stimulus_provenance, 'reading_position': reading_position, 'rendering': rendering, 'row_count': row_count}
+
+
+def run(experiment: str, concept: str, *, root: str | None = None,
+        resamples: int = DEFAULT_RESAMPLES, fraction: float = DEFAULT_FRACTION,
+        seed: int = DEFAULT_SEED,
+        order_shuffles: int = DEFAULT_ORDER_SHUFFLES,
+        dtype: str | None = None, device: str | None = None,
+        log=None) -> dict:
+    """Capture one extraction's rows and diagnose the direction's stability.
+
+    Returns the written document (its ``directory`` and ``path`` keys name
+    where it landed). Raises :class:`ExtractStabilityError` for every refusal
+    this verb owns; a model that will not load, or stimuli that will not read,
+    raise their own exceptions and reach the envelope as failures.
+    """
+    from ..steering import extractor, model_loader
+    from .manifest import Manifest
+
+    log = log or (lambda _line: None)
+    prepared = preflight(experiment, concept, root=root, resamples=resamples, fraction=fraction)
+    manifest = prepared['manifest']
+    ref = prepared['ref']
+    method = prepared['method']
+    positive = prepared['positive']
+    negative = prepared['negative']
+    stimulus_provenance = prepared['stimulus_provenance']
+    reading_position = prepared['reading_position']
+    rendering = prepared['rendering']
+    row_count = prepared['row_count']
 
     device = model_loader.resolve_device(device)
     log(f"loading {manifest.model_id}"

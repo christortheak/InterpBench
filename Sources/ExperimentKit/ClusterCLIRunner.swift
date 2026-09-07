@@ -131,7 +131,7 @@ public struct ClusterCLIRunner: Sendable {
         // channel before any verb runs (`emit` is stdout in human mode and
         // stderr in JSON mode, so the one-document invariant survives).
         // Offline coauthoring neither consults nor migrates the private registry.
-        if invocation.verb != .sitesGuide, invocation.verb != .sitesReview,
+        if invocation.verb != .sitesGuide, invocation.verb != .sitesReview, invocation.verb != .sitesAccept,
             let summary = (try? repository.migrateLegacyStoresIfNeeded(now: now()))?
             .summary {
             emit("site registry: \(summary)")
@@ -217,6 +217,26 @@ public struct ClusterCLIRunner: Sendable {
         case .sitesShow: return try sitesShow(invocation)
         case .sitesExport: return try sitesExport(invocation)
         case .sitesImport: return try sitesImport(invocation)
+        case .sitesAccept:
+            do {
+                guard let path = invocation.positional, let expected = invocation.draftSHA256 else {
+                    throw ClusterCLIError.missingArgument(verb: invocation.verb, what: "a companion path and --draft-sha256")
+                }
+                let data = try Data(contentsOf: URL(filePath: path))
+                let accepted = try await ClusterProfileAcceptance.accept(data: data,
+                    expectedSHA256: expected, repository: repository, now: now())
+                var envelope = ClusterCLIEnvelope(verb: invocation.verb.displayName, state: .ready,
+                    message: "Imported reviewed profile and retained citations. Continue with cluster preview, then the existing authentication, bootstrap and connection workflow.", changed: true, observedAt: now())
+                envelope.siteID = accepted.site.id
+                envelope.siteName = accepted.site.displayName
+                envelope.outputPath = accepted.evidencePath
+                envelope.sites = [summary(of: accepted.site)]
+                envelope.advisories = accepted.advisories
+                return envelope
+            } catch let error as ClusterProfileAcceptance.Refusal {
+                return .failure(verb: invocation.verb.displayName, code: error.code,
+                    reason: error.reason, repairAction: error.repairAction, state: .blocked)
+            }
         case .sitesGuide:
             var envelope = ClusterCLIEnvelope(verb: invocation.verb.displayName, state: .ready,
                 message: "Use the prompts and companion format to coauthor a profile from documentation.", observedAt: now())

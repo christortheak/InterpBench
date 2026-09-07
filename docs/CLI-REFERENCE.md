@@ -192,6 +192,12 @@ The command table below is checked against the declared client verb specs.
 <!-- BEGIN CLIENT-STUDY-ASSEMBLY -->
 
 ```text
+steerlab runner science-plan <request.json> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
+steerlab runner science-submit <request.json> --plan-sha256 <value> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
+steerlab runner resubmit <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>] [--walltime <value>]
+steerlab runner reconcile --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
+steerlab runner recovery <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
+steerlab runner recover <job-id> --confirm-owner-exited --reason <value> --review-token <value> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab science list
 steerlab science guide <method>
 steerlab science operation <operation>
@@ -2126,6 +2132,11 @@ workflow that works. The success message names the file to author:
 <!-- Generated from the declarative verb table — `steerlab-cli docs cli-reference --write`. Edit the table, not this block. -->
 
 ```
+steerlab-cli remote science-plan <request.json> [--site <id>] [--url <server>]
+steerlab-cli remote science-submit <request.json> --plan-sha256 <value> [--site <id>] [--url <server>]
+steerlab-cli remote recovery <job-id> [--site <id>] [--url <server>]
+steerlab-cli remote recover <job-id> --confirm-owner-exited --reason <text> --review-token <value> [--site <id>] [--url <server>]
+steerlab-cli remote reconcile [--site <id>] [--url <server>]
 steerlab-cli remote model-plan <modelID> [--revision <commit>] [--site <id>] [--url <server>]
 steerlab-cli remote model-install <modelID> --plan-sha256 <value> [--revision <commit>] [--site <id>] [--url <server>]
 steerlab-cli remote model-status <job-id> [--site <id>] [--url <server>]
@@ -2147,6 +2158,11 @@ steerlab-cli remote chat [--hash <sha256>] [--max-tokens <n>] --prompt <text> [-
 
 | Verb | Purpose |
 |---|---|
+| `remote science-plan` | Review staged battery or stability inputs and runner resources. |
+| `remote science-submit` | Submit the exact reviewed standalone diagnostic; reconnect using remote jobs and logs. |
+| `remote recovery` | Inspect controller ownership evidence and its external review token. |
+| `remote recover` | Attest that the recorded owner exited and request gated recovery. |
+| `remote reconcile` | Fold all known child records and run the existing merge pass on this endpoint. |
 | `remote model-plan` | Inspect the selected server cache, installation policy and plan digest without downloading or loading weights. |
 | `remote model-install` | Start one durable installation on the reviewed server and return its job ID. |
 | `remote model-status` | Observe the exact model-install job and terminal outcome. |
@@ -2404,6 +2420,7 @@ steerlab-cli cluster sites export [--help] [--json] [--out <file>] --site <id>
 steerlab-cli cluster sites import <profile.json> [--force] [--help] [--json]
 steerlab-cli cluster sites guide [--help] [--json]
 steerlab-cli cluster sites review <draft.json> [--help] [--json]
+steerlab-cli cluster sites accept <draft.json> --draft-sha256 <value> [--help] [--json]
 steerlab-cli cluster preview [--help] [--job-class <class>] [--json] --site <id>
 steerlab-cli cluster status [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--refresh] [--remote-repo <path>] --site <id> [--squeue <command>]
 steerlab-cli cluster diagnose [--bootstrap-partition <partition>] [--env-file <path>] [--env-prefix <path>] [--help] [--json] [--materialize-env] [--no-materialize-env] [--payload <path>] [--python-version <version>] [--redact] [--remote-repo <path>] --site <id> [--squeue <command>]
@@ -2439,6 +2456,7 @@ steerlab-cli cluster ensure [--allow-bootstrap] [--allow-controller-start] [--al
 | `cluster sites import` | Upsert a site profile by its canonical remote identity. |
 | `cluster sites guide` | Print cluster-document authoring and review prompts with the companion format. |
 | `cluster sites review` | Check a sourced profile draft and render its plan without importing or connecting. |
+| `cluster sites accept` | Import the exact reviewed companion and retain its cited evidence; never replace a saved site. |
 | `cluster preview` | Render the environment and scheduler commands this site will run. |
 | `cluster status` | Report each lifecycle layer's state, read-only. |
 | `cluster diagnose` | Report status plus the auth command, log path, and last operations. |

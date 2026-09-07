@@ -418,6 +418,11 @@ public enum ExperimentCLIParser {
                 + "runs; \"\" clears the override.",
             valueFlags: ["--revision", "--reason"]),
 
+        .init(namespace: "remote", verb: "science-plan", positional: "<request.json>", purpose: "Review staged battery or stability inputs and runner resources.", valueFlags: modelPreparationConnection),
+        .init(namespace: "remote", verb: "science-submit", positional: "<request.json>", purpose: "Submit the exact reviewed standalone diagnostic; reconnect using remote jobs and logs.", valueFlags: modelPreparationConnection.union(["--plan-sha256"]), requiredFlags: ["--plan-sha256"]),
+        .init(namespace: "remote", verb: "reconcile", purpose: "Fold all known child records and run the existing merge pass on this endpoint.", valueFlags: modelPreparationConnection),
+        .init(namespace: "remote", verb: "recovery", positional: "<job-id>", purpose: "Inspect controller ownership evidence and its external review token.", valueFlags: modelPreparationConnection),
+        .init(namespace: "remote", verb: "recover", positional: "<job-id>", purpose: "Attest that the recorded owner exited and request gated recovery.", booleanFlags: ["--confirm-owner-exited"], valueFlags: modelPreparationConnection.union(["--review-token", "--reason"]), requiredFlags: ["--review-token", "--reason", "--confirm-owner-exited"]),
         .init(namespace: "remote", verb: "model-plan", positional: "<modelID>", purpose: "Inspect the selected server cache, installation policy and plan digest without downloading or loading weights.", valueFlags: modelPreparationConnection.union(["--revision"])),
         .init(namespace: "remote", verb: "model-install", positional: "<modelID>", purpose: "Start one durable installation on the reviewed server and return its job ID.", valueFlags: modelPreparationConnection.union(["--revision", "--plan-sha256"]), requiredFlags: ["--plan-sha256"]),
         .init(namespace: "remote", verb: "model-status", positional: "<job-id>", purpose: "Observe the exact model-install job and terminal outcome.", valueFlags: modelPreparationConnection),

@@ -6,7 +6,7 @@ Select a concept already declared in a study, its supported meanDifference or la
 
 The stability operation captures the same extraction rows as the engine, then resamples them. It writes a diagnostic outside immutable runs and does not replace the pinned vector. Read stimulusDrift: the diagnostic can report live stimulus bytes that differ from the study's pins. Restore/review those inputs rather than interpreting the result as a reading of the old artifact.
 
-Use `steerlab-server experiment extract-stability <study> <concept> --resamples 32 --fraction 0.8 --seed 1 --json` on the compute host. There is no HTTP or bundle execution route for this diagnostic. CPU resampling still requires a model activation capture first. Mac numerical parity is not claimed; a Mac user can run the Python engine through its captured endpoint.
+Use `steerlab-server experiment extract-stability <study> <concept> --resamples 32 --fraction 0.8 --seed 1 --json` on the compute host. For a managed remote job, use `runner science-plan` / `runner science-submit` (Python client), `remote science-plan` / `remote science-submit` (Mac), or `POST /api/science/plan` and `/api/science/submit`. Supply operation `stability` with parameters `experiment`, `concept` and optional `resamples`, `fraction`, `seed`, `orderShuffles`, `dtype`, `device`. Submit the exact returned `planSHA256`. Inputs must already be staged under the runner root through the declared transfer policy; this is not a standalone bundle transport. The child rechecks inputs after queueing, and the job retains the diagnostic path. It does not resume from a checkpoint. CPU resampling still requires a model activation capture first. Mac numerical parity is not claimed; a Mac user can run the Python engine through its captured endpoint.
 
 Report per-layer cosine movement, sign flips and the resampling settings. Stability does not show behavioral efficacy, construct specificity or a safe dose. Follow with held-out validation and a controlled behavioral study; do not invent a universal acceptance threshold.
 
@@ -17,3 +17,5 @@ Help author the inputs for this method. First restate the researcher-approved co
 ## Independent review prompt
 
 Review the proposed inputs without assuming the author is correct. Check the declared method, schema, labels, split overlap, source/identity pins, baseline and controls, rendering/sampling settings and whether the requested claim follows from the planned measurements. Separate mechanical checks from scientific judgment. Name each blocker and its repair; passing a parser is not scientific validation.
+
+Remote requests accept the seed as an unsigned integer or decimal string; plans return decimal text to preserve all UInt64 digits across clients.

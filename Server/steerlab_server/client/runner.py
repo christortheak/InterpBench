@@ -877,6 +877,32 @@ class RunnerClient:
         listed = document.get("jobs")
         return list(listed) if isinstance(listed, list) else []
 
+    def scientific_plan(self, request: dict) -> dict:
+        return self._json("POST", "/api/science/plan", json_body=request)
+
+    def scientific_submit(self, request: dict, plan_sha256: str) -> dict:
+        # Exactly one POST. Inspect jobs after ambiguous transport failure.
+        if not isinstance(plan_sha256, str) or not _SHA256_HEX.fullmatch(plan_sha256):
+            raise RunnerRefusal("Use the exact SHA-256 from science-plan.", repair_action="Review science-plan on the intended runner.")
+        response = self._json("POST", "/api/science/submit", json_body={"request": request, "planSHA256": plan_sha256})
+        if not isinstance(response, dict) or not isinstance(response.get("jobId"), str) or not response["jobId"]:
+            raise RunnerError("Diagnostic submission returned no job ID; its outcome is uncertain.", repair_action="Inspect runner jobs on the same endpoint before considering another submission.")
+        return response
+
+    def reconcile_jobs(self) -> dict:
+        return self._json("POST", "/api/jobs/reconcile", json_body={})
+
+    def resubmit_job(self, job_id: str, walltime: str | None = None) -> dict:
+        return self._json("POST", f"/api/jobs/{quote(job_id, safe='')}/resubmit",
+                          json_body={"walltime": walltime} if walltime else {})
+
+    def job_recovery(self, job_id: str) -> dict:
+        return self._json("GET", f"/api/jobs/{quote(job_id, safe='')}/recovery")
+
+    def recover_job(self, job_id: str, review_token: str, reason: str) -> dict:
+        return self._json("POST", f"/api/jobs/{quote(job_id, safe='')}/recover",
+                          json_body={"reviewToken": review_token, "reason": reason, "confirmOwnerExited": True})
+
     def cancel_job(self, job_id: str) -> dict:
         """``POST /api/jobs/{id}/cancel``.
 

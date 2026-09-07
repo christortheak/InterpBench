@@ -62,7 +62,13 @@ struct ClusterSetupWizard: View {
                 })
         }
         .sheet(isPresented: $showingProfileCoauthoring) {
-            ClusterProfileCoauthoringSheet(onImport: { importSite($0) })
+            ClusterProfileCoauthoringSheet(repository: cluster.siteRegistry, onImport: { record in
+                cluster.reloadSitesFromDisk()
+                if let entry = cluster.servers.first(where: { $0.siteID == record.id }) {
+                    selectedEntryID = entry.id
+                    provisioner.selectSite(entry.resolvedSite)
+                }
+            })
         }
         .fileImporter(
             isPresented: $showingSiteImporter, allowedContentTypes: [.json]

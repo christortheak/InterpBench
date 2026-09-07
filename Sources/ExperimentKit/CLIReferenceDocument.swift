@@ -104,6 +104,7 @@ public enum CLIReferenceDocument {
         .init(
             id: "swift-remote",
             verbLabels: [
+                "remote science-plan", "remote science-submit", "remote recovery", "remote recover", "remote reconcile",
                 "remote model-plan", "remote model-install", "remote model-status", "remote model-cancel",
                 "remote capabilities", "remote package", "remote upload",
                 "remote submit-bundle", "remote jobs", "remote logs",

@@ -79,6 +79,8 @@ _DEFAULT_PORTS = {"http": "80", "https": "443"}
 # bearer token as soon as the server runs a Slurm executor, a non-local profile,
 # or a non-loopback bind.
 _PRIVILEGED_PREFIXES = (
+    "/api/science/plan",
+    "/api/science/submit",
     "/api/slurm/submit",
     "/api/slurm/bundle",
     "/api/bundles/upload",

@@ -35,6 +35,7 @@ public enum ClusterProfileCoauthoring {
         public let draftExample: Draft
     }
     public struct Review: Encodable, Sendable, Equatable {
+        public let draftSHA256: String
         public let profile: ClusterSiteProfile
         public let preview: ClusterSitePreview
         public let requiredFactPaths: [String]
@@ -48,10 +49,11 @@ public enum ClusterProfileCoauthoring {
         public var readyForImport: Bool { blockers.isEmpty && questions.isEmpty }
 
         enum CodingKeys: String, CodingKey {
-            case profile, preview, requiredFactPaths, sources, facts, questions, blockers, advisories, readyForImport
+            case draftSHA256, profile, preview, requiredFactPaths, sources, facts, questions, blockers, advisories, readyForImport
         }
         public func encode(to encoder: any Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(draftSHA256, forKey: .draftSHA256)
             try c.encode(profile, forKey: .profile)
             try c.encode(preview, forKey: .preview)
             try c.encode(requiredFactPaths, forKey: .requiredFactPaths)
@@ -105,8 +107,9 @@ public enum ClusterProfileCoauthoring {
         credentials go in the Keychain through the normal authentication handoff.
 
         Give the researcher the profile, citations, remaining questions and rendered
-        plan for review. After they accept the factual/configuration choices, export
-        only profile to a private profile.json and use cluster sites import. Continue
+        plan for review. After they accept the factual/configuration choices, import
+        the reviewed companion using cluster sites accept <draft.json> --draft-sha256
+        <profileAuthoring.draftSHA256>. This preserves the cited evidence. Continue
         with cluster preview, auth command, bootstrap plan and the supported connect/
         qualification operations. Importing a profile does not authorize deployment,
         allocation, downloads or cleanup. Keep the local workspace authoritative;
@@ -210,7 +213,7 @@ public enum ClusterProfileCoauthoring {
                 blockers.append("Resolve required execution fact: " + fact.detail)
             }
         }
-        return Review(profile: profile, preview: ClusterSitePreview(profile), requiredFactPaths: required,
+        return Review(draftSHA256: ClusterSupportPaths.sha256Hex(data), profile: profile, preview: ClusterSitePreview(profile), requiredFactPaths: required,
             sources: draft.sources, facts: draft.facts, questions: draft.questions, blockers: Array(Set(blockers)).sorted(),
             advisories: validation.filter { $0.severity == .warning }.map(\.message))
     }

@@ -1040,6 +1040,75 @@ import Testing
         #expect(controller.message?.hasPrefix("Could not inspect") == true)
     }
 
+    @Test func scientificCLIUsesTheJobPositionalAndRejectsAmbiguousArguments() async throws {
+        let client = ClusterClient(profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+            session: Self.session { request in
+                #expect(request.url?.path == "/api/jobs/example-job/recovery")
+                return (Data(#"{"eligible":false}"#.utf8), 200)
+            })
+        _ = try await RemoteScientificWorkflowsCLI.run(["recovery", "--url", "http://server.test", "example-job"],
+            client: client, endpoint: client.profile.baseURL, sink: .discarding)
+        let forbidden = ClusterClient(profile: client.profile, session: Self.session { _ in
+            Issue.record("Malformed arguments must not reach HTTP")
+            return (Data("{}".utf8), 200)
+        })
+        for args in [["recovery", "--url", "http://server.test"],
+                     ["recovery", "example-job", "another-job"],
+                     ["recovery", "example-job", "--url", "http://server.test", "--url", "http://other.test"]] {
+            await #expect(throws: (any Error).self) {
+                try await RemoteScientificWorkflowsCLI.run(args, client: forbidden, endpoint: client.profile.baseURL, sink: .discarding)
+            }
+        }
+    }
+
+    @Test func scientificRequestKeepsUInt64SeedsExact() throws {
+        for seed in ["9007199254740993", "18446744073709551615"] {
+            let data = Data(("{\"operation\":\"stability\",\"parameters\":{\"seed\":" + seed + "}}").utf8)
+            let parsed = try ScientificRequestDocument.read(data)
+            guard case .object(let object) = parsed, case .object(let parameters) = object["parameters"] else { Issue.record("Missing parameters"); return }
+            #expect(parameters["seed"] == .string(seed))
+        }
+        #expect(throws: (any Error).self) { try ScientificRequestDocument.read(Data(#"{"operation":"stability","parameters":{"seed":true}}"#.utf8)) }
+    }
+
+    @Test func scientificSubmissionPreservesReviewedRequestAndEndpoint() async throws {
+        let wanted: JSONValue = .object(["operation": .string("stability"),
+            "parameters": .object(["experiment": .string("example"), "concept": .string("signal")])])
+        let client = ClusterClient(profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+            session: Self.session { request in
+                #expect(request.url?.host == "server.test")
+                #expect(request.url?.path == "/api/science/submit")
+                let data = try #require(Self.bodyData(from: request))
+                let body = try JSONDecoder().decode([String: JSONValue].self, from: data)
+                #expect(body["request"] == wanted)
+                #expect(body["planSHA256"] == .string(String(repeating: "a", count: 64)))
+                return (Data(#"{"jobId":"diagnostic-job","status":"submitted"}"#.utf8), 200)
+            })
+        let result = try await client.scientificSubmit(wanted, planSHA256: String(repeating: "a", count: 64))
+        #expect(result == .object(["jobId": .string("diagnostic-job"), "status": .string("submitted")]))
+        let malformed = ClusterClient(profile: client.profile, session: Self.session { _ in (Data("{}".utf8), 200) })
+        await #expect(throws: (any Error).self) { try await malformed.scientificSubmit(wanted, planSHA256: String(repeating: "a", count: 64)) }
+    }
+
+    @Test func recoveryRequiresTheOriginalReviewAndPropagatesOwnerRefusal() async throws {
+        let client = ClusterClient(profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+            session: Self.session { request in
+                #expect(request.url?.path == "/api/jobs/job/recover")
+                let body = try JSONDecoder().decode([String: JSONValue].self, from: #require(Self.bodyData(from: request)))
+                #expect(body == ["reviewToken": .string("review"), "reason": .string("owner exited"), "confirmOwnerExited": .bool(true)])
+                return (Data(#"{"detail":{"code":"jobRecoveryRefused","reason":"owner remains live","repairAction":"inspect ownership"}}"#.utf8), 409)
+            })
+        do {
+            _ = try await client.recoverJob("job", reviewToken: "review", reason: "owner exited")
+            Issue.record("Must propagate a live-owner refusal")
+        } catch ClusterClient.ClientError.badResponse(let code, _) { #expect(code == 409) }
+        #expect(throws: (any Error).self) { try ExperimentCLIParser.parse(namespace: "remote", ["science-submit", "request.json", "--token", "not-accepted"]) }
+        await #expect(throws: (any Error).self) {
+            try await RemoteScientificWorkflowsCLI.run(["recover", "job", "--review-token", "review", "--reason", "owner exited"],
+                client: client, endpoint: client.profile.baseURL, sink: .discarding)
+        }
+    }
+
     @Test func installModelPostsAndReturnsTheJobID() async throws {
         let client = ClusterClient(
             profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),

@@ -4,6 +4,18 @@ import SwiftUI
 
 struct ServerJobsPanelView: View {
     @Bindable var service: ChatService
+    private struct DiagnosticTarget: Identifiable {
+        let id = UUID()
+        let client: ClusterClient
+        let endpoint: String
+    }
+    private struct RecoveryTarget: Identifiable {
+        let id = UUID()
+        let client: ClusterClient
+        let jobID: String
+    }
+    @State private var recoveryTarget: RecoveryTarget?
+    @State private var diagnosticTarget: DiagnosticTarget?
     @State private var jobs: [RemoteJobRecord] = []
     @State private var jobsOrigin: EvidenceImportOrigin?
     @State private var pipelines: [ClusterClient.PipelineRunSummary] = []
@@ -31,6 +43,24 @@ struct ServerJobsPanelView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                Button("Reconcile jobs") {
+                    let origin = jobsOrigin
+                    if let client = clientForRows(origin: origin) {
+                        Task {
+                            do {
+                                _ = try await client.reconcileJobs()
+                                guard service.cluster.evidenceImportOrigin == origin else { return }
+                                await refreshJobs(selectFirstWhenEmpty: false)
+                                status = "Child records reconciled and merge pass completed."
+                            } catch { status = error.localizedDescription }
+                        }
+                    }
+                }.disabled(!hasServerClient || isRefreshing)
+                Button("Scientific diagnostic…") {
+                    if let client = service.cluster.client {
+                        diagnosticTarget = DiagnosticTarget(client: client, endpoint: client.profile.baseURL.absoluteString)
+                    }
+                }.disabled(!hasServerClient)
                 if isRefreshing {
                     ProgressView()
                         .controlSize(.small)
@@ -71,6 +101,12 @@ struct ServerJobsPanelView: View {
             jobsRegion
         }
         .padding(12)
+        .sheet(item: $recoveryTarget) { target in
+            JobRecoverySheet(client: target.client, jobID: target.jobID)
+        }
+        .sheet(item: $diagnosticTarget) { target in
+            ScientificExecutionSheet(client: target.client, endpoint: target.endpoint)
+        }
         .task(id: service.cluster.computeTarget.rawValue) {
             await refreshJobs(selectFirstWhenEmpty: true)
         }
@@ -414,6 +450,11 @@ struct ServerJobsPanelView: View {
                     }
                 }
                 if let selectedJobID {
+                    Button("Recovery review…") {
+                        if let client = clientForRows(origin: jobsOrigin) {
+                            recoveryTarget = RecoveryTarget(client: client, jobID: selectedJobID)
+                        }
+                    }
                     Button {
                         startStreaming(selectedJobID)
                     } label: {

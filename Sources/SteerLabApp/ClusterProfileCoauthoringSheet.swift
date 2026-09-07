@@ -5,11 +5,13 @@ import UniformTypeIdentifiers
 
 /// A document-to-profile handoff over the same offline command as the CLI.
 struct ClusterProfileCoauthoringSheet: View {
-    let onImport: (Data) -> Void
+    let repository: ClusterSiteRepository
+    let onImport: (ClusterSiteRecord) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var showingImporter = false
     @State private var review: ClusterProfileCoauthoring.Review?
     @State private var message: String?
+    @State private var reviewedData: Data?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -74,11 +76,12 @@ struct ClusterProfileCoauthoringSheet: View {
                 Spacer()
                 Button("Close") { dismiss() }
                 Button("Import reviewed profile") {
-                    guard let review, review.readyForImport else { return }
+                    guard let review, let reviewedData, review.readyForImport else { return }
                     do {
-                        let data = try review.profile.encoded()
+                        let accepted = try ClusterProfileAcceptance.accept(data: reviewedData,
+                            expectedSHA256: review.draftSHA256, repository: repository)
+                        onImport(accepted.site)
                         dismiss()
-                        onImport(data)
                     } catch { message = error.localizedDescription }
                 }
                 .disabled(review?.readyForImport != true)
@@ -91,10 +94,13 @@ struct ClusterProfileCoauthoringSheet: View {
                 let url = try result.get()
                 let scoped = url.startAccessingSecurityScopedResource()
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                review = try ClusterProfileCoauthoring.review(data: Data(contentsOf: url))
+                let data = try Data(contentsOf: url)
+                review = try ClusterProfileCoauthoring.review(data: data)
+                reviewedData = data
                 message = nil
             } catch {
                 review = nil
+                reviewedData = nil
                 message = "Could not review the draft: \(error.localizedDescription)"
             }
         }

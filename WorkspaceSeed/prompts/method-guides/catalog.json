@@ -80,28 +80,28 @@
       "method": "stability",
       "title": "Extraction stability",
       "engineCLI": "steerlab-server experiment extract-stability <study> <concept> --json",
-      "mac": "Invoke the Python engine; native numerical parity is not claimed.",
-      "http": null,
+      "mac": "Server Jobs: Scientific diagnostic; or steerlab-cli remote science-plan/science-submit <request.json> --site <id> --json.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
       "compute": "model",
       "outputs": [
         "Diagnostic path and per-layer stability summary"
       ],
-      "restriction": "Python engine CLI only; capture activations where the model is available. No native Mac diagnostic, HTTP execution route, bundle verb or automatic scheduler allocation."
+      "restriction": "Stage reviewed inputs under the runner workspace using its permitted transport. Remote execution requires pinned model commits and the exact planSHA256. Queue-time input drift refuses before loading. Uses the declared local or Slurm executor; no checkpoint resume or standalone bundle transport. Output stays under diagnostics; native Mac numerical parity is not claimed."
     },
     {
       "id": "battery",
       "method": "batteries",
       "title": "Standalone capability battery",
       "engineCLI": "steerlab-server battery run <battery-file> --agent baseline --model <model> --revision <revision> --json",
-      "mac": "Invoke the Python engine; existing robustness controls are a separate per-agent reading.",
-      "http": null,
+      "mac": "Server Jobs: Scientific diagnostic; or steerlab-cli remote science-plan/science-submit <request.json> --site <id> --json.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
       "compute": "model",
       "outputs": [
         "runDirectory",
         "battery.jsonl",
         "battery-report.json"
       ],
-      "restriction": "Python engine CLI only; format 3 is not a study-pinnable control. Stage reviewed inputs on the compute host; no standalone HTTP/bundle submission route."
+      "restriction": "Stage reviewed inputs under the runner workspace using its permitted transport. Remote execution requires pinned model commits and the exact planSHA256. Queue-time input drift refuses before loading. Uses the declared local or Slurm executor; no checkpoint resume or standalone bundle transport. Format 3 remains separate from study-pinnable controls."
     },
     {
       "id": "rescore-style",

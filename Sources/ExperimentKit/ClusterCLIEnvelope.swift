@@ -339,6 +339,7 @@ public enum ClusterCLIRenderer {
             }
         }
         if let review = envelope.profileAuthoring {
+            lines.append("  reviewed draft SHA-256: " + review.draftSHA256)
             lines += review.blockers.map { "  blocked: " + $0 }
             lines += review.questions.map { "  question (" + $0.path + "): " + $0.question }
         }

@@ -391,8 +391,13 @@ author/reviewer prompts. A valid file is not scientific validation.
 
 The catalog distinguishes engine-only execution from an absent interface:
 standalone `steerlab-server experiment extract-stability` and `battery run`
-have no HTTP/bundle submission route. Run them in an approved compute
-environment with reviewed inputs; do not invent a client study verb or a
+also have reviewed remote submission via `runner science-plan/science-submit`
+on the Python client and `remote science-plan/science-submit` on the Mac.
+Use a request file with `operation` and `parameters` from the method guide,
+then submit its exact `--plan-sha256`. Inputs must already be staged on the
+runner through the site's permitted transfer workflow. The job uses the declared
+local/Slurm executor and keeps the scientific output type; no standalone bundle
+transport or checkpoint resume is claimed. Do not invent a client study verb or a
 scheduler script. OptVec's nine listed verbs include exploratory `jspace`
 analysis and `gradient`; J-space is not an optimization/training operation.
 Discovery or a passing source test does not qualify a numerical claim.
@@ -1762,10 +1767,15 @@ Only Slurm or no scheduler is supported. The check verifies consistency, not the
 truth of a cited page; have the reviewer verify the sources and the researcher
 accept the proposed choices. Keep the companion alongside the private profile.
 
-After review, export the companion's `profile` object to a private JSON file and
-use `steerlab-cli cluster sites import <profile.json> --json`, then
+After review, use `steerlab-cli cluster sites accept <draft.json>
+--draft-sha256 <profileAuthoring.draftSHA256> --json`, then
 `steerlab-cli cluster preview --site <id> --json`. The app's cluster setup wizard
-has **From documentation…**, using the same prompts, check and preview. Import
+has **From documentation…**, using the same prompts, check, acceptance and preview.
+Acceptance verifies the exact reviewed bytes and retains their citations under the
+private site registry's `.authoring/` archive; it never replaces an existing site.
+Mac HTTP clients use `GET /api/cluster/sites/guide` and
+`POST /api/cluster/sites/review|accept`, sending the exact `draftText` and, for
+acceptance, `draftSHA256`. Import
 makes configuration available; it does not authorize deployment, allocations or
 cleanup. Continue through the existing authentication, bootstrap-plan and
 qualification steps. Credentials belong in the Keychain, never in the companion,
@@ -1810,5 +1820,26 @@ On a Mac the Swift CLI above remains the primary instrument.
 - **Do not cite seeded or sample content.** It is there to be modified.
 - **Do not guess at a file shape.** The shapes in §3 are the ones the loaders
   parse; a wrong key is refused with the expected key named.
+
+
+### Reconnect and recover remote jobs
+
+Retain the submission's endpoint, serving root and job ID. Poll `steerlab runner
+jobs <id> --runner <url> --json` or `steerlab-cli remote jobs --site <id>
+--json`; streaming or client timeout stops observation, not execution. Use the
+existing cancel operation when cancellation is intended. `steerlab runner
+resubmit <job-id> --runner <url> [--walltime <hh:mm:ss>] --json` joins the Mac's
+`remote resubmit` and app Resume button for eligible checkpointed jobs.
+Batteries and stability diagnostics have no checkpoint resume; never resubmit
+an uncertain scheduler launch without inspecting its `schedulerSubmissionName`.
+
+For stranded controller-owned work, inspect `runner recovery <job-id>` (Python)
+or `remote recovery <job-id>` (Mac), against the original endpoint. Confirm the
+recorded controller exited before `recover`, using `--review-token`, `--reason`
+and `--confirm-owner-exited`. The app offers Recovery review in Server Jobs.
+This invokes the existing ownership gate and records the operator's assertion;
+an expired review or live owner refuses. It does not restart a computation.
+Use `runner reconcile --runner <url>` or `remote reconcile --site <id>` to fold all known child records and run the existing merge pass on that endpoint. No recovery command grants cleanup permission. Keep local custody verification
+and site retention policy separate from execution status.
 """#
 }

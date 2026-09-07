@@ -12,7 +12,8 @@ from steerlab_server.client.design_commands import VERB_SPECS as DESIGN_SPECS
 from steerlab_server.client.authoring_commands import VERB_SPECS as AUTHORING_SPECS
 MODEL_SPECS = tuple(s for s in client_cli.CLIENT_VERB_SPECS if s.family == "model" and s.verb in ("plan", "install", "status", "cancel"))
 from steerlab_server.client.science_commands import VERB_SPECS as SCIENCE_SPECS
-VERB_SPECS = (*SCIENCE_SPECS, *ASSEMBLY_SPECS, *DESIGN_SPECS, *AUTHORING_SPECS, *MODEL_SPECS)
+REMOTE_SPECS = tuple(s for s in client_cli.CLIENT_VERB_SPECS if s.family == "runner" and s.verb in ("science-plan", "science-submit", "recovery", "recover", "resubmit", "reconcile"))
+VERB_SPECS = (*REMOTE_SPECS, *SCIENCE_SPECS, *ASSEMBLY_SPECS, *DESIGN_SPECS, *AUTHORING_SPECS, *MODEL_SPECS)
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--write", action="store_true")
@@ -30,3 +31,7 @@ if args.write:
 else:
     assert text[start:stop].strip() == body.strip(), "Run scripts/ci/check-client-assembly-reference.py --write"
     print("Client study assembly reference matches declared flags.")
+
+from science_cli_census import check_catalog
+import json
+check_catalog(json.loads((Path(__file__).resolve().parents[2] / "WorkspaceSeed/prompts/method-guides/catalog.json").read_text()), (Path(__file__).resolve().parents[2] / "Server/steerlab_server/cli.py").read_text())

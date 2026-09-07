@@ -1,26 +1,24 @@
 # Researcher workflow implementation status
 
-Current branch: `codex/model-study-equivalence`, based directly on landed main
-`55606d9`, including the independently reviewed design/interview work. Main and
-installed applications remain unchanged by this implementation branch.
+Current branch: `codex/cluster-execution-workflow`, based directly on landed main
+`73bfbd7`. It includes the reviewed scientific-workflow slice, its changelog
+follow-up and the independent final-norm dtype fix. The main checkout and installed
+applications remain unchanged by this implementation branch.
 
-This checkpoint completes the model preparation adapters, standalone agent
-attachment, semantic panel authorship, reviewed pipeline edits and casting
-expansion. The [implementation and review handoff](MODEL-STUDY-AUTHORING-EQUIVALENCE.md)
-records the operation mappings, deployment consequences and review scope.
-The prior [design/interview checkpoint](PYTHON-DESIGN-INTERVIEW-WORKFLOW.md) has
-landed; historical sections below retain their original review state.
+This checkpoint adds acceptance of sourced cluster-profile companions and reviewed
+standalone battery/stability jobs across the app, remote CLIs and HTTP. Recovery
+and reconciliation now have public client/app adapters over the existing owners.
+See [the current handoff](CLUSTER-EXECUTION-WORKFLOW-HANDOFF.md) for exact interfaces,
+review scope and the distinction between implemented controls and live qualification.
+Earlier sections below retain their historical checkpoint and validation claims.
 
 The [implementation plan](RESEARCHER-WORKFLOW-IMPLEMENTATION-PLAN.md) remains
 authoritative; WP-5 and WP-6 remain in scope. This branch authorizes no live
 execution, installation or self-merge. Independent review through the
 maintainer's designated reviewing agent remains the landing gate.
 
-Validation for this checkpoint is recorded in the
+Final suite results, build conditions and gate status are recorded in the
 [validation history](RESEARCHER-WORKFLOW-VALIDATION-HISTORY.md).
-Final suites pass: **6,036 Python tests** (9 skipped), **277 SteeringKit tests**
-and **4,581 ExperimentKit tests**. AST, generated-reference, interview, bridge
-and public-tree gates pass. Independent review and deployment remain separate.
 
 ## What researchers and agents gain
 
@@ -173,20 +171,19 @@ qualification is claimed. See the audit handoff for review boundaries.
 
 ## What remains to implement the vision
 
-1. **Finish shared authoring and context ownership (WP-1/2).** Complete the
-   remaining draft writer/adapter migration. All four Swift bridges are
-   retired, and normal/release bridge checks pass. Observation, auxiliary jobs
-   and delayed actions outside this slice still need end-to-end context coverage.
-2. **Complete public surface equivalence (WP-3/4).** Complete advanced-method gaps and qualify the newly exposed preparation/authoring operations; ship practical
-   method guides, dataset templates and coworker prompts. Every supported
-   operation needs explicit inputs, truthful outcomes and actionable repairs.
-3. **Complete cluster coauthoring and the managed remote lifecycle (WP-5/6).**
-   Demonstrate documentation-to-profile authoring, resolve missing facts with
-   the researcher, and finish composed monitoring, recovery, evidence transfer
-   and bounded cleanup plan/apply with policy and dependency checks.
-4. **Qualify the complete journeys (WP-7).** Exercise researcher/agent/UI paths,
-   offline and failure recovery, and scientific/GPU checks. Record unavailable
-   checks honestly; unit tests alone do not establish research validity.
+1. **Finish verified remote output custody and bounded cleanup (WP-6).**
+   Compose transport, local archive/member verification and receipts across the
+   public surfaces. Cleanup needs a reviewed plan, site retention policy, dependency
+   checks and an explicit apply step. Completion of a job is not permission to delete.
+2. **Close the remaining operation-specific surface gaps (WP-3/4).** The shared
+   method guides and coworker prompts have landed; the catalog now checks actual
+   engine verbs. Keep mapping unsupported paths explicitly, and qualify advanced
+   operations separately from discovery and successful parser tests.
+3. **Qualify complete researcher journeys (WP-5/7).** Use real documentation to
+   author and review a profile, then exercise connection, preparation, submission,
+   interruption/reconnect, verified import and offline results. Include agent/CLI
+   and interactive app paths, scientific/GPU checks, and explicit unavailable
+   outcomes. The new controls and fixture tests do not establish live qualification.
 
 **Integrated upstream fix:** main's terminal-job receipt gate and immutable
 sibling reimport are included in this branch. Live scheduler/accounting and

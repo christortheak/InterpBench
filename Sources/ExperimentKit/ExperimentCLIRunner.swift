@@ -2194,6 +2194,10 @@ public struct ExperimentCLIRunner: Sendable {
         var siteID: String?
         let serverIdentity: String
         let remoteWorkspaceRoot = ExperimentStore.workspaceRoot
+        let scientificWorkflow = RemoteScientificWorkflowsCLI.verbs.contains(verb)
+        if scientificWorkflow, flag("--site") == nil, flag("--url") == nil {
+            throw ExperimentError.malformed("Choose the original server explicitly for this workflow.", repair: "Pass --site <id> or --url <server>; do not borrow a different active target for a reviewed plan or job.")
+        }
         let preparesModel = ["model-plan", "model-install", "model-status", "model-cancel"].contains(verb)
         switch try ClusterRemoteSiteResolver.choose(site: flag("--site"), url: flag("--url")) {
         case .site(let reference):
@@ -2215,13 +2219,16 @@ public struct ExperimentCLIRunner: Sendable {
             }
             url = parsed
             serverIdentity = ClusterConnectionStore.normalizedEndpointKey(parsed.absoluteString)
-            if preparesModel {
+            if preparesModel || scientificWorkflow {
                 token = ClusterTokenStore.load(key: ClusterTokenStore.key(forURLString: parsed.absoluteString))
             } else {
                 token = flag("--token") ?? ProcessInfo.processInfo.environment["STEERLAB_AUTH_TOKEN"]
             }
         }
         let client = ClusterClient(profile: ClusterConnectionProfile(baseURL: url), token: token)
+        if scientificWorkflow {
+            return try await RemoteScientificWorkflowsCLI.run(args, client: client, endpoint: url, sink: sink)
+        }
         if preparesModel {
             return try await RemoteModelPreparationCLI.run(args, client: client, endpoint: url, sink: sink)
         }
