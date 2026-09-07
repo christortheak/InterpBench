@@ -171,6 +171,7 @@ public final class ClusterConnectionStore {
             // Connection state applies to the *active* server only.
             status = nil
             capabilities = nil
+            lastConnectFailure = nil
             remoteState = nil
             remoteInfo = nil
             remoteVariants = []
@@ -200,6 +201,44 @@ public final class ClusterConnectionStore {
     /// connection dot's failure-word matching). internal(set) keeps mutation
     /// inside ExperimentKit.
     public internal(set) var status: String?
+
+    /// True while `connect()` is in flight for the active server.
+    public internal(set) var isConnecting = false
+
+    /// The last connect failure for the active server, verbatim. Cleared by a
+    /// successful connect and whenever the active endpoint changes.
+    public internal(set) var lastConnectFailure: String?
+
+    /// What the connection affordances render — derived from facts, never
+    /// from the free-text `status` line.
+    ///
+    /// UI audit 2026-09-06 (headline 6): `status` is a single shared slot that
+    /// unrelated operations also write ("requesting install of …",
+    /// "agent sync: 2 recipes failed to import", "workspace switch refused"),
+    /// so substring-sniffing it turned a healthy connection amber or red — and
+    /// left a genuinely refused operation reading green. The three facts that
+    /// actually describe the connection are the in-flight flag, the
+    /// capabilities answer, and the last connect failure; this phase is those
+    /// three, and nothing else.
+    public var connectionPhase: ConnectionPhase {
+        guard case .server = activeWorkspace else { return .idle }
+        if isConnecting { return .connecting }
+        if capabilities != nil { return .connected }
+        if let lastConnectFailure { return .failed(lastConnectFailure) }
+        return .idle
+    }
+
+    /// The active server's connection state (see `connectionPhase`).
+    public enum ConnectionPhase: Equatable, Sendable {
+        /// No active server workspace, or nothing has been attempted yet.
+        case idle
+        /// A connect attempt is in flight.
+        case connecting
+        /// Capabilities answered: the server is reachable.
+        case connected
+        /// The last connect attempt failed; the payload is its sentence.
+        case failed(String)
+    }
 
     /// Human-readable OPERATION line ("loading gemma…", "uploading
     /// variant…", stream captions, "response complete", operation errors).
@@ -391,6 +430,7 @@ public final class ClusterConnectionStore {
             if activeWorkspace == .server(id) {
                 status = nil
                 capabilities = nil
+                lastConnectFailure = nil
                 remoteState = nil
                 remoteInfo = nil
                 remoteVariants = []
@@ -428,6 +468,7 @@ public final class ClusterConnectionStore {
         if activeWorkspace == .server(id) {
             status = nil
             capabilities = nil
+            lastConnectFailure = nil
             remoteState = nil
             remoteInfo = nil
             remoteVariants = []
@@ -528,6 +569,7 @@ public final class ClusterConnectionStore {
         if activeWorkspace == .server(id) {
             status = nil
             capabilities = nil
+            lastConnectFailure = nil
             remoteState = nil
             remoteInfo = nil
             remoteVariants = []
@@ -1009,13 +1051,24 @@ public final class ClusterConnectionStore {
     }
 
     /// Save (or clear, when empty) the Hugging Face token for a saved site.
-    public func setStoredHFToken(_ token: String, for entry: ServerEntry) {
+    ///
+    /// Returns false when the Keychain refused the write, so the caller can
+    /// say so instead of reporting a save that did not happen (UI audit
+    /// 2026-09-06). Clearing always reports true — a delete of an absent item
+    /// is the outcome the caller asked for.
+    @discardableResult
+    public func setStoredHFToken(_ token: String, for entry: ServerEntry) -> Bool {
         let key = Self.tokenKey(forEntry: entry) + ".hf"
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             ClusterTokenStore.delete(key: key)
-        } else {
-            try? ClusterTokenStore.save(trimmed, key: key)
+            return true
+        }
+        do {
+            try ClusterTokenStore.save(trimmed, key: key)
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -1041,10 +1094,13 @@ public final class ClusterConnectionStore {
         loadStoredToken()
         guard let client else {
             status = "invalid server URL"
+            lastConnectFailure = "invalid server URL"
             return false
         }
         let origin = evidenceImportOrigin
         let profile = connectionProfile
+        isConnecting = true
+        defer { isConnecting = false }
         do {
             status = "connecting..."
             async let caps = client.capabilities()
@@ -1078,6 +1134,7 @@ public final class ClusterConnectionStore {
             }
             persistToken()  // remember a token that just authenticated
             status = "connected"
+            lastConnectFailure = nil
             // A session may already be running (controller restarts are a
             // blip — the record survives them): look once and resume the
             // countdown/polling. No-op without the capability.
@@ -1085,9 +1142,11 @@ public final class ClusterConnectionStore {
             return true
         } catch {
             guard evidenceImportOrigin == origin, connectionProfile == profile else { return false }
-            status = Self.friendlyConnectionFailure(
+            let failure = Self.friendlyConnectionFailure(
                 error, urlString: serverURL,
                 throughSSHTunnel: activeSite?.isSSHTransport == true)
+            status = failure
+            lastConnectFailure = failure
             return false
         }
     }
