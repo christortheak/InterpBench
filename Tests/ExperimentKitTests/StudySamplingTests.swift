@@ -4,6 +4,26 @@ import Testing
 @testable import ExperimentKit
 
 struct StudySamplingTests {
+    @Test func measuredRecordCarriesOperativeSeedAndPairingIndex() throws {
+        var manifest = ExperimentManifest(name: "sampling", description: "", modelID: "test/model")
+        manifest.temperature = 0.7
+        manifest.samplesPerItem = 3
+        let record = ExperimentTasks.sampledGenerationRecord(manifest: manifest,
+            experimentHash: "hash", taskPromptsFile: "items.jsonl", taskPromptsHash: "inputs",
+            promptMode: .chatAssistant, systemPrompt: nil, qwenThinkingEnabled: false,
+            condition: "baseline", seed: UInt64.max, sampleIndex: 2, promptTokenCount: 12,
+            promptIndex: 1, prompt: .init(id: "item", text: "Prompt", options: nil, target: nil,
+                anchorMonths: nil, severity: nil, arm: nil, caseID: nil), output: "Answer",
+            row: .init(condition: "baseline", seed: UInt64.max, promptIndex: 1,
+                promptID: "item", wordCount: 1, distinct2: 0, markerDensity: [:]))
+        let value = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any])
+        #expect(value["seedInert"] as? Bool == false)
+        #expect(value["sampleIndex"] as? Int == 2)
+        #expect(value["promptTokenCount"] as? Int == 12)
+        #expect(value["seedPolicy"] as? String == "derivedSHA256")
+        #expect((value["seed"] as? NSNumber)?.stringValue == String(UInt64.max))
+    }
+
     @Test func savedAgentThinkingRemainsIndependentOfTheBaselineEffort() {
         var manifest = ExperimentManifest(name: "sampling", description: "", modelID: "test/model")
         manifest.reasoningEffort = "off"

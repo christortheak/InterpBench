@@ -1,0 +1,174 @@
+{
+  "attention": "eager",
+  "deviceActual": [
+    "mps:0"
+  ],
+  "deviceRequested": "mps",
+  "diffSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "elapsedSeconds": 6.961566707992461,
+  "fallbackEnabled": false,
+  "gpu": "Apple M5 Pro",
+  "hardware": "arm64",
+  "longForwardTokens": 4097,
+  "memory": {
+    "current": 2388540416,
+    "driver": 10902945792
+  },
+  "modelRevision": "c1899de289a04d12100db370d81485cdf75e47ca",
+  "mpsStateRestored": true,
+  "optvec": {
+    "chosenCheckpoint": {
+      "selection": "finalStep",
+      "step": 2
+    },
+    "doseResponse": [
+      {
+        "alphaAbsolute": 0.0,
+        "alphaMultiple": 0.0,
+        "anchor": {
+          "itemCount": 0
+        },
+        "capability": {
+          "itemCount": 0
+        },
+        "fluency": {
+          "deltaFromBaseline": null,
+          "meanTokenLogprob": null,
+          "note": "no neutralTexts declared \u2014 no fluency guard ran",
+          "scoredTextCount": 0,
+          "textCount": 0
+        },
+        "isBaseline": true,
+        "target": {
+          "flipRate": 0.0,
+          "flippableItemCount": 0,
+          "itemCount": 2,
+          "meanKLFromBaseline": 0.0,
+          "meanLogOddsMovement": 0.0,
+          "shiftRate": null,
+          "targetSelectedRate": 1.0
+        }
+      },
+      {
+        "alphaAbsolute": 1.0,
+        "alphaMultiple": 1.0,
+        "anchor": {
+          "itemCount": 0
+        },
+        "capability": {
+          "itemCount": 0
+        },
+        "fluency": {
+          "deltaFromBaseline": null,
+          "meanTokenLogprob": null,
+          "note": "no neutralTexts declared \u2014 no fluency guard ran",
+          "scoredTextCount": 0,
+          "textCount": 0
+        },
+        "isBaseline": false,
+        "target": {
+          "flipRate": 0.0,
+          "flippableItemCount": 0,
+          "itemCount": 2,
+          "meanKLFromBaseline": 0.00031210158023924094,
+          "meanLogOddsMovement": 0.09093189239502886,
+          "shiftRate": null,
+          "targetSelectedRate": 1.0
+        }
+      }
+    ],
+    "recordCount": 4,
+    "steps": 2
+  },
+  "os": "macOS-27.0-arm64-arm-64bit",
+  "parameterDtypes": [
+    "torch.float32"
+  ],
+  "probeSHA256": "180ab200740d46dee24e37da14c8757c86046249dcc79687167891e398e6e1c8",
+  "protocol": {
+    "contextTokens": 4097,
+    "dose": 0.5,
+    "dtype": "float32",
+    "layer": 3,
+    "model": "Qwen/Qwen3-0.6B",
+    "optvec": {
+      "alphaAbsolute": 1.0,
+      "caseSHA256": "80ca9ffa1388e598b54996f5a3fb55df4fe216cc5636706a3ced82866dfa271d",
+      "layer": 3,
+      "lr": 0.01,
+      "options": [
+        "A",
+        "B"
+      ],
+      "promptMode": "rawCompletion",
+      "seed": 17,
+      "steps": 2,
+      "target": "A"
+    },
+    "revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+    "tokens": [
+      [
+        151644,
+        872,
+        198,
+        9707,
+        11,
+        1268,
+        151645
+      ],
+      [
+        151644,
+        872,
+        198,
+        3838,
+        374,
+        264,
+        151645
+      ],
+      [
+        151644,
+        872,
+        198,
+        4438,
+        311,
+        1091,
+        151645
+      ],
+      [
+        151644,
+        872,
+        198,
+        1986,
+        525,
+        499,
+        151645
+      ]
+    ],
+    "tolerances": {
+      "atol": 0.005,
+      "directionCosine": 0.999,
+      "rtol": 0.005
+    }
+  },
+  "protocolSHA256": "9ab4d744295dcae04699452d45e17f18b0e410b93286877dc05cf7dfc472b960",
+  "pythonSourceSHA256": "9eea0d08e29cc43b885d120866744dbb2e7414527ad60310c101102f6ad59898",
+  "rngRepeatable": true,
+  "schemaVersion": 1,
+  "scope": "model residuals, logits, additive/ablation hooks; RNG scope",
+  "software": {
+    "python": "3.12.13",
+    "torch": "2.13.0",
+    "transformers": "5.15.1"
+  },
+  "source": "ccf504540c53174912449043f0036673841a08c6",
+  "status": "measured",
+  "tensorsSHA256": "969bc6f873600ee4ec118dc53a194189445f12828cfbc4ad84d2df055e93e786",
+  "unmeasured": [
+    "battery",
+    "J-lens",
+    "J-space",
+    "SAE execution",
+    "fine-tuning",
+    "multi-agent transcript"
+  ]
+}

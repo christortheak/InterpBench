@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reviewedSource": "293888e plus step 3 (docs/TECHNIQUE-PARITY-STEP3-HANDOFF.md)",
+  "reviewedSource": "d84968c plus scoped sampling and local probes (docs/TECHNIQUE-PARITY-COMPLETION-HANDOFF.md)",
   "profiles": {
     "python-model": {
       "python": "Python owns execution; model work uses its configured device and executor.",

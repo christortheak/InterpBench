@@ -1,0 +1,37 @@
+{
+  "dependencies" : {
+    "mlx-swift" : {
+      "revision" : "dc43e62d7055353c7f99fa071a4e71d29dfddc44",
+      "version" : "0.31.4"
+    },
+    "mlx-swift-lm" : {
+      "revision" : "1c05248bb0899e2a7a4962b84d319cf12f4e12aa",
+      "version" : "3.31.3"
+    },
+    "swift-transformers" : {
+      "revision" : "2fa33e1f5e7131a7fc64c28e6d161dcec0d24820",
+      "version" : "1.3.3"
+    }
+  },
+  "gpu" : "Apple M5 Pro",
+  "minP" : 0,
+  "modelID" : "Qwen\/Qwen3-4B-MLX-4bit",
+  "modelRevision" : "52a5ab34fa604bc8af6d3ce0cac0cab10b7eb495",
+  "os" : "Version 27.0 (Build 26A5425a)",
+  "parameterDtypes" : [
+    "bfloat16",
+    "uint32"
+  ],
+  "prefillStepSize" : 512,
+  "qualification" : "Configuration provenance; not a repeatability certificate.",
+  "quantization" : {
+    "bits" : 4,
+    "group_size" : 128
+  },
+  "rng" : "mlx-random-key-split-categorical",
+  "schemaVersion" : 1,
+  "streamScope" : "one record or turn; uninterrupted across reasoning and answer",
+  "tokenizerRevision" : "52a5ab34fa604bc8af6d3ce0cac0cab10b7eb495",
+  "topK" : 0,
+  "topP" : 1
+}

@@ -40,3 +40,4 @@ workspaces/
 
 # Bytecode from local architecture-audit imports in the test suite.
 scripts/ci/__pycache__/
+scripts/qualification/__pycache__/

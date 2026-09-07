@@ -15,7 +15,7 @@ researcher to the cluster coding agents; no local result claims a CUDA compariso
 | Readers | Train/selection/final role fixtures and model readout | Role fixtures; model qualification remains separate |
 | Battery | End-to-end declared endpoints under intervention | Pending cluster/local matching study |
 | Stability | Shared draw identity and resample summaries | Existing numerical fixtures; model study pending |
-| OptVec training/evaluation | Owner loss, gradient, dose, selected artifact and held-out evaluation | Pending model study |
+| OptVec training/evaluation | Owner loss, gradient, dose, selected artifact and held-out evaluation | Two-step training and separate evaluation measured; broader objectives pending |
 | J-lens | Reference agreement, precision promotion, readout | Pending matched imported lens |
 | J-space | Valid imported lens/artifact, projections and null comparisons | Pending matched imported lens/artifact |
 | SAE | Decoder/import identity and actual latent intervention | Metadata fixtures only; device execution pending |
@@ -62,3 +62,82 @@ diagnostic; it is never relabeled CPU success or evidence for an unrun path.
 The full product suites, controlled numerical fixtures, model probes and
 end-to-end researcher journeys are different evidence layers. Neither a passing
 suite nor a small model probe qualifies an entire backend or model family.
+
+## Local observations, 2026-09-07
+
+The committed producer was `ccf5045`, based on main `d84968c`. CPU and MPS
+reports record a clean tracked diff, complete Python source hash and probe hash.
+The subsequent comparator adds checks of the already-recorded OptVec evaluation
+metrics; it does not change the measurement protocol or tolerances.
+Small records are retained in [qualification/local-2026-09-07](qualification/local-2026-09-07/).
+Raw tensors and immutable diagnostic runs remain outside the checkout.
+
+Both Python runs used Qwen/Qwen3-0.6B at
+`c1899de289a04d12100db370d81485cdf75e47ca`, float32, block 3, Python 3.12.13,
+torch 2.13.0 and transformers 5.15.1 on Apple M5 Pro/macOS 27 beta. CPU used
+SDPA; MPS used eager attention with fallback disabled and parameters on `mps:0`.
+This compares the supported execution paths, including their attention difference.
+
+| Measurement | CPU/MPS observation |
+| --- | --- |
+| Captured and edited residuals | Maximum absolute difference 2.63e-5 |
+| Baseline, additive and ablation logits | Maximum absolute difference 2.04e-4; all six final-position argmax decisions agree |
+| Three extraction recipes | Direction cosine above 0.9999999998; recipe arithmetic itself ran on CPU |
+| Two-step OptVec owner training | Loss difference at most 1.51e-5; gradient-norm difference 1.05e-6; selected-direction cosine approximately 1 |
+| OptVec separate evaluation | Four records per backend; log-odds-movement difference 1.10e-5; KL difference 6.24e-8 |
+| Scoped RNG | Replayed draws agree; MPS global state restored |
+| Long forward | 4,097 tokens completed with finite logits on both devices |
+
+Every compared tensor and evaluation metric met the prospective diagnostic
+tolerance. The two evaluation items already selected the target at baseline;
+there were no flippable items. This is execution evidence, not steering efficacy.
+The long forward is not the production generation chunking path. MPS reported
+2,388,540,416 current allocated bytes and 10,902,945,792 driver bytes at the end;
+these are not peak memory measurements.
+
+The separate MLX probe used Qwen/Qwen3-4B-MLX-4bit at
+`52a5ab34fa604bc8af6d3ce0cac0cab10b7eb495`, temperature 0.7, ten list-continuation
+prompts and a 16-token answer cap. All 10 ordinary replays and all 10 replays with
+an 8-token reasoning cap matched text and finish reason. An unrelated seed was
+interleaved before each ordinary replay. Many answers are very short, so this
+does not establish long-generation repeatability. Dependency, dtype and
+quantization details are in the retained provenance. This is a different model
+and precision from the Python probe; no MLX/PyTorch output comparison was made.
+
+The opt-in MLX test reported four passing tests and Xcode reported success, but
+the beta Metal runtime emitted `Completed handler provided after commit call`
+after the tests completed. Preserve that diagnostic for review; a successful
+result file does not establish clean process teardown on this beta toolchain.
+
+## Cluster-agent handoff
+
+Use the reviewed branch tip and an existing allocated CUDA runner. The researcher
+has delegated cluster execution to the coding agents. Cache the exact model
+revision through the normal approved model-preparation route; the probe does
+not download dependencies or weights. From the checkout, with its runner Python:
+
+```sh
+PYTHONPATH=Server python scripts/qualification/backend_probe.py run \
+  --device cuda --model Qwen/Qwen3-0.6B \
+  --revision c1899de289a04d12100db370d81485cdf75e47ca \
+  --layer 3 --context-tokens 4097 --optvec --output /scratch/qualification-cuda
+python scripts/qualification/backend_probe.py compare \
+  /scratch/qualification-cpu /scratch/qualification-cuda
+python scripts/qualification/backend_probe.py compare \
+  /scratch/qualification-mps /scratch/qualification-cuda
+```
+
+Use policy-compliant scratch paths and fresh output directories. Transfer the
+local CPU/MPS directories including `report.json` and `tensors.npz`; the small
+committed JSON summaries alone cannot run the tensor comparison. On this build
+host they are `/private/tmp/interpbench-cpu-probe-02` and
+`/private/tmp/interpbench-mps-probe-02`. Alternatively rerun the same command with
+`--device cpu` or `--device mps` and otherwise identical arguments. Verify source
+hashes and disclose software/attention differences. Save failures without changing
+tolerances, inspect the first differing tensors, and return the complete reports.
+
+After this comparison, work through the still-open matrix rows with matched
+assets and prospectively agreed path-specific criteria. J-lens and J-space need
+their own lens/artifact inputs; neither is OptVec. Qualify full saved-agent and
+multi-agent records, generation chunking, training objectives and researcher
+journeys separately. Do not upgrade whole capability profiles based on this probe.

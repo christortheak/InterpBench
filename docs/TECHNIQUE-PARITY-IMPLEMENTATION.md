@@ -3,8 +3,9 @@
 2026-09-07. Foundation based on main `293888e`. This is the active refinement of
 [the technique brief](ADDING-A-TECHNIQUE-BRIEF-2026-09-07.md) and
 [the parity brief](PARITY-PROGRAM-BRIEF-2026-09-07.md), incorporating the
-researcher's guidance-first principle. The foundation changed no scientific owner or frozen artifact. Step 3 is now
-implemented on the review branch; see its handoff below. The work is ordered;
+researcher's guidance-first principle. The foundation changed no scientific owner or frozen artifact. Steps 1–3 landed on main through `d84968c`. Steps 4 and 6 are implemented on
+`codex/seeded-sampling-qualification`; step 5 has local measurements and an
+explicit cluster handoff. See [the latest handoff](TECHNIQUE-PARITY-COMPLETION-HANDOFF.md). The work is ordered;
 publication of this plan does not mean the remaining packages are implemented
 or measured.
 
@@ -101,7 +102,7 @@ and offer an honest supported mode, rather than silently ignoring the seed.
 
 ## 3. Complete promised Swift semantics and provenance
 
-**Implemented on the branch, pending independent review.** See
+**Landed on main through `d84968c`.** See
 [step 3 handoff](TECHNIQUE-PARITY-STEP3-HANDOFF.md) for the owners, tests and
 remaining scope boundaries. The following criteria describe this package.
 
@@ -185,13 +186,14 @@ reviewed evidence and must never be an automatic regeneration step.
 
 ## Completion and review
 
-Completed on the branch: guide, worked example, inventoried capabilities,
-corrected implementation/qualification contract, and step 3's native scientific
-semantics/provenance. Step 3 awaits independent review and integration through
-the researcher. Remaining packages are **4–6**: scoped seeded MLX sampling,
-hardware qualification, and extension/registration simplification. Steps 4 and 6
-still require coding; live testing is not the only remaining work. Independent
-guide trials and hardware qualification remain explicitly pending.
+Steps 1–3 are integrated. On the new branch, step 4 implements scoped MLX
+sampling and step 6 implements per-operation specifications and unified generation.
+Step 5 provides a prospective protocol, measured CPU/MPS execution and MLX replay,
+and commands for the cluster agents' CUDA comparison. The full qualification
+matrix remains open: see [evidence and limits](TECHNIQUE-PARITY-QUALIFICATION.md).
+Independent fresh-agent guide trials and the remaining live technique/researcher
+journeys also remain pending. Tests establish the stated implementation scope;
+they do not stand in for those measurements.
 Mac-cluster scheduling is still a separate product decision, not implied by this
 program. Managed runtime cleanup is a separate installation-lifecycle task.
 

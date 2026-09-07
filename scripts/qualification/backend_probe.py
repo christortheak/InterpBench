@@ -166,6 +166,20 @@ def compare(args):
         passed = cosine is not None and cosine >= tolerances['directionCosine'] if name.startswith('direction-') else bool(np.allclose(a, b, atol=tolerances['atol'], rtol=tolerances['rtol']))
         rows[name] = dict(maxAbs=float(np.max(np.abs(a-b))), rms=float(np.sqrt(np.mean((a-b)**2))),
                           cosine=cosine, argmaxAgrees=bool(a.argmax() == b.argmax()), withinDiagnosticTolerance=passed)
+    if 'optvec' in reports[0]['protocol']:
+        def numeric(value, prefix=''):
+            if isinstance(value, dict):
+                return {key: number for name, item in value.items() for key, number in numeric(item, prefix + '.' + name).items()}
+            if isinstance(value, list):
+                return {key: number for index, item in enumerate(value) for key, number in numeric(item, prefix + '.' + str(index)).items()}
+            if isinstance(value, (int, float)) and not isinstance(value, bool): return {prefix: float(value)}
+            return {}
+        metrics = [numeric(r['optvec']['doseResponse']) for r in reports]
+        assert set(metrics[0]) == set(metrics[1]), 'Evaluation metric shapes differ.'
+        for name, a in metrics[0].items():
+            b = metrics[1][name]
+            rows['optvec-evaluation' + name] = dict(maxAbs=abs(a-b),
+                withinDiagnosticTolerance=bool(np.isclose(a, b, atol=tolerances['atol'], rtol=tolerances['rtol'])))
     rng_ok = all(r['rngRepeatable'] and r.get('mpsStateRestored') is not False for r in reports)
     print(json.dumps(dict(reference=reports[0]['deviceActual'], candidate=reports[1]['deviceActual'],
                          rngChecksPassed=rng_ok,

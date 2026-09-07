@@ -14,9 +14,10 @@ status field: do not tell an agent that the CLI returns the table below.
 
 ## How to read this inventory
 
-Checked against source `293888e`, 2026-09-07. **Implemented; comparison unqualified**
-means the owner has a code path, but this inventory has no linked reproducible
-cross-backend qualification for a named configuration. It does not mean previous
+Checked against main `d84968c` and the sampling review branch, 2026-09-07. **Implemented; comparison unqualified**
+means the owner has a code path, but the whole capability profile has not been qualified.
+[Local probes](TECHNIQUE-PARITY-QUALIFICATION.md) now measure narrower CPU/MPS
+paths and native MLX replay; they do not qualify a whole profile. It does not mean previous
 CUDA studies lack evidence. CUDA is the reference for the upcoming comparison;
 it is not assumed to be mathematical ground truth.
 
@@ -48,8 +49,8 @@ owners, not mechanically inferred from CLI counts.
 
 | Capability | Python | Native Swift/MLX | Current evidence boundary |
 | --- | --- | --- | --- |
-| Five extraction recipes | `experiment/extraction_workflow.py`, `steering/vector_math.py` | `ConceptBuilder`, `ExtractionRecipe`, `SteeringVectorMath` | Mathematical/identity tests exist; a configuration-specific MPS comparison remains to be measured. |
-| Additive injection / ablation | `steering/injector.py`, `ablator.py`, `plan.py` | `VectorInjector`, `SubspaceAblator`, `InterventionPlan` | Shared mechanics and scope descriptors; native ordinary/saved-agent measured runs now stamp the scope sidecar. Hardware comparison remains unqualified. |
+| Five extraction recipes | `experiment/extraction_workflow.py`, `steering/vector_math.py` | `ConceptBuilder`, `ExtractionRecipe`, `SteeringVectorMath` | Mathematical/identity tests exist; three recipes have a scoped CPU/MPS capture comparison, not full five-recipe qualification. |
+| Additive injection / ablation | `steering/injector.py`, `ablator.py`, `plan.py` | `VectorInjector`, `SubspaceAblator`, `InterventionPlan` | Shared mechanics and scope descriptors; native ordinary/saved-agent measured runs now stamp the scope sidecar. CPU/MPS hooks have a scoped comparison; native cross-backend qualification remains pending. |
 | Standard measured generation | `experiment/condition_execution.py`, `sampling.py` | `ExperimentTasks` | Both engines record effective per-record seed policy. Native MLX has scoped streams; see [local measurements](TECHNIQUE-PARITY-QUALIFICATION.md). |
 | Multi-agent measured generation | `experiment/multi_agent.py` | `MultiAgentRunner`, `ExperimentTasks` | Both engines derive seeds per turn with common streams across conditions. Live full-transcript qualification remains pending. |
 | Sweep, run and analysis | Python stage owners via `experiment/tasks.py` | `ExperimentTasks` and stage owners | Same surface intent does not establish identical numerical output; inspect artifacts and effective configuration. |

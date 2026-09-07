@@ -1,0 +1,269 @@
+{
+  "candidate": [
+    "mps:0"
+  ],
+  "protocolSHA256": "9ab4d744295dcae04699452d45e17f18b0e410b93286877dc05cf7dfc472b960",
+  "reference": [
+    "cpu"
+  ],
+  "results": {
+    "ablate-logits": {
+      "argmaxAgrees": true,
+      "cosine": 0.999999999980292,
+      "maxAbs": 0.00020301900804042816,
+      "rms": 3.628026315568593e-05,
+      "withinDiagnosticTolerance": true
+    },
+    "ablate-residual": {
+      "argmaxAgrees": true,
+      "cosine": 0.9999999999988483,
+      "maxAbs": 1.33514404296875e-05,
+      "rms": 1.4790727903063635e-06,
+      "withinDiagnosticTolerance": true
+    },
+    "add-logits": {
+      "argmaxAgrees": true,
+      "cosine": 0.9999999999969469,
+      "maxAbs": 8.916854858398438e-05,
+      "rms": 1.4598496229605167e-05,
+      "withinDiagnosticTolerance": true
+    },
+    "add-residual": {
+      "argmaxAgrees": true,
+      "cosine": 0.9999999999981164,
+      "maxAbs": 2.6226043701171875e-05,
+      "rms": 1.934154778325473e-06,
+      "withinDiagnosticTolerance": true
+    },
+    "direction-designatedReference": {
+      "argmaxAgrees": true,
+      "cosine": 0.9999999999019935,
+      "maxAbs": 1.52587890625e-05,
+      "rms": 1.3404103846215423e-06,
+      "withinDiagnosticTolerance": true
+    },
+    "direction-lat": {
+      "argmaxAgrees": true,
+      "cosine": 0.9999999998949183,
+      "maxAbs": 1.7136335372924805e-05,
+      "rms": 1.3882084947260076e-06,
+      "withinDiagnosticTolerance": true
+    },
+    "direction-meanDifference": {
+      "argmaxAgrees": true,
+      "cosine": 0.9999999999019935,
+      "maxAbs": 1.52587890625e-05,
+      "rms": 1.3404103846215423e-06,
+      "withinDiagnosticTolerance": true
+    },
+    "direction-optvec": {
+      "argmaxAgrees": true,
+      "cosine": 1.0000000000000002,
+      "maxAbs": 9.313225746154785e-10,
+      "rms": 4.8610662576461324e-11,
+      "withinDiagnosticTolerance": true
+    },
+    "logits-0": {
+      "argmaxAgrees": true,
+      "cosine": 0.9999999999961564,
+      "maxAbs": 9.059906005859375e-05,
+      "rms": 1.7168305468570295e-05,
+      "withinDiagnosticTolerance": true
+    },
+    "logits-1": {
+      "argmaxAgrees": true,
+      "cosine": 0.9999999999963775,
+      "maxAbs": 8.535385131835938e-05,
+      "rms": 1.6220586714915645e-05,
+      "withinDiagnosticTolerance": true
+    },
+    "logits-2": {
+      "argmaxAgrees": true,
+      "cosine": 0.9999999999957199,
+      "maxAbs": 8.058547973632812e-05,
+      "rms": 1.722770858819699e-05,
+      "withinDiagnosticTolerance": true
+    },
+    "logits-3": {
+      "argmaxAgrees": true,
+      "cosine": 0.9999999999963736,
+      "maxAbs": 9.059906005859375e-05,
+      "rms": 1.623764226355041e-05,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-curve-gradNormU": {
+      "argmaxAgrees": true,
+      "cosine": 1.0,
+      "maxAbs": 1.043081283569336e-06,
+      "rms": 7.375698489406456e-07,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-curve-loss": {
+      "argmaxAgrees": true,
+      "cosine": 1.0,
+      "maxAbs": 1.5020370483398438e-05,
+      "rms": 1.0621005824745295e-05,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-curve-lossAnchor": {
+      "argmaxAgrees": true,
+      "cosine": null,
+      "maxAbs": 0.0,
+      "rms": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-curve-lossCap": {
+      "argmaxAgrees": true,
+      "cosine": null,
+      "maxAbs": 0.0,
+      "rms": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-curve-lossOrth": {
+      "argmaxAgrees": true,
+      "cosine": null,
+      "maxAbs": 0.0,
+      "rms": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-curve-lossShift": {
+      "argmaxAgrees": true,
+      "cosine": 1.0,
+      "maxAbs": 1.5020370483398438e-05,
+      "rms": 1.0621005824745295e-05,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-curve-lr": {
+      "argmaxAgrees": true,
+      "cosine": 1.0000000000000002,
+      "maxAbs": 0.0,
+      "rms": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.0.alphaAbsolute": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.0.alphaMultiple": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.0.anchor.itemCount": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.0.capability.itemCount": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.0.fluency.scoredTextCount": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.0.fluency.textCount": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.0.target.flipRate": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.0.target.flippableItemCount": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.0.target.itemCount": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.0.target.meanKLFromBaseline": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.0.target.meanLogOddsMovement": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.0.target.targetSelectedRate": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.1.alphaAbsolute": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.1.alphaMultiple": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.1.anchor.itemCount": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.1.capability.itemCount": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.1.fluency.scoredTextCount": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.1.fluency.textCount": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.1.target.flipRate": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.1.target.flippableItemCount": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.1.target.itemCount": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.1.target.meanKLFromBaseline": {
+      "maxAbs": 6.231430199789409e-08,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.1.target.meanLogOddsMovement": {
+      "maxAbs": 1.0967254628901912e-05,
+      "withinDiagnosticTolerance": true
+    },
+    "optvec-evaluation.1.target.targetSelectedRate": {
+      "maxAbs": 0.0,
+      "withinDiagnosticTolerance": true
+    },
+    "residual-0": {
+      "argmaxAgrees": true,
+      "cosine": 0.9999999999989218,
+      "maxAbs": 1.8596649169921875e-05,
+      "rms": 1.4550951487136477e-06,
+      "withinDiagnosticTolerance": true
+    },
+    "residual-1": {
+      "argmaxAgrees": true,
+      "cosine": 0.9999999999991556,
+      "maxAbs": 8.344650268554688e-06,
+      "rms": 1.3164092242098442e-06,
+      "withinDiagnosticTolerance": true
+    },
+    "residual-2": {
+      "argmaxAgrees": true,
+      "cosine": 0.9999999999988132,
+      "maxAbs": 1.811981201171875e-05,
+      "rms": 1.4899179034316234e-06,
+      "withinDiagnosticTolerance": true
+    },
+    "residual-3": {
+      "argmaxAgrees": true,
+      "cosine": 0.9999999999990152,
+      "maxAbs": 1.239776611328125e-05,
+      "rms": 1.3944626867599274e-06,
+      "withinDiagnosticTolerance": true
+    }
+  },
+  "rngChecksPassed": true
+}
