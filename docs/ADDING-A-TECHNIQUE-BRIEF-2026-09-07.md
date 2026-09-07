@@ -1,5 +1,11 @@
 # Brief: write the "adding a technique" guide, and make the additions easier
 
+**Implementation update (2026-09-07):** use [ADDING-A-TECHNIQUE.md](ADDING-A-TECHNIQUE.md)
+and [TECHNIQUE-PARITY-IMPLEMENTATION.md](TECHNIQUE-PARITY-IMPLEMENTATION.md) for the
+current plan. They replace the fixed class-A effort estimate and automatic audit
+re-pinning advice below with scientific-effect classification and reviewed proof.
+This brief remains the original proposal, not authority to weaken a gate.
+
 Written 2026-09-07 by the maintainer's integration agent for the refactoring
 agents, on main `7284463`. Two deliverables: a guide a researcher's coding
 agent can follow to add a technique, and a short set of changes that make the

@@ -1,5 +1,11 @@
 # Brief: MLX and MPS parity program
 
+**Implementation update (2026-09-07):** [TECHNIQUE-PARITY-IMPLEMENTATION.md](TECHNIQUE-PARITY-IMPLEMENTATION.md)
+is the active refinement. In particular, use its exact per-path seed policies and
+guidance-first qualification policy instead of the simplified derivation and
+model-family refusal proposal below. [SUBSTRATES.md](SUBSTRATES.md) inventories
+the current implementation without claiming new hardware measurements.
+
 Written 2026-09-07 by the maintainer's integration agent for the refactoring
 agents, on main `7284463`. This is a work program, not a design ruling: the
 researcher decides which work packages run and in what order. Each package
