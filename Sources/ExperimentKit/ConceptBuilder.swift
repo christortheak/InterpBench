@@ -3742,6 +3742,7 @@ public final class ConceptBuilder {
         public let layer: Int
         public let trainAccuracy: Float
         public let heldOutAccuracy: Float?
+        public let finalTestAccuracy: Float?
         /// PC1's share of the DIFFERENCE CLOUD's variance. nil when the cloud
         /// carries none to apportion (every difference identical) — absent,
         /// never 0, which would read as "PC1 explains nothing".
@@ -3802,11 +3803,13 @@ public final class ConceptBuilder {
             signHeldOutAccuracy: Float? = nil,
             signFallbackReason: String? = nil,
             explainedVarianceBasis: String = "differenceCloud",
-            isRecommendedLayer: Bool = false
+            isRecommendedLayer: Bool = false,
+            finalTestAccuracy: Float? = nil
         ) {
             self.layer = layer
             self.trainAccuracy = trainAccuracy
             self.heldOutAccuracy = heldOutAccuracy
+            self.finalTestAccuracy = finalTestAccuracy
             self.explainedVariance = explainedVariance
             self.signConvention = signConvention
             self.signHeldOutAccuracy = signHeldOutAccuracy
@@ -3828,7 +3831,8 @@ public final class ConceptBuilder {
                 signHeldOutAccuracy: artifact.signHeldOutAccuracy,
                 signFallbackReason: artifact.signFallbackReason,
                 explainedVarianceBasis: artifact.explainedVarianceBasis,
-                isRecommendedLayer: artifact.recommendedLayer == artifact.layer)
+                isRecommendedLayer: artifact.recommendedLayer == artifact.layer,
+                finalTestAccuracy: artifact.finalTestAccuracy)
         }
     }
 

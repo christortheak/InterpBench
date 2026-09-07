@@ -1931,6 +1931,12 @@ struct ConceptsPanelView: View {
                         }
                     }
                 }
+                Text("Held-out scores describe selection/validation. Final-test rows do not choose the sign or recommended layer.")
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(builder.readerLayerScores.filter { $0.finalTestAccuracy != nil }) { score in
+                    Text("Layer \(score.layer) final-test accuracy: \(Int(((score.finalTestAccuracy ?? 0) * 100).rounded()))%")
+                        .font(.caption.monospaced())
+                }
                 readerSignFallbackNotes
             }
         }

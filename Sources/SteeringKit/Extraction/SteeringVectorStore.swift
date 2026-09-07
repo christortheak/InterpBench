@@ -122,6 +122,7 @@ public struct SteeringVectorSidecar: Codable, Sendable {
     public var readerTemplateHash: String?
     public var readerContrastMode: String?
     public var readerSignConvention: String?
+    public var readerEvidenceRoles: RepEReader.EvidenceRoles? = nil
     /// The reader probe's `orientation` at derive time (+1 or −1) — the sign
     /// the TRAIN class means imply. Under `trainMajority` the derived BYTES
     /// have it folded in (a reader with orientation −1 stores a direction

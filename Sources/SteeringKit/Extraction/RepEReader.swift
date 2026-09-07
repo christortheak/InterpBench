@@ -604,8 +604,11 @@ public enum RepEReader {
         /// SHA-256 over the file's raw bytes (stimulus-set convention).
         public let hash: String
 
-        public var train: [Pair] { pairs.filter { $0.split == "train" } }
-        public var heldOut: [Pair] { pairs.filter { $0.split != "train" } }
+        public var train: [Pair] { pairs.filter { $0.split.lowercased() == "train" } }
+        public var heldOut: [Pair] {
+            pairs.filter { !["train", "finaltest"].contains($0.split.lowercased()) }
+        }
+        public var finalTest: [Pair] { pairs.filter { $0.split.lowercased() == "finaltest" } }
 
         public var shape: Shape {
             pairs.first?.isTemplatePairRow == true ? .singleStimulus : .contentPair
@@ -711,7 +714,9 @@ public enum RepEReader {
                     + "produce different differences, so one file cannot mean both. "
                     + "Repair: split them into two datasets")
         }
-        return Dataset(concept: pairs[0].concept, pairs: pairs, hash: sha256Hex(data))
+        let dataset = Dataset(concept: pairs[0].concept, pairs: pairs, hash: sha256Hex(data))
+        try checkSplitOverlap(dataset, source: source)
+        return dataset
     }
 
     /// Which contrast a (dataset, template) combination declares — derived,
@@ -806,6 +811,12 @@ public enum RepEReader {
         public var heldOutAccuracy: Float?
         public var trainPairCount: Int
         public var heldOutPairCount: Int
+        public var finalTestAccuracy: Float? = nil
+        public var finalTestPairCount: Int? = nil
+        public var splitOverlap: [String: Int]? = nil
+        public var evidenceRoles: EvidenceRoles? = nil
+        public var evidenceRolesBasis: String? = nil
+        public var evidenceRoleNote: String? = nil
         /// Which contrast the pair differences express (absent = legacy
         /// `supervisedContent`).
         public var contrastMode: ContrastMode
@@ -868,6 +879,8 @@ public enum RepEReader {
             case pc1PowerIteration
             case trainAccuracy, heldOutAccuracy
             case trainPairCount, heldOutPairCount
+            case finalTestAccuracy, finalTestPairCount, splitOverlap
+            case evidenceRoles, evidenceRolesBasis, evidenceRoleNote
             case contrastMode, signConvention, signHeldOutAccuracy
             case signFallbackReason, orientationSeed
             case recommendedLayer, recommendedLayerAccuracy
@@ -997,6 +1010,12 @@ public enum RepEReader {
                 Int.self, forKey: .trainPairCount) ?? 0
             heldOutPairCount = try container.decodeIfPresent(
                 Int.self, forKey: .heldOutPairCount) ?? 0
+            finalTestAccuracy = try container.decodeIfPresent(Float.self, forKey: .finalTestAccuracy)
+            finalTestPairCount = try container.decodeIfPresent(Int.self, forKey: .finalTestPairCount)
+            splitOverlap = try container.decodeIfPresent([String: Int].self, forKey: .splitOverlap)
+            evidenceRoles = try container.decodeIfPresent(EvidenceRoles.self, forKey: .evidenceRoles)
+            evidenceRolesBasis = try container.decodeIfPresent(String.self, forKey: .evidenceRolesBasis)
+            evidenceRoleNote = try container.decodeIfPresent(String.self, forKey: .evidenceRoleNote)
             contrastMode =
                 try container.decodeIfPresent(ContrastMode.self, forKey: .contrastMode)
                 ?? .supervisedContent
@@ -1060,6 +1079,13 @@ public enum RepEReader {
             try container.encodeIfPresent(heldOutAccuracy, forKey: .heldOutAccuracy)
             try container.encode(trainPairCount, forKey: .trainPairCount)
             try container.encode(heldOutPairCount, forKey: .heldOutPairCount)
+            try evidenceRoles?.validate()
+            try container.encodeIfPresent(finalTestAccuracy, forKey: .finalTestAccuracy)
+            try container.encodeIfPresent(finalTestPairCount, forKey: .finalTestPairCount)
+            try container.encodeIfPresent(splitOverlap, forKey: .splitOverlap)
+            try container.encodeIfPresent(evidenceRoles, forKey: .evidenceRoles)
+            try container.encodeIfPresent(evidenceRolesBasis, forKey: .evidenceRolesBasis)
+            try container.encodeIfPresent(evidenceRoleNote, forKey: .evidenceRoleNote)
             try container.encode(contrastMode, forKey: .contrastMode)
             try container.encode(signConvention, forKey: .signConvention)
             try container.encodeIfPresent(signHeldOutAccuracy, forKey: .signHeldOutAccuracy)
@@ -1306,7 +1332,7 @@ public enum RepEReader {
 
     /// Pure fit over pre-captured LAT-token activations — the unit-testable
     /// math half. `capturedValues[textIndex][layer]` follows the rendered-text
-    /// order the async `fit` produces: train rows then held-out rows, the
+    /// order the async `fit` produces: train rows, held-out rows, then final-test rows, the
     /// positive/T+ rendering before the negative/T− rendering within each row.
     public static func fit(
         dataset: Dataset,
@@ -1324,17 +1350,19 @@ public enum RepEReader {
                     + "but the fit uses '\(template.id)'")
         }
         let contrastMode = try resolveContrastMode(dataset: dataset, template: template)
+        try checkSplitOverlap(dataset)
         let train = dataset.train
         let held = dataset.heldOut
+        let finalTest = dataset.finalTest
         guard train.count >= 2 else {
             throw ReaderError(
                 reason: "need at least 2 train pairs, have \(train.count) "
                     + "(rows default to split 'train')")
         }
-        guard capturedValues.count == 2 * (train.count + held.count) else {
+        guard capturedValues.count == 2 * (train.count + held.count + finalTest.count) else {
             throw ReaderError(
                 reason: "captured \(capturedValues.count) activations for "
-                    + "\(train.count + held.count) pairs — expected two per pair")
+                    + "\(train.count + held.count + finalTest.count) pairs — expected two per pair")
         }
         let layerCount = capturedValues.first?.count ?? 0
         guard layerCount > 0 else {
@@ -1369,8 +1397,10 @@ public enum RepEReader {
                 probe: probe, positive: posTrain, negative: negTrain)
             let heldAccuracy = try pairAccuracy(
                 probe: probe, positive: posHeld, negative: negHeld)
-            artifacts.append(
-                Artifact(
+            let testStart = nTrain + held.count
+            let posTest = (0 ..< finalTest.count).map { capturedValues[2 * (testStart + $0)][layer] }
+            let negTest = (0 ..< finalTest.count).map { capturedValues[2 * (testStart + $0) + 1][layer] }
+            var artifact = Artifact(
                     modelID: modelID, revision: revision,
                     concept: dataset.concept, layer: layer, template: template,
                     datasetHash: dataset.hash, probe: probe,
@@ -1386,9 +1416,19 @@ public enum RepEReader {
                     signFallbackReason: fitted.signFallbackReason,
                     orientationSeed: contrastMode == .unsupervisedTemplatePair
                         ? orientationSeed : nil,
-                    extractionRendering: extractionRendering))
+                    extractionRendering: extractionRendering)
+            artifact.finalTestAccuracy = try pairAccuracy(probe: probe, positive: posTest, negative: negTest)
+            artifact.finalTestPairCount = finalTest.isEmpty ? nil : finalTest.count
+            artifact.splitOverlap = ["exactDuplicatesAcrossSplits": 0]
+            artifacts.append(artifact)
         }
-        return stampLayerRecommendation(artifacts)
+        return stampLayerRecommendation(artifacts).map { artifact in
+            var stamped = artifact
+            stamped.evidenceRoles = artifact.resolvedEvidenceRoles
+            stamped.evidenceRolesBasis = "stamped"
+            stamped.evidenceRoleNote = RepEReader.evidenceRoleNote
+            return stamped
+        }
     }
 
     /// Stamps the argmax-held-out-accuracy layer into every artifact of a set
@@ -1422,7 +1462,7 @@ public enum RepEReader {
     }
 
     /// The rendered texts a fit reads, in the order `fit` expects: train rows
-    /// then held-out rows, positive/T+ before negative/T− within each row.
+    /// then held-out and final-test rows, positive/T+ before negative/T− within each row.
     /// Pure (no model), so the rendering contract is unit-testable.
     public static func fitTexts(
         dataset: Dataset, template: TaskTemplate, modelID: String,
@@ -1431,7 +1471,7 @@ public enum RepEReader {
         let contrastMode = try resolveContrastMode(dataset: dataset, template: template)
         var texts: [String] = []
         texts.reserveCapacity(dataset.pairs.count * 2)
-        for pair in dataset.train + dataset.heldOut {
+        for pair in dataset.train + dataset.heldOut + dataset.finalTest {
             switch contrastMode {
             case .supervisedContent:
                 for stimulus in [pair.positiveStimulus, pair.negativeStimulus] {
@@ -1485,8 +1525,8 @@ public enum RepEReader {
     }
 
     /// Fits one reader per layer from the dataset's train split; held-out rows
-    /// (any other `split` value) fix each layer's SIGN and score the
-    /// instrument they did not fit.
+    /// (neither train nor finalTest) fix each layer's SIGN and rank layers.
+    /// Final-test rows only score the fitted instrument, after all selection.
     ///
     /// Rendering goes through `renderScaffold` (family-aware) and then the
     /// declared `extractionRendering`; activations are captured by the same
@@ -1704,6 +1744,7 @@ public enum RepEReader {
         sidecar.readerTemplateHash = reader.templateHash
         sidecar.readerContrastMode = reader.contrastMode.rawValue
         sidecar.readerSignConvention = reader.signConvention.rawValue
+        sidecar.readerEvidenceRoles = reader.resolvedEvidenceRoles
         sidecar.readerProbeOrientation = orientation
         sidecar.signConvention = reader.signConvention.rawValue
         if heldOutSigned {
