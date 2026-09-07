@@ -31,7 +31,7 @@ def qualify(scratch):
         ['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
         cwd=ROOT).decode().split('\0')
     for relative in sorted(set(paths)):
-        if not relative.startswith(('Server/', 'WorkspaceSeed/', 'Sources/', 'scripts/ci/', 'docs/')):
+        if not relative.startswith(('Server/', 'WorkspaceSeed/', 'Sources/', 'Tests/', 'scripts/ci/', 'docs/')):
             continue
         source = ROOT / relative
         if source.is_file():
