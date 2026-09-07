@@ -36,3 +36,22 @@ def check_catalog(catalog, engine_source):
         family, verb = words[1:3]
         assert family in families, f"Unknown engine family: {command}"
         assert (verb == '--help' and len(words) == 3) or verb in census.get(family, set()), f"Uncensused engine verb: {command}"
+
+
+def check_actions(catalog, route_census):
+    roles = {row.key: row for row in route_census}
+    for operation in catalog['operations']:
+        actions = operation['actions']
+        assert len({a['id'] for a in actions}) == len(actions), operation['id']
+        declared = set((operation['http'] or '').split('; ')) - {''}
+        assert {a['method'] + ' ' + a['path'] for a in actions} == declared, operation['id']
+        for action in actions:
+            route = roles[action['method'] + ' ' + action['path']]
+            assert action['method'] in {'GET', 'POST'}
+            assert action['serviceRole'] == route.role.value and action['authorityReason'] == route.why, action['id']
+        access = operation['access']
+        assert access['restriction']
+        if actions:
+            assert access['status'] == 'http' and access['client'] and access['macCLI']
+        else:
+            assert access['status'] == 'engineOnly' and operation['engineCLI'] and access['client'] is None and access['macCLI'] is None

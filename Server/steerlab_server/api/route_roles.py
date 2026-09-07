@@ -46,6 +46,11 @@ R, W, B = Role.RUNNER, Role.WORKBENCH, Role.BOTH
 
 #: THE CENSUS. Every (method, template) the app serves must appear here.
 CENSUS: tuple[RouteRole, ...] = (
+    _r("POST", "/api/science/workspace/{action}", W, "Package local authored diagnostic inputs or verify/import local custody; the runner stages only isolated execution copies."),
+    _r("POST", "/api/science/stage", B, "Verify and stage isolated execution copies; never edit workbench source documents."),
+    _r("POST", "/api/science/jobs/{job_id}/export", B, "Package completed standalone execution output for verified local custody."),
+    _r("POST", "/api/science/jobs/{job_id}/cleanup-plan", B, "Review exact diagnostic output removal under declared policy and local custody attestation."),
+    _r("POST", "/api/science/jobs/{job_id}/cleanup-apply", B, "Recheck reviewed cleanup facts and remove only the named diagnostic output with explicit confirmation."),
     _r("POST", "/api/science/plan", B, "Inspect staged standalone diagnostic inputs and execution resources without execution or authorship."),
     _r("POST", "/api/science/submit", B, "Execute a reviewed standalone diagnostic and retain its scientific output type."),
     _r("GET", "/api/jobs/{job_id}/recovery", B, "Read controller ownership evidence and its external review token."),

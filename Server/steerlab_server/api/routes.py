@@ -880,6 +880,8 @@ def build_router(state: ServiceState) -> APIRouter:
     router.include_router(build_science_router())
     from .scientific_execution_routes import build_scientific_execution_router
     router.include_router(build_scientific_execution_router(state))
+    from .diagnostic_transport_routes import build_router as build_diagnostic_transport_router
+    router.include_router(build_diagnostic_transport_router(state))
 
     @router.get("/healthz")
     def healthz():

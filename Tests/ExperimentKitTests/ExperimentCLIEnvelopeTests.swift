@@ -761,7 +761,8 @@ import Testing
             // agent path; their human output is unchanged.
             "panel list", "panel check", "panel compile", "panel inspect", "panel import",
             "experiment set-pipeline", "design expand",
-            "remote science-plan", "remote science-submit", "remote recovery", "remote recover", "remote reconcile",
+            "remote science-stage", "remote science-export", "remote science-fetch", "remote science-call", "remote cleanup-plan", "remote cleanup-apply",
+                "remote science-plan", "remote science-submit", "remote recovery", "remote recover", "remote reconcile",
             "remote model-plan", "remote model-install", "remote model-status", "remote model-cancel",
             // The chat-template capability record (2026-09-05): shown, probed
             // from the pinned template through this Mac's tokenizer, or
@@ -776,7 +777,7 @@ import Testing
             // more often than it meets a missing verb.
             "authoring prompt", "authoring study", "pack preview", "pack apply", "pack export",
             "experiment import-prompts", "experiment inspect-artifact", "experiment attach-artifact",
-            "science list", "science guide", "science operation",
+            "science list", "science guide", "science operation", "science input-plan", "science package", "science import", "science custody", "science verify-custody",
         ]
         #expect(declared == expected)
         for spec in ExperimentCLIParser.specs where spec.namespace == "remote" && spec.verb.hasPrefix("model-") {

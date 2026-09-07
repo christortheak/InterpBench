@@ -1210,3 +1210,45 @@ app qualification, app installation or engine deployment was performed. These
 software checks establish neither memory fit nor scientific qualification.
 Frozen study bytes and existing runs are not migrated. Standalone input/output
 transport composition and verified custody/cleanup remain separate work.
+
+## Diagnostic custody and bounded cleanup — 2026-09-06
+
+Branch `codex/remote-custody-cleanup`, base main `6a94a8f`. Read
+[the implementation/audit handoff](REMOTE-CUSTODY-CLEANUP-HANDOFF.md).
+
+- Final full Python suite: **6,103 passed, 9 skipped, 8 warnings**, 254.05 seconds;
+  `/private/tmp/remote-custody-python-verified.log`.
+- Final full serial Xcode beta suite: **277 SteeringKit + 4,592 ExperimentKit
+  passed**, `TEST SUCCEEDED`; `/private/tmp/remote-custody-xcode-verified.log`.
+  The Mac parity test imports a Python-created diagnostic archive through the
+  real local process adapter and re-verifies it offline, refusing changed bytes.
+- Xcode beta/Metal environment, explicit test Python, external derived data,
+  serial testing and coverage setting match the preceding entry. Python runs
+  from this worktree with `PYTHONPATH=Server HF_HUB_OFFLINE=1` and the established
+  interpreter from the main checkout’s `Server/.venv.nosync/bin/python`.
+- Shared resource/interview gates, both CLI reference generators/checks, route
+  census and negative controls, bridge checks normal/release, lazy-import,
+  task-prompt and stability AST audits, public scan and whitespace checks pass.
+  The historical boundary audit at candidate `a7536f9` still verifies 3,436
+  function bodies. These historical audits retain their original pinned ranges.
+- Against this slice's actual base `6a94a8f`, `battery_run.py`,
+  `extract_stability.py`, `model_variant.py` and `neutral.py` are byte-identical;
+  all 94 existing job function ASTs are unchanged. No mechanical move is claimed.
+  The new durable snapshot method and staged-input admission are semantic additions.
+- Initial full runs exposed stale generated references, now regenerated. Final
+  review added a fresh durable snapshot for foreign-controller job visibility,
+  create-only directory publication, relative portable dependency admission,
+  adapter sidecar inclusion and complete queued closure verification. The final
+  full runs above include these changes, not just the initial passing fixtures.
+- A real loopback fixture exercises upload, isolated stage, completed export,
+  download/import, receipt verification and explicitly confirmed cleanup. Tests
+  also cover refusal without policy, retention, stale policy/plan, active/resumable
+  and foreign-controller jobs, malformed/link/duplicate archives, wrong context,
+  receipt/file drift and quarantine attention/restoration.
+
+The implementation diff was read locally. Independent maintainer review through
+its designated agent and the user remains the landing gate. No live cluster,
+scheduler allocation, model download, real study, app installation or deployment
+was performed. Live scientific/GPU, external-only site transport, Linux atomic
+filesystem behavior and interactive app usability remain unqualified. Main is
+unchanged; source interface tests do not establish universal surface equivalence.

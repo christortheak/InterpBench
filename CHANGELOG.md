@@ -12,6 +12,17 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Standalone diagnostic inputs can be reviewed, packaged and staged as isolated
+  execution copies. Completed output exports import without replacement and
+  retain byte-pinned custody receipts that both clients and the app verify offline.
+- Explicit diagnostic retention policies permit reviewed cleanup of isolated,
+  successful output copies after fresh local custody verification. Cleanup binds
+  policy, dependencies and output bytes, holds durable job registration during
+  removal, and retains inputs, export archives, job records and an audit record.
+- Existing advanced scientific HTTP actions are callable through both remote
+  clients and the app's shared method catalog. Route/service authority is checked
+  against the maintained census; Python-engine-only methods remain explicit.
+
 - Reviewed cluster profiles can be accepted through `cluster sites accept`, the
   setup wizard, and Mac `/api/cluster/sites/guide|review|accept`. Acceptance pins
   companion bytes, retains citations privately, and refuses replacement.

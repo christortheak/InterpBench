@@ -386,7 +386,7 @@ struct ExperimentsPanelView: View {
             }
         }
         .sheet(isPresented: $showScienceGuides) {
-            ScienceGuidesView(openOptimizations: openOptimizations, openTemplates: openTemplates)
+            ScienceGuidesView(client: service.cluster.client, openOptimizations: openOptimizations, openTemplates: openTemplates)
         }
         .sheet(isPresented: $showImportJSONL) {
             if let reviewed = importJSONLReview {

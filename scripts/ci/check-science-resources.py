@@ -44,3 +44,9 @@ print('Science catalog and method guides match both packaged clients.')
 from science_cli_census import check_catalog
 import json
 check_catalog(json.loads((Path(__file__).resolve().parents[2] / "WorkspaceSeed/prompts/method-guides/catalog.json").read_text()), (Path(__file__).resolve().parents[2] / "Server/steerlab_server/cli.py").read_text())
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'Server'))
+from steerlab_server.api.route_roles import CENSUS
+from science_cli_census import check_actions
+check_actions(json.loads((Path(__file__).resolve().parents[2] / 'WorkspaceSeed/prompts/method-guides/catalog.json').read_text()), CENSUS)

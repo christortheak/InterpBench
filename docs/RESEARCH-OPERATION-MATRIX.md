@@ -1,7 +1,7 @@
 # Maintained research operation matrix
 
-Current authoring update: `codex/python-authoring-equivalence`, based on main
-`ef3dec8`, including terminal-job import receipt gates. Earlier evidence rows
+Current transport/access update: `codex/remote-custody-cleanup`, based on main
+`6a94a8f`, including the reviewed cluster execution workflow. Earlier evidence rows
 retain their original qualification boundaries. This is the working inventory for WP-0–WP-7, alongside
 [the implementation plan](RESEARCHER-WORKFLOW-IMPLEMENTATION-PLAN.md) and
 [the validation ledger](RESEARCHER-WORKFLOW-IMPLEMENTATION-STATUS.md). Historical
@@ -26,11 +26,22 @@ interface tests, not live model qualification or interactive UI QA.
 Standalone stability and floor batteries now have reviewed HTTP submission,
 portable/Mac remote CLI adapters and a Server Jobs form. They use staged inputs,
 retain their diagnostic/battery output types, and explicitly do not support
-standalone bundle transport or checkpoint resume. See
+checkpoint resume. Isolated input bundles, completed output export/import, offline
+custody and bounded policy-driven cleanup now compose across both clients and the
+app; see [the current handoff](REMOTE-CUSTODY-CLEANUP-HANDOFF.md). See
 [the cluster and execution handoff](CLUSTER-EXECUTION-WORKFLOW-HANDOFF.md). OptVec J-space is exploratory analysis, not
 training. The catalog states these restrictions; a guide does not grant an
 unsupported engine capability. The detailed rows below retain their broader
 qualification tasks until live journeys are observed.
+
+
+Existing HTTP actions now have catalog-driven `runner science-call` / `remote
+science-call` adapters and an app JSON action editor. The gate checks actual route
+and service-role declarations; original owner schemas, gates and artifacts remain
+authoritative. This closes invocation gaps for supported reader, fine-tune,
+J-lens, Gemma Scope and judgment-completion HTTP operations. Engine-only
+style rescoring, SAE tools and the nine OptVec verbs remain explicitly restricted;
+they are not counted as managed remote execution or bespoke app-form coverage.
 
 ## How to read the matrix
 
@@ -93,10 +104,10 @@ or authorize new agent tasks. The source groups below provide navigable owners.
 | EXEC-04 extraction stability | Stability owner and diagnostic submission | `remote science-plan/science-submit` | Client runner science-plan/science-submit; Engine extract-stability | Python science plan/submit | Server Jobs scientific diagnostic | Reviewed staged inputs, queue-time drift, unchanged numeric owner; no native Mac numerical parity or checkpoint resume |
 | EXEC-05 standalone capability/floor battery | Battery owner and diagnostic submission | `remote science-plan/science-submit` | Client runner science-plan/science-submit; Engine battery run | Python science plan/submit | Server Jobs scientific diagnostic | Closed standalone request; no fake study, format-3 pin bypass or checkpoint resume; partial output locations retained |
 | METHOD-01 readers and reader scoring | Reader owners | Present reader family | Engine reader/data paths; Client file authoring | Python reader fit/score | Readers | Interpret a reader as an instrument; document training/evaluation split and model pins |
-| METHOD-02 optimized vectors | OptVec owners | Restricted execution; artifact consumers | Engine optvec family | Submission coverage unverified by operation | Optimization | Index train/eval/geometry/family/interpret/fracture/campaign paths; identify envelope gaps |
+| METHOD-02 optimized vectors | OptVec owners | Restricted execution; artifact consumers | Engine optvec family | No managed HTTP path in this slice; named engine CLI | Optimization | Index train/eval/geometry/family/interpret/fracture/campaign paths; identify envelope gaps |
 | METHOD-03 fine-tune adapters | FineTuneStore, Python fine-tune owners | Authoring/artifact surface; execution restricted | Engine finetune plan/train/submit | Python plan/train/submit | Adapters | Workbench plan versus runner train/submit authority must remain explicit |
 | METHOD-04 J-lens acquisition/qualification/readout | J-lens owners | Restricted execution, app rendering | Engine jlens family | Python J-lens workbench routes | J-lens | Publish all supported verbs, qualification and model/token/layer constraints |
-| METHOD-05 J-space exploratory analysis | OptVec J-space owner | Restricted execution | Engine optvec jspace | Exact API mapping unverified | Exact UI mapping unverified | Separate from J-lens readout and ordinary paired extraction; add accessible discovery |
+| METHOD-05 J-space exploratory analysis | OptVec J-space owner | Restricted execution | Engine optvec jspace | Engine-only, no managed HTTP action | Guide with explicit engine routing | Separate from J-lens readout and ordinary paired extraction; managed execution remains a gap |
 | METHOD-06 SAE/Gemma Scope analysis/import/qualification | SAE/Gemma Scope owners | Restricted execution; artifact attachment | Client pin-sae; Engine sae/Gemma Scope | Python Gemma Scope routes | SAE/adapter coverage mixed | Preserve convention/qualification stamps and distinguish feature-ID versus report-ranked imports |
 | METHOD-07 vector parity/mirror/norm operations | Vector owners | Present vector family | Engine vectors; Client gap | Python vector operations | Exact controls unverified | Existing artifact writes need immutable-evidence admission audit; never relax it for parity |
 | CHAT-01 local and remote exploratory generation | Chat/variant services | Remote chat present; local CLI gap | Client mapping restricted | Swift chat; Python generate/variant | Playground | API-accessible; explicitly distinguish exploration from frozen study execution |
@@ -116,8 +127,8 @@ or authorize new agent tasks. The source groups below provide navigable owners.
 | REMOTE-06 verify/import individual and chain evidence | Evidence import/chain/adoption owners | Present import/import-chain | Client bundle import/runner evidence/composite run | Python bundle evidence/download/import | Results/import | Captured root, adoption CAS, verified reuse, origin/version-scoped ledger and restart/refusal tests pass; archive/member custody receipts implemented; full remote journey remains |
 | REMOTE-07 browse imported results offline | Result/pipeline stores | Present results/import inspection paths | Client imported artifacts | Swift state; Python workbench catalog | Results/pipeline | Source UI gating fixed; interactive disconnected/local-target check outstanding |
 | REMOTE-08 inspect quota/purge/maintenance | Housekeeping owners | Cluster/remote mapping unverified | Engine housekeeping | Python housekeeping status/refresh/maintenance | Compute | Existing information is not authorization to delete; policy provenance and public discovery needed |
-| REMOTE-09 plan/apply bounded cleanup | Cleanup owner (WP-6), custody/dependency stores | Gap | Gap in managed local-custody workflow | Gap in managed workflow | Gap | Exact targets, verified local custody, active/resumable dependency checks, stale-plan refusal and audit result |
-| REMOTE-10 reverify local evidence custody | EvidenceCustodyStore | `data custody` / `data verify-custody` | Receipt parity pending | Swift workbench custody list/verify | Local run receipt list/verification | Exact retained archive and expanded-file hashes; changed/missing bytes and wrong workspace refuse; not scientific qualification or cleanup permission |
+| REMOTE-09 plan/apply bounded cleanup | Diagnostic cleanup, custody, durable job store | remote cleanup-plan/apply | runner cleanup-plan/apply | Diagnostic cleanup plan/apply | Captured diagnostic lifecycle sheet | Isolated successful diagnostic output copies only; explicit policy, receipt revalidation, exclusive durable job snapshot, stale-plan refusal and audited removal; live policy qualification pending |
+| REMOTE-10 reverify local evidence custody | Diagnostic archive owner; existing study EvidenceCustodyStore | science custody/verify-custody; existing data custody | science custody/verify-custody for diagnostics; existing study receipts separate | Both workbench diagnostic workspace adapters | Offline diagnostic receipt controls | Shared diagnostic receipt format; exact archive/expanded files/root, extra/missing/changed bytes refuse; existing study receipts not migrated |
 | QUAL-01 inspect/record qualification and run journeys | Qualification owners (WP-7) | Partial per-method operations | Engine method-specific qualification | Method-specific routes | Partial views | Live scientific matrix and A–H journey results remain outstanding; no universal tolerance invented |
 
 ## Owner source index

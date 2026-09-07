@@ -9,6 +9,26 @@ public enum ScienceCatalog {
         public let purpose: String
         public let guide: String
     }
+    public struct Action: Codable, Identifiable, Sendable {
+        public let id: String
+        public let method: String
+        public let path: String
+        public let serviceRole: String
+        public let authorityReason: String
+    }
+    public struct Access: Codable, Sendable {
+        public let status: String
+        public let client: String?
+        public let macCLI: String?
+        public let restriction: String
+        enum CodingKeys: String, CodingKey { case status, client, macCLI, restriction }
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(status, forKey: .status); try c.encode(restriction, forKey: .restriction)
+            if let client { try c.encode(client, forKey: .client) } else { try c.encodeNil(forKey: .client) }
+            if let macCLI { try c.encode(macCLI, forKey: .macCLI) } else { try c.encodeNil(forKey: .macCLI) }
+        }
+    }
     public struct Operation: Codable, Identifiable, Sendable {
         public let id: String
         public let method: String
@@ -19,8 +39,10 @@ public enum ScienceCatalog {
         public let compute: String
         public let outputs: [String]
         public let restriction: String
+        public let actions: [Action]
+        public let access: Access
 
-        enum CodingKeys: String, CodingKey { case id, method, title, engineCLI, mac, http, compute, outputs, restriction }
+        enum CodingKeys: String, CodingKey { case id, method, title, engineCLI, mac, http, compute, outputs, restriction, actions, access }
         public func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(id, forKey: .id); try c.encode(method, forKey: .method)
@@ -28,6 +50,7 @@ public enum ScienceCatalog {
             if let engineCLI { try c.encode(engineCLI, forKey: .engineCLI) } else { try c.encodeNil(forKey: .engineCLI) }
             try c.encode(mac, forKey: .mac); try c.encode(compute, forKey: .compute)
             try c.encode(outputs, forKey: .outputs); try c.encode(restriction, forKey: .restriction)
+            try c.encode(actions, forKey: .actions); try c.encode(access, forKey: .access)
             if let http { try c.encode(http, forKey: .http) } else { try c.encodeNil(forKey: .http) }
         }
     }

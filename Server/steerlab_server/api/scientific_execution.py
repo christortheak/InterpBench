@@ -126,7 +126,15 @@ def plan(request, profile):
             raise ScientificRefusal('Submit through the controller; session workers own no durable job queue.')
         if server_role(profile) == 'controller' and profile.executor != 'slurm':
             raise ScientificRefusal('A controller must submit this GPU work through Slurm.')
-        result = input_plan(request, profile.root)
+        execution_root = profile.root
+        staged_digest = None
+        if isinstance(request, dict) and set(request) == {'inputBundleSHA256'}:
+            from . import diagnostic_transport
+            staged_digest = request['inputBundleSHA256']
+            request, execution_root = diagnostic_transport.resolve(staged_digest, profile)
+        result = input_plan(request, execution_root)
+        if staged_digest:
+            result['inputBundleSHA256'] = staged_digest
         from . import job_ownership
         host, pid = job_ownership.current_owner()
         result['controller'] = {'host': host, 'pid': pid, 'metadataRoot': str(Path(profile.metadata_root).resolve())}
@@ -239,6 +247,11 @@ def execute_packet(packet, job_id, record, expected_plan_sha256=None):
         actual = digest({key: value for key, value in reviewed.items() if key != 'planSHA256'})
         if actual != reviewed['planSHA256'] or (expected_plan_sha256 is not None and actual != expected_plan_sha256):
             raise ScientificRefusal('The recorded diagnostic plan changed after submission; nothing was executed.')
+        if reviewed.get('inputBundleSHA256'):
+            from . import diagnostic_transport
+            staged_request = diagnostic_transport.verify_inputs(root, reviewed['inputBundleSHA256'])
+            if staged_request != reviewed['request']:
+                raise ScientificRefusal('Staged archive request differs from the queued plan.')
         current = input_plan(reviewed['request'], root)
         if current['inputSHA256'] != reviewed['inputSHA256']:
             raise ScientificRefusal('Inputs changed while queued; diagnostic refused before model loading.')

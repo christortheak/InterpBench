@@ -117,7 +117,9 @@ def test_every_entry_uses_the_methods_and_templates_the_router_declares():
 # 2. Sanity — the Phase-2 client adapter
 # ---------------------------------------------------------------------------
 # `docs/PORTABILITY-CONTRACTS.md` §8.1 tabulates the routes the adapter speaks.
-# Every one of them is, by definition, a route a runner must keep answering: if
+# This transport mapping excludes catalog-driven science_call actions, whose
+# workbench/runner authority is checked separately by the scientific catalog gate.
+# Every transport entry is a route a runner must keep answering: if
 # a narrowing ever refused one, the client could not submit a bundle or bring
 # evidence home, which is the whole point of the runner role.
 
@@ -125,6 +127,10 @@ def test_every_entry_uses_the_methods_and_templates_the_router_declares():
 #: ``test_the_adapters_endpoint_scan_finds_nothing_undeclared`` below, which
 #: reads the adapter's source rather than trusting this list.
 _ADAPTER_ROUTES = (
+    ("POST", "/api/science/stage"),
+    ("POST", "/api/science/jobs/{job_id}/export"),
+    ("POST", "/api/science/jobs/{job_id}/cleanup-plan"),
+    ("POST", "/api/science/jobs/{job_id}/cleanup-apply"),
     ("POST", "/api/science/plan"),
     ("POST", "/api/science/submit"),
     ("POST", "/api/jobs/reconcile"),

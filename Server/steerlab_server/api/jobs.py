@@ -18,6 +18,7 @@ import time
 import traceback
 import uuid
 from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -506,6 +507,20 @@ class DurableJobStore:
                 "AND result_json IS ?",
                 (_dumps(new_result), job_id, row["result_json"]))
             return new_result
+
+    @contextmanager
+    def exclusive_snapshot(self):
+        """Hold durable job registration/updates while consuming a fresh snapshot.
+
+        Used by bounded artifact removal. A second controller cannot register
+        work between dependency admission and removal, and its existing jobs
+        are visible even when this manager's in-memory list predates them.
+        The consumer must not mutate this store within the transaction.
+        """
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = list(conn.execute("SELECT * FROM jobs ORDER BY created_at DESC"))
+            yield {row["id"]: self._from_row(row) for row in rows}
 
     def load_all(self) -> dict[str, "Job"]:
         with self._lock, self._connect() as conn:

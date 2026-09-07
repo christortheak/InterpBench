@@ -36,11 +36,29 @@ standalone `steerlab-server experiment extract-stability` and `battery run`
 also have reviewed remote submission via `runner science-plan/science-submit`
 on the Python client and `remote science-plan/science-submit` on the Mac.
 Use a request file with `operation` and `parameters` from the method guide,
-then submit its exact `--plan-sha256`. Inputs must already be staged on the
-runner through the site's permitted transfer workflow. The job uses the declared
-local/Slurm executor and keeps the scientific output type; no standalone bundle
-transport or checkpoint resume is claimed. Do not invent a client study verb or a
-scheduler script. OptVec's nine listed verbs include exploratory `jspace`
+then submit its exact `--plan-sha256` within the same controller session. A
+controller restart needs a new plan. For portable inputs, use `science input-plan`
+and `science package`, the permitted upload or external transfer, then
+`runner science-stage` (Mac `remote science-stage`). Stage returns the isolated
+request to plan and submit. Local workspace files remain authoritative.
+
+For completed evidence, use `runner science-fetch` (Mac `remote science-fetch`),
+or `science import` after approved external transfer and `science-export`.
+`science custody` and `science verify-custody` re-read retained archives and
+expanded output files offline. Custody proves bytes, not scientific quality.
+Only isolated successful diagnostic output copies can be removed using
+`cleanup-plan` then `cleanup-apply --confirm-removal`; an explicit server retention
+policy, unchanged plan and freshly verified local receipt are required. Inputs,
+export archives, job records and local evidence remain. Partial and resumable
+outputs stay protected. Never infer permission to remove from a job's completion.
+
+The job uses the declared local/Slurm executor and keeps its scientific output
+type; these standalone diagnostics have no checkpoint resume. Existing HTTP
+scientific actions are listed with method, route and service role by `science
+operation`. Use `runner science-call` (Mac `remote science-call`) or the app's
+Scientific workflows actions with a method-guide request; the same server gates
+apply. Operations marked `engineOnly` still require their named Python engine
+CLI on the compute host. Do not invent a client study verb or scheduler script. OptVec's nine listed verbs include exploratory `jspace`
 analysis and `gradient`; J-space is not an optimization/training operation.
 Discovery or a passing source test does not qualify a numerical claim.
 

@@ -192,12 +192,23 @@ The command table below is checked against the declared client verb specs.
 <!-- BEGIN CLIENT-STUDY-ASSEMBLY -->
 
 ```text
+steerlab runner science-call <operation> --action <value> --request <value> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
+steerlab runner science-stage <server-archive-path> --runner <url> --sha256 <digest> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
+steerlab runner science-export <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
+steerlab runner science-fetch <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
+steerlab runner cleanup-plan <job-id> --receipt-sha256 <value> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
+steerlab runner cleanup-apply <job-id> --confirm-removal --plan-sha256 <value> --receipt-sha256 <value> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner science-plan <request.json> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner science-submit <request.json> --plan-sha256 <value> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner resubmit <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>] [--walltime <value>]
 steerlab runner reconcile --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner recovery <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner recover <job-id> --confirm-owner-exited --reason <value> --review-token <value> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
+steerlab science input-plan <request.json>
+steerlab science package <request.json> --archive <value> --plan-sha256 <value>
+steerlab science import <archive.tar.gz> --sha256 <digest>
+steerlab science custody
+steerlab science verify-custody <receipt-sha256>
 steerlab science list
 steerlab science guide <method>
 steerlab science operation <operation>
@@ -2132,6 +2143,12 @@ workflow that works. The success message names the file to author:
 <!-- Generated from the declarative verb table — `steerlab-cli docs cli-reference --write`. Edit the table, not this block. -->
 
 ```
+steerlab-cli remote science-stage <server-archive-path> --sha256 <hex> [--site <id>] [--url <server>]
+steerlab-cli remote science-export <job-id> [--site <id>] [--url <server>]
+steerlab-cli remote science-fetch <job-id> [--site <id>] [--url <server>]
+steerlab-cli remote science-call <operation> --action <value> --request <value> [--site <id>] [--url <server>]
+steerlab-cli remote cleanup-plan <job-id> --receipt-sha256 <value> [--site <id>] [--url <server>]
+steerlab-cli remote cleanup-apply <job-id> --confirm-removal --plan-sha256 <value> --receipt-sha256 <value> [--site <id>] [--url <server>]
 steerlab-cli remote science-plan <request.json> [--site <id>] [--url <server>]
 steerlab-cli remote science-submit <request.json> --plan-sha256 <value> [--site <id>] [--url <server>]
 steerlab-cli remote recovery <job-id> [--site <id>] [--url <server>]
@@ -2158,6 +2175,12 @@ steerlab-cli remote chat [--hash <sha256>] [--max-tokens <n>] --prompt <text> [-
 
 | Verb | Purpose |
 |---|---|
+| `remote science-stage` | Stage a verified diagnostic execution copy without editing workbench sources. |
+| `remote science-export` | Package completed diagnostic output and return its hash for permitted transfer. |
+| `remote science-fetch` | Download and verify diagnostic evidence into the captured workspace, retaining local custody. |
+| `remote science-call` | Call a catalogued scientific HTTP action with its existing authority and gates. |
+| `remote cleanup-plan` | Reverify local custody and review bounded diagnostic output removal. |
+| `remote cleanup-apply` | Reverify custody and apply exactly the reviewed cleanup with explicit confirmation. |
 | `remote science-plan` | Review staged battery or stability inputs and runner resources. |
 | `remote science-submit` | Submit the exact reviewed standalone diagnostic; reconnect using remote jobs and logs. |
 | `remote recovery` | Inspect controller ownership evidence and its external review token. |
@@ -2844,6 +2867,11 @@ steerlab-cli authoring study <intent>
 steerlab-cli science list
 steerlab-cli science guide <method>
 steerlab-cli science operation <operation>
+steerlab-cli science input-plan <request.json>
+steerlab-cli science package <request.json> --archive <value> --plan-sha256 <value>
+steerlab-cli science import <archive.tar.gz> --sha256 <hex>
+steerlab-cli science custody
+steerlab-cli science verify-custody <receipt-sha256>
 ```
 
 | Verb | Purpose |
@@ -2853,6 +2881,11 @@ steerlab-cli science operation <operation>
 | `science list` | List shipped methods, supported operation interfaces and engine restrictions; does not execute. |
 | `science guide` | Read the shared method guide, dataset schemas and coworker/reviewer instructions. |
 | `science operation` | Inspect exact public execution paths, outputs and restrictions for one operation. |
+| `science input-plan` | Discover and hash local diagnostic inputs using the portable archive owner. |
+| `science package` | Package exactly the reviewed diagnostic inputs for permitted transfer. |
+| `science import` | Verify and import diagnostic evidence into this workspace without replacing outputs. |
+| `science custody` | Reverify and list local diagnostic evidence receipts for offline inspection. |
+| `science verify-custody` | Verify the retained diagnostic archive and every expanded output file. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:swift-authoring END -->

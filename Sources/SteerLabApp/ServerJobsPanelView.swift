@@ -14,6 +14,13 @@ struct ServerJobsPanelView: View {
         let client: ClusterClient
         let jobID: String
     }
+    private struct CustodyTarget: Identifiable {
+        let id = UUID()
+        let root: URL
+        let client: ClusterClient?
+        let jobID: String?
+    }
+    @State private var custodyTarget: CustodyTarget?
     @State private var recoveryTarget: RecoveryTarget?
     @State private var diagnosticTarget: DiagnosticTarget?
     @State private var jobs: [RemoteJobRecord] = []
@@ -56,6 +63,10 @@ struct ServerJobsPanelView: View {
                         }
                     }
                 }.disabled(!hasServerClient || isRefreshing)
+                Button("Inputs, evidence and cleanup…") {
+                    custodyTarget = CustodyTarget(root: ExperimentStore.workspaceRoot,
+                        client: clientForRows(origin: jobsOrigin), jobID: selectedJobID)
+                }
                 Button("Scientific diagnostic…") {
                     if let client = service.cluster.client {
                         diagnosticTarget = DiagnosticTarget(client: client, endpoint: client.profile.baseURL.absoluteString)
@@ -101,6 +112,9 @@ struct ServerJobsPanelView: View {
             jobsRegion
         }
         .padding(12)
+        .sheet(item: $custodyTarget) { target in
+            DiagnosticLifecycleSheet(root: target.root, client: target.client, initialJobID: target.jobID)
+        }
         .sheet(item: $recoveryTarget) { target in
             JobRecoverySheet(client: target.client, jobID: target.jobID)
         }

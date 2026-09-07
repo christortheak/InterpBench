@@ -86,7 +86,29 @@
       "outputs": [
         "Diagnostic path and per-layer stability summary"
       ],
-      "restriction": "Stage reviewed inputs under the runner workspace using its permitted transport. Remote execution requires pinned model commits and the exact planSHA256. Queue-time input drift refuses before loading. Uses the declared local or Slurm executor; no checkpoint resume or standalone bundle transport. Output stays under diagnostics; native Mac numerical parity is not claimed."
+      "restriction": "Use science input-plan/package, permitted upload, then science-stage for isolated execution copies; export/fetch and science verify-custody bring completed evidence home. Remote execution requires pinned model commits and the exact planSHA256. Queue-time input drift refuses before loading. Uses the declared local or Slurm executor; no checkpoint resume. Plan and submit in the same controller session; a controller restart needs a new plan. Output stays under diagnostics; native Mac numerical parity is not claimed.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged standalone diagnostic inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed standalone diagnostic and retain its scientific output type."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      }
     },
     {
       "id": "battery",
@@ -101,7 +123,29 @@
         "battery.jsonl",
         "battery-report.json"
       ],
-      "restriction": "Stage reviewed inputs under the runner workspace using its permitted transport. Remote execution requires pinned model commits and the exact planSHA256. Queue-time input drift refuses before loading. Uses the declared local or Slurm executor; no checkpoint resume or standalone bundle transport. Format 3 remains separate from study-pinnable controls."
+      "restriction": "Use science input-plan/package, permitted upload, then science-stage for isolated execution copies; export/fetch and science verify-custody bring completed evidence home. Remote execution requires pinned model commits and the exact planSHA256. Queue-time input drift refuses before loading. Uses the declared local or Slurm executor; no checkpoint resume. Plan and submit in the same controller session; a controller restart needs a new plan. Format 3 remains separate from study-pinnable controls.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged standalone diagnostic inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed standalone diagnostic and retain its scientific output type."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      }
     },
     {
       "id": "rescore-style",
@@ -116,7 +160,14 @@
         "reasoning-style.csv",
         "reasoning-style.json"
       ],
-      "restriction": "Pinned taxonomy and source epoch admission; permitted measurement-only drift is recorded by the owner. Source run is never rewritten."
+      "restriction": "Pinned taxonomy and source epoch admission; permitted measurement-only drift is recorded by the owner. Source run is never rewritten.",
+      "actions": [],
+      "access": {
+        "status": "engineOnly",
+        "client": null,
+        "macCLI": null,
+        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+      }
     },
     {
       "id": "sweep-judgment",
@@ -129,7 +180,22 @@
       "outputs": [
         "See the selected operation public response and immutable artifact records."
       ],
-      "restriction": "CPU; can append a recommendation to a draft."
+      "restriction": "CPU; can append a recommendation to a draft.",
+      "actions": [
+        {
+          "id": "post-experiment-name-sweep-complete-judgment",
+          "method": "POST",
+          "path": "/api/experiment/{name}/sweep/complete-judgment",
+          "serviceRole": "both",
+          "authorityReason": "Phase 2 of the same fork: the judgments come back and are stamped into the run directory the runner produced. Both, for the same reason as its `awaiting` half."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      }
     },
     {
       "id": "evaluate-judgment",
@@ -142,7 +208,22 @@
       "outputs": [
         "See the selected operation public response and immutable artifact records."
       ],
-      "restriction": "CPU; preserve packet/instruction pins and full judge coverage."
+      "restriction": "CPU; preserve packet/instruction pins and full judge coverage.",
+      "actions": [
+        {
+          "id": "post-experiment-name-evaluate-complete-judgment",
+          "method": "POST",
+          "path": "/api/experiment/{name}/evaluate/complete-judgment",
+          "serviceRole": "both",
+          "authorityReason": "The evaluate-verb twin of sweep/complete-judgment. Same reasoning."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      }
     },
     {
       "id": "reader-fit",
@@ -155,7 +236,22 @@
       "outputs": [
         "See the selected operation public response and immutable artifact records."
       ],
-      "restriction": "Workbench role; reader training is separate from held-out scoring."
+      "restriction": "Workbench role; reader training is separate from held-out scoring.",
+      "actions": [
+        {
+          "id": "post-reader-fit",
+          "method": "POST",
+          "path": "/api/reader/fit",
+          "serviceRole": "workbench",
+          "authorityReason": "Fits a reader and persists it under prompts/ and runs/. Instrument authoring over the live workspace."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      }
     },
     {
       "id": "reader-score",
@@ -168,7 +264,22 @@
       "outputs": [
         "See the selected operation public response and immutable artifact records."
       ],
-      "restriction": "Workbench role; use the exact fitted reader/model identity."
+      "restriction": "Workbench role; use the exact fitted reader/model identity.",
+      "actions": [
+        {
+          "id": "post-reader-score",
+          "method": "POST",
+          "path": "/api/reader/score",
+          "serviceRole": "workbench",
+          "authorityReason": "Exact RepE reader inference over the resident model — proxied to the interactive worker."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      }
     },
     {
       "id": "finetune",
@@ -181,7 +292,36 @@
       "outputs": [
         "See the selected operation public response and immutable artifact records."
       ],
-      "restriction": "Plan is workbench authorship; train/submit are execution. Model recipes differ."
+      "restriction": "Plan is workbench authorship; train/submit are execution. Model recipes differ.",
+      "actions": [
+        {
+          "id": "post-finetune-plan",
+          "method": "POST",
+          "path": "/api/finetune/plan",
+          "serviceRole": "workbench",
+          "authorityReason": "Normalizes a v2 request into the PLAN a researcher confirms in the app, reading caller-named workspace files. Nothing is scheduled and nothing is spent; it is the confirmation step, not the job."
+        },
+        {
+          "id": "post-finetune-train",
+          "method": "POST",
+          "path": "/api/finetune/train",
+          "serviceRole": "runner",
+          "authorityReason": "Runs the LoRA training itself — GPU compute this deployment executes."
+        },
+        {
+          "id": "post-finetune-submit",
+          "method": "POST",
+          "path": "/api/finetune/submit",
+          "serviceRole": "runner",
+          "authorityReason": "The evidence-grade fine-tune path: a hash-pinned bundle submitted as a Slurm job. Submission and scheduling, in the runner's vocabulary."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      }
     },
     {
       "id": "jlens",
@@ -194,7 +334,92 @@
       "outputs": [
         "See the selected operation public response and immutable artifact records."
       ],
-      "restriction": "Existing J-lens workbench; qualify model/lens/layer/token applicability."
+      "restriction": "Existing J-lens workbench; qualify model/lens/layer/token applicability.",
+      "actions": [
+        {
+          "id": "get-jlens-lenses",
+          "method": "GET",
+          "path": "/api/jlens/lenses",
+          "serviceRole": "workbench",
+          "authorityReason": "Imported-lens catalog, read-only. Catalog browsing."
+        },
+        {
+          "id": "post-jlens-lenses-acquire",
+          "method": "POST",
+          "path": "/api/jlens/lenses/acquire",
+          "serviceRole": "workbench",
+          "authorityReason": "Fetches a lens into the HF cache. A cache fetch in shape, but the only consumer is the J-lens workbench — no batch verb needs a lens."
+        },
+        {
+          "id": "post-jlens-lenses-import",
+          "method": "POST",
+          "path": "/api/jlens/lenses/import",
+          "serviceRole": "workbench",
+          "authorityReason": "Converts a cached lens into the workspace lens store. A write into the live workspace's instrument set."
+        },
+        {
+          "id": "post-jlens-token-options",
+          "method": "POST",
+          "path": "/api/jlens/token-options",
+          "serviceRole": "workbench",
+          "authorityReason": "Tokenizer-only candidates for a typed string, so the app can offer a choice before anyone commits to a token id."
+        },
+        {
+          "id": "post-jlens-decode-tokens",
+          "method": "POST",
+          "path": "/api/jlens/decode-tokens",
+          "serviceRole": "workbench",
+          "authorityReason": "Tokenizer-only ids to pieces, for rendering a trace in the app."
+        },
+        {
+          "id": "post-jlens-directions-derive",
+          "method": "POST",
+          "path": "/api/jlens/directions/derive",
+          "serviceRole": "workbench",
+          "authorityReason": "Derives a model-depth direction for one exact token and writes the artifact. Interactive instrument authoring."
+        },
+        {
+          "id": "post-jlens-qualify",
+          "method": "POST",
+          "path": "/api/jlens/qualify",
+          "serviceRole": "workbench",
+          "authorityReason": "Accepts a lens against one exact runtime and records the qualification on the lens. Instrument authoring."
+        },
+        {
+          "id": "post-jlens-g0",
+          "method": "POST",
+          "path": "/api/jlens/g0",
+          "serviceRole": "workbench",
+          "authorityReason": "The G0 feasibility gate — loads the model and generates, for the app's lens screen."
+        },
+        {
+          "id": "post-jlens-probe",
+          "method": "POST",
+          "path": "/api/jlens/probe",
+          "serviceRole": "workbench",
+          "authorityReason": "Position-resolved readout over ONE prompt. The interactive probe."
+        },
+        {
+          "id": "post-jlens-report",
+          "method": "POST",
+          "path": "/api/jlens/report",
+          "serviceRole": "workbench",
+          "authorityReason": "Rolls a completed run's J-lens trace up into its report. It reads a run directory the runner produced, but producing the interpretability report the app renders is a workbench act over that evidence."
+        },
+        {
+          "id": "post-jlens-support",
+          "method": "POST",
+          "path": "/api/jlens/support",
+          "serviceRole": "workbench",
+          "authorityReason": "Reads an existing concept vector back as J-lens token atoms and writes a readout run. Interactive analysis."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      }
     },
     {
       "id": "gemmascope",
@@ -207,7 +432,43 @@
       "outputs": [
         "See the selected operation public response and immutable artifact records."
       ],
-      "restriction": "Existing Gemma Scope workbench; preserve import convention and qualification."
+      "restriction": "Existing Gemma Scope workbench; preserve import convention and qualification.",
+      "actions": [
+        {
+          "id": "get-gemmascope-info",
+          "method": "GET",
+          "path": "/api/gemmascope/info",
+          "serviceRole": "workbench",
+          "authorityReason": "Which Gemma Scope releases this deployment can reach. Catalog."
+        },
+        {
+          "id": "post-gemmascope-run",
+          "method": "POST",
+          "path": "/api/gemmascope/run",
+          "serviceRole": "workbench",
+          "authorityReason": "Runs the SAE analysis that produces a candidate report for the app."
+        },
+        {
+          "id": "post-gemmascope-import",
+          "method": "POST",
+          "path": "/api/gemmascope/import",
+          "serviceRole": "workbench",
+          "authorityReason": "Imports a feature from a cosine report as a vector artifact. An artifact write into the live workspace."
+        },
+        {
+          "id": "post-gemmascope-import-id",
+          "method": "POST",
+          "path": "/api/gemmascope/import-id",
+          "serviceRole": "workbench",
+          "authorityReason": "Imports a feature BY ID, going online to Hugging Face. Same destination and same caller as its report-based sibling."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      }
     },
     {
       "id": "sae",
@@ -220,7 +481,14 @@
       "outputs": [
         "See the selected operation public response and immutable artifact records."
       ],
-      "restriction": "Engine CLI; use the selected subcommand help. No generic submitted-study replacement."
+      "restriction": "Engine CLI; use the selected subcommand help. No generic submitted-study replacement.",
+      "actions": [],
+      "access": {
+        "status": "engineOnly",
+        "client": null,
+        "macCLI": null,
+        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+      }
     },
     {
       "id": "optvec-train",
@@ -233,7 +501,14 @@
       "outputs": [
         "Operation report and its provenance; inspect the declared run/config output."
       ],
-      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission."
+      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission.",
+      "actions": [],
+      "access": {
+        "status": "engineOnly",
+        "client": null,
+        "macCLI": null,
+        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+      }
     },
     {
       "id": "optvec-eval",
@@ -246,7 +521,14 @@
       "outputs": [
         "Operation report and its provenance; inspect the declared run/config output."
       ],
-      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission."
+      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission.",
+      "actions": [],
+      "access": {
+        "status": "engineOnly",
+        "client": null,
+        "macCLI": null,
+        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+      }
     },
     {
       "id": "optvec-geometry",
@@ -259,7 +541,14 @@
       "outputs": [
         "Operation report and its provenance; inspect the declared run/config output."
       ],
-      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission."
+      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission.",
+      "actions": [],
+      "access": {
+        "status": "engineOnly",
+        "client": null,
+        "macCLI": null,
+        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+      }
     },
     {
       "id": "optvec-interpret",
@@ -272,7 +561,14 @@
       "outputs": [
         "Operation report and its provenance; inspect the declared run/config output."
       ],
-      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission."
+      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission.",
+      "actions": [],
+      "access": {
+        "status": "engineOnly",
+        "client": null,
+        "macCLI": null,
+        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+      }
     },
     {
       "id": "optvec-family",
@@ -285,7 +581,14 @@
       "outputs": [
         "Operation report and its provenance; inspect the declared run/config output."
       ],
-      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission."
+      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission.",
+      "actions": [],
+      "access": {
+        "status": "engineOnly",
+        "client": null,
+        "macCLI": null,
+        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+      }
     },
     {
       "id": "optvec-fracture",
@@ -298,7 +601,14 @@
       "outputs": [
         "Operation report and its provenance; inspect the declared run/config output."
       ],
-      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission."
+      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission.",
+      "actions": [],
+      "access": {
+        "status": "engineOnly",
+        "client": null,
+        "macCLI": null,
+        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+      }
     },
     {
       "id": "optvec-campaign",
@@ -311,7 +621,14 @@
       "outputs": [
         "Operation report and its provenance; inspect the declared run/config output."
       ],
-      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission."
+      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission.",
+      "actions": [],
+      "access": {
+        "status": "engineOnly",
+        "client": null,
+        "macCLI": null,
+        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+      }
     },
     {
       "id": "optvec-jspace",
@@ -324,7 +641,14 @@
       "outputs": [
         "Operation report and its provenance; inspect the declared run/config output."
       ],
-      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission."
+      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission.",
+      "actions": [],
+      "access": {
+        "status": "engineOnly",
+        "client": null,
+        "macCLI": null,
+        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+      }
     },
     {
       "id": "optvec-gradient",
@@ -337,7 +661,14 @@
       "outputs": [
         "Operation report and its provenance; inspect the declared run/config output."
       ],
-      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission."
+      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission.",
+      "actions": [],
+      "access": {
+        "status": "engineOnly",
+        "client": null,
+        "macCLI": null,
+        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+      }
     }
   ],
   "scope": "Discovery and guidance, not execution or scientific qualification. engineCLI is a command reference or null; http lists existing method/path references or is null. Null means no direct interface. mac describes the supported Mac command or app/engine handoff. Engine-only operations require that engine and its declared compute environment."

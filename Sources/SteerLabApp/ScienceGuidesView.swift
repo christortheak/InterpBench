@@ -3,6 +3,7 @@ import SwiftUI
 
 /// Uses the exact catalog and guide text shipped to both agent clients.
 struct ScienceGuidesView: View {
+    var client: ClusterClient? = nil
     var openOptimizations: () -> Void
     var openTemplates: () -> Void
     @Environment(\.dismiss) private var dismiss
@@ -11,12 +12,20 @@ struct ScienceGuidesView: View {
     @State private var guide: ScienceCatalog.Guide?
     @State private var operations: [ScienceCatalog.Operation] = []
     @State private var failure: String?
+    private struct ActionTarget: Identifiable {
+        let id = UUID()
+        let operation: ScienceCatalog.Operation
+        let client: ClusterClient
+    }
+    @State private var selectedOperation: ActionTarget?
+    @State private var custodyRoot: URL?
 
     var body: some View {
         VStack(alignment: .leading) {
             HStack {
                 Text("Research methods and guides").font(.title2)
                 Spacer()
+                Button("Local diagnostic evidence…") { custodyRoot = ExperimentStore.workspaceRoot }
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
             }
             Text("Choose a method to review its inputs, scientific decisions and supported execution paths.")
@@ -40,6 +49,11 @@ struct ScienceGuidesView: View {
                                     Text(operation.title).font(.headline)
                                     Text(operation.engineCLI ?? "No direct engine CLI; use the listed HTTP interface.").font(.system(.body, design: .monospaced))
                                     Text(operation.mac)
+                                    Text(operation.access.restriction).font(.caption)
+                                    if !operation.actions.isEmpty, let client {
+                                        Button("Prepare server action…") { selectedOperation = ActionTarget(operation: operation, client: client) }
+                                        Text("Target: " + client.profile.baseURL.absoluteString).font(.caption)
+                                    }
                                     Text(operation.http ?? "No HTTP execution route for this operation.")
                                     Text(operation.restriction).foregroundStyle(.secondary)
                                 }.textSelection(.enabled)
@@ -57,6 +71,12 @@ struct ScienceGuidesView: View {
                 }.frame(minWidth: 470)
             }
         }.padding().frame(minWidth: 780, minHeight: 580)
+        .sheet(item: $selectedOperation) { target in
+            ScientificActionSheet(operation: target.operation, client: target.client)
+        }
+        .sheet(isPresented: Binding(get: { custodyRoot != nil }, set: { if !$0 { custodyRoot = nil } })) {
+            if let root = custodyRoot { DiagnosticLifecycleSheet(root: root, client: nil, initialJobID: nil) }
+        }
         .task {
             do {
                 methods = try ScienceCatalog.catalog().methods

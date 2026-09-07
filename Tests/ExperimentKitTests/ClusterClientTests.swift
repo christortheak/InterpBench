@@ -6,6 +6,31 @@ import Testing
 @testable import ExperimentKit
 
 @Suite(.serialized) struct ClusterClientTests {
+    @Test func scientificActionPreservesLargeIntegersAndOriginalAuthorityRoute() async throws {
+        let client = ClusterClient(profile: .init(baseURL: URL(string: "https://runner.example.invalid/proxy")!), session: Self.session { request in
+            #expect(request.url?.path == "/proxy/api/reader/fit")
+            #expect(request.httpMethod == "POST")
+            let body = try #require(Self.bodyData(from: request))
+            let value = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            #expect((value["seed"] as? NSNumber)?.stringValue == "18446744073709551615")
+            return (Data(#"{"seed":18446744073709551615}"#.utf8), 200)
+        })
+        let result = try await client.callScientificAction(operation: "reader-fit", actionID: "post-reader-fit", document: Data(#"{"path":{},"query":{},"body":{"seed":18446744073709551615}}"#.utf8))
+        guard case .object(let fields) = result else { Issue.record("Missing action result"); return }
+        #expect(fields["responseJSON"] == .string(#"{"seed":18446744073709551615}"#))
+        #expect(throws: (any Error).self) {
+            try ScientificActionRequest.resolve(operation: "optvec-jspace", actionID: "execute", document: Data(#"{"path":{},"query":{},"body":{}}"#.utf8))
+        }
+    }
+
+    @Test func diagnosticCleanupRequiresExplicitConfirmationBeforeDispatch() throws {
+        #expect(throws: (any Error).self) {
+            try DiagnosticArguments(["cleanup-apply", "example-job", "--receipt-sha256", "a", "--plan-sha256", "b"], namespace: "remote", takesValue: true)
+        }
+        let parsed = try DiagnosticArguments(["cleanup-apply", "example-job", "--receipt-sha256", "a", "--plan-sha256", "b", "--confirm-removal"], namespace: "remote", takesValue: true)
+        #expect(parsed.flags["--confirm-removal"] != nil)
+    }
+
     @Test func prohibitedTransferStopsBeforeOpeningLocalFileOrDownload() async throws {
         let client = ClusterClient(
             profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),

@@ -268,6 +268,11 @@ public enum ExperimentCLIParser {
     /// reference document's flag rows from it, and a switch statement cannot
     /// be enumerated.
     public static let specs: [ExperimentCLIVerbSpec] = [
+        .init(namespace: "science", verb: "input-plan", positional: "<request.json>", purpose: "Discover and hash local diagnostic inputs using the portable archive owner."),
+        .init(namespace: "science", verb: "package", positional: "<request.json>", purpose: "Package exactly the reviewed diagnostic inputs for permitted transfer.", valueFlags: ["--archive", "--plan-sha256"], requiredFlags: ["--archive", "--plan-sha256"]),
+        .init(namespace: "science", verb: "import", positional: "<archive.tar.gz>", purpose: "Verify and import diagnostic evidence into this workspace without replacing outputs.", valueFlags: ["--sha256"], requiredFlags: ["--sha256"]),
+        .init(namespace: "science", verb: "custody", purpose: "Reverify and list local diagnostic evidence receipts for offline inspection."),
+        .init(namespace: "science", verb: "verify-custody", positional: "<receipt-sha256>", purpose: "Verify the retained diagnostic archive and every expanded output file."),
         .init(namespace: "science", verb: "list", purpose: "List shipped methods, supported operation interfaces and engine restrictions; does not execute."),
         .init(namespace: "science", verb: "guide", positional: "<method>", purpose: "Read the shared method guide, dataset schemas and coworker/reviewer instructions."),
         .init(namespace: "science", verb: "operation", positional: "<operation>", purpose: "Inspect exact public execution paths, outputs and restrictions for one operation."),
@@ -418,6 +423,12 @@ public enum ExperimentCLIParser {
                 + "runs; \"\" clears the override.",
             valueFlags: ["--revision", "--reason"]),
 
+        .init(namespace: "remote", verb: "science-call", positional: "<operation>", purpose: "Call a catalogued scientific HTTP action with its existing authority and gates.", valueFlags: modelPreparationConnection.union(["--action", "--request"]), requiredFlags: ["--action", "--request"]),
+        .init(namespace: "remote", verb: "science-stage", positional: "<server-archive-path>", purpose: "Stage a verified diagnostic execution copy without editing workbench sources.", valueFlags: modelPreparationConnection.union(["--sha256"]), requiredFlags: ["--sha256"]),
+        .init(namespace: "remote", verb: "science-export", positional: "<job-id>", purpose: "Package completed diagnostic output and return its hash for permitted transfer.", valueFlags: modelPreparationConnection),
+        .init(namespace: "remote", verb: "science-fetch", positional: "<job-id>", purpose: "Download and verify diagnostic evidence into the captured workspace, retaining local custody.", valueFlags: modelPreparationConnection),
+        .init(namespace: "remote", verb: "cleanup-plan", positional: "<job-id>", purpose: "Reverify local custody and review bounded diagnostic output removal.", valueFlags: modelPreparationConnection.union(["--receipt-sha256"]), requiredFlags: ["--receipt-sha256"]),
+        .init(namespace: "remote", verb: "cleanup-apply", positional: "<job-id>", purpose: "Reverify custody and apply exactly the reviewed cleanup with explicit confirmation.", booleanFlags: ["--confirm-removal"], valueFlags: modelPreparationConnection.union(["--receipt-sha256", "--plan-sha256"]), requiredFlags: ["--receipt-sha256", "--plan-sha256", "--confirm-removal"]),
         .init(namespace: "remote", verb: "science-plan", positional: "<request.json>", purpose: "Review staged battery or stability inputs and runner resources.", valueFlags: modelPreparationConnection),
         .init(namespace: "remote", verb: "science-submit", positional: "<request.json>", purpose: "Submit the exact reviewed standalone diagnostic; reconnect using remote jobs and logs.", valueFlags: modelPreparationConnection.union(["--plan-sha256"]), requiredFlags: ["--plan-sha256"]),
         .init(namespace: "remote", verb: "reconcile", purpose: "Fold all known child records and run the existing merge pass on this endpoint.", valueFlags: modelPreparationConnection),

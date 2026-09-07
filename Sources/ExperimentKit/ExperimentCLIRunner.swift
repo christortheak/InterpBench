@@ -190,7 +190,10 @@ public struct ExperimentCLIRunner: Sendable {
             case "pack": result = try StudyPackCLI.run(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
             case "design": result = try StudyDesignCLI.run(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
             case "docs": result = try runDocsCommand(invocation)
-            case "science": result = try ScienceCatalog.run(invocation, sink: sink)
+            case "science":
+                if DiagnosticWorkspace.actions.contains(invocation.verb ?? "") {
+                    result = try await DiagnosticWorkspaceCLI.run(invocation, sink: sink)
+                } else { result = try ScienceCatalog.run(invocation, sink: sink) }
             case "authoring": result = try runAuthoringCommand(invocation)
             case "install": result = try runInstallCommand(invocation)
             case "panel": result = try runPanelCommand(invocation)
@@ -2194,7 +2197,7 @@ public struct ExperimentCLIRunner: Sendable {
         var siteID: String?
         let serverIdentity: String
         let remoteWorkspaceRoot = ExperimentStore.workspaceRoot
-        let scientificWorkflow = RemoteScientificWorkflowsCLI.verbs.contains(verb)
+        let scientificWorkflow = RemoteScientificWorkflowsCLI.verbs.contains(verb) || DiagnosticRemoteCLI.verbs.contains(verb)
         if scientificWorkflow, flag("--site") == nil, flag("--url") == nil {
             throw ExperimentError.malformed("Choose the original server explicitly for this workflow.", repair: "Pass --site <id> or --url <server>; do not borrow a different active target for a reviewed plan or job.")
         }
@@ -2226,6 +2229,9 @@ public struct ExperimentCLIRunner: Sendable {
             }
         }
         let client = ClusterClient(profile: ClusterConnectionProfile(baseURL: url), token: token)
+        if DiagnosticRemoteCLI.verbs.contains(verb) {
+            return try await DiagnosticRemoteCLI.run(args, client: client, root: remoteWorkspaceRoot, sink: sink)
+        }
         if scientificWorkflow {
             return try await RemoteScientificWorkflowsCLI.run(args, client: client, endpoint: url, sink: sink)
         }

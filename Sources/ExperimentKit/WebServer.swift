@@ -767,6 +767,11 @@ public final class SteerLabWebServer: Sendable {
             let response = ClusterProfileHTTP.perform(String(path.split(separator: "/").last!), body: body)
             return Response(status: response.status, body: response.body)
 
+        case ("POST", let route) where route.hasPrefix("/api/science/workspace/"):
+            let action = String(route.dropFirst("/api/science/workspace/".count))
+            let response = await DiagnosticWorkspace.http(action, body: body, root: ExperimentStore.workspaceRoot)
+            return Response(status: response.status, body: response.body)
+
         case ("GET", "/api/science/catalog"):
             let response = ScienceCatalog.http(kind: "catalog", id: nil)
             return Response(status: response.status, body: response.body)

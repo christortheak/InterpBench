@@ -431,6 +431,12 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
     # verification: the adapter supports it for a library caller who must,
     # but turning off certificate checking should take more than one word on
     # a command line.
+    VerbSpec("runner", "science-call", positional="<operation>", purpose="Call a catalogued scientific HTTP action on its existing owner; unsupported surfaces return a typed routing repair.", value_flags=_RUNNER_FLAGS | {"--action", "--request"}, required_flags=frozenset({"--runner", "--action", "--request"})),
+    VerbSpec("runner", "science-stage", positional="<server-archive-path>", purpose="Verify an uploaded or externally transferred input archive and stage an isolated execution copy.", value_flags=_RUNNER_FLAGS | {"--sha256"}, required_flags=frozenset({"--runner", "--sha256"})),
+    VerbSpec("runner", "science-export", positional="<job-id>", purpose="Package completed diagnostic output and return its hash for permitted transfer.", value_flags=_RUNNER_FLAGS, required_flags=frozenset({"--runner"})),
+    VerbSpec("runner", "science-fetch", positional="<job-id>", purpose="Download, verify and import diagnostic evidence into the local workspace, retaining a custody receipt.", value_flags=_RUNNER_FLAGS, required_flags=frozenset({"--runner"})),
+    VerbSpec("runner", "cleanup-plan", positional="<job-id>", purpose="Reverify local diagnostic custody and review policy-bounded remote output removal.", value_flags=_RUNNER_FLAGS | {"--receipt-sha256"}, required_flags=frozenset({"--runner", "--receipt-sha256"})),
+    VerbSpec("runner", "cleanup-apply", positional="<job-id>", purpose="Reverify custody and apply the exact reviewed cleanup with explicit removal confirmation.", value_flags=_RUNNER_FLAGS | {"--receipt-sha256", "--plan-sha256"}, boolean_flags=frozenset({"--confirm-removal"}), required_flags=frozenset({"--runner", "--receipt-sha256", "--plan-sha256", "--confirm-removal"})),
     VerbSpec("runner", "science-plan", positional="<request.json>", purpose="Review staged standalone battery or stability inputs and runner resources.", value_flags=_RUNNER_FLAGS, required_flags=frozenset({"--runner"})),
     VerbSpec("runner", "science-submit", positional="<request.json>", purpose="Submit the exact reviewed standalone diagnostic; use runner jobs and logs to reconnect.", value_flags=_RUNNER_FLAGS | {"--plan-sha256"}, required_flags=frozenset({"--runner", "--plan-sha256"})),
     VerbSpec("runner", "resubmit", positional="<job-id>", purpose="Resume an eligible checkpointed or cancelled-resumable job through its existing gate.", value_flags=_RUNNER_FLAGS | {"--walltime"}, required_flags=frozenset({"--runner"})),
@@ -2997,6 +3003,10 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
     spec = invocation.spec
     verb = spec.verb
     args = invocation.positionals
+
+    if verb in {"science-call", "science-stage", "science-export", "science-fetch", "cleanup-plan", "cleanup-apply"}:
+        from .client.diagnostic_commands import remote
+        return remote(client, invocation, common)
 
     if verb in {"science-plan", "science-submit", "resubmit", "recovery", "recover", "reconcile"}:
         from .client.remote_workflows import run

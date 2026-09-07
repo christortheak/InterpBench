@@ -2762,6 +2762,38 @@ public struct ClusterClient: Sendable {
         }
     }
 
+    /// Forward a catalogued action to its existing owner without re-encoding
+    /// large integer fields through the generic UI number representation.
+    public func callScientificAction(operation: String, actionID: String, document: Data) async throws -> JSONValue {
+        let resolved = try ScientificActionRequest.resolve(operation: operation, actionID: actionID, document: document)
+        var request = try makeRequest(path: resolved.path, method: resolved.method, queryItems: resolved.query)
+        if resolved.method != "GET" {
+            request.httpBody = resolved.body
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        let (data, response) = try await session.data(for: request)
+        try validate(response: response, data: data)
+        return .object(["operation": .string(operation), "action": .string(actionID),
+                        "responseJSON": .string(String(decoding: data, as: UTF8.self)),
+                        "changed": .bool(resolved.method != "GET")])
+    }
+
+    /// Download to a fixed name; the archive owner verifies its exported digest
+    /// before publishing anything into the local workspace.
+    public func downloadDiagnosticArchive(path: String, to directory: URL) async throws -> URL {
+        try await requireHTTPTransfer()
+        let request = try makeRequest(path: "/api/bundles/download", method: "GET", queryItems: [URLQueryItem(name: "path", value: path)])
+        let (temporary, response) = try await session.download(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            try validate(response: response, data: Data(contentsOf: temporary))
+            throw ClientError.interruptedStream
+        }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        let output = directory.appending(component: "diagnostic.tar.gz")
+        try FileManager.default.moveItem(at: temporary, to: output)
+        return output
+    }
+
     public func uploadBundle(_ url: URL) async throws -> UploadedBundle {
         try await requireHTTPTransfer()
         let data = try Data(contentsOf: url)

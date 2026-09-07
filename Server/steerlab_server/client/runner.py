@@ -877,6 +877,27 @@ class RunnerClient:
         listed = document.get("jobs")
         return list(listed) if isinstance(listed, list) else []
 
+    def science_call(self, operation: str, action_id: str, document: dict) -> dict:
+        from ..experiment.science_actions import request
+        action, path, query, body = request(operation, action_id, document)
+        # No proxy endpoint: the existing role/auth/gate owner receives the call.
+        kwargs = {"params": query}
+        if action["method"] != "GET": kwargs["json_body"] = body
+        return self._json(action["method"], path, **kwargs)
+
+    def stage_diagnostic(self, path: str, sha256: str) -> dict:
+        return self._json("POST", "/api/science/stage", json_body={"bundlePath": path, "bundleSHA256": sha256})
+
+    def export_diagnostic(self, job_id: str) -> dict:
+        return self._json("POST", f"/api/science/jobs/{quote(job_id, safe='')}/export", json_body={})
+
+    def diagnostic_cleanup_plan(self, job_id: str, custody: dict) -> dict:
+        return self._json("POST", f"/api/science/jobs/{quote(job_id, safe='')}/cleanup-plan", json_body={"custody": custody})
+
+    def diagnostic_cleanup_apply(self, job_id: str, custody: dict, plan_sha256: str) -> dict:
+        return self._json("POST", f"/api/science/jobs/{quote(job_id, safe='')}/cleanup-apply",
+            json_body={"custody": custody, "planSHA256": plan_sha256, "confirmRemoval": True})
+
     def scientific_plan(self, request: dict) -> dict:
         return self._json("POST", "/api/science/plan", json_body=request)
 

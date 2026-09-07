@@ -171,19 +171,21 @@ qualification is claimed. See the audit handoff for review boundaries.
 
 ## What remains to implement the vision
 
-1. **Finish verified remote output custody and bounded cleanup (WP-6).**
-   Compose transport, local archive/member verification and receipts across the
-   public surfaces. Cleanup needs a reviewed plan, site retention policy, dependency
-   checks and an explicit apply step. Completion of a job is not permission to delete.
-2. **Close the remaining operation-specific surface gaps (WP-3/4).** The shared
-   method guides and coworker prompts have landed; the catalog now checks actual
-   engine verbs. Keep mapping unsupported paths explicitly, and qualify advanced
-   operations separately from discovery and successful parser tests.
-3. **Qualify complete researcher journeys (WP-5/7).** Use real documentation to
-   author and review a profile, then exercise connection, preparation, submission,
-   interruption/reconnect, verified import and offline results. Include agent/CLI
-   and interactive app paths, scientific/GPU checks, and explicit unavailable
-   outcomes. The new controls and fixture tests do not establish live qualification.
+1. **Audit the diagnostic transport/cleanup slice.** The current branch adds
+   isolated input copies, completed evidence import, shared offline diagnostic
+   receipts, and policy-bound removal across both clients and the app. See the
+   [handoff](REMOTE-CUSTODY-CLEANUP-HANDOFF.md). Only successful isolated diagnostic
+   output copies are eligible; broad remote maintenance remains outside scope.
+2. **Close explicit advanced execution limitations.** Existing HTTP actions now
+   have catalog-driven client/app access and a role-census gate. SAE engine tools,
+   style rescoring and nine OptVec verbs still require the named Python engine
+   CLI. Bespoke conceptual app forms and managed execution for those methods are
+   separate remaining implementation work.
+3. **Qualify complete researcher journeys (WP-5/7).** Exercise agent/CLI and app
+   paths with actual documentation, model preparation, queueing, interruption,
+   permitted external-only transport, receipt verification, policy refusal and
+   offline results. Fixture suites do not establish live scientific/GPU,
+   scheduler/accounting, Linux filesystem or interactive app qualification.
 
 **Integrated upstream fix:** main's terminal-job receipt gate and immutable
 sibling reimport are included in this branch. Live scheduler/accounting and
