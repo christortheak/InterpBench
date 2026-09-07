@@ -62,9 +62,17 @@ struct TabularImportButton: View {
 
     private func choose() {
         problem = nil
-        guard let name = panel.management.selectedName,
-            let reviewed = try? panel.management.reviewStudy(named: name) else {
+        guard let name = panel.management.selectedName else {
             problem = "Select and review a draft before importing a table."
+            return
+        }
+        // The review's own refusal, verbatim: "no draft selected" and "this
+        // draft could not be read" are different problems (audit 2026-09-06).
+        let reviewed: DraftAuthoringSnapshot
+        do {
+            reviewed = try panel.management.reviewStudy(named: name)
+        } catch {
+            problem = "Could not review \(name) — \(Self.describe(error))"
             return
         }
         guard
@@ -78,8 +86,17 @@ struct TabularImportButton: View {
             request = TabularImportRequest(
                 target: target, fileName: fileName, table: table, reviewed: reviewed)
         } catch {
-            problem = "\(error)"
+            problem = Self.describe(error)
         }
+    }
+
+    /// The engine's refusals read as written; anything else (a Foundation
+    /// error, whose `description` is an `Error Domain=…` dump) goes through
+    /// `localizedDescription`.
+    private static func describe(_ error: Error) -> String {
+        if let experiment = error as? ExperimentError { return experiment.reason }
+        if let problem = error as? TabularImport.Problem { return problem.message }
+        return error.localizedDescription
     }
 }
 
@@ -147,7 +164,9 @@ struct TabularImportMappingSheet: View {
             }
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .help("close without converting anything — nothing is written or pinned")
                 Button("Import & Pin") {
                     if let refusal = onImport(cleanMapping) {
                         problem = refusal
@@ -156,7 +175,11 @@ struct TabularImportMappingSheet: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
                 .disabled(!requiredMapped)
+                .help(
+                    "convert the mapped columns, write the file at its standard "
+                        + "destination, and pin it into the draft")
             }
         }
         .padding(16)
@@ -172,7 +195,7 @@ struct TabularImportMappingSheet: View {
     private func fieldPicker(_ field: String, required: Bool) -> some View {
         LabeledContent(required ? field : "\(field) (optional)") {
             Picker(
-                "",
+                required ? field : "\(field) (optional)",
                 selection: Binding(
                     get: { mapping[field] ?? "" },
                     set: { mapping[field] = $0 })
@@ -183,6 +206,8 @@ struct TabularImportMappingSheet: View {
                 }
             }
             .labelsHidden()
+            .help(TabularImport.fieldHelp(field, target: request.target))
+            .accessibilityLabel("\(field) column")
         }
         .help(TabularImport.fieldHelp(field, target: request.target))
     }
@@ -203,10 +228,14 @@ struct TabularImportMappingSheet: View {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 GridRow {
                     ForEach(fields, id: \.self) { field in
-                        Text(previewCell(row: row, field: field))
+                        let cell = previewCell(row: row, field: field)
+                        Text(cell)
                             .font(.caption2.monospaced())
                             .lineLimit(1)
                             .frame(maxWidth: 180, alignment: .leading)
+                            // The cell is clipped at 180 pt; the whole value
+                            // stays reachable on hover.
+                            .help(cell)
                     }
                 }
             }

@@ -128,7 +128,9 @@ struct DatasetInventoryView: View {
     // MARK: Scope
 
     private var scopePicker: some View {
-        Picker("", selection: scopeBinding) {
+        // Real title, kept hidden: an unnamed segmented control is silent to
+        // VoiceOver (audit 2026-09-06).
+        Picker("Inventory scope", selection: scopeBinding) {
             ForEach(DatasetInventoryModel.Scope.allCases) { item in
                 Text(item.rawValue).tag(item)
             }
@@ -141,6 +143,7 @@ struct DatasetInventoryView: View {
             "Datasets: the source data a recipe reads. Derived: the vectors, "
                 + "probes, adapters, neutral-PC bases, and agents those "
                 + "recipes produced — read-only.")
+        .accessibilityLabel("Inventory scope")
     }
 
     // MARK: Header
@@ -190,6 +193,7 @@ struct DatasetInventoryView: View {
                 .labelsHidden()
                 .frame(maxWidth: 190)
                 .help("show one dataset family at a time")
+                .accessibilityLabel("Dataset kind filter")
             } else {
                 Picker("Kind", selection: $derivedKindFilter) {
                     Text("All kinds").tag(DerivedArtifactKind?.none)
@@ -200,6 +204,7 @@ struct DatasetInventoryView: View {
                 .labelsHidden()
                 .frame(maxWidth: 190)
                 .help("show one artifact family at a time")
+                .accessibilityLabel("Artifact kind filter")
             }
 
             Button {
@@ -212,6 +217,7 @@ struct DatasetInventoryView: View {
                 "re-scan the workspace (both scopes). The inventory also "
                     + "refreshes on a workspace switch, alongside the other "
                     + "catalogs.")
+            .accessibilityLabel("Refresh inventory")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -221,6 +227,9 @@ struct DatasetInventoryView: View {
         guard model.hasScanned else {
             return model.isScanning ? "scanning the workspace…" : "not scanned yet"
         }
+        // A RE-scan says so too: before this the only signal after the first
+        // scan was the dimmed refresh button (audit 2026-09-06).
+        if model.isScanning { return "re-scanning the workspace…" }
         var parts: [String] = []
         switch scope {
         case .datasets:
@@ -249,23 +258,32 @@ struct DatasetInventoryView: View {
             filteredEmptyState { kindFilter = nil }
         } else {
             Table(rows, selection: selectionBinding, sortOrder: $sortOrder) {
+                // Both name columns truncate at the controls pane's floor, so
+                // the full value is reachable on hover and the name column
+                // keeps a floor of its own (audit headline 1).
                 TableColumn("Dataset", value: \.name) { entry in
                     HStack(spacing: 6) {
-                        if entry.issue != nil {
+                        if let issue = entry.issue {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
-                                .help(entry.issue ?? "")
+                                .help(issue)
+                                .accessibilityLabel("Issue: \(issue)")
                         }
                         Text(entry.name)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
+                    .help(
+                        entry.issue.map { "\(entry.name) — \($0)" } ?? entry.name)
                 }
+                .width(min: 160, ideal: 240)
                 TableColumn("Kind", value: \.kindLabel) { entry in
                     Text(entry.kindLabel)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .help(entry.kindLabel)
                 }
+                .width(min: 110, ideal: 150)
                 TableColumn("Items", value: \.sortableItemCount) { entry in
                     Text(entry.itemCountText)
                         .font(.callout.monospacedDigit())
@@ -306,12 +324,16 @@ struct DatasetInventoryView: View {
                     Text(entry.name)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .help(entry.name)
                 }
+                .width(min: 160, ideal: 240)
                 TableColumn("Kind", value: \.kind.label) { entry in
                     Text(entry.kind.label)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .help(entry.kind.label)
                 }
+                .width(min: 110, ideal: 150)
                 TableColumn("Model", value: \.modelText) { entry in
                     Text(entry.modelText)
                         .lineLimit(1)
@@ -410,6 +432,7 @@ struct DatasetInventoryView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Button("Show all kinds", action: clear)
+                .help("clear the kind filter and list every row again")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -493,7 +516,7 @@ struct DataInventoryDetailColumn: View {
                     } else {
                         detailRow(
                             "sha256",
-                            "—  (no store pins a hash for this family)")
+                            "— (no store pins a hash for this family)")
                     }
 
                     deriveActions(for: entry)
@@ -625,33 +648,48 @@ struct DataInventoryDetailColumn: View {
         }
     }
 
+    /// One destination, ONE name: the tool is called "Concepts & Vectors"
+    /// everywhere (audit 2026-09-06 — adjacent rows used to name the same
+    /// tool "Concept Builder" and "Concepts & Vectors" by kind).
     @ViewBuilder
     private func actions(for entry: DatasetInventoryEntry) -> some View {
-        HStack(spacing: 8) {
-            if let concept = entry.conceptName {
-                Button("Open in Concept Builder") {
-                    route(.conceptBuilder(concept: concept, grandMeanRecipe: false))
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                if let concept = entry.conceptName {
+                    Button("Open in Concepts & Vectors") {
+                        route(.conceptBuilder(concept: concept, grandMeanRecipe: false))
+                    }
+                    .help("switch to Concepts & Vectors with \(concept) selected")
+                } else if entry.kind == .neutralCorpus {
+                    Button("Open in Concepts & Vectors") {
+                        route(.conceptBuilder(concept: nil, grandMeanRecipe: false))
+                    }
+                    .help(
+                        "neutral corpora are edited in the Concepts & Vectors tool's "
+                            + "neutral-corpus section")
                 }
-                .help("switch to Concepts & Vectors with \(concept) selected")
-            } else if entry.kind == .neutralCorpus {
-                Button("Open in Concepts & Vectors") {
-                    route(.conceptBuilder(concept: nil, grandMeanRecipe: false))
+                Button("Reveal in Finder") {
+                    let targets = entry.files.isEmpty ? [entry.directory] : entry.files
+                    NSWorkspace.shared.activateFileViewerSelecting(targets)
                 }
-                .help(
-                    "neutral corpora are edited in the Concepts & Vectors tool's "
-                        + "neutral-corpus section")
+                .help("select this dataset's files in a Finder window")
+                CopyButton(help: "copy the absolute path of this dataset") {
+                    entry.primaryURL.path
+                } label: {
+                    Text("Copy Path")
+                }
+                Spacer()
             }
-            Button("Reveal in Finder") {
-                let targets = entry.files.isEmpty ? [entry.directory] : entry.files
-                NSWorkspace.shared.activateFileViewerSelecting(targets)
-            }
-            Button("Copy Path") {
-                copy(entry.primaryURL.path)
-            }
-            .help("copy the absolute path")
-            Spacer()
+            .controlSize(.small)
+            // The mutable library subtrees have no in-app delete or rename
+            // by design; say so rather than leaving Finder unhinted.
+            Text(
+                "renaming or removing a dataset is a Finder operation — this "
+                    + "app never deletes or moves workspace data")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .controlSize(.small)
     }
 
     /// Read-only, by design: reveal, copy, and AT MOST ONE route to the tool
@@ -669,18 +707,15 @@ struct DataInventoryDetailColumn: View {
             Button("Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([entry.primaryURL])
             }
-            Button("Copy Path") {
-                copy(entry.primaryURL.path)
+            .help("select this artifact's file in a Finder window")
+            CopyButton(help: "copy the absolute path of this artifact") {
+                entry.primaryURL.path
+            } label: {
+                Text("Copy Path")
             }
-            .help("copy the absolute path")
             Spacer()
         }
         .controlSize(.small)
-    }
-
-    private func copy(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
     }
 }
 

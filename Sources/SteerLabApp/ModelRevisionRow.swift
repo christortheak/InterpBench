@@ -31,14 +31,19 @@ struct ModelRevisionControls: View {
         Group {
             if isDraft {
                 HStack(spacing: 8) {
-                    TextField(
-                        "model revision (optional commit hash; empty = "
-                            + "auto-pin at freeze)",
-                        text: $revisionText)
+                    // Short placeholder: the sentence lives in the tooltip,
+                    // where it does not truncate at narrow widths.
+                    TextField("commit hash (optional)", text: $revisionText)
                         .onSubmit { commit() }
-                    Button("Set") { commit() }
-                        .disabled(revisionText == storedRevision)
                         .help(Self.revisionHelp)
+                        .accessibilityLabel("Model revision")
+                    Button("Set Revision") { commit() }
+                        .disabled(revisionText == storedRevision)
+                        .help(
+                            revisionText == storedRevision
+                                ? "the field already matches the pinned "
+                                    + "revision — nothing to write"
+                                : Self.revisionHelp)
                 }
                 .font(.caption)
             }
@@ -51,6 +56,11 @@ struct ModelRevisionControls: View {
         }
         .onAppear { revisionText = storedRevision }
         .onChange(of: manifest.name) { revisionText = storedRevision }
+        // The revision can move under this field from another surface (a pack
+        // apply, an import, a re-read). Without this the field kept the old
+        // text while "Set" compared against the new value, so pressing it
+        // would have written the stale string back (audit 2026-09-06).
+        .onChange(of: manifest.modelRevision) { revisionText = storedRevision }
     }
 
     private var storedRevision: String { manifest.modelRevision ?? "" }
@@ -64,7 +74,15 @@ struct ModelRevisionControls: View {
         } catch {
             errorText =
                 "Couldn't set the model revision — the study must still be "
-                + "a draft (frozen studies are read-only). Details: \(error)"
+                + "a draft (frozen studies are read-only). Details: "
+                + Self.describe(error)
         }
+    }
+
+    /// The store's refusal as written; a Foundation error's `description` is
+    /// an `Error Domain=…` dump, so it goes through `localizedDescription`.
+    private static func describe(_ error: Error) -> String {
+        if let experiment = error as? ExperimentError { return experiment.reason }
+        return error.localizedDescription
     }
 }
