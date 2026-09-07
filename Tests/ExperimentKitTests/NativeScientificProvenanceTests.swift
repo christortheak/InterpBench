@@ -77,7 +77,10 @@ import Testing
     }
 
     @Test func unsupportedMethodAndBadDrawCountsAreExplainedBeforeCompute() throws {
-        try ExperimentRootOverrideLock.withTempRoot(prefix: "stability-preflight") { _ in
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "stability-preflight") { root in
+            let previous = WorkspaceRoot.programmaticOverride
+            WorkspaceRoot.programmaticOverride = root
+            defer { WorkspaceRoot.programmaticOverride = previous }
             var manifest = try ExperimentStore.create(name: "example", description: "fixture", modelID: "example/model")
             manifest.concepts = [.init(name: "signal", stimulusSetHash: "fixture", options: .init(method: .emotionGrandMean))]
             try ExperimentStore.save(manifest)

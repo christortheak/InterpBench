@@ -38,9 +38,11 @@ measures no behavioral outcome.
   propagation, with focused reader and real Python round-trip tests.
 - `4cbf59a`: scope vocabulary/types/planner inventory, ordinary/variant run
   stamping, native stability math and cross-Python numerical/behavior fixtures.
-- The following integration commit completes native CLI publication, the app's
-  optional split authoring, Unicode overlap details, adapter provenance, docs and
-  regression coverage. Use the branch tip as the final review target.
+- `bb480e2`: native CLI publication, the app's optional split authoring, Unicode
+  overlap details, adapter provenance, docs and regression coverage.
+- The final test-isolation follow-up gives the preflight fixture both workspace
+  overrides, so its concept inputs stay in temporary scratch. Use the branch tip
+  as the final review target.
 
 No Python scientific implementation or AST baseline changed. The Python scope
 constants are consumed by a new generator; numerical ports are checked with
@@ -152,8 +154,11 @@ Both full suites ran sequentially against the branch sources:
 | Public scan and `git diff --check` | Clean |
 
 The first full Swift run caught the expected verb-count census change (35 → 36);
-it was corrected and the full suite rerun successfully. No scientific test
-failure remains. The diff was read before the final commit. New numerical ports
+it was corrected and the full suite rerun successfully. The final cleanliness
+check also caught the preflight fixture using the checkout for its two synthetic
+concept files; both workspace overrides are now scoped to the temporary root,
+the verified fixture files were removed, and the full Swift suite was rerun.
+No scientific test failure remains. The diff was read before the final commit. New numerical ports
 are supported by the numerical fixtures above; no AST baseline was moved.
 
 Reproduction (from the worktree, with an existing suitable Python environment):
