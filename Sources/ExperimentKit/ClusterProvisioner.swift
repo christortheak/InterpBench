@@ -72,6 +72,19 @@ public final class SiteEditorModel {
 
     public var topology: ClusterSiteProfile.Topology
 
+    /// The human name for a topology, as the editor's picker spells it.
+    /// Shared so no surface falls back to the raw case name (`daemonInJob`),
+    /// which is what the setup wizard used to print (UI audit 2026-09-06).
+    public nonisolated static func topologyLabel(
+        _ topology: ClusterSiteProfile.Topology
+    ) -> String {
+        switch topology {
+        case .externalServer: return "External server"
+        case .loginDaemon: return "Login-node daemon"
+        case .daemonInJob: return "Daemon in a job"
+        }
+    }
+
     /// One-line explanation per topology case (shared copy: the editor and
     /// the wizard both render it, so it lives with the model).
     public nonisolated static func topologyExplanation(

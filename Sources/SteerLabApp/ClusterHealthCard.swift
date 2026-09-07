@@ -63,31 +63,58 @@ struct ClusterHealthCard: View {
     private var connectionRow: some View {
         let line = connectionLine
         LabeledContent("Connection") {
-            Label(line.text, systemImage: "circle.fill")
+            Label(line.text, systemImage: line.symbol)
                 .font(.caption)
                 .foregroundStyle(line.color)
+                .textSelection(.enabled)
+                .help(line.help)
         }
     }
 
-    private var connectionLine: (text: String, color: Color) {
+    /// The connection's own state, never the shared `status` sentence.
+    ///
+    /// UI audit 2026-09-06 (headline 6): substring-matching `status` painted
+    /// this row red on "install failed: …" and amber on "requesting install
+    /// of …" while the connection was fine, and left it green on "workspace
+    /// switch refused". SSH sites read their tunnel; direct sites read
+    /// `ClusterConnectionStore.connectionPhase` (in-flight flag, capabilities,
+    /// last connect failure). The status sentence is still shown — as the
+    /// row's hover text, where it cannot masquerade as connection state.
+    private var connectionLine: (text: String, color: Color, symbol: String, help: String) {
+        let statusSentence = cluster.status ?? "no status reported"
         if cluster.activeSite?.isSSHTransport == true,
             let state = cluster.attachedTunnel?.state
         {
             switch state {
             case .up:
-                return (state.displayDescription, .green)
+                return (state.displayDescription, .green, "circle.fill", statusSentence)
             case .needsAuth, .opening:
-                return (state.displayDescription, .orange)
+                return (state.displayDescription, .orange, "circle.fill", statusSentence)
             case .degraded:
-                return (state.displayDescription, .red)
+                return (
+                    state.displayDescription, .red, "exclamationmark.triangle.fill",
+                    statusSentence
+                )
             case .idle, .closed:
-                return (state.displayDescription, .secondary)
+                return (state.displayDescription, .secondary, "circle", statusSentence)
             }
         }
-        let status = cluster.status ?? "not connected"
-        if status.contains("failed") || status.contains("invalid") { return (status, .red) }
-        if status.hasSuffix("...") { return (status, .orange) }
-        return (status, cluster.capabilities == nil ? .secondary : .green)
+        switch cluster.connectionPhase {
+        case .connected:
+            return ("connected", .green, "circle.fill", statusSentence)
+        case .connecting:
+            return ("connecting…", .orange, "circle.fill", statusSentence)
+        case .failed(let reason):
+            return (
+                "not connected — \(reason)", .red, "exclamationmark.triangle.fill",
+                statusSentence
+            )
+        case .idle:
+            return (
+                cluster.activeWorkspace == .local ? "local (no server)" : "not connected",
+                .secondary, "circle", statusSentence
+            )
+        }
     }
 
     // MARK: Housekeeping rows
@@ -170,7 +197,7 @@ struct ClusterHealthCard: View {
     private func storageRow(role: String, root: HousekeepingRoot) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
-                Text(role)
+                Text(Self.storageRoleLabel(role))
                     .font(.caption.weight(.medium))
                 Spacer()
                 Text(storageSummary(root))
@@ -188,7 +215,20 @@ struct ClusterHealthCard: View {
                     .textSelection(.enabled)
             }
         }
-        .help(root.path ?? role)
+        .help("\(role) root\(root.path.map { " — \($0)" } ?? "")")
+    }
+
+    /// The scan reports storage ROLES by their manifest key; the row reads
+    /// better with the role's plain name (the key stays in the tooltip, since
+    /// it is what the site profile and the server speak).
+    private static func storageRoleLabel(_ role: String) -> String {
+        switch role {
+        case "workspace": "Workspace"
+        case "hfCache": "Model cache"
+        case "metadata": "Metadata"
+        case "archive": "Archive"
+        default: role
+        }
     }
 
     private func storageSummary(_ root: HousekeepingRoot) -> String {
@@ -326,7 +366,7 @@ struct ClusterHealthCard: View {
                     .font(.caption)
                     .foregroundStyle(status.maintenance?.next == nil ? .secondary : .primary)
             }
-            Button("Edit…") { showingMaintenanceEditor = true }
+            Button("Edit Windows…") { showingMaintenanceEditor = true }
                 .controlSize(.mini)
                 .help("edit the server's maintenance windows — submissions that "
                     + "would cross a window are refused by the executor")
@@ -383,8 +423,13 @@ struct ClusterHealthCard: View {
                 }
                 .controlSize(.mini)
                 .disabled(importer?.isImporting == true || origin != cluster.evidenceImportOrigin)
-                .help("download each bundle, verify its hash manifest, and land "
-                    + "it under this workspace's runs/")
+                .help(
+                    origin != cluster.evidenceImportOrigin
+                        ? "this listing was fetched for a different workspace "
+                            + "or site — refresh before importing, so the "
+                            + "bundles land under the workspace they belong to"
+                        : "download each bundle, verify its hash manifest, and "
+                            + "land it under this workspace's runs/")
             }
         }
         if let entry = cluster.activeServer {

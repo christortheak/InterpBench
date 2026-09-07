@@ -1,3 +1,4 @@
+import AppKit
 import ExperimentKit
 import SwiftUI
 import UniformTypeIdentifiers
@@ -171,6 +172,9 @@ struct ClusterSetupWizard: View {
                     step == currentStep
                         ? AnyShapeStyle(.selection) : AnyShapeStyle(.clear),
                     in: RoundedRectangle(cornerRadius: 5))
+                .accessibilityAddTraits(step == currentStep ? [.isSelected] : [])
+                .help("show the \(step.title) step — \(stepStatusPhrase(step)). "
+                    + "Jumping here runs nothing")
             }
             Spacer()
             Text("The CLI path is the source of truth; this wizard just drives it. "
@@ -179,6 +183,28 @@ struct ClusterSetupWizard: View {
                 .foregroundStyle(.secondary)
         }
         .padding(12)
+    }
+
+    /// One phrase per step status, for the rail's tooltips and the footer's
+    /// gate text.
+    private func stepStatusPhrase(_ step: ProvisionStep) -> String {
+        switch provisioner.record(for: step).status {
+        case .pending: return "not run yet"
+        case .running: return "running now"
+        case .awaitingConfirmation: return "reviewed, waiting for the real run"
+        case .succeeded: return "succeeded"
+        case .failed: return "failed — it can be run again"
+        case .skipped: return "skipped, and stamped SKIPPED in the summary"
+        }
+    }
+
+    /// A step the summary can report on: succeeded, failed, or a loud skip.
+    /// Pending and awaiting-confirmation are not outcomes.
+    private func hasTerminalStatus(_ step: ProvisionStep) -> Bool {
+        switch provisioner.record(for: step).status {
+        case .succeeded, .failed, .skipped: return true
+        case .pending, .running, .awaitingConfirmation: return false
+        }
     }
 
     @ViewBuilder
@@ -290,6 +316,8 @@ struct ClusterSetupWizard: View {
                         .tag(Optional(server.id))
                 }
             }
+            .help("the site this wizard will provision — every later step "
+                + "reads its profile; changing it starts the steps over")
             .onChange(of: selectedEntryID) { _, newValue in
                 if let newValue, let entry = cluster.server(id: newValue) {
                     provisioner.selectSite(entry.resolvedSite)
@@ -303,13 +331,21 @@ struct ClusterSetupWizard: View {
                         provisioner.selectSite(entry.resolvedSite)
                     }
                     .controlSize(.small)
+                    .help("adds a ready-made profile for \(preset.name) to "
+                        + "your Sites registry and selects it — you still "
+                        + "fill in your own login and storage roots")
                 }
             }
             HStack {
                 Button("New Site…") { showingNewSiteEditor = true }
                     .controlSize(.small)
+                    .help("opens an empty site profile to fill in by hand, "
+                        + "seeded with generic Slurm defaults")
                 Button("From documentation…") { showingProfileCoauthoring = true }
                     .controlSize(.small)
+                    .help("hands your agent a prompt and the site's own "
+                        + "documentation, then reviews the profile it returns "
+                        + "before anything is imported")
                 // WP5 §4.2: a real site arrives as JSON, so the wizard's first
                 // step has to be able to accept one. Same canonical registry,
                 // same validations, same refusals as the connection dot's
@@ -326,6 +362,10 @@ struct ClusterSetupWizard: View {
                 }
                 .controlSize(.small)
                 .disabled(selectedEntryID == nil)
+                .help(selectedEntryID == nil
+                    ? "pick a site above first"
+                    : "opens the full profile for the selected site — saving "
+                        + "reloads it here and starts the steps over")
             }
             if let site = provisioner.site {
                 // WP5 §3.3: the same preview the site editor and
@@ -335,7 +375,7 @@ struct ClusterSetupWizard: View {
                 // stays a step; the topology line is the wizard's own framing.
                 GroupBox {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("topology: \(site.topology.rawValue) — "
+                        Text("topology: \(SiteEditorModel.topologyLabel(site.topology)) — "
                             + SiteEditorModel.topologyExplanation(site.topology))
                             .font(.caption)
                             .fixedSize(horizontal: false, vertical: true)
@@ -354,9 +394,18 @@ struct ClusterSetupWizard: View {
     private var authenticateStep: some View {
         VStack(alignment: .leading, spacing: 8) {
             if provisioner.site?.isSSHTransport != true {
-                Text("Direct transport — nothing to authenticate. Continue.")
+                // The step stamps ITSELF skipped, the way the controller-job
+                // step does for a topology that needs no job — otherwise the
+                // end-of-wizard summary reported it "pending" forever.
+                Text("Direct transport — nothing to authenticate. "
+                    + "The step stamps itself skipped.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .task {
+                        if case .pending = provisioner.record(for: .authenticate).status {
+                            provisioner.skip(.authenticate, reason: "direct transport")
+                        }
+                    }
             } else {
                 Text("One interactive login (password / Duo) opens an SSH ControlMaster "
                     + "that persists 8 hours. The app never sees credentials — the login "
@@ -411,12 +460,18 @@ struct ClusterSetupWizard: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             @Bindable var provisioner = provisioner
-            TextField("Local server payload", text: $provisioner.localRepoPath)
-                .font(.caption.monospaced())
-                .help(
-                    "SteerLab checkout (developer mode) or packaged deployment payload "
-                        + "from which the server bundle is selected. Payloads carrying a "
-                        + "deployment-manifest.json are verified before every push.")
+            HStack {
+                TextField("Local server payload", text: $provisioner.localRepoPath)
+                    .font(.caption.monospaced())
+                    .help(
+                        "SteerLab checkout (developer mode) or packaged deployment payload "
+                            + "from which the server bundle is selected. Payloads carrying a "
+                            + "deployment-manifest.json are verified before every push.")
+                Button("Choose…") { chooseLocalRepoPath() }
+                    .controlSize(.small)
+                    .help("pick that folder in a file dialog instead of "
+                        + "typing its path")
+            }
             TextField("Remote server bundle root", text: $provisioner.remoteRepoPath)
                 .font(.caption.monospaced())
                 .help("Dedicated code path containing Server/ (bootstrap --repo); default ~/steerlab")
@@ -427,7 +482,26 @@ struct ClusterSetupWizard: View {
                 Task { await provisioner.runPushCode() }
             }
             .disabled(provisioner.record(for: .pushCode).status == .running)
+            .help("rsyncs the server bundle to the remote path above over the "
+                + "connection you already authenticated — code only, no "
+                + "models, workspaces or runs")
         }
+    }
+
+    /// Folder picker for the payload path — the same value, chosen instead of
+    /// typed.
+    private func chooseLocalRepoPath() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        panel.message = "Choose the SteerLab checkout or deployment payload to push from."
+        if !provisioner.localRepoPath.isEmpty {
+            panel.directoryURL = URL(filePath: provisioner.localRepoPath)
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        provisioner.localRepoPath = url.path
     }
 
     // MARK: Step 4 — Bootstrap
@@ -454,20 +528,30 @@ struct ClusterSetupWizard: View {
                     GridRow {
                         Text("CPU partition")
                         TextField("partition", text: $provisioner.bootstrapJobPartition)
+                            .help("a CPU partition for the setup job — the GPU "
+                                + "partition is not needed to build an "
+                                + "environment")
                     }
                     GridRow {
                         Text("CPUs")
                         TextField(
                             "CPUs", value: $provisioner.bootstrapJobCPUs,
                             format: .number.grouping(.never))
+                            .help("cores for the setup job; more of them make "
+                                + "the package install faster, nothing else")
                     }
                     GridRow {
                         Text("Memory")
                         TextField("memory", text: $provisioner.bootstrapJobMemory)
+                            .help("memory for the setup job, e.g. 16G — the "
+                                + "torch wheel is the hungry part")
                     }
                     GridRow {
                         Text("Setup walltime")
                         TextField("HH:MM:SS", text: $provisioner.bootstrapJobWalltime)
+                            .help("walltime for the setup job; a first install "
+                                + "downloads gigabytes, so allow an hour or "
+                                + "two")
                     }
                     GridRow {
                         Text("Queue query")
@@ -523,12 +607,21 @@ struct ClusterSetupWizard: View {
 
             HStack {
                 TextField("Environment prefix (optional)", text: $provisioner.envPrefix)
+                    .help("where the Python environment is created; empty "
+                        + "uses $HOME/envs/steerlab")
                 TextField("Python version", text: $provisioner.pythonVersion)
                     .frame(width: 130)
+                    .help("interpreter version to build that environment with; "
+                        + "empty uses 3.12")
                 Button("Edit Site Settings…") {
                     editingEntry = selectedEntryID.map { SiteEditTarget(id: $0) }
                 }
                 .disabled(selectedEntryID == nil)
+                .help(selectedEntryID == nil
+                    ? "pick a site in step 1 first"
+                    : "opens the site profile — storage roots, modules and "
+                        + "scheduler defaults the effective configuration "
+                        + "above is read from")
             }
             .textFieldStyle(.roundedBorder)
 
@@ -545,7 +638,13 @@ struct ClusterSetupWizard: View {
 
             HStack {
                 Toggle("Rewrite existing environment file", isOn: $provisioner.bootstrapForce)
+                    .help("overwrites the site's env file if one is already "
+                        + "there — off, an existing file is kept and the step "
+                        + "reports it")
                 Toggle("Submit GPU hello job afterward", isOn: $provisioner.bootstrapHello)
+                    .help("submits a tiny GPU job at the end to prove the "
+                        + "environment really sees a GPU — costs one short "
+                        + "queue slot")
             }
             .font(.caption)
             if let preview = provisioner.bootstrapCommandPreview {
@@ -558,6 +657,12 @@ struct ClusterSetupWizard: View {
                 .disabled(
                     !provisioner.bootstrapConfigurationErrors.isEmpty
                         || provisioner.record(for: .bootstrap).status == .running)
+                .help(
+                    provisioner.bootstrapConfigurationErrors.isEmpty
+                        ? "plans every bootstrap step and prints what it would "
+                            + "do, without creating anything — this is what "
+                            + "unlocks the real run"
+                        : "fix the configuration errors listed above first")
                 Button(
                     provisioner.bootstrapExecutionTarget == .slurmBatch
                         ? "Submit Bootstrap Job" : "Run on SSH Host"
@@ -573,6 +678,19 @@ struct ClusterSetupWizard: View {
                             ? "submits the reviewed plan as a CPU Slurm job and streams its log"
                             : "runs the reviewed plan on the current SSH host")
                         : "locked until a dry-run with the current settings completes")
+            }
+            // The gate, in the row rather than only on hover: before the
+            // first dry-run nothing on screen said why the real run is
+            // unavailable (UI audit 2026-09-06).
+            if !provisioner.realBootstrapUnlocked {
+                Label(
+                    "Run Dry-Run first — the real bootstrap unlocks once a "
+                        + "dry-run of these exact settings has completed, and "
+                        + "locks again if you change them.",
+                    systemImage: "lock")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if let report = provisioner.realReport ?? provisioner.dryRunReport {
                 reportRows(
@@ -658,7 +776,7 @@ struct ClusterSetupWizard: View {
     private var validateStep: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Sources \(provisioner.bootstrapEnvFile) and runs "
-                + "`steerlab-server profile validate` remotely — the same check "
+                + "steerlab-server profile validate remotely — the same check "
                 + "bootstrap ran, standalone.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -666,6 +784,8 @@ struct ClusterSetupWizard: View {
                 Task { await provisioner.runValidate() }
             }
             .disabled(provisioner.record(for: .validate).status == .running)
+            .help("re-runs the site's own profile check on the cluster and "
+                + "lists what passed, warned, and failed — it changes nothing")
             if !provisioner.validateLines.isEmpty {
                 GroupBox("Checks") {
                     VStack(alignment: .leading, spacing: 2) {
@@ -706,6 +826,9 @@ struct ClusterSetupWizard: View {
                     Task { await provisioner.runControllerJob() }
                 }
                 .disabled(provisioner.record(for: .controllerJob).status == .running)
+                .help("submits the small controller job with sbatch and waits "
+                    + "for it to publish its node — this job holds a queue "
+                    + "slot for as long as the app talks to this site")
                 if let jobID = provisioner.controllerJobID {
                     LabeledContent("Job") { Text(jobID).font(.caption.monospaced()) }
                         .font(.caption)
@@ -716,8 +839,11 @@ struct ClusterSetupWizard: View {
                 }
             } else {
                 Text("This site's topology is "
-                    + "\(provisioner.site?.topology.rawValue ?? "unset") — no controller "
-                    + "job is needed. The step stamps itself skipped.")
+                    + (provisioner.site.map {
+                        SiteEditorModel.topologyLabel($0.topology).lowercased()
+                    } ?? "not set")
+                    + " — no controller job is needed. The step stamps itself "
+                    + "skipped.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .task {
@@ -741,6 +867,9 @@ struct ClusterSetupWizard: View {
                 Task { await provisioner.runConnect() }
             }
             .disabled(provisioner.record(for: .connect).status == .running)
+            .help("makes this site the active compute, opens its transport, "
+                + "and asks the server for its capabilities — the same "
+                + "handshake the toolbar's Connect performs")
             GroupBox("Summary") {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(provisioner.summaryLines, id: \.self) { line in
@@ -750,17 +879,24 @@ struct ClusterSetupWizard: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if case .succeeded = provisioner.record(for: .connect).status {
+            if isFinished {
+                // The footer's button becomes "Close" once this succeeds, so
+                // a finished wizard no longer offers "Cancel" beside it.
                 Label(
                     "Done — the Cluster health card on the Home dashboard now shows "
                         + "quota, purge risk, cache freshness, and maintenance for this site.",
                     systemImage: "checkmark.seal")
                     .font(.caption)
                     .foregroundStyle(.green)
-                Button("Close") { dismiss() }
-                    .keyboardShortcut(.defaultAction)
             }
         }
+    }
+
+    /// True once Connect + register has succeeded: the wizard has nothing
+    /// left to cancel.
+    private var isFinished: Bool {
+        if case .succeeded = provisioner.record(for: .connect).status { return true }
+        return false
     }
 
     // MARK: Shared bits
@@ -781,9 +917,26 @@ struct ClusterSetupWizard: View {
 
     private var footer: some View {
         HStack {
-            Button("Cancel") { dismiss() }
-                .keyboardShortcut(.cancelAction)
+            if isFinished {
+                Button("Close", role: .cancel) { dismiss() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.cancelAction)
+                    .help("closes the wizard — the site is connected and stays "
+                        + "the active compute")
+            } else {
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .help("closes the wizard — anything already run on the "
+                        + "cluster (a pushed bundle, a submitted job) stays "
+                        + "as it is")
+            }
             Spacer()
+            if let note = continueSkipNote {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .lineLimit(1)
+            }
             if currentStep != .site, currentStep != .connect {
                 Button("Skip Step") {
                     provisioner.skip(currentStep)
@@ -793,22 +946,61 @@ struct ClusterSetupWizard: View {
             }
             Button("Back") { retreat() }
                 .disabled(currentStep == ProvisionStep.allCases.first)
-            Button("Continue") { advance() }
+                .help("shows the previous step — nothing is undone")
+            Button(continueTitle) { advance() }
                 .disabled(!canAdvance)
+                .help(continueHelp)
         }
         .padding(12)
+    }
+
+    /// Continue never passes a step in silence: on a step with no recorded
+    /// outcome it stamps the loud skip first, and says so before it is
+    /// pressed (UI audit 2026-09-06).
+    private var continueSkipsCurrentStep: Bool {
+        guard currentStep != .site, currentStep != .connect else { return false }
+        return !hasTerminalStatus(currentStep)
+    }
+
+    private var continueTitle: String {
+        continueSkipsCurrentStep ? "Skip and Continue" : "Continue"
+    }
+
+    private var continueSkipNote: String? {
+        guard canAdvance, continueSkipsCurrentStep else { return nil }
+        return "continuing records \(currentStep.title) as SKIPPED"
+    }
+
+    private var continueHelp: String {
+        if currentStep == ProvisionStep.allCases.last {
+            return "this is the last step — use Close when it is done"
+        }
+        if currentStep == .site, provisioner.site == nil {
+            return "pick a site above first — every later step reads its profile"
+        }
+        if provisioner.record(for: currentStep).status == .running {
+            return "this step is still running — wait for it, or use Back"
+        }
+        return continueSkipsCurrentStep
+            ? "moves on and stamps \(currentStep.title) SKIPPED in the "
+                + "summary, since it has not produced an outcome"
+            : "moves to the next step"
     }
 
     private var canAdvance: Bool {
         guard currentStep != ProvisionStep.allCases.last else { return false }
         if currentStep == .site { return provisioner.site != nil }
-        return true
+        // Never advance out from under a step that is still running.
+        return provisioner.record(for: currentStep).status != .running
     }
 
     private func advance() {
         stepError = nil
         let all = ProvisionStep.allCases
         guard let index = all.firstIndex(of: currentStep), index + 1 < all.count else { return }
+        if continueSkipsCurrentStep {
+            provisioner.skip(currentStep, reason: "passed with Continue")
+        }
         currentStep = all[index + 1]
     }
 

@@ -17,10 +17,6 @@ struct ClusterSitePreviewPanes: View {
     /// Height cap for a pane body. The wizard's inline copy is shorter than the
     /// editor's sheet.
     var paneHeight: CGFloat = 220
-    /// Whether the panes start open. The editor opens the environment pane
-    /// (that is what the section is FOR); the wizard keeps everything closed so
-    /// step 1 stays a step and not a wall of text.
-    var expandsEnvironment: Bool = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -35,6 +31,9 @@ struct ClusterSitePreviewPanes: View {
                     "Environment file",
                     detail: "complete, verbatim — secrets stay $(cat …) indirections")
             }
+            .help("the STEERLAB_* environment file this profile generates, "
+                + "sourced by everything the site runs — selectable, so it can "
+                + "be pasted into a review")
             DisclosureGroup {
                 monospacedPane(preview.headerDocument)
             } label: {
@@ -42,11 +41,15 @@ struct ClusterSitePreviewPanes: View {
                     "Scheduler headers",
                     detail: "#SBATCH block per job class (\(preview.headers.count))")
             }
+            .help("the exact #SBATCH block each job class will carry — "
+                + "partition, walltime, memory, gres, account")
             DisclosureGroup {
                 monospacedPane(preview.schedulerCommandDocument)
             } label: {
                 paneLabel("Scheduler commands", detail: "binaries this site invokes")
             }
+            .help("the submit, query, accounting and cancel binaries this "
+                + "profile will call, with any site wrapper applied")
             DisclosureGroup {
                 monospacedPane(preview.gpuDocument)
             } label: {
@@ -56,6 +59,8 @@ struct ClusterSitePreviewPanes: View {
                         ? "none emitted"
                         : "\(preview.gpuVocabulary.entries.count) type(s) + VRAM table")
             }
+            .help("the GPU types a job may ask for here, and the VRAM the "
+                + "memory-fit preflight checks against")
             DisclosureGroup {
                 unresolvedPane
             } label: {
@@ -65,18 +70,24 @@ struct ClusterSitePreviewPanes: View {
                         ? "none — the profile states everything"
                         : "\(preview.unresolvedFacts.count) fell back to a default")
             }
+            .help("fields this profile leaves unstated, each with the default "
+                + "used instead — the decisions still owed")
         }
     }
 
-    @State private var environmentExpanded: Bool = false
+    @State private var environmentExpanded: Bool
 
+    /// - Parameter expandsEnvironment: whether the environment pane starts
+    ///   open. The editor opens it (that is what the section is FOR); the
+    ///   wizard keeps everything closed so step 1 stays a step and not a wall
+    ///   of text. It SEEDS the pane and is not kept afterwards — the reader
+    ///   owns the panes from the first click.
     init(
         preview: ClusterSitePreview, paneHeight: CGFloat = 220,
         expandsEnvironment: Bool = true
     ) {
         self.preview = preview
         self.paneHeight = paneHeight
-        self.expandsEnvironment = expandsEnvironment
         _environmentExpanded = State(initialValue: expandsEnvironment)
     }
 

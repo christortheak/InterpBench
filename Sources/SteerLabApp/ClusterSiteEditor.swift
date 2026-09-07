@@ -32,6 +32,8 @@ struct ClusterSiteEditor: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var model: SiteEditorModel
+    /// Cancel (or Esc) with edits in the form asks before discarding them.
+    @State private var confirmingDiscard = false
 
     init(
         cluster: ClusterConnectionStore,
@@ -108,6 +110,9 @@ struct ClusterSiteEditor: View {
                 Text("SSH tunnel").tag(SiteEditorModel.TransportKind.ssh)
             }
             .pickerStyle(.segmented)
+            .help(
+                "how this Mac reaches the server: straight to a URL, or "
+                    + "through an SSH tunnel you authenticate once per day")
             switch self.model.transportKind {
             case .direct:
                 TextField("Base URL", text: model.directURLString)
@@ -134,10 +139,14 @@ struct ClusterSiteEditor: View {
     private func topologySection(_ model: Bindable<SiteEditorModel>) -> some View {
         Section("Topology") {
             Picker("Daemon runs as", selection: model.topology) {
-                Text("External server").tag(ClusterSiteProfile.Topology.externalServer)
-                Text("Login-node daemon").tag(ClusterSiteProfile.Topology.loginDaemon)
-                Text("Daemon in a job").tag(ClusterSiteProfile.Topology.daemonInJob)
+                ForEach(ClusterSiteProfile.Topology.allCases, id: \.self) { topology in
+                    Text(SiteEditorModel.topologyLabel(topology)).tag(topology)
+                }
             }
+            .help(
+                "where the SteerLab server process lives at this site — it "
+                    + "decides whether the app submits a controller job and "
+                    + "what the tunnel dials")
             Text(SiteEditorModel.topologyExplanation(self.model.topology))
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -154,6 +163,10 @@ struct ClusterSiteEditor: View {
                 Text("Slurm").tag(SiteEditorModel.SchedulerKind.slurm)
             }
             .pickerStyle(.segmented)
+            .help(
+                "None runs work directly on the server; Slurm submits it as "
+                    + "jobs and unlocks the partition, gres and walltime "
+                    + "fields below")
             if self.model.schedulerKind == .slurm {
                 partitionsTable(model)
                 gpuTable(model)
@@ -201,18 +214,32 @@ struct ClusterSiteEditor: View {
             ForEach(model.partitions) { $row in
                 HStack {
                     TextField("name", text: $row.name)
+                        .help("the partition's name as sbatch takes it (--partition)")
                     TextField("hours", text: $row.maxWalltimeHoursText)
                         .frame(width: 60)
-                    TextField("all", text: $row.allowedGPUTypesText)
+                        .help(
+                            "the longest walltime this partition allows, in "
+                                + "hours — a job asking for more is refused "
+                                + "before it is submitted")
+                    // Placeholders say what EMPTY means, not a value to type.
+                    TextField("all types", text: $row.allowedGPUTypesText)
                         .frame(width: 150)
-                    TextField("site", text: $row.qos)
+                        .help(
+                            "comma-separated subset of the GPU inventory below "
+                                + "that this partition actually has; leave it "
+                                + "empty for the whole site vocabulary")
+                    TextField("site QOS", text: $row.qos)
                         .frame(width: 80)
+                        .help(
+                            "--qos for jobs on this partition; leave it empty "
+                                + "to use the site-wide QOS above")
                     Button {
                         self.model.removePartition(id: row.id)
                     } label: {
                         Image(systemName: "minus.circle")
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("Remove partition")
                     .help("remove this partition row")
                 }
             }
@@ -222,9 +249,7 @@ struct ClusterSiteEditor: View {
                 Label("Add partition", systemImage: "plus")
             }
             .controlSize(.small)
-            .help(
-                "allowed GPU types: comma-separated subset of the inventory below; empty "
-                    + "means the whole site vocabulary. qos overrides the site-wide QOS.")
+            .help("adds an empty partition row — a site may declare as many as it has")
         }
     }
 
@@ -245,16 +270,27 @@ struct ClusterSiteEditor: View {
             ForEach(model.gpuRows) { $row in
                 HStack {
                     TextField("A100", text: $row.gpuType)
+                        .help(
+                            "one concrete GPU type as this site's --gres names "
+                                + "it — the vocabulary a job may ask from")
                     TextField("80", text: $row.vramGBText)
                         .frame(width: 90)
+                        .help(
+                            "this type's memory in GB — what the memory-fit "
+                                + "preflight checks a model against")
                     TextField("sm_80", text: $row.computeCapability)
                         .frame(width: 140)
+                        .help(
+                            "CUDA compute capability, e.g. sm_80 — lets a "
+                                + "torch build that ships no kernels for this "
+                                + "card be refused before the job runs")
                     Button {
                         self.model.removeGPURow(id: row.id)
                     } label: {
                         Image(systemName: "minus.circle")
                     }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("Remove GPU type")
                     .help("remove this GPU type")
                 }
             }
@@ -264,15 +300,14 @@ struct ClusterSiteEditor: View {
                 Label("Add GPU type", systemImage: "plus")
             }
             .controlSize(.small)
-            .help(
-                "the site's --gres vocabulary: one row per concrete GPU type, with VRAM "
-                    + "for the memory-fit preflight and CUDA compute capability (sm_80) so "
-                    + "a torch build that ships no kernels for it can be refused")
+            .help("adds an empty row to the site's GPU inventory")
         }
     }
 
     @ViewBuilder
     private func directivesGroup(_ model: Bindable<SiteEditorModel>) -> some View {
+        // Each group's own help sits on the DisclosureGroup, so it is
+        // reachable while the group is collapsed.
         DisclosureGroup("Directives & required headers") {
             TextField("QOS", text: model.qos)
                 .help("site-wide --qos; a partition row may override it")
@@ -288,6 +323,9 @@ struct ClusterSiteEditor: View {
                 "Extra #SBATCH arguments (one per line)", text: model.extraSbatchText,
                 help: "emitted verbatim for every job, in order (e.g. --exclusive)")
         }
+        .help("scheduler directives that ride EVERY job this site submits — "
+            + "qos, constraints, reservation, and the headers sbatch here "
+            + "refuses a job without")
     }
 
     @ViewBuilder
@@ -302,6 +340,8 @@ struct ClusterSiteEditor: View {
             TextField("Cancel command", text: model.cancelCommand)
                 .help("default scancel")
         }
+        .help("the four scheduler binaries this site invokes — override one "
+            + "only where the site ships its own wrapper")
     }
 
     @ViewBuilder
@@ -312,11 +352,15 @@ struct ClusterSiteEditor: View {
             TextField("Default walltime", text: model.defaultWalltime)
                 .help("HH:MM:SS for a generic study job")
             TextField("Default CPUs per task", text: model.defaultCPUsPerTaskText)
+                .help("--cpus-per-task for a generic study job (data loading "
+                    + "and tokenization use them; the GPU does the rest)")
             Toggle("Requeue on preemption", isOn: model.requeue)
                 .help("#SBATCH --requeue: the site may restart an interrupted job")
             Toggle("Auto-resubmit", isOn: model.autoResubmit)
                 .help("the engine resubmits from its checkpoint when a job hits the wall")
             TextField("Auto-resubmit limit", text: model.autoResubmitLimitText)
+                .help("how many times one job may resubmit itself before it "
+                    + "stops and waits for you — the runaway guard")
             TextField("Checkpoint signal lead (s)", text: model.signalSecondsText)
                 .help("seconds before the walltime wall that the checkpoint signal fires")
             Picker("Signal target", selection: model.signalTarget) {
@@ -324,6 +368,12 @@ struct ClusterSiteEditor: View {
                     Text(target).tag(target)
                 }
             }
+            .help(
+                "who receives that checkpoint signal: step = the running step "
+                    + "(the usual choice), batch-forward = the batch script, "
+                    + "which forwards it, batch-direct = the batch script "
+                    + "only. Change it when the site's Slurm delivers signals "
+                    + "differently")
             Picker("Export mode", selection: model.exportMode) {
                 ForEach(SiteEditorModel.exportModeVocabulary, id: \.self) { mode in
                     Text(mode).tag(mode)
@@ -331,6 +381,9 @@ struct ClusterSiteEditor: View {
             }
             .help("#SBATCH --export: jobs normally run with a clean environment (none)")
         }
+        .help("what a job does when the walltime runs out or the site "
+            + "preempts it, plus the CPU/checkpoint defaults every job class "
+            + "starts from")
     }
 
     @ViewBuilder
@@ -341,13 +394,22 @@ struct ClusterSiteEditor: View {
             TextField("Max submitted jobs", text: model.maxSubmittedJobsText)
                 .help("per-user queued cap (sacctmgr show qos format=Name,MaxTRESPerUser)")
             TextField("Max running jobs", text: model.maxRunningJobsText)
+                .help("per-user cap on jobs RUNNING at once here (the queued "
+                    + "cap above is usually the larger number)")
             TextField("Accounting visibility grace (s)", text: model.accountingVisibilityGraceSecondsText)
                 .help(
                     "how long sacct/squeue may lag a fresh submission before “unknown” "
                         + "stops meaning “accounting lag”")
             Toggle("Submit from the bundle directory", isOn: model.submitFromBundleDirectory)
+                .help("runs sbatch with the job bundle as its working "
+                    + "directory — needed where the site resolves relative "
+                    + "paths in a script against the submit directory")
             TextField("Job-name prefix", text: model.jobNamePrefix)
+                .help("prepended to every job name this app submits, so your "
+                    + "jobs are recognizable in squeue")
         }
+        .help("this site's per-user job limits and how submissions are made — "
+            + "the caps a fan-out has to respect")
     }
 
     @ViewBuilder
@@ -364,6 +426,9 @@ struct ClusterSiteEditor: View {
             jobClassFields(
                 "GPU session", fields: model.gpuSession, showPort: true, showIdleMinutes: true)
         }
+        .help("per-class overrides of the defaults above: the controller job "
+            + "that serves the app, the one-off setup job, and the GPU "
+            + "session that holds a model in memory")
     }
 
     @ViewBuilder
@@ -377,10 +442,20 @@ struct ClusterSiteEditor: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         TextField("Partition", text: fields.partition)
+            .help("--partition for \(title.lowercased()) only; empty uses the "
+                + "site default partition above")
         TextField("CPUs per task", text: fields.cpusPerTaskText)
+            .help("--cpus-per-task for \(title.lowercased()); empty uses the "
+                + "site default")
         TextField("Memory", text: fields.memory)
+            .help("--mem for \(title.lowercased()), e.g. 80G; empty uses the "
+                + "site default")
         TextField("Walltime", text: fields.walltime)
+            .help("HH:MM:SS for \(title.lowercased()); empty uses the site "
+                + "default, and the partition's maximum still applies")
         TextField("gres", text: fields.gres)
+            .help("--gres for \(title.lowercased()), e.g. gpu:A100:1; empty "
+                + "uses the site default gres")
         if showPort {
             TextField("Port", text: fields.portText)
                 .help(
@@ -407,6 +482,10 @@ struct ClusterSiteEditor: View {
                 Text("Environment Modules")
                     .tag(ClusterSiteProfile.SiteEnvironment.ModuleSystem.environmentModules)
             }
+            .help(
+                "which module implementation this site ships (Lmod or "
+                    + "Environment Modules) — it decides how the generated "
+                    + "environment file loads the modules listed below")
             TextField("Modules", text: model.modulesText)
                 .help("loaded in order, comma separated (e.g. CUDA/12.4.0, Miniforge3)")
             Picker("Python provider", selection: model.pythonProvider) {
@@ -421,14 +500,26 @@ struct ClusterSiteEditor: View {
                 TextField("Module init script", text: model.moduleInitScript)
                     .help("sourced before any module call (e.g. /etc/profile.d/modules.sh)")
                 TextField("Python version", text: model.pythonVersion)
+                    .help("the interpreter version the bootstrap creates the "
+                        + "environment with, e.g. 3.12")
                 TextField("Env prefix", text: model.envPrefix)
                     .help("conda/mamba env prefix, or the venv root")
                 TextField("Conda profile script", text: model.condaProfileScript)
+                    .help("conda's own init script, sourced before activate "
+                        + "(e.g. /opt/conda/etc/profile.d/conda.sh) — needed "
+                        + "when the provider is conda")
                 TextField("Conda env name", text: model.condaEnvName)
+                    .help("named conda environment to activate, when the site "
+                        + "uses a name rather than a prefix path")
                 TextField("Venv path", text: model.venvPath)
+                    .help("root of an existing virtualenv to activate, when "
+                        + "the provider is venv")
                 TextField("Python executable", text: model.pythonExecutable)
                     .help("absolute interpreter for child jobs, when the controller's is not valid on compute nodes")
             }
+            .help("how a shell at this site gets a working Python — modules, "
+                + "conda, or a venv; the bootstrap writes exactly this into "
+                + "the environment file")
             DisclosureGroup("Packages") {
                 TextField("Torch index URL", text: model.torchIndexURL)
                     .help("empty = default PyPI")
@@ -437,12 +528,17 @@ struct ClusterSiteEditor: View {
                 TextField("Server extras", text: model.serverExtrasText)
                     .help("extras installed with the server, comma separated (e.g. all)")
             }
+            .help("what the bootstrap installs into that environment — the "
+                + "torch build has to match the GPUs declared above")
             DisclosureGroup("Paths & hosts") {
                 TextField("Env-file path", text: model.envFilePath)
                     .help("remote path of the sourced env file; $HOME/~ expand on the far side")
                 TextField("Token-file path", text: model.tokenFilePath)
                     .help("path INDIRECTION only — the token value never enters a profile")
                 TextField("Remote repo path", text: model.remoteRepoPath)
+                    .help("directory on the cluster holding the pushed server "
+                        + "bundle (its Server/ subdirectory) — what bootstrap "
+                        + "and the controller job run from")
                 TextField("Interactive allocation command", text: model.interactiveAllocationCommand)
                     .help("printed in refusals (e.g. interact -c 4 --mem 16g) — never executed")
                 TextField("Transfer host", text: model.transferHost)
@@ -450,6 +546,8 @@ struct ClusterSiteEditor: View {
                 TextField("SSH ControlPersist", text: model.sshControlPersist)
                     .help("multiplexed control-master lifetime (e.g. 8h)")
             }
+            .help("where things live on the far side, and the hosts used to "
+                + "reach them — paths expand on the cluster, never here")
         }
     }
 
@@ -479,7 +577,11 @@ struct ClusterSiteEditor: View {
             TextField("Purge warn days", text: model.purgeWarnDaysText)
                 .help("age at which purge risk escalates to a warning (commonly 20)")
             TextField("Maintenance source", text: model.maintenanceSource)
-                .help("where maintenance windows are announced (URL or free text); empty = manual entry")
+                .help(
+                    "where this site announces maintenance (URL or free "
+                        + "text) — documentation for whoever keeps the "
+                        + "windows current; the windows the executor actually "
+                        + "enforces come from the calendar file under Policy")
             storageGroup(model)
         }
     }
@@ -503,21 +605,36 @@ struct ClusterSiteEditor: View {
                 Text("Offline").tag(ClusterSiteProfile.SiteStorage.OfflineMode.offline)
                 Text("Online").tag(ClusterSiteProfile.SiteStorage.OfflineMode.online)
             }
+            .help(
+                "whether jobs may reach the model hub: Offline serves the "
+                    + "cache only and fails fast on a miss; Auto follows the "
+                    + "compute-node egress answer above")
             Toggle(
                 "Metadata root needs a local filesystem",
                 isOn: model.metadataRequiresLocalFilesystem
             )
             .help("the SQLite job DB needs POSIX locks — not the parallel filesystem")
             TextField("Housekeeping scan file cap", text: model.scanFileCapText)
+                .help("most files one housekeeping scan will walk — the guard "
+                    + "that keeps the scan cheap on a huge workspace")
             TextField("Free-space warn (GB)", text: model.freeSpaceWarnGBText)
+                .help("free space below which the health card turns amber")
             TextField("Free-space fail (GB)", text: model.freeSpaceFailGBText)
+                .help("free space below which submissions are refused rather "
+                    + "than started and lost")
             TextField("Pre-stage minimum free (GB)", text: model.prestageMinFreeGBText)
+                .help("free space a node must have before a model is staged "
+                    + "onto it; below this the staging step is refused")
             TextField("Maintenance calendar stale days", text: model.calendarStaleDaysText)
+                .help("how many days an unchanged maintenance calendar stays "
+                    + "trusted before the health card calls it stale")
             TextField("Quota command", text: model.quotaCommand)
                 .help("its output is DISPLAYED, never parsed")
             TextField("Scanned storage roles", text: model.scannedRolesText)
                 .help("roles the housekeeping scan walks; empty = workspace, metadata, hfCache")
         }
+        .help("node-local staging, hub offline behaviour, and the thresholds "
+            + "the housekeeping scan reports against")
     }
 
     // MARK: Policy
@@ -532,12 +649,23 @@ struct ClusterSiteEditor: View {
             linesEditor(
                 "Login-node hostname patterns (one regex per line)",
                 text: model.loginNodeHostnamePatternsText,
-                help: "matched against `hostname`; empty = no hostname rule, which never refuses")
+                help: "matched against the machine's own hostname; empty = no "
+                    + "hostname rule, which never refuses")
             TextField("Maintenance calendar path", text: model.maintenanceCalendarPath)
-                .help("remote path of the hand-authored window file the engine reads")
+                .help(
+                    "remote path of the hand-authored window file the engine "
+                        + "reads — the ONLY maintenance source that refuses a "
+                        + "submission; the two fields below are documentation")
             TextField("Maintenance source URL", text: model.maintenanceSourceURL)
-                .help("fetched by the app, never by a job")
+                .help(
+                    "the page this site announces maintenance on — recorded "
+                        + "on the profile for whoever updates the calendar "
+                        + "file; nothing fetches it")
             TextField("Maintenance note", text: model.maintenanceSourceNote)
+                .help(
+                    "free-text reminder about how this site announces "
+                        + "maintenance (mailing list, ticket queue) — never "
+                        + "parsed")
             TextField("Transfer method", text: model.transferMethod)
                 .help("bulk artifact movement, e.g. rsync | globus")
             Picker("External-service egress", selection: model.externalServiceEgress) {
@@ -554,6 +682,9 @@ struct ClusterSiteEditor: View {
                 TextField("Auth mode override", text: model.authModeOverride)
                     .help("token = every route gated; a non-loopback bind without it stays refused")
             }
+            .help("tightens how the server exposes itself at this site — a "
+                + "site may only be stricter than the built-in rule, never "
+                + "looser")
         }
     }
 
@@ -561,7 +692,7 @@ struct ClusterSiteEditor: View {
         Section("Bootstrap") {
             TextField("bootstrap.sh path (optional)", text: model.bootstrapPath)
                 .help(
-                    "site-local path of the WS5 bootstrap script once provisioned; empty "
+                    "site-local path of the bootstrap script once provisioned; empty "
                         + "uses <remote repo>/Server/scripts/bootstrap.sh")
         }
     }
@@ -623,9 +754,28 @@ struct ClusterSiteEditor: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Cancel") { dismiss() }
+            // Esc and Cancel both land here; with edits in the form they ask
+            // first, because this sheet holds a hundred fields and one
+            // keypress used to drop all of them (UI audit 2026-09-06).
+            Button("Cancel", role: .cancel) { cancel() }
                 .keyboardShortcut(.cancelAction)
+                .help(
+                    model.isDirty
+                        ? "closes without saving — asks first, because this "
+                            + "form has unsaved changes"
+                        : "closes without changing the site profile")
+                .confirmationDialog(
+                    "Discard the changes to “\(discardTitle)”?",
+                    isPresented: $confirmingDiscard, titleVisibility: .visible
+                ) {
+                    Button("Discard changes", role: .destructive) { dismiss() }
+                    Button("Keep editing", role: .cancel) {}
+                } message: {
+                    Text("Every edit made in this sheet is lost. The site "
+                        + "profile on disk is left exactly as it was.")
+                }
             Button("Save") { save() }
+                .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!model.canSave)
                 .help(
@@ -634,6 +784,21 @@ struct ClusterSiteEditor: View {
                         : "fix the errors above first (warnings never block)")
         }
         .padding(12)
+    }
+
+    /// The site's name for the discard prompt — a brand-new site may not have
+    /// one yet.
+    private var discardTitle: String {
+        let name = model.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "this site" : name
+    }
+
+    private func cancel() {
+        if model.isDirty {
+            confirmingDiscard = true
+        } else {
+            dismiss()
+        }
     }
 
     /// All mutation goes through the store (views stay thin).
