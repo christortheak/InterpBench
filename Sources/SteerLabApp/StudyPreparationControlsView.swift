@@ -165,7 +165,9 @@ struct StudyPreparationControlsView: View {
             .font(.caption)
             .foregroundStyle(.orange)
             .textSelection(.enabled)
-            Button("Show remote options") { runOnServerExpanded = true }
+            // One label per action app-wide: `ExecutionPlanEchoRow` opens the
+            // same disclosure and reads "Show Remote options".
+            Button("Show Remote options") { runOnServerExpanded = true }
                 .controlSize(.small)
                 .help(
                     "expands the Remote options — the unified Run button "

@@ -102,7 +102,9 @@ struct ExclusionRulesEditor: View {
     /// Add menu over the closed vocabulary; rules already declared are
     /// disabled (each rule at most once — the engine's own refusal).
     private var addMenu: some View {
-        Menu("Add rule") {
+        // Title Case, like every other Add on this page ("Add Judge",
+        // "Add Reader Instrument") — audit 10's label-drift finding.
+        Menu("Add Rule") {
             Button("Drop answers that fail their attention check") {
                 append(ExclusionRule(rule: ExclusionEngine.ruleFailedAttentionCheck))
             }
@@ -154,15 +156,28 @@ struct ExclusionRulesEditor: View {
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 64)
                 .help("largest kept value — blank for no upper bound")
-            Button("Apply") { applyRange() }
+            Button("Apply range") { applyRange() }
                 .font(.caption)
                 .disabled(!rangeProblems.isEmpty)
-            if editingRange, rule(ExclusionEngine.ruleOutOfRange) == nil {
-                Button("Cancel") {
+                .help(
+                    "writes these bounds into the study's declared exclusion "
+                        + "rules (draft-only) — answers outside the range are "
+                        + "set aside at analysis time, never deleted")
+            // The revert half used to exist only while ADDING a rule, so
+            // editing a declared range had no way back (audit 10).
+            if rangeEditorIsDirty {
+                let isNew = rule(ExclusionEngine.ruleOutOfRange) == nil
+                Button(isNew ? "Cancel" : "Revert") {
                     editingRange = false
                     resetRangeEditor()
                 }
                 .font(.caption)
+                .help(
+                    isNew
+                        ? "discards this unsaved range and closes the editor — "
+                            + "no rule is declared"
+                        : "puts the fields back to the range the study "
+                            + "currently declares")
             }
         }
         .onAppear { loadRangeFields(from: rule(ExclusionEngine.ruleOutOfRange)) }
@@ -173,6 +188,16 @@ struct ExclusionRulesEditor: View {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// Whether the three fields differ from the rule the study declares
+    /// right now — the condition for offering a way back.
+    private var rangeEditorIsDirty: Bool {
+        let stored = rule(ExclusionEngine.ruleOutOfRange)
+        let trimmed: (String) -> String = { $0.trimmingCharacters(in: .whitespaces) }
+        return trimmed(endpointField) != (stored?.endpoint ?? "")
+            || trimmed(minField) != (stored?.min.map(ExclusionRulesUI.formatBound) ?? "")
+            || trimmed(maxField) != (stored?.max.map(ExclusionRulesUI.formatBound) ?? "")
     }
 
     /// Live validation of the candidate bounds: local number-parse feedback
@@ -313,7 +338,14 @@ struct ExclusionRulesEditor: View {
             errorText =
                 "Couldn't update the exclusion rules — the study must still "
                 + "be a draft (frozen studies keep their declared rules). "
-                + "Details: \(error)"
+                + "Details: \(Self.detail(error))"
         }
+    }
+
+    /// `ExperimentError` is CustomStringConvertible, not LocalizedError, so
+    /// its `reason` is the readable half; anything else gets its localized
+    /// description rather than a Swift dump (audit headline 17).
+    private static func detail(_ error: some Error) -> String {
+        (error as? ExperimentError)?.reason ?? error.localizedDescription
     }
 }

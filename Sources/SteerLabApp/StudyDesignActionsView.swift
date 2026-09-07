@@ -37,7 +37,10 @@ struct StudyDesignActionsView: View {
                 .textSelection(.enabled)
             let siblings = panel.batchSiblings(manifest)
             if !siblings.isEmpty {
-                DisclosureGroup("Minted with \(siblings.count) sibling study(s)") {
+                DisclosureGroup(
+                    "Minted with \(siblings.count) sibling "
+                        + "\(siblings.count == 1 ? "study" : "studies")"
+                ) {
                     ForEach(siblings, id: \.self) { sibling in
                         Text(sibling)
                             .font(.caption2)
@@ -45,6 +48,9 @@ struct StudyDesignActionsView: View {
                     }
                 }
                 .font(.caption2)
+                .help(
+                    "the other studies minted from this design in the same "
+                        + "batch, by their display names")
             }
         }
     }
@@ -92,11 +98,19 @@ struct StudyDesignActionsView: View {
                 do { panel.newDesignFromStudy(reviewedSource: try panel.reviewEditorDesignSource()) }
                 catch { panel.draft.formErrors[.template] = error.localizedDescription }
             }
-            .help(StudyControlCopy.saveAsNewDesignHelp + " Uses saved study settings; save Study Setup first to include unsaved edits.")
+            // `saveAsNewDesignHelp` ends a sentence, so the appended clause
+            // has to start one rather than trail a lowercase fragment.
+            .help(
+                StudyControlCopy.saveAsNewDesignHelp
+                    + " Uses the SAVED study settings — save Study Setup first "
+                    + "to include unsaved edits.")
             if target == nil {
                 Button("Open Templates") { openTemplates() }
                     .buttonStyle(.link)
                     .font(.caption2)
+                    .help(
+                        "opens the Templates section, where designs are listed, "
+                            + "edited and instantiated into studies")
             }
         }
         if let refusal, target != nil {

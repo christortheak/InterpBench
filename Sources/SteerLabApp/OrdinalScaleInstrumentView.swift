@@ -112,7 +112,14 @@ struct OrdinalScaleInstrumentControls: View {
             errorText =
                 "Couldn't update the ordinal-scale instrument — the study "
                 + "must still be a draft (frozen studies are read-only). "
-                + "Details: \(error)"
+                + "Details: \(Self.detail(error))"
         }
+    }
+
+    /// `ExperimentError` is CustomStringConvertible, not LocalizedError, so
+    /// its `reason` is the readable half; anything else gets its localized
+    /// description rather than a Swift dump (audit headline 17).
+    private static func detail(_ error: some Error) -> String {
+        (error as? ExperimentError)?.reason ?? error.localizedDescription
     }
 }

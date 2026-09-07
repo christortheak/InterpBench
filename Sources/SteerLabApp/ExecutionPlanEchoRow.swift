@@ -34,6 +34,10 @@ struct ExecutionPlanEchoRow: View {
                         Button("Show Remote options", action: revealOptions)
                             .buttonStyle(.link)
                             .font(.caption)
+                            .help(
+                                "expands the Remote options disclosure, where "
+                                    + "the verb that caused this mismatch is "
+                                    + "chosen")
                     }
                 }
             }
