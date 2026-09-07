@@ -154,7 +154,12 @@ public final class FineTuningPanel {
     public private(set) var liveRobustnessJudgeStatus: String?
     public private(set) var liveRobustnessFailure: String?
 
-    public var newAdapterName = "my-concept-lora"
+    /// Empty on purpose (UI audit 2026-09-06): the field used to arrive
+    /// pre-filled with a real value, so a bare click filed a generically
+    /// named adapter. The suggestion is the field's PLACEHOLDER now, and
+    /// `createAdapterProject`'s "name the adapter first" gate is visible
+    /// beside the button.
+    public var newAdapterName = ""
     public var newAdapterBaseModelID = ChatService.availableModels.first?.id ?? ""
     public var newAdapterProjectDirectory = ""
 

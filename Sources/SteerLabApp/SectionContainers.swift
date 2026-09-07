@@ -39,7 +39,9 @@ struct DataSectionView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $tool) {
+            // A real title (kept hidden) so VoiceOver announces the control
+            // rather than an unnamed segmented picker.
+            Picker("Data tool", selection: $tool) {
                 ForEach(Tool.allCases) { tool in
                     Text(tool.rawValue).tag(tool)
                 }
@@ -47,6 +49,11 @@ struct DataSectionView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .padding(8)
+            .help(
+                "switch this section's tool — Inventory lists what the "
+                    + "workspace holds; the other three are the builders that "
+                    + "derive artifacts from it")
+            .accessibilityLabel("Data tool")
 
             switch tool {
             case .inventory:

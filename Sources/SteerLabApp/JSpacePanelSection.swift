@@ -5,9 +5,9 @@ import SwiftUI
 ///
 /// Server-only by rule (hard requirement). Imported
 /// lens artifacts are PyTorch/HF-native and activations do not transfer across
-/// substrates, so this panel deliberately offers no local/MLX path: with no
-/// server connection it says so and stops, rather than degrading to something
-/// that would look like it worked.
+/// substrates, so this panel deliberately offers no local/MLX path: on a
+/// workspace that does not compute on a server it says so and stops, rather
+/// than degrading to something that would look like it worked.
 ///
 /// Lives inside Analysis ("vector geometry and mechanistic analysis") rather
 /// than as its own section — a J-lens readout is a mechanistic instrument, and
@@ -30,19 +30,29 @@ struct JSpacePanelSection: View {
     @State private var deriveName: String = ""
     @State private var deriveResult: String?
 
+    /// The gate is the WORKSPACE's compute target, not `cluster.client`:
+    /// the store always builds a client (it falls back to loopback), so the
+    /// old `client == nil` test could never fire and a Local workspace
+    /// rendered the whole server surface and then failed against 127.0.0.1
+    /// (audit 2026-09-06, headline 10). Same test `FineTuningPanelView` uses
+    /// for its server route.
+    private var isServerWorkspace: Bool {
+        service.cluster.computeTarget == .server
+    }
+
     /// Rendered as Form sections so it composes into the Analysis panel rather
     /// than becoming a second layout language beside it.
     var body: some View {
         Section("J-Space — Jacobian lens") {
             header
-            if service.cluster.client == nil {
-                noServerNotice
-            } else {
+            if isServerWorkspace {
                 lensLibrary
+            } else {
+                noServerNotice
             }
         }
         .task { await refresh() }
-        if service.cluster.client != nil {
+        if isServerWorkspace {
             Section("Token → direction") {
                 tokenDirectionBuilder
             }
@@ -77,13 +87,14 @@ struct JSpacePanelSection: View {
     private var noServerNotice: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 6) {
-                Label("No server connection", systemImage: "bolt.horizontal.circle")
+                Label("Needs a server workspace", systemImage: "bolt.horizontal.circle")
                     .font(.callout.bold())
-                Text("""
-                     J-Space has no local equivalent by design. Connect a server \
-                     in Compute — the lens, its derivations, and its readouts all \
-                     live on the substrate that can actually run them.
-                     """)
+                Text(
+                    "This workspace computes on \(service.cluster.substrateLabel), "
+                        + "and J-Space has no local equivalent by design. Point "
+                        + "the workspace at a server in Compute — the lens, its "
+                        + "derivations, and its readouts all live on the "
+                        + "substrate that can actually run them.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -103,17 +114,30 @@ struct JSpacePanelSection: View {
                         }
                     }
                     .frame(maxWidth: 380)
-                    Button("Acquire") { run(.acquire) }
+                    .help(
+                        "which model's published lens the two buttons act on — "
+                        + "a lens only reads the model it was fitted for")
+                    Button("Acquire lens") { run(.acquire) }
                         .disabled(isBusy || selectedModelID.isEmpty)
-                        .help("Fetch the published lens bytes into the server's HF cache")
-                    Button("Import") { run(.importLens) }
+                        .help("fetch the published lens bytes into the server's HF cache")
+                    Button("Import lens") { run(.importLens) }
                         .disabled(isBusy || selectedModelID.isEmpty)
-                        .help("Convert a cached lens into the server workspace")
+                        .help("convert a cached lens into the server workspace")
+                    if isBusy { ProgressView().controlSize(.small) }
                 }
                 if let tier = supported.first(where: { $0.modelID == selectedModelID }),
                    !tier.isEvidenceTier {
                     TierBadge(tier: tier.tier, expanded: true)
                 }
+            } else if catalog != nil {
+                // Empty `supported` used to hide the picker and leave every
+                // button permanently disabled with no explanation.
+                Text(
+                    "this server publishes no supported lens models, so there "
+                        + "is nothing to acquire, import, or derive from here — "
+                        + "the catalog's supported list is empty")
+                    .font(.caption).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             let lenses = catalog?.lenses ?? []
             if lenses.isEmpty {
@@ -128,36 +152,47 @@ struct JSpacePanelSection: View {
         }
     }
 
+    /// A real Button, not a tap gesture: the row is focusable, keyboard
+    /// reachable, and announced as a selectable control (audit 2026-09-06).
     private func lensRow(_ lens: JLensRecord) -> some View {
         let isSelected = selectedLensID == lens.lensID
         let tier = catalog?.supported
             .first(where: { $0.modelID == lens.fit?.modelID })?.tier ?? "testing"
-        return HStack(spacing: 10) {
-            Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(lens.lensID).font(.callout.monospaced())
-                HStack(spacing: 8) {
-                    Text("layers \(lens.layerSpan)")
-                    if let converted = lens.converted?.dtype {
-                        Text("converted \(converted)").foregroundStyle(.green)
-                    } else {
-                        Text("not converted").foregroundStyle(.orange)
+        return Button {
+            select(lens)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(lens.lensID).font(.callout.monospaced())
+                    HStack(spacing: 8) {
+                        Text("layers \(lens.layerSpan)")
+                        if let converted = lens.converted?.dtype {
+                            Text("converted \(converted)").foregroundStyle(.green)
+                        } else {
+                            Text("not converted").foregroundStyle(.orange)
+                        }
+                        let passing = lens.passingQualifications.count
+                        Text(passing > 0 ? "\(passing) qualification(s)" : "unqualified")
+                            .foregroundStyle(passing > 0 ? .green : .secondary)
                     }
-                    let passing = lens.passingQualifications.count
-                    Text(passing > 0 ? "\(passing) qualification(s)" : "unqualified")
-                        .foregroundStyle(passing > 0 ? .green : .secondary)
+                    .font(.caption).foregroundStyle(.secondary)
                 }
-                .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                TierBadge(tier: tier, expanded: false)
             }
-            Spacer()
-            TierBadge(tier: tier, expanded: false)
+            .padding(8)
+            .background(isSelected ? Color.accentColor.opacity(0.10) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
         }
-        .padding(8)
-        .background(isSelected ? Color.accentColor.opacity(0.10) : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .contentShape(Rectangle())
-        .onTapGesture { select(lens) }
+        .buttonStyle(.plain)
+        .help(
+            "select this lens — its full provenance loads below, and Derive "
+                + "uses the model it was fitted for")
+        .accessibilityLabel("Lens \(lens.lensID)")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     /// Full provenance, not a summary. The fit-time revision is UNKNOWN for the
@@ -212,10 +247,20 @@ struct JSpacePanelSection: View {
                 TextField("word or string, e.g. courage", text: $tokenQuery)
                     .frame(maxWidth: 260)
                     .onSubmit { lookUpTokens() }
+                    .help(
+                        "the word or string to look up in the model's "
+                            + "vocabulary — the server tokenizes it and lists "
+                            + "every candidate")
+                    .accessibilityLabel("Word or string to tokenize")
                 Toggle("case variants", isOn: $includeCaseVariants)
                     .toggleStyle(.checkbox)
+                    .help(
+                        "also list the capitalized and lower-cased forms — they "
+                            + "are different vocabulary entries with different "
+                            + "directions")
                 Button("Show token options") { lookUpTokens() }
                     .disabled(isBusy || tokenQuery.isEmpty || selectedModelID.isEmpty)
+                    .help("ask the server for every vocabulary entry this string produces")
             }
             if let options = tokenOptions {
                 ForEach(options.candidates) { candidate in
@@ -223,11 +268,29 @@ struct JSpacePanelSection: View {
                 }
             }
             HStack {
-                TextField("name (optional)", text: $deriveName).frame(maxWidth: 240)
+                TextField("name (optional)", text: $deriveName)
+                    .frame(maxWidth: 240)
+                    .help(
+                        "what the derived direction is called in the vector "
+                            + "catalog — left empty, the server names it from "
+                            + "the token")
+                    .accessibilityLabel("Derived direction name")
                 Button("Derive direction on server") { run(.derive) }
-                    .disabled(isBusy || selectedToken == nil || selectedLensID == nil)
-                    .help("Runs on the connected server; the result appears in the "
-                          + "ordinary vector catalog")
+                    .disabled(
+                        isBusy || selectedToken == nil || selectedLensID == nil
+                            || deriveModelMismatch != nil)
+                    .help(
+                        "runs on the connected server against the selected "
+                            + "lens's own model; the result appears in the "
+                            + "ordinary vector catalog")
+                if isBusy { ProgressView().controlSize(.small) }
+            }
+            // The token IDs are looked up against the picker's model; a lens
+            // fitted for another model cannot use them (audit 2026-09-06).
+            if let mismatch = deriveModelMismatch {
+                Text(mismatch)
+                    .font(.caption).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if let deriveResult {
                 Text(deriveResult).font(.caption.monospaced())
@@ -236,40 +299,83 @@ struct JSpacePanelSection: View {
         }
     }
 
+    /// A real Button for the same reason the lens rows are: focusable,
+    /// keyboard reachable, announced as selectable (audit 2026-09-06).
     private func candidateRow(_ candidate: JLensTokenCandidate) -> some View {
         let isSelected = selectedToken?.tokenID == candidate.tokenID
             && selectedToken?.form == candidate.form
-        return VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 10) {
-                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-                Text(String(candidate.tokenID)).font(.callout.monospaced())
-                Text(candidate.form).font(.caption).foregroundStyle(.secondary)
-                if candidate.singleToken {
-                    Label("single token", systemImage: "checkmark.circle")
-                        .font(.caption).foregroundStyle(.green).labelStyle(.titleAndIcon)
-                } else {
-                    Label("multi-token", systemImage: "exclamationmark.triangle")
-                        .font(.caption).foregroundStyle(.orange).labelStyle(.titleAndIcon)
+        return Button {
+            selectedToken = candidate
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 10) {
+                    Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                        .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    Text(String(candidate.tokenID)).font(.callout.monospaced())
+                    Text(candidate.form).font(.caption).foregroundStyle(.secondary)
+                    if candidate.singleToken {
+                        Label("single token", systemImage: "checkmark.circle")
+                            .font(.caption).foregroundStyle(.green).labelStyle(.titleAndIcon)
+                    } else {
+                        Label("multi-token", systemImage: "exclamationmark.triangle")
+                            .font(.caption).foregroundStyle(.orange).labelStyle(.titleAndIcon)
+                    }
+                    Text(candidate.decoded.map { "\"\($0)\"" } ?? candidate.piece)
+                        .font(.callout.monospaced())
+                    Spacer()
                 }
-                Text(candidate.decoded.map { "\"\($0)\"" } ?? candidate.piece)
-                    .font(.callout.monospaced())
-                Spacer()
+                // Bytes are always shown: a vocabulary entry need not be printable,
+                // and two entries can render identically.
+                Text("bytes \(candidate.decodedBytes)")
+                    .font(.caption2.monospaced()).foregroundStyle(.tertiary)
+                if let note = candidate.note {
+                    Text(note).font(.caption).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            // Bytes are always shown: a vocabulary entry need not be printable,
-            // and two entries can render identically.
-            Text("bytes \(candidate.decodedBytes)")
-                .font(.caption2.monospaced()).foregroundStyle(.tertiary)
-            if let note = candidate.note {
-                Text(note).font(.caption).foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            .padding(8)
+            .background(isSelected ? Color.accentColor.opacity(0.10) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
         }
-        .padding(8)
-        .background(isSelected ? Color.accentColor.opacity(0.10) : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .contentShape(Rectangle())
-        .onTapGesture { selectedToken = candidate }
+        .buttonStyle(.plain)
+        .help(
+            "derive the direction for THIS vocabulary entry — a direction is "
+                + "indexed by one exact token, never by the word")
+        .accessibilityLabel("Token \(candidate.tokenID), \(candidate.form)")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+
+    // MARK: Derive target
+
+    /// The model the SELECTED LENS was fitted for. A lens only reads the
+    /// model it was fitted against, so this — not the Model picker — is what
+    /// a derive runs on (audit 2026-09-06).
+    private var selectedLensFitModelID: String? {
+        guard let selectedLensID else { return nil }
+        let record: JLensRecord? =
+            detail?.lensID == selectedLensID
+            ? detail
+            : catalog?.lenses.first(where: { $0.lensID == selectedLensID })
+        let fitted = record?.fit?.modelID ?? ""
+        return fitted.isEmpty ? nil : fitted
+    }
+
+    private var deriveModelID: String {
+        selectedLensFitModelID ?? selectedModelID
+    }
+
+    /// The token candidates were resolved against the Model picker's
+    /// tokenizer; applying those ids to a lens fitted for another model is
+    /// meaningless, so the derive is refused with the repair.
+    private var deriveModelMismatch: String? {
+        guard let fitted = selectedLensFitModelID, !selectedModelID.isEmpty,
+            fitted != selectedModelID, selectedToken != nil
+        else { return nil }
+        return
+            "the selected lens was fitted for \(fitted), but these token "
+            + "options came from \(selectedModelID)'s tokenizer — switch the "
+            + "Model picker to \(fitted) and look the token up again"
     }
 
     // MARK: Actions
@@ -281,14 +387,23 @@ struct JSpacePanelSection: View {
         detail = lens
         Task {
             guard let client = service.cluster.client else { return }
-            if let full = try? await client.jlensLens(id: lens.lensID) {
-                detail = full
+            do {
+                detail = try await client.jlensLens(id: lens.lensID)
+            } catch {
+                // The Provenance box would otherwise show the catalog's
+                // summary record — fit revision, corpus, prompts fitted all
+                // "—" — with nothing saying the full record failed to load.
+                status =
+                    "showing the catalog summary only — the full record for "
+                    + "\(lens.lensID) did not load: \(error.localizedDescription)"
             }
         }
     }
 
     private func refresh() async {
-        guard let client = service.cluster.client else { return }
+        // Never fetch a lens catalog from a Local workspace's loopback URL:
+        // the panel is server-only, and the notice above says so.
+        guard isServerWorkspace, let client = service.cluster.client else { return }
         do {
             let fetched = try await client.jlensCatalog()
             catalog = fetched
@@ -307,7 +422,8 @@ struct JSpacePanelSection: View {
     }
 
     private func lookUpTokens() {
-        guard let client = service.cluster.client else { return }
+        guard isServerWorkspace, !isBusy, let client = service.cluster.client
+        else { return }
         isBusy = true
         status = "resolving tokens on the server…"
         Task {
@@ -325,23 +441,33 @@ struct JSpacePanelSection: View {
     }
 
     private func run(_ action: Action) {
-        guard let client = service.cluster.client else { return }
+        guard isServerWorkspace, !isBusy, let client = service.cluster.client
+        else { return }
         isBusy = true
+        // A slow submit used to look like a dead click: the buttons dimmed
+        // and nothing was said until the server answered with a job id.
+        status = submitStatus(action)
+        if action == .derive {
+            // Stale success from an earlier derive must not sit under a new
+            // one's error (audit 2026-09-06).
+            deriveResult = nil
+        }
+        let modelID = action == .derive ? deriveModelID : selectedModelID
         Task {
             defer { isBusy = false }
             do {
                 let (jobID, title): (String, String)
                 switch action {
                 case .acquire:
-                    jobID = try await client.jlensAcquire(modelID: selectedModelID)
-                    title = "J-lens acquire: \(selectedModelID)"
+                    jobID = try await client.jlensAcquire(modelID: modelID)
+                    title = "J-lens acquire: \(modelID)"
                 case .importLens:
-                    jobID = try await client.jlensImport(modelID: selectedModelID)
-                    title = "J-lens import: \(selectedModelID)"
+                    jobID = try await client.jlensImport(modelID: modelID)
+                    title = "J-lens import: \(modelID)"
                 case .derive:
                     guard let lensID = selectedLensID, let token = selectedToken else { return }
                     jobID = try await client.jlensDerive(
-                        lensID: lensID, modelID: selectedModelID,
+                        lensID: lensID, modelID: modelID,
                         tokenID: token.tokenID, piece: token.decoded ?? token.piece,
                         name: deriveName.isEmpty ? nil : deriveName)
                     title = "J-lens derive: token \(token.tokenID)"
@@ -368,6 +494,14 @@ struct JSpacePanelSection: View {
             } catch {
                 status = "\(error.localizedDescription)"
             }
+        }
+    }
+
+    private func submitStatus(_ action: Action) -> String {
+        switch action {
+        case .acquire: "asking the server to fetch the lens bytes…"
+        case .importLens: "asking the server to convert the cached lens…"
+        case .derive: "asking the server to derive the direction…"
         }
     }
 }
