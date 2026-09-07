@@ -43,20 +43,24 @@ struct OptVecPanelView: View {
 
     // MARK: - Bundles
 
+    /// Hoisted out of the `Section` body: a `+`-chain with an interpolation
+    /// inside a `ViewBuilder` defeated the type-checker.
+    private static let emptyBundlesExplainer: String =
+        "No OptVec dataset bundles under prompts/optvec/ in this "
+        + "workspace. A bundle is one folder holding the nine "
+        + "hashed dataset files, bundle.json, and REPORT.md; "
+        + "steerlab-server data check optvec reports exactly "
+        + "what one is missing. Where a workspace carries the "
+        + "authoring contract it is at "
+        + "\(OptVecBundleStore.authoringSpec)."
+
     private var bundlesSection: some View {
         Section {
             if panel.bundles.isEmpty {
                 // The authoring spec is a workspace document, not something a
                 // fresh workspace ships — the check verb is the authority
                 // that always exists (audit 2026-09-06).
-                Text(
-                    "No OptVec dataset bundles under prompts/optvec/ in this "
-                        + "workspace. A bundle is one folder holding the nine "
-                        + "hashed dataset files, bundle.json, and REPORT.md; "
-                        + "steerlab-server data check optvec reports exactly "
-                        + "what one is missing. Where a workspace carries the "
-                        + "authoring contract it is at "
-                        + "\(OptVecBundleStore.authoringSpec).")
+                Text(Self.emptyBundlesExplainer)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

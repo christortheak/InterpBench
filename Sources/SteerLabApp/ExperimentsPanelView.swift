@@ -14,6 +14,10 @@ struct ExperimentsPanelView: View {
     /// Lands on the Templates tab — the design library. Studies CASTS designs;
     /// it does not hold them (2026-08-06 restructure).
     var openTemplates: () -> Void = {}
+    /// Lands on Compute, where a submitted run's job is watched. Without this
+    /// the run controls' "Show in Compute" link stays hidden (it renders only
+    /// when the closure is non-nil).
+    var openCompute: () -> Void = {}
     /// Bound expansion state for the "Remote options" disclosure so
     /// cross-links (Optimizations' preconfigured sweep) can open it directly.
     @State private var runOnServerExpanded = false
@@ -217,7 +221,8 @@ struct ExperimentsPanelView: View {
                             pendingModelJob: $pendingModelJob, runOnServerExpanded: $runOnServerExpanded)
                     }
                     StudyRunControlsView(service: service, manifest: manifest,
-                        runOnServerExpanded: $runOnServerExpanded, pendingModelJob: $pendingModelJob)
+                        runOnServerExpanded: $runOnServerExpanded, pendingModelJob: $pendingModelJob,
+                        openCompute: openCompute)
                 }
 
                 if !panel.awaitingSweepJudgments.isEmpty,

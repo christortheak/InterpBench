@@ -155,7 +155,8 @@ struct ChatView: View {
         case .studies:
             ExperimentsPanelView(
                 service: service, openOptimizations: openOptimizations,
-                openTemplates: { section = .templates })
+                openTemplates: { section = .templates },
+                openCompute: { section = .compute })
         case .multiAgent:
             MultiAgentPanelView(service: service)
         case .results:

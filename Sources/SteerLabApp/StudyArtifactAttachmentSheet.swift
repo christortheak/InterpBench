@@ -25,23 +25,11 @@ struct StudyArtifactAttachmentSheet: View {
                 .onChange(of: path) { _, _ in artifact = nil; problem = nil }
                 .help(Self.pathHelp)
             TextField("Concept name in this study", text: $concept)
-                .help(
-                    "the name this study will know the vector by — an "
-                        + "injection condition's slot references exactly this "
-                        + "name, so it is the study's own label, not the "
-                        + "file's")
+                .help(Self.conceptHelp)
             TextField("Source concept (only if the artifact requires it)", text: $sourceConcept)
-                .help(
-                    "the concept the vector was DERIVED from, when that "
-                        + "differs from the name above — required only by "
-                        + "artifacts whose sidecar names a source (a "
-                        + "designated-reference or grand-mean vector reused "
-                        + "under another label); leave it empty otherwise")
+                .help(Self.sourceConceptHelp)
             TextField("Evaluation run (optional)", text: $evalRun)
-                .help(
-                    "a runs/ directory whose evidence backs this vector, "
-                        + "recorded beside the pin as provenance — it gates "
-                        + "nothing and may be left empty")
+                .help(Self.evalRunHelp)
             // The gate, said before the click: Attach is off until Inspect has
             // read the artifact, because the hashes it prints are what gets
             // pinned (UI audit 2026-09-06).
@@ -56,10 +44,7 @@ struct StudyArtifactAttachmentSheet: View {
                     }
                 }
                 .disabled(pathIsEmpty)
-                .help(
-                    "reads the vector and its sidecar at that path and shows "
-                        + "their SHA-256 — Attach pins exactly the bytes "
-                        + "inspected here, so it stays off until this succeeds")
+                .help(Self.inspectHelp)
                 if artifact == nil {
                     Text(
                         pathIsEmpty
@@ -110,7 +95,9 @@ struct StudyArtifactAttachmentSheet: View {
         }
         // A height as well as a width: without one the sheet grew and shrank
         // as the hash block and the refusal appeared (UI audit 2026-09-06).
-        .padding(20).frame(width: 640, minHeight: 420)
+        // `width:` and `minHeight:` are different `frame` overloads and
+        // cannot be mixed; pinning min = max width is the same fixed width.
+        .padding(20).frame(minWidth: 640, maxWidth: 640, minHeight: 420)
     }
 
     private var pathIsEmpty: Bool {
@@ -138,4 +125,25 @@ struct StudyArtifactAttachmentSheet: View {
         + "extension — the .safetensors tensor and its .json sidecar are read "
         + "as a pair. A path that is absolute, contains .., or resolves "
         + "outside the workspace is refused."
+
+    private static let conceptHelp =
+        "the name this study will know the vector by — an injection "
+        + "condition's slot references exactly this name, so it is the "
+        + "study's own label, not the file's"
+
+    private static let sourceConceptHelp =
+        "the concept the vector was DERIVED from, when that differs from "
+        + "the name above — required only by artifacts whose sidecar names "
+        + "a source (a designated-reference or grand-mean vector reused "
+        + "under another label); leave it empty otherwise"
+
+    private static let evalRunHelp =
+        "a runs/ directory whose evidence backs this vector, recorded "
+        + "beside the pin as provenance — it gates nothing and may be left "
+        + "empty"
+
+    private static let inspectHelp =
+        "reads the vector and its sidecar at that path and shows their "
+        + "SHA-256 — Attach pins exactly the bytes inspected here, so it "
+        + "stays off until this succeeds"
 }

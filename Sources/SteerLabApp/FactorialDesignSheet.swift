@@ -373,17 +373,23 @@ private struct FactorialDesignSheet: View {
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!generatable)
-                    .help(
-                        generatable
-                            ? "writes the generated items to this study's "
-                                + "task-prompts destination, pins the file's "
-                                + "hash, and saves the design spec beside it "
-                                + "as provenance"
-                            : "the design above has to generate cleanly first "
-                                + "— the message under the preview says what "
-                                + "is missing")
+                    .help(generateHelp)
             }
         }
+    }
+
+    /// Hoisted out of the button's `.help`: a ternary over two `+`-chains
+    /// inside a `ViewBuilder` defeated the type-checker.
+    private var generateHelp: String {
+        if generatable {
+            return "writes the generated items to this study's "
+                + "task-prompts destination, pins the file's "
+                + "hash, and saves the design spec beside it "
+                + "as provenance"
+        }
+        return "the design above has to generate cleanly first "
+            + "— the message under the preview says what "
+            + "is missing"
     }
 
     private var generatable: Bool {

@@ -1924,7 +1924,10 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
                 controlTopK: topK.map(String.init) ?? ""))
     }
 
-    private static let specInfo = """
+    // Computed, not stored: this view is generic over `RunControls`, and
+    // Swift does not allow static stored properties in a generic type.
+    private static var specInfo: String {
+        """
         Everything the sweep will do, as manifest data. The GRID is the cost: \
         each layer fraction × each alpha is one generated cell per dev prompt, \
         plus the capability battery, and the no-injection baseline cell is \
@@ -1943,6 +1946,7 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
         this spec and the SHA-256 of the dev-prompts and battery files; after \
         that, drift in those bytes refuses sweep start.
         """
+    }
 
     var body: some View {
         Section {

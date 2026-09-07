@@ -30,7 +30,7 @@ public struct GeometryAnalysisResult: Sendable {
     }
 }
 
-public enum GeometryAnalysisError: Error, CustomStringConvertible, LocalizedError {
+public enum GeometryAnalysisError: Error, CustomStringConvertible {
     case tooFewVectors
     case noCommonLayers
     case dimensionMismatch(String)
@@ -46,9 +46,9 @@ public enum GeometryAnalysisError: Error, CustomStringConvertible, LocalizedErro
         }
     }
 
-    /// So that `localizedDescription` — what every UI status line should show —
-    /// is this sentence and not "The operation couldn't be completed."
-    public var errorDescription: String? { description }
+    // `localizedDescription` already yields this sentence: the retroactive
+    // `LocalizedError` conformance lives with the other 20 in
+    // `ErrorMessages.swift`, deliberately collected in one checkable place.
 }
 
 public enum GeometryAnalysis {

@@ -87,30 +87,44 @@ struct WorkspaceSelector: View {
     /// cluster workspace treated its own vectors as foreign and refused
     /// promotions that were entirely legitimate. Declaring it is the point:
     /// it survives the server being offline, unpaired, or moved.
+    /// Hoisted out of the `Section` body: as a `+`-chain inside a
+    /// `ViewBuilder` this defeated the type-checker ("unable to type-check
+    /// this expression in reasonable time"). A named `String` costs nothing.
+    private static let computeBindingHelp: String =
+        "what this workspace's data is FOR — the engine whose "
+        + "artifacts and evidence are native here. A declaration "
+        + "about the folder, not about today's connection: it "
+        + "survives the server being offline or moved, and the "
+        + "lifecycle reads it when deciding whether a vector or a "
+        + "run belongs to this study"
+
     @ViewBuilder
     private var computeBindingSection: some View {
         Section("Computes on") {
-            Picker("Computes on", selection: computeBinding) {
-                ForEach(WorkspaceCompute.allCases, id: \.self) { option in
-                    Text(option.label).tag(option)
-                }
+            computeBindingPicker
+            computeBindingNotes
+        }
+    }
+
+    private var computeBindingPicker: some View {
+        Picker("Computes on", selection: computeBinding) {
+            ForEach(WorkspaceCompute.allCases, id: \.self) { option in
+                Text(option.label).tag(option)
             }
-            .pickerStyle(.inline)
-            .labelsHidden()
-            .help(
-                "what this workspace's data is FOR — the engine whose "
-                    + "artifacts and evidence are native here. A declaration "
-                    + "about the folder, not about today's connection: it "
-                    + "survives the server being offline or moved, and the "
-                    + "lifecycle reads it when deciding whether a vector or a "
-                    + "run belongs to this study")
-            if !workspace.isComputeDeclared {
-                // An inference must not masquerade as a decision.
-                Text("inferred from this workspace's runs — choose to confirm")
-            }
-            if let mismatch = computeMismatchNote {
-                Text(mismatch)
-            }
+        }
+        .pickerStyle(.inline)
+        .labelsHidden()
+        .help(Self.computeBindingHelp)
+    }
+
+    @ViewBuilder
+    private var computeBindingNotes: some View {
+        if !workspace.isComputeDeclared {
+            // An inference must not masquerade as a decision.
+            Text("inferred from this workspace's runs — choose to confirm")
+        }
+        if let mismatch = computeMismatchNote {
+            Text(mismatch)
         }
     }
 
