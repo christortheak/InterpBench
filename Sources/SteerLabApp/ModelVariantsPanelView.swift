@@ -72,7 +72,7 @@ struct ModelVariantsPanelView: View {
     @State private var filterSweepOnly = false
     @State private var filterHasAdapter = false
     @State private var filterRunnableHere = false
-    @State private var name = "variant-1"
+    @State private var name = "agent-1"
     @State private var baseModelID = ChatService.availableModels.first?.id ?? ""
     @State private var baseRevision = ""
     @State private var adapterID: String?
@@ -99,10 +99,18 @@ struct ModelVariantsPanelView: View {
             regionContent
         }
         .confirmationDialog(
-            "Delete selected agent?",
-            isPresented: $confirmDelete
+            deleteDialogTitle,
+            isPresented: $confirmDelete,
+            titleVisibility: .visible
         ) {
             Button("Delete", role: .destructive) { panel.deleteSelectedVariant() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "Removes the definition from this workspace's agent library. "
+                    + "Studies that already pinned it keep their own hashed "
+                    + "copy, and frozen studies and run directories are "
+                    + "untouched. This cannot be undone.")
         }
         // Nothing on the tab-switch path may touch the disk (2026-08-27):
         // this used to be an `onAppear` that ran the library scan, a runs/
@@ -132,6 +140,16 @@ struct ModelVariantsPanelView: View {
         .onChange(of: panel.lastRobustnessDirectory) {
             refreshAgentEvidenceIfShown()
         }
+    }
+
+    /// The delete dialog names the agent it is about to remove — "Delete
+    /// selected agent?" put the researcher one keystroke from losing a
+    /// definition without ever showing which one.
+    private var deleteDialogTitle: String {
+        guard let agentName = panel.selectedVariant?.artifact.name else {
+            return "Delete the selected agent?"
+        }
+        return "Delete the agent '\(agentName)'?"
     }
 
     /// Start the deferred robustness overlay — one runs/ scan plus a content
@@ -219,12 +237,19 @@ struct ModelVariantsPanelView: View {
     }
 
     private var createModeSection: some View {
-        Section("New Agent") {
+        // A saved agent opened with Edit lands here, and a section titled
+        // "New Agent" above a button reading "Save Changes" told two
+        // different stories about the same form.
+        Section(panel.selectedVariant == nil ? "New Agent" : "Edit Agent") {
             Picker("Creation mode", selection: $createMode) {
                 ForEach(AgentCreateMode.allCases) { mode in
                     Text(mode.rawValue).tag(mode)
                 }
             }
+            .help(
+                "how this agent gets its layer and α: by hand, or from a "
+                    + "declared layer×alpha sweep whose winning cell carries "
+                    + "a birth certificate")
             Text(createMode.explainer)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -257,7 +282,15 @@ struct ModelVariantsPanelView: View {
                     Text(variant.artifact.name).tag(String?.some(variant.id))
                 }
             }
-            .help("browse or edit saved agents; New… starts from the current steering setup")
+            .help(
+                "browse or edit saved agents; New… starts a fresh definition "
+                    + "from the Playground's current setup")
+            if let selected = panel.selectedVariant {
+                Text(Self.editingCaption(selected.artifact.name))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             editorFields
         }
@@ -294,52 +327,61 @@ struct ModelVariantsPanelView: View {
         }
     }
 
+    private static func editingCaption(_ name: String) -> String {
+        "editing the saved agent '\(name)' — Save Changes updates it in "
+            + "place; choose New… above to start a fresh definition instead"
+    }
+
+    /// The trimmed editor name, once.
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// A saved agent that already answers to this name and is NOT the one
+    /// being edited. `ModelVariantStore.save` mints a unique run directory
+    /// per save, so a second save under an existing name silently produced
+    /// two library rows distinguishable only by their timestamp.
+    private var collidingAgentName: String? {
+        let candidate = trimmedName
+        guard !candidate.isEmpty else { return nil }
+        let selectedID = panel.selectedVariant?.id
+        return panel.variants.first { record in
+            record.id != selectedID
+                && record.artifact.name
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .compare(candidate, options: .caseInsensitive) == .orderedSame
+        }?.artifact.name
+    }
+
+    /// Why Save is disabled, in one plain sentence — nil means saveable.
+    private var saveDisabledReason: String? {
+        if trimmedName.isEmpty { return "name the agent before saving" }
+        if let existing = collidingAgentName {
+            return "an agent named '\(existing)' is already in this "
+                + "workspace's library — rename this one, or select it in "
+                + "the Agent picker above to save changes to it"
+        }
+        return nil
+    }
+
     private var actionsSection: some View {
         Section("Actions") {
-                HStack {
-                    Button(panel.selectedVariant == nil ? "Save New Agent" : "Save Changes") {
-                        saveVariant()
-                    }
-                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                    if isServerWorkspace {
-                        // A definition whose base model + refs all resolve on
-                        // the active server seeds the live controls exactly
-                        // like a stored server variant — but INLINE-composed:
-                        // no stored path/hash identity is claimed.
-                        Button("Apply in this workspace") {
-                            if let record = panel.selectedVariant {
-                                service.applyLocalDefinitionToServerSteering(record)
-                            }
-                        }
-                        .disabled(
-                            panel.selectedVariant == nil
-                                || selectedDefinitionApplicability?.isApplicable != true)
-                        .help(
-                            "seed the steering controls from this definition; sends "
-                                + "compose an inline spec on \(service.cluster.substrateLabel)")
-                    } else {
-                        Button("Use in Steering") {
-                            if let record = panel.selectedVariant {
-                                service.applyModelVariantToSteering(record)
-                            } else {
-                                saveVariant(applyAfterSave: true)
-                            }
-                        }
-                        .help("load this agent's configuration into the live steering controls")
-                    }
-
-                    Button("Reset From Steering") {
-                        loadDraftFromCurrentSteering()
-                    }
-
-                    if panel.selectedVariant != nil {
-                        Button("Delete…", role: .destructive) {
-                            confirmDelete = true
-                        }
-                    }
+                // Four regular-size buttons overrun the controls column's
+                // 560pt minimum; the second layout is the same buttons
+                // stacked (`ConceptsPanelView.emotionStoryEntry` idiom).
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { actionButtons }
+                    VStack(alignment: .leading, spacing: 6) { actionButtons }
                 }
-                .help("save, apply, or reset this agent (variant artifact)")
+                .help("save, apply, or reset this agent")
+
+                if let reason = saveDisabledReason {
+                    Label(reason, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
 
                 // Non-destructive applicability caption: a definition that
                 // doesn't resolve here names exactly what is missing instead
@@ -353,6 +395,78 @@ struct ModelVariantsPanelView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
+        }
+    }
+
+    /// Help strings built OUTSIDE the view builder (this file's own rule).
+    private var saveButtonHelp: String {
+        if let saveDisabledReason { return saveDisabledReason }
+        return panel.selectedVariant == nil
+            ? "write this definition into the workspace's agent library as a "
+                + "new artifact"
+            : "overwrite the selected agent's definition in place"
+    }
+
+    private var applyInWorkspaceHelp: String {
+        "seed the Playground's steering controls from this definition — it is "
+            + "sent to \(service.cluster.substrateLabel) as an inline spec, "
+            + "not stored there"
+    }
+
+    private var useInPlaygroundHelp: String {
+        panel.selectedVariant == nil
+            ? "save this definition, then load it into the Playground's "
+                + "steering controls"
+            : "load this agent's configuration into the Playground's steering "
+                + "controls"
+    }
+
+    @ViewBuilder
+    private var actionButtons: some View {
+        Button(panel.selectedVariant == nil ? "Save New Agent" : "Save Changes") {
+            saveVariant()
+        }
+        .disabled(saveDisabledReason != nil)
+        .help(saveButtonHelp)
+
+        if isServerWorkspace {
+            // A definition whose base model + refs all resolve on the active
+            // server seeds the live controls exactly like a stored server
+            // variant — but INLINE-composed: no stored path/hash identity is
+            // claimed.
+            Button("Apply in this workspace") {
+                if let record = panel.selectedVariant {
+                    service.applyLocalDefinitionToServerSteering(record)
+                }
+            }
+            .disabled(
+                panel.selectedVariant == nil
+                    || selectedDefinitionApplicability?.isApplicable != true)
+            .help(applyInWorkspaceHelp)
+        } else {
+            Button("Use in Playground") {
+                if let record = panel.selectedVariant {
+                    service.applyModelVariantToSteering(record)
+                } else {
+                    saveVariant(applyAfterSave: true)
+                }
+            }
+            .disabled(panel.selectedVariant == nil && saveDisabledReason != nil)
+            .help(useInPlaygroundHelp)
+        }
+
+        Button("Reset From Playground") {
+            loadDraftFromCurrentSteering()
+        }
+        .help(
+            "discard the edits in this form and re-read the Playground's "
+                + "current model, injections, and prompt settings")
+
+        if panel.selectedVariant != nil {
+            Button("Delete…", role: .destructive) {
+                confirmDelete = true
+            }
+            .help("remove this agent definition from the library — asks first")
         }
     }
 
@@ -385,6 +499,11 @@ struct ModelVariantsPanelView: View {
                         .foregroundStyle(.secondary)
                 }
                 DisclosureGroup("Files") {
+                    Text(
+                        "the two JSONL instruments this check reads — editing "
+                            + "either switches the preset to Custom")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                     TextField(
                         "Capability battery",
                         text: Binding(
@@ -407,13 +526,16 @@ struct ModelVariantsPanelView: View {
                                 panel.robustnessPromptsFile = $0
                                 panel.robustnessPresetID = VariantRobustness.customPresetID
                             }))
-                        .help("JSONL prompt file used for baseline-vs-variant coherence comparisons")
+                        .help("JSONL prompt file used for baseline-vs-agent coherence comparisons")
                     if !panel.robustnessPromptsFile.trimmingCharacters(in: .whitespaces).isEmpty {
                         FileReferenceRow(
                             label: "prompts",
                             path: panel.robustnessPromptsFile)
                     }
                 }
+                .help(
+                    "the battery and coherence-prompt files this check reads "
+                        + "— edit either to leave the preset and go Custom")
                 // Prompts is a COUNT, not a fixed knob: it gets the same
                 // affordance Max tokens has (a typed field plus stepper
                 // arrows), and it states the selected file's actual supply
@@ -445,10 +567,16 @@ struct ModelVariantsPanelView: View {
                     Stepper("Prompts", value: promptsBinding, in: RobustnessPromptSupply.range)
                         .labelsHidden()
                     if let supply = panel.robustnessPromptSupplyCaption {
+                        // Not `fixedSize`: this caption names the selected
+                        // FILE, so a long path used to hold the whole row
+                        // wider than the controls column. It compresses now
+                        // and the tooltip carries the untruncated line.
                         Text(supply)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .fixedSize()
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(supply)
                     }
                     Spacer(minLength: 8)
                     Text("Max tokens")
@@ -483,7 +611,7 @@ struct ModelVariantsPanelView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Toggle("AI coherence judge", isOn: $panel.robustnessUseJudge)
-                    .help("asks a judge model to compare baseline and variant outputs for coherence and prompt-following")
+                    .help("asks a judge model to compare baseline and agent outputs for coherence and prompt-following")
                 if panel.robustnessUseJudge {
                     JudgeModelPicker(
                         title: "Judge",
@@ -496,19 +624,21 @@ struct ModelVariantsPanelView: View {
                         openRouterProvider: $panel.robustnessOpenRouterProvider)
                 }
                 Button(panel.isRobustnessRunning ? "Checking…" : "Run Robustness Check") {
+                    guard robustnessDisabledReason == nil else { return }
                     panel.runRobustnessCheck()
                 }
-                .disabled(
-                    !panel.hasResolvableRobustnessTarget || panel.isRobustnessRunning
-                        || panel.robustnessJudgeDisabledReason != nil)
+                .disabled(robustnessDisabledReason != nil)
+                .help(runRobustnessHelp)
                 // A grayed button that says nothing is a bug, not a state:
-                // the judge precondition that stopped the run is shown in the
-                // words the route itself would have used.
-                if let reason = panel.robustnessJudgeDisabledReason {
+                // every precondition that stops the run is written out here,
+                // not only the judge one (the missing-target case used to be
+                // silent).
+                if let reason = robustnessDisabledReason, !panel.isRobustnessRunning {
                     Label(reason, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
                 }
                 // Substrate transparency: battery/coherence items and scoring
                 // are local recipe data + pure code on either route; only
@@ -520,7 +650,7 @@ struct ModelVariantsPanelView: View {
                 case .serverJob:
                     Text(
                         "generates through \(service.cluster.substrateLabel) (inline "
-                            + "variant spec, greedy); scoring runs locally")
+                            + "agent spec, greedy); scoring runs locally")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 case .localOnly(let caption):
@@ -535,7 +665,7 @@ struct ModelVariantsPanelView: View {
                     HStack {
                         ProgressView()
                             .controlSize(.small)
-                        Text("Generating baseline and variant responses…")
+                        Text("Generating baseline and agent responses…")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         // A1: local robustness checks are cancellable between
@@ -565,8 +695,42 @@ struct ModelVariantsPanelView: View {
                         .font(.caption2.monospaced())
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
+                        .help("run directory holding this report — reports are immutable")
                 }
         }
+    }
+
+    /// Why Run Robustness Check is disabled, in one plain sentence — nil
+    /// means runnable. The missing-target case used to gray the button with
+    /// nothing written anywhere (audit 2026-09-06, headline 24).
+    private var robustnessDisabledReason: String? {
+        if panel.isRobustnessRunning {
+            return "a robustness check is already running"
+        }
+        if !panel.hasResolvableRobustnessTarget {
+            return panel.robustnessTarget == nil
+                ? "pick the agent this check runs against in the Agent picker "
+                    + "above"
+                : "the picked agent no longer resolves in this workspace — "
+                    + "pick another in the Agent picker above"
+        }
+        return panel.robustnessJudgeDisabledReason
+    }
+
+    private var runRobustnessHelp: String {
+        robustnessDisabledReason
+            ?? ("generates baseline and agent answers for the battery and the "
+                + "coherence prompts, then scores both — the report lands "
+                + "under runs/ and in this agent's Library row")
+    }
+
+    /// The row-level variant of the same button: it POINTS the check at the
+    /// row's agent first, so a missing target is not a reason it is off.
+    private var rowRunRobustnessHelp: String {
+        if panel.isRobustnessRunning { return "a robustness check is already running" }
+        return panel.robustnessJudgeDisabledReason
+            ?? ("run the configured robustness check on this agent; output "
+                + "streams in the viewer")
     }
 
     /// The active server's saved variants: read-only listing plus selection
@@ -613,6 +777,9 @@ struct ModelVariantsPanelView: View {
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                                 .textSelection(.enabled)
+                                // Middle truncation hides exactly the part
+                                // that distinguishes two stored copies.
+                                .help(variant.path)
                         }
                         Spacer()
                         Button(
@@ -664,6 +831,10 @@ struct ModelVariantsPanelView: View {
     private var editorFields: some View {
         Group {
             TextField("Name", text: $name)
+                .help(
+                    "what this agent is called in the library, in study "
+                        + "conditions, and in reports — names must be unique "
+                        + "within the workspace")
 
             // Strict, workspace-scoped model choice (same rule as the chat's
             // WorkspaceModelPicker): the options are the active workspace's
@@ -720,9 +891,32 @@ struct ModelVariantsPanelView: View {
                     Text(adapter.label).tag(String?.some(adapter.id))
                 }
             }
+            .help(
+                "a trained LoRA adapter to load alongside the base model — "
+                    + "only adapters trained on this base model are offered, "
+                    + "and changing the base model clears the choice")
 
             Stepper("Layer band: \(bandWidth)", value: $bandWidth, in: 1 ... 11, step: 2)
+                .help(
+                    "how many neighbouring layers each injection covers: 1 "
+                        + "injects at the chosen layer only, 3 also injects "
+                        + "at the layer above and below, and so on. A wider "
+                        + "band spreads the same α over more of the network")
             Toggle("Alpha in residual-norm units", isOn: $alphaInNormUnits)
+                .help(
+                    "on: each injection's α is a fraction of the layer's own "
+                        + "residual-stream norm, so the same number means the "
+                        + "same dose across concepts, layers, and models "
+                        + "(0.1 is the usual starting dose). Off: α is the "
+                        + "literal coefficient on the vector. Changing this "
+                        + "changes what every α below MEANS — it does not "
+                        + "convert them")
+            if bandWidth > 1 {
+                Text(layerBandCaption)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Picker("Neutral basis", selection: $neutralPCBasisID) {
                 Text("None").tag(String?.none)
@@ -730,19 +924,45 @@ struct ModelVariantsPanelView: View {
                     Text(basis.label).tag(String?.some(basis.id))
                 }
             }
+            .help(
+                "principal components of neutral text to project out of the "
+                    + "injection, so the vector carries less of whatever the "
+                    + "model does anyway — built in Analysis, and offered "
+                    + "only for this base model")
 
             Picker("Prompt mode", selection: $promptMode) {
                 ForEach(ExperimentManifest.PromptMode.allCases, id: \.self) { mode in
                     Text(mode.label).tag(mode)
                 }
             }
+            .help(
+                "how prompts reach the model — through the model's chat "
+                    + "template, or as raw completion text. It changes the "
+                    + "tokens the model actually sees, so a study must not "
+                    + "mix modes across its arms")
             Toggle("Qwen thinking mode", isOn: $qwenThinkingEnabled)
-                .disabled(!baseModelID.lowercased().contains("qwen"))
-            LabeledContent("Temperature") {
-                Slider(value: $temperature, in: 0 ... 1.5, step: 0.1)
+                .disabled(!isQwenBaseModel)
+                .help(
+                    isQwenBaseModel
+                        ? "asks Qwen for its <think> block before the answer "
+                            + "— longer generations, and the thinking text is "
+                            + "stripped from the recorded response"
+                        : qwenThinkingDisabledHelp)
+            if !isQwenBaseModel {
+                Text(
+                    "thinking mode is a Qwen chat-template feature; this base "
+                        + "model does not offer it")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            AgentTemperatureRow(value: $temperature)
             TextField("System prompt", text: $systemPrompt, axis: .vertical)
                 .lineLimit(1 ... 5)
+                .help(
+                    "the system message every generation starts from — part "
+                        + "of the agent's definition, so it travels with it "
+                        + "into studies and reports")
 
             injectionsEditor
 
@@ -755,10 +975,28 @@ struct ModelVariantsPanelView: View {
         }
     }
 
+    /// Thinking mode is a Qwen chat-template feature; every other base model
+    /// gets the toggle disabled, and now says why.
+    private var isQwenBaseModel: Bool {
+        baseModelID.lowercased().contains("qwen")
+    }
+
+    /// Built outside the view builder (the `ExperimentsPanelView` rule:
+    /// string arithmetic in a body tips the type-checker over).
+    private var qwenThinkingDisabledHelp: String {
+        let model = baseModelID.isEmpty ? "no base model is selected" : "'\(baseModelID)'"
+        return "only Qwen base models expose a thinking mode — \(model) does not"
+    }
+
+    private var layerBandCaption: String {
+        "layer band \(bandWidth): every injection below is applied at its "
+            + "layer and the \(bandWidth - 1) neighbouring layers around it"
+    }
+
     private var injectionsEditor: some View {
         DisclosureGroup("Injections") {
             if injections.isEmpty {
-                Text("No vectors in this variant.")
+                Text("No vectors in this agent.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -820,6 +1058,11 @@ struct ModelVariantsPanelView: View {
                             mode: $draft.mode,
                             layer: $draft.layer,
                             strength: $draft.alpha,
+                            // The agent-level units toggle decides what this
+                            // row's α MEANS — the row now says so, defaults
+                            // to that denomination, and warns on a raw-scale
+                            // number typed into a norm-unit field.
+                            alphaInNormUnits: alphaInNormUnits,
                             layerCount: layerCount(for: draft),
                             conceptLabel: conceptLabel(for: draft))
                         Spacer()
@@ -829,6 +1072,11 @@ struct ModelVariantsPanelView: View {
                             Image(systemName: "trash")
                         }
                         .buttonStyle(.borderless)
+                        .accessibilityLabel("Remove injection")
+                        .help(
+                            "remove this injection from the definition — "
+                                + "immediate, with no undo; Reset From "
+                                + "Playground discards every unsaved edit")
                     }
                 }
                 .padding(.vertical, 4)
@@ -836,14 +1084,19 @@ struct ModelVariantsPanelView: View {
             Button("Add Vector") {
                 // Default to the FIRST OFFERED row, not the first record in
                 // an arbitrary catalog order: that is the newest derivation
-                // of the newest recipe of the first concept.
+                // of the newest recipe of the first concept. α starts at the
+                // default OF THIS AGENT'S DENOMINATION — the flat 1 this used
+                // to seed is a whole residual stream in norm units, exactly
+                // what `AlphaMagnitudeWarning` calls a typo.
+                let seedAlpha = InjectionModeCopy.defaultSteeringAlpha(
+                    normUnits: alphaInNormUnits)
                 if isServerWorkspace {
                     let record = serverVectorOffers.offers.first?.item
                     injections.append(
                         InjectionDraft(
                             vectorArtifactID: record?.canonicalStoredID,
                             layer: record.map { $0.layerCount / 2 } ?? 0,
-                            alpha: 1))
+                            alpha: seedAlpha))
                 } else {
                     let vector = localVectorOffers.offers.first?.item
                     injections.append(
@@ -851,20 +1104,32 @@ struct ModelVariantsPanelView: View {
                             vectorArtifactID: vector?.id,
                             layer: vector?.fixedSteeringLayer
                                 ?? vector.map { $0.sidecar.layerCount / 2 } ?? 0,
-                            alpha: 1))
+                            alpha: seedAlpha))
                 }
             }
             .disabled(
                 isServerWorkspace
                     ? serverVectorOffers.isEmpty
                     : localVectorOffers.isEmpty)
+            .help(addVectorHelp)
             // Self-reporting availability: when the picker looks mysteriously
             // thin, this line names the filter inputs instead of leaving the
             // user (or the maintainer) to guess which rule starved it.
             Text(injectionAvailabilityCaption)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .help(
+            "the concept vectors this agent injects, and at what layer and "
+                + "strength — an agent with none is a legal baseline")
+    }
+
+    private var addVectorHelp: String {
+        let dose = alphaInNormUnits
+            ? "norm-unit starting dose (0.1)" : "raw-unit default (2)"
+        return "add an injection row seeded with the newest recipe of the "
+            + "first concept, that vector's middle layer, and the " + dose
     }
 
     private var injectionAvailabilityCaption: String {
@@ -1148,7 +1413,7 @@ struct ModelVariantsPanelView: View {
     private func loadDraftFromCurrentSteering() {
         let artifact = currentSteeringArtifact(
             name: panel.variantName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? "variant-1"
+                ? "agent-1"
                 : panel.variantName)
         loadEditor(from: artifact)
         editorLoadedID = nil
@@ -1181,6 +1446,14 @@ struct ModelVariantsPanelView: View {
     }
 
     private func saveVariant(applyAfterSave: Bool = false) {
+        // The gate the button reads, enforced in the action too: every path
+        // into a save (including "Use in Playground" with nothing selected)
+        // goes through here, and a name collision would otherwise mint a
+        // second library row with the same name.
+        if let reason = saveDisabledReason {
+            panel.setStatus(reason)
+            return
+        }
         guard isServerWorkspace else {
             performSave(applyAfterSave: applyAfterSave)
             return
@@ -1282,7 +1555,7 @@ struct ModelVariantsPanelView: View {
             }
             return true
         } catch {
-            panel.setStatus("could not save agent: \(error)")
+            panel.setStatus("could not save agent: \(error.localizedDescription)")
             return false
         }
     }
@@ -1556,15 +1829,30 @@ struct ModelVariantsPanelView: View {
                         .foregroundStyle(.secondary)
                     HStack(spacing: 8) {
                         Button("New Agent") { region = .create }
+                            .help("open the manual definition editor in New Agent")
                         Button("Optimize a Vector") {
                             createMode = .optimize
                             region = .create
                         }
+                        .help(
+                            "open the optimization composer — declare a "
+                                + "layer×alpha sweep and a criterion, then "
+                                + "create the agent from the winning cell")
                         Button("Train Adapter") { navigate(.data) }
+                            .help("open Data → Adapter Training to fine-tune a LoRA first")
                     }
                     .controlSize(.small)
                 }
             } else {
+                Text(
+                    "saved agent definitions in this workspace — pick one to "
+                        + "chat with it, check it, or attach it to a draft "
+                        + "study. Definitions are recipes: they travel with "
+                        + "the workspace and are pinned by hash when a study "
+                        + "uses one.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 libraryFilters
                 agentRoster
                 selectedAgentActions
@@ -1592,6 +1880,9 @@ struct ModelVariantsPanelView: View {
                             agentRow(entry, context: context)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityAddTraits(
+                            panel.selectedVariantID == entry.id ? [.isSelected] : [])
+                        .help(Self.rosterRowHelp(entry.name))
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1620,6 +1911,18 @@ struct ModelVariantsPanelView: View {
         }
     }
 
+    private static func rosterRowHelp(_ name: String) -> String {
+        "select '\(name)' — its actions appear below, and Edit opens its "
+            + "definition in New Agent"
+    }
+
+    private var runnableHereFilterHelp: String {
+        let where_ = isServerWorkspace ? service.cluster.substrateLabel : "this Mac"
+        return "show only agents whose base model and every vector/adapter "
+            + "reference resolve on \(where_) — the filter follows the active "
+            + "substrate"
+    }
+
     private var libraryFilters: some View {
         VStack(alignment: .leading, spacing: 6) {
             Picker("Base model", selection: $filterBaseModel) {
@@ -1628,10 +1931,18 @@ struct ModelVariantsPanelView: View {
                     Text(model).tag(String?.some(model))
                 }
             }
+            .help("show only agents built on one base model — a display filter, nothing is deleted")
             HStack(spacing: 12) {
                 Toggle("Sweep-promoted only", isOn: $filterSweepOnly)
+                    .help(
+                        "show only agents created from a declared "
+                            + "optimization's winning cell — the ones "
+                            + "carrying a birth certificate, rather than "
+                            + "hand-composed definitions")
                 Toggle("Has adapter", isOn: $filterHasAdapter)
+                    .help("show only agents that load a trained LoRA adapter")
                 Toggle("Runnable here", isOn: $filterRunnableHere)
+                    .help(runnableHereFilterHelp)
             }
             .toggleStyle(.checkbox)
             .font(.caption)
@@ -1728,54 +2039,72 @@ struct ModelVariantsPanelView: View {
     @ViewBuilder
     private var selectedAgentActions: some View {
         if let record = panel.selectedVariant {
-            HStack(spacing: 8) {
-                Text(record.artifact.name)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                Spacer()
-                Button("Chat") { chatWithSelectedAgent(record) }
-                    .disabled(
-                        isServerWorkspace
-                            && selectedDefinitionApplicability?.isApplicable != true)
-                    .help(
-                        isServerWorkspace
-                            ? "seed the Playground's steering controls from this "
-                                + "agent (inline spec on the active server)"
-                            : "load this agent's configuration into the Playground "
-                                + "steering controls")
-                Button("Edit") {
-                    createMode = .manual
-                    region = .create
+            // Five small buttons plus the name overrun the controls column;
+            // the second layout puts the name on its own line.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    selectedAgentName(record)
+                    Spacer()
+                    selectedAgentButtons(record)
                 }
-                .help("open this agent's definition in New Agent → Manual composition")
-                if let promotion = record.artifact.promotion {
-                    Button("Open optimization run") {
-                        pendingOptimizationSelection = promotion.experiment
-                        region = .optimizations
-                    }
-                    .help(
-                        "open '\(promotion.experiment)' in Optimizations — the "
-                            + "grid and recommendation this agent was promoted from")
+                VStack(alignment: .leading, spacing: 6) {
+                    selectedAgentName(record)
+                    HStack(spacing: 8) { selectedAgentButtons(record) }
                 }
-                Button("Run robustness") {
-                    // Explicitly point the check at THIS agent, then run —
-                    // the Robustness Check section's picker follows along.
-                    panel.robustnessTargetVariantID = record.id
-                    panel.runRobustnessCheck()
-                }
-                .disabled(
-                    panel.isRobustnessRunning
-                        || panel.robustnessJudgeDisabledReason != nil)
-                .help(
-                    panel.robustnessJudgeDisabledReason
-                        ?? "run the configured robustness check on this agent; "
-                            + "output streams in the viewer")
-                Button("Add to study") { addSelectedAgentToStudy(record) }
-                    .disabled(!canAddSelectedAgentToStudy(record))
-                    .help(addToStudyHelp(record))
             }
             .controlSize(.small)
         }
+    }
+
+    private func selectedAgentName(_ record: ModelVariantRecord) -> some View {
+        Text(record.artifact.name)
+            .font(.caption.weight(.semibold))
+            .lineLimit(1)
+            .help(record.artifact.name)
+    }
+
+    @ViewBuilder
+    private func selectedAgentButtons(_ record: ModelVariantRecord) -> some View {
+        Button("Chat") { chatWithSelectedAgent(record) }
+            .disabled(
+                isServerWorkspace
+                    && selectedDefinitionApplicability?.isApplicable != true)
+            .help(
+                isServerWorkspace
+                    ? "seed the Playground's steering controls from this "
+                        + "agent (inline spec on the active server)"
+                    : "load this agent's configuration into the Playground "
+                        + "steering controls")
+        Button("Edit") {
+            createMode = .manual
+            region = .create
+        }
+        .help("open this agent's definition in New Agent → Manual composition")
+        if let promotion = record.artifact.promotion {
+            Button("Open optimization run") {
+                pendingOptimizationSelection = promotion.experiment
+                region = .optimizations
+            }
+            .help(
+                "open '\(promotion.experiment)' in Optimizations — the "
+                    + "grid and recommendation this agent was promoted from")
+        }
+        Button("Run robustness") {
+            guard !panel.isRobustnessRunning,
+                panel.robustnessJudgeDisabledReason == nil
+            else { return }
+            // Explicitly point the check at THIS agent, then run —
+            // the Robustness Check section's picker follows along.
+            panel.robustnessTargetVariantID = record.id
+            panel.runRobustnessCheck()
+        }
+        .disabled(
+            panel.isRobustnessRunning
+                || panel.robustnessJudgeDisabledReason != nil)
+        .help(rowRunRobustnessHelp)
+        Button("Add to study") { addSelectedAgentToStudy(record) }
+            .disabled(!canAddSelectedAgentToStudy(record))
+            .help(addToStudyHelp(record))
     }
 
     private func chatWithSelectedAgent(_ record: ModelVariantRecord) {
@@ -1804,7 +2133,9 @@ struct ModelVariantsPanelView: View {
             service.experiments.addVariantCondition(reviewedAgent: reviewed)
             navigate(.studies)
         } catch {
-            service.experiments.note("Couldn't attach the agent: \(error)", severity: .error)
+            service.experiments.note(
+                "Couldn't attach the agent: \(error.localizedDescription)",
+                severity: .error)
         }
     }
 
@@ -1818,7 +2149,7 @@ struct ModelVariantsPanelView: View {
         guard study.modelID == record.artifact.baseModelID else {
             return "'\(study.name)' uses \(study.modelID), not this agent's base model"
         }
-        return "pin this agent as a variant condition of '\(study.name)' (by artifact hash)"
+        return "pin this agent as an agent condition of '\(study.name)' (by artifact hash)"
     }
 
     private func robustnessSummary(_ report: VariantRobustnessReport) -> some View {
@@ -1834,13 +2165,13 @@ struct ModelVariantsPanelView: View {
             LabeledContent(
                 "Capability",
                 value:
-                    "\(percent(report.variantBatteryAccuracy)) variant · "
+                    "\(percent(report.variantBatteryAccuracy)) agent · "
                     + "\(percent(report.baselineBatteryAccuracy)) baseline")
             LabeledContent(
                 "Distinct-2",
                 value:
                     report.meanVariantDistinct2.formatted(.number.precision(.fractionLength(3)))
-                    + " variant · "
+                    + " agent · "
                     + report.meanBaselineDistinct2.formatted(.number.precision(.fractionLength(3)))
                     + " baseline")
             if let judgeModel = report.judgeModel {
@@ -1855,10 +2186,14 @@ struct ModelVariantsPanelView: View {
                         model: judgeModel, kind: report.judgeKind,
                         provider: report.judgeProvider))
                 Text(
-                    "Judge: baseline \(counts["baseline"] ?? 0) · variant \(counts["variant"] ?? 0) · ties \(counts["tie"] ?? 0)"
+                    "Judge: baseline \(counts["baseline"] ?? 0) · agent \(counts["variant"] ?? 0) · ties \(counts["tie"] ?? 0)"
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .help(
+                    "how the judge voted across the coherence prompts. The "
+                        + "report itself records the agent arm under its "
+                        + "artifact name, \"variant\"")
                 ForEach(report.coherenceItems.filter { $0.judge != nil }, id: \.index) { item in
                     if let judge = item.judge {
                         DisclosureGroup("Judge \(item.index): \(item.judgeResult ?? judge.winner)") {
@@ -1866,6 +2201,11 @@ struct ModelVariantsPanelView: View {
                                 .font(.caption)
                                 .textSelection(.enabled)
                         }
+                        .help(
+                            "the judge's verdict and its brief reason for "
+                                + "coherence prompt \(item.index) — "
+                                + "\"variant\" is the report's name for the "
+                                + "agent arm")
                     }
                 }
             }
@@ -1892,4 +2232,40 @@ struct ModelVariantsPanelView: View {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
+}
+
+/// The agent definition's temperature, with the number visible and typeable.
+///
+/// Was a bare `Slider` (audit 2026-09-06): 0 and 0.1 are one step apart and
+/// looked identical, yet the difference decides whether the saved agent
+/// generates deterministically at all — and the only way to read it back was
+/// to open the artifact JSON. The study-wide control (`TemperatureRow`) has
+/// the same shape but says "study-wide" in its help, which is the wrong
+/// sentence here.
+///
+/// Its own type for the same reason `TemperatureRow` is: an inline
+/// `LabeledContent { HStack { … } }` in an already-large `body` tips the
+/// Swift type-checker over.
+private struct AgentTemperatureRow: View {
+    @Binding var value: Double
+
+    var body: some View {
+        LabeledContent("Temperature") {
+            HStack(spacing: 8) {
+                Slider(value: $value, in: 0 ... 1.5, step: 0.1)
+                TextField("Temperature", value: $value, format: Self.format)
+                    .labelsHidden()
+                    .frame(width: 56)
+                    .multilineTextAlignment(.trailing)
+            }
+        }
+        .help(
+            "this agent's generation temperature. 0 is greedy and "
+                + "reproducible; anything above it makes the agent's answers "
+                + "sampled, so a measured study run needs a seed policy to "
+                + "stay comparable")
+    }
+
+    private static let format = FloatingPointFormatStyle<Double>()
+        .precision(.fractionLength(0 ... 2))
 }

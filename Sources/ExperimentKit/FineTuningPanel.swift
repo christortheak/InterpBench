@@ -1499,15 +1499,17 @@ public final class FineTuningPanel {
 
     public func deleteSelectedVariant() {
         guard let selectedVariant else {
-            note("select a model variant to delete", severity: .info)
+            note("select an agent to delete", severity: .info)
             return
         }
         do {
             try ModelVariantStore.delete(selectedVariant)
             refresh()
-            note("deleted model variant \(selectedVariant.artifact.name)", severity: .success)
+            note("deleted agent \(selectedVariant.artifact.name)", severity: .success)
         } catch {
-            note("could not delete model variant: \(error)", severity: .error)
+            note(
+                "could not delete agent: \(error.localizedDescription)",
+                severity: .error)
         }
     }
 

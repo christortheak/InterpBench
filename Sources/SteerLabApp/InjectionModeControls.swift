@@ -24,6 +24,12 @@ struct InjectionModeControls: View {
     @Binding var layer: Int
     /// α when steering, λ when ablating.
     @Binding var strength: Double
+    /// Whether the caller's α is denominated in residual-norm units. Drives
+    /// the field's LABEL, its help, its default, and the magnitude warning —
+    /// "Alpha" with a unit-blind tooltip asserting norm units was wrong
+    /// wherever the caller's own units toggle was off (audit 2026-09-06,
+    /// headline 11).
+    var alphaInNormUnits = true
     /// Highest selectable layer, when the caller knows the model's depth.
     var layerCount: Int?
     /// Rendered under the controls. Callers pass the vector's name so the
@@ -41,11 +47,17 @@ struct InjectionModeControls: View {
             .pickerStyle(.segmented)
             .frame(width: 160)
             .onChange(of: mode) { _, new in
-                // Carrying a steering α over as λ would be a silent surprise:
-                // α is typically 1–3, and λ = 2 is already a REFLECTION, not
-                // an ablation. Reset to each mode's sensible default instead.
+                // Carrying a strength across the modes would be a silent
+                // surprise: λ = 2 is already a REFLECTION, not an ablation.
+                // Reset to each mode's sensible default — and, for steering,
+                // to the default OF THE CALLER'S DENOMINATION. The literal 2
+                // this used to write is the raw-unit default; in norm units
+                // it injects twice the whole residual stream, which is
+                // exactly what `AlphaMagnitudeWarning` calls a typo.
                 strength = new == .ablate
-                    ? ChatService.SteerSlot.defaultAblationStrength : 2
+                    ? ChatService.SteerSlot.defaultAblationStrength
+                    : InjectionModeCopy.defaultSteeringAlpha(
+                        normUnits: alphaInNormUnits)
             }
             .help(InjectionModeCopy.pickerHelp)
 
@@ -66,6 +78,10 @@ struct InjectionModeControls: View {
         }
     }
 
+    private var alphaLabel: String {
+        InjectionModeCopy.alphaLabel(normUnits: alphaInNormUnits)
+    }
+
     @ViewBuilder
     private var steeringControls: some View {
         HStack(spacing: 8) {
@@ -82,12 +98,20 @@ struct InjectionModeControls: View {
                         .frame(width: 72)
                 }
             }
-            LabeledContent("Alpha") {
-                TextField("Alpha", value: $strength, format: .number)
+            LabeledContent(alphaLabel) {
+                TextField(alphaLabel, value: $strength, format: .number)
+                    .labelsHidden()
                     .frame(width: 92)
             }
         }
-        .help(InjectionModeCopy.alphaHelp)
+        .help(InjectionModeCopy.alphaHelp(normUnits: alphaInNormUnits))
+        // The same guard the optimize composer puts on its alpha ladder — the
+        // two tabs of New Agent used to disagree by an order of magnitude on
+        // what a sane α is. Norm units only: a raw α of 2 is the historical
+        // default and means something else entirely.
+        if alphaInNormUnits {
+            AlphaMagnitudeWarning(alphasText: "\(strength)")
+        }
     }
 
     @ViewBuilder
@@ -105,11 +129,16 @@ struct InjectionModeControls: View {
         }
         .help(InjectionModeCopy.lambdaHelp)
         if !isCompact {
+            // Says the same thing the Playground's inline caption says
+            // (every layer, every token — including the prompt), so the two
+            // surfaces cannot be read as describing different interventions.
             Label(
-                "All layers — ablation is not aimed at one layer",
+                "Every layer, every token — including the whole prompt; "
+                    + "ablation is not aimed at one layer",
                 systemImage: "square.stack.3d.up")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
