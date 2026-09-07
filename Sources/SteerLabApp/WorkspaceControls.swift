@@ -12,10 +12,14 @@ struct WorkspaceSelector: View {
     let service: ChatService
     let catalog: SubstrateCatalog
     @State private var errorMessage: String?
+    @State private var researchSetup = ResearchSetupModel()
+    @State private var showingResearchSetup = false
+    @AppStorage("SteerLab.researchSetupPresented") private var researchSetupPresented = false
 
     var body: some View {
         Menu {
             Section(workspace.rootURL.path) {
+                Button("Research Setup…") { showingResearchSetup = true }
                 Button("New Workspace…") { newWorkspace() }
                     .disabled(workspace.isEnvironmentPinned)
                 Button("Open Workspace…") { openWorkspace() }
@@ -41,6 +45,18 @@ struct WorkspaceSelector: View {
             Label(
                 "\(workspace.displayName) — \(substrateSuffix)",
                 systemImage: "folder")
+        }
+        .sheet(isPresented: $showingResearchSetup) {
+            ResearchSetupSheet(model: researchSetup, workspace: workspace,
+                createWorkspace: { newWorkspace(deferCompute: true) }, openWorkspace: { openWorkspace() })
+        }
+        .task {
+            guard !researchSetupPresented else { return }
+            await researchSetup.refresh(workspace: workspace.isLegacyRepoRoot ? nil : workspace.rootURL)
+            if !researchSetup.authoringReady {
+                researchSetupPresented = true
+                showingResearchSetup = true
+            }
         }
         .labelStyle(.titleAndIcon)
         .help(helpText)
@@ -138,7 +154,7 @@ struct WorkspaceSelector: View {
         return text
     }
 
-    private func newWorkspace() {
+    private func newWorkspace(deferCompute: Bool = false) {
         let panel = NSSavePanel()
         panel.title = "New SteerLab Workspace"
         panel.prompt = "Create"
@@ -150,10 +166,10 @@ struct WorkspaceSelector: View {
         // Defaults to Cluster: real studies compute there and MLX is for toy
         // runs and shakedowns.
         let chooser = ComputeChoiceAccessory(selected: .cluster)
-        panel.accessoryView = chooser.view
+        if !deferCompute { panel.accessoryView = chooser.view }
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            try workspace.createAndSwitch(to: url, computing: chooser.selected)
+            try workspace.createAndSwitch(to: url, computing: deferCompute ? nil : chooser.selected)
             resetCatalogs()
         } catch {
             errorMessage = "\(error)"

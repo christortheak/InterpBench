@@ -322,7 +322,10 @@ def test_interviews_are_declared_in_wheel_data_and_match_maintained_seed():
     import tomllib
     repository=Path(__file__).resolve().parents[2]
     config=tomllib.loads((repository/'Server/pyproject.toml').read_text())
-    assert 'seed/prompts/study-interviews/*.md' in config['tool']['setuptools']['package-data']['steerlab_server.experiment']
+    import fnmatch
+    declared = config['tool']['setuptools']['package-data']['steerlab_server.experiment']
     for intent in ('conceptStudy','agentComparison','multiAgent'):
+        relative = f'seed/prompts/study-interviews/study-{intent}.md'
+        assert any(fnmatch.fnmatchcase(relative, pattern) for pattern in declared), relative
         expected=(repository/'WorkspaceSeed/prompts/study-interviews'/f'study-{intent}.md').read_text().rstrip('\n')
         assert study_interviews.prompt(intent)==expected

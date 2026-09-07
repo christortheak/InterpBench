@@ -63,3 +63,23 @@ def provision(operation, *, release=None, runtime=None, expected=None, approved=
         failure.repair_action = response.get('repairAction', failure.repair_action)
         raise failure
     return response
+
+
+def start(directory, *, create=False):
+    """One agent-friendly first-run operation after installing the client."""
+    readiness = inspect()
+    if not readiness['clientReady']:
+        raise SetupRefusal('Repair the client imports before creating a workspace.')
+    root = Path(directory).expanduser().absolute()
+    changed = False
+    if create:
+        workspace_bootstrap.initialize(root)
+        changed = True
+    elif not root.is_dir():
+        failure = SetupRefusal('The workspace is missing; use --create to explicitly create a new workspace.')
+        failure.repair_action = 'Choose an existing workspace or run setup start <directory> --create --json.'
+        raise failure
+    report = inspect(root)
+    handoff = workspace_bootstrap.handoff(root)
+    return {'changed': changed, 'readiness': report, 'handoff': handoff,
+            'nextAction': 'Give this handoff and your research question to an agent, or open the same workspace in the app.'}

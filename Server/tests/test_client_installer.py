@@ -70,3 +70,27 @@ def test_installer_lock_contains_only_lightweight_distribution_closure():
     names = set(re.findall(r'^([a-z0-9_-]+)==', (RESOURCES / 'client-requirements.lock').read_text(), re.M))
     assert {'numpy', 'safetensors', 'httpx'} <= names
     assert names <= {'numpy', 'safetensors', 'httpx', 'httpcore', 'h11', 'anyio', 'certifi', 'idna', 'sniffio', 'typing-extensions'}
+
+
+def test_download_failure_preserves_active_environment_and_returns_repair(tmp_path):
+    import os
+    folder = release(tmp_path)
+    old = tmp_path / 'old-environment'
+    old.mkdir()
+    (old / '.steerlab-client.json').write_text('{}')
+    (old / 'keep').write_bytes(b'old runtime')
+    runtime = tmp_path / 'client-runtime'
+    runtime.symlink_to(old)
+    _, plan = call(folder, 'plan', '--runtime', str(runtime))
+    binaries = tmp_path / 'bin'
+    binaries.mkdir()
+    curl = binaries / 'curl'
+    curl.write_text('#!/bin/sh\necho "offline fixture" >&2\nexit 22\n')
+    curl.chmod(0o755)
+    result = subprocess.run(['/bin/sh', str(folder / 'install-client.sh'), 'repair', '--runtime', str(runtime), '--expect', plan['planSHA256'], '--yes'], text=True, capture_output=True, env={**os.environ, 'PATH': str(binaries) + os.pathsep + os.environ['PATH']})
+    response = json.loads(result.stdout)
+    assert result.returncode != 0 and not response['ok'] and not response['changed']
+    assert 'retry' in response['repairAction']
+    assert runtime.resolve() == old and (old / 'keep').read_bytes() == b'old runtime'
+    assert not list(tmp_path.glob('.steerlab-client.*'))
+    assert not (tmp_path / 'client-runtime.setup-lock').exists()

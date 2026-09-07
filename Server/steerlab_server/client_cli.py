@@ -113,6 +113,12 @@ import json
 import os
 import sys
 
+# Family adapters import the canonical CLI module for typed refusals. Running
+# with -m must expose that same module, or its exception classes are duplicated
+# and a valid refusal becomes an untyped operational failure.
+if __name__ == "__main__":
+    sys.modules["steerlab_server.client_cli"] = sys.modules[__name__]
+
 from . import cli_envelope as envelope
 from .client import study_assembly, design_commands, authoring_commands, model_commands, science_commands, bootstrap_commands, setup_commands
 from .cli_envelope import (HELP_FLAG, JSON_FLAG, OUT_FLAG, CLIResult,
@@ -4413,9 +4419,9 @@ def main(argv: list | None = None) -> int:
         # nothing else is — a --root pointing at a non-directory still
         # refuses, on every family.
         try:
-            if family == "workspace" and invocation.spec.verb == "init":
+            if (family, invocation.spec.verb) in (("workspace", "init"), ("setup", "start")):
                 if explicit_root is not None:
-                    raise ClientRefusal(code="usage", reason="Workspace init takes its destination as a positional argument, not --root.", repair_action="steerlab workspace init <directory> --json")
+                    raise ClientRefusal(code="usage", reason="This bootstrap command takes its destination as a positional argument, not --root.", repair_action="steerlab workspace init <directory> --json")
             else:
                 resolve_workspace(explicit_root)
                 resolved = True

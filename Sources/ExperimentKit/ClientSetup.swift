@@ -69,9 +69,19 @@ public enum ClientSetup {
 
 enum ClientSetupCLI {
     static func run(_ invocation: ExperimentCLIInvocation) async throws -> ExperimentCLIResult {
-        let args = try DiagnosticArguments(invocation.args, namespace: "setup", takesValue: false)
+        let args = try DiagnosticArguments(invocation.args, namespace: "setup", takesValue: invocation.verb == "start")
         let result: [String: JSONValue]
-        if args.verb == "inspect" {
+        if args.verb == "start" {
+            guard let directory = args.positional,
+                  case .object(let value) = try await DiagnosticWorkspace.perform("setup-start", payload: ["workspaceRoot": .string(URL(filePath: directory).path), "create": .bool(args.flags["--create"] != nil)]) else {
+                throw ExperimentError(reason: "First run returned no result.")
+            }
+            var handoff = try WorkspaceBootstrap.handoff(URL(filePath: directory))
+            handoff["changed"] = .bool(false)
+            var response = value
+            response["handoff"] = .object(handoff)
+            result = response
+        } else if args.verb == "inspect" {
             let root = ExperimentStore.workspaceRoot
             result = await ClientSetup.inspect(workspace: WorkspaceStore.isWorkspace(url: root) ? root : nil)
         } else {

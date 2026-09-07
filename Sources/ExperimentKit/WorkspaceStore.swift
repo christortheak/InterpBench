@@ -474,6 +474,16 @@ public final class WorkspaceStore {
     /// local fallback identity is configured only when the machine has none,
     /// so app-made commits never fail on an unconfigured git.
     private nonisolated static func initializeGit(at root: URL) {
+        // /usr/bin/git is an installation shim on a fresh Mac. Optional Git
+        // must not start a developer-tools download during workspace creation.
+        let selection = Process()
+        selection.executableURL = URL(filePath: "/usr/bin/xcode-select")
+        selection.arguments = ["-p"]
+        selection.standardOutput = FileHandle.nullDevice
+        selection.standardError = FileHandle.nullDevice
+        guard (try? selection.run()) != nil else { return }
+        selection.waitUntilExit()
+        guard selection.terminationStatus == 0 else { return }
         guard runGit(["init"], in: root) != nil else { return }
         if runGit(["config", "user.email"], in: root) == nil {
             _ = runGit(["config", "user.name", "SteerLab"], in: root)

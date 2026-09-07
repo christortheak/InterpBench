@@ -192,6 +192,7 @@ The command table below is checked against the declared client verb specs.
 <!-- BEGIN CLIENT-STUDY-ASSEMBLY -->
 
 ```text
+steerlab setup start <directory> [--create]
 steerlab setup inspect
 steerlab setup plan [--release <value>] [--runtime <value>]
 steerlab setup apply --expect <value> --yes [--release <value>] [--runtime <value>]
@@ -871,7 +872,8 @@ accept only `1`/`true`/`yes` — **no `on`**. Use `1`.
 usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
 
   init [--home <dir>]                           Create the home layout's Workspaces/ and Sites/.
-  workspace init <path>                         Create and seed a data workspace.
+  workspace init | inspect | handoff …          Create a workspace or obtain agent instructions.
+  setup start | inspect | plan | apply | repair …  First-run readiness and reviewed client setup.
   experiment <verb> <name> …                    The study lifecycle.
   pack preview | apply | export …               Review and import study packs, or export text inputs and dependency names.
   agent list | inspect <path>                   Inspect local agents for reviewed attachment.
@@ -920,12 +922,26 @@ rewrite of `install version` (§3.13), so the report, its envelope, and its
 ```
 steerlab-cli init [--home <dir>]
 steerlab-cli workspace init <path>
+steerlab-cli workspace inspect
+steerlab-cli workspace handoff
+steerlab-cli setup inspect
+steerlab-cli setup plan [--release <value>] [--runtime <value>]
+steerlab-cli setup apply --expect <value> [--release <value>] [--runtime <value>] --yes
+steerlab-cli setup repair --expect <value> [--release <value>] [--runtime <value>] --yes
+steerlab-cli setup start <directory> [--create]
 ```
 
 | Verb | Purpose |
 |---|---|
 | `init` | Create the SteerLab home layout's Workspaces/ and Sites/ directories (default home ~/SteerLab). |
 | `workspace init` | Create and seed a data workspace, and git-init it. |
+| `workspace inspect` | Inspect an existing workspace without modifying it. |
+| `workspace handoff` | Return installed-client instructions for a research agent. |
+| `setup inspect` | Inspect client and workspace readiness; execution is assessed separately. |
+| `setup plan` | Review client setup without downloading anything. |
+| `setup apply` | Install the lightweight client from an approved current plan. |
+| `setup repair` | Activate a verified new environment while retaining the old one. |
+| `setup start` | Open or explicitly create a workspace and return readiness plus agent handoff. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:swift-workspace END -->

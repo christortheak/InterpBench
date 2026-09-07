@@ -4,6 +4,14 @@ The client creates and authors a local data workspace without a model or GPU.
 Choose the Mac app or the app-free `steerlab` client; both seed the same prompts,
 method catalog and AGENTS.md. Execution is a later, explicit choice.
 
+## Mac app
+
+On the first incomplete setup, the app opens Research Setup automatically. It is
+always available from the Workspace menu. Create or open a data workspace, review
+and approve the lightweight client plan, then copy the agent handoff. The initial
+workspace flow leaves compute undeclared so the researcher can choose it when
+preparing execution. No server or model is needed for study authoring.
+
 ## App-free release
 
 The release directory contains a client wheel, a dependency lock, an installer,
@@ -21,7 +29,8 @@ and installs the hashed client lock using wheels only. No compiler is required.
 The result names an absolute `steerlab` executable. Use it to run:
 
 ```text
-steerlab workspace init <new-directory> --json
+steerlab setup start <new-directory> --create --json
+steerlab setup inspect --root <directory> --json
 steerlab workspace handoff --root <directory> --json
 ```
 

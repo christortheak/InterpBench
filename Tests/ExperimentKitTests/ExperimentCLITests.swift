@@ -638,7 +638,7 @@ import Testing
         #expect(
             ExperimentCLIRunner.namespaces
                 == [
-                    "init", "workspace", "data", "vectors", "remote",
+                    "init", "workspace", "setup", "data", "vectors", "remote",
                     "experiment", "docs", "install", "panel", "authoring",
                     // The chat-template capability record (2026-09-05).
                     "model", "design", "agent", "pack", "science",

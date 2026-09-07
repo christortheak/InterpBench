@@ -3,7 +3,7 @@
 You are a coding agent and a person has pointed you at this checkout, possibly
 with nothing else installed. This file is the contract for getting them from
 here to a working SteerLab and a first workspace. Once a workspace exists, its
-own `AGENTS.md` (written by `steerlab-cli workspace init`) takes over for study
+own `AGENTS.md` (written by either client’s `workspace init`) takes over for study
 work — this file is only the bootstrap.
 
 **Two products, two names — never type one under the other.**
@@ -45,6 +45,13 @@ available (`xcodebuild -version`; `/Applications/Xcode-beta.app` may need
 installing anything.
 
 ## Step 1 — get a command line
+
+For a researcher, prefer the packaged app or complete client release over building
+this checkout. Both include guided setup. See `docs/CLIENT-FIRST-RUN.md` and
+`docs/PYTHON-CLIENT-RUNTIME.md`. Readiness and installation plans are read-only;
+installation requires the person's approval of the displayed plan. An agent must
+not infer permission to download tools, change environments, or start servers
+from a research question alone.
 
 Pick the first path that applies:
 
@@ -141,10 +148,9 @@ Creates (and never overwrites) the `SteerLab/` home: `Workspaces/` for
 studies, `Sites/` for the private cluster-site registry, with the app and this
 checkout as siblings. Re-runnable; it reports what already existed.
 
-On a path-4 machine there is no `init` and no `workspace init`: skip to the
-client's own path — author into a plain directory (`--root <dir>` or
-`$STEERLAB_WORKSPACE`), or clone a workspace someone created on a Mac. Any
-folder layout you like; nothing there depends on the `~/SteerLab/` home.
+On an app-free machine, use `steerlab setup start <directory> --create --json`
+to create a complete workspace and obtain an agent handoff. Omit `--create` to
+open an existing one. No prescribed home layout or Mac is required.
 
 ## Step 3 — Python engine (only when GPU-side or parity work needs it)
 
@@ -158,7 +164,7 @@ Serve with an explicit `--root`; the artifact root must be the workspace, not
 `Server/`. The server binds loopback by default — read `SECURITY.md` before
 changing that.
 
-## Step 4 — first workspace, then hand off (Swift CLI only)
+## Step 4 — first workspace, then hand off (either client)
 
 ```sh
 steerlab-cli workspace init ~/SteerLab/Workspaces/<study-name>
@@ -170,11 +176,10 @@ here** — the study lifecycle (create → attach → extract → validate → s
 promote → freeze → run → analyze) is documented there and in
 `docs/CLI-REFERENCE.md`.
 
-Path 4 has no equivalent: the client cannot mint a workspace. Point it at a
-workspace that already exists (`export STEERLAB_WORKSPACE=…`, or `--root` per
-invocation) and follow `docs/CLI-REFERENCE.md` §1.4 for what it can do to one —
-author and declare, `verify`, `freeze`, `bundle package`, then `run <experiment>
---runner <url>` to have an engine execute it and bring the evidence home.
+For the app-free client, `steerlab setup start <directory> --create --json`
+combines readiness, workspace creation and handoff. `setup inspect --root <dir>`
+checks authoring prerequisites without treating a missing model as a setup failure.
+Model execution and cluster provisioning remain explicit later choices.
 
 ## Step 5 — cluster sites (Swift CLI only, and only when the person has one)
 

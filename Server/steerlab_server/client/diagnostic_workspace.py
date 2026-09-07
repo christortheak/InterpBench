@@ -26,6 +26,7 @@ def main():
         print(json.dumps({'ok': True, 'clientSHA256': identity, 'result': workspace_action(document['action'], document['payload'])}))
         return 0
     except Exception as exc:
+        repair = getattr(exc, 'repair_action', None) or getattr(exc, 'repair', None) or repair
         if isinstance(exc, ImportError):
             repair = RUNTIME_REPAIR
         print(json.dumps({'ok': False, 'clientSHA256': identity, 'reason': str(exc), 'repairAction': repair}))

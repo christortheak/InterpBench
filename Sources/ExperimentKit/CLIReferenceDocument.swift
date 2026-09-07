@@ -57,7 +57,7 @@ public enum CLIReferenceDocument {
         // a first-run reader meets immediately before `workspace init`, and
         // splitting it into a region of its own would renumber every §3
         // heading below for one three-line synopsis.
-        .init(id: "swift-workspace", verbLabels: ["init", "workspace init"]),
+        .init(id: "swift-workspace", verbLabels: ["init", "workspace init", "workspace inspect", "workspace handoff", "setup inspect", "setup plan", "setup apply", "setup repair", "setup start"]),
         .init(
             id: "swift-experiment-authoring",
             verbLabels: [

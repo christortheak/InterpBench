@@ -12,6 +12,11 @@ def validate(invocation, count):
 
 
 def workspace_action(action, payload):
+    if action == 'setup-start':
+        if not isinstance(payload, dict) or set(payload) != {'workspaceRoot', 'create'} or not isinstance(payload['workspaceRoot'], str) or not payload['workspaceRoot'] or type(payload['create']) is not bool:
+            raise archives.Refusal('First run requires workspaceRoot and an explicit create boolean.')
+        from . import setup
+        return setup.start(payload['workspaceRoot'], create=payload['create'])
     if action == 'setup-inspect':
         if not isinstance(payload, dict) or payload.keys() - {'workspaceRoot'} or ('workspaceRoot' in payload and (not isinstance(payload['workspaceRoot'], str) or not payload['workspaceRoot'])):
             raise archives.Refusal('Readiness accepts only an optional workspaceRoot string.')

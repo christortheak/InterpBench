@@ -50,3 +50,18 @@ def test_process_readiness_owner_rejects_extra_fields():
     with pytest.raises(ValueError):
         workspace_action('setup-inspect', {'downloadModels': True})
     assert workspace_action('setup-inspect', {})['clientReady']
+
+
+def test_start_requires_explicit_creation_and_preserves_existing_workspace(tmp_path):
+    root = tmp_path / 'workspace'
+    code, result = cli('setup', 'start', str(root))
+    assert code == 65 and not root.exists()
+    assert '--create' in result['error']['repairAction']
+    code, result = cli('setup', 'start', str(root), '--create')
+    assert code == 0 and result['changed'] and result['result']['readiness']['authoringReady'], result
+    before = (root / 'AGENTS.md').read_bytes()
+    code, result = cli('setup', 'start', str(root))
+    assert code == 0 and not result['changed'], result
+    assert result['result']['handoff']['agentGuide'] == str(root / 'AGENTS.md')
+    code, result = cli('setup', 'start', str(root), '--create')
+    assert code == 65 and (root / 'AGENTS.md').read_bytes() == before

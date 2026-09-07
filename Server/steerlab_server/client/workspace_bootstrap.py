@@ -30,6 +30,17 @@ def refuse(reason):
     raise ExperimentStoreError(reason, gate='workspaceBootstrap', repair='Choose a new or empty workspace directory; keep existing studies and outputs in their current workspace.')
 
 
+def available_git():
+    executable = shutil.which('git')
+    if sys.platform == 'darwin' and executable == '/usr/bin/git':
+        # Apple's shim can open a developer-tools installation prompt. Git is
+        # optional for workspace creation, so inspect tool selection first.
+        selected = subprocess.run(['/usr/bin/xcode-select', '-p'], capture_output=True, timeout=5)
+        if selected.returncode:
+            return None
+    return executable
+
+
 def initialize(directory, *, use_git=True, seed=SEED):
     requested = Path(directory).expanduser().absolute()
     if requested.is_symlink():
@@ -58,12 +69,13 @@ def initialize(directory, *, use_git=True, seed=SEED):
         (staged / specification['markerFile']).write_text(marker)
         (staged / 'AGENTS.md').write_text(agent_contents())
         (staged / '.gitignore').write_text(specification['gitignore'])
-        if use_git and shutil.which('git'):
+        git = available_git() if use_git else None
+        if git:
             commands = [['init'], ['-c', 'user.name=SteerLab', '-c', 'user.email=steerlab@localhost', 'add', '-A', '.'],
                         ['-c', 'user.name=SteerLab', '-c', 'user.email=steerlab@localhost', 'commit', '-m', 'Create research workspace']]
             git_status = 'initialized'
             for command in commands:
-                result = subprocess.run(['git', *command], cwd=staged, capture_output=True, timeout=30)
+                result = subprocess.run([git, *command], cwd=staged, capture_output=True, timeout=30)
                 if result.returncode:
                     git_status = 'needsAttention'
                     break

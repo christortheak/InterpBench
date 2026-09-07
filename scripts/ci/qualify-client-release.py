@@ -25,10 +25,14 @@ with tempfile.TemporaryDirectory(prefix='steerlab-first-run-') as temp:
     installed = run(command + ['install'] + flags + ['--expect', plan['planSHA256'], '--yes'])
     client = [installed['executable']]
     workspace = scratch / 'workspace'
-    created = run(client + ['workspace', 'init', str(workspace), '--no-git', '--json'])
+    created = run(client + ['setup', 'start', str(workspace), '--create', '--json'])
     assert (workspace / 'AGENTS.md').is_file(), created
     run(client + ['workspace', 'handoff', '--root', str(workspace), '--json'])
     run(client + ['science', 'list', '--root', str(workspace), '--json'])
+    assert run(client + ['setup', 'inspect', '--root', str(workspace), '--json'])['result']['authoringReady']
+    run(client + ['science', 'interview', 'optvec-gradient', '--root', str(workspace), '--json'])
+    run(client + ['experiment', 'create', 'first-study', '--model', 'test/model', '--root', str(workspace), '--json'])
+    run(client + ['experiment', 'inspect', 'first-study', '--root', str(workspace), '--json'])
     check = '''import importlib.util, json
 from steerlab_server.client.runtime_identity import source_sha256
 assert all(importlib.util.find_spec(n) is None for n in ('torch','transformers','fastapi'))

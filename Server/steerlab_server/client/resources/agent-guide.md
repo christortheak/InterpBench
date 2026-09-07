@@ -16,11 +16,19 @@ here is built or compiled.
 Use the installation named by the researcher or the setup handoff. The Mac app
 ships `steerlab-cli`; the app-free client on Linux or macOS is `steerlab`. Both
 can initialize a new workspace with `workspace init <directory> --json` and
-return an agent handoff with `workspace handoff --root <directory> --json`.
+return an agent handoff with `workspace handoff --json` (select the directory
+with `--workspace` on the Mac CLI or `--root` on the Python client).
 Use the executable's help and method catalog to discover its actual verbs;
 Mac-only lifecycle verbs must not be copied under the Python client's name.
 A source checkout is needed only to develop the product, not to conduct studies.
 Keep the authoring workspace local; a runner's filesystem is execution storage.
+
+`setup start <directory> --create --json` returns client readiness, a new workspace
+and an agent handoff; omit `--create` to use an existing workspace. `setup inspect
+--json` separates authoring prerequisites from execution readiness; select the
+workspace using that client’s global directory flag. Inspect `setup plan --json` before provisioning; run `setup apply` or
+`setup repair` with its `--expect` hash and `--yes` only after the researcher
+approves the displayed installation. Do not install a GPU stack to author a study.
 
 ## Find the method before authoring its data
 

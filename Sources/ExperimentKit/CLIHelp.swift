@@ -622,8 +622,10 @@ public enum ExperimentCLIHelp {
                 synopsis: "init [--home <dir>]",
                 purpose: "Create the home layout's Workspaces/ and Sites/."),
             .init(
-                synopsis: "workspace init <path>",
-                purpose: "Create and seed a data workspace."),
+                synopsis: "workspace init | inspect | handoff …",
+                purpose: "Create a workspace or obtain agent instructions."),
+            .init(synopsis: "setup start | inspect | plan | apply | repair …",
+                purpose: "First-run readiness and reviewed client setup."),
             .init(
                 synopsis: "experiment <verb> <name> …",
                 purpose: "The study lifecycle."),

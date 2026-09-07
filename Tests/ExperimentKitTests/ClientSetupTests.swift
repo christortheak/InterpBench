@@ -25,6 +25,23 @@ import Testing
         #expect(try ClientSetup.releaseDirectory(explicit: root) == root)
     }
 
+    @Test func sharedFirstRunCreatesOnlyWithExplicitApproval() async throws {
+        let repository = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let python = URL(filePath: try #require(ProcessInfo.processInfo.environment["STEERLAB_TEST_PYTHON"]))
+        let root = FileManager.default.temporaryDirectory.appending(component: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        do {
+            _ = try await DiagnosticWorkspace.perform("setup-start", payload: ["workspaceRoot": .string(root.path), "create": .bool(false)], python: python, source: repository.appending(component: "Server"))
+            Issue.record("Missing workspace was accepted")
+        } catch { #expect(!FileManager.default.fileExists(atPath: root.path)) }
+        let response = try await DiagnosticWorkspace.perform("setup-start", payload: ["workspaceRoot": .string(root.path), "create": .bool(true)], python: python, source: repository.appending(component: "Server"))
+        guard case .object(let result) = response, case .object(let readiness) = result["readiness"] else { Issue.record("Missing readiness"); return }
+        #expect(result["changed"] == .bool(true))
+        #expect(readiness["authoringReady"] == .bool(true))
+        #expect(WorkspaceStore.isWorkspace(url: root))
+        #expect(try String(contentsOf: root.appending(component: "AGENTS.md"), encoding: .utf8) == AgentContract.contents())
+    }
+
     @Test func setupFlagsRequireExplicitApprovalAndPlanHash() throws {
         for verb in ["apply", "repair"] {
             let spec = try #require(ExperimentCLIParser.spec(namespace: "setup", verb: verb))

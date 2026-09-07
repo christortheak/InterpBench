@@ -36,7 +36,7 @@ public enum WorkspaceBootstrap {
         report["instructions"] = .string("Read AGENTS.md before working. Discuss the research question and unresolved scientific choices with the researcher. Use this installed client's help and method catalog. Workspace data remains local; running hardware receives execution copies.")
         report["discovery"] = .array([
             .array([.string(executable), .string("--help")]),
-            .array([executable, "science", "list", "--root", root.path, "--json"].map(JSONValue.string))])
+            .array([executable, "science", "list", "--workspace", root.path, "--json"].map(JSONValue.string))])
         return report
     }
 }

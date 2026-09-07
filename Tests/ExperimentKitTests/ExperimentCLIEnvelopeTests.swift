@@ -684,7 +684,8 @@ import Testing
             "init",
             "design list", "design inspect", "design describe", "design instantiate", "design batch", "design save", "design update",
             "agent list", "agent inspect", "experiment attach-agent",
-            "workspace init", "data check", "data custody", "data verify-custody",
+            "workspace init", "workspace inspect", "workspace handoff",
+            "setup start", "setup inspect", "setup plan", "setup apply", "setup repair", "data check", "data custody", "data verify-custody",
             // POLE MIRRORING: the opposite pole of a contrastive direction as
             // its own artifact. A new verb in an existing family, not a
             // changed one — nothing in the lifecycle moved, and the experiment

@@ -108,7 +108,7 @@ public struct ExperimentCLIRunner: Sendable {
     /// over, so the families that stay behind keep their own ladder rung and
     /// nothing is dispatched twice.
     public static let namespaces: Set<String> = [
-        "init", "workspace", "data", "vectors", "remote", "experiment", "docs",
+        "init", "workspace", "setup", "data", "vectors", "remote", "experiment", "docs",
         "install", "panel", "authoring", "model", "design", "agent", "pack", "science",
     ]
 
@@ -755,7 +755,7 @@ public struct ExperimentCLIRunner: Sendable {
                 // positional and never switches the process over to it).
                 workspaceOverride: root.path)
         case "inspect", "handoff":
-            guard args.count == 1 else { throw ExperimentError(reason: "Workspace inspect and handoff take no positional arguments; select the workspace with --root.") }
+            guard args.count == 1 else { throw ExperimentError(reason: "Workspace inspect and handoff take no positional arguments; select the workspace with --workspace.") }
             let root = URL(filePath: ExperimentStore.workspaceRoot.path)
             let payload = try args.first == "handoff" ? WorkspaceBootstrap.handoff(root) : WorkspaceBootstrap.inspect(root)
             return ExperimentCLIResult(message: "Workspace information ready.", changed: false, payload: payload)

@@ -52,3 +52,17 @@ def test_packaged_seed_gate_and_bootstrap_stay_light():
     subprocess.run([sys.executable,str(root/'scripts/ci/check-workspace-bootstrap.py')],check=True)
     code="from steerlab_server.client import workspace_bootstrap; import sys; workspace_bootstrap.manifest(); assert not ({'torch','transformers','fastapi'} & sys.modules.keys())"
     subprocess.run([sys.executable,'-c',code],check=True)
+
+
+def test_clean_mac_skips_optional_git_without_invoking_installation_shim(monkeypatch):
+    from types import SimpleNamespace
+    from steerlab_server.client import workspace_bootstrap as owner
+    calls = []
+    monkeypatch.setattr(owner.sys, 'platform', 'darwin')
+    monkeypatch.setattr(owner.shutil, 'which', lambda _: '/usr/bin/git')
+    def selected(argv, **kwargs):
+        calls.append(argv)
+        return SimpleNamespace(returncode=1)
+    monkeypatch.setattr(owner.subprocess, 'run', selected)
+    assert owner.available_git() is None
+    assert calls == [['/usr/bin/xcode-select', '-p']]

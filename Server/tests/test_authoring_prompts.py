@@ -16,6 +16,7 @@ Swift twin: ``Tests/ExperimentKitTests/AuthoringPromptTests.swift``. No model,
 no GPU, no downloads.
 """
 
+from pathlib import Path
 import json
 import os
 import re
@@ -102,7 +103,11 @@ def test_the_packaged_registry_is_declared_as_package_data():
         text = handle.read()
     import tomllib
     declared = tomllib.loads(text)["tool"]["setuptools"]["package-data"]["steerlab_server.experiment"]
-    assert f"{ap.PACKAGED_SEED_DIRECTORY}/{ap.REGISTRY_RELATIVE_DIRECTORY}/*.md" in declared
+    import fnmatch
+    registry = Path(checkout) / ap.REGISTRY_RELATIVE_DIRECTORY
+    for source in registry.glob('*.md'):
+        relative = f"{ap.PACKAGED_SEED_DIRECTORY}/{ap.REGISTRY_RELATIVE_DIRECTORY}/{source.name}"
+        assert any(fnmatch.fnmatchcase(relative, pattern) for pattern in declared), relative
 
 
 @pytest.mark.skipif(
