@@ -194,7 +194,6 @@ struct OptimizationRunsView: View {
                 criterionSection(optimization)
                 sweepSpecSection(optimization)
                 gridSections(optimization)
-                sweepGridSection(optimization)
                 recommendationsSection(optimization)
             }
             if let status = panel.status {
@@ -1444,58 +1443,12 @@ struct OptimizationRunsView: View {
             ? base + " — minted on \(substrate)" : base
     }
 
-    // MARK: The measured grid (E3)
-
-    /// The sweep's actual cells — heatmap, struck-through constraint
-    /// failures, control status. This content previously existed only in
-    /// `scripts/run-viewer.py`, a scratch tool built because the app could
-    /// not display a sweep it had just run.
-    @ViewBuilder
-    private func sweepGridSection(_ optimization: OptimizationItem) -> some View {
-        if let run = sweepRun, !run.rows.isEmpty {
-            Section("Measured grid (α in norm units) — \(run.runName)") {
-                ForEach(SweepGridPresentation.concepts(rows: run.rows), id: \.self) { concept in
-                    SweepGridView(
-                        grid: SweepGridPresentation.grid(
-                            concept: concept, rows: run.rows,
-                            recommendation: run.recommendations[concept]))
-                }
-                measuredGridLegend
-            }
-        }
-    }
-
-    /// The measured grid's shading, border and strikethrough had no legend at
-    /// all — only a per-cell tooltip. Same three states as the clickable grid
-    /// above, said once for the whole section.
-    private var measuredGridLegend: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 12) {
-                HStack(spacing: 3) {
-                    RoundedRectangle(cornerRadius: 3)
-                        .strokeBorder(Color.accentColor, lineWidth: 1.5)
-                        .frame(width: 12, height: 12)
-                    Text("winner (outlined)")
-                }
-                HStack(spacing: 3) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.accentColor.opacity(0.3))
-                        .frame(width: 10, height: 10)
-                    Text("darker = higher objective")
-                }
-                HStack(spacing: 3) {
-                    Text("0.00").strikethrough()
-                    Text("fails a constraint")
-                }
-            }
-            Text("Same cells as the grid above, shaded by objective value "
-                + "rather than by constraint state. Hover a cell for its "
-                + "objective, distinct-2, battery accuracy and verdict.")
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-    }
+    // The measured heatmap that used to follow the clickable grid was a
+    // second rendering of the same run's cells with its own colour
+    // vocabulary (2026-09-06 audit, decision 5). The clickable grid above is
+    // where a cell is chosen and consumed, and it now carries the legend,
+    // the α units and the struck-through failure state, so it is the one
+    // grid on this screen.
 
     // MARK: Recommendations
 

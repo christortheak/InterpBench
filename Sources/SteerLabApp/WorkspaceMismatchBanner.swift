@@ -35,6 +35,21 @@ struct WorkspaceMismatchBanner: View {
                 // server is offered only SERVER-side roots — a Mac path is
                 // never sent across a tunnel.
                 switchAffordance
+                // The other half of the repair (2026-09-06 audit, decision 4):
+                // after the server is repointed here or restarted with the
+                // right root, the app must re-run its handshake before the
+                // pairing verdict changes and this banner can clear. That used
+                // to live only under Compute; the store's `connect()` is the
+                // same call, so the banner finishes the job itself.
+                Button(cluster.isConnecting ? "Reconnecting…" : "Reconnect") {
+                    Task { await cluster.connect() }
+                }
+                .disabled(cluster.isConnecting || isSwitching)
+                .help(
+                    "re-run the server handshake and refresh the pairing "
+                        + "verdict — use after repointing the server here or "
+                        + "restarting it with the right serving root; changes "
+                        + "nothing on the server")
             }
             .foregroundStyle(.orange)
             .padding(.vertical, 6)

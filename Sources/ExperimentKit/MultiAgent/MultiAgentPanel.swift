@@ -181,6 +181,7 @@ public final class MultiAgentPanel {
         if agents.isEmpty {
             resetToPanelTemplate()
         }
+        freshTemplateSnapshot = scenarioFromEditor()
     }
 
     public func refresh() {
@@ -218,6 +219,14 @@ public final class MultiAgentPanel {
     /// from the template it started from.
     private var savedSnapshot: MultiAgentScenario?
 
+    /// The template a never-saved draft started from. A fresh tab is seeded
+    /// with the built-in three-agent panel, and comparing that seed against
+    /// "anything a template would not carry" made an untouched draft count
+    /// as unsaved — so picking the first scenario on a fresh tab raised the
+    /// discard dialog (2026-09-06 audit, decision 6). An unedited template
+    /// is clean; it becomes dirty once the editor differs from this seed.
+    private var freshTemplateSnapshot: MultiAgentScenario?
+
     /// Does the editor hold work that is not on disk?
     ///
     /// `newScenario()` used to overwrite everything unconditionally, so a
@@ -225,7 +234,12 @@ public final class MultiAgentPanel {
     /// with no warning and no undo. That is data loss, not a papercut.
     public var hasUnsavedChanges: Bool {
         guard let savedSnapshot else {
-            // Never saved: dirty once it carries anything a template would not.
+            // Never saved: dirty once it differs from the template it was
+            // seeded from; with no recorded seed, dirty once it carries
+            // anything a template would not.
+            if let freshTemplateSnapshot {
+                return scenarioFromEditor() != freshTemplateSnapshot
+            }
             return !agents.isEmpty || !turns.isEmpty
                 || !sharedMaterials.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
@@ -263,6 +277,7 @@ public final class MultiAgentPanel {
         rehearsalMaxTokens = 2048
         resetToPanelTemplate()
         savedSnapshot = nil
+        freshTemplateSnapshot = scenarioFromEditor()
         materialsChecklist = []
         sourceProtocolTemplate = nil
         checklistWarnings = []
@@ -306,6 +321,7 @@ public final class MultiAgentPanel {
         rehearsalTemperature = 0
         rehearsalMaxTokens = 2048
         savedSnapshot = nil
+        freshTemplateSnapshot = scenarioFromEditor()
         turnNotices = [:]
         materialsChecklist = template.materialsChecklist.map { ChecklistItem(text: $0) }
         sourceProtocolTemplate = template.name
@@ -993,6 +1009,7 @@ public final class MultiAgentPanel {
         rehearsalMaxTokens = 2048
         resetToContractPanelTemplate()
         savedSnapshot = nil
+        freshTemplateSnapshot = scenarioFromEditor()
         materialsChecklist = []
         sourceProtocolTemplate = nil
         checklistWarnings = []

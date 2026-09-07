@@ -137,7 +137,6 @@ struct AddConditionEditor: View {
         HStack(spacing: 8) {
             Button("Add Condition") { panel.addVectorCondition() }
                 .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
                 .help(
                     panel.draft.conditionMode == .ablate
                         ? "adds a single-slot ablation condition from the "

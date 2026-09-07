@@ -275,12 +275,13 @@ struct ConceptsPanelView: View {
             }
 
             Section("Concept Vector Builder") {
-                recipeFamilyPicker
-                Text(
-                    "One recipe choice for the whole panel — this is the same "
-                        + "setting the Dataset Builder shows.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                // One control for the recipe, in the Dataset Builder where the
+                // choice is made; here the build only echoes it (2026-09-06
+                // audit, decision 5).
+                LabeledContent("Recipe", value: builder.recipeFamily.label)
+                    .help(
+                        "the recipe chosen in the Dataset Builder above — it "
+                            + "decides what this build reads; change it there")
 
                 // A derived direction has no concept, no stimuli, and nothing to
                 // pool — showing those controls would imply provenance it does
