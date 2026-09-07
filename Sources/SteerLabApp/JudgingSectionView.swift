@@ -27,7 +27,25 @@ struct JudgingSectionControls: View {
     @State private var resolving: Int?
     @State private var resolveNote: [Int: String] = [:]
 
+    /// Which judge row the researcher asked to remove (nil = no pending
+    /// removal). Only rows carrying a resolved identity confirm; a blank
+    /// just-added row removes on the click.
+    @State private var pendingJudgeRemoval: Int?
+
     private var isDraft: Bool { manifest.status == .draft }
+
+    /// What happens when a judge answers but will not produce a verdict —
+    /// the rule lives in the evaluate loop (`JudgeNoncompliance`), and until
+    /// now the app never said it anywhere.
+    private static var noncompliancePolicy: String {
+        let cap = Int((JudgeNoncompliance.cap * 100).rounded())
+        return "If a judge answers but will not give a usable verdict for a "
+            + "pair, that pair is written as a recorded noncompliant row — no "
+            + "winner, excluded from every tally and agreement statistic — and "
+            + "the run completes. A judge that fails more than \(cap)% of its "
+            + "pairs fails the evaluation instead: that is systemic, not "
+            + "flakiness."
+    }
 
     // MARK: Stale-index safety
 
@@ -115,12 +133,23 @@ struct JudgingSectionControls: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 6) {
+                // "need at least 2" was wrong: a single-coder design is legal
+                // and freezes cleanly — what it costs is inter-rater
+                // agreement, which the engine says as an advisory
+                // (`singleJudgePanelAdvisory`), not a refusal.
                 Text("Pinned judges — durable identities, hashed into the "
-                    + "study (frozen judged studies need at least 2)")
+                    + "study (one is legal; a second is what makes "
+                    + "inter-rater agreement possible)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 InfoButton(text: StudyInfo.judgeKindsAndKeys)
             }
+            // The noncompliance policy, stated where judges are pinned: it
+            // was nowhere in the app (audit 10).
+            Text(Self.noncompliancePolicy)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
 
         ForEach(panel.draft.judges.indices, id: \.self) { index in
@@ -180,6 +209,9 @@ struct JudgingSectionControls: View {
                 text: judgeBinding(index, get: { $0.name }, set: { $0.name = $1 })
             )
             .frame(maxWidth: 140)
+            .help(
+                "this judge's label in the report and the agreement "
+                    + "statistics — a name you choose, never a model id")
             Picker(
                 "",
                 selection: Binding(
@@ -207,6 +239,12 @@ struct JudgingSectionControls: View {
                 Text("local").tag("local")
             }
             .frame(maxWidth: 110)
+            .accessibilityLabel("judge kind")
+            .help(
+                "how this judge is reached: openrouter (an API call, provider "
+                    + "pinned) or local (weights on the executing substrate). "
+                    + "'claude (legacy)' appears only on rows that already use "
+                    + "it")
             if judge(index).kind == "claude" {
                 TextField(
                     "model (blank = default)",
@@ -214,6 +252,10 @@ struct JudgingSectionControls: View {
                         index,
                         get: { $0.model ?? "" },
                         set: { $0.model = $1 }))
+                    .help(
+                        "the Anthropic model this legacy judge calls — blank "
+                            + "uses the default judge model. New judges should "
+                            + "use openrouter, which pins the serving provider")
             } else if judge(index).kind == "openrouter" {
                 openRouterJudgeFields(index: index)
             } else {
@@ -221,15 +263,62 @@ struct JudgingSectionControls: View {
             }
             keyStateBadge(kind: judge(index).kind)
             if isDraft {
-                Button {
-                    panel.removeJudge(at: index)
-                } label: {
-                    Image(systemName: "trash")
-                }
-                .buttonStyle(.plain)
+                removeJudgeButton(index: index)
             }
         }
         .disabled(!isDraft)
+    }
+
+    /// Was an unlabelled, unconfirmed trash can (audit 10): the page's other
+    /// removals are text "Remove" buttons, and a judge that already carries
+    /// resolved pins is worth confirming. Own function — this file's rows
+    /// sit at the type-checker's budget.
+    @ViewBuilder
+    private func removeJudgeButton(index: Int) -> some View {
+        Button("Remove") { requestJudgeRemoval(index: index) }
+            .font(.caption)
+            .help(
+                "removes this judge from the pinned panel (draft-only) — its "
+                    + "model, provider and revision pins go with it")
+            .confirmationDialog(
+                judgeRemovalTitle(index: index),
+                isPresented: Binding(
+                    get: { pendingJudgeRemoval == index },
+                    set: { if !$0 { pendingJudgeRemoval = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Remove Judge", role: .destructive) {
+                    pendingJudgeRemoval = nil
+                    panel.removeJudge(at: index)
+                }
+                Button("Keep Judge", role: .cancel) {
+                    pendingJudgeRemoval = nil
+                }
+            } message: {
+                Text(
+                    "Its resolved pins (model, provider, revision, dtype) are "
+                        + "discarded with it and would have to be resolved "
+                        + "again. Nothing already judged is affected.")
+            }
+    }
+
+    /// A blank, just-added row removes on the click; a row that already
+    /// carries a resolved identity asks first.
+    private func requestJudgeRemoval(index: Int) {
+        let row = judge(index)
+        let pinned =
+            !(row.revision ?? "").isEmpty || !(row.provider ?? "").isEmpty
+            || !(row.model ?? "").isEmpty
+        if pinned {
+            pendingJudgeRemoval = index
+        } else {
+            panel.removeJudge(at: index)
+        }
+    }
+
+    private func judgeRemovalTitle(index: Int) -> String {
+        let name = judge(index).name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "Remove judge \(name.isEmpty ? "(unnamed)" : "'\(name)'")?"
     }
 
     /// "Needs API key" state for API-backed judge kinds, using the SAME
@@ -266,8 +355,9 @@ struct JudgingSectionControls: View {
 
     private static let localJudgeHelp =
         "the model that acts as the LOCAL judge, scoring baseline-vs-condition "
-        + "output pairs against the rubric — distinct from the Claude judge "
-        + "(API). Blank = the study model: it judges the steered output with "
+        + "output pairs against the rubric — weights on the executing "
+        + "substrate, not an API call. Blank = the study model: it judges the "
+        + "steered output with "
         + "the same model that generated it, through the already-loaded "
         + "weights. A DIFFERENT local model needs an engine holding two "
         + "models (server with STEERLAB_MAX_LOADED_MODELS ≥ 2) and refuses "
@@ -301,6 +391,7 @@ struct JudgingSectionControls: View {
                 .selectionDisabled()
             }
         }
+        .accessibilityLabel("local judge model")
         .help(Self.localJudgeHelp)
         .onChange(of: judge(index).model ?? "") { previous, picked in
             autofillJudgePins(
@@ -427,15 +518,17 @@ struct JudgingSectionControls: View {
         "the model commit this judge loads. Required for a judge naming a "
         + "model other than the study model: there is no study pin to "
         + "inherit, and an unpinned judge cannot be shown to be the same "
-        + "judge across two sessions. Filled from the ACTIVE compute "
-        + "substrate's model cache — Resolve re-reads it."
+        + "judge across two sessions. Resolve fills it from the ACTIVE "
+        + "compute substrate's model cache while it is empty; to re-read it, "
+        + "clear the field first."
 
     private static let judgeResolveHelp =
         "read this model's commit (refs/main) from the cache of whichever "
         + "substrate is active — the server's when a server workspace is "
         + "selected, this Mac's otherwise. A model neither holds has no "
         + "revision to read: install it there, or copy the commit from the "
-        + "model's page."
+        + "model's page. Available only while the field is empty — an "
+        + "existing pin is never overwritten behind your back."
 
     private static let judgeDtypeHelp =
         "the loader dtype this judge is loaded at. bf16 and fp16 are "
@@ -479,6 +572,7 @@ struct JudgingSectionControls: View {
             }
         }
         .labelsHidden()
+        .accessibilityLabel("judge dtype")
         .frame(maxWidth: 110)
         .help(Self.judgeDtypeHelp)
     }
@@ -498,6 +592,11 @@ struct JudgingSectionControls: View {
             "model slug (required)",
             text: judgeBinding(
                 index, get: { $0.model ?? "" }, set: { $0.model = $1 }))
+            .help(
+                "OpenRouter's own id for the model (author/slug) — not always "
+                    + "the Hugging Face repo id. A pin, not a hint: blank is a "
+                    + "verify() problem and the engines refuse at "
+                    + "sweep/evaluate start")
         TextField(
             "provider (required)",
             text: judgeBinding(
@@ -559,6 +658,7 @@ struct JudgingSectionControls: View {
             }
         }
         .labelsHidden()
+        .accessibilityLabel("serving provider")
         .frame(maxWidth: 260)
         .help(
             "each row is one serving endpoint: routing slug, the "
@@ -606,8 +706,9 @@ struct JudgingSectionControls: View {
             }
         } catch {
             discoveryNote[index] =
-                "could not reach OpenRouter's catalogue (\(error)) — the pin "
-                + "is unchecked, not wrong"
+                "could not reach OpenRouter's catalogue "
+                + "(\(error.localizedDescription)) — the pin is unchecked, "
+                + "not wrong"
         }
     }
 }

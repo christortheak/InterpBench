@@ -155,7 +155,14 @@ struct NumericParserControls: View {
             errorText =
                 "Couldn't update the numeric parser — the study must still "
                 + "be a draft, and the parser must be defined in the "
-                + "registry. Details: \(error)"
+                + "registry. Details: \(Self.detail(error))"
         }
+    }
+
+    /// `ExperimentError` is CustomStringConvertible, not LocalizedError, so
+    /// its `reason` is the readable half; anything else gets its localized
+    /// description rather than a Swift dump (audit headline 17).
+    private static func detail(_ error: some Error) -> String {
+        (error as? ExperimentError)?.reason ?? error.localizedDescription
     }
 }

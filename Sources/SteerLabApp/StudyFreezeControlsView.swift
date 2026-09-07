@@ -41,7 +41,8 @@ struct StudyFreezeControlsView: View {
             )
             .confirmationDialog(
                 freezeDialogTitle(manifest.name, decision: decision),
-                isPresented: $confirmFreeze
+                isPresented: $confirmFreeze,
+                titleVisibility: .visible
             ) {
                 Button(decision.confirmLabel, role: .destructive) {
                     if decision.target == .server {
@@ -50,6 +51,11 @@ struct StudyFreezeControlsView: View {
                         freezeLocally()
                     }
                 }
+            } message: {
+                // The dialog used to be title-only, so a one-way click could
+                // be confirmed without the unmet gates or the prominent
+                // advisories in front of the researcher (audit 10).
+                Text(freezeDialogMessage(decision: decision))
             }
         if let note = decision.executorNote {
             Text(note)
@@ -119,7 +125,10 @@ struct StudyFreezeControlsView: View {
         // workspace this local view reads the same shared tree.
         if let readiness = coordinator.freezeReadiness {
             Label(
-                readiness.displayLine(),
+                readiness.ready
+                    ? "ready to freeze"
+                    : "not ready to freeze — \(readiness.unmetGates.count) unmet "
+                        + "gate\(readiness.unmetGates.count == 1 ? "" : "s")",
                 systemImage: readiness.ready
                     ? "checkmark.seal" : "hourglass"
             )
@@ -128,7 +137,18 @@ struct StudyFreezeControlsView: View {
             .help(
                 readiness.ready
                     ? "every freeze gate is currently satisfied"
-                    : readiness.unmetGates.joined(separator: "\n"))
+                    : "each unmet gate is listed below — freeze refuses until "
+                        + "they are satisfied")
+            // A gate standing between the researcher and a one-way action
+            // must be readable without hovering (audit 10): every unmet gate
+            // gets its own row, not the first three in a tooltip.
+            ForEach(readiness.unmetGates, id: \.self) { gate in
+                Label(gate, systemImage: "hourglass")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             // Non-blocking advisories (e.g. hand-created variants without
             // sweep-selection provenance): visible next to the gates, never
             // a refusal. Cross-substrate validate-evidence advisories are
@@ -182,16 +202,52 @@ struct StudyFreezeControlsView: View {
         }
     }
 
+    /// Title only names the object; everything else moved into `message`,
+    /// which macOS renders as body text rather than a bold paragraph.
     private func freezeDialogTitle(_ name: String, decision: FreezeRouting.Decision) -> String {
         switch decision.target {
-        case .thisMac:
-            "Freeze '\(name)'? This is one-way — afterwards the study can "
-                + "only be duplicated, never edited."
-        case .server:
-            "Freeze '\(name)' on \(inputs.serverLabel)? The server "
-                + "evaluates the gates against ITS OWN substrate's validation "
-                + "evidence and stamps frozenBy: \"server\". This is one-way — "
-                + "afterwards the study can only be duplicated, never edited."
+        case .thisMac: "Freeze '\(name)'?"
+        case .server: "Freeze '\(name)' on \(inputs.serverLabel)?"
         }
+    }
+
+    /// What the researcher must have read before a one-way click: the
+    /// consequence, where the gates are evaluated, and the state of those
+    /// gates AT THE MOMENT of the click (the button stays enabled when they
+    /// are unmet — the gate itself refuses).
+    private func freezeDialogMessage(decision: FreezeRouting.Decision) -> String {
+        var parts: [String] = []
+        switch decision.target {
+        case .thisMac:
+            parts.append(
+                "One-way: afterwards the study can only be duplicated, never "
+                    + "edited.")
+        case .server:
+            parts.append(
+                "One-way: afterwards the study can only be duplicated, never "
+                    + "edited. \(inputs.serverLabel) evaluates the gates "
+                    + "against ITS OWN substrate's validation evidence and "
+                    + "stamps frozenBy: \"server\".")
+        }
+        if let readiness = coordinator.freezeReadiness, !readiness.ready {
+            parts.append(
+                "Unmet gate\(readiness.unmetGates.count == 1 ? "" : "s") right "
+                    + "now — freeze will refuse until these are satisfied:\n"
+                    + readiness.unmetGates.map { "• \($0)" }.joined(separator: "\n"))
+        }
+        var advisories = coordinator.freezeReadiness?.advisories ?? []
+        advisories += coordinator.remoteFreezeAdvisories
+        if decision.target == .server,
+            let crossSubstrate = coordinator.serverFreezeCrossSubstrateAdvisory
+        {
+            advisories.append(crossSubstrate)
+        }
+        let prominent = FreezeRouting.present(advisories: advisories).prominent
+        if !prominent.isEmpty {
+            parts.append(
+                "Worth reading first:\n"
+                    + prominent.map { "• \($0)" }.joined(separator: "\n"))
+        }
+        return parts.joined(separator: "\n\n")
     }
 }

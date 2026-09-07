@@ -1,3 +1,4 @@
+import AppKit
 import ExperimentKit
 import SteeringKit
 import SwiftUI
@@ -32,7 +33,14 @@ struct StudyResultsView<JudgeControls: View>: View {
                         .tag(String?.some(item.id))
                 }
             }
+            .help(
+                "which immutable run directory this pane reads — run, "
+                    + "validation, judge and other artifacts of this study, "
+                    + "newest first")
             Button("Refresh Results") { refresh() }
+                .help(
+                    "re-scans this study's runs/ tree and reloads the "
+                        + "selected run's artifacts")
 
             if let detail = results.selectedResult {
                 VStack(alignment: .leading, spacing: 3) {
@@ -40,12 +48,22 @@ struct StudyResultsView<JudgeControls: View>: View {
                         .font(.caption2.monospaced())
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
+                        .help(detail.item.path)
                     if let judgeArtifactDirectory = detail.judgeArtifactDirectory {
                         Text("Judge artifact: \(judgeArtifactDirectory)")
                             .font(.caption2.monospaced())
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
+                            .help(judgeArtifactDirectory)
                     }
+                    Button("Reveal in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting(
+                            [URL(filePath: detail.item.path)])
+                    }
+                    .font(.caption)
+                    .help(
+                        "opens this run directory in Finder — the artifacts "
+                            + "are immutable, so this is a read-only look")
                 }
 
                 EvidenceCustodyView(runDirectory: URL(fileURLWithPath: detail.item.path))
@@ -90,8 +108,15 @@ struct StudyResultsView<JudgeControls: View>: View {
                             Button("Review Judge Responses") {
                                 reviewSheet = ResultReviewSheet(mode: .judgments, detail: detail)
                             }
+                            .help(
+                                "opens every recorded judgment in a sheet — "
+                                    + "prompt, both outputs' scores, the brief "
+                                    + "reason and the raw judge JSON")
                         }
                     }
+                    .help(
+                        "the paired judge's per-condition tallies from "
+                            + "judge-report.json — wins, ties and mean confidence")
                 }
 
                 if !detail.robustnessReports.isEmpty {
@@ -102,6 +127,10 @@ struct StudyResultsView<JudgeControls: View>: View {
                             }
                         }
                     }
+                    .help(
+                        "capability and coherence checks per agent from "
+                            + "robustness-report.json — does the intervention "
+                            + "cost the model its answers?")
                 }
 
                 if let validation = detail.validationReportText {
@@ -110,6 +139,9 @@ struct StudyResultsView<JudgeControls: View>: View {
                             .font(.caption.monospaced())
                             .textSelection(.enabled)
                     }
+                    .help(
+                        "the convergent-validity evidence this run wrote — the "
+                            + "same text freeze's validation gate reads")
                 }
 
                 if !detail.generations.isEmpty {
@@ -117,6 +149,9 @@ struct StudyResultsView<JudgeControls: View>: View {
                         Button("Review Responses (\(detail.generations.count))") {
                             reviewSheet = ResultReviewSheet(mode: .generations, detail: detail)
                         }
+                        .help(
+                            "opens every generated response in a sheet — "
+                                + "prompt, condition and the full output text")
                         ForEach(detail.generations.prefix(5)) { generation in
                             LabeledContent("\(generation.condition) · \(generation.promptID)") {
                                 Text("\(generation.wordCount) words")
@@ -129,28 +164,44 @@ struct StudyResultsView<JudgeControls: View>: View {
         }
     }
 
+    /// Every link here hands the file to whatever app owns its extension —
+    /// it LEAVES SteerLab, which the labels alone never said (audit 10). The
+    /// help on each says so, and Reveal in Finder above is the stay-put
+    /// alternative.
     @ViewBuilder
     private func artifactLinks(_ detail: StudyRunDetail) -> some View {
         HStack {
             if !detail.generations.isEmpty {
                 Link("generations.jsonl", destination: artifactURL(detail, "generations.jsonl"))
+                    .help(Self.artifactLinkHelp("one JSON line per generated response"))
             }
             if !detail.judgments.isEmpty {
                 Link("judgments.jsonl", destination: artifactURL(detail, "judgments.jsonl"))
+                    .help(
+                        Self.artifactLinkHelp(
+                            "one JSON line per judgment, noncompliant rows included"))
             }
             if detail.report != nil || detail.validationReportText != nil {
                 Link("report.json", destination: artifactURL(detail, "report.json"))
+                    .help(Self.artifactLinkHelp("this run's summary statistics and manifest stamp"))
             }
             if detail.pairedJudgeReport != nil {
                 Link("judge-report.json", destination: artifactURL(detail, "judge-report.json"))
+                    .help(Self.artifactLinkHelp("the paired judge's per-condition tallies"))
             }
             if !detail.robustnessReports.isEmpty {
                 Link(
                     "robustness-report.json",
                     destination: artifactURL(detail, "robustness-report.json"))
+                    .help(Self.artifactLinkHelp("per-agent capability and coherence checks"))
             }
         }
         .font(.caption)
+    }
+
+    private static func artifactLinkHelp(_ what: String) -> String {
+        "opens this file OUTSIDE SteerLab, in whichever app owns its type — "
+            + what
     }
 
     private func artifactURL(_ detail: StudyRunDetail, _ filename: String) -> URL {
@@ -189,13 +240,13 @@ struct StudyResultsView<JudgeControls: View>: View {
             LabeledContent(
                 "Capability",
                 value:
-                    percent(report.variantBatteryAccuracy) + " variant · "
+                    percent(report.variantBatteryAccuracy) + " agent · "
                     + percent(report.baselineBatteryAccuracy) + " baseline")
             LabeledContent(
                 "Distinct-2",
                 value:
                     report.meanVariantDistinct2.formatted(.number.precision(.fractionLength(3)))
-                    + " variant · "
+                    + " agent · "
                     + report.meanBaselineDistinct2.formatted(.number.precision(.fractionLength(3)))
                     + " baseline")
             if report.judgeModel != nil {
@@ -203,8 +254,11 @@ struct StudyResultsView<JudgeControls: View>: View {
                     $0
                 }
                 .mapValues(\.count)
+                // The record vocabulary keeps saying "variant"; the reader
+                // reads "agent" (audit 10 polish — the artifact keys are
+                // untouched).
                 Text(
-                    "Judge: baseline \(counts["baseline"] ?? 0) · variant \(counts["variant"] ?? 0) · ties \(counts["tie"] ?? 0)"
+                    "Judge: baseline \(counts["baseline"] ?? 0) · agent \(counts["variant"] ?? 0) · ties \(counts["tie"] ?? 0)"
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -216,6 +270,7 @@ struct StudyResultsView<JudgeControls: View>: View {
                                 .font(.caption)
                                 .textSelection(.enabled)
                         }
+                        .help("the coherence judge's reason for this item, as recorded")
                     }
                 }
             }

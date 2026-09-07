@@ -134,7 +134,7 @@ struct StudyEvaluationSection<JudgingEditor: View>: View {
             // could populate.
             ReaderPinControls(manifest: manifest, panel: panel)
             if panel.canAddReaderInstrument {
-                Button("Add reader instrument (repeReaderScore)") {
+                Button("Add Reader Instrument (repeReaderScore)") {
                     panel.addReaderInstrument()
                 }
                 .font(.caption)

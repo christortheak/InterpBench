@@ -19,6 +19,9 @@ struct RubricFileControls: View {
     @Bindable var panel: ExperimentPanel
 
     @State private var templateStatus: String?
+    /// Whether `templateStatus` reports a PROBLEM — a refusal must not
+    /// render in the same calm grey as "wrote it" (audit convention).
+    @State private var templateStatusIsProblem = false
 
     private var isDraft: Bool { manifest.status == .draft }
 
@@ -43,15 +46,21 @@ struct RubricFileControls: View {
                     Button("clear (no rubric file)") { panel.draft.judgeRubricFile = "" }
                 }
             } label: {
+                // Bounded so a long workspace-relative path truncates
+                // instead of pushing the row past the column (audit 10):
+                // `fixedSize` alone let a `lineLimit(1)` label grow forever.
                 Text(selectedFile.isEmpty ? "choose…" : selectedFile)
                     .font(.caption.monospaced())
                     .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 260)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
             .disabled(!isDraft)
             .help(
-                "rubric files under prompts/rubrics/ — pinned by hash at "
+                (selectedFile.isEmpty ? "" : "\(selectedFile) — ")
+                    + "rubric files under prompts/rubrics/ — pinned by hash at "
                     + "Save Evaluation Settings; the folder button picks a "
                     + "rubric anywhere else in the workspace")
             WorkspacePathChooseButton(
@@ -59,7 +68,7 @@ struct RubricFileControls: View {
                 allowedTypes: Self.rubricTypes,
                 startingSubdirectory: JudgeRubricStore.relativeDirectory,
                 onChoose: { panel.draft.judgeRubricFile = $0 },
-                onProblem: { templateStatus = $0 }
+                onProblem: { templateStatus = $0; templateStatusIsProblem = true }
             )
             .disabled(!isDraft)
             InfoButton(text: StudyInfo.rubricFile)
@@ -84,7 +93,7 @@ struct RubricFileControls: View {
         if let templateStatus {
             Text(templateStatus)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(templateStatusIsProblem ? Color.orange : Color.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
@@ -158,12 +167,21 @@ struct RubricFileControls: View {
             let created = try StudyDataReadiness.scaffold(
                 requirement: requirement, in: VectorCatalog.projectRoot)
             panel.draft.judgeRubricFile = destination
+            templateStatusIsProblem = false
             templateStatus = "created \(created.path) — replace the example "
                 + "criteria with your study's, then Save Evaluation Settings "
                 + "pins it by hash"
         } catch {
-            templateStatus = "could not create the rubric — \(error)"
+            templateStatusIsProblem = true
+            templateStatus = "could not create the rubric — \(Self.detail(error))"
         }
+    }
+
+    /// `ExperimentError` is CustomStringConvertible, not LocalizedError, so
+    /// its `reason` is the readable half; anything else gets its localized
+    /// description rather than a Swift dump (audit headline 17).
+    private static func detail(_ error: some Error) -> String {
+        (error as? ExperimentError)?.reason ?? error.localizedDescription
     }
 
     /// The scratchpad's write-to-file exit, under the house write rule:
@@ -178,10 +196,12 @@ struct RubricFileControls: View {
             if let existing = try? Data(contentsOf: url) {
                 if existing == data {
                     panel.draft.judgeRubricFile = destination
+                    templateStatusIsProblem = false
                     templateStatus = "\(destination) already holds exactly "
                         + "this text — selected it; Save Evaluation Settings "
                         + "pins it by hash"
                 } else {
+                    templateStatusIsProblem = true
                     templateStatus = "\(destination) already exists with "
                         + "DIFFERENT contents — scratchpad saves never "
                         + "overwrite. Select the file and use the pencil "
@@ -194,10 +214,12 @@ struct RubricFileControls: View {
                 withIntermediateDirectories: true)
             try data.write(to: url, options: .atomic)
             panel.draft.judgeRubricFile = destination
+            templateStatusIsProblem = false
             templateStatus = "wrote \(destination) and selected it — Save "
                 + "Evaluation Settings pins it by hash"
         } catch {
-            templateStatus = "could not write the rubric file — \(error)"
+            templateStatusIsProblem = true
+            templateStatus = "could not write the rubric file — \(Self.detail(error))"
         }
     }
 }
@@ -254,6 +276,7 @@ struct CaseFamilyField: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
+                .accessibilityLabel("Suggest a case family")
                 .help("suggestions carried over from the shipped example "
                     + "study — free text is equally valid (saved as "
                     + "provenance)")

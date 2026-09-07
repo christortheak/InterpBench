@@ -390,10 +390,13 @@ public final class ExperimentPanel {
     }
 
     /// The not-on-server callout body (rendered prominently by the view).
+    /// Names only controls that still exist: "Submit Bundle" was retired when
+    /// the ONE Run control became the submission path (audit headline 21).
     public static func residencyCalloutMessage(study: String, substrate: String) -> String {
         "Study '\(study)' exists locally, not on \(substrate). Direct runs "
-            + "execute the server-resident copy only. Submit Bundle sends a "
-            + "portable copy — or pair the server to this workspace "
+            + "execute the server-resident copy only. Run on \(substrate) "
+            + "(under Remote options) submits a portable hash-pinned bundle "
+            + "instead — or pair the server to this workspace "
             + "(serve --root <workspace>)."
     }
 
@@ -2520,9 +2523,21 @@ public final class ExperimentPanel {
         await localJobs.runStudy(experimentName: name)
     }
 
+    /// Server-routed validation in flight (audit headline 5). The LOCAL
+    /// controller owns `localJobs.isValidating`; neither the bundle path nor
+    /// the direct server-resident path set anything a view could read, so
+    /// "Validate Study" stayed enabled and a second click packaged and
+    /// submitted a second job. One observable flag, set around the whole
+    /// server branch, is what the Run button already gets from
+    /// `UnifiedStudyRunner.isSubmitting`.
+    public private(set) var isValidatingOnServer = false
+
     public func validateStudy() async {
         guard let name = management.selectedName, !localJobs.isValidating else { return }
         if isServerWorkspace {
+            guard !isValidatingOnServer else { return }
+            isValidatingOnServer = true
+            defer { isValidatingOnServer = false }
             // Mac-authority mode (2026-07-21): on a KNOWN-unpaired server
             // the direct verb would execute whatever same-named copy the
             // server happens to hold (the researcher's real stale-draft
