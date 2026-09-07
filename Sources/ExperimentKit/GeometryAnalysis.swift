@@ -30,7 +30,7 @@ public struct GeometryAnalysisResult: Sendable {
     }
 }
 
-public enum GeometryAnalysisError: Error, CustomStringConvertible {
+public enum GeometryAnalysisError: Error, CustomStringConvertible, LocalizedError {
     case tooFewVectors
     case noCommonLayers
     case dimensionMismatch(String)
@@ -45,6 +45,10 @@ public enum GeometryAnalysisError: Error, CustomStringConvertible {
             "vector dimensions do not match for \(label)"
         }
     }
+
+    /// So that `localizedDescription` — what every UI status line should show —
+    /// is this sentence and not "The operation couldn't be completed."
+    public var errorDescription: String? { description }
 }
 
 public enum GeometryAnalysis {

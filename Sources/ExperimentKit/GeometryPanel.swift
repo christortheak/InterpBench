@@ -15,6 +15,10 @@ public final class GeometryPanel {
     public private(set) var result: GeometryAnalysisResult?
     public var selectedLayer = 0
     public private(set) var status: String?
+    /// True while the local cosine/RSA math is running — the Analysis pane's
+    /// Compute button reads it for its busy state and its re-entry guard, the
+    /// same shape `isServerComputing` already had.
+    public private(set) var isComputing = false
 
     /// The LOCAL vector selection the Analysis controls edit and `compute`
     /// reads (`VectorArtifact.ID`s).
@@ -45,7 +49,26 @@ public final class GeometryPanel {
         return result.matrices[index]
     }
 
-    public func compute(artifacts: [VectorArtifact]) {
+    /// Cosine + layer RSA over the selection.
+    ///
+    /// Async, with a busy flag and a re-entry guard: on a large selection this
+    /// is seconds of work, and it used to run as a bare synchronous call — the
+    /// Analysis pane froze with no indication that anything was happening (UI
+    /// audit 2026-09-06). The `Task.yield()` is what makes the busy state
+    /// visible: it lets the pane paint "Computing…" before the math starts.
+    ///
+    /// The math deliberately stays on THIS actor. `GeometryAnalysis.analyze`
+    /// is pure over `Sendable` values and would move off-main cleanly as
+    /// Swift sees it, but it reaches `SteeringVectorStore.load`, which
+    /// evaluates MLX arrays — and this app keeps MLX evaluation on one actor.
+    /// Moving it is a concurrency question about MLX, not about this view, and
+    /// belongs with a measurement rather than with a copy fix.
+    public func compute(artifacts: [VectorArtifact]) async {
+        guard !isComputing else { return }
+        isComputing = true
+        status = "computing cosines over \(artifacts.count) vectors…"
+        defer { isComputing = false }
+        await Task.yield()
         do {
             let analysis = try GeometryAnalysis.analyze(artifacts: artifacts)
             result = analysis
@@ -53,7 +76,11 @@ public final class GeometryPanel {
             status = "computed \(analysis.matrices.count) layer matrices — tables in the viewer"
         } catch {
             result = nil
-            status = "\(error)"
+            // The store's convention gates throw types that describe
+            // themselves but are not `LocalizedError`; prefer the sentence
+            // when there is one rather than dumping the enum case.
+            status = (error as? LocalizedError)?.errorDescription
+                ?? String(describing: error)
         }
     }
 
@@ -108,6 +135,9 @@ public final class GeometryPanel {
     }
 
     public func computeOnServer(records: [RemoteVectorRecord], layer: Int) {
+        // Re-entry guard at the model layer too: a disabled button is the
+        // view's promise, not the store's.
+        guard !isServerComputing else { return }
         guard let host, let client = host.cluster.client else {
             serverStatus = "no server connection — check the Compute selector"
             return
@@ -146,8 +176,10 @@ public final class GeometryPanel {
                 self.serverMatrix = nil
                 // ClusterClient rethrows the route's 400 with the server's
                 // self-naming detail (which vectors failed to load and why)
-                // — show it verbatim.
-                self.serverStatus = "\(error)"
+                // — show it verbatim, through the error's own sentence rather
+                // than an enum-case dump.
+                self.serverStatus = (error as? LocalizedError)?.errorDescription
+                    ?? String(describing: error)
             }
         }
     }
