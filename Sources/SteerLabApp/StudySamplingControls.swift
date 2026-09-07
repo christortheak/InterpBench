@@ -84,19 +84,19 @@ struct StudySamplingControls: View {
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
-        // The server-only-stochastic rule, surfaced exactly like the
-        // temperature rule: local target + samplesPerItem > 1 explains
-        // itself inline instead of failing later.
+        // A stochastic design is fine on either engine: both derive one
+        // seed per (condition, prompt, sample index) record. Say where the
+        // repeatability claim ends instead of steering the run elsewhere.
         if panel.draft.samplesPerItemField > 1, !panel.isServerWorkspace {
             Label(
-                "samplesPerItem > 1 is a stochastic design — it runs on the "
-                    + "Python server, which seeds PyTorch per record; the "
-                    + "local MLX generator has no per-run sampling seed, so "
-                    + "local runs stay greedy (temperature 0, 1 sample)",
+                "samplesPerItem > 1 is a stochastic design — this Mac seeds "
+                    + "each record's sampling stream, so every sample is "
+                    + "individually reproducible here; the same seeds on the "
+                    + "server draw different tokens",
                 systemImage: "die.face.5"
             )
             .font(.caption)
-            .foregroundStyle(.orange)
+            .foregroundStyle(.secondary)
         }
         // Study-owned sampling (2026-07-21): with saved agents in the
         // design, say explicitly that these knobs govern every condition.

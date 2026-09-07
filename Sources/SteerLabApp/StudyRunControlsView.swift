@@ -61,17 +61,9 @@ struct StudyRunControlsView: View {
     @ViewBuilder
     private func runControls(manifest: ExperimentManifest, panel: ExperimentPanel) -> some View {
         let decision = runDecision(manifest: manifest)
-        // Greedy-only is a LOCAL substrate limitation (no per-run sampling
-        // seed in the MLX generator). A stochastic MANIFEST already pins the
-        // picker to the server; this gate catches a nonzero draft field.
-        // E1: greedy-only is a LOCAL sampler limitation, so it binds only a
-        // study that actually samples. A logprob-only study is deterministic
-        // whatever the temperature says.
-        let plan = ExecutionPlan.resolve(instruments: manifest.outcomeInstruments)
-        let requiresGreedy =
-            decision.selection == .thisMac
-            && plan.samplingIsOperative
-            && (manifest.temperature != 0 || panel.draft.runTemperature != 0)
+        // Local measured runs seed each record's sampling stream, so a warm
+        // design runs here as it does on the server (2026-09-07). The old
+        // greedy-only gate that mirrored the retired engine refusal is gone.
         substratePickerRow(decision: decision)
         runNoteRows(decision: decision)
         // A declared sampling setting this plan will never read. Advisory,
@@ -100,15 +92,8 @@ struct StudyRunControlsView: View {
                         + "measurement method is manifest provenance, never "
                         + "inferred from the data")
         }
-        primaryRunRow(
-            manifest: manifest, panel: panel, decision: decision,
-            requiresGreedy: requiresGreedy)
+        primaryRunRow(manifest: manifest, panel: panel, decision: decision)
         preflightRows(manifest: manifest, panel: panel, decision: decision)
-        if requiresGreedy {
-            Text("Run Study requires saved Temperature = 0 for reproducible measured runs.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
         if let runDirectory = panel.localJobs.lastRunDirectory {
             Text(runDirectory)
                 .font(.caption2.monospaced())
@@ -187,8 +172,7 @@ struct StudyRunControlsView: View {
     private func primaryRunRow(
         manifest: ExperimentManifest,
         panel: ExperimentPanel,
-        decision: SubstrateRouting.Decision,
-        requiresGreedy: Bool
+        decision: SubstrateRouting.Decision
     ) -> some View {
         let busy = panel.localJobs.isRunning || panel.localJobs.isExtracting || runner.isSubmitting
         // Finding 11c: what this button will ACTUALLY submit, stated before
@@ -246,7 +230,7 @@ struct StudyRunControlsView: View {
             }
             .buttonStyle(.bordered)
             .disabled(
-                busy || !panel.violations.isEmpty || requiresGreedy
+                busy || !panel.violations.isEmpty
                     || decision.runBlockedReason != nil
             )
             .help(

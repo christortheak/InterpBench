@@ -25,10 +25,11 @@ struct SeedsListControls: View {
     private var isDraft: Bool { manifest.status == .draft }
 
     private static let seedsHelp: String =
-        "the fixed seed list stochastic server runs index into (sample k of "
-        + "a record uses seed k). Comma-separated whole numbers, order "
-        + "preserved, duplicates refused. Local Mac runs are greedy-only "
-        + "and stamp seedInert — these seeds carry no causal meaning there"
+        "the fixed seed list a stochastic run indexes into on either engine "
+        + "(sample k of a record uses seed k). Comma-separated whole numbers, "
+        + "order preserved, duplicates refused. At temperature 0 decoding is "
+        + "greedy and the records stamp seedInert — the seeds then carry no "
+        + "causal meaning"
 
     var body: some View {
         Group {

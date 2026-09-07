@@ -106,10 +106,10 @@ enum StudyInfo {
         1 sample means deterministic 'greedy' decoding — the model always \
         takes its most likely token, so the same prompt gives the same \
         answer. More than 1 sample is a stochastic design: it needs \
-        temperature > 0 and runs on the Python server, which seeds every \
-        record individually so any single response can be reproduced \
-        exactly. The local Mac engine has no per-run sampling seed, so \
-        local measured runs stay greedy.
+        temperature > 0. Both engines seed every record individually, so \
+        any single response can be reproduced on the engine that produced \
+        it; equal seeds on the Mac and on the server do not give equal \
+        token draws, and repeatability is a per-backend measurement.
 
         Seed policy: the fixed seed list (engine term 'manifestSeeds', the \
         default) reuses the study's declared seeds for every record; \

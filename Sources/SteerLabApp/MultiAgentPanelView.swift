@@ -935,9 +935,9 @@ struct MultiAgentPanelView: View {
                 + "casting."
                 + (panel.rehearsalTemperature == 0
                     ? ""
-                    : " Warm play-throughs vary and, on this Mac, are not "
-                        + "reproducible: MLX cannot pin a sampling seed. The "
-                        + "server seeds every turn."))
+                    : " Warm play-throughs vary by design; a measured study "
+                        + "seeds every turn on either engine, a rehearsal "
+                        + "does not."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } header: {
