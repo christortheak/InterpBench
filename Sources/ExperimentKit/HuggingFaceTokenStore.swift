@@ -103,9 +103,11 @@ public enum HuggingFaceTokenStore {
 
     /// Save to the Keychain AND materialize the hub file. Empty/whitespace
     /// means CLEAR (both copies, file only if it is ours — see above).
-    /// Returns a non-nil error message when the FILE write failed: the
-    /// Keychain save still stands, but a silent file failure would rebuild
-    /// exactly the gap this store exists to close.
+    /// Returns a non-nil message when EITHER write failed — the file write
+    /// (a silent failure there would rebuild exactly the gap this store
+    /// exists to close) or, since the 2026-09-06 UI audit, the Keychain write,
+    /// which used to be discarded so the settings row reported "no token
+    /// stored", indistinguishable from never having typed one.
     @discardableResult
     public static func save(
         _ token: String,
@@ -120,15 +122,24 @@ public enum HuggingFaceTokenStore {
             removeMaterialized(at: url, ifMatching: previous)
             return nil
         }
-        _ = storage.writeKeychain(trimmed)
+        let keychainWritten = storage.writeKeychain(trimmed)
+        var fileFailure: String?
         do {
             try materialize(trimmed, at: url)
-            return nil
         } catch {
-            return "token saved to the Keychain, but writing \(url.path) "
-                + "failed (\(error.localizedDescription)) — gated downloads "
-                + "will not authenticate until it exists"
+            fileFailure = "writing \(url.path) failed "
+                + "(\(error.localizedDescription)) — gated downloads will not "
+                + "authenticate until it exists"
         }
+        if keychainWritten {
+            guard let fileFailure else { return nil }
+            return "token saved to the Keychain, but " + fileFailure
+        }
+        guard let fileFailure else {
+            return "token written to \(url.path), but the macOS Keychain "
+                + "write failed — this app will not remember it"
+        }
+        return "the macOS Keychain write failed and " + fileFailure
     }
 
     /// Write the hub token file with owner-only permissions (mode 600 —

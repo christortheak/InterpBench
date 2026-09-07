@@ -14,23 +14,35 @@ struct AddConditionEditor: View {
 
     var body: some View {
         @Bindable var draft = panel.draft
-        inputRow(label: "Condition name") {
+        inputRow(
+            label: "Condition name",
+            caption: "what this condition is called in the study's tables and "
+                + "reports — left blank, the engine names it from the "
+                + "concept, layer and strength"
+        ) {
             TextField("optional", text: $draft.conditionName)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 200)
+                .help(
+                    "optional label for this condition in results — blank "
+                        + "lets the engine name it from concept, layer and "
+                        + "strength")
         }
         inputRow(
             label: "Concept",
             caption: "the attached concept whose direction this condition "
                 + "injects"
         ) {
-            Picker("", selection: $draft.conditionConcept) {
+            Picker("Concept", selection: $draft.conditionConcept) {
                 ForEach(panel.conditionConceptOptions, id: \.self) { concept in
                     Text(concept).tag(concept)
                 }
             }
             .labelsHidden()
             .frame(width: 200)
+            .help(
+                "only concepts already attached to this study are offered — "
+                    + "attach one in Concepts above to widen the list")
         }
         inputRow(
             label: "What it does",
@@ -40,7 +52,7 @@ struct AddConditionEditor: View {
                 : "Steer ADDS the concept whether or not the model was "
                     + "already representing it"
         ) {
-            Picker("", selection: $draft.conditionMode) {
+            Picker("What it does", selection: $draft.conditionMode) {
                 Text("Steer").tag(InterventionPlan.Mode.add)
                 Text("Ablate").tag(InterventionPlan.Mode.ablate)
             }
@@ -62,6 +74,10 @@ struct AddConditionEditor: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 72)
                     .multilineTextAlignment(.trailing)
+                    .help(
+                        "the transformer layer this condition injects at, as "
+                            + "a whole number — the middle third of the "
+                            + "network is the usual sweet spot")
             }
             inputRow(
                 label: "Strength (α)",
@@ -73,6 +89,7 @@ struct AddConditionEditor: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 90)
                     .multilineTextAlignment(.trailing)
+                    .help(alphaFieldHelp)
             }
             inputRow(
                 label: "Relative strength",
@@ -81,9 +98,16 @@ struct AddConditionEditor: View {
                     + "concepts); off: raw activation units"
             ) {
                 HStack(spacing: 6) {
-                    Toggle("", isOn: $draft.conditionAlphaInNormUnits)
+                    Toggle("Relative strength", isOn: $draft.conditionAlphaInNormUnits)
                         .toggleStyle(.checkbox)
                         .labelsHidden()
+                        .help(
+                            "on: α is measured against the model's own "
+                                + "activity at that layer (residual-norm "
+                                + "units, comparable across concepts and "
+                                + "layers). Off: α is raw activation units. "
+                                + "It changes what the number above MEANS — "
+                                + "it does not convert it")
                     InfoButton(text: StudyInfo.strengthLayerNorm)
                 }
             }
@@ -112,6 +136,8 @@ struct AddConditionEditor: View {
         }
         HStack(spacing: 8) {
             Button("Add Condition") { panel.addVectorCondition() }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
                 .help(
                     panel.draft.conditionMode == .ablate
                         ? "adds a single-slot ablation condition from the "
@@ -120,7 +146,22 @@ struct AddConditionEditor: View {
                             + "2 reflection)"
                         : "adds a single-slot vector condition from the fields "
                             + "above — a negative α is legal (direction control)")
+            Button("Clear") { clearInputs() }
+                .help(
+                    "empty the name, layer and strength fields above — "
+                        + "removes nothing that has already been added")
         }
+        // The fields do NOT all reset after an add: only the name is cleared,
+        // which is what makes a dose ladder quick to type — but it also means
+        // a second Add Condition with an untouched form declares the same
+        // layer and α again. Say so rather than letting it be discovered.
+        Text(
+            "adding keeps the layer and strength as they are (handy for a "
+                + "dose ladder — change α and add again); only the name is "
+                + "cleared")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
         // Editing any input the refusal named clears it — a stale refusal
         // sitting under a field the researcher has already corrected is its
         // own paper cut.
@@ -159,6 +200,26 @@ struct AddConditionEditor: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// α's help follows the denomination the checkbox below selects — a
+    /// unit-blind "strength" is how a raw 2 rides into a norm-unit field.
+    private var alphaFieldHelp: String {
+        panel.draft.conditionAlphaInNormUnits
+            ? "α as a fraction of the layer's residual-stream norm (0.1 is "
+                + "the usual starting dose); negative pushes the opposite way"
+            : "α as the literal coefficient on the vector, NOT a fraction of "
+                + "the residual norm; negative pushes the opposite way"
+    }
+
+    /// Empty the typed inputs without touching the conditions already added,
+    /// the picked concept, or the mode — the editor is inline, so there was
+    /// no way back out of a half-typed row.
+    private func clearInputs() {
+        panel.draft.conditionName = ""
+        panel.draft.conditionLayerText = ""
+        panel.draft.conditionAlphaText = ""
+        panel.clearFormError(.addCondition)
     }
 
     /// One input as a labeled Form row (the pipeline gate-row pattern):

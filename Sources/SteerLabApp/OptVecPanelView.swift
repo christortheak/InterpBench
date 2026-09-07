@@ -19,8 +19,10 @@ struct OptVecPanelView: View {
             bundlesSection
             runsSection
             attachSection
-            if let status = panel.status {
-                Section {
+            // An attach refusal renders in red under its own button; the
+            // status section used to repeat it in grey (audit 2026-09-06).
+            if let status = panel.status, !repeatsAttachError(status) {
+                Section("Last action") {
                     Text(status)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -32,17 +34,33 @@ struct OptVecPanelView: View {
         .onAppear { panel.refresh() }
     }
 
+    /// `attachSelectedArtifact` sets both `attachError` and a
+    /// "attach failed — <reason>" status; only one of them belongs on screen.
+    private func repeatsAttachError(_ status: String) -> Bool {
+        guard let error = panel.attachError, !error.isEmpty else { return false }
+        return status.contains(error)
+    }
+
     // MARK: - Bundles
+
+    /// Hoisted out of the `Section` body: a `+`-chain with an interpolation
+    /// inside a `ViewBuilder` defeated the type-checker.
+    private static let emptyBundlesExplainer: String =
+        "No OptVec dataset bundles under prompts/optvec/ in this "
+        + "workspace. A bundle is one folder holding the nine "
+        + "hashed dataset files, bundle.json, and REPORT.md; "
+        + "steerlab-server data check optvec reports exactly "
+        + "what one is missing. Where a workspace carries the "
+        + "authoring contract it is at "
+        + "\(OptVecBundleStore.authoringSpec)."
 
     private var bundlesSection: some View {
         Section {
             if panel.bundles.isEmpty {
-                Text(
-                    "No OptVec dataset bundles under prompts/optvec/ in this "
-                        + "workspace. A bundle is one folder holding the nine "
-                        + "hashed dataset files, bundle.json, and REPORT.md — "
-                        + "see the authoring spec "
-                        + "(\(OptVecBundleStore.authoringSpec)).")
+                // The authoring spec is a workspace document, not something a
+                // fresh workspace ships — the check verb is the authority
+                // that always exists (audit 2026-09-06).
+                Text(Self.emptyBundlesExplainer)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -67,9 +85,10 @@ struct OptVecPanelView: View {
                 .help("re-scan prompts/optvec/ and re-run the data check")
             }
         } footer: {
+            // Plain text, not Markdown: backticks used to render literally.
             Text(
-                "verdicts are the same checks as `steerlab-server data check "
-                    + "optvec` — directives present, all nine files pinned, "
+                "verdicts are the same checks as steerlab-server data check "
+                    + "optvec — directives present, all nine files pinned, "
                     + "pinned hashes agreeing with the bytes on disk")
                 .font(.caption2)
         }
@@ -104,6 +123,7 @@ struct OptVecPanelView: View {
             report?.ready == true
                 ? "all data checks pass — hashes agree with the bytes on disk"
                 : "data check found blockers — select for the requirement list")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     private func bundleCaption(
@@ -225,7 +245,7 @@ struct OptVecPanelView: View {
                 Text(
                     "No optvec-* runs in this workspace's runs/ tree yet. "
                         + "Training and eval run on the Python server "
-                        + "(`steerlab-server optvec …`); imported or paired "
+                        + "(steerlab-server optvec …); imported or paired "
                         + "run directories appear here.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -275,7 +295,10 @@ struct OptVecPanelView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("config.json runType \(run.kind.rawValue)")
+        .help(
+            "show this run's report — a \(run.kind.label.lowercased()) run "
+                + "(config.json runType \(run.kind.rawValue))")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     @ViewBuilder
@@ -320,10 +343,20 @@ struct OptVecPanelView: View {
                     }
                     .joined(separator: " · "))
                 .font(.caption.weight(.semibold))
+            // The seed axis, on screen: a trained vector is one sample from
+            // an equivalence class, so how many seeds a campaign spans is a
+            // first-class fact about it (audit 2026-09-06).
+            Text(seedLine(status))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             ForEach(status.cells) { cell in
                 HStack(spacing: 8) {
                     Text(cell.cell.cellID)
                         .font(.caption.monospaced())
+                    Text(cell.cell.seed.map { "seed \($0)" } ?? "seed —")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
                     Text(cell.status.label)
                         .font(.caption2)
                         .foregroundStyle(
@@ -346,6 +379,22 @@ struct OptVecPanelView: View {
                 }
             }
         }
+    }
+
+    /// How many distinct seeds the campaign's cells cover — the number the
+    /// stability protocol is read against (2–3 seeds, and only the loadings
+    /// that survive all of them are interpretable).
+    private func seedLine(_ status: OptVecRunStore.CampaignStatus) -> String {
+        let seeds = Set(status.cells.compactMap(\.cell.seed)).sorted()
+        guard !seeds.isEmpty else {
+            return
+                "no seed recorded in campaign.json — a single trained vector "
+                + "is one sample of an equivalence class, so read it as one"
+        }
+        let listed = seeds.map(String.init).joined(separator: ", ")
+        return
+            "\(seeds.count) seed\(seeds.count == 1 ? "" : "s") (\(listed)) — "
+            + "only loadings that hold across seeds are interpretable"
     }
 
     private func trainDetail(
@@ -401,9 +450,10 @@ struct OptVecPanelView: View {
 
     private func evalDetail(_ report: OptVecRunStore.EvalReport) -> some View {
         VStack(alignment: .leading, spacing: 4) {
+            // One absent-value glyph everywhere in this panel: "—".
             Text(
-                "claim: \(report.claim ?? "?") · split: "
-                    + (report.split ?? "?"))
+                "claim: \(report.claim ?? "—") · split: "
+                    + (report.split ?? "—"))
                 .font(.caption.weight(.semibold))
             if let firewall = report.firewall {
                 // The engine's own screen-grade disclaimer, verbatim —
@@ -456,7 +506,7 @@ struct OptVecPanelView: View {
     private func libraryRows(_ library: OptVecRunStore.LibraryBlock) -> some View {
         Text(
             "library comparison — \(library.comparedCount ?? 0) vector(s) at "
-                + "layer \(library.layer.map(String.init) ?? "?")")
+                + "layer \(library.layer.map(String.init) ?? "—")")
             .font(.caption.weight(.semibold))
         ForEach(
             Array((library.topK ?? []).enumerated()), id: \.offset
@@ -489,8 +539,8 @@ struct OptVecPanelView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(
-                "condition: \(report.condition ?? "unknown") · claim: "
-                    + (report.claim ?? "?"))
+                "condition: \(report.condition ?? "—") · claim: "
+                    + (report.claim ?? "—"))
                 .font(.caption.weight(.semibold))
             if let lens = report.stages?.logitLens {
                 if let skipped = lens.skipped {
@@ -612,7 +662,7 @@ struct OptVecPanelView: View {
         var parts: [String] = []
         if let condition = solution.condition { parts.append(condition) }
         if let match = solution.topLibraryMatch {
-            var text = match.concept ?? match.name ?? "?"
+            var text = match.concept ?? match.name ?? "—"
             if let cosine = match.cosine {
                 text += String(format: " cos %.3f", cosine)
             }
@@ -639,7 +689,7 @@ struct OptVecPanelView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(
                 "claim: \(report.claim ?? "exploratory") · tier: "
-                    + (report.evidenceTier ?? "?"))
+                    + (report.evidenceTier ?? "—"))
                 .font(.caption.weight(.semibold))
             if let qualification = report.qualification {
                 // Mandatory rider: the lens is unqualified (Stage 4
@@ -722,6 +772,8 @@ struct OptVecPanelView: View {
                             + "layer %d",
                         $0, report.count ?? 0, report.layer ?? -1)
                 } ?? "—")
+            // The seed axis of the family this PR was computed over.
+            stageLine("seeds", geometrySeeds(report))
             Text(
                 "unit-normalized PR answers \"how many directions is this "
                     + "family?\" — the raw PR is dominated by the longest "
@@ -731,13 +783,21 @@ struct OptVecPanelView: View {
         }
     }
 
+    /// Distinct seeds among the vectors this geometry report covers.
+    private func geometrySeeds(_ report: OptVecRunStore.GeometryReport) -> String {
+        let seeds = Set((report.entries ?? []).compactMap(\.seed)).sorted()
+        guard !seeds.isEmpty else { return "— (no seed recorded per vector)" }
+        return
+            "\(seeds.count) distinct (\(seeds.map(String.init).joined(separator: ", ")))"
+    }
+
     // MARK: - Attach (the one v1 action)
 
     private var attachSection: some View {
         @Bindable var panel = panel
         return Section {
             Picker("Draft study", selection: $panel.attachStudyName) {
-                Text("select…").tag("")
+                Text("Choose…").tag("")
                 ForEach(panel.draftStudyNames, id: \.self) {
                     Text($0).tag($0)
                 }
@@ -746,7 +806,7 @@ struct OptVecPanelView: View {
                 "attach is draft-only — the pinned-artifact concept enters "
                     + "the study's manifest and freezes with it")
             Picker("Trained artifact", selection: $panel.attachArtifactReference) {
-                Text("select…").tag("")
+                Text("Choose…").tag("")
                 ForEach(panel.attachableArtifacts, id: \.reference) { artifact in
                     Text(artifact.reference).tag(artifact.reference)
                 }
@@ -777,8 +837,8 @@ struct OptVecPanelView: View {
                 .help(
                     "pin the artifact's bytes (both file hashes) into the "
                         + "draft manifest as a pinnedArtifact concept — the "
-                        + "same contract as `steerlab-server experiment "
-                        + "attach-artifact`")
+                        + "same contract as steerlab-server experiment "
+                        + "attach-artifact")
                 Spacer()
             }
             if let error = panel.attachError {
@@ -790,12 +850,23 @@ struct OptVecPanelView: View {
         } header: {
             Text("Attach a trained vector to a study")
         } footer: {
-            Text(
-                "the artifact is the recipe: verify and freeze re-hash both "
-                    + "files, and the confirm study runs through the standard "
-                    + "lifecycle (server engine) with control-matrix "
-                    + "conditions")
-                .font(.caption2)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(
+                    "the artifact is the recipe: verify and freeze re-hash both "
+                        + "files, and the confirm study runs through the standard "
+                        + "lifecycle (server engine) with control-matrix "
+                        + "conditions")
+                // The stability protocol, at the point of commitment: this is
+                // where one trained vector becomes a study's pinned concept.
+                Text(
+                    "a trained vector is ONE SAMPLE of an equivalence class — "
+                        + "a different seed finds a different solution with the "
+                        + "same loss. Only the loadings that hold across 2–3 "
+                        + "seeds are interpretable; pin siblings and report "
+                        + "their intersection, not one run's coordinates.")
+                    .foregroundStyle(.orange)
+            }
+            .font(.caption2)
         }
     }
 }

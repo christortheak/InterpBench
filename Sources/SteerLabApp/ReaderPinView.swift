@@ -53,9 +53,13 @@ struct ReaderPinControls: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .help(ref.path)
                 Spacer()
                 if isDraft {
-                    Button("Remove") { remove(ref.concept) }
+                    // "Unpin", the inverse of "Pin fitted reader…" below —
+                    // "Remove" is the transcript's and the roster's verb for
+                    // deleting a thing, and this deletes nothing.
+                    Button("Unpin") { remove(ref.concept) }
                         .font(.caption)
                         .help(
                             "unpins this reader; if it was the last one, the "
@@ -73,9 +77,9 @@ struct ReaderPinControls: View {
                 Text(
                     "No fitted reader artifacts found under runs/. Readers "
                         + "are fitted from paired reader data (RepE reading "
-                        + "probes) — fit one from the Concept Lab, or import "
-                        + "a server evidence bundle that carries one; it "
-                        + "will appear here to pin.")
+                        + "probes) — fit one in Data › Concepts & Vectors, or "
+                        + "import a server evidence bundle that carries one; "
+                        + "it will appear here to pin.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -139,7 +143,7 @@ struct ReaderPinControls: View {
             errorText =
                 "Couldn't update the pinned readers — the study must still "
                 + "be a draft, and the artifact must be a reader fitted on "
-                + "the study's model. Details: \(error)"
+                + "the study's model. Details: \(error.localizedDescription)"
         }
     }
 }

@@ -41,7 +41,13 @@ struct RemoteSubmissionLabelTests {
         let message = ExperimentPanel.residencyCalloutMessage(
             study: "s1", substrate: "gpu-box")
         #expect(message.contains("'s1' exists locally, not on gpu-box"))
-        #expect(message.contains("Submit Bundle"))
+        // The bundle path is named by the control that still exists: the
+        // unified Run button under Remote options. "Submit Bundle" was
+        // retired from the Studies pane (UI/UX audit 2026-09-06).
+        #expect(message.contains("Run on gpu-box"))
+        #expect(message.contains("Remote options"))
+        #expect(message.contains("portable hash-pinned bundle"))
+        #expect(!message.contains("Submit Bundle"))
         #expect(message.contains("serve --root"))
     }
 

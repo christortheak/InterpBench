@@ -44,7 +44,7 @@ struct StudyServerRunsView: View {
                                 )
                             }
                             if let task = run.task, !task.isEmpty {
-                                Text(task).lineLimit(1)
+                                Text(task).lineLimit(1).help(task)
                             }
                         }
                         .font(.caption2)

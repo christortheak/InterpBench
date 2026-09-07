@@ -183,6 +183,10 @@ extension RunSemanticSectionsContent where AnalyzeRow == EmptyView {
 struct RunSemanticSectionsView: View {
     @Bindable var service: ChatService
     let item: RunBrowser.Item
+    /// Called with the DIRECTORY NAME of the run a finished local analyze
+    /// wrote, so the browser hosting this view can rescan and focus it.
+    /// nil where there is no run list to refresh (the study-scoped detail).
+    var onAnalyzed: ((String) -> Void)?
     @State private var model: RunResults.Model?
 
     var body: some View {
@@ -191,7 +195,8 @@ struct RunSemanticSectionsView: View {
                 RunSemanticSectionsContent(
                     model: model, selectFile: select(fileNamed:)
                 ) {
-                    RunAnalyzeRow(service: service, item: item)
+                    RunAnalyzeRow(
+                        service: service, item: item, onAnalyzed: onAnalyzed)
                 }
             } else {
                 HStack(spacing: 6) {
@@ -532,6 +537,11 @@ private enum RunAnalyzeState {
 struct RunAnalyzeRow: View {
     @Bindable var service: ChatService
     let item: RunBrowser.Item
+    /// The run list's rescan-and-select, called with the new analyze run's
+    /// directory name. Analyze writes a NEW immutable run beside this one;
+    /// telling the researcher to "refresh the run list" and leaving them to
+    /// find the button is work the finished action can just do.
+    var onAnalyzed: ((String) -> Void)?
     @State private var state: RunAnalyzeState = .idle
 
     private var serverAvailable: Bool {
@@ -553,14 +563,20 @@ struct RunAnalyzeRow: View {
                 title: "Analyze (local)",
                 caption: "paired effect sizes (bootstrap CI + Wilcoxon) over the "
                     + "newest completed run of '\(experiment)' — pure CPU, writes "
-                    + "a new immutable analyze run"
+                    + "a new immutable analyze run",
+                help: "compute paired effect sizes for '\(experiment)' here on "
+                    + "this Mac — it writes a NEW analyze run and never touches "
+                    + "the run you are reading"
             ) { runLocal(experiment: experiment) }
         case .server(let experiment):
             actionRow(
                 title: "Analyze on \(service.cluster.substrateLabel)",
-                caption: "submits the server's analyze verb for '\(experiment)' "
-                    + "as a durable job (per-engine epoch guard: a server run is "
-                    + "analyzed on the server)"
+                caption: "runs the analysis where the run was produced, as a "
+                    + "durable job for '\(experiment)' (the per-engine epoch "
+                    + "guard: a server run is analyzed on the server)",
+                help: "submit the server's analyze verb for '\(experiment)' as "
+                    + "a durable job — the new analyze run lands on the server, "
+                    + "not in this workspace"
             ) { runServer(experiment: experiment) }
         case .unavailable(let reason):
             if item.runType == "run" {
@@ -574,15 +590,20 @@ struct RunAnalyzeRow: View {
     }
 
     private func actionRow(
-        title: String, caption: String, action: @escaping () -> Void
+        title: String, caption: String, help: String,
+        action: @escaping () -> Void
     ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
-                Button(action: action) {
+                Button {
+                    guard !isRunning else { return }
+                    action()
+                } label: {
                     Label(title, systemImage: "function")
                 }
                 .controlSize(.small)
                 .disabled(isRunning)
+                .help(help)
                 if isRunning { ProgressView().controlSize(.small) }
                 statusText
                 Spacer()
@@ -625,12 +646,17 @@ struct RunAnalyzeRow: View {
                 let directory = try await Task.detached(priority: .userInitiated) {
                     try ExperimentTasks.analyze(experimentName: experiment)
                 }.value
+                let name = directory.lastPathComponent
+                // Hand the new run straight to the browser instead of
+                // asking the researcher to go and find Refresh.
+                onAnalyzed?(name)
                 state = .finished(
-                    "analysis → \(directory.lastPathComponent) — refresh the "
-                        + "run list to browse it")
+                    onAnalyzed == nil
+                        ? "analysis → \(name) — refresh the run list to browse it"
+                        : "analysis → \(name) — selected in the run list")
             } catch {
                 // The epoch guard's and data checks' refusals, verbatim.
-                state = .failed("\(error)")
+                state = .failed(error.localizedDescription)
             }
         }
     }
@@ -649,7 +675,7 @@ struct RunAnalyzeRow: View {
                     "submitted analyze job \(jobID) — monitor in Compute, then "
                         + "refresh the server runs list")
             } catch {
-                state = .failed("\(error)")
+                state = .failed(error.localizedDescription)
             }
         }
     }
@@ -677,6 +703,7 @@ struct RemoteRunAnalyzeRow: View {
         case .server(let experiment):
             HStack(spacing: 8) {
                 Button {
+                    guard !isRunning else { return }
                     submit(experiment: experiment)
                 } label: {
                     Label(
@@ -730,7 +757,7 @@ struct RemoteRunAnalyzeRow: View {
                     experiment: experiment, verb: "analyze")
                 state = .finished("submitted analyze job \(jobID) — monitor in Compute")
             } catch {
-                state = .failed("\(error)")
+                state = .failed(error.localizedDescription)
             }
         }
     }
@@ -831,14 +858,15 @@ struct CategoricalStudySectionView: View {
                 if model.summaries != nil {
                     Button("View summaries.csv") { selectFile("summaries.csv") }
                         .controlSize(.small)
+                        .help("focus the per-item summaries table in the viewer pane")
                 }
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([model.runDirectory])
                 } label: {
-                    Label("Reveal artifacts", systemImage: "folder")
+                    Label("Reveal in Finder", systemImage: "folder")
                 }
                 .controlSize(.small)
-                .help("reveal the immutable run directory in Finder")
+                .help("select this run's immutable directory in Finder")
             }
             Spacer()
         }
@@ -917,10 +945,19 @@ struct ChoiceMatrixTableView: View {
         }
     }
 
+    /// The target-match verdict rides a GLYPH as well as the colour —
+    /// green/orange alone is unreadable to a colour-blind or monochrome
+    /// reader, and this cell is the categorical study's headline number.
     private func choiceText(_ cell: RunResults.ChoiceCell) -> String {
         if let choice = cell.choice {
-            if cell.sampleCount > 1 { return "\(choice) (majority)" }
-            return choice
+            let mark: String
+            switch cell.matchesTarget {
+            case .some(true): mark = " ✓"
+            case .some(false): mark = " ≠"
+            case .none: mark = ""
+            }
+            if cell.sampleCount > 1 { return "\(choice) (majority)\(mark)" }
+            return choice + mark
         }
         return cell.parseFailures > 0 ? "parse failure" : "—"
     }
@@ -950,7 +987,7 @@ struct ChoiceMatrixTableView: View {
 
     private var legend: some View {
         Text(
-            "green = matches target · orange = differs from target · red = "
+            "✓ green = matches target · ≠ orange = differs from target · red = "
                 + "parse failure · P/lo = choice probability / log odds of the "
                 + "target (answer-token instrument)")
             .font(.caption2)
@@ -1122,6 +1159,7 @@ struct EffectSizesTableView: View {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
                 .imageScale(.small)
+                .accessibilityLabel("significant after correction")
         case .some(false):
             Text("n.s.")
                 .foregroundStyle(.secondary)
@@ -1388,7 +1426,10 @@ struct SummariesTableView: View {
                     .padding(.vertical, 2)
                 }
                 if table.truncated {
-                    Text("first \(table.rows.count) rows — open the file for the full table")
+                    Text(
+                        "preview shows the first \(table.rows.count) rows — "
+                            + "Quick Look summaries.csv, or open it in its "
+                            + "default app, for the whole table")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -1433,20 +1474,25 @@ struct ValidationReportSectionView: View {
         VStack(alignment: .leading, spacing: 3) {
             Text("Convergent validity (held-out scenarios, chance = 50%)")
                 .font(.caption.weight(.semibold))
-            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
-                GridRow {
-                    Text("concept")
-                    Text("layer")
-                    Text("scenarios")
-                    Text("transfer")
-                    Text("calibrated")
-                    Text("AUC")
-                    Text("")
-                }
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                ForEach(report.concepts) { row in
-                    conceptRow(row)
+            // Seven columns (one of them a two-line note) do not fit the
+            // 560 pt controls minimum; every sibling table in this file
+            // scrolls horizontally, and this one clipped instead.
+            ScrollView(.horizontal) {
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
+                    GridRow {
+                        Text("concept")
+                        Text("layer")
+                        Text("scenarios")
+                        Text("transfer")
+                        Text("calibrated")
+                        Text("AUC")
+                        Text("")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    ForEach(report.concepts) { row in
+                        conceptRow(row)
+                    }
                 }
             }
             // Review 2026-08-01: the diagnostics existed only in the JSON —
@@ -1487,6 +1533,15 @@ struct ValidationReportSectionView: View {
         return nil
     }
 
+    /// The same verdict IN WORDS. The band is otherwise encoded in hue
+    /// alone, which is no verdict at all to a colour-blind reader or a
+    /// screen reader.
+    private func chanceBandDescription(_ value: Double) -> String {
+        if value >= 0.6 { return "above chance" }
+        if value <= 0.4 { return "below chance" }
+        return "near chance"
+    }
+
     @ViewBuilder
     private func accuracyText(_ row: RunResults.ValidationConceptRow) -> some View {
         if let accuracy = row.accuracy {
@@ -1499,6 +1554,10 @@ struct ValidationReportSectionView: View {
                         ? Color.orange
                         : chanceBandColor(accuracy) ?? Color.primary)
                 .fontWeight(.semibold)
+                .accessibilityLabel(
+                    String(format: "transfer %.0f percent, ", accuracy * 100)
+                        + chanceBandDescription(accuracy)
+                        + (row.oneSided == true ? ", one-sided read" : ""))
         } else if let fraction = row.fractionAboveMidpoint {
             Text(String(format: "%.0f%% above midpoint (unlabeled)", fraction * 100))
                 .foregroundStyle(.orange)
@@ -1514,6 +1573,9 @@ struct ValidationReportSectionView: View {
             Text(String(format: "%.0f%%", calibrated * 100))
                 .foregroundStyle(chanceBandColor(calibrated) ?? Color.primary)
                 .fontWeight(.semibold)
+                .accessibilityLabel(
+                    String(format: "calibrated %.0f percent, ", calibrated * 100)
+                        + chanceBandDescription(calibrated))
         } else {
             Text("—").foregroundStyle(.secondary)
         }
@@ -1524,6 +1586,9 @@ struct ValidationReportSectionView: View {
         if let auc = row.auc {
             Text(String(format: "%.2f", auc))
                 .foregroundStyle(chanceBandColor(auc) ?? Color.primary)
+                .accessibilityLabel(
+                    String(format: "AUC %.2f, ", auc)
+                        + chanceBandDescription(auc))
         } else {
             Text("—").foregroundStyle(.secondary)
         }
@@ -1536,6 +1601,7 @@ struct ValidationReportSectionView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
+                .help(note)
         } else {
             Text("")
         }
@@ -1699,7 +1765,7 @@ struct CosineMatrixGridView: View {
     private func cellText(row: Int, column: Int) -> some View {
         let value = matrix.values[row][column]
         let flagged = matrix.isFlagged(row: row, column: column)
-        Text(value.map { String(format: "%.2f", $0) } ?? "nan")
+        Text(value.map { String(format: "%.2f", $0) } ?? "—")
             .foregroundStyle(
                 row == column
                     ? AnyShapeStyle(.tertiary)
@@ -1726,43 +1792,79 @@ struct PanelTranscriptView: View {
         PanelTranscript.arms(in: transcripts, replicate: replicate)
     }
 
+    // A `GroupBox`, not a `Section`: outside a List or Form a Section draws
+    // an unstyled header, and every sibling block on this surface is a
+    // GroupBox — the transcript fell visually out of the stack.
     var body: some View {
-        Section("Panel transcript") {
-            if replicates.count > 1 {
-                Picker("Play-through", selection: $replicate) {
-                    ForEach(replicates, id: \.self) { index in
-                        Text("Replicate \(index + 1) of \(replicates.count)").tag(index)
-                    }
-                }
-                .pickerStyle(.segmented)
-                Text(
-                    "Each play-through is an independent transcript — the unit the "
-                        + "statistics treat as one observation.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-
-            HStack(alignment: .top, spacing: 16) {
-                ForEach(arms) { transcript in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 6) {
-                            Text(transcript.condition)
-                                .font(.headline)
-                            Text("\(transcript.turns.count) turns · \(transcript.totalWords) words")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        ForEach(transcript.turns) { turn in
-                            turnRow(turn)
+        GroupBox("Panel transcript") {
+            VStack(alignment: .leading, spacing: 10) {
+                if replicates.count > 1 {
+                    Picker("Play-through", selection: $replicate) {
+                        ForEach(replicates, id: \.self) { index in
+                            Text("Replicate \(index + 1) of \(replicates.count)").tag(index)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .pickerStyle(.segmented)
+                    .help(
+                        "page between the run's independent play-throughs — "
+                            + "each one is a separate transcript and one "
+                            + "observation in the statistics")
+                    Text(
+                        "Each play-through is an independent transcript — the unit the "
+                            + "statistics treat as one observation.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
+                armGrid
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onAppear {
             if !replicates.contains(replicate) { replicate = replicates.first ?? 0 }
         }
+    }
+
+    /// At most TWO arms side by side. Three `.callout` columns inside the
+    /// 560 pt controls minimum leave under 170 pt each, which is not a
+    /// transcript anyone can read.
+    private var armGrid: some View {
+        let rows = armRows
+        return VStack(alignment: .leading, spacing: 16) {
+            ForEach(rows.indices, id: \.self) { index in
+                HStack(alignment: .top, spacing: 16) {
+                    ForEach(rows[index]) { transcript in
+                        armColumn(transcript)
+                    }
+                    if rows[index].count == 1, rows.count > 1 {
+                        // Keep the last odd column the width of the others.
+                        Color.clear.frame(maxWidth: .infinity)
+                    }
+                }
+            }
+        }
+    }
+
+    private var armRows: [[PanelTranscript.Transcript]] {
+        let all = arms
+        return stride(from: 0, to: all.count, by: 2).map { start in
+            Array(all[start..<min(start + 2, all.count)])
+        }
+    }
+
+    private func armColumn(_ transcript: PanelTranscript.Transcript) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(transcript.condition)
+                    .font(.headline)
+                Text("\(transcript.turns.count) turns · \(transcript.totalWords) words")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(transcript.turns) { turn in
+                turnRow(turn)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func turnRow(_ turn: PanelTranscript.Turn) -> some View {
@@ -1803,5 +1905,8 @@ struct PanelTranscriptView: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .help(
+            "expand turn \(turn.index) to read what \(turn.speaker) said and "
+                + "who saw it")
     }
 }

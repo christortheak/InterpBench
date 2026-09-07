@@ -31,7 +31,7 @@ final class ResultsExplorerSchemeHandler: NSObject, WKURLSchemeHandler {
             task.didReceive(data)
             task.didFinish()
         } catch {
-            let body = Data("\(error)".utf8)
+            let body = Data(error.localizedDescription.utf8)
             let response = HTTPURLResponse(
                 url: url, statusCode: 404, httpVersion: "HTTP/1.1",
                 headerFields: ["Content-Type": "text/plain; charset=utf-8"])!
@@ -134,13 +134,10 @@ struct ResultsExplorerButton: View {
         }
         .controlSize(.small)
         .help(
-            (runName == nil
-                ? "browse every run in this workspace with the embedded "
-                : "open this run in the embedded ")
-                + "Results Explorer — the reading views (overview, concept "
-                + "evidence, optimization, effects, panels, generations, "
-                + "provenance) served natively from the workspace, "
-                + "read-only, no browser")
+            runName == nil
+                ? "browse every run in this workspace in the embedded "
+                    + "Results Explorer — read-only"
+                : "open this run in the embedded Results Explorer — read-only")
         .sheet(isPresented: $showingExplorer) {
             VStack(spacing: 0) {
                 HStack {
@@ -152,13 +149,50 @@ struct ResultsExplorerButton: View {
                     Spacer()
                     Button("Done") { showingExplorer = false }
                         .keyboardShortcut(.cancelAction)
+                        .help("close the explorer and go back to the run list")
                 }
                 .padding(10)
                 Divider()
-                ResultsExplorerPane(runName: runName)
+                if Self.assetsAvailable {
+                    ResultsExplorerPane(runName: runName)
+                } else {
+                    assetsMissingState
+                }
             }
-            .frame(minWidth: 1180, minHeight: 780)
+            // Ideal, not minimum: 1180 x 780 as a floor is taller than the
+            // usable height of a 13-inch display, and a sheet cannot be
+            // resized below its minimum.
+            .frame(
+                minWidth: 720, idealWidth: 1180, maxWidth: .infinity,
+                minHeight: 460, idealHeight: 780, maxHeight: .infinity)
         }
+    }
+
+    /// A NATIVE state for a build whose embedded explorer assets are
+    /// missing. Without it the WKWebView renders the scheme handler's 404
+    /// body as bare text, which reads like a broken page rather than an
+    /// incomplete install.
+    private var assetsMissingState: some View {
+        ContentUnavailableView {
+            Label(
+                "The embedded Results Explorer is not in this build",
+                systemImage: "questionmark.folder")
+        } description: {
+            Text(
+                "Its web assets are missing, so there is nothing to serve. "
+                    + "The run's artifacts are still readable in the Results "
+                    + "detail pane, and in Finder.")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Cheap presence check for the shipped SPA — one `fileExists`, run when
+    /// the sheet is presented.
+    private static var assetsAvailable: Bool {
+        guard let root = try? CodeResources.webAssets() else { return false }
+        return FileManager.default.fileExists(
+            atPath: root
+                .appending(components: "results-explorer", "index.html").path)
     }
 }
 
@@ -176,17 +210,24 @@ struct RemoteResultsExplorerButton: View {
         {
             ResultsExplorerButton(runName: runID)
         } else {
-            Button {} label: {
-                Label(
-                    "Results Explorer",
-                    systemImage: "chart.bar.doc.horizontal")
+            VStack(alignment: .trailing, spacing: 1) {
+                Button {} label: {
+                    Label(
+                        "Results Explorer",
+                        systemImage: "chart.bar.doc.horizontal")
+                }
+                .controlSize(.small)
+                .disabled(true)
+                .help(
+                    "the embedded Results Explorer reads local run directories "
+                        + "— Import Evidence (or download this run's results) "
+                        + "and it becomes viewable here")
+                // A disabled button whose only explanation is a tooltip is
+                // an explanation most researchers never see.
+                Text("no local copy yet — Import Evidence first")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
             }
-            .controlSize(.small)
-            .disabled(true)
-            .help(
-                "the embedded Results Explorer reads local run directories "
-                    + "— Import Evidence (or download this run's results) "
-                    + "and it becomes viewable here")
         }
     }
 }

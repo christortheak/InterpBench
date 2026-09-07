@@ -360,7 +360,8 @@ public final class MultiAgentPanel {
                 + "are reusable; its materials are empty by design"
             return true
         } catch {
-            status = "\(error)"
+            status = "could not save the protocol template: "
+                + error.localizedDescription
             return false
         }
     }
@@ -409,7 +410,8 @@ public final class MultiAgentPanel {
                     ? ""
                     : " — \(checklistWarnings.joined(separator: "; "))")
         } catch {
-            status = "\(error)"
+            status = "could not save this scenario: "
+                + error.localizedDescription
         }
     }
 
@@ -422,8 +424,30 @@ public final class MultiAgentPanel {
             newScenario()
             status = "deleted scenario '\(selected.scenario.name)'"
         } catch {
-            status = "\(error)"
+            status = "could not delete this scenario: "
+                + error.localizedDescription
         }
+    }
+
+    /// The text a freshly ADDED seat or turn carries. Named so the editor can
+    /// tell an untouched item — safe to remove with one click — from one the
+    /// researcher has written into, which asks first.
+    public enum Seeded {
+        public static let seatPrompt =
+            "You are {{agent.name}}. Follow the scenario protocol precisely."
+        public static let contractTask =
+            "Write your contribution to this step of the scenario."
+        public static let turnPromptTemplate = """
+            You are {{agent.name}}.
+
+            Scenario materials:
+            {{scenario.materials}}
+
+            Visible prior context:
+            {{agent.context}}
+
+            Task:
+            """
     }
 
     /// Adds a seat — a ROLE in the environment. It names no model and no
@@ -438,7 +462,7 @@ public final class MultiAgentPanel {
             MultiAgentScenario.Agent(
                 name: "Seat \(index)",
                 baseModelID: "",
-                systemPrompt: "You are {{agent.name}}. Follow the scenario protocol precisely."))
+                systemPrompt: Seeded.seatPrompt))
     }
 
     public func removeSeat(id: String) {
@@ -473,17 +497,7 @@ public final class MultiAgentPanel {
             MultiAgentScenario.Turn(
                 title: "Turn \(index)",
                 speakerAgentID: speaker.id,
-                promptTemplate: """
-                    You are {{agent.name}}.
-
-                    Scenario materials:
-                    {{scenario.materials}}
-
-                    Visible prior context:
-                    {{agent.context}}
-
-                    Task:
-                    """,
+                promptTemplate: Seeded.turnPromptTemplate,
                 outputLabel: "turn_\(index)",
                 routing: .all))
     }
@@ -491,6 +505,17 @@ public final class MultiAgentPanel {
     public func removeTurn(id: String) {
         turns.removeAll { $0.id == id }
         turnNotices[id] = nil
+    }
+
+    /// Moves a turn by `offset` positions. Turn ORDER is semantic: a contract
+    /// turn may only read outputs produced by EARLIER turns, and `validate`
+    /// refuses one that reads a later turn's label. Reordering was previously
+    /// possible only by removing a turn and re-authoring it.
+    public func moveTurn(id: String, by offset: Int) {
+        guard let from = turns.firstIndex(where: { $0.id == id }) else { return }
+        let to = from + offset
+        guard turns.indices.contains(to) else { return }
+        turns.swapAt(from, to)
     }
 
     // MARK: - Contract turns (spec §1–2)
@@ -543,7 +568,7 @@ public final class MultiAgentPanel {
                 routing: .all,
                 contract: TurnContract(
                     stage: "",
-                    task: "Write your contribution to this step of the scenario.")))
+                    task: Seeded.contractTask)))
     }
 
     /// Output labels this turn may declare as contract inputs — earlier turns
@@ -615,7 +640,8 @@ public final class MultiAgentPanel {
                 "wrote the environment as '\(result.semanticFileName)'; "
                 + "'\(selected.url.lastPathComponent)' is unchanged"
         } catch {
-            status = "\(error)"
+            status = "could not write the migrated environment: "
+                + error.localizedDescription
         }
     }
 

@@ -26,6 +26,11 @@ struct SweepPanelSection: View {
                 Button("Edit sweep spec", action: editAction)
                     .buttonStyle(.link)
                     .font(.caption)
+                    .help(
+                        "open the editor that owns these values — the grid, "
+                            + "the instrument files, and the criterion. A "
+                            + "frozen study's spec is pinned data and cannot "
+                            + "be edited")
             }
         }
     }
@@ -66,13 +71,42 @@ struct SweepPanelSection: View {
     private var fileRows: some View {
         ForEach(resolved.files, id: \.label) { file in
             LabeledContent(file.label) {
-                Text(file.detail)
+                // Missing/drifted was carried by colour alone; the marker
+                // says it too, for anyone who cannot see the orange.
+                Text(Self.fileDetailText(file))
                     .font(.caption2)
-                    .foregroundStyle(
-                        !file.exists || file.drifted ? Color.orange : Color.secondary)
+                    .foregroundStyle(Self.fileIsProblem(file) ? Color.orange : Color.secondary)
                     .textSelection(.enabled)
+                    .help(Self.fileHelp(file))
             }
         }
+    }
+
+    /// String arithmetic OUT of the view builder, per this file's own rule.
+    private static func fileIsProblem(
+        _ file: SweepPanelModel.InstrumentFile
+    ) -> Bool {
+        !file.exists || file.drifted
+    }
+
+    private static func fileDetailText(
+        _ file: SweepPanelModel.InstrumentFile
+    ) -> String {
+        fileIsProblem(file) ? "⚠︎ " + file.detail : file.detail
+    }
+
+    private static func fileHelp(
+        _ file: SweepPanelModel.InstrumentFile
+    ) -> String {
+        if !file.exists {
+            return "this instrument file is not in the workspace — the sweep "
+                + "refuses at start"
+        }
+        if file.drifted {
+            return "this file's bytes differ from what the study pinned — the "
+                + "sweep refuses to select on drifted inputs"
+        }
+        return file.detail
     }
 
     /// Built outside the view builder: `ExperimentsPanelView` taught us that

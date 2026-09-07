@@ -23,11 +23,15 @@ struct StudySeatsSection: View {
     var body: some View {
         if let casting = panel.seatCasting {
             let refusal = panel.seatCastingRefusal(casting)
-            Section("Seats") {
+            Section {
+                Text(StudyControlCopy.seatsGlossaryLine)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 if casting.seats.isEmpty {
                     Text(
                         "this scenario declares no seats — add roles to it in "
-                            + "the Panels editor first"
+                            + "Multi-Agent first"
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -52,6 +56,11 @@ struct StudySeatsSection: View {
                             value: casting.occupants[seat.id]?.label ?? "baseline"
                         )
                         .font(.caption)
+                        .help(
+                            "who is cast in '\(seat.name)' — read-only here; "
+                                + "the advisory or the study's status above "
+                                + "says why, and duplicating as a draft is "
+                                + "how to recast")
                     }
                 }
                 if casting.isEditable, panel.availableAgentsForSeats.isEmpty {
@@ -97,6 +106,9 @@ struct StudySeatsSection: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+            } header: {
+                InfoSectionHeader(
+                    title: "Seats", text: StudyControlCopy.seatsGlossary)
             }
         }
     }

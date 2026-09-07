@@ -21,6 +21,15 @@ struct ServerJobsPanelView: View {
         let jobID: String?
     }
     @State private var custodyTarget: CustodyTarget?
+    /// A cancel parked behind its confirmation (UI audit 2026-09-06,
+    /// headline 7): cancelling a Slurm job kills a possibly hours-long run
+    /// and loses its queue slot, and both cancel affordances used to fire on
+    /// the click.
+    private struct CancelTarget: Identifiable {
+        let id: String
+        let kind: String
+    }
+    @State private var cancelTarget: CancelTarget?
     @State private var recoveryTarget: RecoveryTarget?
     @State private var diagnosticTarget: DiagnosticTarget?
     @State private var jobs: [RemoteJobRecord] = []
@@ -30,9 +39,16 @@ struct ServerJobsPanelView: View {
     @State private var logLines: [String] = []
     @State private var status: String?
     @State private var isRefreshing = false
+    @State private var isReconciling = false
     @State private var isStreaming = false
     @State private var streamTask: Task<Void, Never>?
     @State private var streamIdentity: UUID?
+    /// When the rows on screen were fetched — a queued job can sit reading
+    /// "queued" for a long time, and nothing used to say how old the row was.
+    @State private var lastRefreshedAt: Date?
+    /// How many head lines the 2,000-line cap has dropped from this stream,
+    /// so the viewer can say so instead of silently losing the start.
+    @State private var droppedLogLines = 0
     /// The last workspace-import report, in full, for the button's tooltip.
     /// A `@State` string rather than a row: this column's minimum height must
     /// not move while an import streams (the 2026-08-05 crash class).
@@ -42,36 +58,35 @@ struct ServerJobsPanelView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Server Jobs")
-                        .font(.headline)
-                    Text(connectionSummary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                // One connection status per column: the Compute header above
+                // already prints `cluster.status`, and this sub-caption
+                // printed it a second time (UI audit 2026-09-06).
+                Text(panelTitle)
+                    .font(.headline)
+                    .help(panelTitleHelp)
                 Spacer()
-                Button("Reconcile jobs") {
-                    let origin = jobsOrigin
-                    if let client = clientForRows(origin: origin) {
-                        Task {
-                            do {
-                                _ = try await client.reconcileJobs()
-                                guard service.cluster.evidenceImportOrigin == origin else { return }
-                                await refreshJobs(selectFirstWhenEmpty: false)
-                                status = "Child records reconciled and merge pass completed."
-                            } catch { status = error.localizedDescription }
-                        }
-                    }
-                }.disabled(!hasServerClient || isRefreshing)
+                Button(isReconciling ? "Reconciling…" : "Reconcile jobs") {
+                    reconcile()
+                }
+                .disabled(!hasServerClient || isRefreshing || isReconciling)
+                .help("ask the server to re-read its child job records and "
+                    + "finish any half-done shard merge — it reads and repairs "
+                    + "bookkeeping, and never submits or cancels work")
                 Button("Inputs, evidence and cleanup…") {
                     custodyTarget = CustodyTarget(root: ExperimentStore.workspaceRoot,
                         client: clientForRows(origin: jobsOrigin), jobID: selectedJobID)
                 }
+                .help("review this job's inputs, bring its evidence home with a "
+                    + "custody receipt, or plan a policy-bound cleanup — every "
+                    + "step is a separate explicit action")
                 Button("Scientific diagnostic…") {
                     if let client = service.cluster.client {
                         diagnosticTarget = DiagnosticTarget(client: client, endpoint: client.profile.baseURL.absoluteString)
                     }
-                }.disabled(!hasServerClient)
+                }
+                .disabled(!hasServerClient)
+                .help("open the plan-then-submit form for a capability battery "
+                    + "or an extraction-stability check on this server")
                 if isRefreshing {
                     ProgressView()
                         .controlSize(.small)
@@ -82,7 +97,8 @@ struct ServerJobsPanelView: View {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .disabled(!hasServerClient || isRefreshing)
-                .help("Refresh the durable job list from the active server.")
+                .help("re-read the durable job list from the active compute "
+                    + "target — the status line below stamps when")
 
                 // The workspace import (open-issues §20). The evidence
                 // auto-import beside it brings ONE run home per finished job,
@@ -95,7 +111,11 @@ struct ServerJobsPanelView: View {
                     Label("Import runs", systemImage: "square.and.arrow.down.on.square")
                 }
                 .disabled(!canImportClusterRuns || isImporting)
-                .help(importDetail ?? Self.importHelp)
+                // The last report is appended, never substituted: replacing
+                // the description meant the button stopped saying what it
+                // does after the first import (UI audit 2026-09-06).
+                .help(importDetail.map { Self.importHelp + "\n\nLast import:\n" + $0 }
+                    ?? Self.importHelp)
             }
 
             // Always-present, single-line slot: the status text changes on
@@ -107,6 +127,10 @@ struct ServerJobsPanelView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                // This slot is the ONLY place a refusal or its repair action
+                // renders; selection is what lets the researcher copy one
+                // (UI audit 2026-09-06). It does not change the height.
+                .textSelection(.enabled)
                 .help(status ?? "")
 
             jobsRegion
@@ -114,6 +138,24 @@ struct ServerJobsPanelView: View {
         .padding(12)
         .sheet(item: $custodyTarget) { target in
             DiagnosticLifecycleSheet(root: target.root, client: target.client, initialJobID: target.jobID)
+        }
+        .confirmationDialog(
+            cancelTarget.map { "Cancel \($0.kind) job \($0.id)?" }
+                ?? "Cancel this job?",
+            isPresented: cancelPresented,
+            titleVisibility: .visible,
+            presenting: cancelTarget
+        ) { target in
+            Button("Cancel job", role: .destructive) {
+                let origin = jobsOrigin
+                Task { await cancel(target.id, origin: origin) }
+            }
+            Button("Keep running", role: .cancel) {}
+        } message: { _ in
+            Text("The allocation on \(service.cluster.substrateLabel) is "
+                + "cancelled and its queue slot is lost. Whatever the run "
+                + "already wrote stays on the server, and a checkpointed job "
+                + "can be resumed from its last checkpoint.")
         }
         .sheet(item: $recoveryTarget) { target in
             JobRecoverySheet(client: target.client, jobID: target.jobID)
@@ -133,6 +175,8 @@ struct ServerJobsPanelView: View {
             pipelines = []
             selectedJobID = nil
             logLines = []
+            droppedLogLines = 0
+            lastRefreshedAt = nil
             status = nil
             Task { await refreshJobs(selectFirstWhenEmpty: true) }
         }
@@ -158,12 +202,30 @@ struct ServerJobsPanelView: View {
     @ViewBuilder
     private var jobsRegion: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if !hasServerClient {
+            if service.cluster.computeTarget == .local {
+                // One framing of one fact for the Local target, instead of
+                // the old stack of three (UI audit 2026-09-06).
+                ContentUnavailableView(
+                    "No Jobs on Local Compute",
+                    systemImage: "laptopcomputer",
+                    description: Text(
+                        "Local (MLX) runs everything inside this app. Jobs "
+                            + "appear here when the Compute selector in the "
+                            + "window toolbar points at a server."))
+            } else if !hasServerClient {
                 ContentUnavailableView(
                     "No Active Server",
                     systemImage: "server.rack",
-                    description: Text("Choose a server workspace in the toolbar, then connect."))
-            } else if jobs.isEmpty && awaitingPipelines.isEmpty && !isRefreshing {
+                    description: Text("Choose a server compute target in the window toolbar, then connect."))
+            } else if jobs.isEmpty && awaitingPipelines.isEmpty && isRefreshing {
+                // The first fetch used to render an empty List and an empty
+                // log box, then swap to the "No Jobs" empty state — layout-safe
+                // but a visible flash (UI audit 2026-09-06).
+                ContentUnavailableView(
+                    "Loading Jobs…",
+                    systemImage: "clock.arrow.circlepath",
+                    description: Text("Reading the durable job list from \(service.cluster.substrateLabel)."))
+            } else if jobs.isEmpty && awaitingPipelines.isEmpty {
                 ContentUnavailableView(
                     "No Jobs",
                     systemImage: "checkmark.circle",
@@ -181,16 +243,50 @@ struct ServerJobsPanelView: View {
         service.cluster.computeTarget == .server && service.cluster.client != nil
     }
 
-    private var connectionSummary: String {
-        guard service.cluster.computeTarget == .server else {
-            return "Local workspace selected"
-        }
-        return service.cluster.status ?? service.cluster.serverURL
+    private var panelTitle: String {
+        service.cluster.computeTarget == .server ? "Server Jobs" : "Jobs"
+    }
+
+    private var panelTitleHelp: String {
+        service.cluster.computeTarget == .server
+            ? "every durable job this compute target is running or has run — "
+                + "select one to read its log"
+            : "jobs exist only on a server compute target; Local (MLX) runs "
+                + "everything inside this app"
     }
 
     private var selectedJob: RemoteJobRecord? {
         guard let selectedJobID else { return nil }
         return jobs.first { $0.id == selectedJobID }
+    }
+
+    private var cancelPresented: Binding<Bool> {
+        Binding(
+            get: { cancelTarget != nil },
+            set: { if !$0 { cancelTarget = nil } })
+    }
+
+    /// Server-side bookkeeping repair, with the re-entry guard the button
+    /// needs: `isRefreshing` alone did not cover the reconcile itself.
+    private func reconcile() {
+        guard !isReconciling else { return }
+        let origin = jobsOrigin
+        guard let client = clientForRows(origin: origin) else { return }
+        isReconciling = true
+        Task {
+            defer { isReconciling = false }
+            do {
+                _ = try await client.reconcileJobs()
+                guard service.cluster.evidenceImportOrigin == origin else { return }
+                await refreshJobs(selectFirstWhenEmpty: false)
+                status = "child records reconciled and the merge pass completed"
+            } catch let error as ClusterClient.ClientError {
+                status = "reconcile failed: "
+                    + ClusterClient.unwrappingDetail(error).description
+            } catch {
+                status = "reconcile failed: \(error.localizedDescription)"
+            }
+        }
     }
 
     private var jobList: some View {
@@ -326,11 +422,14 @@ struct ServerJobsPanelView: View {
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                            .help("this workspace's job id: \(job.id)")
                         if let executorJobID = job.executorJobID, !executorJobID.isEmpty {
                             Text("scheduler \(executorJobID)")
                                 .font(.caption2.monospaced())
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
+                                .help("the scheduler's own id for this job: "
+                                    + executorJobID)
                         }
                     }
                     Text(jobTimeSummary(job))
@@ -339,16 +438,29 @@ struct ServerJobsPanelView: View {
                     parkedRecoveryLine(for: job)
                     shardChips(for: job)
                     if let error = job.error, !error.isEmpty {
+                        // Two caption lines rarely hold a server failure
+                        // reason, and a Text inside a List row cannot be
+                        // selected — the tooltip and the context-menu copy
+                        // are how the whole thing is reachable.
                         Text(error)
                             .font(.caption2)
                             .foregroundStyle(.red)
                             .lineLimit(2)
+                            .help(error)
                     }
                 }
                 .padding(.vertical, 5)
                 .tag(job.id)
                 .contextMenu {
-                    Button("Copy Job ID") { copyToClipboard(job.id) }
+                    Button("Copy Job ID") { copy(job.id, describedAs: "job id") }
+                        .help("put \(job.id) on the clipboard")
+                    if let error = job.error, !error.isEmpty {
+                        Button("Copy Error") {
+                            copy(error, describedAs: "failure reason")
+                        }
+                        .help("put this job's whole failure reason on the "
+                            + "clipboard — the row shows only its first lines")
+                    }
                     if RemoteJobStatusClass.offersResume(
                         status: job.status, resubmittedAs: job.resubmittedAs)
                     {
@@ -356,12 +468,15 @@ struct ServerJobsPanelView: View {
                             let origin = jobsOrigin
                             Task { await resubmit(job.id, origin: origin) }
                         }
+                        .help("re-submit this job's own sbatch script — the "
+                            + "run continues from its checkpoint")
                     }
                     if job.finishedAt == nil {
                         Button("Cancel Job", role: .destructive) {
-                            let origin = jobsOrigin
-                            Task { await cancel(job.id, origin: origin) }
+                            cancelTarget = CancelTarget(id: job.id, kind: job.kind)
                         }
+                        .help("cancel this job on the compute target — asks "
+                            + "first; the queue slot is lost")
                     }
                 }
             }
@@ -444,55 +559,94 @@ struct ServerJobsPanelView: View {
 
     private var logViewer: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Log")
-                        .font(.headline)
-                    Text(selectedJobID ?? "Select a job")
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                if isStreaming {
-                    ProgressView()
-                        .controlSize(.small)
-                    Button("Stop") {
-                        streamTask?.cancel()
-                        streamTask = nil
-                        isStreaming = false
-                    }
-                }
-                if let selectedJobID {
-                    Button("Recovery review…") {
-                        if let client = clientForRows(origin: jobsOrigin) {
-                            recoveryTarget = RecoveryTarget(client: client, jobID: selectedJobID)
-                        }
-                    }
-                    Button {
-                        startStreaming(selectedJobID)
-                    } label: {
-                        Label("Stream", systemImage: "waveform")
-                    }
-                    .disabled(isStreaming)
-                    .help("Stream live log output for the selected job.")
-                    Button(role: .destructive) {
-                        let origin = jobsOrigin
-                        Task { await cancel(selectedJobID, origin: origin) }
-                    } label: {
-                        Label("Cancel", systemImage: "stop.fill")
-                    }
-                    .disabled(selectedJob?.finishedAt != nil)
-                }
-            }
+            logHeader
+            logBox
+        }
+    }
 
+    private var logHeader: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Log")
+                    .font(.headline)
+                Text(selectedJobID ?? "Select a job")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .help(selectedJobID.map { "log of job \($0)" }
+                        ?? "select a job in the list above to read its log")
+            }
+            Spacer()
+            if isStreaming {
+                ProgressView()
+                    .controlSize(.small)
+                // "Stop stream", never a bare "Stop": it sits beside the
+                // Cancel that kills the JOB (UI audit 2026-09-06).
+                Button("Stop stream") {
+                    streamTask?.cancel()
+                    streamTask = nil
+                    isStreaming = false
+                }
+                .help("stop following this log — the job keeps running, and "
+                    + "Stream picks the tail up again")
+            }
+            // Icon-only: this header already carries four controls, and the
+            // column's 560 pt floor has no room for a fifth title.
+            CopyButton(
+                help: "copy everything in the box below, truncation marker "
+                    + "included, to the clipboard",
+                text: { hasLogText ? logText : nil }
+            ) {
+                Label("Copy log", systemImage: "doc.on.doc")
+            }
+            .labelStyle(.iconOnly)
+            .disabled(!hasLogText)
+            .accessibilityLabel("Copy log")
+            if let selectedJobID {
+                Button("Recovery review…") {
+                    if let client = clientForRows(origin: jobsOrigin) {
+                        recoveryTarget = RecoveryTarget(client: client, jobID: selectedJobID)
+                    }
+                }
+                .help("inspect who owns this job before asserting that the "
+                    + "original controller has exited")
+                Button {
+                    startStreaming(selectedJobID)
+                } label: {
+                    Label("Stream", systemImage: "waveform")
+                }
+                .disabled(isStreaming)
+                .help("follow this job's log live — new lines append and the "
+                    + "box stays at the bottom")
+                Button(role: .destructive) {
+                    cancelTarget = CancelTarget(
+                        id: selectedJobID, kind: selectedJob?.kind ?? "server")
+                } label: {
+                    Label("Cancel", systemImage: "stop.fill")
+                }
+                .disabled(selectedJob?.finishedAt != nil)
+                .help("cancel this job on the compute target — asks first; "
+                    + "the queue slot is lost")
+            }
+        }
+    }
+
+    /// Bottom-anchored while streaming (UI audit 2026-09-06): appended lines
+    /// used to fill below the fold with nothing following them.
+    private var logBox: some View {
+        ScrollViewReader { proxy in
             ScrollView {
-                Text(logText)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-                    .padding(10)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(logText)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding(10)
+                    Color.clear
+                        .frame(height: 1)
+                        .id(Self.logBottomAnchor)
+                }
             }
             .background(Color(nsColor: .textBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -504,7 +658,20 @@ struct ServerJobsPanelView: View {
             // above (2026-08-05); 100 so both floors fit under jobsRegion's
             // constant 280.
             .frame(minHeight: 100, idealHeight: 220)
+            .onChange(of: logLines.count) { _, _ in
+                guard isStreaming else { return }
+                proxy.scrollTo(Self.logBottomAnchor, anchor: .bottom)
+            }
+            .onChange(of: selectedJobID) { _, _ in
+                proxy.scrollTo(Self.logBottomAnchor, anchor: .bottom)
+            }
         }
+    }
+
+    private static let logBottomAnchor = "log-bottom"
+
+    private var hasLogText: Bool {
+        !logLines.isEmpty || !(selectedJob?.logTail.isEmpty ?? true)
     }
 
     private var logText: String {
@@ -514,7 +681,13 @@ struct ServerJobsPanelView: View {
             }
             return "No log output yet."
         }
-        return logLines.joined(separator: "\n")
+        let body = logLines.joined(separator: "\n")
+        guard droppedLogLines > 0 else { return body }
+        // The cap used to drop the head in silence, so a log could begin
+        // mid-sentence with nothing saying why.
+        return "… \(droppedLogLines) earlier line"
+            + (droppedLogLines == 1 ? "" : "s")
+            + " dropped — this viewer keeps the last 2,000 …\n" + body
     }
 
     private func refreshJobs(selectFirstWhenEmpty: Bool) async {
@@ -543,12 +716,14 @@ struct ServerJobsPanelView: View {
             jobsOrigin = origin
             jobs = fetched
             pipelines = fetchedPipelines
-            if let selectedJobID, fetched.contains(where: { $0.id == selectedJobID }) {
-                status = "\(fetched.count) job\(fetched.count == 1 ? "" : "s")"
-            } else {
+            lastRefreshedAt = Date()
+            if !(selectedJobID.map { id in fetched.contains { $0.id == id } } ?? false) {
                 selectedJobID = selectFirstWhenEmpty ? fetched.first?.id : nil
-                status = "\(fetched.count) job\(fetched.count == 1 ? "" : "s")"
             }
+            // "as of <time>": there is no auto-poll, so a queued row can be
+            // minutes old with nothing saying so (UI audit 2026-09-06).
+            status = "\(fetched.count) job\(fetched.count == 1 ? "" : "s")"
+                + " · as of \(Self.clock.string(from: lastRefreshedAt ?? Date()))"
         } catch {
             guard service.cluster.evidenceImportOrigin == origin else { return }
             status = "could not list jobs: \(error.localizedDescription)"
@@ -618,7 +793,9 @@ struct ServerJobsPanelView: View {
 
     private func clientForRows(origin: EvidenceImportOrigin?) -> ClusterClient? {
         guard let origin, service.cluster.evidenceImportOrigin == origin else {
-            status = "evidenceContextChanged: " + EvidenceImportOrigin.changedRepair
+            // The internal code used to be the visible prefix; it belongs in
+            // the tooltip, not in front of the repair sentence.
+            status = EvidenceImportOrigin.changedRepair
             return nil
         }
         return service.cluster.client
@@ -631,6 +808,7 @@ struct ServerJobsPanelView: View {
         let identity = UUID()
         streamIdentity = identity
         logLines = jobs.first(where: { $0.id == jobID })?.logTail ?? []
+        droppedLogLines = 0
         isStreaming = true
         streamTask = Task {
             do {
@@ -642,7 +820,9 @@ struct ServerJobsPanelView: View {
                             logLines.append(line)
                         }
                         if logLines.count > 2_000 {
-                            logLines.removeFirst(logLines.count - 2_000)
+                            let excess = logLines.count - 2_000
+                            logLines.removeFirst(excess)
+                            droppedLogLines += excess
                         }
                     }
                 }
@@ -962,11 +1142,25 @@ struct ServerJobsPanelView: View {
         return "\(total)s"
     }
 
-    private func formatTimestamp(_ timestamp: Double) -> String {
+    /// Cached: this used to allocate a `DateFormatter` per call, several per
+    /// row per render.
+    private static let stamp: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
         formatter.timeStyle = .medium
-        return formatter.string(from: Date(timeIntervalSince1970: timestamp))
+        return formatter
+    }()
+
+    /// Time only — the "as of" stamp on the status line is always today.
+    private static let clock: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .medium
+        return formatter
+    }()
+
+    private func formatTimestamp(_ timestamp: Double) -> String {
+        Self.stamp.string(from: Date(timeIntervalSince1970: timestamp))
     }
 
     /// Colors come from the shared, unit-tested classifier: "checkpointed"
@@ -986,8 +1180,12 @@ struct ServerJobsPanelView: View {
         }
     }
 
-    private func copyToClipboard(_ value: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(value, forType: .string)
+    /// A context-menu copy cannot show "Copied" the way `CopyButton` does —
+    /// the menu is gone by then — so it reports through the always-present
+    /// status slot instead (UI audit 2026-09-06, headline 19).
+    private func copy(_ value: String, describedAs what: String) {
+        status = Clipboard.copy(value)
+            ? "copied the \(what) to the clipboard"
+            : "could not write to the clipboard — another app is holding it"
     }
 }

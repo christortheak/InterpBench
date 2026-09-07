@@ -75,7 +75,10 @@ struct StudyManagementSection: View {
         @Bindable var management = panel.management
         @Bindable var draft = management.draft
         Section {
-            Picker("Draft", selection: $management.selectedName) {
+            // "Study", not "Draft": the picker enumerates every study at every
+            // status, and frozen/complete ones appeared under a control
+            // titled Draft (UI audit 2026-09-06).
+            Picker("Study", selection: $management.selectedName) {
                 Text("select…").tag(String?.none)
                 let families = duplicateFamilyLabels
                 ForEach(panel.management.experiments, id: \.name) { manifest in
@@ -127,8 +130,20 @@ struct StudyManagementSection: View {
                         Button("Delete…", role: .destructive) {
                             deleteDraftRunCount = ExperimentStore.runsStamped(
                                 experimentName: manifest.name)
-                            deleteReview = try? management.reviewStudy(named: manifest.name)
-                            confirmDeleteDraft = deleteReview != nil
+                            do {
+                                deleteReview = try management.reviewStudy(
+                                    named: manifest.name)
+                                confirmDeleteDraft = true
+                            } catch {
+                                // A review that throws used to make the click a
+                                // silent no-op (UI audit 2026-09-06, headline 9).
+                                deleteReview = nil
+                                confirmDeleteDraft = false
+                                panel.note(
+                                    "Reload the study before deleting it. "
+                                        + error.localizedDescription,
+                                    severity: .warning)
+                            }
                         }
                         .disabled(panel.management.deleteSelectedStudyRefusal != nil)
                         .help(panel.management.deleteSelectedStudyRefusal ?? StudyControlCopy.deleteStudyHelp)
@@ -174,7 +189,10 @@ struct StudyManagementSection: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         TextField("new study name", text: $draft.newName)
-                            .help("creates a draft pinned to the currently selected model")
+                            .help(StudyControlCopy.canonicalNameHelp)
+                            .onChange(of: draft.newName) {
+                                panel.clearFormError(.createStudy)
+                            }
                         TextField(
                             "question or purpose", text: $draft.newDescription,
                             axis: .vertical
@@ -197,8 +215,27 @@ struct StudyManagementSection: View {
                         .foregroundStyle(.secondary)
                         Button("Create Draft") { panel.management.create(context: panel.studyCreationContext) }
                             .disabled(panel.draft.newName.isEmpty)
+                            .help(
+                                "creates experiments/<name>/ as a draft pinned "
+                                    + "to the model selected above and selects "
+                                    + "it — a name already in use is refused, "
+                                    + "and nothing is written")
+                        // The refusal (usually a name collision) AT the
+                        // control, not only in the status line at the bottom
+                        // of the page (UI audit 2026-09-06, headline 9).
+                        if let refusal = panel.draft.formErrors[.createStudy] {
+                            Label(refusal, systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                        }
                     }
                 }
+                .help(
+                    "name the study and pin its model revision up front, "
+                        + "instead of taking the placeholder name New Study "
+                        + "creates and renaming it afterwards")
             }
             // New Study mints a placeholder name and asks for the rename
             // immediately — the one-click flow is only an improvement if
@@ -232,7 +269,7 @@ struct StudyManagementSection: View {
             panel.refresh()
             consumeInstantiationInvitation(panel: panel)
             // Same one-shot pattern, same reason as the instantiation
-            // invitation: Templates' "New Template" creates the draft and
+            // invitation: Templates' "New Blank Design" creates the draft and
             // navigates here, so this view is not on screen when the rename
             // invitation is set and the onChange above never fires.
             consumeRenameInvitation(panel: panel)
@@ -263,6 +300,10 @@ struct StudyManagementSection: View {
                 Text("No saved designs yet.")
                 Button("Open Templates") { openTemplates() }
                     .buttonStyle(.link)
+                    .help(
+                        "switches to the Templates tab — the design library, "
+                            + "where a study you intend to repeat is saved as "
+                            + "a design")
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
@@ -295,7 +336,7 @@ struct StudyManagementSection: View {
 
     /// One-shot handoff for "this draft was just created — name it now".
     /// Consumed on change (the in-tab New Study path) and on appear (Templates'
-    /// New Template, which creates the draft in another section).
+    /// New Blank Design, which creates the draft in another section).
     private func consumeRenameInvitation(panel: ExperimentPanel) {
         guard let invited = panel.management.renameInvitation,
             let manifest = panel.management.experiments.first(where: { $0.name == invited })
@@ -338,7 +379,8 @@ struct StudyManagementSection: View {
         panel.clearFormError(.rename)
         panel.management.selectedName = manifest.name
         guard let reviewed = try? panel.management.reviewStudy(named: manifest.name) else {
-            panel.note("Reload the study before opening Rename.", severity: .warning)
+            panel.note(
+                "Reload the study, then open Rename again.", severity: .warning)
             return
         }
         renameSheet = RenameStudySheet(

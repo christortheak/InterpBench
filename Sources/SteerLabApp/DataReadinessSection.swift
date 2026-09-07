@@ -29,6 +29,10 @@ struct DataReadinessSection: View {
 
     @State private var requirements: [DataRequirement] = []
     @State private var message: String?
+    /// Whether `message` reports a FAILURE. Both outcomes used to render in
+    /// the same grey caption, so a refused pin read like a completed one
+    /// (UI audit 2026-09-06).
+    @State private var messageIsError = false
     @State private var editTarget: JSONLEditTarget?
     @State private var showTaskPromptsEditor = false
     @State private var batteryPathField = ""
@@ -56,6 +60,7 @@ struct DataReadinessSection: View {
                 }
                 .buttonStyle(.plain)
                 .help("re-scan the workspace for the files this study needs")
+                .accessibilityLabel("Re-scan study data")
             }
             // One pane, subdivided by what each file IS FOR (2026-07-19
             // feedback) — blockers first within each group.
@@ -88,11 +93,7 @@ struct DataReadinessSection: View {
                     }
                 }
             }
-            if let message {
-                Text(message)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
+            messageRow
         } header: {
             InfoSectionHeader(
                 title: "Data & Prompts", text: StudyInfo.dataPrompts)
@@ -112,6 +113,40 @@ struct DataReadinessSection: View {
                 refresh()
             }
         }
+    }
+
+    /// The one outcome line for this section's actions. Failures render in
+    /// the error style used elsewhere in the app (orange, icon, selectable);
+    /// successes stay in the quiet caption style.
+    @ViewBuilder
+    private var messageRow: some View {
+        if let message {
+            if messageIsError {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    /// Report a completed action.
+    private func report(_ text: String?) {
+        message = text
+        messageIsError = false
+    }
+
+    /// Report a failure or refusal — always with `localizedDescription`, never
+    /// a raw Swift error dump.
+    private func reportProblem(_ text: String) {
+        message = text
+        messageIsError = true
     }
 
     private func refresh() {
@@ -219,14 +254,16 @@ struct DataReadinessSection: View {
                     // there. Pin it here and say so.
                     let pinned = panel?.pinScaffoldedFile(
                         requirement: requirement, createdPath: created.path) ?? false
-                    message = pinned
-                        ? "created and pinned \(created.path) — replace the example "
-                            + "content with your study's data"
-                        : "created \(created.path) — replace the example rows "
-                            + "with your study's data"
+                    report(
+                        pinned
+                            ? "created and pinned \(created.path) — replace the example "
+                                + "content with your study's data"
+                            : "created \(created.path) — replace the example rows "
+                                + "with your study's data")
                     refresh()
                 } catch {
-                    message = "\(error)"
+                    reportProblem(
+                        "couldn't create the file: \(error.localizedDescription)")
                 }
             }
             .font(.caption)
@@ -259,6 +296,7 @@ struct DataReadinessSection: View {
                 }
                 .buttonStyle(.plain)
                 .help("reveal the concept directory in Finder")
+                .accessibilityLabel("Reveal concept directory in Finder")
             }
         }
     }
@@ -283,6 +321,10 @@ struct DataReadinessSection: View {
             TextField(
                 "battery JSONL path (prompts/batteries/…)",
                 text: $batteryPathField)
+                .help(
+                    "workspace-relative path of the capability battery this "
+                        + "study runs; Pin records its SHA-256, and an empty "
+                        + "field leaves the engine's default battery in use")
             WorkspacePathChooseButton(
                 message: "Choose the capability-battery JSONL (workspace "
                     + "files only — the path pins on selection)",
@@ -292,7 +334,7 @@ struct DataReadinessSection: View {
                     batteryPathField = relativePath
                     pinBattery()
                 },
-                onProblem: { message = $0 })
+                onProblem: { reportProblem($0) })
                 .disabled(!isDraft)
             Button("Pin") { pinBattery() }
                 .disabled(!isDraft
@@ -325,11 +367,12 @@ struct DataReadinessSection: View {
             _ = try ExperimentStore.setCapabilityBatteryFile(
                 file, experimentName: manifest.name)
             if file == nil { batteryPathField = "" }
-            message = nil
+            report(nil)
             panel?.refresh()
             refresh()
         } catch {
-            message = "Couldn't pin the battery: \(error)"
+            reportProblem(
+                "couldn't pin the battery: \(error.localizedDescription)")
         }
     }
 
@@ -353,6 +396,10 @@ struct DataReadinessSection: View {
             TextField(
                 "human-baseline CSV path (prompts/baselines/…)",
                 text: $draft.humanBaselinePathField)
+                .help(
+                    "workspace-relative path of the human-baseline CSV; Pin "
+                        + "records its SHA-256, and R claims against human "
+                        + "performance need one")
             // Phase 3 item 12: pick the CSV instead of typing its path —
             // the choice writes the workspace-relative path AND makes the
             // pin through the same shape-validating pin flow.
@@ -365,7 +412,7 @@ struct DataReadinessSection: View {
                     panel.draft.humanBaselinePathField = relativePath
                     panel.repinHumanBaseline()
                 },
-                onProblem: { message = $0 })
+                onProblem: { reportProblem($0) })
                 .disabled(!isDraft)
             Button("Pin") { panel.repinHumanBaseline() }
                 .disabled(!isDraft
@@ -404,6 +451,11 @@ struct DataReadinessSection: View {
                 "human-validation JSONL path (optional — per-judge "
                     + "vs-human agreement)",
                 text: $humanValidationPathField)
+                .help(
+                    "workspace-relative path of the human-validation JSONL "
+                        + "(one {condition, promptID, outcome} row per line); "
+                        + "pinning it adds the per-judge vs-human column to "
+                        + "the evaluation report")
             WorkspacePathChooseButton(
                 message: "Choose the human-validation JSONL (workspace "
                     + "files only — the path pins on selection)",
@@ -413,7 +465,7 @@ struct DataReadinessSection: View {
                     humanValidationPathField = relativePath
                     pinHumanValidation()
                 },
-                onProblem: { message = $0 })
+                onProblem: { reportProblem($0) })
                 .disabled(!isDraft)
             Button("Pin") { pinHumanValidation() }
                 .disabled(!isDraft
@@ -446,11 +498,13 @@ struct DataReadinessSection: View {
         do {
             _ = try ExperimentStore.pinHumanValidation(
                 path: trimmed, experimentName: manifest.name)
-            message = nil
+            report(nil)
             panel?.refresh()
             refresh()
         } catch {
-            message = "Couldn't pin the human-validation subset: \(error)"
+            reportProblem(
+                "couldn't pin the human-validation subset: "
+                    + error.localizedDescription)
         }
     }
 
@@ -459,11 +513,13 @@ struct DataReadinessSection: View {
             _ = try ExperimentStore.clearHumanValidation(
                 experimentName: manifest.name)
             humanValidationPathField = ""
-            message = nil
+            report(nil)
             panel?.refresh()
             refresh()
         } catch {
-            message = "Couldn't unpin the human-validation subset: \(error)"
+            reportProblem(
+                "couldn't unpin the human-validation subset: "
+                    + error.localizedDescription)
         }
     }
 }
@@ -498,6 +554,9 @@ struct JSONLRecordEditorSheet: View {
             TextEditor(text: $editorText)
                 .font(.system(.caption, design: .monospaced))
                 .frame(minWidth: 520, minHeight: 320)
+                .help(
+                    "edit each record's TEXT; every other field of the record "
+                        + "is written back verbatim on save")
             if let summary = document?.instrumentSummary {
                 Label(summary, systemImage: "list.bullet.rectangle")
                     .font(.caption2)
@@ -510,16 +569,27 @@ struct JSONLRecordEditorSheet: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             if let status {
-                Text(status)
+                // Only failures reach this line, so it renders in the error
+                // style rather than the grey caption it used to share with
+                // the explanatory text above.
+                Label(status, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.orange)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
                 Spacer()
-                Button("Cancel") { onDone() }
+                Button("Cancel", role: .cancel) { onDone() }
+                    .keyboardShortcut(.cancelAction)
+                    .help("close without writing any change to the file")
                 Button("Save") { save() }
+                    .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(document == nil)
+                    .help(
+                        "write the edited records back to the file, preserving "
+                            + "every non-text field")
             }
         }
         .padding()
@@ -533,7 +603,7 @@ struct JSONLRecordEditorSheet: View {
             document = loaded
             editorText = loaded.editorText
         } catch {
-            status = "cannot load: \(error)"
+            status = "cannot load this file: " + error.localizedDescription
         }
     }
 
@@ -545,7 +615,7 @@ struct JSONLRecordEditorSheet: View {
             try updated.serialized().write(to: target.url, options: .atomic)
             onDone()
         } catch {
-            status = "cannot save: \(error)"
+            status = "cannot save this file: " + error.localizedDescription
         }
     }
 }

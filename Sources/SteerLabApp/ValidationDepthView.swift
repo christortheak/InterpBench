@@ -105,8 +105,17 @@ struct ValidationDepthControls: View {
         errorText = nil
     }
 
+    /// The write happens in the picker's binding SETTER, which only a user
+    /// pick reaches — never in `onChange`, which also fires on the
+    /// programmatic `syncFromManifest()` (audit headline 16). Under the old
+    /// wiring, selecting a study that declares nothing rewrote the newly
+    /// selected draft's manifest, and on a frozen study raised a draft-gate
+    /// error the user had not asked for.
     @ViewBuilder private var modePicker: some View {
-        Picker("Validation read depth", selection: $mode) {
+        Picker(
+            "Validation read depth",
+            selection: Binding(get: { mode }, set: { userPicked($0) })
+        ) {
             Text("Default (steering-condition layer, else mid-network)")
                 .tag(Mode.defaultRule)
             Text("Layer index(es)").tag(Mode.layerIndex)
@@ -114,24 +123,26 @@ struct ValidationDepthControls: View {
         }
         .disabled(!isDraft)
         .help(Self.depthHelp)
-        .onChange(of: mode) { previous, selected in
-            guard previous != selected else { return }
-            errorText = nil
-            switch selected {
-            case .defaultRule:
-                // Default IS the value — clear immediately.
-                write {
-                    try ExperimentStore.setValidationReadDepth(
-                        experimentName: manifest.name)
-                }
-                valueText = ""
-            case .layerIndex, .depthFraction:
-                // Never reinterpret a value across modes (21 is not the
-                // fraction 21): keep the stored value only when the stored
-                // declaration is already in this mode, else start empty
-                // and wait for Set.
-                valueText = selected == storedMode ? storedValueText : ""
+    }
+
+    private func userPicked(_ selected: Mode) {
+        guard selected != mode else { return }
+        mode = selected
+        errorText = nil
+        switch selected {
+        case .defaultRule:
+            // Default IS the value — clear immediately.
+            write {
+                try ExperimentStore.setValidationReadDepth(
+                    experimentName: manifest.name)
             }
+            valueText = ""
+        case .layerIndex, .depthFraction:
+            // Never reinterpret a value across modes (21 is not the
+            // fraction 21): keep the stored value only when the stored
+            // declaration is already in this mode, else start empty
+            // and wait for Set.
+            valueText = selected == storedMode ? storedValueText : ""
         }
     }
 
@@ -146,8 +157,23 @@ struct ValidationDepthControls: View {
             TextField(placeholder, text: $valueText)
                 .frame(maxWidth: 260)
                 .onSubmit { commit() }
+                .help(
+                    mode == .layerIndex
+                        ? "whole layer indices on this study's model — one, or "
+                            + "several comma-separated to measure a depth "
+                            + "profile in ONE validate run. Nothing is declared "
+                            + "until you press Set"
+                        : "relative depths in 0–1, resolved with the sweep's "
+                            + "truncating rule so the same value reads the same "
+                            + "place across model sizes. Comma-separate several "
+                            + "for a profile; nothing is declared until you "
+                            + "press Set")
             Button("Set") { commit() }
                 .disabled(!isDraft || trimmedEmpty)
+                .help(
+                    "writes the value(s) into the study manifest as the "
+                        + "declared validation read depth — draft-only, and it "
+                        + "replaces any previous declaration")
         }
         .disabled(!isDraft)
     }
@@ -241,7 +267,14 @@ struct ValidationDepthControls: View {
                 "Couldn't set the validation read depth — the study must "
                 + "still be a draft, and exactly one declaration shape "
                 + "(index / fraction / a list of one kind) may be set. "
-                + "Details: \(error)"
+                + "Details: \(Self.detail(error))"
         }
+    }
+
+    /// `ExperimentError` is CustomStringConvertible, not LocalizedError, so
+    /// its `reason` is the readable half; anything else gets its localized
+    /// description rather than a Swift dump (audit headline 17).
+    private static func detail(_ error: some Error) -> String {
+        (error as? ExperimentError)?.reason ?? error.localizedDescription
     }
 }

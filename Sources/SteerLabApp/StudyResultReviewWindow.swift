@@ -23,6 +23,7 @@ struct ResultReviewSheet: Identifiable {
 
 struct ResultReviewWindow: View {
     let sheet: ResultReviewSheet
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -36,6 +37,11 @@ struct ResultReviewWindow: View {
                         .textSelection(.enabled)
                 }
                 Spacer()
+                // Audit headline 12: the sheet had no way out — no Close
+                // button and no cancelAction, so Escape was at best
+                // undiscoverable.
+                Button("Close", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
             }
 
             Divider()
@@ -130,6 +136,7 @@ struct ResultReviewWindow: View {
                     .font(.caption.monospaced())
                     .textSelection(.enabled)
             }
+            .help("the judge's verbatim response for this pair, as recorded in judgments.jsonl")
         }
         .padding(12)
         .background(.background)

@@ -1296,7 +1296,7 @@ public final class ChatService {
 
     public func transcriptMarkdown() -> String {
         var lines: [String] = [
-            "# SteerLab Steering Transcript",
+            "# SteerLab Playground Transcript",
             "",
             "- Model: \(loadedModelID ?? selectedModelID)",
             "- Prompt mode: \(promptMode.rawValue)",

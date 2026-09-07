@@ -11,6 +11,10 @@ struct StudyArmsSection: View {
     let availableVariants: [ModelVariantRecord]
     @State private var agentReview: AgentArtifactSnapshot?
     @State private var agentReviewMessage: String?
+    /// The arm whose trash was clicked, awaiting confirmation. Removing an arm
+    /// writes the manifest immediately, so it confirms like every other write
+    /// in this cluster (UI audit 2026-09-06, headline 7).
+    @State private var pendingArmRemoval: String?
 
     private func reviewAgentSelection(_ id: String?) {
         panel.draft.selectedVariantToAddID = id
@@ -18,7 +22,7 @@ struct StudyArmsSection: View {
         agentReviewMessage = nil
         guard let id, let record = panel.availableVariantsForStudy.first(where: { $0.id == id }) else { return }
         do { agentReview = try AgentArtifactSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, reviewedRecord: record) }
-        catch { agentReviewMessage = String(describing: error) }
+        catch { agentReviewMessage = error.localizedDescription }
     }
 
     /// ONE Conditions section, content by study type: the ARMS of the
@@ -58,23 +62,41 @@ struct StudyArmsSection: View {
             } else {
                 if isDraft {
                     HStack {
-                        Picker("Add agent", selection: Binding(get: { draft.selectedVariantToAddID }, set: reviewAgentSelection)) {
+                        Picker("Agent", selection: Binding(get: { draft.selectedVariantToAddID }, set: reviewAgentSelection)) {
                             Text("select…").tag(String?.none)
                             ForEach(panel.availableVariantsForStudy) { variant in
                                 Text(variant.artifact.name).tag(String?.some(variant.id))
                             }
                         }
-                        Button("Add") {
+                        .help(
+                            "saved agents built on this study's base model — "
+                                + "agents on any other model are not eligible "
+                                + "and are not listed")
+                        Button("Add Agent") {
                             if let agentReview { panel.addVariantCondition(reviewedAgent: agentReview) }
                         }
                         .disabled(agentReview == nil || draft.selectedVariantToAddID == nil)
+                        .help(
+                            "adds the selected agent as one comparison arm and "
+                                + "SAVES the draft immediately, pinning the "
+                                + "agent by artifact hash")
                         Button("Reload agent selection") { reviewAgentSelection(draft.selectedVariantToAddID) }
                             .disabled(draft.selectedVariantToAddID == nil)
+                            .help(
+                                "re-reads the selected agent's artifact from "
+                                    + "disk — press it when the agent was "
+                                    + "rebuilt or edited in Agents while this "
+                                    + "page was open")
                     }
-                    .help("add a saved agent that uses the selected baseline model")
                     .onChange(of: panel.management.selectedName) { reviewAgentSelection(nil) }
                     .onChange(of: ExperimentStore.workspaceRoot.path) { reviewAgentSelection(nil) }
-                    if let agentReviewMessage { Text(agentReviewMessage).font(.caption).foregroundStyle(.orange) }
+                    if let agentReviewMessage {
+                        Label(agentReviewMessage, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                    }
                     if !manifest.concepts.isEmpty {
                         Menu("Add sweep-created agent…") {
                             ForEach(manifest.concepts, id: \.name) { concept in
@@ -82,6 +104,9 @@ struct StudyArmsSection: View {
                                     panel.addForwardReferencedCondition(
                                         concept: concept.name)
                                 }
+                                .help(
+                                    "adds an arm for the agent this study's "
+                                        + "sweep will promote for '\(concept.name)'")
                             }
                         }
                         .help(
@@ -138,8 +163,31 @@ struct StudyArmsSection: View {
                 }
             }
         } header: {
+            // "Conditions" was the title of TWO sections on a concept study —
+            // this one holds agents, the other holds injection conditions.
+            // The title now says what its rows are (UI audit 2026-09-06).
             InfoSectionHeader(
-                title: "Conditions", text: StudyInfo.conditionsArms)
+                title: "Arms (agents)", text: StudyInfo.conditionsArms)
+        }
+        .confirmationDialog(
+            "Remove arm '\(pendingArmRemoval ?? "")'?",
+            isPresented: Binding(
+                get: { pendingArmRemoval != nil },
+                set: { if !$0 { pendingArmRemoval = nil } }),
+            titleVisibility: .visible
+        ) {
+            if let name = pendingArmRemoval {
+                Button("Remove '\(name)'", role: .destructive) {
+                    panel.removeVariantCondition(name)
+                    pendingArmRemoval = nil
+                }
+            }
+        } message: {
+            Text(
+                "Removes this arm from the draft and saves the manifest "
+                    + "immediately. The agent artifact itself is untouched — "
+                    + "re-add it with Add Agent. Runs already recorded keep "
+                    + "the arm they measured.")
         }
     }
 
@@ -158,6 +206,10 @@ struct StudyArmsSection: View {
                             .tag(ModelVariantRecord.ID?.some(record.id))
                     }
                 }
+                .help(
+                    "the agent whose cell this study re-tests — its layer and "
+                        + "strength are the anchor the deltas move around; "
+                        + "sweep-promoted agents are the evidence path")
                 TextField("strength deltas (α)", text: $draft.confirmDeltasText)
                     .frame(width: 120)
                     .help(
@@ -173,6 +225,11 @@ struct StudyArmsSection: View {
                         + "direction")
                 Button("Attach Policy") { panel.attachPerturbations() }
                     .disabled(panel.draft.confirmAgentID == nil)
+                    .help(
+                        "declares the perturbation policy on this draft and "
+                            + "expands it into ordinary hashed conditions — "
+                            + "anchor, α ± each delta, and the control when "
+                            + "it is on")
             }
             // Non-blocking: confirmation of a hand-created agent stays legal,
             // but the evidence path runs through sweep-promoted agents.
@@ -285,11 +342,13 @@ struct StudyArmsSection: View {
             Spacer()
             if isDraft {
                 Button {
-                    panel.removeVariantCondition(variant.name)
+                    pendingArmRemoval = variant.name
                 } label: {
                     Image(systemName: "trash")
                 }
                 .buttonStyle(.plain)
+                .help("remove '\(variant.name)' as an arm of this draft")
+                .accessibilityLabel("Remove arm \(variant.name)")
             }
         }
     }

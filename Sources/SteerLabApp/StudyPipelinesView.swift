@@ -8,19 +8,40 @@ struct StudyPipelinesView: View {
     let refresh: () async -> Void
     let duplicateStudy: () -> Void
 
+    /// How many rows each list renders before the "N more" line. The listing
+    /// is a summary; silently dropping the tail made a truncated list read as
+    /// a complete one.
+    private static let serverRowLimit = 20
+    private static let localRowLimit = 10
+
+    @State private var isRefreshing = false
+
     @ViewBuilder
     var body: some View {
         Group {
             Text("Pipelines — \(substrateLabel)")
                 .font(.caption.bold())
                 .padding(.top, 4)
-            Button("Refresh Pipelines") {
-                Task { await refresh() }
+            HStack(spacing: 8) {
+                Button(isRefreshing ? "Refreshing…" : "Refresh Pipelines") {
+                    guard !isRefreshing else { return }
+                    isRefreshing = true
+                    Task {
+                        await refresh()
+                        isRefreshing = false
+                    }
+                }
+                .disabled(isRefreshing)
+                .help(
+                    "list this experiment's chain-runner runs on the active "
+                        + "server: per-stage status, gate aborts, and promoted "
+                        + "agents")
+                if isRefreshing {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Spacer()
             }
-            .help(
-                "list this experiment's chain-runner runs on the active "
-                    + "server: per-stage status, gate aborts, and promoted "
-                    + "agents")
             if pipelines.pipelineRuns.isEmpty {
                 Text(
                     "No pipelines listed — refresh, or submit the "
@@ -29,18 +50,41 @@ struct StudyPipelinesView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             } else {
-                ForEach(pipelines.pipelineRuns.prefix(20)) { pipeline in
+                ForEach(pipelines.pipelineRuns.prefix(Self.serverRowLimit)) { pipeline in
                     pipelineRunRow(pipeline)
                 }
+                moreRow(
+                    total: pipelines.pipelineRuns.count,
+                    shown: Self.serverRowLimit,
+                    location: "on \(substrateLabel)")
             }
             if !pipelines.localPipelineRuns.isEmpty {
                 Text("Imported / local")
                     .font(.caption2.bold())
                     .foregroundStyle(.secondary)
-                ForEach(pipelines.localPipelineRuns.prefix(10)) { pipeline in
+                ForEach(pipelines.localPipelineRuns.prefix(Self.localRowLimit)) { pipeline in
                     pipelineRunRow(pipeline)
                 }
+                moreRow(
+                    total: pipelines.localPipelineRuns.count,
+                    shown: Self.localRowLimit,
+                    location: "in this workspace's runs/")
             }
+        }
+    }
+
+    /// The tail this listing does not draw, stated rather than dropped.
+    @ViewBuilder
+    private func moreRow(total: Int, shown: Int, location: String) -> some View {
+        if total > shown {
+            Text("\(total - shown) more chain run\(total - shown == 1 ? "" : "s") "
+                + "not listed — this summary draws the first \(shown)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .help(
+                    "\(total) chain runs exist \(location); the rest stay in "
+                        + "the ledger and are unaffected by what this summary "
+                        + "shows")
         }
     }
 
@@ -54,6 +98,9 @@ struct StudyPipelinesView: View {
                     .font(.caption.monospaced())
                     .textSelection(.enabled)
                     .lineLimit(1)
+                    // The row truncates; the whole run id has to stay
+                    // reachable, because it is what names the evidence.
+                    .help(pipeline.run)
                 Text(pipeline.stateLabel)
                     .font(.caption2.bold())
                     .padding(.horizontal, 6)
@@ -72,10 +119,13 @@ struct StudyPipelinesView: View {
                 .foregroundStyle(.secondary)
             if let updated = pipeline.updatedAt {
                 // For "unfinished" chains this is the evidence for judging
-                // running-vs-abandoned — the listing cannot know.
-                Text("last ledger write: \(updated)")
+                // running-vs-abandoned — the listing cannot know. Rendered in
+                // the reader's own locale and time zone; the tooltip keeps the
+                // server's verbatim UTC stamp.
+                Text("last ledger write: \(Self.timestampLabel(updated))")
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
+                    .help("recorded by the server as \(updated) (UTC)")
             }
             if let agents = pipeline.promotedAgents, !agents.isEmpty {
                 ForEach(agents.keys.sorted(), id: \.self) { concept in
@@ -92,6 +142,13 @@ struct StudyPipelinesView: View {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    /// The ledger's UTC ISO stamp, in the reader's locale. Unparseable
+    /// stamps render verbatim rather than disappearing.
+    private static func timestampLabel(_ stamp: String) -> String {
+        guard let date = HousekeepingDates.parse(stamp) else { return stamp }
+        return date.formatted(date: .abbreviated, time: .shortened)
     }
 
     private func pipelineStateColor(

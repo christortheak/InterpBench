@@ -7,8 +7,59 @@ struct FineTuningPanelView: View {
     /// Item 2 (cluster-testing): a server LoRA training submission parked
     /// while the shared no-GPU-session dialog asks.
     @State private var pendingModelJob: PendingModelJob?
+    /// The cluster job a "Cancel Training" click is asking about — cancelling
+    /// a server job is irreversible and loses the queue slot, so it confirms.
+    @State private var confirmingCancelJobID: String?
 
     private var panel: FineTuningPanel { service.fineTuning }
+
+    /// The panel's own Create Adapter gates, so the refusal can be shown
+    /// BESIDE the button instead of as a note at the bottom of the form.
+    /// Mirrors `FineTuningPanel.createAdapterProject`, including its fallback
+    /// to the host's loaded/selected model when the picker is empty.
+    private var createAdapterDisabledReason: String? {
+        if panel.newAdapterName.trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
+        {
+            return "name the adapter first — the name becomes adapters/<name>/"
+        }
+        let picked = panel.newAdapterBaseModelID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let effective =
+            picked.isEmpty
+            ? (service.loadedModelID ?? service.selectedModelID) : picked
+        if effective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "choose a base model first — an adapter is trained for one model"
+        }
+        return nil
+    }
+
+    /// Instruction/chat tuning needs the structured upload route; on a server
+    /// whose capabilities say it has none, the click was refused into the
+    /// Status section at the bottom of the form. Only asserted when the
+    /// capabilities are actually known.
+    private var legacyServerModeRefusal: String? {
+        guard service.cluster.computeTarget == .server,
+            panel.trainingMode == .instructionChat,
+            let capabilities = service.cluster.capabilities,
+            !capabilities.supportsStructuredFineTuneUpload
+        else { return nil }
+        return
+            "\(service.cluster.substrateLabel) accepts document adaptation "
+            + "only — instruction/chat tuning trains in the Local workspace"
+    }
+
+    /// The wire key and the server's derivation, on screen rather than only
+    /// in the Scale tooltip.
+    private var scaleConventionNote: String {
+        let alpha = Double(panel.scale) * Double(panel.rank)
+        return
+            "Scale is sent as adapterScale; the server resolves lora_alpha = "
+            + "scale × rank = "
+            + "\(panel.scale.formatted(.number.precision(.fractionLength(0 ... 1)))) × "
+            + "\(panel.rank) = "
+            + "\(alpha.formatted(.number.precision(.fractionLength(0 ... 1))))."
+    }
 
     var body: some View {
         @Bindable var panel = service.fineTuning
@@ -26,14 +77,17 @@ struct FineTuningPanelView: View {
                         Spacer()
                     }
                 }
-                TextField("Name", text: $panel.newAdapterName)
-                    .textFieldStyle(.roundedBorder)
-                    .help("Name for the adapter project and artifact. Use a stable research label, such as the corpus, method, or intended intervention.")
+                TextField(
+                    "Name", text: $panel.newAdapterName,
+                    prompt: Text("my-concept-lora")
+                )
+                .textFieldStyle(.roundedBorder)
+                .help("Name for the adapter project and artifact. Use a stable research label, such as the corpus, method, or intended intervention.")
                 DirectoryPathRow(
                     title: "Project directory",
                     path: resolvedDisplayPath(panel.newAdapterProjectDirectory),
                     placeholder: "Default: adapters/ in the workspace",
-                    chooseTitle: "Choose...",
+                    chooseTitle: "Choose…",
                     help: "Parent folder where SteerLab will create the adapter's home. Leave blank to store it under the workspace's adapters/ folder."
                 ) {
                     openFolder(panel.newAdapterProjectDirectory)
@@ -41,7 +95,15 @@ struct FineTuningPanelView: View {
                     chooseDirectory { panel.newAdapterProjectDirectory = $0 }
                 }
                 Button("Create Adapter") { panel.createAdapterProject() }
+                    .disabled(createAdapterDisabledReason != nil)
                     .help("create adapters/<name>/ in the workspace with training/ and validation/ data folders, and add the adapter to the library")
+                // The panel's own gates, said beside the button instead of as
+                // a note at the bottom of the form (audit 2026-09-06).
+                if let reason = createAdapterDisabledReason {
+                    Text(reason)
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
             }
 
             Section("Adapter Library") {
@@ -87,7 +149,7 @@ struct FineTuningPanelView: View {
                         title: "Adapter output",
                         path: resolvedDisplayPath(panel.adapterDirectory),
                         placeholder: "Choose adapter output folder",
-                        chooseTitle: "Choose...",
+                        chooseTitle: "Choose…",
                         help: "Folder where the trained adapter files live. A completed MLX adapter should contain adapter_config.json and adapters.safetensors."
                     ) {
                         openFolder(panel.adapterDirectory)
@@ -98,7 +160,7 @@ struct FineTuningPanelView: View {
                         title: "Training workspace",
                         path: resolvedDisplayPath(panel.trainingWorkspacePath),
                         placeholder: "Choose training workspace folder",
-                        chooseTitle: "Choose...",
+                        chooseTitle: "Choose…",
                         help: "Workspace for raw source material and instruction templates before they are converted into train/validation datasets."
                     ) {
                         openFolder(panel.trainingWorkspacePath)
@@ -109,8 +171,9 @@ struct FineTuningPanelView: View {
                         title: "Training data",
                         path: directoryDisplayPath(panel.trainingDataPath),
                         placeholder: "Choose training data folder",
-                        chooseTitle: "Choose...",
-                        help: "Folder containing the examples the adapter learns from (.txt, .md, .json, .jsonl, .pdf). Drop files onto this row to copy them into the folder."
+                        chooseTitle: "Choose…",
+                        help: "Folder containing the examples the adapter learns from (.txt, .md, .json, .jsonl, .pdf). Drop files onto this row to copy them into the folder.",
+                        acceptsDrop: true
                     ) {
                         openFolder(panel.trainingDataPath)
                     } choose: {
@@ -124,8 +187,9 @@ struct FineTuningPanelView: View {
                         title: "Validation data",
                         path: directoryDisplayPath(panel.validationDataPath),
                         placeholder: "Choose validation data folder",
-                        chooseTitle: "Choose...",
-                        help: "Folder containing held-out examples used to monitor validation loss. Drop files onto this row to copy them into the folder."
+                        chooseTitle: "Choose…",
+                        help: "Folder containing held-out examples used to monitor validation loss. Drop files onto this row to copy them into the folder.",
+                        acceptsDrop: true
                     ) {
                         openFolder(panel.validationDataPath)
                     } choose: {
@@ -163,6 +227,13 @@ struct FineTuningPanelView: View {
                             step: 0.5,
                             fractionDigits: 1,
                             help: "LoRA scale is the direct multiplier on the learned low-rank update, during training and inference (this engine's MLX convention). A server run receives it as adapterScale and resolves PEFT's lora_alpha = scale × rank itself, so the number means the same strength on both engines.")
+                        // The convention is visible, not tooltip-only: with
+                        // the defaults (rank 8 × scale 10) a PEFT reader would
+                        // otherwise assume alpha = 10 where the server gets 80.
+                        Text(scaleConventionNote)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                         IntSliderField(
                             "Layers",
                             value: $panel.adaptedLayers,
@@ -182,7 +253,6 @@ struct FineTuningPanelView: View {
                             "Learning rate",
                             value: $panel.learningRate,
                             range: 0.000001 ... 0.001,
-                            fractionDigits: 7,
                             help: "Optimizer learning rate on a logarithmic slider. 1e-5 is a conservative default for LoRA fine-tuning.")
                     }
                     HStack {
@@ -216,12 +286,14 @@ struct FineTuningPanelView: View {
                                     pending: $pendingModelJob
                                 ) { await panel.beginServerTraining() }
                             }
-                            .disabled(panel.isTraining)
+                            .disabled(
+                                panel.isTraining
+                                    || legacyServerModeRefusal != nil)
                             .help(
-                                "queue document-adaptation LoRA on "
+                                "queue \(panel.trainingMode.label.lowercased()) LoRA on "
                                     + "\(service.cluster.substrateLabel): the training "
                                     + "folder's text files (or the single training "
-                                    + "file) are uploaded inline and the adapter "
+                                    + "file) are uploaded and the adapter "
                                     + "lands in the server's runs tree (progress "
                                     + "under Compute)")
                         } else {
@@ -233,16 +305,32 @@ struct FineTuningPanelView: View {
                             ProgressView()
                                 .controlSize(.small)
                                 .help("Adapter training is running.")
-                            Button("Cancel") { panel.cancelTraining() }
+                            // A server cancel is an irreversible cluster job
+                            // cancel, so it asks and names the job; the local
+                            // stop is cooperative and keeps its checkpoints,
+                            // so it stays unconfirmed (audit 2026-09-06).
+                            if let jobID = panel.serverTrainingJobID {
+                                Button("Cancel Training", role: .destructive) {
+                                    confirmingCancelJobID = jobID
+                                }
                                 .help(
-                                    panel.serverTrainingJobID == nil
-                                        ? "Request cancellation. Local training "
-                                            + "stops at the next reporting checkpoint."
-                                        : "Send a cancel request for cluster job "
-                                            + "\(panel.serverTrainingJobID ?? "") — the "
-                                            + "cluster decides when it stops; logs keep "
-                                            + "streaming until it does.")
+                                    "send a cancel request for cluster job \(jobID) — the "
+                                        + "cluster decides when it stops; logs keep "
+                                        + "streaming until it does")
+                            } else {
+                                Button("Cancel Training") { panel.cancelTraining() }
+                                    .help(
+                                        "request cancellation — local training stops at "
+                                            + "the next reporting checkpoint and the "
+                                            + "adapter written so far stays on disk")
+                            }
                         }
+                    }
+                    if let refusal = legacyServerModeRefusal {
+                        Text(refusal)
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     if let progress = panel.trainingProgress {
                         VStack(alignment: .leading, spacing: 6) {
@@ -275,23 +363,43 @@ struct FineTuningPanelView: View {
                         .help("Choose an adapter from the library above to show its trainer settings.")
                 }
                 Button("Refresh Library") { panel.refresh() }
-                    .help("Rescan saved adapter and agent (variant) artifacts from disk.")
+                    .help("Rescan saved adapter and agent artifacts from disk.")
             }
 
-            if let status = panel.status {
-                Section("Status") {
-                    Text(status)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .help("Latest Fine-Tuning action result or error message.")
-                }
+            // A CONSTANT slot: the section used to appear and disappear with
+            // the status, shifting the whole form (audit 2026-09-06).
+            Section("Status") {
+                Text(panel.status ?? "no Adapter Training action yet this session")
+                    .font(.caption)
+                    .foregroundStyle(panel.status == nil ? .tertiary : .secondary)
+                    .textSelection(.enabled)
+                    .help("Latest Adapter Training action result or error message.")
             }
         }
         .formStyle(.grouped)
         // Item 2 (cluster-testing): the shared no-GPU-session warning for
         // the server training submission above.
         .modelJobGPUWarning(pending: $pendingModelJob, service: service)
+        .confirmationDialog(
+            "Cancel training job \(confirmingCancelJobID ?? "") on "
+                + "\(service.cluster.substrateLabel)?",
+            isPresented: Binding(
+                get: { confirmingCancelJobID != nil },
+                set: { if !$0 { confirmingCancelJobID = nil } }),
+            presenting: confirmingCancelJobID
+        ) { jobID in
+            Button("Cancel Job \(jobID)", role: .destructive) {
+                confirmingCancelJobID = nil
+                panel.cancelTraining()
+            }
+            Button("Keep Training", role: .cancel) { confirmingCancelJobID = nil }
+        } message: { jobID in
+            Text(
+                "The cluster decides when job \(jobID) stops, and the queue "
+                    + "slot is lost. Checkpoints already written to the "
+                    + "server's runs tree stay there; training does not resume "
+                    + "from here.")
+        }
         // The explicit-split route parks the server's normalized training
         // plan here; nothing is scheduled until the researcher confirms it
         // (docs/CLUSTER-LORA-READINESS.md §3 — the plan confirmed and the
@@ -337,7 +445,7 @@ struct FineTuningPanelView: View {
                 if selected {
                     Text("selected")
                         .font(.caption)
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(Color.accentColor)
                 }
                 Text(record.artifact.fineTuneType.uppercased())
                     .font(.caption.monospaced())
@@ -380,8 +488,21 @@ struct FineTuningPanelView: View {
             Text(value)
                 .font(.caption.monospaced())
         }
-        .help("\(label): \(value)")
+        .help(Self.metricHelp[label] ?? label)
     }
+
+    /// What each abbreviated cell in an adapter row MEANS — the tooltip used
+    /// to repeat the two words already on screen (audit 2026-09-06).
+    private static let metricHelp: [String: String] = [
+        "rank": "LoRA rank the adapter was trained at",
+        "scale": "LoRA scale (adapterScale; the server resolves lora_alpha = scale × rank)",
+        "layers": "how many transformer layers the adapter touches",
+        "iters": "optimizer steps the training ran for",
+        "adapter": "first 10 characters of the adapter weights' sha256",
+        "config": "first 10 characters of adapter_config.json's sha256",
+        "train": "first 10 characters of the training data's sha256",
+        "valid": "first 10 characters of the validation data's sha256",
+    ]
 
     private func shortHash(_ value: String?) -> String {
         guard let value, !value.isEmpty else { return "-" }
@@ -447,19 +568,25 @@ private struct DirectoryPathRow: View {
     let placeholder: String
     let chooseTitle: String?
     let help: String
+    /// Rows that accept a file drop say so on screen: the drop used to be
+    /// discoverable only through the tooltip (audit 2026-09-06).
+    var acceptsDrop: Bool = false
     let open: () -> Void
     let choose: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
+            // Link style, not plain: this opens Finder, and as a plain label
+            // it read as static text.
             Button(action: open) {
                 Label(title, systemImage: "folder")
                     .labelStyle(.titleAndIcon)
                     .frame(width: 150, alignment: .leading)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.link)
             .disabled(path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .help(path.isEmpty ? help : "\(help) Click to open this folder in Finder.")
+            .help(path.isEmpty ? help : "\(help) Click to reveal this folder in Finder.")
+            .accessibilityLabel("Reveal \(title.lowercased()) in Finder")
 
             Text(path.isEmpty ? placeholder : path)
                 .font(.caption.monospaced())
@@ -469,6 +596,16 @@ private struct DirectoryPathRow: View {
                 .help(path.isEmpty ? help : path)
 
             Spacer(minLength: 8)
+
+            if acceptsDrop {
+                Label("drop files to copy", systemImage: "arrow.down.doc")
+                    .labelStyle(.titleAndIcon)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .help(
+                        "drag files onto this row and they are COPIED into "
+                            + "\(title.lowercased()) — the originals are left alone")
+            }
 
             if let chooseTitle {
                 Button(chooseTitle, action: choose)
@@ -546,8 +683,23 @@ private struct TrainingPlanView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-        .help("\(label): \(value)")
+        // The value truncates, so the tooltip carries it in full alongside
+        // what the abbreviation means.
+        .help("\(Self.planMetricHelp[label] ?? label) — \(value)")
     }
+
+    private static let planMetricHelp: [String: String] = [
+        "train": "training examples found, and their estimated token count",
+        "valid": "held-out examples found, and their estimated token count",
+        "kind": "row shape the training files parsed as",
+        "model": "parameter count read from the base model's name",
+        "rank": "recommended LoRA rank",
+        "layers": "recommended number of adapted layers",
+        "batch": "recommended batch size",
+        "iters": "recommended optimizer steps",
+        "scale": "recommended LoRA scale (adapterScale)",
+        "lr": "recommended learning rate",
+    ]
 }
 
 private struct IntSliderField: View {
@@ -582,12 +734,12 @@ private struct IntSliderField: View {
                     set: { value = clamped(Int($0.rounded())) }),
                 in: Double(range.lowerBound) ... Double(range.upperBound),
                 step: Double(step))
-                .help("\(help) Valid range: \(range.lowerBound)-\(range.upperBound).")
+                .help("\(help) Valid range: \(range.lowerBound) to \(range.upperBound).")
             TextField(title, value: $value, format: .number)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 86)
                 .monospacedDigit()
-                .help("Type an exact \(title.lowercased()) value. Values outside \(range.lowerBound)-\(range.upperBound) are clamped.")
+                .help("Type an exact \(title.lowercased()) value. Values outside \(range.lowerBound) to \(range.upperBound) are clamped.")
         }
         .help(help)
         .onChange(of: value) { _, newValue in
@@ -636,17 +788,17 @@ private struct DoubleSliderField: View {
                     set: { value = stepped($0) }),
                 in: range,
                 step: step)
-                .help("\(help) Valid range: \(range.lowerBound)-\(range.upperBound).")
+                .help("\(help) Valid range: \(SliderRangeText.of(range)).")
             TextField(
                 title,
                 value: Binding(
                     get: { value },
-                    set: { value = clamped($0) }),
+                    set: { value = displayRounded(clamped($0)) }),
                 format: .number.precision(.fractionLength(fractionDigits)))
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 86)
                 .monospacedDigit()
-                .help("Type an exact \(title.lowercased()) value. Values outside the valid range are clamped.")
+                .help("Type an exact \(title.lowercased()) value. Values outside \(SliderRangeText.of(range)) are clamped, and the value is kept at the precision shown.")
         }
         .help(help)
         .onChange(of: value) { _, newValue in
@@ -655,9 +807,20 @@ private struct DoubleSliderField: View {
         }
     }
 
+    /// The slider's own notches are `lowerBound + k·step`; rounding to
+    /// multiples of `step` instead put the stored value off the thumb by
+    /// `lowerBound % step` at every notch (audit 2026-09-06).
     private func stepped(_ candidate: Double) -> Double {
-        let rounded = (candidate / step).rounded() * step
+        let offset = candidate - range.lowerBound
+        let rounded = range.lowerBound + (offset / step).rounded() * step
         return clamped(rounded)
+    }
+
+    /// A typed value is stored at the precision the field displays, so the
+    /// number on screen is the number that trains.
+    private func displayRounded(_ candidate: Double) -> Double {
+        let scale = pow(10.0, Double(fractionDigits))
+        return (candidate * scale).rounded() / scale
     }
 
     private func clamped(_ candidate: Double) -> Double {
@@ -665,24 +828,34 @@ private struct DoubleSliderField: View {
     }
 }
 
+/// Range bounds as readable text: `"\(0.000001)-\(0.001)"` printed
+/// "1e-06-0.001", where the range hyphen collides with the exponent's sign
+/// (audit 2026-09-06).
+private enum SliderRangeText {
+    static func of(_ range: ClosedRange<Double>) -> String {
+        "\(number(range.lowerBound)) to \(number(range.upperBound))"
+    }
+
+    static func number(_ value: Double) -> String {
+        value.formatted(.number.precision(.significantDigits(1 ... 4)))
+    }
+}
+
 private struct LogDoubleSliderField: View {
     let title: String
     @Binding var value: Double
     let range: ClosedRange<Double>
-    let fractionDigits: Int
     let help: String
 
     init(
         _ title: String,
         value: Binding<Double>,
         range: ClosedRange<Double>,
-        fractionDigits: Int,
         help: String
     ) {
         self.title = title
         self._value = value
         self.range = range
-        self.fractionDigits = fractionDigits
         self.help = help
     }
 
@@ -696,17 +869,19 @@ private struct LogDoubleSliderField: View {
                     get: { log10(clamped(value)) },
                     set: { value = clamped(pow(10.0, $0)) }),
                 in: log10(range.lowerBound) ... log10(range.upperBound))
-                .help("\(help) Slider is logarithmic over \(range.lowerBound)-\(range.upperBound).")
+                .help("\(help) Slider is logarithmic over \(SliderRangeText.of(range)).")
             TextField(
                 title,
                 value: Binding(
                     get: { value },
                     set: { value = clamped($0) }),
-                format: .number.precision(.fractionLength(fractionDigits)))
+                // Significant digits rather than 7 fraction digits: 1e-5 used
+                // to render "0.0000100".
+                format: .number.precision(.significantDigits(1 ... 3)))
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 104)
                 .monospacedDigit()
-                .help("Type an exact learning rate. Values outside \(range.lowerBound)-\(range.upperBound) are clamped.")
+                .help("Type an exact learning rate. Values outside \(SliderRangeText.of(range)) are clamped.")
         }
         .help(help)
         .onChange(of: value) { _, newValue in
@@ -751,17 +926,20 @@ private struct ServerTrainingPlanSheet: View {
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
             HStack {
                 Spacer()
-                Button("Cancel") {
+                Button("Cancel", role: .cancel) {
                     panel.cancelServerTrainingPlan()
                     dismiss()
                 }
                 .keyboardShortcut(.cancelAction)
+                .help("discard this plan — nothing is scheduled and the uploaded splits are dropped")
                 Button("Confirm & Train") {
                     let panel = panel
                     Task { await panel.confirmServerTrainingPlan() }
                     dismiss()
                 }
+                .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
+                .help("schedule exactly this plan — the confirmation carries its hash, so the plan run is provably the plan shown")
             }
         }
         .padding(20)

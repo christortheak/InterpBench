@@ -6,7 +6,7 @@ import SwiftUI
 /// studies).
 ///
 /// Deliberately WITHOUT a manifest editor (settled scoping decision,
-/// 2026-08-06). Revising a design is a round trip — "Edit design…" mints an
+/// 2026-08-06). Revising a design is a round trip — "Edit design…" creates an
 /// agentless scratch draft, the Studies editor edits it, "Save back to design"
 /// writes it here — and a second editor in this tab would be a parallel
 /// implementation of the Studies one: the first field added to only one of them
@@ -17,8 +17,8 @@ import SwiftUI
 /// What the three buttons here are FOR (2026-08-06 round-trip pass): the
 /// researcher asked why a design cannot be edited or written from scratch. The
 /// answer is that it can — through the one editor. "Edit design…" and "New
-/// Template" are the two ends of that loop made first-class, so the round trip
-/// is a thing you press rather than a procedure you have to know.
+/// Blank Design" are the two ends of that loop made first-class, so the round
+/// trip is a thing you press rather than a procedure you have to know.
 ///
 /// Every rule it renders lives in `ExperimentPanel` / `StudyDesignSummary`
 /// (ExperimentKit, unit-tested). This file decides nothing.
@@ -59,7 +59,7 @@ struct TemplatesPanelView: View {
             let reviewed = try StudyDesignSnapshot(workspaceRoot: context.workspaceRoot, name: name)
             descriptionReview = reviewed
             descriptionDraft = reviewed.template.templateDescription
-        } catch { descriptionMessage = "Could not read the design: \(error.localizedDescription)" }
+        } catch { descriptionMessage = "Couldn't read the design: \(error.localizedDescription)" }
     }
 
     var body: some View {
@@ -102,8 +102,13 @@ struct TemplatesPanelView: View {
                 }
                 renamingTemplate = nil
             }
+            // An empty or unchanged name was accepted and then refused two
+            // sections away, after the alert had closed (UI audit 2026-09-06).
+            .disabled(
+                templateRenameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || templateRenameText == renamingTemplate)
         } message: {
-            Text("Studies already minted from this design keep the OLD name "
+            Text("Studies already created from this design keep the OLD name "
                 + "in their lineage stamp — provenance records what was true "
                 + "when it was written.")
         }
@@ -118,8 +123,8 @@ struct TemplatesPanelView: View {
     /// repeating is usually one that already ran, and a design carries no
     /// lifecycle stamps, so a frozen study saves exactly as a draft does.
     ///
-    /// "New Template" is the blank end of the same loop. It creates an ordinary
-    /// scratch draft and hands it to the Studies editor — there is no
+    /// "New Blank Design" is the blank end of the same loop. It creates an
+    /// ordinary scratch draft and hands it to the Studies editor — there is no
     /// design-shaped blank form, because a design IS a manifest and the manifest
     /// editor is in Studies.
     @ViewBuilder
@@ -132,9 +137,9 @@ struct TemplatesPanelView: View {
                     guard panel.management.newDesignDraft(context: panel.studyCreationContext) != nil else { return }
                     navigate(.studies)
                 } label: {
-                    Label("New Template", systemImage: "plus.square.on.square")
+                    Label("New Blank Design", systemImage: "plus.square.on.square")
                 }
-                .help(Self.newTemplateHelp)
+                .help(Self.newBlankDesignHelp)
             }
             Text(Self.fromScratchPointer)
                 .font(.caption2)
@@ -148,6 +153,10 @@ struct TemplatesPanelView: View {
                         .tag(String?.some(manifest.name))
                 }
             }
+            .help(
+                "the study whose settings become the design — every study in "
+                    + "this workspace at any status, because a design carries "
+                    + "no lifecycle stamps")
             HStack(spacing: 8) {
                 Button {
                     guard let name = panel.management.designs.templateSourceStudyName else { return }
@@ -208,6 +217,7 @@ struct TemplatesPanelView: View {
                             .tag(String?.some(template.name))
                     }
                 }
+                .help(selectedDesignHelp)
             }
         }
     }
@@ -217,6 +227,19 @@ struct TemplatesPanelView: View {
             + template.study.modelID
     }
 
+    /// Picker rows truncate in a 560 pt column, so the hover text carries the
+    /// selected row in full plus what the three parts mean (UI audit
+    /// 2026-09-06).
+    private var selectedDesignHelp: String {
+        let format =
+            "each row reads name · what kind of study it is · the model it "
+            + "pins"
+        guard let selected = panel.management.designs.selectedTemplate else {
+            return format
+        }
+        return "\(templateRowLabel(selected)) — \(format)"
+    }
+
     // MARK: Metadata (the one editable field)
 
     @ViewBuilder
@@ -224,35 +247,48 @@ struct TemplatesPanelView: View {
         _ template: StudyTemplate, panel: ExperimentPanel
     ) -> some View {
         Section(template.name) {
-            if let descriptionMessage { Text(descriptionMessage).font(.caption).foregroundStyle(.orange) }
-            Button("Discard description edits and reload") { syncDescriptionDraft(force: true) }
+            if let descriptionMessage {
+                Label(descriptionMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
             TextField(
                 "what this design is for", text: $descriptionDraft,
                 axis: .vertical
             )
             .lineLimit(1 ... 3)
-            .onSubmit {
-                guard let reviewed = descriptionReview, reviewed.template.name == template.name else {
-                    descriptionMessage = "Reload and review this design before saving its description."
-                    return
-                }
-                if let saved = panel.management.updateTemplateDescription(reviewed: reviewed, to: descriptionDraft) {
-                    descriptionReview = saved
-                    descriptionMessage = nil
-                } else {
-                    descriptionMessage = "The description was not saved. Your edits are retained; review the notice and reload the saved design before retrying."
-                }
-            }
+            .onSubmit { saveDescription(template, panel: panel) }
             .help(
-                "a note for the researcher. Excluded from the design's content "
-                    + "hash, so editing it can never make a minted study "
-                    + "diverge — which is why it is the one field this library "
+                "a note for the researcher — excluded from the design's content "
+                    + "hash, so editing it can never make a created study "
+                    + "diverge, which is why it is the one field this library "
                     + "lets you change")
-            Text("press return to save")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            // Return saves, but a vertical-axis field reads as a newline
+            // field, and the discard button used to sit ABOVE the thing it
+            // discards (UI audit 2026-09-06).
+            HStack(spacing: 8) {
+                Button("Save Description") { saveDescription(template, panel: panel) }
+                    .disabled(!descriptionHasChange)
+                    .help(
+                        descriptionHasChange
+                            ? "writes the description onto this design — the "
+                                + "same thing pressing Return in the field does"
+                            : "nothing to save — the field matches the saved "
+                                + "description")
+                Button("Discard description edits and reload") { syncDescriptionDraft(force: true) }
+                    .disabled(!descriptionHasChange)
+                    .help(
+                        "re-reads the design from disk and replaces the field "
+                            + "above; no design file is changed")
+                Text("or press return in the field")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
             LabeledContent("Created", value: shortDate(template.createdAt))
                 .font(.caption)
+                .help("when this design was first written into the library")
             if let parent = template.parentTemplate {
                 LabeledContent("Diverged from", value: parent)
                     .font(.caption)
@@ -263,9 +299,46 @@ struct TemplatesPanelView: View {
         }
     }
 
+    /// Whether the field differs from the design as last read.
+    private var descriptionHasChange: Bool {
+        guard let reviewed = descriptionReview else { return false }
+        return descriptionDraft != reviewed.template.templateDescription
+    }
+
+    /// The one write this library performs. Shared by Return and the button so
+    /// the two can never diverge.
+    private func saveDescription(_ template: StudyTemplate, panel: ExperimentPanel) {
+        guard let reviewed = descriptionReview, reviewed.template.name == template.name else {
+            descriptionMessage = "Reload this design, then save the description again."
+            return
+        }
+        if let saved = panel.management.updateTemplateDescription(reviewed: reviewed, to: descriptionDraft) {
+            descriptionReview = saved
+            descriptionMessage = nil
+        } else {
+            descriptionMessage =
+                "The description was not saved. Your edits are kept here; "
+                + "reload the saved design and try again."
+        }
+    }
+
+    /// Localized, in this machine's time zone — the ISO string was sliced by
+    /// hand and shown as if it were local time (UI audit 2026-09-06).
     private func shortDate(_ iso: String) -> String {
         guard !iso.isEmpty else { return "—" }
-        return String(iso.prefix(19)).replacingOccurrences(of: "T", with: " ")
+        guard let date = Self.parseTimestamp(iso) else {
+            return String(iso.prefix(19)).replacingOccurrences(of: "T", with: " ")
+        }
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    /// Both spellings the stores write (with and without fractional seconds).
+    private static func parseTimestamp(_ iso: String) -> Date? {
+        let plain = ISO8601DateFormatter()
+        if let date = plain.date(from: iso) { return date }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: iso)
     }
 
     // MARK: The read-only design summary
@@ -286,7 +359,7 @@ struct TemplatesPanelView: View {
                         .multilineTextAlignment(.leading)
                 }
             }
-            Text("read-only here. To revise it: Edit design… mints a scratch "
+            Text("read-only here. To revise it: Edit design… creates a scratch "
                 + "draft, you edit that draft in the Studies editor, and Save "
                 + "back to design writes it onto this design in place.")
                 .font(.caption2)
@@ -314,7 +387,7 @@ struct TemplatesPanelView: View {
                 .help(
                     "opens the Studies tab's new-studies table on this design: "
                         + "pick the cast, see what the batch will cost, then "
-                        + "mint one ordinary draft study per casting")
+                        + "create one ordinary draft study per casting")
                 Button("Edit design…") {
                     // The round trip's first leg. The draft is ORDINARY — full
                     // editor, no special mode — and the second leg is the
@@ -327,7 +400,16 @@ struct TemplatesPanelView: View {
                     templateRenameText = template.name
                     renamingTemplate = template.name
                 }
+                .help(
+                    "renames templates/<name>/ — studies already created from "
+                        + "this design keep the OLD name in their lineage "
+                        + "stamp, because provenance records what was true "
+                        + "when it was written")
                 Button("Delete", role: .destructive) { confirmDeleteTemplate = true }
+                    .help(
+                        "removes this design from the library after a "
+                            + "confirmation — studies created from it are "
+                            + "ordinary drafts and are untouched")
                     .confirmationDialog(
                         "Delete design '\(template.name)'?",
                         isPresented: $confirmDeleteTemplate,
@@ -338,7 +420,7 @@ struct TemplatesPanelView: View {
                         }
                     } message: {
                         Text("Removes templates/\(template.name)/. Studies "
-                            + "already minted from it are ordinary drafts and "
+                            + "already created from it are ordinary drafts and "
                             + "are untouched — they keep the design's name in "
                             + "their lineage stamp.")
                     }
@@ -353,25 +435,25 @@ struct TemplatesPanelView: View {
         + "measurement setting, no agents. Offered at any status — a design "
         + "carries no lifecycle stamps, so a frozen study saves exactly as a "
         + "draft does. An unchanged instance of an existing design selects "
-        + "that design rather than minting a near-duplicate."
+        + "that design rather than creating a near-duplicate."
 
     private static let editDesignHelp =
-        "mints an agentless scratch draft of this design (named "
+        "creates an agentless scratch draft of this design (named "
         + "<design>-edit) and opens it in the Studies editor — the ONE manifest "
         + "editor. Change anything there, then use Save back to design to "
         + "update this design in place. The draft is an ordinary study: it can "
         + "be kept, run, frozen or deleted like any other."
 
-    private static let newTemplateHelp =
+    private static let newBlankDesignHelp =
         "creates a blank scratch draft and opens it in the Studies editor. "
         + "Author the design there, then use Save as new design to put it in "
-        + "this library."
+        + "this library"
 
     private static let fromScratchPointer =
         "There is no blank design form: a design IS a study manifest, so a new "
         + "one is authored in the Studies editor and saved back here. New "
-        + "Template starts that draft; Save as new design (in Studies) or New "
-        + "from Study below completes the loop."
+        + "Blank Design starts that draft; Save as new design (in Studies) or "
+        + "New from Study below completes the loop."
 
     private static let designVsDuplicate =
         "Saving a study as a design strips its agents and re-derives the "

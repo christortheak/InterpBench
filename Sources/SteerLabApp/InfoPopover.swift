@@ -23,13 +23,25 @@ struct InfoButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Explain")
+        // The hover layer is the secondary one, but the button that OPENS
+        // the explanation had none of its own (2026-09-06 audit).
+        .help("explain this in full — opens a few paragraphs of plain-language help")
+        // Hit target: a caption-scale glyph is ~14 pt on its own.
+        .frame(minWidth: 20, minHeight: 20)
+        .contentShape(Rectangle())
         .popover(isPresented: $isPresented) {
-            Text(text)
-                .font(.caption)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 380)
-                .padding(12)
-                .textSelection(.enabled)
+            // The longest corpus entries run four or five paragraphs; at
+            // 380 pt of caption text that is taller than a laptop screen,
+            // and a popover does not scroll on its own.
+            ScrollView {
+                Text(text)
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 380, alignment: .leading)
+                    .padding(12)
+                    .textSelection(.enabled)
+            }
+            .frame(maxWidth: 404, maxHeight: 460)
         }
     }
 }
@@ -146,7 +158,7 @@ enum StudyInfo {
     static let conditionsArms = """
         The arms of the study — what is actually compared. An agent \
         comparison runs the baseline model against saved agents (steered \
-        or fine-tuned variants). A multi-agent study runs a scenario. A \
+        or adapter-trained). A multi-agent study runs a scenario. A \
         concept study's confirm phase declares a perturbation policy \
         around a promoted agent's operating point and expands it into \
         ordinary conditions.
@@ -239,7 +251,8 @@ enum StudyInfo {
         as drift instead of silently changing the study — re-pin after \
         deliberate edits. 'Create from template' scaffolds a starting \
         file with example rows; the row's buttons view it, reveal it in \
-        Finder, or open it in your editor.
+        Finder, or edit it in the app (the editor sheet can hand it to \
+        your default app too).
         """
 
     static let evaluationOutcome = """
@@ -279,9 +292,10 @@ enum StudyInfo {
         randomized order, without knowing which is which, and scores the \
         pair against the pinned rubric. Judges are PINNED identities — \
         name, kind, and model (plus serving provider for OpenRouter) are \
-        hashed into the study — and a frozen judged study needs at least \
-        2 so the report can carry agreement statistics; one judge's \
-        quirks are not evidence.
+        hashed into the study — and a judged study freezes with at least \
+        one. A single-coder design is legal and freezes with an advisory, \
+        because no inter-rater agreement can exist for its codings; two or \
+        more let the report carry agreement statistics.
 
         Three judge kinds. 'claude' and 'openrouter' are API calls and \
         need keys (rows say so when the key is missing). 'local' runs on \

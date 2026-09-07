@@ -31,7 +31,7 @@ enum StudyControlCopy {
         + "studies pin each agent (variant artifact) by artifact hash; concept-vector "
         + "studies also require a matching validate run. Settings must be "
         + "frozen before behavior is measured — iterate afterwards by duplicating. "
-        + "CLI: freeze --force skips validation gates"
+        + "steerlab-cli freeze --force skips validation gates"
 
     static let remoteFreezeHelp =
         "ONE-WAY, executed by the ACTIVE SERVER: the server verifies every "
@@ -104,6 +104,24 @@ enum StudyControlCopy {
         + "\"device default\" to let the substrate choose, which is what "
         + "every study did before this pin existed. Honored by the server; "
         + "the Mac validates it here so a bad value cannot reach the cluster."
+
+    /// The Seats section introduces more new words than any other section on
+    /// the page and had no ⓘ at all (UI audit 2026-09-06). One glossary, used
+    /// both as the section's ⓘ text and as a visible first line.
+    static let seatsGlossary =
+        "A seat is a role the scenario declares (proposer, reviewer, …). "
+        + "Casting is who fills each seat: a saved agent, or 'baseline' — the "
+        + "study's own model with no intervention, which is a real condition, "
+        + "not an empty seat. The cast panel is one arm of the study; with "
+        + "'Include stripped baseline arm' on, the same panel with every "
+        + "intervention removed is the other. Save Casting compiles the "
+        + "scenario plus the casting into the bound scenario the run executes."
+
+    /// One line of the same glossary, rendered in the section itself — the ⓘ
+    /// is for the whole story, this is for the words in the rows.
+    static let seatsGlossaryLine =
+        "seat = a role in the scenario · casting = which agent (or the "
+        + "baseline model) fills each seat · the cast panel is one arm"
 
     static let seatPickerHelp =
         "the agent that speaks for this role. 'baseline' is the study's own "

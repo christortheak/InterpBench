@@ -135,6 +135,7 @@ public final class StudyManagementController {
 
     public func create(context: StudyCreationContext?) {
         guard let context else { return }
+        clearFormError(.createStudy)
         do {
             // Workspace-scoped fallback: a server-target draft must never be
             // silently pinned to a local MLX id the server can't load.
@@ -177,15 +178,22 @@ public final class StudyManagementController {
             draft.newRevision = ""
             refresh()
             selectedName = manifest.name
+            // A study this owner just wrote IS reviewed: without starting the
+            // review here, `selectedDraftNeedsReload` answers true the moment
+            // the draft lands and a brand-new study opens under the
+            // "the saved study changed" warning (UI audit 2026-09-06,
+            // headline 2). The same reason applies to rename and duplicate.
+            beginAuthoringReview(named: manifest.name)
             note(
                 "created draft protocol '\(manifest.name)' (model \(manifest.modelID)"
                     + (manifest.modelRevision.map { ", revision \($0.prefix(12))…)" } ?? ")"),
                 severity: .success)
         } catch {
-            note(
+            refuse(
+                .createStudy,
                 "Couldn't create the draft — check the name isn't already in "
-                    + "use and the workspace is writable. Details: \(error)",
-                severity: .error)
+                    + "use and the workspace is writable. Details: "
+                    + error.localizedDescription)
         }
     }
 
@@ -252,6 +260,10 @@ public final class StudyManagementController {
         guard !messages.isEmpty else { return true }
         refresh()
         if selectedName == name { selectedName = current }
+        // The renamed study is the one this owner just wrote; a label-only
+        // rename leaves the selection unchanged, so nothing else would start
+        // the review and the editor would claim the study drifted.
+        beginAuthoringReview(named: current)
         note(messages.joined(separator: " — "), severity: .success)
         return true
     }
@@ -534,6 +546,7 @@ public final class StudyManagementController {
             }
             refresh()
             selectedName = copy.name
+            beginAuthoringReview(named: copy.name)
             note("created draft '\(copy.name)'", severity: .success)
         } catch {
             note(

@@ -20,6 +20,9 @@ struct DiscriminantControlsSection: View {
 
     private var isDraft: Bool { manifest.status == .draft }
 
+    /// The control whose "Remove" was clicked, awaiting confirmation.
+    @State private var controlPendingRemoval: String?
+
     var body: some View {
         Section("Discriminant controls") {
             explanation
@@ -32,6 +35,24 @@ struct DiscriminantControlsSection: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             }
+        }
+        .confirmationDialog(
+            "Remove this discriminant control?",
+            isPresented: Binding(
+                get: { controlPendingRemoval != nil },
+                set: { if !$0 { controlPendingRemoval = nil } }),
+            titleVisibility: .visible,
+            presenting: controlPendingRemoval
+        ) { concept in
+            Button("Remove \(concept)", role: .destructive) {
+                panel.removeValidationControl(concept)
+                controlPendingRemoval = nil
+            }
+            Button("Cancel", role: .cancel) { controlPendingRemoval = nil }
+        } message: { concept in
+            Text("The draft stops bounding its concepts against \(concept), and "
+                + "the stimulus hash pinned for it is dropped. You can declare "
+                + "it again while the study is a draft.")
         }
     }
 
@@ -67,10 +88,15 @@ struct DiscriminantControlsSection: View {
                             .foregroundStyle(.secondary)
                         if isDraft {
                             Button("Remove") {
-                                panel.removeValidationControl(control.concept)
+                                controlPendingRemoval = control.concept
                             }
                             .buttonStyle(.link)
                             .font(.caption2)
+                            .help(
+                                "undeclare \(control.concept) as a control — "
+                                    + "asks first; the study then measures its "
+                                    + "concepts against nothing external at "
+                                    + "this position")
                         }
                     }
                 }
@@ -79,7 +105,9 @@ struct DiscriminantControlsSection: View {
     }
 
     private func controlDetail(_ control: ExperimentManifest.ValidationControl) -> String {
-        var parts = [control.options.method.rawValue]
+        // The researcher-facing name, never the artifact-compatibility raw
+        // value ("lat" reads as RepE's LAT and is not one).
+        var parts = [control.options.method.label]
         parts.append("stimuli \(control.stimulusSetHash.prefix(8))…")
         if let revision = control.modelRevision {
             parts.append("rev \(revision.prefix(8))…")
@@ -100,6 +128,9 @@ struct DiscriminantControlsSection: View {
                 Text("select…").tag("")
                 ForEach(candidates, id: \.self) { Text($0).tag($0) }
             }
+            .help(
+                "the direction this study's concepts must NOT collapse into — "
+                    + "a workspace concept that is not one of this study's own")
             Picker("Extraction method", selection: $draft.controlMethod) {
                 // Recipe methods only: a control re-derives its vector, so
                 // pinnedArtifact/optvec (bytes, not recipes) can't be one.
@@ -107,15 +138,29 @@ struct DiscriminantControlsSection: View {
                     ExtractionMethod.allCases.filter(\.isRecipeMethod),
                     id: \.self
                 ) { method in
-                    Text(method.rawValue).tag(method)
+                    // `.label`, never `rawValue`: the raw values are
+                    // artifact-compatibility constants ("lat"), not names.
+                    Text(methodTitle(method)).tag(method)
                 }
             }
             .help(
                 "the control's OWN recipe — a control authored for grand-mean "
                     + "extraction read by a paired method is measured at a "
                     + "position it was never authored for")
+            // The default is a choice with consequences, so it is named rather
+            // than left as whatever the picker happened to open on.
+            Text("defaults to \(ExtractionMethod.meanDifference.label) — set it "
+                + "to the recipe this control's own stimuli were authored for, "
+                + "which need not be this study's recipe")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             Button("Declare control") { panel.addValidationControl() }
                 .disabled(panel.draft.controlConcept.isEmpty)
+                .help(
+                    "record the picked concept as a discriminant control on "
+                        + "this draft, pinning its stimulus hash — declarable "
+                        + "while the study is a draft")
             Text("the stimulus hash is read from the concept's files and "
                 + "pinned automatically")
                 .font(.caption2)
@@ -123,6 +168,11 @@ struct DiscriminantControlsSection: View {
         }
     }
 
+    /// Picker item text: the method's name, with the picker's own default
+    /// marked so it cannot be accepted by inattention.
+    private func methodTitle(_ method: ExtractionMethod) -> String {
+        method == .meanDifference ? "\(method.label) (default)" : method.label
+    }
 }
 
 /// The outcome-instrument scope declaration, its OWN section (2026-08-03
@@ -157,13 +207,19 @@ struct InstrumentScopeSection: View {
                 Button("Clear scope") { panel.declareOutcomeInstrumentScope([]) }
                     .buttonStyle(.link)
                     .font(.caption2)
+                    .help(
+                        "undeclare the scope — answer-token instruments go "
+                            + "back to reading every response format in the "
+                            + "file, and the pinned row set is dropped")
             }
         } else if formats.count > 1 {
             // Only worth offering when the file is genuinely mixed.
             Text("this file mixes response formats: "
                 + formats.map { "\($0.format) (\($0.count))" }
                     .joined(separator: ", ")
-                + ". An answer-token instrument can only read `label` rows.")
+                // Plain quotes: this string is `+`-concatenated, so SwiftUI
+                // renders it verbatim and backticks would show as backticks.
+                + ". An answer-token instrument can only read 'label' rows.")
                 .font(.caption)
                 .fixedSize(horizontal: false, vertical: true)
             if isDraft {

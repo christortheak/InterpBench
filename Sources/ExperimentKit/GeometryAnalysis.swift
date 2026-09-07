@@ -45,6 +45,10 @@ public enum GeometryAnalysisError: Error, CustomStringConvertible {
             "vector dimensions do not match for \(label)"
         }
     }
+
+    // `localizedDescription` already yields this sentence: the retroactive
+    // `LocalizedError` conformance lives with the other 20 in
+    // `ErrorMessages.swift`, deliberately collected in one checkable place.
 }
 
 public enum GeometryAnalysis {

@@ -34,7 +34,9 @@ struct MaintenanceWindowsEditor: View {
                 .foregroundStyle(.secondary)
 
             if rows.isEmpty {
-                Text("No windows declared.")
+                // Same phrase as the Home dashboard's Cluster health card,
+                // in the same lowercase-fragment style.
+                Text("no windows declared — add one below")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -56,6 +58,8 @@ struct MaintenanceWindowsEditor: View {
                     Label("Add window", systemImage: "plus")
                 }
                 .controlSize(.small)
+                .help("adds a row starting tomorrow, four hours long — edit its "
+                    + "times, then Save to send the whole list to the server")
                 Spacer()
             }
 
@@ -74,13 +78,23 @@ struct MaintenanceWindowsEditor: View {
             }
 
             HStack {
-                Button("Cancel") { dismiss() }
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .help("closes without changing the server's window list")
                 Spacer()
                 Button(isSaving ? "Saving…" : "Save") {
                     Task { await save() }
                 }
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
                 .disabled(isSaving || localValidationProblem != nil)
+                .help(
+                    localValidationProblem == nil
+                        ? "replaces the server's whole window list with these "
+                            + "rows — submissions whose walltime would cross a "
+                            + "window are refused from then on"
+                        : "fix the window flagged above first — end must be "
+                            + "after start")
             }
         }
         .padding(16)
@@ -95,21 +109,30 @@ struct MaintenanceWindowsEditor: View {
                 "start", selection: row.start,
                 displayedComponents: [.date, .hourAndMinute])
                 .labelsHidden()
+                .accessibilityLabel("Window start")
+                .help("when the window opens — your local time, stored in UTC")
             Text("→").foregroundStyle(.secondary)
             DatePicker(
                 "end", selection: row.end,
                 displayedComponents: [.date, .hourAndMinute])
                 .labelsHidden()
+                .accessibilityLabel("Window end")
+                .help("when the window closes — must be after the start")
             TextField("label (optional)", text: row.label)
                 .textFieldStyle(.roundedBorder)
                 .frame(minWidth: 140)
+                .accessibilityLabel("Window label")
+                .help("what this window is (e.g. quarterly filesystem "
+                    + "maintenance) — shown wherever the window is quoted")
             Button(role: .destructive) {
                 rows.removeAll { $0.id == row.wrappedValue.id }
             } label: {
                 Image(systemName: "trash")
             }
             .buttonStyle(.borderless)
-            .help("remove this window")
+            .accessibilityLabel("Remove window")
+            .help("removes this window from the list — Save sends the "
+                + "shortened list to the server")
         }
     }
 
@@ -129,7 +152,7 @@ struct MaintenanceWindowsEditor: View {
     }
 
     private func save() async {
-        guard localValidationProblem == nil else { return }
+        guard !isSaving, localValidationProblem == nil else { return }
         cluster.loadStoredToken()
         guard let client = cluster.client else {
             errorLine = "invalid server URL"
@@ -150,7 +173,10 @@ struct MaintenanceWindowsEditor: View {
             onSaved(canonical)
             dismiss()
         } catch {
-            errorLine = "\(error)"
+            // Server validation messages, verbatim — `ClientError` is a
+            // LocalizedError, and any other thrown error (URLError, decoding)
+            // reads as a sentence here instead of a raw Swift dump.
+            errorLine = error.localizedDescription
         }
     }
 }

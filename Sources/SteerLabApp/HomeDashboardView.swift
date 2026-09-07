@@ -1,4 +1,5 @@
 import ExperimentKit
+import Foundation
 import SwiftUI
 
 /// The launch screen: a compact dashboard of REAL workspace state (no
@@ -11,6 +12,12 @@ struct HomeDashboardView: View {
     let navigate: (WorkbenchSection) -> Void
     /// Lands on Agents → Optimizations (declared sweep runs).
     var openOptimizations: () -> Void = {}
+    /// Lands on Data → Adapter Training. A plain `navigate(.data)` lands on
+    /// whichever Data tool was last shown, so a button named after a tool
+    /// needs the tool-setting route (2026-09-06 audit).
+    var openAdapterTraining: () -> Void = {}
+    /// Opens ONE agent: selects it, then lands on Agents → Library.
+    var openAgent: (ModelVariantRecord.ID) -> Void = { _ in }
 
     var body: some View {
         Form {
@@ -27,18 +34,16 @@ struct HomeDashboardView: View {
             agentsSection
             jobsSection
             studiesSection
-            nextActionsSection
         }
         .formStyle(.grouped)
-        .onAppear {
-            service.experiments.refresh()
-        }
-        // The agent-library scan is IO that nothing on the appearance path
-        // needs before the dashboard draws: same rule as the Agents tab.
-        // `.task` runs after the first draw, the scan runs off the main
-        // actor (latest-wins inside the panel), and the previous visit's
-        // rows stay visible while it lands.
+        // Both scans are IO that nothing on the appearance path needs before
+        // the dashboard draws. `.task` runs after the first draw, the agent
+        // scan runs off the main actor (latest-wins inside the panel), and
+        // the previous visit's rows stay visible while they land — the study
+        // refresh used to run synchronously in `.onAppear`, ahead of the
+        // first frame.
         .task {
+            service.experiments.refresh()
             service.fineTuning.refreshAgentLibraryAsync()
         }
     }
@@ -54,6 +59,8 @@ struct HomeDashboardView: View {
                 .textSelection(.enabled)
                 .lineLimit(1)
                 .truncationMode(.middle)
+                // Middle-truncated: the whole path has to stay reachable.
+                .help(workspace.rootURL.path)
             if workspace.isLegacyRepoRoot {
                 Label(
                     "running against the code checkout (dev fallback) — create a "
@@ -79,10 +86,15 @@ struct HomeDashboardView: View {
                 LabeledContent(
                     "Connection", value: service.cluster.status ?? "not connected")
             } else {
-                LabeledContent("Connection", value: "in-process MLX")
+                // One spelling for the substrate everywhere ("Local (MLX)",
+                // as `substrateLabel` and `WorkspaceCompute.label` say it).
+                LabeledContent("Connection", value: "in this app — no server")
             }
             Button("Open Compute") { navigate(.compute) }
                 .controlSize(.small)
+                .help(
+                    "the Compute section: server connections, jobs, logs, and "
+                        + "model installs")
         }
     }
 
@@ -101,9 +113,12 @@ struct HomeDashboardView: View {
             if let loaded = loadedModelLine {
                 LabeledContent("Loaded", value: loaded)
             } else {
+                // Name the compute target the way the Compute card above
+                // names it — the host:port spelling read as a third place
+                // (2026-09-06 audit, headline 18).
                 Text(
                     isServerWorkspace
-                        ? "No model is loaded on \(service.cluster.serverHostLabel)."
+                        ? "No model is loaded on \(service.cluster.substrateLabel)."
                         : "No model loaded.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -137,10 +152,12 @@ struct HomeDashboardView: View {
                         + "hand, or by optimizing a concept vector.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                HStack(spacing: 8) {
-                    Button("Open Agents") { navigate(.agents) }
-                    Button("Optimize") { openOptimizations() }
-                    Button("Train Adapter") { navigate(.data) }
+                // Three routes at Home's 420 pt floor: `ViewThatFits` keeps
+                // them on one line where there is room and stacks them into
+                // two rows where there is not, instead of clipping.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { agentEmptyStateButtons }
+                    VStack(alignment: .leading, spacing: 6) { agentEmptyStateButtons }
                 }
                 .controlSize(.small)
             } else {
@@ -149,11 +166,37 @@ struct HomeDashboardView: View {
                 }
                 Button("Open Agent Library") { navigate(.agents) }
                     .controlSize(.small)
+                    .help("Agents → Library: every saved agent, with its readiness chips")
             }
         }
     }
 
+    @ViewBuilder
+    private var agentEmptyStateButtons: some View {
+        Button("Open Agents") { navigate(.agents) }
+            .help("the Agents section — library, New Agent, and optimization runs")
+        Button("Optimize") { openOptimizations() }
+            .help(
+                "Agents → Optimizations: declare a run that searches layers "
+                    + "and strengths for the best steering point")
+        Button("Train Adapter") { openAdapterTraining() }
+            .help("Data → Adapter Training: fine-tune a LoRA adapter from a dataset")
+    }
+
+    /// Context-carrying, like the study rows below: an agent row IS a link to
+    /// that agent — it selects it and opens Agents → Library, where the
+    /// browser can show the selection.
     private func agentRow(_ record: ModelVariantRecord) -> some View {
+        Button {
+            openAgent(record.id)
+        } label: {
+            agentRowLabel(record)
+        }
+        .buttonStyle(.plain)
+        .help("open '\(record.artifact.name)' in Agents → Library")
+    }
+
+    private func agentRowLabel(_ record: ModelVariantRecord) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(record.artifact.name)
@@ -168,6 +211,7 @@ struct HomeDashboardView: View {
                 .font(.caption2.monospaced())
                 .foregroundStyle(.secondary)
         }
+        .contentShape(Rectangle())
     }
 
     // MARK: Jobs
@@ -234,8 +278,9 @@ struct HomeDashboardView: View {
                 LabeledContent("Server jobs (last check)", value: badge)
                     .font(.caption)
             }
-            Button("Open Compute") { navigate(.compute) }
-                .controlSize(.small)
+            // No second "Open Compute" here: the Compute card above already
+            // carries it, and Home showed the same button three times
+            // (2026-09-06 audit, headline 23).
         }
     }
 
@@ -248,17 +293,23 @@ struct HomeDashboardView: View {
     private var studiesSection: some View {
         Section("Recent studies") {
             if recentStudies.isEmpty {
-                Text("No study protocols in this workspace yet.")
+                Text(
+                    "No study protocols in this workspace yet — the Studies "
+                        + "section is where the first draft is created.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Button("Create study") { navigate(.studies) }
+                // "Create study" created nothing; it navigated. One honest
+                // label for one action (2026-09-06 audit, headline 23).
+                Button("Open Studies") { navigate(.studies) }
                     .controlSize(.small)
+                    .help("the Studies section, where a draft study is created and edited")
             } else {
                 ForEach(recentStudies, id: \.name) { manifest in
                     studyRow(manifest)
                 }
                 Button("Open Studies") { navigate(.studies) }
                     .controlSize(.small)
+                    .help("the Studies section: draft, freeze, run, and import evidence")
             }
         }
     }
@@ -318,24 +369,27 @@ struct HomeDashboardView: View {
         }
     }
 
-    // MARK: Next actions
+    // MARK: Dates
 
-    private var nextActionsSection: some View {
-        Section("Next actions") {
-            HStack(spacing: 8) {
-                Button("Open Playground") { navigate(.playground) }
-                Button("Optimize") { openOptimizations() }
-                    .help("Agents → Optimizations: declared sweep runs and Create Agent")
-                Button("Create study") { navigate(.studies) }
-                Button("Open Compute") { navigate(.compute) }
-            }
-            .controlSize(.small)
-        }
-    }
+    // A "Next actions" section used to sit here, repeating Open Playground,
+    // Optimize, Create study and Open Compute — four buttons that every card
+    // above already offers, three of them without help, in one non-wrapping
+    // row at Home's 420 pt floor. Each action now has exactly one home, in
+    // the card it belongs to (2026-09-06 audit, headline 23).
 
+    /// Artifact timestamps are ISO-8601 UTC, in the two spellings the
+    /// producing stores emit (with and without fractional seconds). Render
+    /// them in the researcher's own locale and time zone instead of slicing
+    /// the string by hand, which showed UTC without saying so; an
+    /// unparseable stamp falls back to its own text, never to a wrong date.
+    /// Formatters are built per call — `ISO8601DateFormatter` is not
+    /// `Sendable`, and this runs at most eight times per dashboard draw.
     private func shortDate(_ iso: String) -> String {
-        let trimmed = iso.replacingOccurrences(of: "T", with: " ")
-            .replacingOccurrences(of: "Z", with: "")
-        return String(trimmed.prefix(min(16, trimmed.count)))
+        guard !iso.isEmpty else { return "—" }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let parsed = fractional.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
+        guard let parsed else { return iso }
+        return parsed.formatted(date: .abbreviated, time: .shortened)
     }
 }

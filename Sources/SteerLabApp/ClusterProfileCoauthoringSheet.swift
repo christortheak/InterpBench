@@ -19,20 +19,18 @@ struct ClusterProfileCoauthoringSheet: View {
             Text("Give your agent the cluster documentation and this prompt. It will return a profile with sources and questions about missing facts. Credentials stay in the Keychain.")
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
-                Button("Copy agent and reviewer prompts") {
-                    do {
-                        let guide = try ClusterProfileCoauthoring.guide()
-                        let encoder = JSONEncoder()
-                        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-                        let example = String(decoding: try encoder.encode(guide.draftExample), as: UTF8.self)
-                        let packet = guide.authorPrompt + "\n\nIndependent reviewer:\n" + guide.reviewerPrompt
-                            + "\n\nCompanion format (incomplete example):\n" + example
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(packet, forType: .string)
-                        message = "Prompts copied. Share them with your agent alongside the documentation."
-                    } catch { message = error.localizedDescription }
+                CopyButton(
+                    help: "copies the authoring prompt, the independent "
+                        + "reviewer's prompt, and an example of the JSON shape "
+                        + "the agent must answer with",
+                    text: { promptPacket() }
+                ) {
+                    Text("Copy agent and reviewer prompts")
                 }
                 Button("Review agent draft…") { showingImporter = true }
+                    .help("reads the JSON your agent produced and checks its "
+                        + "declarations and source references — it never "
+                        + "contacts the cluster")
             }
             if let message { Text(message).font(.caption).textSelection(.enabled) }
             ScrollView {
@@ -51,6 +49,8 @@ struct ClusterProfileCoauthoringSheet: View {
                         }
                         Text(SiteEditorModel.topologyExplanation(review.profile.topology)).font(.caption)
                         DisclosureGroup("Sources and declarations") {
+                            // Same ordering the reviewer emitted; offsets as
+                            // ids because two advisories may read alike.
                             ForEach(Array(review.sources.enumerated()), id: \.offset) { _, source in
                                 Text(source.reference).font(.caption)
                             }
@@ -62,8 +62,15 @@ struct ClusterProfileCoauthoringSheet: View {
                                 }
                             }
                         }
-                        ForEach(review.advisories, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary) }
-                        ForEach(review.blockers, id: \.self) { Text($0).foregroundStyle(.orange) }
+                        .help("every fact the draft claims, with the document "
+                            + "and locator it was taken from — read these "
+                            + "against the site's own documentation")
+                        ForEach(Array(review.advisories.enumerated()), id: \.offset) { _, advisory in
+                            Text(advisory).font(.caption).foregroundStyle(.secondary)
+                        }
+                        ForEach(Array(review.blockers.enumerated()), id: \.offset) { _, blocker in
+                            Text(blocker).foregroundStyle(.orange)
+                        }
                         ForEach(Array(review.questions.enumerated()), id: \.offset) { _, question in
                             Text(question.question).foregroundStyle(.orange)
                         }
@@ -73,8 +80,16 @@ struct ClusterProfileCoauthoringSheet: View {
                 }
             }
             HStack {
+                if let reason = importDisabledReason {
+                    Text(reason)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Spacer()
-                Button("Close") { dismiss() }
+                Button("Close", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .help("closes without adding anything to your Sites registry")
                 Button("Import reviewed profile") {
                     guard let review, let reviewedData, review.readyForImport else { return }
                     do {
@@ -84,7 +99,13 @@ struct ClusterProfileCoauthoringSheet: View {
                         dismiss()
                     } catch { message = error.localizedDescription }
                 }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
                 .disabled(review?.readyForImport != true)
+                .help(importDisabledReason
+                    ?? "copies the reviewed profile into your Sites registry "
+                        + "and selects it — the same checks the command line "
+                        + "runs, against the draft's own checksum")
             }
         }
         .padding(20)
@@ -103,6 +124,40 @@ struct ClusterProfileCoauthoringSheet: View {
                 reviewedData = nil
                 message = "Could not review the draft: \(error.localizedDescription)"
             }
+        }
+    }
+
+    /// Why "Import reviewed profile" cannot be pressed yet — visible beside
+    /// the button, not only in its tooltip.
+    private var importDisabledReason: String? {
+        guard let review else {
+            return "no draft reviewed yet — copy the prompts, then open your "
+                + "agent's JSON with Review agent draft…"
+        }
+        guard review.readyForImport else {
+            return "the review left questions or blockers above — answer them "
+                + "with your agent and review the corrected draft"
+        }
+        return nil
+    }
+
+    /// The packet the agent needs, or nil when it could not be built (the
+    /// reason lands in the sheet's message line).
+    private func promptPacket() -> String? {
+        do {
+            let guide = try ClusterProfileCoauthoring.guide()
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let example = String(
+                decoding: try encoder.encode(guide.draftExample), as: UTF8.self)
+            message = "Share the copied prompts with your agent alongside the "
+                + "documentation."
+            return guide.authorPrompt + "\n\nIndependent reviewer:\n"
+                + guide.reviewerPrompt
+                + "\n\nCompanion format (incomplete example):\n" + example
+        } catch {
+            message = "Could not build the prompts: \(error.localizedDescription)"
+            return nil
         }
     }
 }

@@ -36,23 +36,56 @@ struct ValidateStudyButtonRow: View {
             dryRun: false)
     }
 
+    /// In flight on EITHER substrate (audit headline 5): the local
+    /// controller's flag never covered the server routes, so the label
+    /// stayed "Validate Study" and a second click submitted a second job.
+    private var isValidating: Bool {
+        panel.localJobs.isValidating || panel.isValidatingOnServer
+    }
+
     private var disabled: Bool {
-        panel.localJobs.isValidating || panel.localJobs.isRunning || panel.localJobs.isExtracting
+        isValidating || panel.localJobs.isRunning || panel.localJobs.isExtracting
             || !panel.violations.isEmpty
             || missingOnServer
     }
 
+    /// Why the button is unavailable, in one line beside it — the idiom
+    /// `ExperimentPanel.extractDisabledReason` already uses for the
+    /// neighbouring Extract button. Busy states say so in the label, and the
+    /// residency case has its own callout below, so both stay nil here.
+    private var disabledReason: String? {
+        guard !isValidating, !missingOnServer else { return nil }
+        if panel.localJobs.isRunning {
+            return "a study run is in progress — validation waits for it to finish"
+        }
+        if panel.localJobs.isExtracting {
+            return "vector extraction is in progress — validation waits for it to finish"
+        }
+        if !panel.violations.isEmpty {
+            let count = panel.violations.count
+            return "\(count) verification problem\(count == 1 ? "" : "s") listed above — "
+                + "validation runs only on a study that verifies"
+        }
+        return nil
+    }
+
+    @ViewBuilder
     var body: some View {
         HStack(spacing: 8) {
-            Button(panel.localJobs.isValidating ? "Validating Study…" : "Validate Study") {
+            Button(isValidating ? "Validating Study…" : "Validate Study") {
+                // Re-entry guard on the same predicate the button reads: a
+                // fast second click must not package and submit twice.
+                guard !disabled else { return }
                 submit()
             }
             .buttonStyle(.bordered)
             .disabled(disabled)
             .help(help)
+            if isValidating {
+                ProgressView().controlSize(.small)
+            }
             // A1: local validation is cancellable between units of work.
             if panel.localJobs.isValidating, !panel.isServerWorkspace {
-                ProgressView().controlSize(.small)
                 Button("Stop", role: .destructive) { panel.cancelValidation() }
                     .controlSize(.small)
                     .disabled(panel.localJobs.validationCancelRequested)
@@ -61,6 +94,12 @@ struct ValidateStudyButtonRow: View {
                             + "stay marked cancelled and NO validation evidence is "
                             + "written — reported as cancelled, never as an error")
             }
+        }
+        if let disabledReason {
+            Text(disabledReason)
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

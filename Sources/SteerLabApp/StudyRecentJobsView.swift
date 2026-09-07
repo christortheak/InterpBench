@@ -18,7 +18,10 @@ struct StudyRecentJobsView: View {
                     Text(job.id)
                         .font(.caption.monospaced())
                         .textSelection(.enabled)
-                    Text("\(job.verb) · \(job.study) · \(job.state)")
+                    // Jobs DISCOVERED by a refresh carry no study name, so
+                    // the row used to read "run · — · running" (audit 10):
+                    // drop the segment rather than print a dash.
+                    Text(Self.jobSummary(job))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -42,7 +45,7 @@ struct StudyRecentJobsView: View {
                     if ExperimentPanel.jobOffersEvidenceImport(
                         verb: job.verb, state: job.state)
                     {
-                        Button("Import evidence") {
+                        Button("Import Evidence") {
                             Task { await importEvidence(job.id) }
                         }
                         .controlSize(.small)
@@ -70,5 +73,15 @@ struct StudyRecentJobsView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    /// verb · study · state, with the study segment omitted when the job was
+    /// discovered rather than submitted from here (its record has no name).
+    private static func jobSummary(_ job: StudyRemoteJobController.RecentServerJob) -> String {
+        let study = job.study.trimmingCharacters(in: .whitespaces)
+        let named = !study.isEmpty && study != "—" && study != "-"
+        return named
+            ? "\(job.verb) · \(study) · \(job.state)"
+            : "\(job.verb) · \(job.state)"
     }
 }

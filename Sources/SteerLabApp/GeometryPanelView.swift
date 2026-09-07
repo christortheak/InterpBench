@@ -12,6 +12,9 @@ struct GeometryPanelView: View {
     // to it, and it is scoped to a connection rather than to the workspace.
     @State private var gemmaScopeLayer = 0
     @State private var gemmaScopeStatus: String?
+    /// A failed local job's raw stderr/stdout — a transcript, kept behind a
+    /// disclosure instead of dumped into the status caption.
+    @State private var gemmaScopeFailureDetail: String?
     @State private var isRunningGemmaScope = false
     @State private var logitLensLayer = 0
     @State private var isRunningLogitLens = false
@@ -38,6 +41,10 @@ struct GeometryPanelView: View {
     @State private var serverScopeReportRuns: [RemoteRunRecord] = []
     @State private var selectedServerScopeRunID: String?
     @State private var serverScopeImportStatus: String?
+    /// Busy + failure for the report LISTING (as against the import), so a
+    /// server error is a message instead of a stale, silently empty list.
+    @State private var isRefreshingServerReports = false
+    @State private var serverScopeReportsStatus: String?
 
     private var selectedIDs: Set<VectorArtifact.ID> { service.geometry.selectedIDs }
 
@@ -203,112 +210,13 @@ struct GeometryPanelView: View {
                 localVectorsSection
             }
 
-            Section("Logit Lens") {
-                if isServerWorkspace {
-                    Text(
-                        "Logit Lens runs on the local substrate only (it reads "
-                            + "the vector through the locally loaded model's "
-                            + "unembed) — switch Compute to Local (MLX).")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if service.state != .ready {
-                    needsModelPrompt(
-                        "Logit Lens requires a loaded model (local loaded model only).")
-                } else if let artifact = selectedSingleArtifact {
-                    LabeledContent("Vector", value: artifact.sidecar.concept)
-                    Stepper(
-                        "Layer: \(min(logitLensLayer, gemmaScopeLayerLimit))",
-                        value: $logitLensLayer,
-                        in: 0 ... gemmaScopeLayerLimit)
-                    HStack {
-                        Button(isRunningLogitLens ? "Reading…" : "Read Through Unembed") {
-                            runLogitLens(artifact: artifact)
-                        }
-                        .disabled(isRunningLogitLens || service.state != .ready)
-                        if isRunningLogitLens {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Projecting vector through output head…")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    Text("Shows the tokens most upweighted and downweighted by the residual vector at the selected layer. Local loaded model only.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    if let logitLensReport {
-                        LogitLensReportView(report: logitLensReport)
-                    }
-                    if let logitLensStatus {
-                        Text(logitLensStatus)
-                            .font(.caption)
-                            .textSelection(.enabled)
-                    }
-                } else {
-                    Text("Select exactly one compatible vector to read it through the model unembed.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            Section("Logit Lens") { logitLensSectionContent }
 
             Section("Gemma Scope") {
                 if isServerWorkspace {
                     serverGemmaScopeSectionContent
-                } else if let info = gemmaScopeInfo {
-                    LabeledContent("Suite", value: info.suiteName)
-                    LabeledContent("Model", value: "\(info.modelSize) \(info.tuning.uppercased())")
-                    LabeledContent("Site", value: info.recommendedSite)
-                    LabeledContent("Release", value: info.recommendedRelease)
-                    LabeledContent("SAE layer", value: "\(info.recommendedLayer)")
-                    LabeledContent("SAE id", value: info.recommendedSAEID)
-
-                    if let artifact = selectedSingleArtifact {
-                        Stepper(
-                            "Target layer: \(min(gemmaScopeLayer, gemmaScopeLayerLimit))",
-                            value: $gemmaScopeLayer,
-                            in: 0 ... gemmaScopeLayerLimit)
-                        Button(isRunningGemmaScope ? "Analyzing…" : "Run Gemma Scope Analysis") {
-                            runGemmaScopeAnalysis(artifact: artifact, info: info)
-                        }
-                        .disabled(isRunningGemmaScope)
-                    } else {
-                        Text("Select exactly one vector to run a Gemma Scope analysis.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    HStack {
-                        if let url = URL(string: info.landingPageURL) {
-                            Link(info.suiteName, destination: url)
-                        }
-                        if let url = URL(string: info.repositoryURL) {
-                            Link(info.repository, destination: url)
-                        }
-                    }
-
-                    DisclosureGroup("SAELens snippet") {
-                        Text(info.saeLensSnippet)
-                            .font(.caption.monospaced())
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 4)
-                    }
-
-                    ForEach(info.notes, id: \.self) { note in
-                        Text(note)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if let gemmaScopeStatus {
-                        Text(gemmaScopeStatus)
-                            .font(.caption)
-                            .textSelection(.enabled)
-                    }
                 } else {
-                    Text("Load a Gemma 3 model to see Gemma Scope 2 repositories and SAELens snippets.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    localGemmaScopeSectionContent
                 }
             }
 
@@ -342,11 +250,13 @@ struct GeometryPanelView: View {
             logitLensReport = nil
             logitLensStatus = nil
             gemmaScopeStatus = nil
+            gemmaScopeFailureDetail = nil
         }
         .onChange(of: selectedIDs) {
             gemmaScopeLayer = min(gemmaScopeLayer, gemmaScopeLayerLimit)
             logitLensLayer = min(logitLensLayer, gemmaScopeLayerLimit)
             gemmaScopeStatus = nil
+            gemmaScopeFailureDetail = nil
             logitLensReport = nil
             logitLensStatus = nil
         }
@@ -370,6 +280,156 @@ struct GeometryPanelView: View {
         }
     }
 
+    // MARK: Logit Lens (extracted so the Form body stays small)
+
+    @ViewBuilder
+    private var logitLensSectionContent: some View {
+        if isServerWorkspace {
+            Text(
+                "Logit Lens runs on the local substrate only (it reads "
+                    + "the vector through the locally loaded model's "
+                    + "unembed) — switch Compute to Local (MLX).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else if service.state != .ready {
+            needsModelPrompt(
+                "Logit Lens requires a loaded model (local loaded model only).")
+        } else if let artifact = selectedSingleArtifact {
+            LabeledContent("Vector", value: artifact.sidecar.concept)
+            Stepper(
+                "Layer: \(min(logitLensLayer, gemmaScopeLayerLimit))",
+                value: $logitLensLayer,
+                in: 0 ... gemmaScopeLayerLimit)
+            .help(
+                "which layer's slice of the vector is projected "
+                    + "through the output head — 0…\(gemmaScopeLayerLimit) "
+                    + "for this artifact")
+            HStack {
+                Button(isRunningLogitLens ? "Reading…" : "Read Through Unembed") {
+                    runLogitLens(artifact: artifact)
+                }
+                .disabled(isRunningLogitLens || service.state != .ready)
+                .help(
+                    "project this vector through the loaded model's "
+                        + "output head and list the tokens it up- and "
+                        + "downweights at the chosen layer")
+                if isRunningLogitLens {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Projecting vector through output head…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Text("Shows the tokens most upweighted and downweighted by the residual vector at the selected layer. Local loaded model only.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            if let logitLensReport {
+                LogitLensReportView(report: logitLensReport)
+            }
+            if let logitLensStatus {
+                Text(logitLensStatus)
+                    .font(.caption)
+                    .textSelection(.enabled)
+            }
+        } else {
+            Text("Select exactly one compatible vector to read it through the model unembed.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: Gemma Scope, local branch (extracted for the same reason)
+
+    @ViewBuilder
+    private var localGemmaScopeSectionContent: some View {
+        if let info = gemmaScopeInfo {
+            LabeledContent("Suite", value: info.suiteName)
+            LabeledContent("Model", value: "\(info.modelSize) \(info.tuning.uppercased())")
+            LabeledContent("Site", value: info.recommendedSite)
+            LabeledContent("Release", value: info.recommendedRelease)
+            LabeledContent("SAE layer", value: "\(info.recommendedLayer)")
+            LabeledContent("SAE id", value: info.recommendedSAEID)
+
+            if let artifact = selectedSingleArtifact {
+                Stepper(
+                    "Target layer: \(min(gemmaScopeLayer, gemmaScopeLayerLimit))",
+                    value: $gemmaScopeLayer,
+                    in: 0 ... gemmaScopeLayerLimit)
+                .help(Self.snappedLayerHelp)
+                Text(snappedLayerCaption(info))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(isRunningGemmaScope ? "Analyzing…" : "Run Gemma Scope Analysis") {
+                    runGemmaScopeAnalysis(artifact: artifact, info: info)
+                }
+                .disabled(isRunningGemmaScope)
+                .help(
+                    "rank this vector against the published SAE's "
+                        + "features at layer \(info.recommendedLayer) "
+                        + "and write gemmascope-report.json into runs/ "
+                        + "— runs on this Mac")
+            } else {
+                Text("Select exactly one vector to run a Gemma Scope analysis.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                if let url = URL(string: info.landingPageURL) {
+                    Link(info.suiteName, destination: url)
+                        .help(
+                            "opens the \(info.suiteName) landing page "
+                                + "in your browser")
+                }
+                if let url = URL(string: info.repositoryURL) {
+                    Link(info.repository, destination: url)
+                        .help(
+                            "opens the \(info.repository) model "
+                                + "repository in your browser")
+                }
+            }
+
+            DisclosureGroup("SAELens snippet") {
+                Text(info.saeLensSnippet)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
+            }
+
+            ForEach(info.notes, id: \.self) { note in
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let gemmaScopeStatus {
+                Text(gemmaScopeStatus)
+                    .font(.caption)
+                    .textSelection(.enabled)
+            }
+            if let gemmaScopeFailureDetail {
+                DisclosureGroup("Job output") {
+                    Text(gemmaScopeFailureDetail)
+                        .font(.caption2.monospaced())
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                }
+                .help("the failed job's stderr (or stdout) verbatim")
+            }
+        } else {
+            // Selecting is enough — `gemmaScopeInfo` falls back to the
+            // SELECTED model id, so the block appears before a load.
+            Text("Select (or load) a Gemma 3 model to see Gemma Scope 2 "
+                + "repositories and SAELens snippets.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
     // MARK: Model section (the surface owns its prerequisite)
 
     /// The same picker + load action as Playground's Model section
@@ -378,9 +438,12 @@ struct GeometryPanelView: View {
     private var modelSection: some View {
         Section("Model") {
             WorkspaceModelPicker(service: service)
+            // One control size for the whole row: the Load button used to be
+            // regular beside three small siblings.
             HStack(spacing: 8) {
                 Button(loadButtonTitle) { runLoadButtonAction() }
                     .disabled(loadButtonDisabled)
+                    .controlSize(.small)
                     .help(
                         isServerWorkspace
                             ? "load the selected model on \(service.cluster.substrateLabel)"
@@ -397,6 +460,9 @@ struct GeometryPanelView: View {
                 if service.modelInstaller.isInstalling {
                     Button("Cancel Download") { service.modelInstaller.cancel() }
                         .controlSize(.small)
+                        .help(
+                            "stop the download — files already fetched stay "
+                                + "in the cache and a re-run resumes")
                 }
                 Spacer()
             }
@@ -407,11 +473,15 @@ struct GeometryPanelView: View {
                         service.modelInstaller.isFailed ? .orange : .secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // Truncated in the middle, so the whole id has to be reachable
+            // some other way: hover, and select-to-copy.
             Text(modelStatusLine)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .help(modelStatusLine)
+                .textSelection(.enabled)
         }
     }
 
@@ -424,6 +494,11 @@ struct GeometryPanelView: View {
                 .foregroundStyle(.secondary)
             Button(loadPromptTitle) { runLoadButtonAction() }
                 .disabled(loadButtonDisabled)
+                .help(
+                    isServerWorkspace
+                        ? "load the selected model on \(service.cluster.substrateLabel)"
+                        : "the same load as the Model section above — weights "
+                            + "that are not on this Mac are downloaded first")
         }
     }
 
@@ -449,20 +524,42 @@ struct GeometryPanelView: View {
     // MARK: Local sections
 
     private var localGeometrySection: some View {
-        Section("Geometry") {
+        // "Vector Geometry" matches the viewer's own title; "Geometry" was the
+        // retired section name.
+        Section("Vector Geometry") {
             HStack {
                 Button("Select All") {
                     geometry.select(
                         vectorIDs: Set(service.compatibleVectors.map(\.id)))
                 }
                 .disabled(service.compatibleVectors.isEmpty)
+                .help(
+                    "select every vector listed below "
+                        + "(\(service.compatibleVectors.count) for the loaded model)")
 
                 Button("Clear") { geometry.clearSelection() }
                     .disabled(selectedIDs.isEmpty)
+                    .help(
+                        "deselect every vector — the computed tables are "
+                            + "retired with the selection they described")
 
-                Button("Compute") { geometry.compute(artifacts: selectedArtifacts) }
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(selectedArtifacts.count < 2)
+                Button(geometry.isComputing ? "Computing…" : "Compute") {
+                    guard !geometry.isComputing else { return }
+                    let artifacts = selectedArtifacts
+                    Task { await geometry.compute(artifacts: artifacts) }
+                }
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(selectedArtifacts.count < 2 || geometry.isComputing)
+                .help(
+                    "⌘↩ — cosines between every selected pair at every common "
+                        + "layer, plus layer RSA; the tables render in the "
+                        + "viewer pane on the right")
+
+                if geometry.isComputing {
+                    ProgressView().controlSize(.small)
+                }
+
+                selectionCount(selectedIDs.count)
             }
 
             if !unlistableSelection.isEmpty {
@@ -488,8 +585,11 @@ struct GeometryPanelView: View {
                         get: { geometry.selectedLayer },
                         set: { geometry.selectedLayer = $0 }),
                     in: 0 ... max(0, result.matrices.count - 1))
+                .help(
+                    "which of the \(result.matrices.count) computed layer "
+                        + "matrices the viewer shows — no recompute")
             } else {
-                Text("Select at least two compatible vectors.")
+                Text(selectionShortfall(selectedIDs.count))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -499,9 +599,21 @@ struct GeometryPanelView: View {
                 .foregroundStyle(.secondary)
 
             if let status = geometry.status {
-                Text(status)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                // A status with no table and nothing running is a failure, and
+                // a failure reads as one rather than as grey prose.
+                if geometry.result == nil, !geometry.isComputing {
+                    Label(status, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                } else {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
             }
         }
     }
@@ -568,33 +680,68 @@ struct GeometryPanelView: View {
     // MARK: Server sections (geometry runs server-side over the catalog)
 
     private var serverGeometrySection: some View {
-        Section("Geometry") {
+        // "Vector Geometry" matches the viewer's own title; "Geometry" was the
+        // retired section name.
+        Section("Vector Geometry") {
             HStack {
                 Button("Select All") {
                     serverSelectedIDs = Set(service.compatibleServerVectors.map(\.id))
                 }
                 .disabled(service.compatibleServerVectors.isEmpty)
+                .help(
+                    "select every vector listed below "
+                        + "(\(service.compatibleServerVectors.count) in the "
+                        + "server catalog for the selected model)")
 
                 Button("Clear") {
                     serverSelectedIDs.removeAll()
                     geometry.clearServer()
                 }
                 .disabled(serverSelectedIDs.isEmpty)
+                .help(
+                    "deselect every vector — the computed table is retired "
+                        + "with the selection it described")
 
                 Button(geometry.isServerComputing ? "Computing…" : "Compute on Server") {
+                    guard !geometry.isServerComputing else { return }
                     geometry.computeOnServer(
                         records: selectedServerRecords,
                         layer: min(serverLayer, serverLayerLimit))
                 }
                 .keyboardShortcut(.return, modifiers: .command)
-                .disabled(selectedServerRecords.count < 2 || geometry.isServerComputing)
+                .disabled(
+                    selectedServerRecords.count < 2
+                        || geometry.isServerComputing
+                        || noServerClient)
+                .help(
+                    noServerClient
+                        ? Self.noClientReason
+                        : "⌘↩ — one request to \(service.cluster.substrateLabel) "
+                            + "for the cosines between the selected vectors at "
+                            + "the chosen layer; the table renders in the "
+                            + "viewer pane on the right")
+
+                if geometry.isServerComputing {
+                    ProgressView().controlSize(.small)
+                }
+
+                selectionCount(serverSelectedIDs.count)
             }
+
+            if noServerClient { noClientCaption }
 
             Stepper(
                 "Layer: \(min(serverLayer, serverLayerLimit))",
                 value: $serverLayer,
                 in: 0 ... serverLayerLimit)
             .disabled(selectedServerRecords.isEmpty)
+            .help(
+                selectedServerRecords.isEmpty
+                    ? "select server vectors first — the range comes from "
+                        + "their layer counts"
+                    : "the layer the server computes at, 0…\(serverLayerLimit); "
+                        + "the server clamps it per vector when layer counts "
+                        + "differ and the viewer says so")
 
             Text(
                 "Computes on \(service.cluster.substrateLabel) over its vector "
@@ -604,7 +751,7 @@ struct GeometryPanelView: View {
                 .foregroundStyle(.secondary)
 
             if selectedServerRecords.count < 2 {
-                Text("Select at least two server vectors.")
+                Text(selectionShortfall(serverSelectedIDs.count, noun: "server vectors"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -616,6 +763,69 @@ struct GeometryPanelView: View {
                     .textSelection(.enabled)
             }
         }
+    }
+
+    // MARK: Shared selection and gate copy
+
+    /// No server to talk to. `ClusterConnectionStore` always builds a client
+    /// on a server workspace, so this is the honest "not connected" case
+    /// rather than the substrate question.
+    private var noServerClient: Bool { service.cluster.client == nil }
+
+    private static let noClientReason =
+        "no server connection — pick a site in the Compute selector, or "
+        + "switch Compute to Local (MLX)"
+
+    /// A disabled server button says why in the pane, not only on hover.
+    private var noClientCaption: some View {
+        Label(Self.noClientReason, systemImage: "bolt.horizontal.circle")
+            .font(.caption)
+            .foregroundStyle(.orange)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// The live selection count, beside Select All / Clear. Without it the
+    /// only count in the pane was the COMPUTED one, which appears after the
+    /// fact and describes a different set.
+    private func selectionCount(_ count: Int) -> some View {
+        Text("\(count) selected")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .monospacedDigit()
+    }
+
+    /// Count-aware version of "select at least two": "1 selected — pick one
+    /// more" is actionable where the flat sentence is not.
+    private func selectionShortfall(
+        _ count: Int, noun: String = "compatible vectors"
+    ) -> String {
+        switch count {
+        case 0: "Select at least two \(noun)."
+        case 1: "1 selected — pick one more (a cosine needs a pair)."
+        default: "\(count) selected — press Compute."
+        }
+    }
+
+    /// The stepper does not choose the layer the run uses: `GemmaScopeCatalog`
+    /// snaps the preference to the nearest layer the suite actually publishes
+    /// an SAE for, and the run then reports THAT layer. Said out loud in both
+    /// branches — a silently moved layer is how a report gets read as
+    /// answering a question it was not asked.
+    private static let snappedLayerHelp =
+        "a preference, not the layer that runs — it is snapped to the nearest "
+        + "layer the suite publishes an SAE for, shown as 'SAE layer' above"
+
+    private func snappedLayerCaption(_ info: GemmaScopeInfo) -> String {
+        "runs at layer \(info.recommendedLayer) — the nearest published SAE "
+            + "layer for \(info.recommendedRelease); the preference above is "
+            + "snapped to it"
+    }
+
+    /// The message a status line should show. Prefers the error type's own
+    /// sentence (`LocalizedError`) and falls back to its description — never a
+    /// bare `"\(error)"`, which prints enum-case dumps at researchers.
+    private func statusMessage(_ error: Error) -> String {
+        (error as? LocalizedError)?.errorDescription ?? String(describing: error)
     }
 
     private var serverVectorsSection: some View {
@@ -664,6 +874,9 @@ struct GeometryPanelView: View {
     private var localGemmaScopeReportsContent: some View {
         HStack {
             Button("Refresh Reports") { refreshGemmaScopeReports() }
+                .help(
+                    "rescan this workspace's runs/ for gemmascope-report.json "
+                        + "files — reads the tree, changes nothing")
             if let count = gemmaScopeReports.isEmpty ? nil : gemmaScopeReports.count {
                 Text("\(count) report\(count == 1 ? "" : "s")")
                     .font(.caption)
@@ -681,6 +894,9 @@ struct GeometryPanelView: View {
                     Text(report.label).tag(Optional(report.id))
                 }
             }
+            .help(
+                "which gemmascope-report.json from this workspace's runs/ the "
+                    + "feature rows below come from")
 
             if let report = selectedGemmaScopeReport {
                 GemmaScopeReportView(report: report) { row, source in
@@ -714,10 +930,24 @@ struct GeometryPanelView: View {
                     "Target layer: \(min(serverGemmaScopeLayer, serverGemmaScopeLayerLimit))",
                     value: $serverGemmaScopeLayer,
                     in: 0 ... serverGemmaScopeLayerLimit)
+                .help(Self.snappedLayerHelp)
+                Text(snappedLayerCaption(info))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Button(isRunningServerGemmaScope ? "Analyzing…" : "Run on Server") {
+                    guard !isRunningServerGemmaScope else { return }
                     runServerGemmaScope(record: record, info: info)
                 }
-                .disabled(isRunningServerGemmaScope)
+                .disabled(isRunningServerGemmaScope || noServerClient)
+                .help(
+                    noServerClient
+                        ? Self.noClientReason
+                        : "queue a durable Gemma Scope job on "
+                            + "\(service.cluster.substrateLabel) at layer "
+                            + "\(info.recommendedLayer) — followed in Activity, "
+                            + "and the report lands in the server's runs/")
+                if noServerClient { noClientCaption }
             } else {
                 Text("Select exactly one server vector to run a Gemma Scope analysis.")
                     .font(.caption)
@@ -754,7 +984,19 @@ struct GeometryPanelView: View {
     @ViewBuilder
     private var serverGemmaScopeReportsContent: some View {
         HStack {
-            Button("Refresh Server Reports") { refreshServerScopeReportRuns() }
+            Button(isRefreshingServerReports ? "Refreshing…" : "Refresh Server Reports") {
+                refreshServerScopeReportRuns()
+            }
+            .disabled(isRefreshingServerReports || noServerClient)
+            .help(
+                noServerClient
+                    ? Self.noClientReason
+                    : "ask \(service.cluster.substrateLabel) which of its run "
+                        + "directories hold a gemmascope-report.json — reads "
+                        + "the server's runs/, changes nothing")
+            if isRefreshingServerReports {
+                ProgressView().controlSize(.small)
+            }
             if !serverScopeReportRuns.isEmpty {
                 let count = serverScopeReportRuns.count
                 Text("\(count) report\(count == 1 ? "" : "s")")
@@ -762,7 +1004,23 @@ struct GeometryPanelView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        sourceCaption
+        // Said once per screen: the Vectors section above already carries the
+        // generic "source:" caption, so this one names what IS listed here.
+        Text("reports listed from the server's runs/")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+
+        if noServerClient { noClientCaption }
+
+        // A failed listing is a message, not an empty list that reads as
+        // "no reports exist".
+        if let serverScopeReportsStatus {
+            Label(serverScopeReportsStatus, systemImage: "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
 
         if serverScopeReportRuns.isEmpty {
             Text(
@@ -776,6 +1034,9 @@ struct GeometryPanelView: View {
                     Text(run.id).tag(Optional(run.id))
                 }
             }
+            .help(
+                "which server run directory's gemmascope-report.json the "
+                    + "feature rows below come from — selecting one fetches it")
         }
 
         if let report = serverScopeReport {
@@ -844,7 +1105,7 @@ struct GeometryPanelView: View {
                 isRunningServerGemmaScope = false
             } catch {
                 isRunningServerGemmaScope = false
-                serverGemmaScopeStatus = "\(error)"
+                serverGemmaScopeStatus = statusMessage(error)
             }
         }
     }
@@ -860,17 +1121,39 @@ struct GeometryPanelView: View {
             serverScopeReportPath = serverPath
             selectedServerScopeRunID = runID
         } catch {
-            serverScopeImportStatus = "could not load server report: \(error)"
+            serverScopeImportStatus =
+                "could not load server report: \(statusMessage(error))"
         }
     }
 
+    /// List the server runs that hold a report. A failure used to be
+    /// swallowed by `try?`, so a server error looked exactly like "there are
+    /// no reports"; it is now a status line, and the fetch shows it is
+    /// running. The first run is auto-selected, as the local branch does.
     private func refreshServerScopeReportRuns() {
-        guard let client = service.cluster.client else { return }
+        guard let client = service.cluster.client else {
+            serverScopeReportsStatus = Self.noClientReason
+            return
+        }
+        guard !isRefreshingServerReports else { return }
+        isRefreshingServerReports = true
+        serverScopeReportsStatus = nil
         Task {
-            if let runs = try? await client.runs() {
+            defer { isRefreshingServerReports = false }
+            do {
+                let runs = try await client.runs()
                 serverScopeReportRuns = runs.filter {
                     $0.files.contains("gemmascope-report.json")
                 }
+                if let selected = selectedServerScopeRunID,
+                    serverScopeReportRuns.contains(where: { $0.id == selected })
+                {
+                    return
+                }
+                selectedServerScopeRunID = serverScopeReportRuns.first?.id
+            } catch {
+                serverScopeReportsStatus =
+                    "could not list server reports: \(statusMessage(error))"
             }
         }
     }
@@ -904,7 +1187,7 @@ struct GeometryPanelView: View {
                     + "the analyzed vector's norm, unlike local import); it is now "
                     + "in the server vector catalog"
             } catch {
-                serverScopeImportStatus = "\(error)"
+                serverScopeImportStatus = statusMessage(error)
             }
         }
     }
@@ -929,15 +1212,23 @@ struct GeometryPanelView: View {
                     if result.succeeded {
                         gemmaScopeStatus =
                             "\(result.summary)\n\(result.prepared.directory)"
+                        gemmaScopeFailureDetail = nil
                     } else {
-                        gemmaScopeStatus =
-                            "\(result.summary)\n\(result.stderr.isEmpty ? result.stdout : result.stderr)"
+                        // The summary is the message; the job's own output is
+                        // a transcript, and a transcript in a caption is not
+                        // a message. It moves behind a disclosure.
+                        gemmaScopeStatus = result.summary
+                        let output = result.stderr.isEmpty
+                            ? result.stdout : result.stderr
+                        gemmaScopeFailureDetail =
+                            output.trimmingCharacters(in: .whitespacesAndNewlines)
+                                .isEmpty ? nil : output
                     }
                 }
             } catch {
                 await MainActor.run {
                     isRunningGemmaScope = false
-                    gemmaScopeStatus = "\(error)"
+                    gemmaScopeStatus = statusMessage(error)
                 }
             }
         }
@@ -959,7 +1250,7 @@ struct GeometryPanelView: View {
             } catch {
                 await MainActor.run {
                     isRunningLogitLens = false
-                    logitLensStatus = "\(error)"
+                    logitLensStatus = statusMessage(error)
                 }
             }
         }
@@ -1001,7 +1292,7 @@ struct GeometryPanelView: View {
             gemmaScopeImportStatus =
                 "Imported feature \(row.feature) as \(artifact.sidecar.concept). It is now available for steering and studies."
         } catch {
-            gemmaScopeImportStatus = "\(error)"
+            gemmaScopeImportStatus = statusMessage(error)
         }
     }
 }
@@ -1097,8 +1388,14 @@ private struct GemmaScopeFeatureRowsView: View {
                         importFeature(row, source)
                     }
                     .disabled(row.decoderValues == nil)
+                    // The enabled state used to carry an EMPTY help, so the
+                    // only tooltip on this row was the refusal.
+                    .help(
+                        row.decoderValues == nil
+                            ? "rerun the Gemma Scope job to export decoder vectors"
+                            : "add feature \(row.feature)'s decoder row to the "
+                                + "vector catalog as a steerable vector")
                 }
-                .help(row.decoderValues == nil ? "rerun the Gemma Scope job to export decoder vectors" : "")
             }
         }
         .padding(.vertical, 4)
@@ -1108,9 +1405,13 @@ private struct GemmaScopeFeatureRowsView: View {
 private struct LogitLensReportView: View {
     let report: LogitLensReport
 
+    /// Real state, not `.constant(true)`: the chevron was clickable and did
+    /// nothing.
+    @State private var showsUpweighted = true
+
     var body: some View {
         LabeledContent("Layer", value: "\(report.layer)")
-        DisclosureGroup("Top upweighted tokens", isExpanded: .constant(true)) {
+        DisclosureGroup("Top upweighted tokens", isExpanded: $showsUpweighted) {
             tokenRows(report.topPositive, positive: true)
         }
         DisclosureGroup("Top downweighted tokens") {

@@ -5,8 +5,11 @@ import UniformTypeIdentifiers
 
 /// WS1 connection dot (turnkey-cluster plan): one glanceable circle for the
 /// active site's transport — green = up (tunnel live / direct server
-/// connected), grey = idle or Local-only, amber = authenticate/in-flight,
-/// red = degraded. The menu carries the connection lifecycle: authenticate
+/// connected), grey = idle or Local-only, amber = authenticate/in-flight or
+/// the local Python server starting, red = degraded. Direct-transport state
+/// comes from `ClusterConnectionStore.connectionPhase` (in-flight flag,
+/// capabilities, last connect failure), never from the shared `status`
+/// sentence. The menu carries the connection lifecycle: authenticate
 /// (Duo happens in Terminal — the app never touches credentials), connect/
 /// disconnect, a site picker, one-click preset adds, and site JSON
 /// import/export. The view is glue only: every decision lives in
@@ -42,119 +45,26 @@ struct ClusterConnectionDot: View {
     /// One auto-connect attempt per running episode of the local server —
     /// reset when it stops, so a restart connects again.
     @State private var localServerAutoConnectAttempted = false
+    /// Terminal could not be opened for the interactive login: the command is
+    /// shown so the researcher can run it themselves (UI audit 2026-09-06).
+    @State private var authFailure: AuthTerminalFailure?
+    /// Export has its own alert — a failed export under a "Site Import" title
+    /// was the audit's finding.
+    @State private var exportError: String?
+    /// Non-nil presents the GPU-session stop confirmation; the message comes
+    /// from `GPUSessionStopCheck`, exactly as the toolbar control's does.
+    @State private var gpuStopMessage: String?
+    @State private var isCheckingGPUJobs = false
 
     var body: some View {
         Menu {
-            Section(titleLine) {
-                Text(stateLine)
-                if cluster.activeSite?.isSSHTransport == true {
-                    Button("Authenticate…") { tunnel.openAuthTerminal() }
-                }
-                if cluster.activeWorkspace != .local {
-                    if showsDisconnect {
-                        Button("Disconnect") { disconnect() }
-                    } else {
-                        Button("Connect") { connect() }
-                    }
-                }
-            }
-            // GPU session at a glance (plan §2.7): one status line, Stop when
-            // active. Capability-gated; the dot's own color stays the
-            // CONTROLLER connection — a session ending never reads as a
-            // disconnect here.
-            if cluster.activeWorkspace != .local,
-                cluster.capabilities?.supportsGPUSession == true
-            {
-                Section("GPU Session") {
-                    Text(gpuSessionLine)
-                    if cluster.gpuSession.isActive {
-                        Button("Stop GPU Session") {
-                            Task { await cluster.gpuSession.stop() }
-                        }
-                    }
-                }
-            }
-            // One-click local Python server: no terminal, no venv incantation,
-            // no cwd hazard (the script serves the current workspace via an
-            // explicit --root). Output streams to the Activity pane; a busy
-            // port fails with a sentence, not a traceback.
-            Section("Local Python Server") {
-                Text(localServer.statusLine)
-                // WP3: the setup affordance sits ABOVE the start/stop controls
-                // and answers the question those controls used to fail at —
-                // "there is no Python environment here yet". Three states:
-                //   * a step in flight: the named step, disabled, with Cancel
-                //     available in the sheet and progress in the Activity pane;
-                //   * ready: one line saying so; the existing Start/Stop
-                //     controls below are the ones the researcher then uses;
-                //   * anything else: the setup entry point.
-                Text("Local engine: " + localEngineLine)
-                if case .running = localEngine.phase {
-                    Button("Setting Up Local Engine…") {}
-                        .disabled(true)
-                    Button("Show Setup Progress…") { showingEngineSetup = true }
-                } else {
-                    Button(localEngineButtonTitle) { showingEngineSetup = true }
-                        .help(
-                            "provisions the local Python engine end to end: "
-                                + "engine source (a code checkout, or the "
-                                + "bundled engine copied to ~/SteerLab/Engine), "
-                                + "a pinned sha256-verified uv and a managed "
-                                + "CPython \(PinnedCPython.minor), a venv "
-                                + "installed from the committed platform lock, "
-                                + "the loopback server, and site qualify. Every "
-                                + "step checks before it acts, so re-running "
-                                + "continues rather than restarting")
-                }
-                switch localServer.phase {
-                case .idle:
-                    Button("Start Local Python Server") {
-                        localServer.start(host: service)
-                    }
-                    .help(
-                        "runs scripts/start-local-server.sh: creates "
-                            + "Server/.venv.nosync on first use and installs the "
-                            + "full workbench incl. LoRA/PDF/Gemma Scope extras "
-                            + "(many minutes — progress streams in the Activity "
-                            + "pane), then serves the current workspace on "
-                            + "127.0.0.1:\(localServer.port) (loopback only). "
-                            + "Once running, the app connects to it "
-                            + "automatically")
-                case .starting, .running:
-                    Button("Stop Local Python Server") { localServer.stop() }
-                case .stopping:
-                    Button("Stop Local Python Server") {}
-                        .disabled(true)
-                }
-            }
+            connectionSection
+            gpuSessionSection
+            localServerSection
             Divider()
-            Picker("Site", selection: siteSelection) {
-                Text("Local (MLX)").tag(ClusterConnectionStore.Workspace.local)
-                ForEach(cluster.servers) { server in
-                    Text(server.displayName).tag(ClusterConnectionStore.Workspace.server(server.id))
-                }
-            }
-            .pickerStyle(.inline)
+            sitePickerSection
             Divider()
-            ForEach(cluster.missingPresets, id: \.name) { preset in
-                Button("Add \(preset.name) preset…") { addPreset(preset) }
-            }
-            Button("Import Site JSON…") { showingImporter = true }
-            if let active = cluster.activeServer {
-                Button("Export “\(active.displayName)”…") { export(active) }
-            }
-            Divider()
-            if let active = cluster.activeServer {
-                Button("Edit Site…") {
-                    siteEditTarget = SiteEditTarget(id: active.id)
-                }
-                if cluster.activeSite?.isSSHTransport == true {
-                    Button("Install HF Token…") {
-                        hfTokenTarget = SiteEditTarget(id: active.id)
-                    }
-                }
-            }
-            Button("Set Up Cluster…") { showingSetupWizard = true }
+            siteManagementSection
         } label: {
             // Fresh-Mac finding: a bare coloured circle is unreadable to
             // anyone who has not been told what it means — it looks like
@@ -198,13 +108,47 @@ struct ClusterConnectionDot: View {
             document: exportDocument,
             contentType: .json,
             defaultFilename: exportFilename
-        ) { _ in
+        ) { result in
             exportDocument = nil
+            // A write that failed at save time used to be swallowed here.
+            // A cancelled save panel is not a failure and says nothing.
+            if case .failure(let error) = result,
+                (error as? CocoaError)?.code != .userCancelled
+            {
+                exportError = "could not save the site profile: "
+                    + error.localizedDescription
+            }
         }
         .alert(
             "Site Import", isPresented: importErrorPresented,
             actions: { Button("OK") { importError = nil } },
             message: { Text(importError ?? "") })
+        .alert(
+            "Site Export", isPresented: exportErrorPresented,
+            actions: { Button("OK") { exportError = nil } },
+            message: { Text(exportError ?? "") })
+        .alert(
+            "Authenticate", isPresented: authFailurePresented,
+            presenting: authFailure
+        ) { failure in
+            if let command = failure.command {
+                Button("Copy ssh Command") { Clipboard.copy(command) }
+            }
+            Button("OK", role: .cancel) { authFailure = nil }
+        } message: { failure in
+            Text(failure.message)
+        }
+        .confirmationDialog(
+            "Stop the GPU session on \(cluster.substrateLabel)?",
+            isPresented: gpuStopPresented, titleVisibility: .visible
+        ) {
+            Button("Stop session", role: .destructive) {
+                Task { await cluster.gpuSession.stop() }
+            }
+            Button("Keep running", role: .cancel) {}
+        } message: {
+            Text(gpuStopMessage ?? "")
+        }
         .alert(
             "Site Import", isPresented: importConfirmationPresented,
             presenting: importConfirmation
@@ -248,6 +192,188 @@ struct ClusterConnectionDot: View {
         }
     }
 
+    // MARK: Menu sections
+    //
+    // Extracted from `body` so each stays inside the type-checker's comfort
+    // zone; the menu is one long list of small controls.
+
+    @ViewBuilder
+    private var connectionSection: some View {
+        Section(titleLine) {
+            Text(stateLine)
+            if cluster.activeSite?.isSSHTransport == true {
+                Button("Authenticate…") { authenticate() }
+                    .help(
+                        "opens Terminal with this site's ssh command so you "
+                            + "can complete the interactive login (password / "
+                            + "Duo) — the app never sees the credentials, and "
+                            + "the resulting connection is reused for 8 hours")
+            }
+            if cluster.activeWorkspace != .local {
+                if showsDisconnect {
+                    Button("Disconnect") { disconnect() }
+                        .help(
+                            "closes the SSH tunnel to this site; queued and "
+                                + "running cluster jobs keep going, and "
+                                + "Connect reopens it")
+                } else {
+                    Button("Connect") { connect() }
+                        .help(
+                            "opens the transport if this site needs one and "
+                                + "asks the server for its capabilities — the "
+                                + "handshake every server-side panel waits on")
+                }
+            }
+        }
+    }
+
+    // GPU session at a glance (plan §2.7): one status line, Stop when
+    // active. Capability-gated; the dot's own color stays the CONTROLLER
+    // connection — a session ending never reads as a disconnect here.
+    @ViewBuilder
+    private var gpuSessionSection: some View {
+        if cluster.activeWorkspace != .local,
+            cluster.capabilities?.supportsGPUSession == true
+        {
+            Section("GPU Session") {
+                Text(gpuSessionLine)
+                if cluster.gpuSession.isActive {
+                    Button(isCheckingGPUJobs ? "Checking Jobs…" : "Stop GPU Session") {
+                        requestGPUSessionStop()
+                    }
+                    .disabled(isCheckingGPUJobs)
+                    .help(
+                        "ends the GPU session — its worker job is cancelled "
+                            + "and the queue slot is lost; asks first, and "
+                            + "says whether server jobs are still running. "
+                            + "The controller connection stays up")
+                }
+            }
+        }
+    }
+
+    // One-click local Python server: no terminal, no venv incantation, no
+    // cwd hazard (the script serves the current workspace via an explicit
+    // --root). Output streams to the Activity pane; a busy port fails with a
+    // sentence, not a traceback.
+    @ViewBuilder
+    private var localServerSection: some View {
+        Section("Local Python Server") {
+            Text(localServer.statusLine)
+            // WP3: the setup affordance sits ABOVE the start/stop controls
+            // and answers the question those controls used to fail at —
+            // "there is no Python environment here yet". A step in flight is
+            // a status LINE plus the progress button; a disabled button whose
+            // title promised an action was the audit's finding.
+            Text("Local engine: " + localEngineLine)
+            if case .running = localEngine.phase {
+                Button("Show Setup Progress…") { showingEngineSetup = true }
+                    .help(
+                        "opens the setup sheet on the step now running — it "
+                            + "carries the step-by-step report and Cancel")
+            } else {
+                Button(localEngineButtonTitle) { showingEngineSetup = true }
+                    .help(
+                        "provisions the local Python engine end to end: "
+                            + "engine source (a code checkout, or the "
+                            + "bundled engine copied to ~/SteerLab/Engine), "
+                            + "a pinned sha256-verified uv and a managed "
+                            + "CPython \(PinnedCPython.minor), a venv "
+                            + "installed from the committed platform lock, "
+                            + "the loopback server, and site qualify. Every "
+                            + "step checks before it acts, so re-running "
+                            + "continues rather than restarting")
+            }
+            switch localServer.phase {
+            case .idle:
+                Button("Start Local Python Server") {
+                    localServer.start(host: service)
+                }
+                .help(
+                    "runs scripts/start-local-server.sh: creates "
+                        + "Server/.venv.nosync on first use and installs the "
+                        + "full workbench incl. LoRA/PDF/Gemma Scope extras "
+                        + "(many minutes — progress streams in the Activity "
+                        + "pane), then serves the current workspace on "
+                        + "127.0.0.1:\(localServer.port) (loopback only). "
+                        + "Once running, the app connects to it "
+                        + "automatically")
+            case .starting, .running:
+                Button("Stop Local Python Server") { localServer.stop() }
+                    .help(
+                        "terminates the local server process on "
+                            + "127.0.0.1:\(localServer.port); files it has "
+                            + "already written to the workspace stay, and "
+                            + "anything it was computing is lost")
+            case .stopping:
+                Text("stopping…")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var sitePickerSection: some View {
+        Picker("Site", selection: siteSelection) {
+            Text("Local (MLX)").tag(ClusterConnectionStore.Workspace.local)
+            ForEach(cluster.servers) { server in
+                Text(server.displayName).tag(ClusterConnectionStore.Workspace.server(server.id))
+            }
+        }
+        .pickerStyle(.inline)
+        .help(
+            "which compute this workspace talks to — Local (MLX) runs in this "
+                + "app, a site runs on its server; picking a site connects to "
+                + "it. Same selection as the toolbar's compute menu")
+    }
+
+    @ViewBuilder
+    private var siteManagementSection: some View {
+        ForEach(cluster.missingPresets, id: \.name) { preset in
+            Button("Add \(preset.name) preset…") { addPreset(preset) }
+                .help(
+                    "adds a ready-made profile for \(preset.name) to your "
+                        + "Sites registry and makes it the active site — you "
+                        + "still fill in your own login and storage roots")
+        }
+        Button("Import Site JSON…") { showingImporter = true }
+            .help(
+                "copies a profile file into your Sites registry "
+                    + "(\(HomeLayout.clusterSitesDirectory.path)) through the "
+                    + "same checks the command line uses; credentials stay in "
+                    + "this Mac's Keychain")
+        if let active = cluster.activeServer {
+            Button("Export “\(active.displayName)”…") { export(active) }
+                .help(
+                    "writes this site's profile as JSON to share it — no "
+                        + "token or password is ever written into the file")
+        }
+        Divider()
+        if let active = cluster.activeServer {
+            Button("Edit Site…") {
+                siteEditTarget = SiteEditTarget(id: active.id)
+            }
+            .help(
+                "opens the full profile for this site — transport, scheduler, "
+                    + "storage roots, policy — with a live preview of the "
+                    + "environment and job headers it will generate")
+            if cluster.activeSite?.isSSHTransport == true {
+                Button("Install HF Token…") {
+                    hfTokenTarget = SiteEditTarget(id: active.id)
+                }
+                .help(
+                    "writes a Hugging Face read token into this site's model "
+                        + "cache so gated model installs authenticate; the "
+                        + "value travels over the authenticated connection "
+                        + "and is kept in this Mac's Keychain")
+            }
+        }
+        Button("Set Up Cluster…") { showingSetupWizard = true }
+            .help(
+                "opens the step-by-step wizard — pick a site, authenticate, "
+                    + "push the server bundle, bootstrap its Python "
+                    + "environment, validate, and connect")
+    }
+
     // MARK: Labels
 
     private var titleLine: String {
@@ -289,6 +415,9 @@ struct ClusterConnectionDot: View {
 
     private var stateLine: String {
         guard case .server = cluster.activeWorkspace, let site = cluster.activeSite else {
+            if localServer.phase != .idle {
+                return "local Python server — \(localServer.statusLine)"
+            }
             return "no cluster site active"
         }
         if site.isSSHTransport { return tunnel.state.displayDescription }
@@ -298,15 +427,16 @@ struct ClusterConnectionDot: View {
     /// One word for the transport's state, next to the glyph. Deliberately
     /// short — the sentence is in the menu and the tooltip.
     private var connectionTitle: String {
-        guard case .server = cluster.activeWorkspace, cluster.activeSite != nil else {
-            return "Local"
-        }
         switch connectionState {
         case .connected: return "Connected"
         case .authenticate: return "Authenticate"
         case .working: return "Connecting"
         case .degraded: return "Degraded"
         case .offline: return "Not Connected"
+        case .local: return "Local"
+        case .localServerStarting: return "Starting Server"
+        case .localServerStopping: return "Stopping Server"
+        case .localServerReady: return "Server Ready"
         }
     }
 
@@ -317,6 +447,9 @@ struct ClusterConnectionDot: View {
         case .working: return "network"
         case .degraded: return "exclamationmark.triangle.fill"
         case .offline: return "network.slash"
+        case .local: return "network.slash"
+        case .localServerStarting, .localServerStopping: return "hourglass"
+        case .localServerReady: return "network"
         }
     }
 
@@ -324,11 +457,23 @@ struct ClusterConnectionDot: View {
     /// label, the glyph, and the colour cannot drift apart.
     private enum ConnectionState {
         case connected, authenticate, working, degraded, offline
+        /// Local (MLX) workspace with no local server in flight.
+        case local
+        /// The one-click local Python server's own phases, which used to be
+        /// invisible on the dot (the audit's item (a)): a venv build can run
+        /// for many minutes, and "Local" grey said nothing about it.
+        case localServerStarting, localServerStopping, localServerReady
     }
 
     private var connectionState: ConnectionState {
         guard case .server = cluster.activeWorkspace, let site = cluster.activeSite else {
-            return .offline
+            guard cluster.activeWorkspace == .local else { return .offline }
+            switch localServer.phase {
+            case .starting: return .localServerStarting
+            case .stopping: return .localServerStopping
+            case .running: return .localServerReady
+            case .idle: return .local
+            }
         }
         if site.isSSHTransport {
             switch tunnel.state {
@@ -339,12 +484,16 @@ struct ClusterConnectionDot: View {
             case .idle, .closed: return .offline
             }
         }
-        guard let status = cluster.status else { return .offline }
-        if status.contains("failed") || status.contains("invalid") || status.contains("rejected") {
-            return .degraded
+        // Direct transport: the phase is three facts (in-flight, capabilities,
+        // last connect failure) held by the store — never the shared free-text
+        // `status` line, which model installs, workspace switches and agent
+        // sync also write (UI audit 2026-09-06, headline 6).
+        switch cluster.connectionPhase {
+        case .connected: return .connected
+        case .connecting: return .working
+        case .failed: return .degraded
+        case .idle: return .offline
         }
-        if status.hasSuffix("...") { return .working }
-        return .connected
     }
 
     /// Same four colours as before, now derived from the single normalized
@@ -352,9 +501,13 @@ struct ClusterConnectionDot: View {
     private var dotColor: Color {
         switch connectionState {
         case .connected: return .green
-        case .authenticate, .working: return .orange
+        // Actionable, not broken: an idle local server the researcher can
+        // switch to reads the same as "Authenticate".
+        case .authenticate, .working, .localServerStarting, .localServerStopping,
+            .localServerReady:
+            return .orange
         case .degraded: return .red
-        case .offline: return .secondary  // grey: Local-only or not connected
+        case .offline, .local: return .secondary  // grey: Local-only or not connected
         }
     }
 
@@ -382,6 +535,43 @@ struct ClusterConnectionDot: View {
         // setup there means this button, the Compute picker, the site editor,
         // and the setup wizard all perform the same observable operation.
         Task { await service.connectCluster() }
+    }
+
+    /// Open Terminal for the interactive login. `openAuthTerminal` answers
+    /// whether it could; when it could not, the click used to do nothing
+    /// visible — now the researcher gets the reason AND the command, the way
+    /// the setup wizard's Authenticate step already did.
+    private func authenticate() {
+        guard !tunnel.openAuthTerminal() else { return }
+        let command = cluster.activeSite.flatMap(ClusterTunnel.authenticationCommand(for:))
+        authFailure = AuthTerminalFailure(
+            command: command,
+            message: command == nil
+                ? "This site has no SSH destination to log in to — set “SSH "
+                    + "user@host” in Edit Site… first."
+                : "Could not open Terminal. Run this command in your own "
+                    + "Terminal, finish the login there, then choose "
+                    + "Connect:\n\n\(command ?? "")")
+    }
+
+    /// The toolbar control's guarded stop, reached from the menu: the same
+    /// `GPUSessionStopCheck` rules decide what the confirmation SAYS, and the
+    /// menu always asks — cancelling the worker job loses the queue slot.
+    private func requestGPUSessionStop() {
+        guard !isCheckingGPUJobs else { return }
+        isCheckingGPUJobs = true
+        Task {
+            var count: Int?
+            if let client = cluster.client, let jobs = try? await client.jobs() {
+                count = GPUSessionStopCheck.unfinishedJobCount(jobs)
+            }
+            isCheckingGPUJobs = false
+            gpuStopMessage = GPUSessionStopCheck.confirmationMessage(
+                unfinishedJobCount: count)
+                ?? "The worker job is cancelled and its queue slot is lost; "
+                    + "no server job is unfinished. The controller connection "
+                    + "stays up."
+        }
     }
 
     /// Connects to the one-click local server without hand-typing its URL:
@@ -495,7 +685,7 @@ struct ClusterConnectionDot: View {
             exportFilename = name.isEmpty ? "cluster-site" : Self.sanitizedFilename(name)
             exportDocument = SiteProfileJSONDocument(data: data)
         } catch {
-            importError = "could not export site: \(error.localizedDescription)"
+            exportError = "could not export site: \(error.localizedDescription)"
         }
     }
 
@@ -533,6 +723,32 @@ struct ClusterConnectionDot: View {
             get: { importConfirmation != nil },
             set: { if !$0 { importConfirmation = nil } })
     }
+
+    private var exportErrorPresented: Binding<Bool> {
+        Binding(
+            get: { exportError != nil },
+            set: { if !$0 { exportError = nil } })
+    }
+
+    private var authFailurePresented: Binding<Bool> {
+        Binding(
+            get: { authFailure != nil },
+            set: { if !$0 { authFailure = nil } })
+    }
+
+    private var gpuStopPresented: Binding<Bool> {
+        Binding(
+            get: { gpuStopMessage != nil },
+            set: { if !$0 { gpuStopMessage = nil } })
+    }
+}
+
+/// "Authenticate…" could not hand the login to Terminal: the sentence to
+/// show, and the command to run by hand when there is one.
+struct AuthTerminalFailure: Identifiable {
+    let id = UUID()
+    let command: String?
+    let message: String
 }
 
 /// One import waiting on the researcher's answer.
@@ -581,6 +797,9 @@ struct HFTokenInstallSheet: View {
     @State private var isInstalling = false
     @State private var statusMessage: String?
     @State private var statusIsError = false
+    /// Presence of the Keychain copy, checked once on appear. The value is
+    /// deliberately never read into the field.
+    @State private var hasStoredToken = false
 
     private var entry: ClusterConnectionStore.ServerEntry? {
         cluster.servers.first { $0.id == entryID }
@@ -613,8 +832,22 @@ struct HFTokenInstallSheet: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
+            // Presence, never contents (the type's own contract): the stored
+            // secret is not read back into the field, so nothing here can
+            // re-push a stale token by accident.
+            if hasStoredToken {
+                Text("A token for this site is already in this Mac's Keychain. "
+                    + "Paste a new one to replace it on the cluster.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             SecureField("hf_…", text: $token)
                 .textFieldStyle(.roundedBorder)
+                .help(
+                    "the read token itself — kept in this Mac's Keychain and "
+                        + "written to the cluster's model cache; never stored "
+                        + "in a site profile or shown again")
             if let statusMessage {
                 Label(statusMessage,
                     systemImage: statusIsError ? "xmark.octagon.fill" : "checkmark.circle.fill")
@@ -624,35 +857,57 @@ struct HFTokenInstallSheet: View {
             }
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .help("closes without saving or sending anything")
                 Button(isInstalling ? "Installing…" : "Install on Cluster") { install() }
+                    .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(
                         isInstalling || tokenPath == nil
                             || token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help(
+                        tokenPath == nil
+                            ? "this site has no HF cache root, so there is "
+                                + "nowhere to write the token — set one in "
+                                + "Edit Site… first"
+                            : "keeps the token in this Mac's Keychain and "
+                                + "writes it to the cluster's model cache, "
+                                + "replacing any token already there")
             }
         }
         .padding(16)
         .frame(width: 460)
         .onAppear {
-            if let entry, let stored = cluster.storedHFToken(for: entry) {
-                token = stored
-            }
+            hasStoredToken = entry.flatMap { cluster.storedHFToken(for: $0) }?.isEmpty == false
         }
     }
 
     private func install() {
-        guard let entry else { return }
+        guard let entry, !isInstalling else { return }
         isInstalling = true
         statusMessage = nil
         let value = token
         Task {
-            cluster.setStoredHFToken(value, for: entry)
+            // A Keychain refusal is reported, not swallowed: the cluster copy
+            // may still land, and the researcher needs to know the Mac-side
+            // copy (rotation without re-pasting) did not.
+            let saved = cluster.setStoredHFToken(value, for: entry)
             let error = await tunnel.installHFToken(value)
             isInstalling = false
             statusIsError = error != nil
-            statusMessage = error ?? "token installed — model installs can now "
-                + "authenticate (gated models also need their license accepted)"
+            if let error {
+                statusMessage = error
+            } else {
+                hasStoredToken = saved
+                statusMessage = "token installed — model installs can now "
+                    + "authenticate (gated models also need their license "
+                    + "accepted)"
+                    + (saved
+                        ? ""
+                        : ". This Mac's Keychain refused to keep a copy, so "
+                            + "you will have to paste the token again next time")
+            }
         }
     }
 }

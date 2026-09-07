@@ -26,8 +26,11 @@ public enum ClaudeStimulusGenerator {
 
     /// Persist (or, for empty/whitespace input, delete) the key in the
     /// macOS Keychain. The legacy plaintext UserDefaults slot is cleared
-    /// either way.
-    public static func saveAPIKey(_ key: String) {
+    /// either way. Returns whether the key is now at rest as asked, so a
+    /// settings row can say "could not write to the Keychain" instead of
+    /// silently reporting no key.
+    @discardableResult
+    public static func saveAPIKey(_ key: String) -> Bool {
         AnthropicKeyStore.save(key)
     }
 

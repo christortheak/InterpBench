@@ -243,9 +243,19 @@ struct LocalEngineSetupSheet: View {
                 ?? "released \(result.unloaded) resident model "
                 + "slot\(result.unloaded == 1 ? "" : "s")"
         } catch {
-            engineControlNote = "unload failed: \(error)"
+            engineControlNote = "unload failed: " + Self.describe(error)
         }
         await refreshEngine()
+    }
+
+    /// The engine's own words, never the Swift debug form: `\(error)` on a
+    /// `ClientError.badResponse` printed the raw JSON body (UI audit
+    /// 2026-09-06). `ServerJobsPanelView` already unwraps the same way.
+    private static func describe(_ error: any Error) -> String {
+        if let client = error as? ClusterClient.ClientError {
+            return ClusterClient.unwrappingDetail(client).description
+        }
+        return error.localizedDescription
     }
 
     private func cancelEngineLoad() async {
@@ -257,7 +267,7 @@ struct LocalEngineSetupSheet: View {
             engineControlNote = result.note
                 ?? "cancel requested for \(result.cancelRequested.count) load(s)"
         } catch {
-            engineControlNote = "cancel failed: \(error)"
+            engineControlNote = "cancel failed: " + Self.describe(error)
         }
         await refreshEngine()
     }
@@ -295,7 +305,7 @@ struct LocalEngineSetupSheet: View {
         VStack(alignment: .leading, spacing: 4) {
             Label("This will download", systemImage: "arrow.down.circle")
                 .font(.subheadline.weight(.semibold))
-            ForEach(engine.downloadPreamble, id: \.self) { line in
+            ForEach(Array(engine.downloadPreamble.enumerated()), id: \.offset) { _, line in
                 Text("• " + line)
                     .font(.caption)
                     .fixedSize(horizontal: false, vertical: true)
@@ -366,7 +376,7 @@ struct LocalEngineSetupSheet: View {
 
     private func qualificationSection(_ report: SiteQualificationReport) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("site qualify — \(report.generatedBy) on \(report.platform)")
+            Text("Acceptance checks — \(report.generatedBy) on \(report.platform)")
                 .font(.subheadline.weight(.semibold))
             Text(report.summaryLine)
                 .font(.caption)
@@ -390,7 +400,7 @@ struct LocalEngineSetupSheet: View {
                 }
             }
             if let version = engine.engineVersion {
-                Text("engineVersion (from /api/info): \(version)")
+                Text("Engine version: \(version)")
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
@@ -419,28 +429,64 @@ struct LocalEngineSetupSheet: View {
     // MARK: Controls
 
     private var controls: some View {
-        HStack {
-            Button("Re-check") { Task { await engine.refreshPlan() } }
-                .disabled(engine.phase.isRunning)
-            Spacer()
-            if engine.phase.isRunning {
-                Button("Cancel") { engine.cancel() }
-                    .help(
-                        "stops after the step in flight — nothing already "
-                            + "installed is undone, and re-running continues")
+        VStack(alignment: .leading, spacing: 6) {
+            // Why the primary is dim, in the sheet rather than only on hover.
+            // Always-present so accepting a blocked step does not resize the
+            // sheet under the pointer.
+            Text(startIsBlocked
+                ? "A step above is blocked — read its red row and clear the "
+                    + "blocker; setup will not start over it."
+                : " ")
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .lineLimit(1)
+            HStack {
+                Button("Re-check") { Task { await engine.refreshPlan() } }
+                    .disabled(engine.phase.isRunning)
+                    .help(engine.phase.isRunning
+                        ? "not while setup is running — it is already reporting "
+                            + "each step as it goes"
+                        : "re-read what is already installed without changing "
+                            + "anything")
+                Spacer()
+                if engine.phase.isRunning {
+                    // "Stop Setup", not "Cancel": the button beside it is
+                    // Close, and one of the two aborts work while the other
+                    // only dismisses (UI audit 2026-09-06).
+                    Button("Stop Setup") { engine.cancel() }
+                        .help(
+                            "stops after the step in flight — nothing already "
+                                + "installed is undone, and re-running continues")
+                }
+                Button("Close", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .help("close this sheet — any setup in flight keeps "
+                        + "running, and reopening shows where it got to")
+                Button(startTitle) {
+                    engine.run(host: service)
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(engine.phase.isRunning || startIsBlocked)
+                .help(startHelp)
             }
-            Button("Close") { dismiss() }
-            Button(startTitle) {
-                engine.run(host: service)
-            }
-            .keyboardShortcut(.defaultAction)
-            .disabled(engine.phase.isRunning || startIsBlocked)
         }
     }
 
     private var startTitle: String {
         if case .ready = engine.phase { return "Re-verify" }
         return "Set Up"
+    }
+
+    private var startHelp: String {
+        if case .ready = engine.phase {
+            return "run every check again from the top — it re-verifies what "
+                + "is installed and re-runs the acceptance checks; nothing "
+                + "already installed is re-downloaded"
+        }
+        return "run the steps above in order — each checks what is already "
+            + "there before it does anything, so stopping and re-running "
+            + "continues rather than restarting"
     }
 
     private var startIsBlocked: Bool {

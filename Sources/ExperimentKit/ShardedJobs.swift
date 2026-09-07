@@ -129,9 +129,9 @@ public enum ShardedSubmission {
     /// real per-user GPU-job limit at a Slurm site.
     public static let siteFieldHelp =
         "the most GPU jobs one sharded submission may fan out into at this "
-        + "site — find your real per-user limit with `sacctmgr show qos "
-        + "format=Name,MaxTRESPerUser` (empty = uncapped stepper, max "
-        + "\(defaultStepperCap))"
+        + "site — find your real per-user limit with sacctmgr show qos "
+        + "format=Name,MaxTRESPerUser (empty = no site cap, and a submission "
+        + "may then ask for up to \(defaultStepperCap) jobs)"
 }
 
 // MARK: - Shard fields on job records

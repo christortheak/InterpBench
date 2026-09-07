@@ -8,10 +8,19 @@ struct StudyRunControlsView: View {
     let manifest: ExperimentManifest
     @Binding var runOnServerExpanded: Bool
     @Binding var pendingModelJob: PendingModelJob?
+    /// Takes the researcher to the Compute section, where the durable job
+    /// lives after submission (audit 10: the panel named a job id and then
+    /// offered no way to reach it). Optional so this view stays usable
+    /// without a navigation host; `ExperimentsPanelView` supplies it.
+    var openCompute: (() -> Void)?
     @State private var runner = UnifiedStudyRunner()
     @State private var runSubstrate: SubstrateRouting.Substrate?
     @State private var confirmForcedOverride = false
+    @State private var confirmCancelJob = false
     @State private var reconnectJobID = ""
+    /// The job whose log stream the user stopped by hand — a stopped stream
+    /// must not keep looking live.
+    @State private var stoppedLogJobID: String?
     private var panel: ExperimentPanel { service.experiments }
     private func serverRunCaption(_ verb: String) -> String {
         "\(verb) runs on \(service.cluster.substrateLabel) as a durable job — reconnect from Compute"
@@ -26,6 +35,7 @@ struct StudyRunControlsView: View {
             runSubstrate = nil
             runner.clearPreflight()
         }
+        .onChange(of: panel.remoteJobs.remoteJobID) { stoppedLogJobID = nil }
     }
 
     /// WS6.3: the substrate decision for the ONE Run control — every rule
@@ -131,7 +141,9 @@ struct StudyRunControlsView: View {
                 Text(decision.serverLabel).tag(SubstrateRouting.Substrate.server)
             } else {
                 // Greyed, never pickable: connect (or add a site) first.
-                Text("\(decision.serverLabel) — \(decision.serverHint ?? "connect first")")
+                // SHORT here — the full hint is a caption row below, because
+                // a 60-character segment truncates at the 560 pt panel floor.
+                Text("\(decision.serverLabel) (connect first)")
                     .tag(SubstrateRouting.Substrate.server)
                     .selectionDisabled()
             }
@@ -153,10 +165,16 @@ struct StudyRunControlsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        if let hint = decision.serverHint, decision.selection == .server {
+        // The greyed segment now says only "(connect first)", so its full
+        // hint has to render here whenever the server arm is unavailable —
+        // not just when the server happens to be the selection.
+        if let hint = decision.serverHint,
+            decision.selection == .server || !decision.serverSelectable
+        {
             Text(hint)
                 .font(.caption2)
                 .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
         }
         if let hint = decision.localHint {
             Text(hint)
@@ -376,20 +394,38 @@ struct StudyRunControlsView: View {
                     Text("pipeline (experimental)").tag("pipeline")
                 }
                 .help("the experiment verb the unified Run button submits remotely")
+                // "local" here is the SERVER's own controller process, not
+                // this Mac — two rows under a "Run on: This Mac / <site>"
+                // picker that reading was a real trap (audit 10). The wire
+                // values are unchanged; only what the researcher reads is.
                 Picker("Executor", selection: $options.remoteExecutor) {
-                    Text("local").tag("local")
-                    Text("slurm").tag("slurm")
+                    Text("controller (no scheduler)").tag("local")
+                    Text("Slurm batch job").tag("slurm")
                 }
+                .help(
+                    "where on the server the job runs: inside the server's own "
+                        + "controller process — a small CPU allocation, no "
+                        + "scheduler — or as a Slurm batch job with the GPU and "
+                        + "walltime below. Neither runs on this Mac")
                 Toggle("Dry run (prepare only, nothing executes)", isOn: $options.remoteDryRun)
                     .help(
                         "stages the bundle and renders the job without executing "
                             + "the study — the job finishes as 'prepared'")
-                HStack {
-                    TextField("GPU gres", text: $options.remoteGres)
+                // Labelled, because the defaults are non-empty and therefore
+                // the placeholders never show: two bare boxes reading 'A100'
+                // and '04:00:00' said nothing about which was which.
+                LabeledContent("GPU type (gres)") {
+                    TextField("e.g. A100", text: $options.remoteGres)
                         .textFieldStyle(.roundedBorder)
-                    TextField("walltime", text: $options.remoteWalltime)
-                        .textFieldStyle(.roundedBorder)
+                        .help(Self.gresHelp)
                 }
+                .help(Self.gresHelp)
+                LabeledContent("Walltime (HH:MM:SS)") {
+                    TextField("e.g. 04:00:00", text: $options.remoteWalltime)
+                        .textFieldStyle(.roundedBorder)
+                        .help(Self.walltimeHelp)
+                }
+                .help(Self.walltimeHelp)
                 // Resume-on-checkpoint (2026-07-22 incident: a checkpointed run
                 // had no resume path) — DEFAULT ON: a checkpointed batch run
                 // continuing is what submitting it asked for.
@@ -446,13 +482,7 @@ struct StudyRunControlsView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
-                HStack {
-                    Button("Test Connection") { Task { await panel.testRemoteConnection() } }
-                    Button("Cancel Job") { Task { await panel.cancelRemoteJob() } }
-                        .disabled(panel.remoteJobs.remoteJobID == nil)
-                    Button("Import Evidence") { Task { await panel.downloadRemoteEvidence() } }
-                        .disabled(panel.remoteJobs.remoteJobID == nil)
-                }
+                remoteJobActionsRow(panel: panel)
                 Text(StudyControlCopy.remoteOptionsCaption)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -468,16 +498,34 @@ struct StudyRunControlsView: View {
                     }
                     .disabled(reconnectJobID.trimmingCharacters(in: .whitespaces).isEmpty)
                     if !panel.remoteJobs.remoteLogLines.isEmpty {
-                        Button("Stop Log") { panel.stopRemoteLogStream() }
+                        Button("Stop Log") {
+                            stoppedLogJobID = panel.remoteJobs.remoteJobID
+                            panel.stopRemoteLogStream()
+                        }
+                        .help(
+                            "stops following this job's log here — the job "
+                                + "itself keeps running on the server, and "
+                                + "Reconnect picks the stream back up")
                     }
                 }
                 .help(
                     "resume watching a running or finished job by its id after an app or session restart"
                 )
                 if let job = panel.remoteJobs.remoteJobID {
-                    LabeledContent("Remote job", value: job)
-                        .font(.caption)
-                        .textSelection(.enabled)
+                    HStack(spacing: 8) {
+                        LabeledContent("Remote job", value: job)
+                            .font(.caption)
+                            .textSelection(.enabled)
+                        if let openCompute {
+                            Button("Show in Compute", action: openCompute)
+                                .buttonStyle(.link)
+                                .font(.caption)
+                                .help(
+                                    "opens the Compute section, where every "
+                                        + "server job of this workspace is "
+                                        + "listed with its state and log")
+                        }
+                    }
                 }
                 if let uploaded = panel.remoteJobs.remoteLastUploadedBundle {
                     LabeledContent("Uploaded bundle", value: uploaded)
@@ -498,9 +546,24 @@ struct StudyRunControlsView: View {
                 if !panel.remoteJobs.remoteLogLines.isEmpty {
                     // The log is always titled with the job id verbatim so it can
                     // be copied and reconnected to later.
-                    Text("job log — \(panel.remoteJobs.remoteJobID ?? "?")")
-                        .font(.caption.monospaced())
-                        .textSelection(.enabled)
+                    HStack(spacing: 6) {
+                        Text("job log — \(panel.remoteJobs.remoteJobID ?? "?")")
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                        // A stopped or failed stream leaves the last lines on
+                        // screen unchanged, which reads exactly like a live
+                        // one (audit 10). Say which it is.
+                        if let badge = logStreamBadge {
+                            Label(badge, systemImage: "pause.circle")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                                .help(
+                                    "these lines are frozen where the stream "
+                                        + "ended — the job may still be running "
+                                        + "on the server; Reconnect resumes "
+                                        + "following it")
+                        }
+                    }
                     ScrollView {
                         Text(panel.remoteJobs.remoteLogLines.joined(separator: "\n"))
                             .font(.caption2.monospaced())
@@ -520,6 +583,87 @@ struct StudyRunControlsView: View {
     /// Session-scoped list of server jobs submitted from this panel (run
     /// verbs and bundle submissions), ids selectable so a researcher can
     /// reconnect after an app restart.
+
+    /// Connection test, job cancel and evidence import for the current
+    /// durable job. Own function: the cancel is destructive and now carries a
+    /// confirmation, and `remoteRunControls` is already a long builder.
+    @ViewBuilder
+    private func remoteJobActionsRow(panel: ExperimentPanel) -> some View {
+        HStack {
+            Button("Test Connection") { Task { await panel.testRemoteConnection() } }
+                .help(
+                    "asks the server for its capabilities and reports what "
+                        + "came back — submits nothing and changes nothing")
+            Button("Cancel Job") { confirmCancelJob = true }
+                .disabled(panel.remoteJobs.remoteJobID == nil)
+                .help(
+                    "cancels the durable job on "
+                        + "\(service.cluster.substrateLabel) — a queued Slurm "
+                        + "job loses its queue slot and a running one loses "
+                        + "the work it has not written")
+                .confirmationDialog(
+                    cancelJobDialogTitle,
+                    isPresented: $confirmCancelJob,
+                    titleVisibility: .visible
+                ) {
+                    Button("Cancel Job", role: .destructive) {
+                        Task { await panel.cancelRemoteJob() }
+                    }
+                    Button("Keep Running", role: .cancel) {}
+                } message: {
+                    Text(Self.cancelJobConsequence)
+                }
+            Button("Import Evidence") { Task { await panel.downloadRemoteEvidence() } }
+                .disabled(panel.remoteJobs.remoteJobID == nil)
+                .help(
+                    "downloads this job's evidence bundle, verifies its hashes "
+                        + "and lands it as a new immutable runs/ directory in "
+                        + "this workspace")
+        }
+    }
+
+    private static let cancelJobConsequence =
+        "The job stops on the server. A queued job loses its place in the "
+        + "queue; a running job keeps only what it already wrote to its run "
+        + "directory, and no report is produced. This cannot be undone — "
+        + "resubmitting starts a new job."
+
+    private static let gresHelp =
+        "the Slurm generic resource this job asks for (sent as "
+        + "--gres=gpu:<type>) — the vocabulary is the active site profile's "
+        + "GPU types. Blank asks for no GPU, which on a model-running verb "
+        + "means the controller's small CPU allocation"
+
+    private static let walltimeHelp =
+        "the Slurm time limit for this job, in Slurm's own format — HH:MM:SS, "
+        + "or D-HH:MM:SS for more than a day. The scheduler kills the job at "
+        + "the limit, which is what the resume policy below exists for"
+
+    /// Names the object a destructive click will act on: the job id, the
+    /// verb it was submitted with (from the recent-jobs record, not the
+    /// picker's current value), and the substrate it runs on.
+    private var cancelJobDialogTitle: String {
+        let id = panel.remoteJobs.remoteJobID ?? "?"
+        let verb =
+            panel.remoteJobs.recentServerJobs.first { $0.id == id }?.verb
+            ?? panel.submission.remoteVerb
+        return "Cancel job \(id) (\(verb)) on \(service.cluster.substrateLabel)?"
+    }
+
+    /// "stream stopped" / "stream failed" for the log header — nil while the
+    /// stream is (as far as this view can tell) live.
+    private var logStreamBadge: String? {
+        if let status = panel.remoteJobs.remoteStatus,
+            status.hasPrefix("remote log stream failed")
+                || status.hasPrefix("log follow refused")
+        {
+            return "stream failed"
+        }
+        if let stoppedLogJobID, stoppedLogJobID == panel.remoteJobs.remoteJobID {
+            return "stream stopped"
+        }
+        return nil
+    }
 
     /// The active site profile's cap on sharded fan-out (nil = uncapped;
     /// the stepper falls back to `ShardedSubmission.defaultStepperCap`).

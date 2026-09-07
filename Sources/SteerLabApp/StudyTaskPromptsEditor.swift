@@ -37,7 +37,9 @@ struct StudyTaskPromptsEditor: View {
         }
         HStack {
             Button("Load Prompts") { panel.loadTaskPrompts() }
-                .help("read the JSONL file into the editor below")
+                .help(
+                    "read the pinned JSONL file into the editor below — a read "
+                        + "only, so it stays available on frozen studies")
             Button("Save & Pin Prompts") { panel.saveTaskPrompts() }
                 .disabled(manifest.status != .draft)
                 .help(StudyInfo.taskPromptsSavePin)
@@ -103,6 +105,10 @@ struct StudyTaskPromptsEditor: View {
                     showImportJSONL = true
                 }
                 .controlSize(.small)
+                .help(
+                    "opens the same sheet as Import JSONL… with this text "
+                        + "already in it — parses the records properly instead "
+                        + "of saving the JSON as literal prompt text")
             }
         }
         if let instrumentSummary = panel.draft.taskPromptsInstrumentSummary {

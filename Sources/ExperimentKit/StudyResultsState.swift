@@ -27,6 +27,13 @@ public final class StudyResultsState {
     /// workspace is active.
     public internal(set) var remoteResultsRuns: [RemoteStampedRunRecord] = []
     public internal(set) var remoteResultsStatus: String?
+    /// Whether the last LISTING attempt failed (or could not be made at
+    /// all: not connected, invalid URL). A typed signal beside the
+    /// free-text status so the browser can tell "the server has no runs"
+    /// from "we could not ask it" without substring-matching prose.
+    /// Per-file detail fetch failures do NOT set this — they are attributed
+    /// per file (`RemoteRunDetailPayload.otherReasons`).
+    public internal(set) var remoteResultsFailed = false
     public internal(set) var isLoadingRemoteResults = false
     /// The remote run selected in the Results pane — the remote sibling of
     /// `ChatService.selectedResultsRun` (which stays a LOCAL `RunBrowser.Item`
@@ -105,6 +112,7 @@ public final class StudyResultsState {
             remoteResultsRuns = []
             selectedRemoteResultsRun = nil
             remoteResultsStatus = nil
+            remoteResultsFailed = false
             return
         }
         // Not connected yet (fresh launch, server workspace persisted from a
@@ -116,12 +124,14 @@ public final class StudyResultsState {
             remoteResultsStatus =
                 "not connected to \(cluster.substrateLabel) "
                 + "— connect in Compute to browse its runs"
+            remoteResultsFailed = true
             return
         }
         cluster.loadStoredToken()
         guard let client = cluster.client else {
             remoteResultsRuns = []
             remoteResultsStatus = "invalid server URL"
+            remoteResultsFailed = true
             return
         }
         isLoadingRemoteResults = true
@@ -134,12 +144,14 @@ public final class StudyResultsState {
                 selectedRemoteResultsRun = runs.first { $0.id == selected.id }
             }
             let substrate = cluster.substrateLabel
+            remoteResultsFailed = false
             remoteResultsStatus =
                 "\(runs.count) run\(runs.count == 1 ? "" : "s") "
                 + "on \(substrate)"
         } catch {
             guard listingGeneration == generation else { return }
             remoteResultsRuns = []
+            remoteResultsFailed = true
             // Human-sized reason, not a raw Swift error dump.
             remoteResultsStatus =
                 "could not reach \(cluster.substrateLabel) — "
@@ -150,6 +162,11 @@ public final class StudyResultsState {
     public struct RemoteRunDetailPayload: Sendable {
         public var previewed: [RemoteRunFilePreviewItem] = []
         public var other: [RemoteRunFileEntry] = []
+        /// Why each `other` file has no preview, keyed by file name — the
+        /// fetch failure or the plan's refusal. Without it a file that
+        /// FAILED to download is indistinguishable from one that simply has
+        /// no preview renderer.
+        public var otherReasons: [String: String] = [:]
         public var model: RunResults.Model?
 
         public init() {}
@@ -272,8 +289,9 @@ public final class StudyResultsState {
             } else {
                 preview = .unavailable(reason: "no preview")
             }
-            if case .unavailable = preview {
+            if case .unavailable(let reason) = preview {
                 payload.other.append(file)
+                payload.otherReasons[file.name] = reason
             } else {
                 payload.previewed.append(
                     RemoteRunFilePreviewItem(file: file, preview: preview))

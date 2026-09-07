@@ -47,6 +47,7 @@ struct RenameStudyWindow: View {
                     Section("Name") {
                         TextField("study name", text: $canonicalName)
                             .font(.body.monospaced())
+                            .help(StudyControlCopy.canonicalNameHelp)
                         Text(StudyControlCopy.canonicalNameHelp)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
@@ -62,6 +63,7 @@ struct RenameStudyWindow: View {
 
                 Section("Display label") {
                     TextField("display label (optional)", text: $label)
+                        .help(labelHelp)
                     Text(labelHelp)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -70,16 +72,32 @@ struct RenameStudyWindow: View {
             }
             .formStyle(.grouped)
 
+            // The refusal (a name collision, a manifest that moved, a
+            // workspace switch) renders HERE. It used to land in the form
+            // behind this sheet, so a collision looked like a dead button
+            // (UI audit 2026-09-06, headline 9).
+            if let refusal = panel.draft.formErrors[.rename] {
+                Label(refusal, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
-                Button("Rename") {
+                    .keyboardShortcut(.cancelAction)
+                    .help("close without renaming; nothing is written")
+                Button(primaryTitle) {
                     if panel.management.rename(reviewed: sheet.reviewed,
                         canonicalName: sheet.isDraft ? canonicalName : nil,
                         label: label) { dismiss() }
                 }
+                .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!hasChange)
+                .help(primaryHelp)
             }
         }
         .padding(18)
@@ -92,6 +110,27 @@ struct RenameStudyWindow: View {
 
     private var hasChange: Bool {
         (sheet.isDraft && canonicalName != sheet.name) || label != sheet.label
+    }
+
+    /// A frozen study's only available effect is the display label, so the
+    /// button says what it will actually do (UI audit 2026-09-06).
+    private var primaryTitle: String {
+        sheet.isDraft ? "Rename" : "Set Label"
+    }
+
+    private var primaryHelp: String {
+        guard hasChange else {
+            return sheet.isDraft
+                ? "nothing to apply yet — change the name or the display label "
+                    + "above"
+                : "nothing to apply yet — change the display label above"
+        }
+        return sheet.isDraft
+            ? "applies both effects in one action: the canonical rename moves "
+                + "experiments/<name>/ and rewrites the manifest, then the "
+                + "display label is written beside it"
+            : "writes the display label beside the manifest — no hash moves and "
+                + "no run is rewritten"
     }
 
     // Long strings live outside the body — interpolating them inline blows

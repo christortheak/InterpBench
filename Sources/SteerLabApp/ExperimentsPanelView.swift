@@ -14,6 +14,10 @@ struct ExperimentsPanelView: View {
     /// Lands on the Templates tab — the design library. Studies CASTS designs;
     /// it does not hold them (2026-08-06 restructure).
     var openTemplates: () -> Void = {}
+    /// Lands on Compute, where a submitted run's job is watched. Without this
+    /// the run controls' "Show in Compute" link stays hidden (it renders only
+    /// when the closure is non-nil).
+    var openCompute: () -> Void = {}
     /// Bound expansion state for the "Remote options" disclosure so
     /// cross-links (Optimizations' preconfigured sweep) can open it directly.
     @State private var runOnServerExpanded = false
@@ -31,7 +35,11 @@ struct ExperimentsPanelView: View {
             if presented {
                 guard let name = panel.management.selectedName,
                     let review = try? panel.management.reviewStudy(named: name) else {
-                    panel.note("Select and review a draft study before importing prompts.", severity: .warning)
+                    panel.note(
+                        "Select a draft study first — the import pins into the "
+                            + "selected draft; if one is selected, reload it "
+                            + "and try again.",
+                        severity: .warning)
                     return
                 }
                 importJSONLReview = review
@@ -48,7 +56,7 @@ struct ExperimentsPanelView: View {
     var body: some View {
         @Bindable var panel = service.experiments
         Form {
-            Button("Research methods and guides", systemImage: "book") { showScienceGuides = true }
+            methodsGuidesSection
             StudyManagementSection(panel: panel, openTemplates: openTemplates)
 
             if let manifest = panel.management.selected {
@@ -213,7 +221,8 @@ struct ExperimentsPanelView: View {
                             pendingModelJob: $pendingModelJob, runOnServerExpanded: $runOnServerExpanded)
                     }
                     StudyRunControlsView(service: service, manifest: manifest,
-                        runOnServerExpanded: $runOnServerExpanded, pendingModelJob: $pendingModelJob)
+                        runOnServerExpanded: $runOnServerExpanded, pendingModelJob: $pendingModelJob,
+                        openCompute: openCompute)
                 }
 
                 if !panel.awaitingSweepJudgments.isEmpty,
@@ -324,19 +333,8 @@ struct ExperimentsPanelView: View {
                     // A durable server job in flight gets a visible cancel
                     // control right here — not buried in a disclosure.
                     if let job = panel.remoteJobs.activeServerJob {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("server \(job.verb) job \(job.id) — '\(job.study)'")
-                                .font(.caption.monospaced())
-                                .textSelection(.enabled)
-                            Button("Cancel Server Job", role: .destructive) {
-                                Task { await panel.cancelActiveServerJob() }
-                            }
-                            .controlSize(.small)
-                            .help(
-                                "requests cancellation of the durable job on the "
-                                    + "server; the run stops at the next record and "
-                                    + "the job is marked cancelled")
+                        ActiveServerJobRow(job: job) {
+                            await panel.cancelActiveServerJob()
                         }
                     }
                 }
@@ -396,6 +394,22 @@ struct ExperimentsPanelView: View {
                     onImport: { text in panel.importTaskPromptsJSONL(text, reviewed: reviewed) },
                     statusLine: { panel.draft.taskPromptsStatus })
             }
+        }
+    }
+
+    /// The guides entry point, in a Section of its own: as a bare Button it was
+    /// the one orphan cell above every Section in a grouped Form (UI audit
+    /// 2026-09-06). Extracted because `body` is at the type-checker's limit.
+    @ViewBuilder
+    private var methodsGuidesSection: some View {
+        Section {
+            Button("Research methods and guides", systemImage: "book") {
+                showScienceGuides = true
+            }
+            .help(
+                "the shipped method guides — what each study type measures, "
+                    + "what makes a result defensible, and which operation to "
+                    + "reach for; reads only, changes nothing")
         }
     }
 
@@ -502,4 +516,57 @@ struct ExperimentsPanelView: View {
         }
     }
 
+}
+
+/// The in-flight durable server job plus its cancel control.
+///
+/// Own view for two reasons: `ExperimentsPanelView.body` is at the
+/// type-checker's limit, and cancelling a queued cluster job loses the queue
+/// slot, so it now confirms like every other destructive action in this
+/// cluster (UI audit 2026-09-06, headline 7).
+private struct ActiveServerJobRow: View {
+    let job: StudyRemoteJobController.ActiveServerJob
+    let cancel: () async -> Void
+
+    @State private var confirmCancel = false
+    @State private var isCancelling = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text("server \(job.verb) job \(job.id) — '\(job.study)'")
+                .font(.caption.monospaced())
+                .textSelection(.enabled)
+            Button(isCancelling ? "Cancelling…" : "Cancel Server Job", role: .destructive) {
+                guard !isCancelling else { return }
+                confirmCancel = true
+            }
+            .controlSize(.small)
+            .disabled(isCancelling)
+            .help(
+                "requests cancellation of the durable job on the server; the "
+                    + "run stops at the next record, the job is marked "
+                    + "cancelled, and the queue slot is lost")
+            .confirmationDialog(
+                "Cancel \(job.verb) job \(job.id) ('\(job.study)')?",
+                isPresented: $confirmCancel,
+                titleVisibility: .visible
+            ) {
+                Button("Cancel job \(job.id)", role: .destructive) {
+                    isCancelling = true
+                    Task {
+                        await cancel()
+                        isCancelling = false
+                    }
+                }
+                Button("Keep running", role: .cancel) {}
+            } message: {
+                Text(
+                    "The run stops at the next record and the job is marked "
+                        + "cancelled. Records already written stay on the "
+                        + "server; the queue slot is lost and resuming means "
+                        + "submitting again.")
+            }
+        }
+    }
 }

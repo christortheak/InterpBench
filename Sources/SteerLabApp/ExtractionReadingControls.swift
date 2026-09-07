@@ -40,6 +40,10 @@ struct ReadingPositionField: View {
             .labelsHidden()
             .frame(width: 186)
             .help(help)
+            // `labelsHidden()` leaves the accessible name EMPTY: the visible
+            // context is the enclosing `LabeledContent`, which VoiceOver does
+            // not attach to the picker itself.
+            .accessibilityLabel("Reading position")
             // Carrying the number into a new kind's range is the MODEL's job
             // (`ExperimentPanel`/`ConceptBuilder` both do it on the way in),
             // so the two sites cannot drift into two conveniences.
@@ -91,6 +95,7 @@ struct ExtractionRenderingField: View {
             .labelsHidden()
             .frame(width: 140)
             .help(help)
+            .accessibilityLabel("Extraction rendering")
             if choice.mode == .chatTemplate {
                 Picker("", selection: $choice.voice) {
                     Text("as user").tag(ExtractionRendering.Voice.user)
@@ -99,11 +104,12 @@ struct ExtractionRenderingField: View {
                 .labelsHidden()
                 .frame(width: 124)
                 .help(
-                    "whose turn the stimulus is rendered as. 'as user' is the "
-                        + "legacy voice — the model READS the stimulus. 'as "
-                        + "assistant' renders it as the model's OWN output; the "
-                        + "two engines differ on which can render that, and the "
-                        + "declaration itself answers")
+                    "whose turn the stimulus is rendered as. 'as user' means "
+                        + "the model READS the stimulus; 'as assistant' renders "
+                        + "it as the model's OWN output. The two engines differ "
+                        + "on which can render that, and the declaration itself "
+                        + "answers")
+                .accessibilityLabel("Stimulus voice")
                 if choice.voice == .user {
                     Toggle("generation prompt", isOn: $choice.addGenerationPrompt)
                         .help(

@@ -47,6 +47,7 @@ struct StudyConceptsSection: View {
                         .help(
                             "detach '\(ref.name)' from this draft — refused "
                                 + "while a declaration still names it")
+                        .accessibilityLabel("Detach concept \(ref.name)")
                     }
                 }
             }
@@ -54,8 +55,10 @@ struct StudyConceptsSection: View {
                 attachPickerRows(panel: panel)
             }
         } header: {
+            // The section pins concept RECIPES; building and validating live
+            // in the Preparation controls (UI audit 2026-09-06).
             InfoSectionHeader(
-                title: "Build & Validate Concept Vectors",
+                title: "Concepts (pinned recipes)",
                 text: StudyInfo.conceptVectors)
         }
     }
@@ -97,7 +100,7 @@ struct StudyConceptsSection: View {
                 }
             }
             HStack(spacing: 8) {
-                Picker("", selection: $draft.attachMethod) {
+                Picker("Extraction method", selection: $draft.attachMethod) {
                     ForEach(
                         selectedSource?.supportedMethods
                             ?? ExtractionMethod.allCases.filter(\.isRecipeMethod),
@@ -106,6 +109,7 @@ struct StudyConceptsSection: View {
                         Text(method.label).tag(method)
                     }
                 }
+                .labelsHidden()
                 .frame(maxWidth: 210)
                 .help(
                     "extraction method pinned into the recipe — paired methods "

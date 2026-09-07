@@ -13,7 +13,7 @@ import UniformTypeIdentifiers
 /// 2. **Name + destination** — the canonical path, PREVIEWED before anything
 ///    is written, computed by `DatasetCreationPlanner` from the engine's own
 ///    path authorities.
-/// 3. **Create by** — author it in the existing Concept Builder, or import
+/// 3. **Create by** — author it in the Concepts & Vectors builder, or import
 ///    files that are copied into that destination after validation.
 ///
 /// This view is thin on purpose: every destination, requirement, collision,
@@ -104,9 +104,16 @@ struct DatasetCreationSheet: View {
         ) { result in
             let slot = importingSlot
             importingSlot = nil
-            guard let slot, case .success(let url) = result else { return }
-            chosen[slot] = url
-            failure = nil
+            // A chooser failure used to be dropped on the floor; say what
+            // went wrong (audit 2026-09-06).
+            switch result {
+            case .success(let url):
+                guard let slot else { return }
+                chosen[slot] = url
+                failure = nil
+            case .failure(let error):
+                failure = "could not open that file — \(describe(error))"
+            }
         }
         .alert("Replace existing file?", isPresented: $confirmingReplace) {
             Button("Replace", role: .destructive) { commit(replacing: true) }
@@ -148,15 +155,22 @@ struct DatasetCreationSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            Button("Cancel") { dismiss() }
+            Button("Cancel", role: .cancel) { dismiss() }
                 .keyboardShortcut(.cancelAction)
+                .help("close without creating anything — nothing is written until step 3")
             if step != .role {
                 Button("Back") { goBack() }
+                    .help("return to the previous step; the choices you made are kept")
             }
             if step != .method {
                 Button("Continue") { goForward() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canContinue)
+                    .help(
+                        step == .role
+                            ? "go on to the name and the destination this role files to"
+                            : "go on to how the rows get here — author them in "
+                                + "Concepts & Vectors, or import a file")
             }
         }
         .padding(.horizontal, 16)
@@ -253,6 +267,10 @@ struct DatasetCreationSheet: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(
+            "file this dataset as \(candidate.title.lowercased()) — the role "
+                + "picks the recipe that reads it and the one place it belongs")
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
     // MARK: Step 2 — name and destination
@@ -291,7 +309,9 @@ struct DatasetCreationSheet: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
-            Picker("", selection: $recipeFamily) {
+            // Real title (hidden): the heading above is a plain Text and is
+            // not associated with the group for VoiceOver.
+            Picker("Which recipe does this validate?", selection: $recipeFamily) {
                 Text("Choose…").tag(DatasetRecipeFamily?.none)
                 ForEach(DatasetRecipeFamily.allCases) { family in
                     Text(family.label).tag(DatasetRecipeFamily?.some(family))
@@ -299,6 +319,8 @@ struct DatasetCreationSheet: View {
             }
             .labelsHidden()
             .pickerStyle(.radioGroup)
+            .help("the recipe family decides the canonical root this set is filed under")
+            .accessibilityLabel("Which recipe does this validate?")
             if let recipeFamily {
                 Text(recipeFamily.detail)
                     .font(.caption)
@@ -316,7 +338,7 @@ struct DatasetCreationSheet: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Which paired recipe reads this?")
                 .font(.callout.weight(.medium))
-            Picker("", selection: $pairedFamily) {
+            Picker("Which paired recipe reads this?", selection: $pairedFamily) {
                 Text("Choose…").tag(VectorCatalog.PairedStimulusFamily?.none)
                 ForEach(VectorCatalog.PairedStimulusFamily.allCases) { family in
                     Text(family.title)
@@ -325,6 +347,10 @@ struct DatasetCreationSheet: View {
             }
             .labelsHidden()
             .pickerStyle(.radioGroup)
+            .help(
+                "the family picks the root AND the row shape the import is "
+                    + "parsed with — neither loader reads the other's rows")
+            .accessibilityLabel("Which paired recipe reads this?")
             if let pairedFamily {
                 Text(pairedFamily.detail)
                     .font(.caption)
@@ -338,13 +364,15 @@ struct DatasetCreationSheet: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Which neutral corpus?")
                 .font(.callout.weight(.medium))
-            Picker("", selection: $neutralTarget) {
+            Picker("Which neutral corpus?", selection: $neutralTarget) {
                 ForEach(NeutralCorpusTarget.allCases) { target in
                     Text(target.label).tag(target)
                 }
             }
             .labelsHidden()
             .pickerStyle(.radioGroup)
+            .help("which neutral corpus this file becomes — each has one canonical place")
+            .accessibilityLabel("Which neutral corpus?")
         }
     }
 
@@ -355,6 +383,11 @@ struct DatasetCreationSheet: View {
             TextField(nameFieldPlaceholder, text: $rawName)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 320)
+                .help(
+                    "the name this dataset is filed under — it becomes the "
+                        + "directory (or the filename) in the destination "
+                        + "previewed below")
+                .accessibilityLabel(nameFieldLabel)
             if let plan, plan.wasSanitized {
                 Text("filed as \(plan.name)")
                     .font(.caption)
@@ -497,20 +530,37 @@ struct DatasetCreationSheet: View {
     /// the only way those datasets get started at all.
     private func authorInBuilderCard(_ plan: DatasetCreationPlan) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Author in Concept Builder")
+            Text("Author in Concepts & Vectors")
                 .font(.callout.weight(.medium))
-            Text(
-                "Creates \(plan.directoryRelativePath) and registers the "
-                    + "concept — empty structure, no example rows — then opens "
-                    + "Concepts & Vectors with it selected so you can paste, "
-                    + "generate, or type the rows there."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            Button("Create and open the builder") { authorInBuilder(plan) }
+            Text(authorInBuilderDetail(plan))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            // The recommended route for the roles that reach it, so it is the
+            // prominent one and it is what Return does (audit 2026-09-06 —
+            // Return used to import while this button had no shortcut).
+            Button("Create and open Concepts & Vectors") { authorInBuilder(plan) }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
                 .disabled(isApplying)
+                .help(
+                    "register the concept and switch to Concepts & Vectors — "
+                        + "no rows are invented, you author them there")
         }
+    }
+
+    /// Honest about the verb: the same plan can be a create or an add-to, and
+    /// the destination preview on step 2 already says which.
+    private func authorInBuilderDetail(_ plan: DatasetCreationPlan) -> String {
+        let opening =
+            plan.verb == .create
+            ? "Creates \(plan.directoryRelativePath) and registers the concept"
+            : "\(plan.directoryRelativePath) already exists — this registers "
+                + "the concept and adds to it; nothing already there is touched"
+        return opening
+            + " — empty structure, no example rows — then opens Concepts & "
+            + "Vectors with it selected so you can paste, generate, or type "
+            + "the rows there."
     }
 
     private var llmAuthoringNote: some View {
@@ -522,7 +572,7 @@ struct DatasetCreationSheet: View {
                     + "corpus-generation instructions — live in Concepts & "
                     + "Vectors under the grand-mean recipe (\"Copy LLM prompt\" "
                     + "and \"Copy Claude Cowork prompt\"). They are generated "
-                    + "against the builder's current concept and recipe, so "
+                    + "against that tool's current concept and recipe, so "
                     + "they are copied there rather than duplicated here. "
                     + "Import the JSONL you get back below."
             )
@@ -594,9 +644,7 @@ struct DatasetCreationSheet: View {
             }
 
             HStack(spacing: 10) {
-                Button(importButtonTitle(plan)) { attemptCommit(plan) }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(chosen.isEmpty || isApplying)
+                importButton(plan)
                 if isApplying {
                     ProgressView().controlSize(.small)
                 }
@@ -606,11 +654,45 @@ struct DatasetCreationSheet: View {
         }
     }
 
+    /// Prominent and default-action ONLY when it is this step's recommended
+    /// route: the builder card takes both when the role authors there, and a
+    /// replace never answers to Return (audit 2026-09-06).
+    @ViewBuilder
+    private func importButton(_ plan: DatasetCreationPlan) -> some View {
+        let isPrimary = !plan.role.authorsInConceptBuilder
+        if isPrimary {
+            Button(importButtonTitle(plan)) { attemptCommit(plan) }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(
+                    plan.verb == .replace ? nil : KeyboardShortcut.defaultAction)
+                .disabled(chosen.isEmpty || isApplying)
+                .help(importButtonHelp(plan))
+        } else {
+            Button(importButtonTitle(plan)) { attemptCommit(plan) }
+                .disabled(chosen.isEmpty || isApplying)
+                .help(importButtonHelp(plan))
+        }
+    }
+
     private func importButtonTitle(_ plan: DatasetCreationPlan) -> String {
         switch plan.verb {
         case .create: "Create dataset"
         case .addTo: "Add to dataset"
         case .replace: "Replace…"
+        }
+    }
+
+    private func importButtonHelp(_ plan: DatasetCreationPlan) -> String {
+        switch plan.verb {
+        case .create:
+            "copy the chosen bytes to \(plan.directoryRelativePath) after the "
+                + "family's own parser accepts them"
+        case .addTo:
+            "add the chosen bytes to \(plan.directoryRelativePath) — nothing "
+                + "already filed there is touched"
+        case .replace:
+            "overwrite the file already filed here — asks first, and says "
+                + "what a frozen study pinned to the old bytes will do"
         }
     }
 
@@ -638,9 +720,13 @@ struct DatasetCreationSheet: View {
                 importingSlot = file.slot
             }
             .controlSize(.small)
+            .help(
+                "pick the file that becomes \(file.filename) — it is copied, "
+                    + "never moved or linked")
             if chosen[file.slot] != nil {
                 Button("Clear") { chosen[file.slot] = nil }
                     .controlSize(.small)
+                    .help("forget this choice — nothing on disk changes")
             }
         }
     }
@@ -661,10 +747,11 @@ struct DatasetCreationSheet: View {
     /// invented — `DatasetInventory` lists a concept-stimuli row only when
     /// positive/negative actually exist.
     private func authorInBuilder(_ plan: DatasetCreationPlan) {
+        guard !isApplying else { return }
         do {
             try plan.createDirectory()
         } catch {
-            failure = "\(error)"
+            failure = describe(error)
             return
         }
         let builder = service.concepts
@@ -676,6 +763,7 @@ struct DatasetCreationSheet: View {
     }
 
     private func attemptCommit(_ plan: DatasetCreationPlan) {
+        guard !isApplying else { return }
         let replacing = plan.files.contains { chosen[$0.slot] != nil && $0.exists }
         if replacing {
             confirmingReplace = true
@@ -696,25 +784,42 @@ struct DatasetCreationSheet: View {
             + "to those bytes will now fail verification."
     }
 
+    /// The copy + parse runs OFF the main actor: it hashes and validates
+    /// every file, and on the main actor the spinner and the disabled gates
+    /// below could never render (audit 2026-09-06 — `isApplying` was set and
+    /// cleared inside one run-loop turn). Re-entry is guarded by the same
+    /// flag the buttons read.
     private func commit(replacing: Bool) {
-        guard let plan else { return }
+        guard let plan, !isApplying else { return }
         isApplying = true
         failure = nil
         // The file-importer hands back security-scoped URLs; the copy happens
         // inside `apply`, so access is held across the whole call.
-        let scoped = chosen.values.filter { $0.startAccessingSecurityScopedResource() }
-        defer {
-            for url in scoped { url.stopAccessingSecurityScopedResource() }
-            isApplying = false
+        let imports = chosen
+        let scoped = imports.values.filter { $0.startAccessingSecurityScopedResource() }
+        Task {
+            defer {
+                for url in scoped { url.stopAccessingSecurityScopedResource() }
+                isApplying = false
+            }
+            do {
+                let outcome = try await Task.detached(priority: .userInitiated) {
+                    try plan.apply(imports: imports, replacingExisting: replacing)
+                }.value
+                onCreated(outcome.inventoryEntryID)
+                dismiss()
+            } catch {
+                failure = describe(error)
+            }
         }
-        do {
-            let outcome = try plan.apply(
-                imports: chosen, replacingExisting: replacing)
-            onCreated(outcome.inventoryEntryID)
-            dismiss()
-        } catch {
-            failure = "\(error)"
-        }
+    }
+
+    /// `DatasetCreationError` says exactly what was refused; a Foundation
+    /// error's `description` is an `Error Domain=…` dump, so those go through
+    /// `localizedDescription`.
+    private func describe(_ error: Error) -> String {
+        if let creation = error as? DatasetCreationError { return creation.description }
+        return error.localizedDescription
     }
 }
 

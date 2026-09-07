@@ -51,6 +51,8 @@ struct OptimizationComposerView: View {
     @State private var criterionJSONExpanded = false
     @State private var criterionJSONText = ""
     @State private var criterionJSONError: String?
+    /// Applying overwrites every criterion field in the form; it asks first.
+    @State private var confirmApplyCriterionJSON = false
     @State private var appliedSelection: ExperimentManifest.SweepSelection?
 
     // Sweep grid + instruments (defaults mirror SweepSpec()).
@@ -227,6 +229,46 @@ struct OptimizationComposerView: View {
             .filter { !$0.name.isEmpty }
     }
 
+    /// The grid the form currently describes, or nil when a field does not
+    /// parse. Built once so the disabled-reason, the caption, and Declare
+    /// itself all audit exactly the same spec.
+    private var composedSpec: ExperimentManifest.SweepSpec? {
+        guard let fractions = SweepSpecForm.parseNumberList(layerFractionsText),
+            let alphas = SweepSpecForm.parseNumberList(alphasText),
+            let maxTokens = Int(maxTokensText.trimmingCharacters(in: .whitespaces))
+        else { return nil }
+        return ExperimentManifest.SweepSpec(
+            layerFractions: fractions,
+            alphas: alphas,
+            devPromptsFile: devPromptsFile.trimmingCharacters(in: .whitespaces),
+            batteryFile: batteryFile.trimmingCharacters(in: .whitespaces),
+            maxTokens: maxTokens)
+    }
+
+    /// THE grid audit — the same one `set-sweep-grid` and the HTTP route run
+    /// (`ExperimentStore.sweepGridProblem` via `SweepSpecForm.validate`).
+    ///
+    /// It used to run only inside `panel.setSweepSpec`, which
+    /// `OptimizationComposer.declare` reaches AFTER `ExperimentStore.create`
+    /// has already written the manifest: a fraction of 1.2 or a descending
+    /// ladder minted a draft study with pins and no criterion, and the retry
+    /// under the same auto-suggested name then refused as "already exists".
+    /// Auditing here means the button is disabled with the engine's own
+    /// sentence before anything is written.
+    private var gridProblem: String? {
+        if SweepSpecForm.parseNumberList(layerFractionsText) == nil {
+            return "layer fractions: enter comma-separated numbers, e.g. "
+                + "0.5, 0.7, 0.85"
+        }
+        if SweepSpecForm.parseNumberList(alphasText) == nil {
+            return "alphas: enter comma-separated numbers, e.g. 0.05, 0.08, 0.13"
+        }
+        if Int(maxTokensText.trimmingCharacters(in: .whitespaces)) == nil {
+            return "max tokens: enter a whole number"
+        }
+        return composedSpec.flatMap(SweepSpecForm.validate)
+    }
+
     private var declareDisabledReason: String? {
         if effectiveMetric == nil {
             return "choose the selection objective first — the criterion is "
@@ -260,10 +302,85 @@ struct OptimizationComposerView: View {
                 return "logprobShift needs a choice prompts file"
             }
         }
+        if let gridProblem { return gridProblem }
         if nameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return "name the optimization study"
         }
         return nil
+    }
+
+    /// Where a "Declare & Optimize" sweep would actually execute. Mirrors
+    /// `OptimizationRunsView.SweepExecution` — the composer declares LOCAL
+    /// studies, so an unpaired server has no direct route at all.
+    private var runsOnServer: Bool {
+        service.cluster.computeTarget == .server
+    }
+
+    private var serverIsPaired: Bool {
+        service.cluster.activeServerPairing == .paired
+    }
+
+    private var substrateLabel: String { service.cluster.substrateLabel }
+
+    /// Why "Declare & Optimize" specifically is unavailable — nil means the
+    /// sweep can start. Declaring alone stays available in every one of
+    /// these states, which is why this is separate from
+    /// `declareDisabledReason`.
+    ///
+    /// `ExperimentPanel.runSweep` silently `return`s while another local job
+    /// holds the engine, and `StudyServerJobCoordinator` refuses a direct run
+    /// against an unpaired server — both AFTER the study was declared and the
+    /// region had already switched, so nothing said the sweep never started.
+    private var optimizeDisabledReason: String? {
+        if let declareDisabledReason { return declareDisabledReason }
+        if panel.localJobs.isSweeping {
+            return "a sweep is already running — Declare Optimization now and "
+                + "start this one from Optimizations when that finishes"
+        }
+        if panel.localJobs.isRunning || panel.localJobs.isValidating {
+            return "another study task is running — Declare Optimization now "
+                + "and start the sweep from Optimizations when it finishes"
+        }
+        if runsOnServer, !serverIsPaired {
+            return "\(substrateLabel) is not paired to this workspace, and a "
+                + "direct run would execute the server-resident copy — "
+                + "Declare Optimization here, then send it with Submit "
+                + "Bundle (verb sweep) from Studies"
+        }
+        return nil
+    }
+
+    /// Names the substrate on the button, exactly as Optimizations' own
+    /// button does, so "immediately" never means somewhere unstated.
+    private var optimizeButtonTitle: String {
+        runsOnServer && serverIsPaired
+            ? "Declare & Optimize on \(substrateLabel)"
+            : "Declare & Optimize"
+    }
+
+    /// Help strings built OUTSIDE the view builder.
+    private var optimizeButtonHelp: String {
+        if let optimizeDisabledReason { return optimizeDisabledReason }
+        return runsOnServer
+            ? "declare the optimization and submit its sweep as a durable job "
+                + "on \(substrateLabel) — watch it in Optimizations and the "
+                + "Activity pane"
+            : "declare the optimization and start its sweep on this Mac now — "
+                + "watch it in Optimizations and the Activity pane"
+    }
+
+    private var declareButtonHelp: String {
+        declareDisabledReason
+            ?? "declare only — run the sweep later from Optimizations"
+    }
+
+    /// The grid's size in one line, so a typo in either axis is visible as a
+    /// cell count before it is visible as a queue.
+    private var gridSizeCaption: String? {
+        guard let spec = composedSpec else { return nil }
+        let cells = spec.layerFractions.count * spec.alphas.count
+        return "\(spec.layerFractions.count) depths × \(spec.alphas.count) "
+            + "alphas = \(cells) cells, plus the implied no-injection baseline"
     }
 
     // MARK: Objective section
@@ -439,6 +556,10 @@ struct OptimizationComposerView: View {
         HStack(spacing: 8) {
             Button("Add judge") { judgeDrafts.append(JudgeDraft()) }
                 .controlSize(.small)
+                .help(
+                    "add another judge to the panel — two or more distinct "
+                        + "judges buy inter-rater agreement; the whole panel "
+                        + "is pinned into the manifest")
             judgesCaption
         }
         localJudgeRuleCaptions
@@ -570,17 +691,49 @@ struct OptimizationComposerView: View {
     @ViewBuilder
     private var criterionJSONEditor: some View {
         DisclosureGroup("Edit criterion as JSON", isExpanded: $criterionJSONExpanded) {
+            // A CONSTANT height, not a minimum: a `minHeight` that appears
+            // and disappears with a disclosure is the macOS 27 split-column
+            // hazard, and this sits in the controls column.
             TextEditor(text: $criterionJSONText)
                 .font(.caption.monospaced())
-                .frame(minHeight: 120)
+                .frame(height: 160)
+                .help(
+                    "the criterion block verbatim, as it will be written into "
+                        + "the manifest — edit fields this form does not "
+                        + "show, then Apply JSON")
             HStack(spacing: 8) {
-                Button("Apply JSON") { applyCriterionJSON() }
+                Button("Apply JSON") { confirmApplyCriterionJSON = true }
                     .controlSize(.small)
-                Button("Seed from form") {
+                    .disabled(
+                        criterionJSONText
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                            .isEmpty)
+                    .help(
+                        "parse this JSON and OVERWRITE every criterion field "
+                            + "in the form above with it — asks first")
+                Button("Seed JSON from form") {
                     criterionJSONText = encodedSelectionJSON()
                     criterionJSONError = nil
                 }
                 .controlSize(.small)
+                .help(
+                    "replace the text above with the criterion the form "
+                        + "currently describes — discards hand edits made "
+                        + "here, and changes nothing in the form")
+            }
+            .confirmationDialog(
+                "Apply this JSON to the criterion form?",
+                isPresented: $confirmApplyCriterionJSON,
+                titleVisibility: .visible
+            ) {
+                Button("Apply JSON", role: .destructive) { applyCriterionJSON() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(
+                    "Every criterion field above — objective, instruments, "
+                        + "tolerance, floor, control margin and scope — is "
+                        + "replaced by what this JSON declares. Nothing is "
+                        + "written to disk until you Declare.")
             }
             if let criterionJSONError {
                 Text(criterionJSONError)
@@ -594,6 +747,9 @@ struct OptimizationComposerView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
+        .help(
+            "the escape hatch for criterion fields this form does not show — "
+                + "the block is verbatim manifest data, never hashed")
         .onChange(of: criterionJSONExpanded) {
             if criterionJSONExpanded, criterionJSONText.isEmpty {
                 criterionJSONText = encodedSelectionJSON()
@@ -644,7 +800,40 @@ struct OptimizationComposerView: View {
             controlTopKText = decoded.controls?.topK.map(String.init) ?? ""
             criterionJSONError = nil
         } catch {
-            criterionJSONError = "\(error)"
+            criterionJSONError = Self.criterionJSONMessage(error)
+        }
+    }
+
+    /// A `DecodingError` interpolated raw reads as
+    /// `keyNotFound(CodingKeys(stringValue: …), Swift.DecodingError.Context(…))`
+    /// — Swift internals in a researcher's face. Its `localizedDescription`
+    /// is the other extreme ("the data couldn't be read"), naming nothing.
+    /// This says which field, in the words of the JSON they typed.
+    private static func criterionJSONMessage(_ error: Error) -> String {
+        guard let decoding = error as? DecodingError else {
+            return error.localizedDescription
+        }
+        func path(_ context: DecodingError.Context) -> String {
+            let keys = context.codingPath.map(\.stringValue)
+                .filter { !$0.isEmpty }
+            return keys.isEmpty ? "the top level" : keys.joined(separator: ".")
+        }
+        switch decoding {
+        case .keyNotFound(let key, let context):
+            return "criterion JSON: '\(key.stringValue)' is required at "
+                + "\(path(context)) but is missing"
+        case .typeMismatch(let type, let context):
+            return "criterion JSON: \(path(context)) must be a \(type) — "
+                + context.debugDescription
+        case .valueNotFound(let type, let context):
+            return "criterion JSON: \(path(context)) is null, but a \(type) "
+                + "is required"
+        case .dataCorrupted(let context):
+            return context.codingPath.isEmpty
+                ? "criterion JSON: not valid JSON — \(context.debugDescription)"
+                : "criterion JSON: \(path(context)) — \(context.debugDescription)"
+        @unknown default:
+            return "criterion JSON: \(decoding.localizedDescription)"
         }
     }
 
@@ -734,6 +923,10 @@ struct OptimizationComposerView: View {
                     .foregroundStyle(.secondary)
                 Button("Open Data") { navigate(.data) }
                     .controlSize(.small)
+                    .help(
+                        "open Data → Concepts & Vectors, where a concept's "
+                            + "stimulus data is authored and its vector "
+                            + "extracted")
             } else {
                 vectorRows
             }
@@ -941,6 +1134,24 @@ struct OptimizationComposerView: View {
             TextField("Max tokens per generation", text: $maxTokensText)
                 .textFieldStyle(.roundedBorder)
                 .multilineTextAlignment(.leading)
+                .help(
+                    "the generation cap for every dev-prompt and battery "
+                        + "answer in the sweep — it multiplies through every "
+                        + "cell, so it is the main lever on how long a sweep "
+                        + "takes")
+            if let gridProblem {
+                // The engine's own grid audit, before anything is written.
+                Label(gridProblem, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            } else if let gridSizeCaption {
+                Text(gridSizeCaption)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             InstrumentPathField(
                 label: "Dev prompts (JSONL)",
                 options: instrumentFiles,
@@ -1023,21 +1234,22 @@ struct OptimizationComposerView: View {
                 .textFieldStyle(.roundedBorder)
                 .multilineTextAlignment(.leading)
                 .lineLimit(1 ... 3)
+                .help(
+                    "the question this optimization answers, recorded in the "
+                        + "manifest — free text, and it travels into the "
+                        + "study's reports")
+            // One control size across the row: a small "Open Optimizations"
+            // beside two regular Declare buttons read as a different class of
+            // control than it is.
             HStack(spacing: 8) {
-                Button("Declare & Optimize") { declare(andOptimize: true) }
+                Button(optimizeButtonTitle) { declare(andOptimize: true) }
                     .buttonStyle(.borderedProminent)
-                    .disabled(declareDisabledReason != nil)
-                    .help(
-                        "declare the optimization and start its sweep "
-                            + "immediately — watch it in Optimizations and "
-                            + "the Activity pane")
+                    .disabled(optimizeDisabledReason != nil)
+                    .help(optimizeButtonHelp)
                 Button("Declare Optimization") { declare(andOptimize: false) }
                     .disabled(declareDisabledReason != nil)
-                    .help(
-                        "declare only — run the sweep later from "
-                            + "Optimizations")
+                    .help(declareButtonHelp)
                 Button("Open Optimizations") { openOptimizations() }
-                    .controlSize(.small)
                     .help("existing optimization runs — grids, recommendations, Create Agent")
             }
             declareCaptions
@@ -1055,19 +1267,38 @@ struct OptimizationComposerView: View {
             Text(declareDisabledReason)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         } else {
+            // The "named by path only" clause contradicted `sweepInputPinNote`
+            // directly above it and has been false since 2026-07-20 (dev
+            // prompts and battery are hash-pinned, choice prompts since
+            // 2026-08-02).
             Text("creates the draft study with its concept and corpus pins, "
                 + "declares the criterion verbatim, and opens the run in "
-                + "Optimizations — grid and criterion are manifest data that "
-                + "freeze pins; the dev-prompts and battery files are named by "
-                + "path only (see the note above)")
+                + "Optimizations — grid, criterion, and every instrument file "
+                + "are manifest data that freeze pins")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        // Declaring is available in states where STARTING the sweep is not,
+        // so that refusal gets its own line rather than being discovered
+        // after the region has already switched.
+        if declareDisabledReason == nil, let reason = optimizeDisabledReason {
+            Label(
+                "Declare & Optimize is unavailable: " + reason,
+                systemImage: "exclamationmark.triangle")
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         }
         Text("or declare a criterion on an existing draft study: the Declare "
             + "an Optimization flow in Agents → Optimizations")
             .font(.caption2)
             .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     /// Declare (optionally then start the sweep) and land on Optimizations
@@ -1077,26 +1308,19 @@ struct OptimizationComposerView: View {
     /// preflight and status surfacing apply unchanged.
     private func declare(andOptimize: Bool) {
         formError = nil
-        guard let fractions = SweepSpecForm.parseNumberList(layerFractionsText) else {
-            formError = "layer fractions: enter comma-separated numbers, e.g. 0.5, 0.7, 0.85"
+        // The grid audit runs BEFORE anything is written: `declare` creates
+        // the study first and only reaches the audit inside `setSweepSpec`,
+        // which is how a bad grid used to leave an orphan draft behind.
+        guard var spec = composedSpec, gridProblem == nil else {
+            formError = gridProblem
             return
         }
-        guard let alphas = SweepSpecForm.parseNumberList(alphasText) else {
-            formError = "alphas: enter comma-separated numbers, e.g. 0.05, 0.08, 0.13"
-            return
-        }
-        guard let maxTokens = Int(maxTokensText.trimmingCharacters(in: .whitespaces)) else {
-            formError = "max tokens: enter a whole number"
+        if andOptimize, let reason = optimizeDisabledReason {
+            formError = reason
             return
         }
         do {
             let plan = try OptimizationComposer.makePlan(selectedPins)
-            var spec = ExperimentManifest.SweepSpec(
-                layerFractions: fractions,
-                alphas: alphas,
-                devPromptsFile: devPromptsFile.trimmingCharacters(in: .whitespaces),
-                batteryFile: batteryFile.trimmingCharacters(in: .whitespaces),
-                maxTokens: maxTokens)
             spec.selection = composedSelection()
             let isJudge = effectiveMetric == "judgeScore"
             let created = try OptimizationComposer.declare(
@@ -1118,7 +1342,7 @@ struct OptimizationComposerView: View {
             }
             onDeclared(created)
         } catch {
-            formError = "\(error)"
+            formError = error.localizedDescription
         }
     }
 }
@@ -1254,24 +1478,46 @@ private struct ObjectiveMetricPicker: View {
     @Binding var metric: String?
 
     var body: some View {
+        // Short labels: in a pop-up at the controls column's 560pt minimum a
+        // 110-character option truncates to its first few words, and two of
+        // these carried the SAME parenthetical. The recommendation lives in
+        // the help and the caption below the picker instead.
         Picker("Selection objective", selection: $metric) {
             Text("choose…").tag(String?.none)
-            Text("judge score — paired judging vs baseline "
-                + "(outcome instrument; recommended when the claim is about a "
-                + "substantive outcome)")
-                .tag(String?.some("judgeScore"))
-            Text("logprob shift — Δ logP(target) on choice prompts "
-                + "(outcome instrument; recommended when the claim is about a "
-                + "substantive outcome)")
-                .tag(String?.some("logprobShift"))
-            Text("marker density — smoke-test / manipulation check")
-                .tag(String?.some("markerDensity"))
+            Text("judge score").tag(String?.some("judgeScore"))
+            Text("logprob shift").tag(String?.some("logprobShift"))
+            Text("marker density (smoke test)").tag(String?.some("markerDensity"))
         }
         .help(
-            "the declared selection objective — no default: judgeScore and "
-                + "logprobShift are the outcome instruments; markerDensity is "
-                + "a diagnostic/manipulation check, never the promotion "
-                + "objective when the claim is about a substantive outcome")
+            "the declared selection objective — no default. judge score: "
+                + "paired judging against baseline. logprob shift: "
+                + "Δ logP(target) on choice prompts. Both are outcome "
+                + "instruments, and one of them is what a claim about a "
+                + "substantive outcome needs. marker density is a "
+                + "diagnostic/manipulation check, never the promotion "
+                + "objective for such a claim")
+        objectiveGuidance
+    }
+
+    /// The recommendation the option labels used to carry, now visible under
+    /// the picker where it does not truncate.
+    @ViewBuilder
+    private var objectiveGuidance: some View {
+        if metric == "judgeScore" {
+            Text("outcome instrument: a judge panel scores each cell's "
+                + "generations against the baseline's, on a pinned rubric. "
+                + "Recommended when the claim is about a substantive outcome.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if metric == "logprobShift" {
+            Text("outcome instrument: mean Δ logP(target) on choice prompts, "
+                + "scored without generating. Recommended when the claim is "
+                + "about a substantive outcome.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
@@ -1305,6 +1551,10 @@ private struct InstrumentPathField: View {
         TextField("\(label) — workspace-relative path", text: $text)
             .textFieldStyle(.roundedBorder)
             .multilineTextAlignment(.leading)
+            .help(
+                "the same file as a typed path, for a file the picker above "
+                    + "does not list — workspace-relative, so the study stays "
+                    + "portable. " + help)
         if !text.trimmingCharacters(in: .whitespaces).isEmpty {
             FileReferenceRow(
                 label: label,
@@ -1333,32 +1583,51 @@ private struct JudgeDraftRow: View {
 
     private static let customTag = "custom…"
 
+    /// Two lines, not one. A single HStack held the name field, a 110pt kind
+    /// picker, two more required text fields and the remove button inside a
+    /// 560pt column: each field got ~120pt, so "Model slug (required)" and
+    /// "Provider (required)" — the placeholders that say the field is
+    /// mandatory — were cut off before the word "required".
     var body: some View {
-        HStack(spacing: 8) {
-            TextField("Judge name (required)", text: $draft.name)
-                .textFieldStyle(.roundedBorder)
-                .multilineTextAlignment(.leading)
-            Picker("kind", selection: $draft.kind) {
-                // Not offered for new judges (2026-07-24) — see
-                // `JudgingSectionView.judgeRow`. Listed only when it is
-                // already this draft's kind, so an imported panel renders
-                // instead of being silently rewritten.
-                if draft.kind == "claude" {
-                    Text("claude (legacy)").tag("claude")
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                TextField("Judge name (required)", text: $draft.name)
+                    .textFieldStyle(.roundedBorder)
+                    .multilineTextAlignment(.leading)
+                    .help(
+                        "what this judge is called in the manifest and in "
+                            + "per-judge results — required; a nameless row "
+                            + "is dropped at Declare")
+                Picker("Judge kind", selection: $draft.kind) {
+                    // Not offered for new judges (2026-07-24) — see
+                    // `JudgingSectionView.judgeRow`. Listed only when it is
+                    // already this draft's kind, so an imported panel renders
+                    // instead of being silently rewritten.
+                    if draft.kind == "claude" {
+                        Text("claude (legacy)").tag("claude")
+                    }
+                    Text("openrouter").tag("openrouter")
+                    Text("local").tag("local")
                 }
-                Text("openrouter").tag("openrouter")
-                Text("local").tag("local")
+                .labelsHidden()
+                .frame(width: 130)
+                .help(
+                    "where this judge runs: openrouter (a pinned slug and "
+                        + "serving provider), or local (an MLX model on this "
+                        + "substrate). It decides which fields the row asks "
+                        + "for next")
+                Button {
+                    remove(draft.id)
+                } label: {
+                    Image(systemName: "minus.circle")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Remove judge")
+                .help("remove this judge")
             }
-            .labelsHidden()
-            .frame(width: 110)
-            modelField
-            Button {
-                remove(draft.id)
-            } label: {
-                Image(systemName: "minus.circle")
+            HStack(spacing: 8) {
+                modelField
             }
-            .buttonStyle(.plain)
-            .help("remove this judge")
         }
     }
 
@@ -1413,7 +1682,7 @@ private struct JudgeDraftRow: View {
     }
 
     private var localModelPicker: some View {
-        Picker("model", selection: pickerSelection) {
+        Picker("Judge model", selection: pickerSelection) {
             Text(defaultChoiceLabel).tag("")
             ForEach(installedModels, id: \.self) { model in
                 Text(model).tag(model)
@@ -1473,6 +1742,7 @@ private struct ArtifactPickRow: View {
                 }
             }
             .disabled(!isPinnable)
+            .help(toggleHelp)
             Spacer()
         }
     }
@@ -1480,6 +1750,15 @@ private struct ArtifactPickRow: View {
     private var isPinnable: Bool {
         if case .pinnable = verdict { return true }
         return false
+    }
+
+    private var toggleHelp: String {
+        isPinnable
+            ? "pin this vector's RECIPE — concept, current stimulus bytes, "
+                + "and extraction options; the sweep re-derives the vector "
+                + "from them rather than reusing these tensor bytes"
+            : "this artifact's recipe cannot be pinned in this workspace — "
+                + "the caption says what is missing"
     }
 
     @ViewBuilder

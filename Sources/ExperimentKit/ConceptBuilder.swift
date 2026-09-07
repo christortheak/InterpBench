@@ -155,7 +155,7 @@ public final class ConceptBuilder {
                 [
                     "RepE reader LAT fits a scalar reading direction from paired examples rendered through a selected reader template.",
                     "Data needed: an independent paired reader dataset; held-out pairs estimate reader accuracy.",
-                    "Workflow: copy the LLM prompt, paste/import pairs, choose the reader template and held-out count, then use Build Reader rather than the ordinary vector button.",
+                    "Workflow: copy the LLM prompt, paste/import pairs, choose the reader template and held-out count, then use Build reader rather than the ordinary vector button.",
                 ]
             case .emotionGrandMean:
                 [
@@ -285,7 +285,35 @@ public final class ConceptBuilder {
     public private(set) var stats: Stats?
     public private(set) var isWorking = false
     public private(set) var activeTaskLabel: String?
+    /// The panel's one-line outcome caption.
     public private(set) var status: String?
+    /// The caption the most recent completed SAVE published, so a success can
+    /// be recognised by identity rather than by its prose. Any later status —
+    /// a refusal, a delete result, a copy note — replaces `status` and stops
+    /// matching, with no property observer needed.
+    public private(set) var lastSavedStatus: String?
+
+    /// Whether `status` reports a completed SAVE. Carried explicitly so no
+    /// view has to read the prose: the Concepts panel used to colour any
+    /// status containing the word "saved" green, which turned the DELETE
+    /// result ("…and saved vector artifacts remain") into a success
+    /// (UI audit 2026-09-06).
+    public var statusIsSuccess: Bool {
+        status != nil && status == lastSavedStatus
+    }
+
+    /// Report a completed save through the status line, flagged as one.
+    func reportSaved(_ text: String) {
+        status = text
+        lastSavedStatus = text
+    }
+
+    /// Report a problem the VIEW noticed — a file-importer failure, say —
+    /// through the same status line every engine refusal already uses.
+    public func reportProblem(_ message: String) {
+        status = message
+    }
+
     /// Most recent vector/reader/probe BUILD failure — rendered as a
     /// banner-style row in the Concepts panel, because a failed build in the
     /// caption-sized status line is invisible in practice (missing/unsynced
@@ -1217,7 +1245,7 @@ public final class ConceptBuilder {
             refreshConceptList()
             selectedExisting = name
             vectorBuilderSelectedExisting = name
-            status = "saved concept \(name) — choose a recipe and create its dataset"
+            reportSaved("saved concept \(name) — choose a recipe and create its dataset")
             if let host {
                 _ = host.startLiveLog(
                     title: "Concept — \(name)",
@@ -2926,6 +2954,9 @@ public final class ConceptBuilder {
     /// Acquire-then-import in one action from the builder: a researcher who
     /// wants a vector should not have to learn the lens lifecycle to get one.
     public func importJLensForSelectedModel() async {
+        // Every sibling action carries this guard; without it a double-click
+        // queued the acquire + import job PAIR twice (UI audit 2026-09-06).
+        guard !isWorking else { return }
         guard let host, let client = host.cluster.client,
               let modelID = host.workspaceSelectedModelID, !modelID.isEmpty
         else { status = "connect a server workspace and select a model"; return }
@@ -5602,8 +5633,9 @@ public final class ConceptBuilder {
             let artifactID = runDirectory.appending(component: artifactName).path
             host.selectVector(artifactID)
             host.steeringEnabled = true
-            status = "saved \(name) (\(stimuli.positive.count)+\(stimuli.negative.count) stimuli) "
-                + "→ \(runDirectory.lastPathComponent); selected for steering"
+            reportSaved(
+                "saved \(name) (\(stimuli.positive.count)+\(stimuli.negative.count) stimuli) "
+                    + "→ \(runDirectory.lastPathComponent); selected for steering")
             refreshStaleness()
         } catch {
             reportBuildFailure("save failed: \(error)", title: "Vector Build — failed")
@@ -5717,9 +5749,10 @@ public final class ConceptBuilder {
         let artifactID = runDirectory.appending(component: artifactName).path
         host.selectVector(artifactID)
         host.steeringEnabled = true
-        status = "saved \(name) (\(target.rows.count) stories − "
-            + "\(referenceCorpus.rows.count) reference '\(reference)') "
-            + "→ \(runDirectory.lastPathComponent); selected for steering"
+        reportSaved(
+            "saved \(name) (\(target.rows.count) stories − "
+                + "\(referenceCorpus.rows.count) reference '\(reference)') "
+                + "→ \(runDirectory.lastPathComponent); selected for steering")
         refreshStaleness()
     }
 
@@ -5864,10 +5897,11 @@ public final class ConceptBuilder {
         let screeningNote = "(\(extraction.screening.includedCount)/\(extraction.screening.sourceCount) selected build rows"
             + (excluded > 0 ? ", excluded \(excluded) short" : "")
             + ")"
-        status = "saved \(savedArtifactIDs.count) grand-mean \(vectorNoun) "
-            + "(\(savedConceptList)) \(screeningNote) → "
-            + "\(runDirectory.lastPathComponent); selected for steering"
-            + neutralNote + skippedNote
+        reportSaved(
+            "saved \(savedArtifactIDs.count) grand-mean \(vectorNoun) "
+                + "(\(savedConceptList)) \(screeningNote) → "
+                + "\(runDirectory.lastPathComponent); selected for steering"
+                + neutralNote + skippedNote)
         refreshStaleness()
     }
 
