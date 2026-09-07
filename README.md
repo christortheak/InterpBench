@@ -30,8 +30,9 @@ any time, because both work on the same workspace folder.
 
 Release files carry the version and a short source revision in their names,
 for example `SteerLab-0.9.6+416d0675.zip` and
-`steerlab-client-0.9.6+416d0675.tar.gz`. The release notes give the client
-archive's SHA-256, and the archive carries a `SHA256SUMS` for its contents.
+`steerlab-client-0.9.6+416d0675.tar.gz`. Each has a `.sha256` file beside it
+on the Releases page, and the client archive carries a `SHA256SUMS` for its
+contents.
 
 ### Use the Mac app
 

@@ -110,9 +110,9 @@ steering vectors you publish. Read the license of the model you use; see
 
 Pick the first route that fits. Release files carry the version and a short
 source revision in their names (`SteerLab-<version>+<revision>.zip`,
-`steerlab-client-<version>+<revision>.tar.gz`); the release notes give the
-client archive's SHA-256, and the archive carries a `SHA256SUMS` for its
-contents.
+`steerlab-client-<version>+<revision>.tar.gz`), each with a `.sha256` file
+beside it on the Releases page; the client archive also carries a
+`SHA256SUMS` for its contents.
 
 ### 4.1 The Mac app
 
