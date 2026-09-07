@@ -36,12 +36,18 @@ struct GeometryViewerColumn: View {
                 "Cosines @ L\(matrix.layer)",
                 caption: "\(result.artifacts.count) vectors · "
                     + "\(result.matrices.count) common layers · "
-                    + "layer stepper in the Analysis pane")
+                    + "layer stepper in the Analysis pane",
+                copyHelp: "copy this cosine matrix as tab-separated text "
+                    + "(full labels, four decimals) for notes or a spreadsheet",
+                tsv: { GeometryTableText.matrix(matrix) })
             GeometryMatrixView(matrix: matrix)
             if !result.rsa.isEmpty {
                 sectionHeader(
                     "Layer RSA",
-                    caption: "second-order similarity of the cosine structure across layers")
+                    caption: "second-order similarity of the cosine structure across layers",
+                    copyHelp: "copy the layer-RSA matrix as tab-separated text "
+                        + "for notes or a spreadsheet",
+                    tsv: { GeometryTableText.rsa(result) })
                 GeometryRSAView(result: result)
             }
         } else {
@@ -54,7 +60,10 @@ struct GeometryViewerColumn: View {
         if let matrix = geometry.serverMatrix {
             sectionHeader(
                 "Cosines @ L\(matrix.layer) (server)",
-                caption: "computed on \(service.cluster.substrateLabel) over its vector catalog")
+                caption: "computed on \(service.cluster.substrateLabel) over its vector catalog",
+                copyHelp: "copy this cosine matrix as tab-separated text "
+                    + "(full labels, four decimals) for notes or a spreadsheet",
+                tsv: { GeometryTableText.matrix(matrix) })
             GeometryMatrixView(matrix: matrix)
             serverLayerCaption
         } else {
@@ -74,26 +83,81 @@ struct GeometryViewerColumn: View {
         }
     }
 
+    /// The button named here is the one the pane actually shows on this
+    /// substrate — "Compute" locally, "Compute on Server" on the server.
     private var emptyState: some View {
         ContentUnavailableView(
             "No geometry computed yet",
             systemImage: "circle.grid.cross",
             description: Text(
                 "Select at least two vectors in the Analysis pane and press "
-                    + "Compute — the cosine table renders here."))
+                    + (isServerWorkspace ? "Compute on Server" : "Compute")
+                    + " — the cosine table renders here."))
             .frame(maxWidth: .infinity)
             .padding(.top, 40)
     }
 
-    private func sectionHeader(_ title: String, caption: String) -> some View {
+    /// Title + the one-line colour legend + a TSV copy: the fill intensity is
+    /// otherwise unexplained, and a results surface researchers paste into
+    /// notes needs a way out that is not a screenshot.
+    private func sectionHeader(
+        _ title: String,
+        caption: String,
+        copyHelp: String,
+        tsv: @escaping () -> String?
+    ) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.headline)
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.headline)
+                CopyButton("Copy as TSV", help: copyHelp, text: tsv)
+                    .buttonStyle(.link)
+                    .font(.caption)
+            }
             Text(caption)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Text(GeometryTableText.colourLegend)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
         .padding(.top, 4)
+    }
+}
+
+/// Text renderings of the geometry tables: the colour legend the cells need,
+/// and the tab-separated form the Copy buttons write. Pure and file-scoped
+/// so the two table views and the header share one vocabulary.
+private enum GeometryTableText {
+    static let colourLegend =
+        "blue = positive · red = negative · deeper fill = larger magnitude · "
+        + "a dash means the pair is not comparable"
+
+    static func matrix(_ matrix: GeometryLayerMatrix) -> String {
+        var lines = [(["cosine @ L\(matrix.layer)"] + matrix.labels)
+            .joined(separator: "\t")]
+        for (row, label) in matrix.labels.enumerated() {
+            let values = row < matrix.values.count ? matrix.values[row] : []
+            lines.append(([label] + values.map(cell)).joined(separator: "\t"))
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    static func rsa(_ result: GeometryAnalysisResult) -> String {
+        let heads = result.matrices.map { "L\($0.layer)" }
+        var lines = [(["layer RSA"] + heads).joined(separator: "\t")]
+        for (row, matrix) in result.matrices.enumerated() {
+            let values = row < result.rsa.count ? result.rsa[row] : []
+            lines.append((["L\(matrix.layer)"] + values.map(cell))
+                .joined(separator: "\t"))
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// NaN copies as an empty cell, never as 0 — the same rule the on-screen
+    /// "—" follows.
+    private static func cell(_ value: Float) -> String {
+        value.isNaN ? "" : String(format: "%.4f", Double(value))
     }
 }
 
@@ -103,6 +167,11 @@ struct GeometryViewerColumn: View {
 struct GeometryMatrixView: View {
     let matrix: GeometryLayerMatrix
 
+    /// Header and data cells share ONE width: with 58 above and 48 below, the
+    /// Grid sized the column to 58 and every coloured cell sat 10 pt off its
+    /// own header.
+    private static let columnWidth: CGFloat = 58
+
     var body: some View {
         ScrollView([.horizontal, .vertical]) {
             Grid(alignment: .trailing, horizontalSpacing: 8, verticalSpacing: 4) {
@@ -111,8 +180,9 @@ struct GeometryMatrixView: View {
                     ForEach(matrix.labels, id: \.self) { label in
                         Text(shortGeometryLabel(label))
                             .font(.caption2)
-                            .frame(width: 58)
+                            .frame(width: Self.columnWidth)
                             .help(label)
+                            .textSelection(.enabled)
                     }
                 }
                 ForEach(matrix.labels.indices, id: \.self) { row in
@@ -121,14 +191,21 @@ struct GeometryMatrixView: View {
                             .font(.caption2)
                             .frame(width: 72, alignment: .trailing)
                             .help(matrix.labels[row])
+                            .textSelection(.enabled)
                         ForEach(matrix.labels.indices, id: \.self) { column in
-                            GeometryCell(value: matrix.values[row][column])
+                            GeometryCell(
+                                value: matrix.values[row][column],
+                                width: Self.columnWidth)
                         }
                     }
                 }
             }
             .padding(.vertical, 4)
         }
+        // The minimum stays: this two-axis ScrollView collapses without one,
+        // and unlike the controls column the hazard does not apply here —
+        // the whole viewer sits inside its own root ScrollView, so the split
+        // column's minimum never moves with the table's presence.
         .frame(minHeight: 160, maxHeight: 420)
     }
 }
@@ -152,7 +229,7 @@ struct GeometryRSAView: View {
                         Text("L\(result.matrices[row].layer)")
                             .font(.caption2)
                         ForEach(result.matrices.indices, id: \.self) { column in
-                            GeometryCell(value: result.rsa[row][column])
+                            GeometryCell(value: result.rsa[row][column], width: 48)
                         }
                     }
                 }
@@ -165,14 +242,16 @@ struct GeometryRSAView: View {
 
 private struct GeometryCell: View {
     let value: Float
+    var width: CGFloat = 48
 
     var body: some View {
         Text(display)
             .font(.caption.monospacedDigit())
-            .frame(width: 48)
+            .frame(width: width)
             .padding(.vertical, 2)
             .background(cellColor, in: RoundedRectangle(cornerRadius: 4))
             .help(helpText)
+            .textSelection(.enabled)
     }
 
     /// NaN marks a pair the server could not compare — shown, not zeroed.
