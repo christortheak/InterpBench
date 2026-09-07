@@ -168,6 +168,8 @@ set -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(dirname "$SCRIPT_DIR")"
 SUPPORT="$SCRIPT_DIR/app-bundle"
+# Refuse stale compiled client identities before compiling a distributable app.
+python3 "$SCRIPT_DIR/ci/check-python-client-identity.py" || exit 1
 
 # Default OUTPUT deliberately sits OUTSIDE the checkout — see the iCloud note
 # under "Assemble". A signed .app cannot live in iCloud Drive and still pass
@@ -485,6 +487,9 @@ rsync -a --exclude "__pycache__" --exclude "*.pyc" --exclude ".DS_Store" \
 # ServerPayload = the filtered Server/ tree, taken from the payload just
 # staged so the two can never disagree.
 cp -R "$RES/ClusterPayload/Server" "$RES/ServerPayload" || die "could not stage ServerPayload"
+# Both the app and app-free client use the same reviewed installer.
+python3 "$SCRIPT_DIR/build-client-release.py" --output "$RES/ServerPayload/client-release" \
+  || die "could not build the lightweight client release (uv is required by the release builder)"
 
 for family in WorkspaceSeed web AnalysisTools ClusterPayload ServerPayload; do
   printf '  %-16s %s\n' "$family" "$(du -sh "$RES/$family" | cut -f1)"

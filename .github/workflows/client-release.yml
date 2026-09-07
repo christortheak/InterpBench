@@ -1,0 +1,30 @@
+name: Client release qualification
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'Server/**'
+      - 'WorkspaceSeed/**'
+      - 'scripts/build-client-release.py'
+      - 'scripts/ci/qualify-client-release.py'
+      - '.github/workflows/client-release.yml'
+jobs:
+  linux-client:
+    if: github.event.repository.name == 'InterpBench'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Build lightweight release
+        run: |
+          python -m pip install uv==0.12.5
+          python scripts/build-client-release.py --output /tmp/steerlab-client-release
+      - name: Qualify isolated install and repair
+        run: python scripts/ci/qualify-client-release.py /tmp/steerlab-client-release --repair
+      - uses: actions/upload-artifact@v4
+        with:
+          name: steerlab-client
+          path: /tmp/steerlab-client-release/
