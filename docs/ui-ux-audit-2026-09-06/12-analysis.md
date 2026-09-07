@@ -1,0 +1,113 @@
+# Audit 12 — Analysis section (vector geometry panel + viewer, J-lens trace/support, discriminant controls)
+
+Files read in full: `GeometryPanelView.swift` (1143), `GeometryViewerColumn.swift` (204), `JLensTraceViews.swift` (320), `JLensSupportSection.swift` (269), `DiscriminantControlsSection.swift` (185). Base: `<checkout>/Sources/SteerLabApp/`.
+Cross-checked (grep/sed only): `ExperimentKit/GeometryPanel.swift`, `ExperimentKit/GeometryAnalysis.swift`, `ExperimentKit/GemmaScopeCatalog.swift`, `ExperimentKit/ExperimentPanel.swift`, `ExperimentKit/ExperimentStore.swift`, `ExperimentKit/StudyDraftState.swift`, `SteeringKit/Extraction/SteeringVectorMath.swift`, `SteerLabApp/JSpacePanelSection.swift`, `WorkspaceControls.swift`, `WorkbenchSection.swift`, `ChatView.swift`, `StudyEvaluationSection.swift`.
+
+Hosting facts that matter for the findings: `GeometryPanelView` is the Analysis CONTROLS pane (ChatView.swift:130, min width 560 via `WorkbenchSection.minimumContentWidth` default); `GeometryViewerColumn` is the Analysis VIEWER (ChatView.swift:202, viewer title "Vector Geometry", WorkbenchSection.swift:166). `JLensSupportSection` and `JLensTraceSection` render as Form sections inside `JSpacePanelSection` (JSpacePanelSection.swift:49-50), which itself sits inside the Analysis Form's server branch (GeometryPanelView.swift:200) — so the J-lens heatmap and observation table live in the 560pt CONTROLS pane, not the viewer. `DiscriminantControlsSection`/`InstrumentScopeSection` are hosted in the Studies section (StudyEvaluationSection.swift:30/38), also a 560pt pane.
+
+## Coverage table
+
+| File | Controls found | With `.help` (own or group) | Missing help | Icon-only missing a11y label |
+|---|---|---|---|---|
+| GeometryPanelView.swift | 26 own (15 Button, 5 Stepper, 2 Picker, 2 Toggle, 2 Link) + 3 shared components (`WorkspaceModelPicker`, `InstallModelButton`, `AddLocalModelButton`, which carry their own help at WorkspaceControls.swift:386/225/279) | 3 own (Load :384, local toggle :562, server toggle :656) + 1 conditional group help (:1101, empty string when the button is enabled) + 3 shared | 22 (23 counting the empty-string case at :1096) | 0 |
+| GeometryViewerColumn.swift | 0 (display only; header labels and cells carry `.help`) | — | 0 | 0 |
+| JLensTraceViews.swift | 4 (TextField :60, Button :62, Picker :107, Picker :120) | 0 | 4 | 0 |
+| JLensSupportSection.swift | 4 (Picker :107, Stepper :115, TextField :118, Button :123) | 2 (:115, :118) | 2 | 0 |
+| DiscriminantControlsSection.swift | 6 (Button :69, Picker :99, Picker :103, Button :117, Button :157, Button :170) | 2 (:103, :170) | 4 | 0 |
+
+No icon-only controls exist in this cluster; no `Menu`, context menu, or toolbar items either.
+
+## Findings
+
+- **[BUG]** `JLensTraceViews.swift:107` + `:139-151` — Picker "Generation" — switching generation never re-decodes tokens: `decodeVisibleTokens` runs once in `load()` for the FIRST row only, so for every other generation the "predicted" / "top-k" columns and the "Colour by" picker fall back to raw integer ids (`piece()` returns `"\(id)"`). — Re-run decoding on `selectedRowID` change (`.onChange`) or decode the union of ids across all rows at load.
+- **[BUG]** `JLensTraceViews.swift:66-70` — loader status text — rendered as an `.overlay(alignment: .bottomLeading)` with `.offset(y: 16)`, i.e. OUTSIDE the HStack's layout bounds; an error like "run not found" paints over the next Form row (completeness line / Generation picker) instead of taking space. — Make it a normal row under the loader (as `JLensSupportSection.swift:45-47` does).
+- **[BUG]** `JLensTraceViews.swift:270-295` — `Table(shown)…frame(minHeight: 220)` — a fixed-minHeight view that appears/disappears with async state (after "Load trace"), inside the split-view controls column; this is the fatal min-size class the checklist names. It also nests a vertically scrolling `Table` inside the grouped `Form` (nested vertical scroll). (Unverified on the beta — the enclosing Form scrolls and may absorb it.) — Either bound it with a fixed `maxHeight` box like `vectorList` (GeometryPanelView.swift:553) or, better, render heatmap + table in the viewer pane where the section's own convention says results go (GeometryViewerColumn.swift:4-8).
+- **[BUG]** `GeometryPanelView.swift:868-874` — Button "Refresh Server Reports" (:757) — `if let runs = try? await client.runs()` swallows the failure; on a server error the click does nothing visible and the list stays stale/empty with no message. — Surface the error into `serverScopeImportStatus` (or a status line) and show a busy indicator while fetching.
+- **[BUG]** `JLensSupportSection.swift:218-221` + `:50` — catalog fetch — `catalog = try? await client.jlensCatalog()` swallows errors, so a failed fetch renders as the misleading "No server vector matches an imported lens. Import a lens…" (:99-103). It also runs only once in `.task`: after importing a lens in the J-Space section directly above, or after connecting, this section never refreshes and keeps telling the user to import a lens. — Surface the error; re-run on `service.cluster.client` change and after a lens import (or add a Refresh).
+- **[BUG]** `GeometryPanelView.swift:717` + `:797-800` — Button "Run on Server" — enabled when `service.cluster.client == nil`; the click only sets a status "no server connection — check the Compute selector". Same shape for "Compute on Server" (:584, guard in `GeometryPanel.computeOnServer`). — Gate `.disabled(... || service.cluster.client == nil)` with a `.help` saying why.
+- **[BUG]** `JLensSupportSection.swift:118` + `:233-235` — TextField "Layers (blank = every fitted layer)" — parse is `split(…).compactMap { Int($0) }`, so "abc", "11;17" or "L11" silently become an EMPTY list and the job reads every fitted layer, contradicting what the user typed. — Validate; refuse or echo the parsed layer list before submitting.
+- **[DESIGN]** `DiscriminantControlsSection.swift:110` and `:82` — Picker "Extraction method" items and the declared-control detail line — show `method.rawValue` ("meanDifference", "lat", "emotionGrandMean", "designatedReference") although `ExtractionMethod.label` exists ("Mean difference", "Paired-difference PCA (RepE-inspired)", "Grand mean (multi-concept)", "Designated reference …" — SteeringVectorMath.swift:121-130). "lat" is unreadable to a researcher. — Use `.label` in both places. (The panel's success note at ExperimentPanel.swift:2236 also prints `rawValue`.)
+- **[DESIGN]** `GeometryPanelView.swift:266` and `:713` — Stepper "Target layer: N" (local + server Gemma Scope) — the run does NOT use the stepped value: `runGemmaScopeAnalysis`/`runServerGemmaScope` pass `min(info.recommendedLayer, …)`, and `recommendedLayer` is the stepper value snapped to the nearest PUBLISHED SAE layer (GemmaScopeCatalog.swift:92-109; e.g. 27B-it only has 16/31/40/53). Nothing in the UI says so; stepping to 7 runs at 9 and the status then reports "at layer 9". — Add a `.help`/caption: "snapped to the nearest published SAE layer — see 'SAE layer' above", or drop the stepper in favour of a picker over the published layers.
+- **[DESIGN]** `GeometryPanelView.swift:492` / `:607` (+ `:454-463`, `:573-584`) — vector selection — no live count: "Select at least two compatible vectors." never says how many ARE selected; the only count ("Vectors: N", :484) appears after Compute and is the computed set, not the selection. — Show "N selected" beside Select All / Clear on both branches, and make the ≥2 message count-aware ("1 selected — pick one more").
+- **[DESIGN]** `GeometryPanelView.swift:463` — Button "Compute" (local) — no busy state and no retitle: `GeometryPanel.compute` is synchronous on the main actor (GeometryPanel.swift:48-58), so a large selection freezes the pane silently; the server twin does retitle to "Computing…" and disable. The ⌘↩ shortcut is also undiscoverable (no visible hint). — Move the math off-main with a busy flag, or at least retitle; mention ⌘↩ in a `.help`.
+- **[DESIGN]** `GeometryViewerColumn.swift:166-197` — cosine / RSA tables — no legend for the colour scale (blue = positive cosine, red = negative, opacity ∝ |value| capped at 0.35 at :191). Sign is also in the number, so not colour-only, but the fill intensity is unexplained. — One caption line under each `sectionHeader` ("blue positive · red negative · deeper = larger |cos|").
+- **[DESIGN]** `GeometryViewerColumn.swift:103-164` — cosine / RSA tables — not copyable: cells have no `.textSelection`, there is no "Copy as TSV" and the Grid is not a `Table` (not sortable). For a results surface researchers will paste into notes this is the main gap. — Add a copy action on the header (TSV of labels + values) and `.textSelection(.enabled)` on cells.
+- **[DESIGN]** `JLensTraceViews.swift:60-63` — TextField "run id, e.g. 20260729T…-exp-…-run" — the user must type a server run id by hand; the sibling Gemma Scope Reports section already lists `client.runs()` filtered by a file name (GeometryPanelView.swift:868-874) — the same pattern (`files.contains("jlens-readout.jsonl")`) would give a Picker. `runID` is also not trimmed, so a pasted id with trailing whitespace fails. — Offer a run picker with the free-text field as fallback; trim.
+- **[DESIGN]** `JLensTraceViews.swift:270-293` — 8-column `Table` in the 560pt controls pane — fixed 46/58/42 leaves ~400pt for five flexible columns; headers "watched (logit lens)" / "top-k (logit lens)" and the comma-joined number cells truncate to unreadable at the section minimum (item f). — Viewer pane, or a toggle that hides the logit-lens companion columns.
+- **[DESIGN]** `JLensTraceViews.swift:77-102` — completeness HStack — up to five non-wrapping items ("N incomplete — NOT usable as a readout" label, "N generation(s), M observation(s)", "N unparseable line(s)", TierBadge, ClaimBadge) in one row; at 560pt this clips/truncates (unverified exact widths). — Wrap (two rows, or a `FlowLayout`).
+- **[DESIGN]** `GeometryPanelView.swift:847, 907, 940, 962, 1004` — status lines — `"\(error)"` interpolates the raw Swift error (enum-case dumps like `http(status: 500, body: …)`) instead of `localizedDescription`; `:934` additionally dumps the job's raw stderr/stdout into a caption. Selectable, but not a message. — Use `localizedDescription`; keep raw stderr behind a disclosure.
+- **[DESIGN]** `JLensSupportSection.swift:123` + `:249-267` — Button "Read support" — polls a durable server job with no Cancel and no link to the job; `isBusy` locks the button until the job ends, and the polling `Task {}` is not tied to the view's lifetime. The Gemma Scope server run hands off to Activity ("live log in Activity", GeometryPanelView.swift:816) — this one does not. — Offer Cancel or the same Activity hand-off.
+- **[DESIGN]** `GeometryPanelView.swift:774-777` — Picker "Report" (server) — after a refresh nothing is auto-selected (selection stays `nil`, no nil tag), so the picker renders blank until clicked; the local branch auto-selects the first report (:986). — Default `selectedServerScopeRunID` to the first run.
+- **[POLISH]** `GeometryPanelView.swift:452` and `:571` — `Section("Geometry")` — the form group inside the Analysis pane still carries the retired section name; with the viewer titled "Vector Geometry" it reads as the old section (item e). — Rename to "Vector Geometry" (matches the viewer) or "Cosine geometry". Cross-file, not mine: `WorkbenchSection.swift:56` describes the section as "vector geometry and mechanistic analysis (formerly Geometry)" — a "(formerly …)" in user-visible copy.
+- **[POLISH]** `GeometryPanelView.swift:1101` — Import / "Import on Server" buttons (:1096) — group-level `.help` is `""` when the row is importable, so the enabled state has no tooltip; only the disabled state explains itself. — Give the enabled case a help ("import this feature's decoder row as a vector in the catalog").
+- **[POLISH]** `GeometryPanelView.swift:1113` and `JLensSupportSection.swift:155` — `DisclosureGroup(…, isExpanded: .constant(true))` — a chevron that does nothing when clicked. — Use a plain header, or real `@State`.
+- **[POLISH]** `GeometryPanelView.swift:381-400` — model row — the Load button is regular `controlSize` while its siblings `InstallModelButton`/`AddLocalModelButton`/"Cancel Download" are `.controlSize(.small)` in the same HStack. — One size for the row.
+- **[POLISH]** `GeometryPanelView.swift:410-413` — `Text(modelStatusLine).lineLimit(1).truncationMode(.middle)` — "loaded: <owner/repo@revision>" is truncated with no `.help` or `.textSelection` carrying the full id. — Add `.help(modelStatusLine)`.
+- **[POLISH]** `GeometryViewerColumn.swift:114` vs `:125`/`:172` — cosine matrix header cells are `frame(width: 58)` while data cells are `frame(width: 48)`; the Grid sizes every column to 58, so the coloured cells sit right-aligned with a 10pt gap and look offset from their headers (the RSA table's 48/48 at :147/:172 aligns). — Match widths.
+- **[POLISH]** `GeometryViewerColumn.swift:132` and `:162` — `.frame(minHeight: 160/140, …)` on content that appears only once a result exists — same fatal class as above, but inside the viewer's root `ScrollView` (:19) so the column minimum should not move; low risk, noting per the checklist (unverified on the beta).
+- **[POLISH]** `GeometryViewerColumn.swift:82-83` — empty state "…press Compute — the cosine table renders here." — the server branch's button is "Compute on Server". — Branch the copy, or say "press Compute (or Compute on Server)".
+- **[POLISH]** `JLensTraceViews.swift:120` — Picker "Colour by" — UK spelling; the app's user-visible copy uses US ("Colors only …", RunResultsViews.swift:1460). — "Color by".
+- **[POLISH]** `JLensTraceViews.swift:86`, `:89` — "generation(s) … observation(s)", "unparseable line(s)" — "(s)" pluralisation while the same pane spells plurals out (`"report\(count == 1 ? "" : "s")"`, GeometryPanelView.swift:668). — Real plurals.
+- **[POLISH]** `JLensSupportSection.swift:115-117` — Stepper "Budget: N tokens" help — "25 is the occupancy the workspace paper reports" — "the workspace paper" is named nowhere in the app; dangling reference in help text. — Name the source or drop the clause.
+- **[POLISH]** `JLensSupportSection.swift:100-102` — empty-state copy "(J-Space → lens library)" — there is no user-visible "lens library" (only a `// MARK: Lens library` at JSpacePanelSection.swift:94); the visible section is "J-Space — Jacobian lens" with "Acquire" / "Import" buttons. — "…in the J-Space section above: Acquire, then Import".
+- **[POLISH]** `JLensSupportSection.swift:139-141` — LabeledContent "Saved to" — shows only the last path component; the full run directory lives in `.help` only and is not selectable, so it cannot be copied. — `.textSelection(.enabled)` with the full path, or a Reveal/Copy affordance.
+- **[POLISH]** `JLensSupportSection.swift:108` ("Choose…") vs `DiscriminantControlsSection.swift:100` ("select…") — the same empty-selection placeholder idiom with two spellings/cases. — Pick one.
+- **[POLISH]** `DiscriminantControlsSection.swift:166` — "An answer-token instrument can only read `label` rows." — the string is built by `+` concatenation, so SwiftUI does not parse Markdown and the backticks render literally. — Quote the word or use a literal `Text` with Markdown.
+- **[POLISH]** `DiscriminantControlsSection.swift:69` — Button "Remove" (`.buttonStyle(.link)`, caption2) — removes a declared control with no confirmation and no help. Draft-only and re-declarable, so low; but it is also a ~caption2-sized link target. — Add `.help`; consider `role: .destructive` with a confirmation, or at least regular size.
+- **[POLISH]** `DiscriminantControlsSection.swift:103` — Picker "Extraction method" — defaults to `.meanDifference` (StudyDraftState.swift:165) with no indication that it is a default; given the project's primary recipe is grand-mean, a researcher can declare a mean-difference control without noticing (item d). — Show the default explicitly or default to the study's own recipe.
+- **[POLISH]** `GeometryPanelView.swift:309` — "Load a Gemma 3 model to see Gemma Scope 2 repositories and SAELens snippets." — `gemmaScopeInfo` (:143-149) falls back to `selectedModelID`, so SELECTING a Gemma 3 model already shows the block; the copy overstates the requirement. — "Select (or load) a Gemma 3 model…".
+- **[POLISH]** `GeometryPanelView.swift:282`, `:285` — `Link(info.suiteName)`, `Link(info.repository)` — open the browser with no `.help` saying so. — `.help("opens … in your browser")`.
+- **[POLISH]** `GeometryPanelView.swift:623` and `:765` — `sourceCaption` ("source: <substrate>") appears twice on the server screen (Vectors section and Gemma Scope Reports section) with the same help. — Once is enough; the reports caption could say "reports listed from the server's runs/".
+- **[POLISH]** `GeometryPanelView.swift:757` — Button "Refresh Server Reports" — async with no busy indicator and no completion feedback (the local "Refresh Reports" at :666 is synchronous and updates the count instantly). — Small `ProgressView` while fetching.
+
+### Cluster extras (a)–(f), stated explicitly
+
+- (a) Selection: multi-select is per-row `Toggle`s in a bounded 260pt list (:553) — fine; Select All / Clear exist on both branches; NO live selected count (finding above); Compute = pure cosine + layer RSA over the selection (`GeometryAnalysis.analyze`, all layers 0..<layerCount), synchronous with no busy state locally; server Compute is one layer per request with a busy retitle and disabled state ✓.
+- (b) Tables: not sortable (Grid), not copyable, no colour legend (findings above); NaN handled well — "—" with help "not comparable (dimension mismatch)" and no fill (GeometryViewerColumn.swift:178-190); empty state is a proper `ContentUnavailableView` (:77-86); server layer clamping is disclosed per vector (:65-75) ✓.
+- (c) J-lens: import lives in `JSpacePanelSection.swift:96-117` (not in my files): the "Model" picker lists `modelID — tier` from the curated `supported` table and an expanded `TierBadge` explains a non-evidence tier; there is NO free tier picker, so a lens for a model off the curated table (the CLI's required `--tier` case) cannot be imported from the app and nothing says so. Observe/qualify: no such actions exist anywhere in `SteerLabApp` (grep); the app only DISPLAYS qualification counts (JSpacePanelSection.swift:147-148) — no gates/repair actions to audit. Reference-fp32 note: the string "fp32"/"float32"/"output head" appears nowhere in `SteerLabApp` (only in SteeringKit internals) — the note is hidden, not surfaced.
+- (d) Discriminant fields: Concept (placeholder "select…", no default), Extraction method (defaults to meanDifference, raw enum labels — findings above), the stimulus hash is pinned automatically and says so ✓ (:119-120). J-lens support: "Budget: 25 tokens" carries units and a default ✓; "Layers (blank = every fitted layer)" states its default ✓ but validates nothing.
+- (e) "Geometry" as a heading: `Section("Geometry")` at :452/:571 (finding above). All other copy uses current names ("Analysis pane", "Compute", "Data", "Playground") ✓.
+- (f) Hard-coded widths at 560pt: cosine matrix is inside a 2-axis ScrollView (row label 72 + N × 58) — scrolls, fine; RSA likewise; the J-lens heatmap is in a horizontal ScrollView (38 + steps × 23) — fine; the J-lens `Table` (146pt fixed + 5 flexible) and the completeness HStack are the two that break (findings above). `GemmaScopeFeatureRowsView` (:1087-1100) and `LogitLensReportView` rows use flexible widths ✓.
+
+## Missing tooltips (exhaustive)
+
+GeometryPanelView.swift:219 — Stepper "Layer: N" (Logit Lens)
+GeometryPanelView.swift:224 — Button "Read Through Unembed" / "Reading…"
+GeometryPanelView.swift:266 — Stepper "Target layer: N" (Gemma Scope, local)
+GeometryPanelView.swift:270 — Button "Run Gemma Scope Analysis" / "Analyzing…"
+GeometryPanelView.swift:282 — Link <suite name> (opens landing page)
+GeometryPanelView.swift:285 — Link <repository> (opens HF repo)
+GeometryPanelView.swift:398 — Button "Cancel Download"
+GeometryPanelView.swift:425 — Button "Load <model>" / "Download <model>…" (needs-model prompt)
+GeometryPanelView.swift:454 — Button "Select All" (local)
+GeometryPanelView.swift:460 — Button "Clear" (local)
+GeometryPanelView.swift:463 — Button "Compute" (local, ⌘↩ unhinted)
+GeometryPanelView.swift:485 — Stepper "Layer: N" (local result layer)
+GeometryPanelView.swift:573 — Button "Select All" (server)
+GeometryPanelView.swift:578 — Button "Clear" (server)
+GeometryPanelView.swift:584 — Button "Compute on Server" / "Computing…" (⌘↩ unhinted)
+GeometryPanelView.swift:593 — Stepper "Layer: N" (server; disabled with no reason when nothing is selected)
+GeometryPanelView.swift:666 — Button "Refresh Reports"
+GeometryPanelView.swift:679 — Picker "Report" (local)
+GeometryPanelView.swift:713 — Stepper "Target layer: N" (server Gemma Scope)
+GeometryPanelView.swift:717 — Button "Run on Server" / "Analyzing…"
+GeometryPanelView.swift:757 — Button "Refresh Server Reports"
+GeometryPanelView.swift:774 — Picker "Report" (server)
+GeometryPanelView.swift:1096 — Button "Import" / "Import on Server" (group help at :1101 is "" whenever the button is enabled)
+JLensTraceViews.swift:60 — TextField "run id, e.g. 20260729T…-exp-…-run"
+JLensTraceViews.swift:62 — Button "Load trace"
+JLensTraceViews.swift:107 — Picker "Generation"
+JLensTraceViews.swift:120 — Picker "Colour by"
+JLensSupportSection.swift:107 — Picker "Vector"
+JLensSupportSection.swift:123 — Button "Read support"
+DiscriminantControlsSection.swift:69 — Button "Remove" (link style)
+DiscriminantControlsSection.swift:99 — Picker "Concept"
+DiscriminantControlsSection.swift:117 — Button "Declare control"
+DiscriminantControlsSection.swift:157 — Button "Clear scope" (link style)
+
+## Notes on strengths
+
+- NaN cells are shown as "—" with a reason, never zeroed (GeometryViewerColumn.swift:178-187); the server's per-vector layer clamping is disclosed rather than implied (:65-75).
+- Trace completeness is stated before any number, with an explicit "NOT usable as a readout" (JLensTraceViews.swift:76-85); the support readout never shows the energy figure without its matched-norm null in the same string (JLensSupportSection.swift:199-210).
+- The route-preselected-but-unlistable selection is said out loud with the ids in a tooltip (GeometryPanelView.swift:467-479), and every vector toggle carries concept · model · stimulus-hash provenance as help (:562, :656).
+- The vector list is bounded to a constant 260pt box specifically to dodge the split-view min-size hazard, and says so (GeometryPanelView.swift:534-553).
