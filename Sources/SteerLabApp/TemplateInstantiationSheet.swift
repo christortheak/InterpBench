@@ -11,7 +11,7 @@ struct TemplateInstantiationRequest: Identifiable {
     /// jobs this batch will really create, not a default.
     let shardsPerStudy: Int
     let jobNoun: String
-    /// False when no server is connected — "Mint & Submit All" is not offered,
+    /// False when no server is connected — "Create and Submit" is not offered,
     /// and the sheet says why rather than failing six times in a row.
     let canSubmit: Bool
     /// Occupants to preload as permutation rows — the Seats section's "Create
@@ -20,7 +20,7 @@ struct TemplateInstantiationRequest: Identifiable {
     var permuting: [SeatOccupant] = []
 }
 
-/// The cell table: one row per study to mint.
+/// The cell table: one row per study to create.
 ///
 /// The sheet exists because the choice a researcher is actually making here is
 /// a batch SIZE, and the row count hides it. A composition sweep over four
@@ -81,8 +81,6 @@ struct TemplateInstantiationSheet: View {
                 }
                 .formStyle(.grouped)
             }
-            Button("Discard casting edits and reload design") { model.discardAndReload() }
-                .disabled(model.isWorking)
             totalsLine
             footer
         }
@@ -152,14 +150,25 @@ struct TemplateInstantiationSheet: View {
                         Toggle(
                             agent.artifact.name,
                             isOn: permutationBinding(agentID: agent.id))
+                            .help(
+                                "include '\(agent.artifact.name)' in the set "
+                                    + "that gets re-seated across the panel")
                     }
                 }
+                .help(
+                    "the set of agents to re-seat: every distinct way of "
+                        + "putting them in the seats becomes one row below")
                 Toggle("pad with baseline", isOn: $model.permutationPadsWithBaseline)
                     .help(
                         "fills the remaining seats with the unsteered model, so "
                             + "a two-agent set still casts a three-seat panel")
                 Button("Add all permutations") { model.addAllPermutations() }
                     .disabled(model.permutationRefusal != nil)
+                    .help(
+                        model.permutationRefusal
+                            ?? "adds one row per distinct re-seating of the "
+                                + "chosen agents — identical occupants swapped "
+                                + "are the same panel and are deduped")
             }
             if let refusal = model.permutationRefusal {
                 Text(refusal)
@@ -198,7 +207,7 @@ struct TemplateInstantiationSheet: View {
 
     @ViewBuilder
     private var rowsSection: some View {
-        Section("Studies to mint") {
+        Section("Studies to create") {
             ForEach(model.rows) { row in
                 rowView(row)
             }
@@ -230,6 +239,8 @@ struct TemplateInstantiationSheet: View {
                 }
                 .buttonStyle(.borderless)
                 .disabled(model.isWorking)
+                .help("drop this row — nothing has been written yet, and Add Study puts one back")
+                .accessibilityLabel("Remove this study row")
             }
 
             if model.template?.intent == .multiAgent {
@@ -240,6 +251,7 @@ struct TemplateInstantiationSheet: View {
                             Text(agent.artifact.name).tag(agent.id)
                         }
                     }
+                    .help(StudyControlCopy.seatPickerHelp)
                 }
             } else {
                 // A compare-agents row casts as many agents as it likes, so
@@ -251,6 +263,9 @@ struct TemplateInstantiationSheet: View {
                             Toggle(
                                 agent.artifact.name,
                                 isOn: agentBinding(row: row.id, agentID: agent.id))
+                                .help(
+                                    "give this study an arm running "
+                                        + "'\(agent.artifact.name)'")
                         }
                     }
                     .fixedSize()
@@ -288,8 +303,9 @@ struct TemplateInstantiationSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             } else if let advisory = model.advisory(for: row) {
-                // Non-blocking: a zero-agent draft is legal and Load Only will
-                // write it. Only submission requires a runnable casting.
+                // Non-blocking: a zero-agent draft is legal and Create
+                // Studies will write it. Only submission requires a runnable
+                // casting.
                 Label(advisory, systemImage: "info.circle")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -301,7 +317,7 @@ struct TemplateInstantiationSheet: View {
                     .foregroundStyle(.secondary)
             }
         case .minted(let study):
-            Label("minted \(study)", systemImage: "doc.badge.plus")
+            Label("created \(study)", systemImage: "doc.badge.plus")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         case .submitted(let study, let jobID):
@@ -395,33 +411,47 @@ struct TemplateInstantiationSheet: View {
     private var footer: some View {
         HStack {
             if model.isWorking { ProgressView().controlSize(.small) }
+            Button("Discard casting edits and reload design") { model.discardAndReload() }
+                .disabled(model.isWorking)
+                .help(
+                    "throws away every row edited here and rebuilds the table "
+                        + "from the saved design — nothing has been written to "
+                        + "the workspace yet, so nothing is lost but these edits")
             Spacer()
             Button("Close", role: .cancel) { dismiss() }
-            Button("Load Only") {
+                .keyboardShortcut(.cancelAction)
+                .help("close the table; rows that were not created are discarded")
+            // "Create", not "Load": the rows become study directories. One
+            // convention across the sheet (UI audit 2026-09-06, headline 20) —
+            // the safe action is the prominent Return default, and the
+            // batch-queueing one deliberately is not.
+            Button("Create Studies") {
                 Task {
                     await model.mint()
                     guard model.isCurrentWorkspace else { return }
                     panel.refresh()
-                    // LOADS the first minted draft in the Studies editor: the
-                    // point of minting without submitting is to keep editing,
+                    // OPENS the first created draft in the Studies editor: the
+                    // point of creating without submitting is to keep editing,
                     // and leaving the researcher to find the study in a picker
                     // of thirty is the same as not opening it.
                     if let first = model.firstMintedStudy {
                         panel.management.selectedName = first
                     }
-                    panel.note(model.lastSummary ?? "", severity: model.lastMintWasClean ? .success : .warning)
+                    report()
                     // Failures stay on screen to be read; a clean batch has
                     // nothing left to say here.
                     if model.lastMintWasClean { dismiss() }
                 }
             }
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.defaultAction)
             .disabled(!model.readyToMint || model.isWorking)
             .help(
-                "mints one ordinary draft per row (shared batch id) and opens "
+                "creates one ordinary draft per row (shared batch id) and opens "
                     + "the first one in the Studies editor. Agents optional — a "
                     + "zero-agent draft is legal, and the study's readiness "
                     + "check surfaces the missing casting")
-            Button("Load and Submit") {
+            Button("Create and Submit") {
                 Task {
                     await model.mint(submit: { study in
                         await panel.submitStudyBundle(named: study)
@@ -431,30 +461,37 @@ struct TemplateInstantiationSheet: View {
                     if let first = model.firstMintedStudy {
                         panel.management.selectedName = first
                     }
-                    panel.note(model.lastSummary ?? "", severity: model.lastMintWasClean ? .info : .warning)
+                    report()
                     if model.lastMintWasClean { dismiss() }
                 }
             }
-            .keyboardShortcut(.defaultAction)
             .disabled(!model.readyToSubmit || model.isWorking || !request.canSubmit)
             .help(submitHelp)
         }
     }
 
-    /// Why "Load and Submit" is off, or what it does. Naming the specific
+    /// One outcome notice for both buttons: the same severity for the same
+    /// outcome, and never an EMPTY notice in the persistent feed when the
+    /// model has no summary to give (UI audit 2026-09-06).
+    private func report() {
+        guard let summary = model.lastSummary, !summary.isEmpty else { return }
+        panel.note(summary, severity: model.lastMintWasClean ? .success : .warning)
+    }
+
+    /// Why "Create and Submit" is off, or what it does. Naming the specific
     /// blocker matters: "disabled" alone sends the researcher hunting between
     /// a missing server connection and a row with no agents cast.
     private var submitHelp: String {
         guard request.canSubmit else {
-            return "no server connection — connect one in Compute, or Load "
-                + "Only and submit from the study list"
+            return "no server connection — connect one in Compute, or Create "
+                + "Studies and submit from the study list"
         }
         guard model.readyToSubmit else {
             return "every study needs a runnable casting before the batch can "
                 + "be queued — submitting a baseline-only arm spends cluster "
                 + "time measuring nothing against nothing"
         }
-        return "mints every row, then submits each minted draft to the server "
+        return "creates every row, then submits each new draft to the server "
             + "IN TURN — one failed submission does not stop the rest, and the "
             + "summary names the ones that failed"
     }

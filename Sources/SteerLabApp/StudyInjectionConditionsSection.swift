@@ -82,6 +82,11 @@ struct StudyInjectionConditionsSection: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 1)
                             .background(.blue.opacity(0.12), in: Capsule())
+                            .help(
+                                "every strength is negative: the SAME direction "
+                                    + "pushed the other way — separates the "
+                                    + "concept's sign from any effect of "
+                                    + "steering at all")
                     }
                 }
                 Text(conditionSummary(condition))
@@ -91,10 +96,10 @@ struct StudyInjectionConditionsSection: View {
             Spacer()
             if manifest.status == .draft {
                 if !condition.slots.isEmpty, condition.controlType == nil {
-                    Button("+ sign control") { panel.addSignControl(for: condition.name) }
+                    Button("Add sign control") { panel.addSignControl(for: condition.name) }
                         .controlSize(.small)
                         .help("adds '\(condition.name)-neg' with every α negated")
-                    Button("+ random control") {
+                    Button("Add random control") {
                         panel.addMatchedNormRandomControl(for: condition.name)
                     }
                     .controlSize(.small)
@@ -111,7 +116,8 @@ struct StudyInjectionConditionsSection: View {
                     Image(systemName: "trash")
                 }
                 .buttonStyle(.plain)
-                .help("remove this condition from the draft")
+                .help("remove '\(condition.name)' from the draft")
+                .accessibilityLabel("Remove condition \(condition.name)")
             }
         }
     }

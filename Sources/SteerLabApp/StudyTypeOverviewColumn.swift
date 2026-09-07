@@ -1,4 +1,3 @@
-import AppKit
 import ExperimentKit
 import SwiftUI
 
@@ -24,7 +23,7 @@ struct StudyViewerColumn: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $reading) {
+            Picker("Reading", selection: $reading) {
                 ForEach(Reading.allCases) { item in
                     Text(item.rawValue).tag(item)
                 }
@@ -94,13 +93,17 @@ struct StudyManifestJSONColumn: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer()
-            Button {
-                copy(panel.selectedStudyJSON ?? "")
+            // The one clipboard affordance: it says "Copied" instead of
+            // writing silently, and carries its own accessibility label
+            // (UI audit 2026-09-06, headline 19).
+            CopyButton(
+                help: "copy this study's manifest JSON to the clipboard"
+            ) {
+                panel.selectedStudyJSON
             } label: {
                 Image(systemName: "doc.on.doc")
             }
             .buttonStyle(.borderless)
-            .help("copy this manifest JSON")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
@@ -108,11 +111,6 @@ struct StudyManifestJSONColumn: View {
             "read-only — a study is edited through the Studies pane's own "
                 + "controls (and a frozen study not at all); Paste Study JSON "
                 + "imports an edited document as a NEW draft")
-    }
-
-    private func copy(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
     }
 }
 

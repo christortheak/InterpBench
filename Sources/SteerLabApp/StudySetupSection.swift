@@ -11,11 +11,28 @@ struct StudySetupSection: View {
     var body: some View {
         @Bindable var draft = panel.draft
         Section("Study Setup") {
-            if panel.management.selectedDraftNeedsReload {
-                Text("The saved study changed since these fields were loaded. Reload and review it before saving.")
+            // Why every field below is greyed, said once at the top instead of
+            // left to be inferred from a header far down the page (UI audit
+            // 2026-09-06).
+            if manifest.status != .draft {
+                Label(Self.frozenSettingsNote(manifest), systemImage: "lock")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if panel.management.selectedDraftNeedsReload {
+                Text(
+                    "The saved study changed since these fields were loaded — "
+                        + "reload it before saving, or a save would overwrite "
+                        + "the change."
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
                 Button("Discard edits and reload") { panel.reloadSelectedDraft() }
+                    .help(
+                        "replace these unsaved fields with the saved study; no "
+                            + "study files are changed")
             }
             TextField(
                 "question or purpose",
@@ -48,59 +65,16 @@ struct StudySetupSection: View {
                 "what you will measure: flips, scores, cooperation rate, "
                     + "style markers, capability battery, degeneration")
 
+            // The model block renders for BOTH study kinds. It used to sit
+            // inside the .modelOutput branch, which left a multi-agent study
+            // with no model control at all while Seats told the researcher to
+            // "pick this study's base model first" (UI audit 2026-09-06,
+            // headline 13). Save Study Setup writes it either way, and a
+            // change resets every seat to baseline with an advisory.
+            StudyBaseModelPicker(
+                manifest: manifest, panel: panel, substrateLabel: substrateLabel)
+
             if panel.draft.studyKind == .modelOutput {
-                // Workspace-scoped model choice (same strict rule as
-                // the chat's WorkspaceModelPicker): a server target
-                // offers ONLY that server's installed models; a
-                // current selection outside the inventory stays
-                // rendered — "(not installed)" — but is never
-                // pickable anew. The chosen server id flows into the
-                // manifest exactly as local ids do.
-                Picker(
-                    panel.draft.studyKind == .multiAgent
-                        ? "Default model for seats"
-                        : "Baseline model",
-                    selection: $draft.studyBaseModelID
-                ) {
-                    if panel.draft.studyBaseModelID.isEmpty {
-                        Text("select model…").tag("")
-                    }
-                    ForEach(panel.modelOptions, id: \.self) { model in
-                        Text(model).tag(model)
-                    }
-                    if WorkspaceScoping.selectionOutsideInventory(
-                        panel.draft.studyBaseModelID, inventory: panel.modelOptions)
-                    {
-                        Text(
-                            panel.isServerWorkspace
-                                ? "\(panel.draft.studyBaseModelID) (not installed)"
-                                : panel.draft.studyBaseModelID
-                        )
-                        .tag(panel.draft.studyBaseModelID)
-                        .selectionDisabled()
-                    }
-                }
-                .disabled(manifest.status != .draft)
-                .help(
-                    panel.draft.studyKind == .multiAgent
-                        ? "used only by panel seats that name no base model of "
-                            + "their own. Seats may each carry a different "
-                            + "model; every turn records the one it ran on, and "
-                            + "this value is not a claim about the run."
-                        : panel.isServerWorkspace
-                            ? "the unmodified baseline model and required base for "
-                                + "added agents — models installed on "
-                                + "\(substrateLabel) (the active "
-                                + "compute workspace)"
-                            : "the unmodified baseline model and required base for added agents")
-                if panel.isServerWorkspace, panel.modelOptions.isEmpty {
-                    Text(
-                        "no models installed on \(substrateLabel) — "
-                            + "use Install model… (Compute menu) to prefetch one"
-                    )
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                }
                 // Draft-editable revision pin (audit 2026-08-01:
                 // create-time only before — changing it required
                 // duplicate-or-paste-JSON).
@@ -145,24 +119,34 @@ struct StudySetupSection: View {
                         + "user turn (this affects prompt-set "
                         + "hashing and prompt design)")
 
+                let modelHasThinking = PromptRendering.hasThinkingMode(
+                    manifest.modelID,
+                    capabilities: ExperimentStore.modelCapabilities(for: manifest))
                 Picker("Reasoning effort", selection: $draft.reasoningEffort) {
                     ForEach(ReasoningEffort.vocabulary, id: \.self) { effort in
                         Text(effort).tag(effort)
                     }
                 }
-                .disabled(
-                    manifest.status != .draft
-                        || !PromptRendering.hasThinkingMode(
-                            manifest.modelID,
-                            capabilities: ExperimentStore.modelCapabilities(for: manifest))
-                )
+                .disabled(manifest.status != .draft || !modelHasThinking)
                 .help(
-                    "The reasoning effort the chat template is rendered with "
+                    "the reasoning effort the chat template is rendered with "
                         + "(off = no thinking block; on = thinking at the template's "
                         + "default effort). A non-off effort needs a reasoning token "
                         + "budget, and a LEVEL only where the model's capability "
                         + "record — probed from its chat template, shown in the "
-                        + "Compute section — says the template accepts it.")
+                        + "Compute section — says the template accepts it")
+                // Disabled-with-no-reason was the complaint: say which fact
+                // about the model closed the control (UI audit 2026-09-06).
+                if !modelHasThinking, manifest.status == .draft {
+                    Text(
+                        "unavailable for \(manifest.modelID) — its chat "
+                            + "template has no thinking mode, so there is no "
+                            + "reasoning block to ask an effort of"
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
                 if panel.draft.qwenThinkingEnabled {
                     TextField(
                         "Reasoning max tokens",
@@ -171,8 +155,9 @@ struct StudySetupSection: View {
                     )
                     .disabled(manifest.status != .draft)
                     .help(
-                        "The reasoning block's own token cap (up to </think>); "
-                            + "Max tokens is then the answer budget. Required.")
+                        "the reasoning block's own token cap (up to </think>); "
+                            + "Max tokens is then the answer budget — required "
+                            + "beside a non-off effort")
                 }
             }
 
@@ -205,14 +190,14 @@ struct StudySetupSection: View {
                 .help(
                     "the saved scenario this study runs: its roles, "
                         + "turns and materials. Selecting it does NOT "
-                        + "pin it — Save study setup compiles the seat "
+                        + "pin it — Save Study Setup compiles the seat "
                         + "casting below and writes the pin, which is "
-                        + "what Data & Prompts checks.")
+                        + "what Data & Prompts checks")
                 if panel.draft.selectedMultiAgentScenarioID != nil,
                     manifest.multiAgentScenarioPath == nil
                 {
                     Text(
-                        "selected but not pinned — Save study setup to "
+                        "selected but not pinned — Save Study Setup to "
                             + "pin it"
                     )
                     .font(.caption2)
@@ -226,8 +211,8 @@ struct StudySetupSection: View {
                 .help(
                     "runs the SAME panel a second time with every "
                         + "intervention removed — adapters and steering "
-                        + "vectors stripped, base models unchanged. This "
-                        + "is the control the measurement subtracts.")
+                        + "vectors stripped, base models unchanged: the "
+                        + "control the measurement subtracts")
                 if !panel.draft.multiAgentIncludeBaseline {
                     // Not a style preference: without the control arm
                     // there is nothing to difference against, so the
@@ -323,11 +308,110 @@ struct StudySetupSection: View {
     }
 
     /// Scenarios that carry their own seat bindings are marked in the picker,
-    /// matching the Panels editor: only one of two same-named entries can be
-    /// cast from a study.
+    /// matching Multi-Agent: only one of two same-named entries can be cast
+    /// from a study.
     private static func scenarioMenuLabel(_ record: MultiAgentScenarioRecord) -> String {
         PanelAuthoring.carriesBindings(record.scenario)
             ? "\(record.label) — bound (legacy)"
             : record.label
+    }
+
+    /// Why every field below is read-only. Long strings live outside the body.
+    private static func frozenSettingsNote(_ manifest: ExperimentManifest) -> String {
+        "\(manifest.status.rawValue) — these settings are part of the record "
+            + "every run of this study stamps, so they can no longer change. "
+            + "Duplicate as Draft (in the Study section above) to iterate."
+    }
+}
+
+/// The study's base model, in its own view because it renders for BOTH study
+/// kinds and `StudySetupSection.body` is close to the type-checker's budget.
+///
+/// Workspace-scoped model choice (same strict rule as the chat's
+/// `WorkspaceModelPicker`): a server target offers ONLY that server's
+/// installed models; a current selection outside the inventory stays rendered
+/// — "(not installed)" — but is never pickable anew. The chosen server id
+/// flows into the manifest exactly as local ids do.
+private struct StudyBaseModelPicker: View {
+    let manifest: ExperimentManifest
+    let panel: ExperimentPanel
+    let substrateLabel: String
+
+    var body: some View {
+        @Bindable var draft = panel.draft
+        let isPanel = panel.draft.studyKind == .multiAgent
+        Picker(
+            isPanel ? "Default model for seats" : "Baseline model",
+            selection: $draft.studyBaseModelID
+        ) {
+            if panel.draft.studyBaseModelID.isEmpty {
+                Text("select model…").tag("")
+            }
+            ForEach(panel.modelOptions, id: \.self) { model in
+                Text(model).tag(model)
+            }
+            if WorkspaceScoping.selectionOutsideInventory(
+                panel.draft.studyBaseModelID, inventory: panel.modelOptions)
+            {
+                Text(
+                    panel.isServerWorkspace
+                        ? "\(panel.draft.studyBaseModelID) (not installed)"
+                        : panel.draft.studyBaseModelID
+                )
+                .tag(panel.draft.studyBaseModelID)
+                .selectionDisabled()
+            }
+        }
+        .disabled(manifest.status != .draft)
+        .help(helpText)
+        if panel.isServerWorkspace, panel.modelOptions.isEmpty {
+            Text(
+                "no models installed on \(substrateLabel) — "
+                    + "use Install model… (Compute menu) to prefetch one"
+            )
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        // Changing the model is not a free edit: agents are built on one
+        // model, so the save drops the revision pin and every arm, and resets
+        // every seat to baseline. Said before the click, not after it.
+        if manifest.status == .draft, changesWouldDropCast {
+            Text(castResetWarning)
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// True once the picker names a model other than the saved one.
+    private var changesWouldDropCast: Bool {
+        let chosen = panel.draft.studyBaseModelID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return !chosen.isEmpty && chosen != manifest.modelID
+    }
+
+    private var castResetWarning: String {
+        panel.draft.studyKind == .multiAgent
+            ? "unsaved model change — saving resets every seat to baseline and "
+                + "drops the revision pin: an agent built on '\(manifest.modelID)' "
+                + "cannot run in a panel on another model"
+            : "unsaved model change — saving drops the revision pin and every "
+                + "attached agent arm: an agent built on '\(manifest.modelID)' "
+                + "is not eligible under another model"
+    }
+
+    private var helpText: String {
+        if panel.draft.studyKind == .multiAgent {
+            return "the model a seat runs on when its cast agent names no base "
+                + "model of its own, and the model every eligible agent must be "
+                + "built on. Seats may each carry a different model; every turn "
+                + "records the one it ran on"
+        }
+        return panel.isServerWorkspace
+            ? "the unmodified baseline model and required base for added "
+                + "agents — models installed on \(substrateLabel) (the active "
+                + "compute workspace)"
+            : "the unmodified baseline model and required base for added agents"
     }
 }

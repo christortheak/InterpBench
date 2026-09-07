@@ -97,8 +97,11 @@ struct StudyIssuesSection: View {
     }
 
     private func recompute() {
+        // The workspace root every sibling uses (rootOverride ?? projectRoot);
+        // reading VectorCatalog.projectRoot directly would scan the wrong tree
+        // whenever an override is in force (UI audit 2026-09-06).
         dataBlockers = StudyDataReadiness.requirements(
-            for: manifest, workspaceRoot: VectorCatalog.projectRoot
+            for: manifest, workspaceRoot: ExperimentStore.workspaceRoot
         ).filter { $0.status == .missing || $0.status == .invalid }
     }
 }

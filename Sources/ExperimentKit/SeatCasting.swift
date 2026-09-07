@@ -334,7 +334,7 @@ public enum SeatCasting {
     static let legacyAdvisory =
         "this scenario carries its own seat bindings (authored before seats "
         + "and scenarios were separated), so its casting is shown read-only "
-        + "here. Migrate it in the Panels editor — that splits it into a "
+        + "here. Migrate it in Multi-Agent — that splits it into a "
         + "reusable scenario plus the casting it was carrying — then pick the "
         + "migrated scenario to cast seats from this study."
 
