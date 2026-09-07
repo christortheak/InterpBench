@@ -109,6 +109,39 @@ the beta Metal runtime emitted `Completed handler provided after commit call`
 after the tests completed. Preserve that diagnostic for review; a successful
 result file does not establish clean process teardown on this beta toolchain.
 
+## CUDA observations, 2026-09-07
+
+The CUDA leg ran from a clean checkout of the landed main commit `ca452a7`
+(empty tracked diff) on one allocated A100-SXM4-80GB node, Linux, Python
+3.12.13, torch 2.11.0+cu128, transformers 5.14.1, SDPA attention, parameters on
+`cuda:0`, with the same model, revision, float32 dtype, block 3, 4,097-token
+long forward and two-step OptVec journey as the local runs. The model revision
+was pre-staged into the site cache inside the job under the site's declared
+compute egress; the probe itself ran offline. The comparator then ran on the
+login node against the transferred local CPU and MPS evidence directories
+(tensor archive hashes verified after transfer). Small records are retained in
+[qualification/cluster-2026-09-07](qualification/cluster-2026-09-07/).
+
+The local producer ran torch 2.13.0 and transformers 5.15.1; the cluster runner
+is one minor version behind on both. This is a software difference the
+comparison discloses, not a controlled variable.
+
+| Measurement | CPU → CUDA | MPS → CUDA |
+| --- | --- | --- |
+| Captured and edited residuals | max abs 2.48e-5 | max abs 2.86e-6 |
+| Baseline, additive and ablation logits | max abs 2.01e-4; all argmax agree | max abs 4.05e-5; all argmax agree |
+| Three extraction recipes | direction cosine ≥ 0.99999999988 | direction cosine ≥ 0.99999999999 |
+| Two-step OptVec training curve | max abs 3.34e-6 across loss terms, gradient norm and learning rate | max abs 1.17e-5 |
+| OptVec separate evaluation (24 metrics) | max abs 2.38e-6 | max abs 1.34e-5 |
+| Scoped RNG | replayed draws agree on every backend | same |
+| Long forward | 4,097 tokens finite on CUDA (peak 6.0 GB allocated) | same |
+
+All 47 compared rows and all 24 evaluation metrics met the prospective
+diagnostic tolerance on both comparisons, with the RNG checks passing. As with
+the local observations, this is execution evidence on one small model at one
+block: it does not qualify a backend, a model family, generation chunking or
+steering efficacy, and no capability profile changes on its account.
+
 ## Cluster-agent handoff
 
 Use the reviewed branch tip and an existing allocated CUDA runner. The researcher
