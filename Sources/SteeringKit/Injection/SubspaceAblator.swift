@@ -63,7 +63,10 @@ public struct SubspaceAblator: LayerIntervention {
         /// λ. 1 = full ablation, (0,1) = partial, 2 = reflection.
         public let strength: Float
 
-        public init(basis: [[Float]], strength: Float = 1) {
+        public let centering: String
+
+        public init(basis: [[Float]], strength: Float = 1, centering: String = "none") {
+            self.centering = centering
             self.basis = basis
             self.strength = strength
         }
@@ -71,6 +74,20 @@ public struct SubspaceAblator: LayerIntervention {
         /// Rank of the removed subspace — below the number of directions
         /// supplied when some were linearly dependent on the others.
         public var rank: Int { basis.count }
+    }
+
+    public func scope() -> InterventionScope {
+        typealias V = InterventionScopeVocabulary
+        return .init(path: V.ABLATION, site: V.SITE_BLOCK_OUTPUT,
+            layers: ablations.keys.sorted(), positions: V.POSITIONS_EVERY,
+            prefill: V.PREFILL_EVERY_POSITION, decode: V.DECODE_EVERY_POSITION,
+            centering: InterventionScope.centeringSummary(ablations.values.map(\.centering)),
+            doseUnits: V.DOSE_UNITS_LAMBDA, control: V.CONTROL_RANDOM_DIRECTION_ABLATION,
+            claimLimits: V.CLAIM_LIMITS_ABLATION,
+            detail: ["rankPerLayer": .object(Dictionary(uniqueKeysWithValues:
+                        ablations.map { (String($0.key), .integer($0.value.rank)) })),
+                     "lambdaPerLayer": .object(Dictionary(uniqueKeysWithValues:
+                        ablations.map { (String($0.key), .number(Double($0.value.strength))) }))])
     }
 
     private let ablations: [Int: Ablation]

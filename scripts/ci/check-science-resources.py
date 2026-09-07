@@ -67,3 +67,7 @@ print('Shared interviews cover every managed method with distinct catalog catego
 import subprocess
 subprocess.run([sys.executable, str(root / 'scripts/ci/check-substrates.py'),
                 *(['--write'] if args.write else [])], check=True)
+
+# Scope descriptions use one maintained vocabulary across execution engines.
+subprocess.run([sys.executable, str(root / 'scripts/ci/check-intervention-scopes.py'),
+                *(['--write'] if args.write else [])], check=True)

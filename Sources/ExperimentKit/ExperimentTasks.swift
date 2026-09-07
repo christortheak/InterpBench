@@ -1704,11 +1704,12 @@ public enum ExperimentTasks {
         /// Orders the ablation basis (Gram-Schmidt is order-dependent).
         /// Irrelevant for `.add`, which commutes.
         var concept: String = ""
+        var centering: String = "none"
 
         var planEdit: InterventionPlan.Edit {
             .init(
                 layer: layer, vector: vector, strength: alpha, mode: mode,
-                concept: concept)
+                concept: concept, centering: centering)
         }
     }
 
@@ -2969,7 +2970,7 @@ public enum ExperimentTasks {
                     CellInjection(
                         layer: layer, vector: vector, alpha: alpha,
                         mode: injection.effectiveMode,
-                        concept: injection.concept))
+                        concept: injection.concept, centering: centering))
             }
         }
         return cells
@@ -3445,6 +3446,13 @@ public enum ExperimentTasks {
             print("study run cancelled by user — no generations were produced")
             return runDirectory
         }
+        try RunInterventionScope.write(experiment: manifest.name,
+            entries: conditions.map { condition in
+                RunInterventionScope.entry(name: condition.name,
+                    state: RunInterventionScope.state(condition)) {
+                    try injections(for: condition, extractions: extractions)
+                }
+            }, to: runDirectory)
         let rubrics = Dictionary(
             uniqueKeysWithValues: manifest.concepts.compactMap { ref in
                 let directory = VectorCatalog.conceptsDirectory.appending(component: ref.name)
@@ -4533,6 +4541,16 @@ public enum ExperimentTasks {
         {
             emitRunAdvisory(advisory, to: runDirectory)
         }
+
+        try RunInterventionScope.write(experiment: pinnedManifest.name,
+            entries: runtimeConditions.map { condition in
+                let state = condition.variant.map { RunInterventionScope.state(name: condition.name, variant: $0) }
+                    ?? RunInterventionScope.state(.init(name: "baseline", slots: []))
+                return RunInterventionScope.entry(name: condition.name, state: state,
+                    neutralPCBasisPath: condition.variant?.neutralPCBasisPath) {
+                    try condition.variant.map(injections(for:)) ?? []
+                }
+            }, to: runDirectory)
 
         var cancelled = false
         for condition in runtimeConditions {

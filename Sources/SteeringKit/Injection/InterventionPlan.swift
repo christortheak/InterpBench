@@ -35,16 +35,18 @@ public enum InterventionPlan {
         /// order is what makes the removed subspace reproducible across runs
         /// and engines rather than a function of dictionary iteration.
         public let concept: String
+        public let centering: String
 
         public init(
             layer: Int, vector: [Float], strength: Float, mode: Mode,
-            concept: String
+            concept: String, centering: String = "none"
         ) {
             self.layer = layer
             self.vector = vector
             self.strength = strength
             self.mode = mode
             self.concept = concept
+            self.centering = centering
         }
     }
 
@@ -104,9 +106,21 @@ public enum InterventionPlan {
             let ordered = group.sorted { $0.concept < $1.concept }
             let basis = SubspaceAblator.orthonormalized(ordered.map(\.vector))
             guard !basis.isEmpty else { continue }
-            perLayer[layer] = .init(basis: basis, strength: strength)
+            perLayer[layer] = .init(basis: basis, strength: strength,
+                centering: InterventionScope.centeringSummary(ordered.map(\.centering)))
         }
         return perLayer.isEmpty ? nil : SubspaceAblator(ablations: perLayer)
+    }
+
+    /// Describes the same concrete chain that generation arms, in chain order.
+    public static func scopeInventory(
+        _ edits: [Edit], promptTokenCount: Int? = nil
+    ) throws -> [InterventionScope] {
+        try interventions(edits, promptTokenCount: promptTokenCount).map { intervention in
+            if let injector = intervention as? VectorInjector { return injector.scope() }
+            if let ablator = intervention as? SubspaceAblator { return ablator.scope() }
+            preconditionFailure("InterventionPlan produced an undescribed intervention")
+        }
     }
 
     /// Whether a chain satisfies the invariant: at most one ablator, and if

@@ -29,6 +29,22 @@ public struct VectorInjector: LayerIntervention {
     }
 
     /// Layer index → injection applied to that block's output.
+    public func scope() -> InterventionScope {
+        typealias V = InterventionScopeVocabulary
+        let gated = promptTokenCount != nil
+        return .init(path: V.ADDITIVE, site: V.SITE_BLOCK_OUTPUT,
+            layers: injections.keys.sorted(),
+            positions: gated ? V.POSITIONS_LAST_GATED : V.POSITIONS_LAST_UNGATED,
+            prefill: gated ? V.PREFILL_GATED : V.PREFILL_UNGATED,
+            decode: V.DECODE_LAST_POSITION, centering: V.CENTERING_NOT_APPLICABLE,
+            doseUnits: V.DOSE_UNITS_ALPHA, control: V.CONTROL_RANDOM_MATCHED_NORM,
+            claimLimits: V.CLAIM_LIMITS_ADDITIVE,
+            detail: ["chunkedPrefillGate": .string(gated ? "promptTokenCount" : "none"),
+                     "promptTokenCount": promptTokenCount.map { .integer($0) } ?? .null,
+                     "alphaPerLayer": .object(Dictionary(uniqueKeysWithValues:
+                        injections.map { (String($0.key), .number(Double($0.value.alpha))) }))])
+    }
+
     private let injections: [Int: Injection]
 
     /// Total prompt token count, when known. The generate loop prefills the
