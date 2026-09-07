@@ -291,6 +291,21 @@ public enum RunBrowser {
     static let jsonlHeadByteLimit = 262_144
     static let textHeadByteLimit = 4_096
 
+    /// CHEAP previewability classification — extension and size only, no
+    /// bytes read. Mirrors `preview(for:)`'s dispatch so a run's file list
+    /// can be split into "previewable" and "other" without parsing every
+    /// file first (the parse then happens once, for the file actually
+    /// previewed). A file this says yes to can still turn out unreadable;
+    /// `preview(for:)` reports that as `.unavailable` at preview time.
+    public static func isPreviewable(_ file: FileEntry) -> Bool {
+        if file.isDirectory { return false }
+        switch (file.name as NSString).pathExtension.lowercased() {
+        case "json": return file.size <= jsonPreviewByteLimit
+        case "csv", "jsonl", "txt", "md", "log": return true
+        default: return false
+        }
+    }
+
     /// Preview dispatch by extension. Never slurps: JSON is size-gated
     /// before a full read; CSV/JSONL/text read a bounded head only.
     public static func preview(for file: FileEntry) -> FilePreview {
