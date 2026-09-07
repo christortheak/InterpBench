@@ -774,12 +774,20 @@ injection took hold, as a mechanism-level cross-check on a vector (what
 vocabulary is it made of), and as a readout recorded alongside generation in
 a study.
 
-It is server-only and lives entirely under `steerlab-server jlens`. The Mac
-app renders lens artifacts and carries a study's readout block, and never
-produces either; the Swift CLI has no lens verbs. The reference package the
-engine checks itself against is an optional extra, deliberately outside
-`[all]` because it raises the transformers floor and installs from GitHub:
-`bootstrap.sh --with-jlens` on a cluster node, or
+Two things are separate here: who executes the mathematics, and where you
+drive it from. The numerics are the Python engine's alone, under
+`steerlab-server jlens`; the Mac engine never fits, converts or qualifies a
+lens, and reads the artifacts and a study's readout block without executing
+them. Access is wider than that: the app's method catalog and
+`steerlab-cli science list|guide|operation` describe the operations, and
+the Mac CLI's `remote science-plan|science-submit|science-call` verbs (or
+the Python client's `runner science-*` twins) submit the supported ones to a
+connected engine and fetch what comes back, so a lens can be acquired,
+imported and qualified from your desk without typing on the node. The
+commands below are the engine's own, as they run on the node. The reference
+package the engine checks itself against is an optional extra, deliberately
+outside `[all]` because it raises the transformers floor and installs from
+GitHub: `bootstrap.sh --with-jlens` on a cluster node, or
 `pip install -e "Server[jlens]"` in a venv you have decided to change.
 
 The path, in order:
@@ -946,8 +954,33 @@ cd Server && .venv.nosync/bin/python -m pytest -q                   # the Python
 a regression. `-parallel-testing-enabled NO` is required, not a preference: the
 suite serializes a process-global data-root override, and parallel execution
 starves the cooperative thread pool and wedges. `-skipMacroValidation` is
-required under command-line `xcodebuild`. Keep build products in `*.nosync`
-directories if your checkout lives in a synced folder.
+required under command-line `xcodebuild`.
+
+**Where build products go matters.** If the checkout lives in a synced folder
+(iCloud Drive, Dropbox), keep every build product *outside* it: the sync
+client writes sidecar files into build trees, and code signing then fails on
+"detritus" inside the bundle. `*.nosync` suffixes stop iCloud from syncing a
+directory but do not stop it from touching the tree, so an external scratch
+directory is the reliable form. The environment that works from a clean
+scratch, spelled out once:
+
+```bash
+export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer   # when xcode-select points elsewhere
+export TOOLCHAINS=com.apple.dt.toolchain.Metal.<version>              # the Metal toolchain you downloaded
+xcodebuild test -skipMacroValidation -scheme SteerLab-Package \
+  -destination 'platform=macOS' -parallel-testing-enabled NO \
+  -derivedDataPath /path/outside/the/synced/folder/DerivedData \
+  CLANG_COVERAGE_MAPPING=NO
+```
+
+Without `TOOLCHAINS` naming the Metal toolchain, a fresh derived-data
+directory can die at `CompileMetalFile` even though an older one built;
+`xcodebuild -downloadComponent MetalToolchain` installs it, and
+`xcodebuild -showComponent MetalToolchain` prints its identifier. `CLANG_COVERAGE_MAPPING=NO`
+keeps coverage instrumentation out of Release products: a package with test
+targets otherwise ships a `__llvm_prf` section in the CLI. `scripts/build-app.sh`
+and `scripts/install-cli.sh` already apply these; the line above is for
+running the suite by hand.
 
 Run the smoke test after touching the steering engine: it asserts that hooks
 fire on every forward pass, that steered output differs from baseline, and that

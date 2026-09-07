@@ -34,10 +34,10 @@ repository exists to make them trustworthy:
    declared rather than assumed, and a contrastive direction's opposite pole
    is minted as its own provenance-stamped artifact rather than left as a
    negative α.
-2. **Inject** it during generation, at a chosen layer and a strength measured
-   in units of the residual-stream norm at that layer, on every decode step
-   rather than only during prefill; or ablate it, removing the direction's
-   component from the stream.
+2. **Inject** it during generation, at a chosen layer and a declared dose,
+   on every decode step rather than only during prefill; or ablate it,
+   removing the direction's component from the stream. Each intervention
+   class has its own dose convention, stated below.
 3. **Measure** what moved, with paired baselines, matched-norm random
    controls, capability batteries, answer-token log-probabilities for
    categorical outcomes, trained activation readers, judged outcomes, and
@@ -74,7 +74,8 @@ Three commitments shape everything else in the design:
   artifact lifecycle rather than left to good intentions: inputs pinned by
   hash, a one-way freeze that fixes every setting *before* behavior is
   measured, held-out validation for every extracted vector, matched-norm
-  random controls, and doses reported in comparable units. Integrity gates
+  random controls, and doses reported in the units their intervention class
+  declares. Integrity gates
   refuse rather than warn, and a refusal names its repair. Beyond integrity,
   the instrument guides rather than forbids: a configuration that is
   implemented but not yet qualified on your hardware is available for
@@ -280,9 +281,22 @@ check it after the fact.
 
 Extracted vectors are validated before use: each must move a held-out probe
 for its own concept, and cross-concept similarities are reported so distinct
-concepts cannot collapse into one direction. Strength is reported in units
-of the residual-stream norm on a pinned reference corpus, so a dose is
-comparable across concepts and layers.
+concepts cannot collapse into one direction.
+
+**Doses are declared per intervention class, not one number for everything.**
+Ordinary additive steering reports α in units of the residual-stream norm at
+the injection layer, measured on a pinned reference corpus under a declared
+denominator convention, so a dose is comparable across concepts and layers
+within one convention. Ablation reports λ, a dimensionless fraction of the
+projected component, with no norm denominator. OptVec-trained vectors carry
+an absolute L2 dose at their layer, stored on the artifact, and J-space
+inspection reads that stored layer and dose rather than converting it.
+Sparse-autoencoder feature clamps report β in the feature's own latent
+units, stamped as such so no reader mistakes it for a norm-unit α. Adapters
+carry an adapter scale whose convention is stamped on the artifact: the
+PEFT `lora_alpha / r` form on the Python engine and a direct multiplier on
+the MLX trainer. [INTERVENTION-SCOPE.md](INTERVENTION-SCOPE.md) and
+[TRAINING-RECIPES.md](TRAINING-RECIPES.md) are the contracts.
 
 ## The Python engine
 

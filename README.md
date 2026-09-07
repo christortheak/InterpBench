@@ -13,12 +13,17 @@ and settings that produced it. You make the scientific choices; SteerLab
 keeps results traceable to their inputs and settings, and keeps the work
 organized.
 
+Study one model, compare several configured agents, or investigate what
+happens when agents interact. Use the Mac app or your coding assistant to
+prepare studies, choose local or remote compute, monitor execution, and
+inspect the evidence in your own workspace.
+
 **[Download from the Releases page](https://github.com/christortheak/InterpBench/releases/latest)**
 (the Mac app, or the app-free client archive) · **[Getting started](docs/CLIENT-FIRST-RUN.md)**
 
 *Pre-release research software. It has so far run in earnest on a small
-number of installations; expect rough edges away from the paved path, and
-read a refusal before working around it. Which methods run on which
+number of installations. Expect some rough edges; setup guidance and
+diagnostic messages explain what needs attention. Which methods run on which
 hardware, and what has actually been measured, is recorded in
 [capabilities and measured limits](docs/SUBSTRATES.md).*
 
@@ -147,8 +152,15 @@ workspace; create one with `workspace init` on either client.
 - **Measure** against paired baselines and matched random controls, with
   seeded sampling, judged outcomes, trained activation readers and
   capability batteries.
-- **Compare agents**: a model plus its interventions is an agent, and a study
-  is a comparison between agents, including agents talking to each other.
+- **Study individual agents and groups.** Compare a base model with steered
+  or fine-tuned versions, or place configured agents into multi-agent
+  scenarios. Define the participants and conversation structure, vary the
+  interventions, and examine how individual behavior and group outcomes
+  change. (Throughout, "agent" means a configured model under study; your
+  coding assistant is the separate tool that helps you drive SteerLab.)
+- **Try models by hand.** The Mac app downloads open-weight models into your
+  local cache and lets you chat with them, with or without an intervention
+  applied, before you design anything measured.
 - **Run where the work fits.** To run a study, you need a model and suitable
   compute. Supported studies can run locally on an Apple Silicon Mac or
   through the Python engine on a workstation or cluster. Choose according to
@@ -158,6 +170,34 @@ workspace; create one with `workspace init` on either client.
 The methods, their inputs and their limits are described in the shipped
 method guides your agent can read (`science list`, `science guide <method>`
 on either command line).
+
+### Investigate how behavior changes through interaction
+
+A change that affects an agent acting alone may behave differently in a
+group. SteerLab lets you author multi-agent scenarios, assign model
+configurations to participants, and compare baseline and intervention
+conditions. Retained transcripts and study records let you examine both the
+conversation and its measured outcomes.
+
+Your coding assistant can help prepare the scenario and participant
+configurations; the app provides authoring and inspection tools for the same
+study.
+
+### Run on a cluster from the app or your coding assistant
+
+Keep authoring and reviewing the study locally while a configured
+workstation or Slurm cluster performs the computation. From the Mac app or
+its command-line tools, you can configure connections, submit supported
+work, monitor jobs and logs, and bring verified results back into your
+workspace. Your coding assistant can drive those operations for you.
+
+If you have cluster documentation, your assistant can use it to help prepare
+a reviewed configuration and ask about missing details. Storage and transfer
+settings reflect the site's policies. Supported cleanup workflows let you
+review remote removal after verifying local evidence.
+
+Without the Mac app, the Python client can submit work to a configured
+runner and retrieve its results.
 
 ## Where the depth is
 
