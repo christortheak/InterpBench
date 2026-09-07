@@ -115,6 +115,10 @@ struct ActivityFeedColumn: View {
         return states
     }
 
+    /// Fixed height on purpose: this bar appears and disappears with async
+    /// state directly inside a split-view column, so what it contributes to
+    /// the column's minimum must not also move with its contents (the
+    /// macOS 27 split-view rule the file comment above records).
     private var runningBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
@@ -129,11 +133,13 @@ struct ActivityFeedColumn: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(Capsule().fill(.tint.opacity(0.12)))
+                    .help(state.label)
                 }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
         }
+        .frame(height: 32)
         .background(.quaternary.opacity(0.35))
     }
 
@@ -144,10 +150,14 @@ struct ActivityFeedColumn: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     ForEach(activityMessages) { message in
-                        MessageBubble(message: message) {
-                            copyToClipboard(service.transcriptTurnText(message))
-                        }
-                        .id(message.id)
+                        // "log entry", not "turn": these bubbles are job and
+                        // build output, and offering "Copy this turn" on a
+                        // vector build read as if the chat had leaked in.
+                        MessageBubble(
+                            message: message,
+                            copyText: { service.transcriptTurnText(message) },
+                            copyNoun: "log entry")
+                            .id(message.id)
                     }
                 }
                 .padding(12)
@@ -174,11 +184,6 @@ struct ActivityFeedColumn: View {
                     + "runs. Chat lives in Playground.")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func copyToClipboard(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
     }
 }
 
@@ -269,6 +274,7 @@ struct ResultsRunSummaryColumn: View {
             }
             .buttonStyle(.borderless)
             .help("reveal this run directory in Finder")
+            .accessibilityLabel("Reveal in Finder")
         }
     }
 

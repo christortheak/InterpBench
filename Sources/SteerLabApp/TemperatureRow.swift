@@ -13,20 +13,26 @@ import SwiftUI
 /// tips it over ("unable to type-check this expression in reasonable time").
 struct TemperatureRow: View {
     @Binding var value: Double
+    /// The row's tooltip. Defaults to the study wording; the Playground
+    /// passes its own, because a Playground chat's temperature has none of
+    /// the study consequences (audit 2026-09-06, headline 11).
+    var help: String =
+        "study-wide generation temperature. Measured agent-comparison runs "
+        + "currently require 0 for reproducibility, so a nonzero value routes "
+        + "the study to the Python server"
 
     var body: some View {
         LabeledContent("Temperature") {
             HStack(spacing: 8) {
                 Slider(value: $value, in: 0 ... 1.5, step: 0.1)
-                TextField("", value: $value, format: Self.format)
+                    .accessibilityLabel("Temperature")
+                TextField("Temperature", value: $value, format: Self.format)
+                    .labelsHidden()
                     .frame(width: 56)
                     .multilineTextAlignment(.trailing)
             }
         }
-        .help(
-            "study-wide generation temperature. Measured agent-comparison "
-                + "runs currently require 0 for reproducibility, so a nonzero "
-                + "value routes the study to the Python server")
+        .help(help)
     }
 
     private static let format = FloatingPointFormatStyle<Double>()
