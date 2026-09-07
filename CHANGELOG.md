@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.6] — 2026-09-07
+
 - Scoped MLX sampling for ordinary, saved-agent and multi-agent measured runs,
   including reasoning budgets. Run records carry effective seeds and sample
   indices; new provenance records the model/runtime configuration. Stochastic
