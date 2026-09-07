@@ -20,7 +20,8 @@ def test_cli_creates_complete_seed_and_handoff_without_existing_workspace(tmp_pa
     assert client_cli.main(['workspace','handoff','--root',str(root),'--json']) == 0
     report = json.loads(capsys.readouterr().out)['result']
     assert report['agentGuide'] == str(root / 'AGENTS.md')
-    assert report['executable'][0] == sys.executable
+    expected = Path(sys.executable).with_name('steerlab')
+    assert report['executable'] == ([str(expected)] if expected.is_file() else [sys.executable, '-m', 'steerlab_server.client_cli'])
     assert not (root / '.git').exists()
 
 

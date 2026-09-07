@@ -104,7 +104,13 @@ def handoff(directory, *, executable=None):
     report = inspect(directory)
     if not report['recognized'] or not report['agentGuidePresent']:
         refuse('This workspace has no agent guide; initialize a new workspace or restore its instructions explicitly.')
-    command = executable or [sys.executable, '-m', 'steerlab_server.client_cli']
+    if executable is None:
+        # Name the same executable the installer returned when this interpreter
+        # carries the client's console script; fall back to the module form for
+        # a bare interpreter (a checkout venv or a test process).
+        script = Path(sys.executable).with_name('steerlab')
+        executable = [str(script)] if script.is_file() else [sys.executable, '-m', 'steerlab_server.client_cli']
+    command = executable
     root = report['workspaceRoot']
     return {**report, 'executable': command, 'agentGuide': str(Path(root) / 'AGENTS.md'),
             'instructions': 'Read AGENTS.md before working. Discuss the research question and unresolved scientific choices with the researcher. Use only capabilities reported by this installed client. Workspace data remains local; running hardware receives execution copies.',

@@ -14,30 +14,34 @@ preparing execution. No server or model is needed for study authoring.
 
 ## App-free release
 
-The release directory contains a client wheel, a dependency lock, an installer,
-and its checksums. No repository or preinstalled Python is required. Supported
+The client release is one archive, `steerlab-client-<version>+<sha>.tar.gz`,
+with a checksum file beside it. Extract it anywhere. The folder holds an
+installer, a helper, the client wheel, a hashed dependency lock, a README and
+an `AGENTS.md` written for a coding agent that has been pointed at the folder:
+plan before installing, install only with the approved hash, use the returned
+executable, and create the research workspace somewhere else. No repository,
+preinstalled Python, administrator privileges or GPU is required. Supported
 installer platforms are Apple Silicon macOS and x86_64 Linux with glibc.
 
-Run `sh install-client.sh plan` from the extracted release. Review its destination,
-actions and plan hash, then run `sh install-client.sh install --expect <hash> --yes`.
-An agent can parse both responses as JSON; stdout contains one result and download
-progress goes to stderr. Use `--runtime <absolute-path>` on both calls to choose
-another destination. Network access to GitHub, Astral's Python distribution and
-PyPI is required. The installer verifies uv, downloads managed CPython 3.12.14,
-and installs the hashed client lock using wheels only. No compiler is required.
+1. `sh install-client.sh plan` changes nothing and reports the destination,
+   the actions and a plan hash.
+2. `sh install-client.sh install --expect <planSHA256> --yes` downloads a
+   verified uv and managed CPython 3.12.14, installs the hashed client lock
+   from wheels only, verifies imports and source identity, and activates the
+   environment. The result names an absolute `steerlab` executable. Use
+   `--runtime <absolute-path>` on both calls to choose another destination.
+   Network access to GitHub, Astral's Python distribution and PyPI is required.
+3. `<executable> setup start <new-workspace> --create --json` creates a
+   complete workspace outside the download folder and returns readiness plus
+   the agent handoff. Omit `--create` to open an existing workspace.
+4. `<executable> workspace handoff --root <workspace> --json` prints the handoff
+   again; it names the executable and the discovery commands, and points at
+   the workspace's own `AGENTS.md`, which governs study work from then on.
 
-The result names an absolute `steerlab` executable. Use it to run:
-
-```text
-steerlab setup start <new-directory> --create --json
-steerlab setup inspect --root <directory> --json
-steerlab workspace handoff --root <directory> --json
-```
-
-Give the handoff and the research question to an agent. It reads the workspace's
-AGENTS.md, discovers the installed method catalog, and asks about scientific
-choices. Paths stay local to the authoring workspace; cluster execution receives
-copies through the managed submission and verified import operations.
+`setup inspect --root <workspace> --json` reports client and workspace readiness
+without treating a missing model as a setup failure. Paths stay local to the
+authoring workspace; cluster execution receives copies through the managed
+submission and verified import operations.
 
 ## Repair and upgrades
 
