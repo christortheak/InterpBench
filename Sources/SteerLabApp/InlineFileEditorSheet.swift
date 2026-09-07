@@ -18,13 +18,20 @@ struct InlineFileEditorSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
+    /// The bytes as loaded, so "has this been edited?" is a real question and
+    /// not a guess — Save used to be enabled on an untouched file and Cancel
+    /// used to drop edits silently (2026-09-06 audit).
+    @State private var loadedText = ""
     /// Why the file cannot be edited here (nil = editable).
     @State private var editRefusal: String?
     @State private var status: String?
+    @State private var confirmingDiscard = false
 
     /// 2 MB — recipe files (prompts, rubrics, baselines, batteries) are far
     /// smaller; anything bigger belongs in a real editor.
     private static let editByteLimit = 2_097_152
+
+    private var isDirty: Bool { editRefusal == nil && text != loadedText }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -39,6 +46,10 @@ struct InlineFileEditorSheet: View {
                 TextEditor(text: $text)
                     .font(.system(.caption, design: .monospaced))
                     .frame(minHeight: 300)
+                    .accessibilityLabel("File contents")
+                    .help(
+                        "the file's text — Save writes it back in place; "
+                            + "nothing is written until you do")
                 if pinnedHash != nil {
                     // The drift consequence, visible at the moment of action
                     // — not hover-only (StudyInfo.inlineFileEditor is the
@@ -93,27 +104,54 @@ struct InlineFileEditorSheet: View {
 
     private var buttonRow: some View {
         HStack(spacing: 8) {
-            Button("Copy All") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(text, forType: .string)
-                status = "copied \(text.count) characters to the clipboard"
+            CopyButton(
+                "Copy All",
+                help: "copy the whole editor text to the clipboard"
+            ) {
+                editRefusal == nil ? text : nil
             }
             .disabled(editRefusal != nil)
-            .help("copy the whole editor text to the clipboard")
             Button("Open in Default App") {
-                if let url = reference.url {
-                    NSWorkspace.shared.open(url)
+                guard let url = reference.url else {
+                    status = "this path does not resolve to a file on disk"
+                    return
+                }
+                // The sheet exists because researchers may have no handler
+                // for .jsonl/.md — so "no app opened it" has to be said, not
+                // swallowed (2026-09-06 audit).
+                if !NSWorkspace.shared.open(url) {
+                    status = "macOS has no app registered for this file type — "
+                        + "edit it here, or set a default app in Finder's Get Info"
                 }
             }
             .help("open this file in whatever app macOS associates with it — "
                 + "for users who prefer a full editor; unsaved changes here "
                 + "are not carried over")
             Spacer()
-            Button("Cancel") { dismiss() }
+            Button("Cancel", role: .cancel) {
+                if isDirty { confirmingDiscard = true } else { dismiss() }
+            }
+            .keyboardShortcut(.cancelAction)
+            .help(
+                isDirty
+                    ? "close without saving — the edits in this box are discarded"
+                    : "close the editor; nothing has been changed")
+            .confirmationDialog(
+                "Discard edits to “\(reference.displayName)”?",
+                isPresented: $confirmingDiscard
+            ) {
+                Button("Discard Edits", role: .destructive) { dismiss() }
+                Button("Keep Editing", role: .cancel) {}
+            } message: {
+                Text("The file on disk is unchanged; the text typed here is lost.")
+            }
             Button("Save") { save() }
                 .keyboardShortcut(.defaultAction)
-                .disabled(editRefusal != nil)
-                .help("write the editor text back to the file (atomic write)")
+                .disabled(editRefusal != nil || !isDirty)
+                .help(
+                    isDirty
+                        ? "write the editor text back to the file (atomic write)"
+                        : "nothing to save — the text matches the file on disk")
         }
     }
 
@@ -137,6 +175,7 @@ struct InlineFileEditorSheet: View {
             return
         }
         text = decoded
+        loadedText = decoded
     }
 
     private func save() {

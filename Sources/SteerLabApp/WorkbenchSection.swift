@@ -1,11 +1,10 @@
 import ExperimentKit
 import SwiftUI
 
-/// Primary navigation sections, ordered by the research lifecycle (design
-/// brief: docs/UI_REDESIGN_AGENT_WORKBENCH_EXPERIENCE.md), not implementation
-/// history. Existing panel TYPES keep their names — only user-facing labels
-/// change (Steering→Playground, Variants→Agents, Concept Lab→Data,
-/// Geometry→Analysis).
+/// Primary navigation sections, ordered by the research lifecycle (2026-07
+/// workbench design brief), not implementation history. Existing panel TYPES
+/// keep their names — only user-facing labels change (Steering→Playground,
+/// Variants→Agents, Concept Lab→Data, Geometry→Analysis).
 enum WorkbenchSection: String, CaseIterable, Identifiable {
     case home = "Home"
     // Playground above Data (researcher request 2026-07-18): interactive
@@ -45,15 +44,15 @@ enum WorkbenchSection: String, CaseIterable, Identifiable {
 
     var help: String {
         switch self {
-        case .home: "workspace dashboard: where am I, what exists, what next"
+        case .home: "the workspace dashboard: what this workspace holds, what is running, and what to do next"
         case .agents: "the agent workbench — library, creation (manual or optimize from a concept vector), and optimization runs"
-        case .playground: "interactive chat and exploratory steering (formerly Steering)"
+        case .playground: "interactive chat and exploratory steering — try a model, a vector, and a strength before anything is declared"
         case .data: "the workspace's data: inventory of every dataset and derived artifact, the one New Dataset flow, and the editors that author and build them (concepts, corpora, vectors, adapter training)"
         case .templates: "the design library: a study's task, instruments, sampling and judges — with no agents and no compute"
         case .studies: "evidence-grade study protocols (draft → freeze → run)"
-        case .multiAgent: "scenario and protocol builder"
+        case .multiAgent: "build a scenario several agents take turns in — who speaks when, what each one sees, and the rehearsal that tries it"
         case .results: "browse immutable run directories"
-        case .analysis: "vector geometry and mechanistic analysis (formerly Geometry)"
+        case .analysis: "how vectors sit relative to each other and what the model does with them — cosines, RSA, published-SAE cross-checks, and lens readouts"
         case .compute: "server connections, jobs, logs, and installs"
         }
     }
@@ -68,11 +67,10 @@ enum WorkbenchSection: String, CaseIterable, Identifiable {
     }
 }
 
-/// Regions within the Agents section (design brief:
-/// docs/AGENT_CREATION_SWEEP_UI_RECOMMENDATION.md — Screens is no longer a
-/// top-level section; the sweep/promote workflow is agent creation, and the
-/// Optimizations region is the returning-user path to in-flight and
-/// completed optimization runs).
+/// Regions within the Agents section (2026-07 agent-creation design brief:
+/// Screens is no longer a top-level section; the sweep/promote workflow is
+/// agent creation, and the Optimizations region is the returning-user path to
+/// in-flight and completed optimization runs).
 enum AgentsRegion: String, CaseIterable, Identifiable {
     case library = "Library"
     case create = "New Agent"
@@ -84,7 +82,10 @@ enum AgentsRegion: String, CaseIterable, Identifiable {
         switch self {
         case .library: "browse, filter, and check saved agents"
         case .create: "create an agent — manually or by optimizing a concept vector"
-        case .optimizations: "declared layer×alpha optimization runs: grids, recommendations, Create Agent"
+        case .optimizations:
+            "runs that search for the best place and strength to steer at — "
+                + "their grids, the point each run recommends, and Create Agent "
+                + "to save that point as an agent (the search is over layer × α)"
         }
     }
 }

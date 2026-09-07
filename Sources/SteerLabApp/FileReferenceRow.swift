@@ -58,6 +58,10 @@ struct FileReferenceRow: View {
                         Image(systemName: "eye")
                     }
                     .buttonStyle(.plain)
+                    // Icon-only: without a label VoiceOver reads "eye".
+                    .accessibilityLabel("View \(reference.displayName)")
+                    .frame(minWidth: 20, minHeight: 20)
+                    .contentShape(Rectangle())
                     .help("view the file's contents read-only")
                 }
                 Button {
@@ -68,6 +72,12 @@ struct FileReferenceRow: View {
                     Image(systemName: "folder")
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(
+                    isDirectory
+                        ? "Browse \(reference.displayName) in Finder"
+                        : "Reveal \(reference.displayName) in Finder")
+                .frame(minWidth: 20, minHeight: 20)
+                .contentShape(Rectangle())
                 .help(isDirectory
                     ? "a DIRECTORY — browse its files in Finder"
                     : "reveal in Finder")
@@ -78,6 +88,9 @@ struct FileReferenceRow: View {
                         Image(systemName: "square.and.pencil")
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Edit \(reference.displayName)")
+                    .frame(minWidth: 20, minHeight: 20)
+                    .contentShape(Rectangle())
                     .help("edit in the app — Save writes the file in place; "
                         + "a pinned file then shows as drift until re-pinned "
                         + "(the sheet can also open your default app)")
@@ -105,6 +118,10 @@ private struct FileReferenceViewer: View {
     let pinnedHash: String?
 
     @Environment(\.dismiss) private var dismiss
+    /// Read once on appear, not on every render: `contents` used to be a
+    /// computed property that hit the disk twice per body evaluation.
+    @State private var text = ""
+    @State private var isTruncated = false
 
     private static let byteLimit = 262_144  // 256 KB is plenty for recipe files
 
@@ -121,19 +138,22 @@ private struct FileReferenceViewer: View {
                     hashLine
                 }
                 Spacer()
-                Button("Done") { dismiss() }
-                    .keyboardShortcut(.defaultAction)
+                // One dismiss convention app-wide: Cancel/Close/Done is the
+                // cancel action, so Escape closes every sheet.
+                Button("Done", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .help("close this preview — nothing here changes the file")
             }
 
             Divider()
 
             ScrollView {
-                Text(contents.text)
+                Text(text)
                     .font(.caption.monospaced())
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if contents.truncated {
+            if isTruncated {
                 Text("… truncated preview (first 256 KB) — the pencil editor "
                     + "or your default app shows the full file")
                     .font(.caption2)
@@ -142,6 +162,7 @@ private struct FileReferenceViewer: View {
         }
         .padding(16)
         .frame(minWidth: 640, minHeight: 460)
+        .onAppear(perform: load)
     }
 
     @ViewBuilder
@@ -161,12 +182,14 @@ private struct FileReferenceViewer: View {
         }
     }
 
-    private var contents: (text: String, truncated: Bool) {
+    private func load() {
         guard let url = reference.url, let data = try? Data(contentsOf: url) else {
-            return ("(could not read file)", false)
+            text = "(could not read file)"
+            isTruncated = false
+            return
         }
-        let truncated = data.count > Self.byteLimit
-        let slice = truncated ? data.prefix(Self.byteLimit) : data[...]
-        return (String(decoding: slice, as: UTF8.self), truncated)
+        isTruncated = data.count > Self.byteLimit
+        let slice = isTruncated ? data.prefix(Self.byteLimit) : data[...]
+        text = String(decoding: slice, as: UTF8.self)
     }
 }

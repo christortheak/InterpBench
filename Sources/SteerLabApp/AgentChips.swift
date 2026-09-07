@@ -36,6 +36,33 @@ struct AgentKindBadge: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Capsule().fill(background))
+            .help(help)
+    }
+
+    /// Where this agent CAME FROM, in a sentence — the badge word alone
+    /// ("override-promoted", "vector-only") says nothing to a reader who has
+    /// not run that path yet (2026-09-06 audit).
+    private var help: String {
+        switch kind {
+        case .baseline:
+            "the unsteered base model itself — not a saved file; it is listed "
+                + "so a study can name it as an arm"
+        case .sweepPromoted:
+            "promoted from an optimization run at the point that run "
+                + "recommended — its layer, strength, and evidence are pinned"
+        case .overridePromoted:
+            "promoted from an optimization run at a point a researcher chose "
+                + "instead of the recommended one; the override is recorded "
+                + "in the agent"
+        case .adapter:
+            "carries a trained LoRA adapter (Data → Adapter Training)"
+        case .vectorOnly:
+            "steers with a concept vector at a fixed layer and strength; no "
+                + "trained weights"
+        case .exploratory:
+            "saved by hand in the Playground or the editor — no optimization "
+                + "run stands behind its settings"
+        }
     }
 
     private var background: Color {

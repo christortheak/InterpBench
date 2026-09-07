@@ -10,6 +10,11 @@ import SwiftUI
 /// store), never per-view prose. Renders nothing when paired/unknown/local.
 struct WorkspaceMismatchBanner: View {
     let cluster: ClusterConnectionStore
+    /// Repointing a serving root is a server round trip with no indicator of
+    /// its own here; without this flag a second click queued a second switch
+    /// (2026-09-06 audit: server-route actions need a busy state and a
+    /// re-entry guard).
+    @State private var isSwitching = false
 
     var body: some View {
         if let message = cluster.workspaceMismatchBanner {
@@ -52,22 +57,25 @@ struct WorkspaceMismatchBanner: View {
     private var switchAffordance: some View {
         switch cluster.workspaceSwitchAffordance {
         case .pointServerAtLocalWorkspace(let localRoot):
-            Button("Point server at this workspace") {
-                Task { await cluster.switchServerWorkspace(to: localRoot) }
+            Button(isSwitching ? "Repointing…" : "Point server at this workspace") {
+                Task { await switchRoot(to: localRoot) }
             }
+            .disabled(isSwitching)
             .help(
                 "the server runs on this Mac — repoint its serving root at "
                     + "\(localRoot) (no restart; refused while server jobs "
                     + "are running)")
         case .offerServerSideRoots(let roots):
-            Menu("Point server at…") {
+            Menu(isSwitching ? "Repointing…" : "Point server at…") {
                 ForEach(roots, id: \.self) { root in
-                    Button(root) {
-                        Task { await cluster.switchServerWorkspace(to: root) }
-                    }
+                    Button(root) { Task { await switchRoot(to: root) } }
+                        .help(
+                            "make \(root) this server's serving root — no "
+                                + "restart; refused while server jobs are running")
                 }
             }
             .fixedSize()
+            .disabled(isSwitching)
             .help(
                 "repoint the server's serving root at one of its OWN known "
                     + "workspace roots (site profile + recents) — the app's "
@@ -76,5 +84,14 @@ struct WorkspaceMismatchBanner: View {
         case .unavailable:
             EmptyView()
         }
+    }
+
+    /// One in flight at a time. The store surfaces the outcome (the banner
+    /// itself disappears on success; a refusal lands in the status line).
+    private func switchRoot(to root: String) async {
+        guard !isSwitching else { return }
+        isSwitching = true
+        defer { isSwitching = false }
+        await cluster.switchServerWorkspace(to: root)
     }
 }

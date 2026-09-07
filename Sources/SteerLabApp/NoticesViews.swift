@@ -23,6 +23,13 @@ struct NoticesBellButton: View {
             .imageScale(.medium)
         }
         .buttonStyle(.plain)
+        // A bare `Image` reads as its symbol name to VoiceOver, and the
+        // unseen-error state was carried by the glyph alone.
+        .accessibilityLabel(
+            notices.hasUnseenErrors
+                ? "Notices — unseen errors" : "Notices")
+        .frame(minWidth: 20, minHeight: 20)
+        .contentShape(Rectangle())
         .help(
             "panel notices — every Studies/Agents status event, kept (last "
                 + "\(PanelNotices.capacity)) and persisted per workspace; "
@@ -37,6 +44,8 @@ struct NoticesBellButton: View {
 /// The feed popover: newest first, severity icons, source + timestamp, and a
 /// Clear action. Read-only over the store — the panels append, this renders.
 struct NoticesFeedView: View {
+    @State private var confirmingClear = false
+
     var body: some View {
         let notices = PanelNotices.shared
         VStack(alignment: .leading, spacing: 8) {
@@ -44,10 +53,26 @@ struct NoticesFeedView: View {
                 Text("Notices")
                     .font(.headline)
                 Spacer()
-                Button("Clear") { notices.clear() }
+                // Clear deletes the persisted file as well as the in-memory
+                // ring — the only record of what the panels reported this
+                // session — so it asks first (2026-09-06 audit, headline 7).
+                Button("Clear", role: .destructive) { confirmingClear = true }
                     .controlSize(.small)
                     .disabled(notices.notices.isEmpty)
                     .help("empties the notices ring (and its persisted file)")
+                    .confirmationDialog(
+                        "Clear all \(notices.notices.count) notices?",
+                        isPresented: $confirmingClear
+                    ) {
+                        Button("Clear Notices", role: .destructive) { notices.clear() }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text(
+                            "Every recorded Studies and Agents event is deleted, "
+                                + "here and in this workspace's saved notices file. "
+                                + "Nothing else changes — no study, run, or "
+                                + "artifact is touched.")
+                    }
             }
             if notices.notices.isEmpty {
                 Text(

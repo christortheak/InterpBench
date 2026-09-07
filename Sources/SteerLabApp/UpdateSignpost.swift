@@ -122,6 +122,7 @@ struct UpdateBanner: View {
                     Image(systemName: "xmark")
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel("Dismiss update notice")
                 .help("dismiss — this version will not be announced again")
             }
             .padding(.horizontal, 14)

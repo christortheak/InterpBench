@@ -125,10 +125,16 @@ struct SteerLabApp: App {
                 UpdateBanner(model: updates)
                 ChatView(service: service, workspace: workspace)
             }
-            // Floor: sidebar (~160) + section controls (≥560 for the dense
-            // panels) + viewer (≥420). Below this the sidebar collapses
-            // and section labels truncate (live-testing finding).
-            .frame(minWidth: 1200, minHeight: 700)
+            // Floor: sidebar + section controls (≥560 for the dense panels)
+            // + viewer (≥420). Below this the sidebar collapses and section
+            // labels truncate (live-testing finding).
+            //
+            // 1240, not 1200: the sidebar is draggable to 240 (ChatView), so
+            // 240 + 560 + 420 = 1220 plus the two dividers is what the split
+            // actually needs. At 1200 the two column minimums could not both
+            // be honoured with the sidebar at its maximum, and the controls
+            // pane was the one that gave (2026-09-06 audit, headline 1).
+            .frame(minWidth: 1240, minHeight: 700)
             // After the window is up, never before: the check is entirely
             // async and off the main actor, so launch time is unaffected.
             .task { await updates.runAutomaticCheckIfDue() }
@@ -169,6 +175,14 @@ struct SteerLabApp: App {
         // content minimum and the sidebar truncates section names ("tabs cut
         // off"). 1440×900 fits every section's controls + viewer comfortably.
         .defaultSize(width: 1440, height: 900)
+        // The `.frame(minWidth:)` above only constrains the CONTENT; a
+        // WindowGroup's default resizability lets the window itself be
+        // resized — and RESTORED — smaller than that, which is how the app
+        // came back at ≈1140 pt with the controls pane squeezed under its
+        // floor (2026-09-06 audit, headline 1). `.contentMinSize` makes the
+        // window's minimum the content's minimum, so neither a drag nor a
+        // restored frame can go under it; the maximum stays unlimited.
+        .windowResizability(.contentMinSize)
         // "Check for Updates…" lives where macOS apps put it: the app menu,
         // just under About. The toggle beside it is the visible off switch
         // for the automatic once-a-day check.
@@ -197,7 +211,12 @@ private struct SubstrateSelector: View {
         // in the toolbar (discoverability finding): it reads
         // "Compute: Local (MLX)" / "Compute: <server name>".
         Menu {
-            Picker("Workspace", selection: workspaceSelection) {
+            // "Compute target", never "Workspace": the toolbar's OTHER menu
+            // is the data workspace, and this one used to borrow its name
+            // from the internal type (`ClusterConnectionStore.Workspace`),
+            // so the two menus contradicted each other on what "workspace"
+            // meant (2026-09-06 audit, headline 18).
+            Picker("Compute target", selection: workspaceSelection) {
                 Text("Local (MLX)").tag(ClusterConnectionStore.Workspace.local)
                 ForEach(cluster.servers) { server in
                     serverMenuItem(server)
@@ -205,16 +224,21 @@ private struct SubstrateSelector: View {
                 }
             }
             .pickerStyle(.inline)
+            .help(
+                "which engine this app computes on — the MLX engine in the "
+                    + "app, or one of the saved Python SteerLab servers")
             Divider()
             Button("Add Server…") {
                 editingServerID = nil
                 showingServerEditor = true
             }
+            .help("save another Python SteerLab server (name, URL, token) and connect to it")
             if let active = cluster.activeServer {
                 Button("Edit “\(active.name)”…") {
                     editingServerID = active.id
                     showingServerEditor = true
                 }
+                .help("change this server's name, URL, or bearer token — or forget it")
             }
             // Which workspace the active server actually serves — surfaced in
             // the Compute UI itself so "whose artifacts am I looking at?" never
@@ -259,8 +283,16 @@ private struct SubstrateSelector: View {
                                         }
                                     }
                                 }
+                                .help(
+                                    "repoint this server's serving root at \(root) "
+                                        + "without a restart — refused while server "
+                                        + "jobs are running")
                             }
                         }
+                        .help(
+                            "server-side roots this server already knows (its site "
+                                + "profile plus recents) — picking one changes which "
+                                + "tree it serves")
                     }
                 }
             }
@@ -269,12 +301,14 @@ private struct SubstrateSelector: View {
         }
         .labelStyle(.titleAndIcon)
         .help(
-            "which workspace the app is scoped to: the MLX engine in this app, "
-                + "or a saved Python SteerLab server (its installed models, "
+            "which engine the app computes on: the MLX engine in this app, or "
+                + "a saved Python SteerLab server (its installed models, "
                 + "artifacts, runs, and jobs — everything it lists lives under "
-                + "its serving root, shown in this menu). Recipes — concepts, "
-                + "stimuli, manifests — are git-versioned and visible in every "
-                + "workspace. Connection state lives on the dot to the right")
+                + "its serving root, shown in this menu). The folder menu to "
+                + "the left picks the DATA workspace; this one picks the "
+                + "engine. Recipes — concepts, stimuli, manifests — are "
+                + "git-versioned and visible whichever engine is selected. "
+                + "Connection state lives on the dot to the right")
         // The server add/edit popover stays reachable from this menu's
         // Add Server…/Edit… items; the selector's former duplicate
         // connection dot is gone — ClusterConnectionDot (right) is the ONE
@@ -352,6 +386,7 @@ private struct ServerEditorView: View {
     @State private var urlString = ClusterConnectionStore.defaultServerURL
     @State private var token = ""
     @State private var installModelID = ""
+    @State private var confirmingRemove = false
 
     private var existing: ClusterConnectionStore.ServerEntry? {
         serverID.flatMap { cluster.server(id: $0) }
@@ -362,13 +397,34 @@ private struct ServerEditorView: View {
         return cluster.activeWorkspace == .server(serverID)
     }
 
+    /// Connect used to be enabled with an empty (or unparseable) URL: the
+    /// store fell back to the host label of "" and the failure surfaced much
+    /// later, as "invalid server URL" in the status line (2026-09-06 audit).
+    /// A base URL needs a scheme and a host to be reachable at all.
+    private var urlProblem: String? {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "enter the server's base URL first" }
+        guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(),
+            scheme == "http" || scheme == "https", let host = url.host(), !host.isEmpty
+        else {
+            return "not a reachable base URL — it needs http:// or https:// and a host"
+        }
+        return nil
+    }
+
+    /// Both model buttons send this string to the server; neither has
+    /// anything to send while it is blank (Plan used to POST "").
+    private var trimmedInstallModelID: String {
+        installModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(existing == nil ? "Add Server" : "Edit Server")
                 .font(.headline)
             TextField("name (defaults to host:port)", text: $name)
                 .textFieldStyle(.roundedBorder)
-                .help("label shown in the Compute workspace menu")
+                .help("label shown for this server in the Compute menu")
             TextField("server URL", text: $urlString)
                 .textFieldStyle(.roundedBorder)
                 .help("base URL for the Python SteerLab server, usually an SSH tunnel or OOD URL")
@@ -377,17 +433,41 @@ private struct ServerEditorView: View {
                 .help("optional STEERLAB_AUTH_TOKEN; saved to the Keychain per host:port on connect")
             HStack {
                 Button("Connect") { saveAndConnect() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(urlProblem != nil)
                     .help(
-                        "save this server, switch the workspace to it, and fetch its "
+                        "save this server, switch compute to it, and fetch its "
                             + "capabilities, model inventory, jobs, and agents")
                 Spacer()
                 if let existing {
-                    Button("Remove", role: .destructive) {
-                        cluster.removeServer(id: existing.id)
-                        dismiss()
-                    }
-                    .help("forget this server (its Keychain token included); jobs keep running server-side")
+                    Button("Remove", role: .destructive) { confirmingRemove = true }
+                        .help(
+                            "forget this server (its Keychain token included); jobs "
+                                + "keep running server-side")
+                        .confirmationDialog(
+                            "Remove “\(existing.name)”?", isPresented: $confirmingRemove
+                        ) {
+                            Button("Remove Server", role: .destructive) {
+                                cluster.removeServer(id: existing.id)
+                                dismiss()
+                            }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text(
+                                "The saved entry and its Keychain token are deleted "
+                                    + "on this Mac. Nothing on the server changes — "
+                                    + "its jobs keep running and its artifacts stay "
+                                    + "where they are.")
+                        }
                 }
+            }
+            // Below the URL, not in a tooltip: a disabled Connect has to say
+            // why (2026-09-06 audit, headline 24).
+            if let urlProblem {
+                Text(urlProblem)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if isActiveServer {
                 Divider()
@@ -399,19 +479,28 @@ private struct ServerEditorView: View {
                                 + "durable job (full-precision HF ids — MLX repos are rejected "
                                 + "with a family-twin hint)")
                     Button("Plan") {
-                        Task { await cluster.previewModelPreparation(installModelID) }
+                        Task { await cluster.previewModelPreparation(trimmedInstallModelID) }
                     }
+                    .disabled(trimmedInstallModelID.isEmpty)
+                    .help(
+                        "ask the server what installing this repo would cost — "
+                            + "disk, files, and whether it is already cached — "
+                            + "without queueing anything")
                     Button("Install") {
-                        Task { await cluster.installModel(installModelID) }
+                        Task { await cluster.installModel(trimmedInstallModelID) }
                     }
-                    .disabled(
-                        installModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(trimmedInstallModelID.isEmpty)
+                    .help(
+                        "queue the prefetch as a durable server job; it survives "
+                            + "this popover closing and shows up in Compute › Jobs")
                 }
-            }
                 if cluster.modelPreparation.endpoint == cluster.connectionProfile?.baseURL,
-                    cluster.modelPreparation.requestedModelID == installModelID, let message = cluster.modelPreparation.message {
+                    cluster.modelPreparation.requestedModelID == installModelID,
+                    let message = cluster.modelPreparation.message
+                {
                     Text(message).font(.caption).textSelection(.enabled)
                 }
+            }
             if isActiveServer, let status = cluster.status {
                 Text(status)
                     .font(.caption)
