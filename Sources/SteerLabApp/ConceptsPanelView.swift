@@ -48,6 +48,42 @@ private enum ConceptDatasetPreview: String, Identifiable {
     }
 }
 
+/// One confirmed irreversible action: the dialog names the object, the
+/// message states the consequence, and the confirm button carries the
+/// destructive role (UI audit 2026-09-06, headline 7). Overwriting a
+/// server copy, replacing a corpus, and deleting a row out of a stimulus
+/// file on disk all travel through this one shape.
+private struct ConceptsConfirmation: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
+    let confirmTitle: String
+    let perform: () -> Void
+}
+
+/// The one `confirmationDialog` presenter for `ConceptsConfirmation`. A
+/// modifier rather than an inline dialog: `ConceptsPanelView.body` is at the
+/// type-checker's limit, so every addition to it stays one short call.
+private struct ConceptsConfirmationDialog: ViewModifier {
+    @Binding var pending: ConceptsConfirmation?
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(
+            pending?.title ?? "",
+            isPresented: Binding(
+                get: { pending != nil },
+                set: { presented in if !presented { pending = nil } }),
+            titleVisibility: .visible,
+            presenting: pending
+        ) { item in
+            Button(item.confirmTitle, role: .destructive) { item.perform() }
+            Button("Cancel", role: .cancel) {}
+        } message: { item in
+            Text(item.message)
+        }
+    }
+}
+
 /// Concept construction panel: paste contrasting stimuli, rebuild the
 /// direction live, watch design stats, save through the canonical pipeline.
 struct ConceptsPanelView: View {
@@ -69,6 +105,12 @@ struct ConceptsPanelView: View {
     /// hides when the selection moves so it can never be read against the
     /// wrong concept.
     @State private var independenceVerdictConcept: String?
+    /// Pending confirmed action for the panel's own rows (server overwrite,
+    /// corpus replacement, on-disk row deletion).
+    @State private var pendingConfirmation: ConceptsConfirmation?
+    /// The same, for the dataset-preview popover — a popover presents its own
+    /// content, so it needs its own presenter rather than sharing the Form's.
+    @State private var pendingPreviewConfirmation: ConceptsConfirmation?
 
     private var builder: ConceptBuilder { service.concepts }
 
@@ -112,6 +154,7 @@ struct ConceptsPanelView: View {
                     }
                     .disabled(builder.currentConceptName.isEmpty || builder.selectedExisting == nil)
                     .help("delete this concept's editable datasets; saved vector artifacts remain")
+                    .accessibilityLabel("Delete concept datasets")
                 }
                 if builder.selectedExisting == nil {
                     newConceptHandoffRow
@@ -129,16 +172,9 @@ struct ConceptsPanelView: View {
             }
 
             Section("Dataset Builder") {
-                conceptPickerRow(label: "Dataset concept", allowDelete: true)
+                datasetConceptEchoRow
                 localEditNoticeRow
-                Picker("Vector recipe", selection: $builder.recipeFamily) {
-                    ForEach(ConceptBuilder.RecipeFamily.allCases) { family in
-                        Text(family.label).tag(family)
-                    }
-                }
-                .help(
-                    "choose the data contract first: CAA pairs, RepE/LAT paired "
-                        + "reader data, or grand-mean multi-concept stories")
+                recipeFamilyPicker
                 datasetBrowseDisclosure
                 LabeledContent(
                     builder.recipeFamily.isPaired ? "Paired rows" : "Story rows",
@@ -199,33 +235,7 @@ struct ConceptsPanelView: View {
                     emotionStoryEntry
                 }
 
-                HStack {
-                    Button(builder.recipeFamily.isPaired ? "Add to set" : "Add story row(s)") {
-                        Task { await builder.addDrafts() }
-                    }
-                    .disabled(builder.isWorking)
-                    .help(
-                        "append the pasted lines to the working set; stats go stale "
-                            + "until you rebuild (one forward pass per new stimulus)")
-
-                    if builder.recipeFamily.isPaired {
-                        rebuildButton
-                    } else {
-                        Text("Grand Mean corpus balance updates automatically as rows and selections change.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if builder.recipeFamily.isPaired {
-                        Button("Import file…") { showImporter = true }
-                            .disabled(builder.isWorking)
-                            .help(
-                                "import pairs made elsewhere: JSONL ({\"positive\",\"negative\"} "
-                                    + "per line), a JSON array, or two-column CSV")
-                    }
-
-                    workingIndicator(task: "Rebuilding stats", fallback: "Rebuilding stats...")
-                }
+                datasetActionRow
 
                 copyLLMPromptRow
 
@@ -254,26 +264,23 @@ struct ConceptsPanelView: View {
 
             if let status = builder.status {
                 Section {
+                    // The success colour comes from an explicit flag the
+                    // builder sets on a completed save. Matching the substring
+                    // "saved" turned the DELETE result ("…and saved vector
+                    // artifacts remain") green (UI audit 2026-09-06).
                     Text(status)
                         .font(.caption)
-                        .foregroundStyle(status.lowercased().contains("saved") ? .green : .secondary)
+                        .foregroundStyle(builder.statusIsSuccess ? .green : .secondary)
                 }
             }
 
             Section("Concept Vector Builder") {
-                Picker("Vector Type", selection: $builder.recipeFamily) {
-                    ForEach(ConceptBuilder.RecipeFamily.allCases) { family in
-                        // Server-only families are absent in Local rather than
-                        // present-and-refusing: a lens direction derived on this
-                        // machine would be meaningless steering that no existing
-                        // check would catch.
-                        if !family.isServerOnly
-                            || service.cluster.computeTarget == .server {
-                            Text(family.label).tag(family)
-                        }
-                    }
-                }
-                .help("choose the vector recipe to build for the loaded model")
+                recipeFamilyPicker
+                Text(
+                    "One recipe choice for the whole panel — this is the same "
+                        + "setting the Dataset Builder shows.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
 
                 // A derived direction has no concept, no stimuli, and nothing to
                 // pool — showing those controls would imply provenance it does
@@ -342,13 +349,12 @@ struct ConceptsPanelView: View {
                             parameter: $builder.readingPositionParameter,
                             defaultCaption: nil,
                             help:
-                                "WHERE the residual stream is read. The whole "
-                                    + "cross-engine vocabulary, not just the "
-                                    + "pooled pair this pane used to offer — the "
-                                    + "content-side roles only exist inside a "
-                                    + "rendered turn, so they need the chat "
-                                    + "template below. Vector-build provenance, "
-                                    + "not concept identity")
+                                "WHERE the residual stream is read — the whole "
+                                    + "cross-engine vocabulary. The content-side "
+                                    + "roles only exist inside a rendered turn, "
+                                    + "so they need the chat template below. "
+                                    + "Vector-build provenance, not concept "
+                                    + "identity")
                     }
                     if let refusal = builder.readingPositionRefusal {
                         Text(refusal)
@@ -359,13 +365,12 @@ struct ConceptsPanelView: View {
                         ExtractionRenderingField(
                             choice: $builder.extractionRenderingChoice,
                             help:
-                                "HOW each stimulus reaches the model. 'raw' is "
-                                    + "the legacy rendering — the bare string "
-                                    + "through the tokenizer. 'chat template' "
-                                    + "renders it the way a measured generation "
-                                    + "does; the two produce DIFFERENT "
-                                    + "directions, so the artifact stamps which "
-                                    + "one it read")
+                                "HOW each stimulus reaches the model. 'raw' "
+                                    + "sends the bare string through the "
+                                    + "tokenizer; 'chat template' renders it "
+                                    + "the way a measured generation does. The "
+                                    + "two produce DIFFERENT directions, so the "
+                                    + "artifact stamps which one it read")
                     }
                     if let refusal = builder.extractionRenderingRefusal {
                         Text(refusal)
@@ -399,12 +404,19 @@ struct ConceptsPanelView: View {
         }
         .formStyle(.grouped)
         .onAppear { builder.presentRecipeGuide() }
+        .modifier(ConceptsConfirmationDialog(pending: $pendingConfirmation))
         .fileImporter(
             isPresented: $showImporter,
             allowedContentTypes: [.json, .commaSeparatedText, .plainText]
         ) { result in
-            if case .success(let url) = result {
+            switch result {
+            case .success(let url):
                 Task { await builder.importPairs(from: url) }
+            case .failure(let error):
+                // A dropped `.failure` left the panel looking as if nothing
+                // had been asked of it.
+                builder.reportProblem(
+                    "could not open that file: " + error.localizedDescription)
             }
         }
         .popover(item: $datasetPreview, arrowEdge: .trailing) { preview in
@@ -512,7 +524,7 @@ struct ConceptsPanelView: View {
                     "download the server's copy of '\(record.name)' into the "
                         + "local workspace — asks before overwriting local stimuli")
                 Button("Upload to server…") {
-                    Task { await builder.uploadConceptToServer(record.name) }
+                    pendingConfirmation = uploadConfirmation(record.name)
                 }
                 .font(.caption)
                 .disabled(
@@ -520,8 +532,27 @@ struct ConceptsPanelView: View {
                         || builder.conceptDrift(for: record.name) == .serverOnly)
                 .help(
                     "overwrite the server's copy of '\(record.name)' with the "
-                        + "local workspace's stimulus files")
+                        + "local workspace's stimulus files — asks first")
             }
+        }
+    }
+
+    /// The upload's confirmation. "Fetch from server…" already asked before
+    /// overwriting the local copy; the reverse direction overwrote the
+    /// server's silently, behind a label whose ellipsis promised a dialog
+    /// (UI audit 2026-09-06, headline 7).
+    private func uploadConfirmation(_ name: String) -> ConceptsConfirmation {
+        let substrate = service.cluster.substrateLabel
+        return ConceptsConfirmation(
+            title: "Overwrite '\(name)' on \(substrate)?",
+            message:
+                "This replaces the stimulus files under prompts/concepts/\(name) "
+                + "on \(substrate) with this workspace's copy. Edits made there "
+                + "and never fetched will be lost, and server jobs will read the "
+                + "new data.",
+            confirmTitle: "Overwrite server copy"
+        ) {
+            Task { await builder.uploadConceptToServer(name) }
         }
     }
 
@@ -564,13 +595,13 @@ struct ConceptsPanelView: View {
                         service.cluster.artifactListPresentation)
                     {
                         Button("Upload to server…") {
-                            Task { await builder.uploadConceptToServer(currentConceptName) }
+                            pendingConfirmation = uploadConfirmation(currentConceptName)
                         }
                         .disabled(builder.isWorking)
                         .help(
                             "write this concept's local stimulus files to the "
                                 + "server's tree so server jobs see the data this "
-                                + "panel shows")
+                                + "panel shows — asks before overwriting")
                         Button("Fetch from server…") {
                             Task { await builder.fetchConceptFromServer(currentConceptName) }
                         }
@@ -669,7 +700,7 @@ struct ConceptsPanelView: View {
                     runIndependenceScreen()
                 } label: {
                     Label(
-                        "Screen Stimuli for Forbidden Vocabulary",
+                        "Screen stimuli for forbidden vocabulary",
                         systemImage: "checkmark.shield")
                 }
                 .disabled(independenceScreenRunning || concept.isEmpty)
@@ -685,8 +716,14 @@ struct ConceptsPanelView: View {
                         + "effect. The governing vocabulary and flagged lines "
                         + "stream to the Activity pane; flagged means review, "
                         + "not automatic rejection")
+                InfoButton(text: Self.forbiddenVocabularyInfo)
                 if independenceScreenRunning {
                     ProgressView().controlSize(.small)
+                }
+                if concept.isEmpty {
+                    Text("select a concept above to screen its stimuli")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
                 }
             }
             if let independenceVerdict, independenceVerdictConcept == concept {
@@ -698,6 +735,29 @@ struct ConceptsPanelView: View {
             }
         }
     }
+
+    /// What the circularity firewall IS, on screen rather than only in a
+    /// 90-word hover tooltip (UI audit 2026-09-06).
+    private static let forbiddenVocabularyInfo = """
+        The circularity firewall keeps a concept's stimuli from quietly \
+        encoding the study's own task. If the sentences that define, say, \
+        "leniency" already talk about courts, sentences and defendants, then \
+        a direction extracted from them is partly a direction for the task \
+        domain — and every downstream effect on that task is confounded by \
+        construction.
+
+        This screen reads the selected concept's stimulus and validation \
+        text and reports every line containing a term from the forbidden \
+        vocabulary. WHICH vocabulary governs is workspace data: \
+        prompts/screens/forbidden-vocabulary.json when the workspace defines \
+        one (named term lists you can edit), otherwise the shipped default \
+        list. The screen names the file it used before it reports anything.
+
+        Flagged means READ IT, not rejected. Some flags are legitimate — a \
+        term can appear in a control sentence for the same reason it appears \
+        in the task. The governing vocabulary and the flagged lines stream \
+        to the Activity pane so the judgement stays yours.
+        """
 
     private func runIndependenceScreen() {
         let concept = builder.currentConceptName
@@ -840,17 +900,28 @@ struct ConceptsPanelView: View {
                             + "residualNormPerLayer; a Measure norms job appears here "
                             + "when one exists")
             } else {
-                // Expanded when there is something to do. Collapsed-by-default
-                // was the second half of the "no obvious UI meaning" problem:
-                // a refusal sends you here, and the fix was behind a closed
-                // triangle whose title never used the word the refusal used.
-                DisclosureGroup(
-                    isExpanded: .constant(true)
-                ) {
+                // Always visible when there is something to do. Collapsed-by-
+                // default was the second half of the "no obvious UI meaning"
+                // problem: a refusal sends you here, and the fix was behind a
+                // closed triangle whose title never used the word the refusal
+                // used. It is a plain labelled stack rather than a
+                // DisclosureGroup pinned open, whose chevron did nothing when
+                // clicked (UI audit 2026-09-06).
+                VStack(alignment: .leading, spacing: 6) {
+                    // The title carries the vocabulary the refusals use, so
+                    // someone told to "measure norms" recognizes the
+                    // destination on sight.
+                    Label(
+                        "Server vectors missing norms on \(workspaceName) "
+                            + "(\(records.count)) — measure norms here",
+                        systemImage: "ruler")
+                        .font(.callout.bold())
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("""
-                             Norm-unit α needs a per-layer denominator measured                              on the neutral corpus. Measuring writes a NEW                              artifact — the original is never modified — and the                              copy is what you then steer with.
-                             """)
+                        Text(
+                            "Norm-unit α needs a per-layer denominator measured "
+                                + "on the neutral corpus. Measuring writes a NEW "
+                                + "artifact — the original is never modified — "
+                                + "and the copy is what you then steer with.")
                             .font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         // WHICH corpus, pinned by hash: the measurement
@@ -883,15 +954,6 @@ struct ConceptsPanelView: View {
                         }
                     }
                     .padding(.top, 4)
-                } label: {
-                    // The title carries the vocabulary the refusals use, so
-                    // someone told to "measure norms" recognizes the
-                    // destination on sight.
-                    Label(
-                        "Server vectors missing norms on \(workspaceName) "
-                            + "(\(records.count)) — measure norms here",
-                        systemImage: "ruler")
-                        .font(.callout.bold())
                 }
             }
         }
@@ -961,12 +1023,24 @@ struct ConceptsPanelView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 if index < builder.positives.count {
                                     datasetPreviewLine(label: "+", text: builder.positives[index]) {
-                                        builder.removeContrastiveStimulus(isPositive: true, index: index)
+                                        pendingPreviewConfirmation = diskRowDeletion(
+                                            what: "the + stimulus on line \(index + 1)",
+                                            file: "positive.jsonl"
+                                        ) {
+                                            builder.removeContrastiveStimulus(
+                                                isPositive: true, index: index)
+                                        }
                                     }
                                 }
                                 if index < builder.negatives.count {
                                     datasetPreviewLine(label: "-", text: builder.negatives[index]) {
-                                        builder.removeContrastiveStimulus(isPositive: false, index: index)
+                                        pendingPreviewConfirmation = diskRowDeletion(
+                                            what: "the − stimulus on line \(index + 1)",
+                                            file: "negative.jsonl"
+                                        ) {
+                                            builder.removeContrastiveStimulus(
+                                                isPositive: false, index: index)
+                                        }
                                     }
                                 }
                             }
@@ -983,10 +1057,18 @@ struct ConceptsPanelView: View {
                                 Text(row.text)
                                     .font(.callout)
                                     .textSelection(.enabled)
-                                Button("Remove") {
-                                    builder.removeEmotionRow(row)
+                                Button("Remove", role: .destructive) {
+                                    pendingPreviewConfirmation = diskRowDeletion(
+                                        what: "this \(row.concept) story row",
+                                        file: "stories.jsonl"
+                                    ) {
+                                        builder.removeEmotionRow(row)
+                                    }
                                 }
                                 .font(.caption)
+                                .help(
+                                    "deletes the row from the file on disk — "
+                                        + "not just from the working set")
                             }
                             Divider()
                         }
@@ -1006,10 +1088,18 @@ struct ConceptsPanelView: View {
                                         .font(.caption2.monospaced())
                                         .foregroundStyle(.secondary)
                                     Spacer()
-                                    Button("Remove") {
-                                        builder.removeProbeExample(index: index)
+                                    Button("Remove", role: .destructive) {
+                                        pendingPreviewConfirmation = diskRowDeletion(
+                                            what: "this probe example",
+                                            file: "items.jsonl"
+                                        ) {
+                                            builder.removeProbeExample(index: index)
+                                        }
                                     }
                                     .font(.caption)
+                                    .help(
+                                        "deletes the row from the file on disk "
+                                            + "— not just from the working set")
                                 }
                                 Text(item.text)
                                     .font(.callout)
@@ -1023,6 +1113,25 @@ struct ConceptsPanelView: View {
         }
         .frame(minWidth: 360, idealWidth: 460, maxWidth: 560, minHeight: 260, idealHeight: 420, maxHeight: 560)
         .padding(16)
+        .modifier(ConceptsConfirmationDialog(pending: $pendingPreviewConfirmation))
+    }
+
+    /// A row deletion that rewrites the concept's file on disk immediately.
+    /// The Browse trash button only edits the WORKING set and says so; these
+    /// previews used the same bare "Remove" label for a permanent write
+    /// (UI audit 2026-09-06, headline 7).
+    private func diskRowDeletion(
+        what: String, file: String, delete: @escaping () -> Void
+    ) -> ConceptsConfirmation {
+        ConceptsConfirmation(
+            title: "Delete \(what)?",
+            message:
+                "This rewrites \(file) in this concept's prompts/ directory "
+                + "immediately — the row is gone from the file, not just from "
+                + "the working set. Vector artifacts already extracted from it "
+                + "are unaffected.",
+            confirmTitle: "Delete from file",
+            perform: delete)
     }
 
     private func datasetPreviewLine(label: String, text: String, remove: @escaping () -> Void) -> some View {
@@ -1035,41 +1144,110 @@ struct ConceptsPanelView: View {
                 .font(.callout)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Remove", action: remove)
+            Button("Remove", role: .destructive, action: remove)
                 .font(.caption)
+                .help(
+                    "deletes the row from the file on disk — not just from the "
+                        + "working set")
         }
     }
 
-    private func conceptPickerRow(label: String, allowDelete: Bool) -> some View {
-        @Bindable var builder = service.concepts
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Picker(label, selection: $builder.selectedExisting) {
-                    if builder.selectedExisting == nil {
-                        Text("No concept selected").tag(String?.none)
-                    }
-                    ForEach(builder.existingConcepts, id: \.self) { name in
-                        Text(name).tag(String?.some(name))
-                    }
-                }
-                .help("choose the concept for this panel's dataset work")
-
-                newDatasetButton
-
-                if allowDelete {
-                    Button(role: .destructive) {
-                        showDeleteConceptWarning = true
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .disabled(builder.currentConceptName.isEmpty || builder.selectedExisting == nil)
-                    .help("delete this concept's editable datasets; saved vector artifacts remain")
-                }
-            }
-            if builder.selectedExisting == nil {
-                newConceptHandoffRow
-            }
+    /// Dataset actions, wrapped so the row does not clip at the 560 pt
+    /// controls minimum — the shape `emotionStoryEntry` already uses.
+    @ViewBuilder
+    private var datasetActionRow: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) { datasetActionControls }
+            VStack(alignment: .leading, spacing: 8) { datasetActionControls }
         }
+    }
+
+    @ViewBuilder
+    private var datasetActionControls: some View {
+        Button(builder.recipeFamily.isPaired ? "Add to set" : "Add story row(s)") {
+            Task { await builder.addDrafts() }
+        }
+        .disabled(builder.isWorking)
+        .help(
+            "append the pasted lines to the working set; stats go stale "
+                + "until you rebuild (one forward pass per new stimulus)")
+
+        if builder.recipeFamily.isPaired {
+            rebuildButton
+            Button("Import file…") { showImporter = true }
+                .disabled(builder.isWorking)
+                .help(
+                    "import pairs made elsewhere: JSONL ({\"positive\",\"negative\"} "
+                        + "per line), a JSON array, or two-column CSV")
+        } else {
+            Text("Grand Mean corpus balance updates automatically as rows and selections change.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+
+        workingIndicator(task: "Rebuilding stats", fallback: "Rebuilding stats...")
+    }
+
+    /// The Dataset Builder's concept, as a READ-ONLY echo of the Concept
+    /// Index's picker above. The trio (picker + New Dataset… + trash) used to
+    /// be drawn twice on one screen over the same `selectedExisting`, with two
+    /// delete buttons for the same concept and two different labels and help
+    /// strings for the same control (UI audit 2026-09-06, headline 23).
+    @ViewBuilder
+    private var datasetConceptEchoRow: some View {
+        if let selected = builder.selectedExisting {
+            LabeledContent("Dataset concept", value: selected)
+                .help(
+                    "the concept this pane edits — chosen in Concept Index "
+                        + "above, which is also where it is created or deleted")
+        } else {
+            newConceptHandoffRow
+        }
+    }
+
+    /// The panel's ONE recipe control, rendered at both places the choice
+    /// matters. Each site used to carry its own picker over the same
+    /// `recipeFamily` with DIFFERENT filtering, so a server-only family chosen
+    /// in the Dataset Builder left the Concept Vector Builder's picker blank
+    /// and offered lens rows a Local workspace cannot derive (UI audit
+    /// 2026-09-06, headline 23).
+    @ViewBuilder
+    private var recipeFamilyPicker: some View {
+        @Bindable var builder = service.concepts
+        HStack(spacing: 6) {
+            Picker("Vector recipe", selection: $builder.recipeFamily) {
+                ForEach(offerableRecipeFamilies) { family in
+                    Text(family.label).tag(family)
+                }
+            }
+            .help(
+                "choose the data contract first: CAA pairs, RepE/LAT paired "
+                    + "reader data, grand-mean stories, a designated reference "
+                    + "corpus, or a lens token direction. It decides what the "
+                    + "dataset boxes below hold and what the build reads")
+            InfoButton(text: recipeFamilyGuide)
+        }
+    }
+
+    /// Server-only families are absent in Local rather than
+    /// present-and-refusing: a lens direction derived on this machine would be
+    /// meaningless steering that no existing check would catch. The CURRENT
+    /// selection always stays listed, so switching a workspace to Local can
+    /// never leave the picker rendering blank.
+    private var offerableRecipeFamilies: [ConceptBuilder.RecipeFamily] {
+        ConceptBuilder.RecipeFamily.allCases.filter { family in
+            !family.isServerOnly
+                || service.cluster.computeTarget == .server
+                || family == builder.recipeFamily
+        }
+    }
+
+    /// The recipe's plain-language guide, on screen beside the picker. It
+    /// existed only as an Activity-pane live-log bubble — off-panel, and
+    /// cleared with the chat live logs.
+    private var recipeFamilyGuide: String {
+        ([builder.recipeFamily.label] + builder.recipeFamily.activityGuide)
+            .joined(separator: "\n\n")
     }
 
     /// The retired new-concept entry's replacement (WP-Data phase 4).
@@ -1377,10 +1555,18 @@ struct ConceptsPanelView: View {
                             .font(.caption)
                             .bold()
                             Spacer()
-                            Button("Remove") {
-                                builder.removeEmotionRow(row)
+                            Button("Remove", role: .destructive) {
+                                pendingConfirmation = diskRowDeletion(
+                                    what: "this \(row.concept) story row",
+                                    file: "stories.jsonl"
+                                ) {
+                                    builder.removeEmotionRow(row)
+                                }
                             }
                             .font(.caption)
+                            .help(
+                                "deletes the row from the file on disk — not "
+                                    + "just from the working set")
                         }
                         Text(row.text)
                             .font(.caption)
@@ -1399,7 +1585,7 @@ struct ConceptsPanelView: View {
         @Bindable var builder = service.concepts
         Section("RepE Reader") {
             Text(
-                "Concept data → reader artifact → optional steering variant. "
+                "Concept data → reader artifact → optional steering vector. "
                     + "The reader is a fitted measurement instrument (task template "
                     + "+ LAT token position + PCA training normalization + held-out "
                     + "accuracy); steering with it is an explicit, provenance-stamped "
@@ -1480,6 +1666,11 @@ struct ConceptsPanelView: View {
             TextEditor(text: $builder.customReaderTemplateText)
                 .font(.callout.monospaced())
                 .frame(height: 80)
+                .help(
+                    "the one-off scaffold every reader row is rendered "
+                        + "through; it is persisted and hashed into the "
+                        + "reader's run directory, so editing it changes "
+                        + "every artifact fitted afterwards")
             Text(
                 "must contain {{stimulus}}; include {{concept}} to name the concept "
                     + "in the scaffold (RepE-faithful) or omit it for an unnamed "
@@ -1586,8 +1777,15 @@ struct ConceptsPanelView: View {
                 HStack {
                     Button("Add stimuli") { builder.addReaderStimuli() }
                         .disabled(builder.isWorking)
-                    Button("Clear") { builder.clearReaderStimuli() }
+                        .help(
+                            "append each pasted line to the authored reader "
+                                + "rows below; nothing is written until the "
+                                + "reader is built")
+                    Button("Clear", role: .destructive) { builder.clearReaderStimuli() }
                         .disabled(builder.readerStimuli.isEmpty || builder.isWorking)
+                        .help(
+                            "discard every authored reader stimulus in the "
+                                + "working set; files on disk are unchanged")
                     Spacer()
                     Text("\(builder.readerStimuli.count) rows")
                         .font(.caption2)
@@ -1949,9 +2147,16 @@ struct ConceptsPanelView: View {
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         if let derived = builder.lastDerivedReaderVector {
-            DisclosureGroup(
-                isExpanded: .constant(true)
-            ) {
+            // A plain labelled stack, not a DisclosureGroup pinned open: the
+            // chevron it drew did nothing when clicked (UI audit 2026-09-06).
+            VStack(alignment: .leading, spacing: 4) {
+                Label(
+                    derived.isAttachable
+                        ? "Derived steering vector — attachable"
+                        : "Derived steering vector — norms owed",
+                    systemImage: derived.isAttachable
+                        ? "checkmark.seal" : "ruler")
+                    .font(.callout.bold())
                 VStack(alignment: .leading, spacing: 4) {
                     Text(derived.reference)
                         .font(.caption2.monospaced())
@@ -1975,14 +2180,6 @@ struct ConceptsPanelView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.top, 4)
-            } label: {
-                Label(
-                    derived.isAttachable
-                        ? "Derived steering vector — attachable"
-                        : "Derived steering vector — norms owed",
-                    systemImage: derived.isAttachable
-                        ? "checkmark.seal" : "ruler")
-                    .font(.callout.bold())
             }
         }
     }
@@ -2004,7 +2201,15 @@ struct ConceptsPanelView: View {
 
     @ViewBuilder
     private var copyLLMPromptRow: some View {
-        HStack {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) { copyLLMPromptControls }
+            VStack(alignment: .leading, spacing: 8) { copyLLMPromptControls }
+        }
+    }
+
+    @ViewBuilder
+    private var copyLLMPromptControls: some View {
+        Group {
             Button("Copy LLM prompt") {
                 if let prompt = builder.generationPrompt() {
                     copyToClipboard(
@@ -2080,7 +2285,10 @@ struct ConceptsPanelView: View {
                     Text("Projection name")
                     TextField("assistant-dialogue-neutral", text: $builder.projectionNeutralCorpusName)
                         .textFieldStyle(.roundedBorder)
-                    Button("Select/create") {
+                        .help(
+                            "the named projection corpus to use or create "
+                                + "under prompts/neutral/projection/")
+                    Button("Use projection corpus") {
                         service.selectProjectionNeutralCorpus(named: builder.projectionNeutralCorpusName)
                     }
                     .help("select or create a named projection corpus under prompts/neutral/projection/")
@@ -2090,72 +2298,40 @@ struct ConceptsPanelView: View {
                     TextField("fear, joy, arousal, valence", text: $builder.projectionNeutralConceptsDraft)
                         .textFieldStyle(.roundedBorder)
                         .gridCellColumns(2)
+                        .help(
+                            "the concepts this corpus must be neutral with "
+                                + "respect to; the copied prompt asks for rows "
+                                + "that express none of them")
                 }
                 GridRow {
                     Text("Matched domains")
                     TextField("workplace, household planning, technical help", text: $builder.projectionNeutralDomainsDraft)
                         .textFieldStyle(.roundedBorder)
                         .gridCellColumns(2)
+                        .help(
+                            "the subject matter the rows should cover, matched "
+                                + "to the concept corpus so the corpora differ "
+                                + "in the concept and not the topic")
                 }
                 GridRow {
                     Text("Avoid settings")
                     TextField("danger, illness, moral judgment", text: $builder.projectionNeutralExclusionsDraft)
                         .textFieldStyle(.roundedBorder)
                         .gridCellColumns(2)
+                        .help(
+                            "settings the copied prompt should steer clear of, "
+                                + "so the neutral rows carry no incidental "
+                                + "charge of their own")
                 }
             }
             .font(.caption)
 
-            HStack {
-                Button("Copy neutral corpus prompt") {
-                    if let prompt = builder.neutralCorpusPrompt() {
-                        copyToClipboard(
-                            prompt,
-                            successMessage: "neutral corpus prompt copied — paste JSONL below and import")
-                    }
-                }
-                .help(
-                    "copies a prompt for long, domain-neutral passages suitable for token-50 residual norm calibration")
-
-                Button("Copy projection prompt") {
-                    if let prompt = builder.anthropicStyleNeutralDialoguePrompt() {
-                        copyToClipboard(
-                            prompt,
-                            successMessage: "projection-neutral dialogue prompt copied — paste JSONL below and import")
-                    }
-                }
-                .help(
-                    "copies a prompt for Human/Assistant dialogues neutral with respect to the listed concepts and matched domains")
-
-                Button("Import to selected") {
-                    builder.importNeutralCorpusDraft()
-                }
-                .disabled(builder.neutralCorpusDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .help("replace the selected neutral corpus with the pasted rows")
-
-                Button {
-                    Task { await service.buildNeutralPCBasis(allLayers: neutralPCAllLayers) }
-                } label: {
-                    if service.isBuildingNeutralPCBasis {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Text("Build neutral PCs")
-                    }
-                }
-                .disabled(neutralPCBuildDisabled || summary.count == 0)
-                .help(
-                    "run the selected model (loading it first if it is not resident) over the "
-                        + "selected neutral corpus, estimate token-position PCs "
-                        + "over the middle-third layer band, and store them for optional steering-time projection")
-
-                Toggle("All layers (expensive)", isOn: $neutralPCAllLayers)
-                    .toggleStyle(.checkbox)
-                    .font(.caption)
-                    .disabled(service.isBuildingNeutralPCBasis)
-                    .help(
-                        "capture every layer instead of the middle-third band: ~3× the memory and "
-                            + "~3× the PCA time, and steering lives in the middle third anyway")
+            neutralCorpusActionRow(corpusLabel: selectedCorpus.label, rowCount: summary.count)
+            if let reason = neutralPCBuildDisabledReason(rowCount: summary.count) {
+                Text(reason)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if let neutralPCStatus = service.neutralPCStatus {
                 Text(neutralPCStatus)
@@ -2183,6 +2359,108 @@ struct ConceptsPanelView: View {
             .font(.caption2)
             .foregroundStyle(.secondary)
         }
+    }
+
+    /// The Neutral Corpora action row, wrapped: four buttons plus a checkbox
+    /// run to roughly 800 pt and used to clip at the 560 pt controls minimum.
+    @ViewBuilder
+    private func neutralCorpusActionRow(corpusLabel: String, rowCount: Int) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                neutralCorpusActionControls(corpusLabel: corpusLabel, rowCount: rowCount)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                neutralCorpusActionControls(corpusLabel: corpusLabel, rowCount: rowCount)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func neutralCorpusActionControls(
+        corpusLabel: String, rowCount: Int
+    ) -> some View {
+        @Bindable var builder = service.concepts
+        // These copies keep `copyToClipboard`, not the shared `CopyButton`:
+        // it reports a REFUSED pasteboard write and parks the prompt under
+        // "Last copied prompt", which is the manual-recovery path.
+        Button("Copy neutral corpus prompt") {
+            if let prompt = builder.neutralCorpusPrompt() {
+                copyToClipboard(
+                    prompt,
+                    successMessage: "neutral corpus prompt copied — paste JSONL below and import")
+            }
+        }
+        .help(
+            "copies a prompt for long, domain-neutral passages suitable for token-50 residual norm calibration")
+
+        Button("Copy projection prompt") {
+            if let prompt = builder.anthropicStyleNeutralDialoguePrompt() {
+                copyToClipboard(
+                    prompt,
+                    successMessage: "projection-neutral dialogue prompt copied — paste JSONL below and import")
+            }
+        }
+        .help(
+            "copies a prompt for Human/Assistant dialogues neutral with respect to the listed concepts and matched domains")
+
+        Button("Import to selected") {
+            pendingConfirmation = ConceptsConfirmation(
+                title: "Replace the rows in '\(corpusLabel)'?",
+                message:
+                    "The pasted rows become the whole of '\(corpusLabel)' — its "
+                    + "\(rowCount) current row(s) are written over. Vectors "
+                    + "already measured against this corpus keep the hash they "
+                    + "were stamped with; new measurements will use the new one.",
+                confirmTitle: "Replace corpus"
+            ) {
+                builder.importNeutralCorpusDraft()
+            }
+        }
+        .disabled(builder.neutralCorpusDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .help(
+            "replace the selected neutral corpus with the pasted rows — asks "
+                + "first, and the corpus hash is what gets stamped into "
+                + "neutral-PC and norm artifacts")
+
+        Button {
+            Task { await service.buildNeutralPCBasis(allLayers: neutralPCAllLayers) }
+        } label: {
+            if service.isBuildingNeutralPCBasis {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Text("Build neutral PCs")
+            }
+        }
+        .disabled(neutralPCBuildDisabled || rowCount == 0)
+        .help(
+            "run the selected model (loading it first if it is not resident) over the "
+                + "selected neutral corpus, estimate token-position PCs "
+                + "over the middle-third layer band, and store them for optional steering-time projection")
+
+        Toggle("All layers (expensive)", isOn: $neutralPCAllLayers)
+            .toggleStyle(.checkbox)
+            .font(.caption)
+            .disabled(service.isBuildingNeutralPCBasis)
+            .help(
+                "capture every layer instead of the middle-third band: ~3× the memory and "
+                    + "~3× the PCA time, and steering lives in the middle third anyway")
+    }
+
+    /// Why "Build neutral PCs" is off, in the row rather than nowhere at all
+    /// (UI audit 2026-09-06, headline 24).
+    private func neutralPCBuildDisabledReason(rowCount: Int) -> String? {
+        if rowCount == 0 {
+            return "the selected neutral corpus has no rows — paste and import "
+                + "some before building PCs"
+        }
+        if service.isBuildingNeutralPCBasis { return nil }
+        if service.cluster.computeTarget == .server, service.state != .ready {
+            return "neutral PCs are estimated in-process on this Mac: load a "
+                + "local model first"
+        }
+        return service.localBuildBlockedReason(
+            isBuilding: service.isBuildingNeutralPCBasis)
     }
 
     @ViewBuilder
@@ -2214,12 +2492,15 @@ struct ConceptsPanelView: View {
                     }
                 }
                 .disabled(builder.currentConceptName.isEmpty)
+                .help(
+                    "copies a prompt that asks an LLM for the labeled probe "
+                        + "sentences; paste the JSONL reply below and import it")
             }
 
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $builder.probeDraft)
                     .font(.callout)
-                    .frame(minHeight: 120)
+                    .frame(height: 120)
                     .help(
                         "paste strict JSONL probe examples here. Expected fields: text, expresses, topic, split")
                 if builder.probeDraft.isEmpty {
@@ -2232,36 +2513,12 @@ struct ConceptsPanelView: View {
                 }
             }
 
-            HStack {
-                Button("Import probe examples") {
-                    Task { await builder.addProbeDrafts() }
-                }
-                .disabled(builder.probeDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .help("save pasted probe examples to prompts/probes/<concept>/items.jsonl")
-                if service.cluster.computeTarget == .server {
-                    Button("Train probe on server") {
-                        Task { await builder.trainProbeOnActiveServer() }
-                    }
-                    .disabled(service.selectedRemoteModelID == nil)
-                    .help(
-                        "queue probe training as a durable server job over the "
-                            + "server's checkout of prompts/probes/<concept>/items.jsonl "
-                            + "on the selected server model; the probe artifact stays "
-                            + "server-side")
-                } else {
-                    Button("Train chat probe") {
-                        Task { await builder.trainReadingProbe() }
-                    }
-                    .disabled(builder.isWorking || builder.probePositiveCount < 4 || builder.probeNegativeCount < 4)
-                    .help(
-                        "record activations for the independent probe examples, train a scalar "
-                            + "reading probe across layers, save the best layer, and make it "
-                            + "available in chat highlighting")
-                    workingIndicator(task: "Training probe", fallback: "Training probe...")
-                }
-                Text("Probe data stays separate from CAA, RepE, and Grand Mean vector data.")
+            probeActionRow
+            if let reason = probeTrainingDisabledReason {
+                Text(reason)
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if let costLine = builder.probeTrainingCostLine() {
@@ -2288,10 +2545,18 @@ struct ConceptsPanelView: View {
                                     .font(.caption2.monospaced())
                                     .foregroundStyle(.secondary)
                                 Spacer()
-                                Button("Remove") {
-                                    builder.removeProbeExample(index: index)
+                                Button("Remove", role: .destructive) {
+                                    pendingConfirmation = diskRowDeletion(
+                                        what: "this probe example",
+                                        file: "items.jsonl"
+                                    ) {
+                                        builder.removeProbeExample(index: index)
+                                    }
                                 }
                                 .font(.caption)
+                                .help(
+                                    "deletes the row from the file on disk — "
+                                        + "not just from the working set")
                             }
                             Text(item.text)
                                 .font(.caption)
@@ -2304,6 +2569,74 @@ struct ConceptsPanelView: View {
         }
     }
 
+    /// Probe actions, wrapped: two buttons, the busy indicator and a
+    /// full-sentence caption overrun the 560 pt controls minimum.
+    @ViewBuilder
+    private var probeActionRow: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) { probeActionControls }
+            VStack(alignment: .leading, spacing: 8) { probeActionControls }
+        }
+    }
+
+    @ViewBuilder
+    private var probeActionControls: some View {
+        Button("Import probe examples") {
+            Task { await builder.addProbeDrafts() }
+        }
+        .disabled(builder.probeDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .help("save pasted probe examples to prompts/probes/<concept>/items.jsonl")
+        if service.cluster.computeTarget == .server {
+            Button("Train probe on server") {
+                Task { await builder.trainProbeOnActiveServer() }
+            }
+            .disabled(service.selectedRemoteModelID == nil || builder.isWorking)
+            .help(
+                "queue probe training as a durable server job over the "
+                    + "server's checkout of prompts/probes/<concept>/items.jsonl "
+                    + "on the selected server model; the probe artifact stays "
+                    + "server-side")
+            // The server branch had no indicator, so a queued job that takes
+            // minutes (the model loads first) looked like a click that did
+            // nothing (UI audit 2026-09-06, headline 5).
+            workingIndicator(
+                task: "Training probe (server)",
+                fallback: "Queueing probe training…")
+        } else {
+            Button("Train chat probe") {
+                Task { await builder.trainReadingProbe() }
+            }
+            .disabled(builder.isWorking || builder.probePositiveCount < 4 || builder.probeNegativeCount < 4)
+            .help(
+                "record activations for the independent probe examples, train a scalar "
+                    + "reading probe across layers, save the best layer, and make it "
+                    + "available in chat highlighting. Needs at least 4 "
+                    + "concept-present and 4 control examples")
+            workingIndicator(task: "Training probe", fallback: "Training probe...")
+        }
+        Text("Probe data stays separate from CAA, RepE, and Grand Mean vector data.")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+    }
+
+    /// Why probe training is off, said in the row (UI audit 2026-09-06,
+    /// headline 24).
+    private var probeTrainingDisabledReason: String? {
+        if service.cluster.computeTarget == .server {
+            if builder.isWorking { return nil }
+            return service.selectedRemoteModelID == nil
+                ? "select a server model before queueing probe training" : nil
+        }
+        if builder.isWorking { return nil }
+        if builder.probePositiveCount < 4 || builder.probeNegativeCount < 4 {
+            return "probe training needs at least 4 concept-present and 4 "
+                + "control examples — there are "
+                + "\(builder.probePositiveCount)+ / \(builder.probeNegativeCount)- "
+                + "so far"
+        }
+        return nil
+    }
+
     @ViewBuilder
     private var emotionConceptSelector: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -2311,7 +2644,7 @@ struct ConceptsPanelView: View {
                 Text("Concepts")
                     .font(.headline)
                 Spacer()
-                Button("All") {
+                Button("Build & include all") {
                     builder.includeAllEmotionConcepts()
                 }
                 .disabled(builder.includedEmotionConcepts.isEmpty && !builder.grandMeanBuildConceptsAreExplicit)
@@ -2343,12 +2676,17 @@ struct ConceptsPanelView: View {
                                     get: { builder.grandMeanConceptWillBuild(concept) },
                                     set: { builder.setGrandMeanBuildConcept(concept, build: $0) }))
                                 .labelsHidden()
+                                .help("save a vector artifact for \(concept)")
                             Toggle(
                                 "Include \(concept)",
                                 isOn: Binding(
                                     get: { builder.emotionConceptIsIncluded(concept) },
                                     set: { builder.setEmotionConcept(concept, included: $0) }))
                                 .labelsHidden()
+                                .help(
+                                    "let \(concept)'s rows contribute to the "
+                                        + "grand mean every built vector is "
+                                        + "measured against")
                         }
                     }
                 }
@@ -2364,6 +2702,9 @@ struct ConceptsPanelView: View {
             HStack {
                 Button("Use all topics") { builder.includeAllEmotionTopics() }
                     .disabled(builder.includedEmotionTopics.isEmpty)
+                    .help(
+                        "tick every topic, so the vector reads the whole "
+                            + "concept × topic grid")
                 Text("Unchecked topics stay in the corpus but are excluded from this vector artifact.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -2374,6 +2715,9 @@ struct ConceptsPanelView: View {
                     isOn: Binding(
                         get: { builder.emotionTopicIsIncluded(topic) },
                         set: { builder.setEmotionTopic(topic, included: $0) }))
+                    .help(
+                        "include the \(topic) rows in this vector; unticking "
+                            + "leaves them in the corpus and out of the build")
             }
         }
     }
@@ -2572,6 +2916,96 @@ struct ConceptsPanelView: View {
         }
     }
 
+    /// Count + sort + direction + filter + search. The two menus are
+    /// `.fixedSize()` and the field was a fixed 180 pt, so the row could not
+    /// compress at the 560 pt controls minimum — it wraps instead.
+    @ViewBuilder
+    private var vectorLibraryToolbarControls: some View {
+        // `maxWidth: .infinity` rather than a `Spacer`: a Spacer would eat
+        // vertical space in the wrapped (VStack) arrangement.
+        Text(vectorLibraryCountLabel)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+        Menu {
+            ForEach(VectorLibrarySort.allCases) { sort in
+                Button {
+                    vectorSort = sort
+                } label: {
+                    if vectorSort == sort {
+                        Label(sort.rawValue, systemImage: "checkmark")
+                    } else {
+                        Text(sort.rawValue)
+                    }
+                }
+            }
+        } label: {
+            Text(vectorSort.rawValue)
+        }
+        .menuStyle(.button)
+        .fixedSize()
+        .help("choose the sort field")
+        .accessibilityLabel("Sort vectors by")
+
+        Button {
+            vectorSortAscending.toggle()
+        } label: {
+            Image(systemName: vectorSortAscending ? "arrow.up" : "arrow.down")
+        }
+        .help(vectorSortAscending ? "ascending order; click for descending" : "descending order; click for ascending")
+        .accessibilityLabel(
+            vectorSortAscending
+                ? "Sorting ascending; switch to descending"
+                : "Sorting descending; switch to ascending")
+
+        Menu {
+            Button("All") {
+                vectorFilterShowsAll = true
+                vectorFilterConcepts = []
+            }
+            .disabled(vectorFilterShowsAll)
+            Button("None") {
+                vectorFilterShowsAll = false
+                vectorFilterConcepts = []
+            }
+            .disabled(!vectorFilterShowsAll && vectorFilterConcepts.isEmpty)
+            Divider()
+            ForEach(vectorLibraryConcepts, id: \.self) { concept in
+                Toggle(
+                    concept,
+                    isOn: Binding(
+                        get: {
+                            vectorFilterShowsAll
+                                || vectorFilterConcepts.contains(concept)
+                        },
+                        set: { included in
+                            if vectorFilterShowsAll {
+                                vectorFilterConcepts = Set(vectorLibraryConcepts)
+                                vectorFilterShowsAll = false
+                            }
+                            if included {
+                                vectorFilterConcepts.insert(concept)
+                            } else {
+                                vectorFilterConcepts.remove(concept)
+                            }
+                        }))
+            }
+        } label: {
+            Label(vectorFilterLabel, systemImage: "line.3.horizontal.decrease.circle")
+        }
+        .menuStyle(.button)
+        .fixedSize()
+        .disabled(vectorLibraryConcepts.isEmpty)
+        .help("filter by concept")
+        .accessibilityLabel("Filter vectors by concept")
+
+        TextField("Search", text: $vectorSearchText)
+            .textFieldStyle(.roundedBorder)
+            .frame(minWidth: 140, idealWidth: 180)
+            .help("search concept, recipe, model, hash, or run path")
+    }
+
     @ViewBuilder
     private var vectorLibrarySection: some View {
         Section("Vector Library") {
@@ -2589,82 +3023,11 @@ struct ConceptsPanelView: View {
                         .textSelection(.enabled)
                 }
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 10) {
-                        Text(vectorLibraryCountLabel)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-
-                        Menu {
-                            ForEach(VectorLibrarySort.allCases) { sort in
-                                Button {
-                                    vectorSort = sort
-                                } label: {
-                                    if vectorSort == sort {
-                                        Label(sort.rawValue, systemImage: "checkmark")
-                                    } else {
-                                        Text(sort.rawValue)
-                                    }
-                                }
-                            }
-                        } label: {
-                            Text(vectorSort.rawValue)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) { vectorLibraryToolbarControls }
+                        VStack(alignment: .leading, spacing: 6) {
+                            vectorLibraryToolbarControls
                         }
-                        .menuStyle(.button)
-                        .fixedSize()
-                        .help("choose the sort field")
-
-                        Button {
-                            vectorSortAscending.toggle()
-                        } label: {
-                            Image(systemName: vectorSortAscending ? "arrow.up" : "arrow.down")
-                        }
-                        .help(vectorSortAscending ? "ascending order; click for descending" : "descending order; click for ascending")
-
-                        Menu {
-                            Button("All") {
-                                vectorFilterShowsAll = true
-                                vectorFilterConcepts = []
-                            }
-                            .disabled(vectorFilterShowsAll)
-                            Button("None") {
-                                vectorFilterShowsAll = false
-                                vectorFilterConcepts = []
-                            }
-                            .disabled(!vectorFilterShowsAll && vectorFilterConcepts.isEmpty)
-                            Divider()
-                            ForEach(vectorLibraryConcepts, id: \.self) { concept in
-                                Toggle(
-                                    concept,
-                                    isOn: Binding(
-                                        get: {
-                                            vectorFilterShowsAll
-                                                || vectorFilterConcepts.contains(concept)
-                                        },
-                                        set: { included in
-                                            if vectorFilterShowsAll {
-                                                vectorFilterConcepts = Set(vectorLibraryConcepts)
-                                                vectorFilterShowsAll = false
-                                            }
-                                            if included {
-                                                vectorFilterConcepts.insert(concept)
-                                            } else {
-                                                vectorFilterConcepts.remove(concept)
-                                            }
-                                        }))
-                            }
-                        } label: {
-                            Label(vectorFilterLabel, systemImage: "line.3.horizontal.decrease.circle")
-                        }
-                        .menuStyle(.button)
-                        .fixedSize()
-                        .disabled(vectorLibraryConcepts.isEmpty)
-                        .help("filter by concept")
-
-                        TextField("Search", text: $vectorSearchText)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 180)
-                        .help("search concept, recipe, model, hash, or run path")
                     }
 
                     if libraryArtifacts.isEmpty {
@@ -2937,6 +3300,24 @@ struct ConceptsPanelView: View {
                 }
                 workingIndicator(task: "Generating vector", fallback: "Generating vector...")
             }
+            // The blocked reason was computed and never rendered, so the
+            // button simply went dead (UI audit 2026-09-06, headline 24).
+            if let reason = service.localBuildBlockedReason(
+                isBuilding: builder.isWorking)
+            {
+                Text(reason)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if !builder.canSaveAndExtract {
+                Text(
+                    "nothing to save yet — add the recipe's stimuli, and pick "
+                        + "a concept and a model above")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -2945,19 +3326,33 @@ struct ConceptsPanelView: View {
     @ViewBuilder
     private var serverBuildButton: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Button("Build vector on \(service.cluster.substrateLabel)") {
-                Task { await builder.buildVectorOnActiveServer() }
+            HStack(spacing: 8) {
+                Button("Build vector on \(service.cluster.substrateLabel)") {
+                    Task { await builder.buildVectorOnActiveServer() }
+                }
+                .disabled(serverBuildDisabled || builder.isWorking)
+                .help(
+                    "queue extraction as a durable server job with this panel's "
+                        + "method, reading position, and extraction rendering — "
+                        + "the whole declaration travels, and the server echoes "
+                        + "what it applied. The server reads its own tree of the "
+                        + "stimuli (the build preflights it against this panel's "
+                        + "data, syncing when safe, refusing on drift) and the "
+                        + "vector lands in the server's catalog, not the local "
+                        + "runs tree")
+                // The server branch had no busy state at all: a build that
+                // queues a model load first looked like a dead click, and the
+                // store's own re-entry guard dropped the second one silently
+                // (UI audit 2026-09-06, headline 5).
+                workingIndicator(
+                    task: "Generating vector (server)",
+                    fallback: "Queueing the extraction job…")
             }
-            .disabled(serverBuildDisabled)
-            .help(
-                "queue extraction as a durable server job with this panel's "
-                    + "method, reading position, and extraction rendering — "
-                    + "the whole declaration travels, and the server echoes "
-                    + "what it applied. The server reads its own tree of the "
-                    + "stimuli (the build preflights it against this panel's "
-                    + "data, syncing when safe, refusing on drift) and the "
-                    + "vector lands in the server's catalog, not the local "
-                    + "runs tree")
+            if service.selectedRemoteModelID == nil {
+                Text("select a server model above before queueing the build")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
             if let refusal = builder.serverExtractionDeclarationRefusal {
                 Text(refusal)
                     .font(.caption2)
@@ -3029,6 +3424,9 @@ struct ConceptsPanelView: View {
                     Spacer()
                     Button("Dismiss") { builder.clearBuildError() }
                         .controlSize(.small)
+                        .help(
+                            "hide this failure; it stays in the Activity "
+                                + "pane's log")
                 }
                 .padding(8)
                 .background(errorBannerBackground)
@@ -3070,15 +3468,33 @@ struct ConceptsPanelView: View {
         // would fail with "load a model first". The residency gate is honest
         // here until the rebuild path ensures its own model.
         .disabled(service.state != .ready || builder.isWorking)
+        // The else-branch this help used to carry was dead: `rebuildButton`
+        // only renders for a paired family (UI audit 2026-09-06).
         .help(
-            builder.recipeFamily.isPaired
-                ? "recompute the paired direction and stats. The pass count is the forward passes needed for uncached stimuli"
-                : "live pair-margin stats are not defined for emotion grand-mean corpora; save to extract")
+            "recompute the paired direction and stats. The pass count is the "
+                + "forward passes needed for uncached stimuli")
         if builder.statsStale {
             button.buttonStyle(.borderedProminent)
         } else {
             button
         }
+        if let reason = rebuildDisabledReason {
+            Text(reason)
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Why "Rebuild stats" is off. Unlike the save path, `rebuild()` has no
+    /// step that loads the selected model, so the residency gate is real and
+    /// the researcher has to be told which one it is (UI audit 2026-09-06,
+    /// headline 24).
+    private var rebuildDisabledReason: String? {
+        if builder.isWorking { return nil }
+        guard service.state != .ready else { return nil }
+        return "live stats are recomputed in-process: load a model first "
+            + "(rebuild does not load one for you)"
     }
 
     @ViewBuilder
@@ -3110,6 +3526,7 @@ struct ConceptsPanelView: View {
             .controlSize(.small)
             .foregroundStyle(.secondary)
             .help("remove from working set (files unchanged until save)")
+            .accessibilityLabel("Remove stimulus from working set")
         }
     }
 
@@ -3257,10 +3674,21 @@ extension ConceptsPanelView {
         HStack {
             TextField("word or string, e.g. courage", text: $builder.jlensQuery)
                 .onSubmit { Task { await builder.lookUpJLensTokens() } }
+                .help(
+                    "the word to look up in the model's vocabulary; the "
+                        + "tokenizer decides which exact tokens spell it, and "
+                        + "you pick one of them below")
             Toggle("case variants", isOn: $builder.jlensIncludeCaseVariants)
                 .toggleStyle(.checkbox)
+                .help(
+                    "also list 'Courage', ' courage' and the other cased and "
+                        + "space-prefixed spellings — they are DIFFERENT tokens "
+                        + "with different directions")
             Button("Token options") { Task { await builder.lookUpJLensTokens() } }
                 .disabled(builder.jlensQuery.isEmpty || builder.jlensLensID == nil)
+                .help(
+                    "ask the model's tokenizer which exact tokens spell this "
+                        + "word, and list them to choose from")
         }
 
         if let options = builder.jlensTokenOptions {
@@ -3285,6 +3713,10 @@ extension ConceptsPanelView {
                 Text(name).tag(name)
             }
         }
+        .help(
+            "file this direction under a concept in every concept-grouped "
+                + "view. It is only a filing choice — a single token is not "
+                + "that concept, so leave it as 'none' unless you mean it")
         if !builder.jlensAssociatedConcept.isEmpty {
             Label(
                 "will appear beside \(builder.jlensAssociatedConcept)'s "
@@ -3361,33 +3793,59 @@ extension ConceptsPanelView {
                 Task { await builder.importJLensForSelectedModel() }
             }
             .controlSize(.small)
+            // Unguarded, this queued the acquire + import job PAIR twice on a
+            // double-click, and showed no busy state for either
+            // (UI audit 2026-09-06, headline 5).
+            .disabled(builder.isWorking)
+            .help(
+                "fetch the published lens for the selected server model and "
+                    + "import it — two durable server jobs (acquire, then "
+                    + "import), and the import is offline, so the acquire has "
+                    + "to land first")
+            workingIndicator(
+                task: "Importing J-lens", fallback: "Importing the lens…")
         }
     }
 
+    /// A real `Button`, not a tap gesture on a stack: selecting the exact
+    /// token is the one decision this family hinges on, and the row had no
+    /// keyboard focus, no accessibility role and no tooltip
+    /// (UI audit 2026-09-06, headline 25).
     private func jlensCandidateRow(_ candidate: JLensTokenCandidate) -> some View {
         let isSelected = builder.jlensSelectedTokenID == candidate.tokenID
             && builder.jlensSelectedPiece == (candidate.decoded ?? candidate.piece)
-        return VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 8) {
-                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-                Text(String(candidate.tokenID)).font(.caption.monospaced())
-                Text(candidate.form).font(.caption2).foregroundStyle(.secondary)
-                if candidate.singleToken {
-                    Text("single").font(.caption2).foregroundStyle(.green)
-                } else {
-                    Text("multi-token").font(.caption2).foregroundStyle(.orange)
+        let spelling = candidate.decoded ?? candidate.piece
+        return Button {
+            builder.selectJLensToken(candidate)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                        .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    Text(String(candidate.tokenID)).font(.caption.monospaced())
+                    Text(candidate.form).font(.caption2).foregroundStyle(.secondary)
+                    if candidate.singleToken {
+                        Text("single").font(.caption2).foregroundStyle(.green)
+                    } else {
+                        Text("multi-token").font(.caption2).foregroundStyle(.orange)
+                    }
+                    Text(candidate.decoded.map { "\"\($0)\"" } ?? candidate.piece)
+                        .font(.caption.monospaced())
+                    Spacer()
                 }
-                Text(candidate.decoded.map { "\"\($0)\"" } ?? candidate.piece)
-                    .font(.caption.monospaced())
-                Spacer()
+                if let note = candidate.note {
+                    Text(note).font(.caption2).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            if let note = candidate.note {
-                Text(note).font(.caption2).foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            .contentShape(Rectangle())
         }
-        .contentShape(Rectangle())
-        .onTapGesture { builder.selectJLensToken(candidate) }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Token \(candidate.tokenID), \(spelling)")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        .help(
+            "derive the direction for token \(candidate.tokenID) — the exact "
+                + "spelling \"\(spelling)\". The token id, not the word, is "
+                + "what the artifact carries")
     }
 }
