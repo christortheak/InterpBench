@@ -36,6 +36,24 @@ struct OptimizationRunsView: View {
     @State private var selectedCell: SelectedCell?
     @State private var overridePromotion: OverridePromotion?
     @State private var showDeclareSheet = false
+    /// The concept whose Create Agent is in flight — the re-entry guard AND
+    /// the busy indicator. The server route is a durable mint; a second click
+    /// used to submit a second one.
+    @State private var promotingConcept: String?
+    /// The outcome of the last Create Agent, rendered BESIDE the button. It
+    /// used to land only in the bottom status section and the bell, several
+    /// hundred points below where it was pressed.
+    @State private var promotionOutcome: PromotionOutcome?
+    /// Bumped by "Reload Spec": part of the sweep editor's keyed identity, so
+    /// re-creating it reseeds every field from the manifest on disk.
+    @State private var specReloadToken = 0
+
+    /// A finished (or refused) promotion, as the row renders it.
+    private struct PromotionOutcome {
+        let concept: String
+        let message: String
+        let isFailure: Bool
+    }
     /// Experiments named by some local agent's promotion birth certificate —
     /// the lifecycle strip's "Promoted" evidence (local tree; on a PAIRED
     /// server that IS the server's tree too. The server's variant listing
@@ -108,7 +126,7 @@ struct OptimizationRunsView: View {
             OptimizationItem(
                 source: .local,
                 name: manifest.name,
-                statusLabel: manifest.status.rawValue,
+                statusLabel: Self.statusLabel(manifest.status.rawValue),
                 isDraft: manifest.status == .draft,
                 modelID: manifest.modelID,
                 conceptCount: manifest.concepts.count,
@@ -126,7 +144,7 @@ struct OptimizationRunsView: View {
             OptimizationItem(
                 source: .server,
                 name: record.name,
-                statusLabel: record.status ?? "?",
+                statusLabel: Self.statusLabel(record.status),
                 isDraft: record.status == "draft",
                 modelID: record.modelID ?? "?",
                 conceptCount: record.concepts?.count ?? 0,
@@ -141,6 +159,19 @@ struct OptimizationRunsView: View {
 
     private var optimizations: [OptimizationItem] {
         showsServerList ? localOptimizationItems + serverOptimizationItems : localOptimizationItems
+    }
+
+    /// The manifest status in words. A server listing that carries no status
+    /// used to render as a bare "?" in the row title, which reads as a
+    /// rendering fault rather than as missing information.
+    private static func statusLabel(_ raw: String?) -> String {
+        switch raw {
+        case "draft": "draft"
+        case "frozen": "frozen (pinned)"
+        case "complete": "complete"
+        case let value? where !value.isEmpty && value != "?": value
+        default: "status unknown"
+        }
     }
 
     private var selectedOptimization: OptimizationItem? {
@@ -187,16 +218,7 @@ struct OptimizationRunsView: View {
         .onChange(of: selectedRef) { reloadSweepRun() }
         .sheet(item: $overridePromotion) { promotion in
             OverridePromotionSheet(promotion: promotion) { reason in
-                panel.promote(
-                    experimentName: promotion.experiment,
-                    concept: promotion.concept,
-                    cell: (layer: promotion.layer, alpha: promotion.alpha),
-                    overrideReason: reason,
-                    route: promotion.mintsOnServer ? .activeServer : .local,
-                    // Pins CAPTURED when the sheet opened. Re-deriving them
-                    // here would silently promote unpinned if the loaded run
-                    // changed or cleared while the sheet was up.
-                    pins: promotion.pins)
+                promoteOverride(promotion, reason: reason)
             }
         }
         .sheet(isPresented: $showDeclareSheet) {
@@ -338,10 +360,7 @@ struct OptimizationRunsView: View {
     /// The local ("this workspace") list — present in EVERY compute mode.
     @ViewBuilder
     private var localListSection: some View {
-        Section(
-            showsServerList
-                ? "Optimization runs — this workspace" : "Optimization runs")
-        {
+        Section {
             if localOptimizationItems.isEmpty {
                 Text(
                     "No optimization runs in this workspace yet. An "
@@ -363,8 +382,30 @@ struct OptimizationRunsView: View {
                     "declaring an optimization is a manifest edit in the LOCAL "
                         + "workspace — available in every compute mode; the "
                         + "compute target decides where the sweep executes")
+        } header: {
+            InfoSectionHeader(
+                title: showsServerList
+                    ? "Optimization runs — this workspace" : "Optimization runs",
+                text: Self.optimizationsInfo)
         }
     }
+
+    private static let optimizationsInfo = """
+        An "optimization run" is not a new kind of object. It is a LENS over \
+        studies: every experiment whose manifest declares a layer×alpha sweep \
+        spec, or whose conditions already carry sweep-selection provenance, \
+        shows up in this list.
+
+        That is the research funnel's SCREEN stage. Declaring the grid and the \
+        selection criterion is a manifest edit and can be done in any compute \
+        mode; running the sweep executes wherever the compute target points. \
+        The winning cell of a completed sweep is what "Create Agent" mints, \
+        with the run, criterion, dev split and metrics recorded in the agent's \
+        birth certificate.
+
+        Frozen studies are immutable, so iterating on a grid means duplicating \
+        the study in Studies — never editing a frozen one.
+        """
 
     /// The server's own list — only for a NON-paired server workspace (on a
     /// paired server the trees are the same files; one list, no duplicates).
@@ -427,10 +468,12 @@ struct OptimizationRunsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(
-            "experiments whose manifest declares a sweep spec or carries "
-                + "sweep-selection provenance — a lens over studies (the "
-                + "research funnel's 'screen' stage), not a new object type")
+        .accessibilityAddTraits(selectedRef == optimization.ref ? .isSelected : [])
+        // The row's help says what CLICKING it does. The concept behind the
+        // list lives on the section's ⓘ, where it is read once rather than
+        // repeated identically on every row.
+        .help("show '\(optimization.name)' below — its criterion, grid, "
+            + "recommendations and the Create Agent edge")
     }
 
     private func optimizationRowCaption(_ optimization: OptimizationItem) -> String {
@@ -478,7 +521,7 @@ struct OptimizationRunsView: View {
             .first?.value.criterion
         let effective = declared ?? stamped
         let resolved = SweepRunCatalog.displayCriterion(effective)
-        return Section("Declared criterion") {
+        return Section {
             if declared == nil {
                 Text(missingDeclaredCaption(optimization, hasStamped: stamped != nil))
                     .font(.caption)
@@ -519,8 +562,35 @@ struct OptimizationRunsView: View {
                         "margin \(format($0))"
                     } ?? "none declared")
             }
+        } header: {
+            InfoSectionHeader(
+                title: "Declared criterion", text: Self.criterionInfo)
         }
     }
+
+    private static let criterionInfo = """
+        The criterion is the rule that picks a winning cell out of the grid, \
+        declared BEFORE the sweep runs and hashed with the study. Four parts:
+
+        • Objective — the number being maximised. judgeScore and logprobShift \
+        are outcome instruments; markerDensity is a manipulation check and \
+        never the promotion objective when the claim is about a substantive \
+        outcome.
+        • Capability tolerance — how far the capability battery may fall \
+        below the no-injection baseline before a cell is ineligible.
+        • Coherence floor — the distinct-bigram floor a cell's output must \
+        clear. Declared either RELATIVE to the α=0 baseline (a ratio, plus an \
+        absolute backstop no cell may fall below whatever the baseline was) or \
+        as a plain absolute floor. Which of the two is in force is itself \
+        declared data, and this panel never converts one into the other.
+        • Matched-norm random control — when a margin is declared, the winner \
+        must beat a norm-matched random direction by at least that much, or \
+        the concept gets no recommendation at all.
+
+        Values marked "(default)" are not on the manifest: the engine's \
+        documented defaults are shown so the rule that will actually apply is \
+        never left implicit.
+        """
 
     private func missingDeclaredCaption(
         _ optimization: OptimizationItem, hasStamped: Bool
@@ -566,8 +636,16 @@ struct OptimizationRunsView: View {
                 spec: optimization.sweep,
                 panel: panel,
                 onSaved: { refreshOptimizations() },
+                // "Reload Spec" re-reads the manifest by re-creating the
+                // editor: the keyed identity changes, so init reseeds every
+                // field AND re-derives the review handle whose absence is what
+                // the stale refusal is about.
+                reload: {
+                    refreshOptimizations()
+                    specReloadToken += 1
+                },
                 runControls: { runSweepControls(optimization) })
-                .id(optimization.id)
+                .id("\(optimization.id)#\(specReloadToken)")
         } else {
             readOnlySweepSpecSection(optimization)
         }
@@ -653,6 +731,10 @@ struct OptimizationRunsView: View {
                 sweepExecution(optimization) == .server
                     ? "Optimize on \(substrate)" : "Optimize"
             ) {
+                // Re-entry guard on the same condition the button reads: the
+                // GPU-session dialog can park this submission, and a second
+                // click while it is parked is a second durable job.
+                guard sweepDisabledReason(optimization) == nil else { return }
                 // Item 2: a server-executed sweep is a model-running durable
                 // job — the shared gate warns when no GPU session is up
                 // (local sweeps pass straight through).
@@ -666,19 +748,33 @@ struct OptimizationRunsView: View {
                 }
             }
             .disabled(sweepDisabledReason(optimization) != nil)
-            if panel.localJobs.isSweeping {
+            .help(sweepDisabledReason(optimization) ?? runSweepHelp(optimization))
+            // A sweep is in flight on EITHER route: local MLX, or a durable
+            // job on the server. The spinner used to follow the local flag
+            // only, so a running server sweep looked idle.
+            if panel.localJobs.isSweeping || panel.remoteJobs.activeSweepJob != nil {
                 ProgressView()
                     .controlSize(.small)
             }
             if panel.localJobs.isSweeping || panel.remoteJobs.activeSweepJob != nil {
-                Button("Cancel Optimization", role: .destructive) {
+                let cancelling = panel.remoteJobs.activeSweepJob == nil
+                    && panel.localJobs.sweepCancelRequested
+                Button(
+                    cancelling ? "Cancelling…" : "Cancel Optimization",
+                    role: .destructive
+                ) {
+                    guard !cancelling else { return }
                     Task { await panel.cancelSweep() }
                 }
-                .disabled(panel.remoteJobs.activeSweepJob == nil && panel.localJobs.sweepCancelRequested)
+                .disabled(cancelling)
                 .help(
-                    "requests cancellation; the engine stops after the "
-                        + "current generation — partial rows stay in the "
-                        + "run directory")
+                    cancelling
+                        ? "cancellation requested — the engine stops after the "
+                            + "current generation; the rows already written "
+                            + "stay in the run directory"
+                        : "requests cancellation; the engine stops after the "
+                            + "current generation — partial rows stay in the "
+                            + "run directory")
             }
         }
         if let reason = sweepDisabledReason(optimization) {
@@ -702,6 +798,9 @@ struct OptimizationRunsView: View {
             openStudiesForBundleSweep(study: optimization.name)
         }
         .controlSize(.small)
+        .help("jump to Studies with '\(optimization.name)' selected and Submit "
+            + "Bundle preconfigured for the sweep verb — nothing is submitted "
+            + "from here")
         Text(
             "'\(optimization.name)' lives in this workspace; \(substrate) is not "
                 + "paired to it. Submit Bundle sends a hash-pinned portable "
@@ -717,14 +816,23 @@ struct OptimizationRunsView: View {
         if panel.localJobs.isSweeping {
             return "a sweep is already running — follow it in the activity pane"
         }
+        // The server route had no guard at all: the button stayed live while a
+        // durable sweep job was in flight, and each click submitted another
+        // one (the Cancel control beside it exists precisely because one IS
+        // running).
+        if let job = panel.remoteJobs.activeSweepJob {
+            return "sweep job \(job.id) is running on \(substrate) — follow it "
+                + "in the activity pane, or cancel it here first"
+        }
         if panel.localJobs.isRunning || panel.localJobs.isValidating {
             return "another study task is running — wait for it to finish"
         }
         if optimization.source == .local {
             if !optimization.isDraft, optimization.sweep == nil {
-                return "'\(optimization.name)' is \(optimization.statusLabel) with no "
-                    + "declared sweep spec — the spec is pinned data; duplicate "
-                    + "the study in Studies to declare one"
+                return "'\(optimization.name)' is not a draft "
+                    + "(\(optimization.statusLabel)) and declares no sweep "
+                    + "spec — the spec is pinned data; duplicate the study in "
+                    + "Studies to declare one"
             }
             if case .declaredAhead(let metric) = SweepSpecForm.validateSelection(
                 optimization.sweep?.selection)
@@ -785,9 +893,25 @@ struct OptimizationRunsView: View {
         }
     }
 
+    private static let lifecycleInfo = """
+        Where this study stands in the screen funnel. Each stage is DERIVED \
+        from evidence on disk, never stored:
+
+        • Declared — the manifest carries a sweep spec.
+        • Optimized — a sweep run exists for it (or a stamped recommendation \
+        proves one ran, even if the run directory has since been pruned).
+        • Recommended — the criterion selected a winning cell for at least \
+        one concept.
+        • Agent created — some agent's birth certificate names this study.
+
+        A stage can read "status unknown" rather than "no": a server's \
+        listing does not expose every field, and reporting an unknown as a \
+        false negative would be worse than saying so.
+        """
+
     private func lifecycleSection(_ optimization: OptimizationItem) -> some View {
         let states = lifecycleStates(optimization)
-        return Section("Lifecycle") {
+        return Section {
             lifecycleStrip(states)
             Text(OptimizationLifecycle.nextStep(states))
                 .font(.caption)
@@ -804,6 +928,8 @@ struct OptimizationRunsView: View {
                         + "under a declared perturbation policy (α ± δ, "
                         + "matched-norm control) on held-out prompts")
             }
+        } header: {
+            InfoSectionHeader(title: "Lifecycle", text: Self.lifecycleInfo)
         }
     }
 
@@ -819,13 +945,27 @@ struct OptimizationRunsView: View {
 
     private func lifecycleStrip(_ states: OptimizationLifecycle.States) -> some View {
         HStack(spacing: 10) {
-            stageChip("Declared", states.declared)
+            stageChip(
+                "Declared", states.declared,
+                done: "the manifest declares a layer×alpha sweep spec",
+                todo: "no sweep spec on the manifest yet — declare one below")
             stageArrow
-            stageChip("Optimized", states.swept)
+            stageChip(
+                "Optimized", states.swept,
+                done: "a sweep run exists for this study (or a stamped "
+                    + "recommendation proves one ran)",
+                todo: "the declared sweep has not run yet — use Optimize")
             stageArrow
-            stageChip("Recommended", states.recommended)
+            stageChip(
+                "Recommended", states.recommended,
+                done: "the declared criterion selected a winning cell",
+                todo: "no winning cell yet — either the sweep has not run, or "
+                    + "the constraints refused every cell")
             stageArrow
-            stageChip("Agent created", states.promoted)
+            stageChip(
+                "Agent created", states.promoted,
+                done: "an agent's birth certificate names this study",
+                todo: "no agent has been minted from this study's winning cell")
         }
     }
 
@@ -836,15 +976,28 @@ struct OptimizationRunsView: View {
     }
 
     /// nil state = not knowable on this substrate (rendered as "?", never as
-    /// a false negative).
-    private func stageChip(_ label: String, _ state: Bool?) -> some View {
+    /// a false negative). Every state explains itself: the known ones used to
+    /// carry an EMPTY tooltip, which is the common case.
+    private func stageChip(
+        _ label: String, _ state: Bool?, done: String, todo: String
+    ) -> some View {
         HStack(spacing: 3) {
             Image(systemName: stageSymbol(state))
                 .foregroundStyle(state == true ? Color.green : Color.secondary)
             Text(label)
         }
         .font(.caption)
-        .help(state == nil ? "not derivable from the server API" : "")
+        .help(stageHelp(state, done: done, todo: todo))
+    }
+
+    private func stageHelp(_ state: Bool?, done: String, todo: String) -> String {
+        switch state {
+        case true?: "done — " + done
+        case false?: "not yet — " + todo
+        case nil:
+            "status unknown — \(substrate)'s listing does not carry this, so "
+                + "it is reported as unknown rather than as a no"
+        }
     }
 
     private func stageSymbol(_ state: Bool?) -> String {
@@ -860,7 +1013,7 @@ struct OptimizationRunsView: View {
     @ViewBuilder
     private func gridSections(_ optimization: OptimizationItem) -> some View {
         if let run = sweepRun {
-            Section("Optimization grid — \(run.runName)") {
+            Section("Optimization grid (α in norm units) — \(run.runName)") {
                 ForEach(SweepRunCatalog.concepts(in: run.rows), id: \.self) { concept in
                     conceptGrid(concept: concept, run: run, optimization: optimization)
                 }
@@ -1037,14 +1190,22 @@ struct OptimizationRunsView: View {
                 selectedCell = selectedCell == cellID ? nil : cellID
             } label: {
                 VStack(spacing: 1) {
+                    // Colour is never the only carrier: a failing cell is
+                    // struck through (the same cue the measured grid uses)
+                    // and a winner is badged in words.
                     Text(cellNumber(row, criterion: criterion))
                         .font(.caption.monospacedDigit())
+                        .strikethrough(state == .failedConstraint)
                     if state == .winner {
-                        Text("winner")
-                            .font(.system(size: 8, weight: .bold))
+                        Text("✓ winner")
+                            .font(.caption2.weight(.bold))
+                    }
+                    if state == .failedConstraint {
+                        Text("✕ fails")
+                            .font(.caption2.weight(.bold))
                     }
                 }
-                .frame(minWidth: 52)
+                .frame(minWidth: 56)
                 .padding(.vertical, 4)
                 .padding(.horizontal, 4)
                 .background(
@@ -1056,12 +1217,14 @@ struct OptimizationRunsView: View {
                             lineWidth: 2))
             }
             .buttonStyle(.plain)
+            .accessibilityAddTraits(selectedCell == cellID ? .isSelected : [])
             .help(cellHelp(row, state: state, criterion: criterion))
         } else {
             Text("—")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
-                .frame(minWidth: 52)
+                .frame(minWidth: 56)
+                .help("no measured cell at this layer × alpha")
         }
     }
 
@@ -1123,9 +1286,10 @@ struct OptimizationRunsView: View {
 
     private var gridLegend: some View {
         HStack(spacing: 10) {
-            legendSwatch(.green.opacity(0.3), "winner")
+            legendSwatch(.green.opacity(0.3), "✓ winner")
             legendSwatch(.secondary.opacity(0.1), "pass")
-            legendSwatch(.red.opacity(0.16), "fails constraint")
+            legendSwatch(.red.opacity(0.16), "✕ fails constraint (struck through)")
+            Text("click a cell to select it")
         }
         .font(.caption2)
         .foregroundStyle(.secondary)
@@ -1184,18 +1348,34 @@ struct OptimizationRunsView: View {
                         concept: cell.concept, optimization: optimization).metric,
                     showsChart: false)
             }
+            // The recommendation row below already offers Create Agent for a
+            // criterion-selected winner, and both buttons call the same
+            // function — so the grid keeps its button only when no such row
+            // exists for this concept in the loaded run.
+            let hasRecommendationRow = recommendationRowExists(for: cell.concept)
             HStack(spacing: 8) {
                 Text("selected: \(cell.concept) L\(cell.layer) α\(format(cell.alpha))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                if isWinner {
-                    Button("Create Agent") {
+                if isWinner, hasRecommendationRow {
+                    Text("this is the criterion-selected winner — Create Agent "
+                        + "for it is on its row under \"Recommended agent "
+                        + "settings\" below")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if isWinner {
+                    Button(promotingConcept == cell.concept
+                        ? "Creating Agent…" : "Create Agent") {
                         promoteFromDisplayedRun(
                             optimization: optimization, concept: cell.concept)
                     }
-                    .disabled(sweepRun == nil)
+                    .disabled(sweepRun == nil || promotingConcept != nil)
                     .help(promoteWinnerHelp(optimization))
+                    if promotingConcept == cell.concept {
+                        ProgressView().controlSize(.small)
+                    }
                 } else {
                     Button("Create Agent (override)…") {
                         overridePromotion = OverridePromotion(
@@ -1206,17 +1386,59 @@ struct OptimizationRunsView: View {
                                 experimentName: optimization.name,
                                 concept: cell.concept))
                     }
+                    .disabled(promotingConcept != nil)
                     .help(
                         "this is NOT the winner under the declared criterion — "
-                            + "creating an agent from it requires a reason and "
-                            + "stamps promotedBy: manualOverride")
+                            + "creating an agent from it requires a written "
+                            + "reason and is recorded as a manual override "
+                            + "(promotedBy: manualOverride)")
                 }
+            }
+            // Only when this concept has no recommendation row below — that
+            // row renders the same outcome, and one message twice on one
+            // screen reads as two events.
+            if !hasRecommendationRow {
+                promotionOutcomeLine(for: cell.concept)
+            }
+        }
+    }
+
+    /// Does the loaded run carry a criterion-selected recommendation row for
+    /// this concept? (A manifest can hold provenance from an OLDER run than
+    /// the one on screen, in which case there is no row and the grid keeps
+    /// its own button.)
+    private func recommendationRowExists(for concept: String) -> Bool {
+        guard let run = sweepRun,
+            case .selected = run.recommendations[concept]
+        else { return false }
+        return true
+    }
+
+    /// The Create Agent outcome, INLINE. Success and refusal used to speak
+    /// only into the bottom status section and the bell.
+    @ViewBuilder
+    private func promotionOutcomeLine(for concept: String) -> some View {
+        if let outcome = promotionOutcome, outcome.concept == concept {
+            Label(
+                outcome.message,
+                systemImage: outcome.isFailure
+                    ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(outcome.isFailure ? Color.orange : Color.green)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+            if !outcome.isFailure {
+                Button("Open Agents") { navigate(.agents) }
+                    .controlSize(.small)
+                    .help("show the minted agent in the Agents library, with "
+                        + "its birth certificate")
             }
         }
     }
 
     private func promoteWinnerHelp(_ optimization: OptimizationItem) -> String {
-        let base = "mint an agent from the criterion-selected winning cell "
+        let base = "mint an agent from the criterion-selected winning cell — "
+            + "recorded as chosen by the declared criterion "
             + "(promotedBy: criterion)"
         return mintsOnServer(optimization)
             ? base + " — minted on \(substrate)" : base
@@ -1231,15 +1453,48 @@ struct OptimizationRunsView: View {
     @ViewBuilder
     private func sweepGridSection(_ optimization: OptimizationItem) -> some View {
         if let run = sweepRun, !run.rows.isEmpty {
-            Section("Measured grid — \(run.runName)") {
+            Section("Measured grid (α in norm units) — \(run.runName)") {
                 ForEach(SweepGridPresentation.concepts(rows: run.rows), id: \.self) { concept in
                     SweepGridView(
                         grid: SweepGridPresentation.grid(
                             concept: concept, rows: run.rows,
                             recommendation: run.recommendations[concept]))
                 }
+                measuredGridLegend
             }
         }
+    }
+
+    /// The measured grid's shading, border and strikethrough had no legend at
+    /// all — only a per-cell tooltip. Same three states as the clickable grid
+    /// above, said once for the whole section.
+    private var measuredGridLegend: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 12) {
+                HStack(spacing: 3) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .strokeBorder(Color.accentColor, lineWidth: 1.5)
+                        .frame(width: 12, height: 12)
+                    Text("winner (outlined)")
+                }
+                HStack(spacing: 3) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.accentColor.opacity(0.3))
+                        .frame(width: 10, height: 10)
+                    Text("darker = higher objective")
+                }
+                HStack(spacing: 3) {
+                    Text("0.00").strikethrough()
+                    Text("fails a constraint")
+                }
+            }
+            Text("Same cells as the grid above, shaded by objective value "
+                + "rather than by constraint state. Hover a cell for its "
+                + "objective, distinct-2, battery accuracy and verdict.")
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
     }
 
     // MARK: Recommendations
@@ -1290,16 +1545,27 @@ struct OptimizationRunsView: View {
                             metric: SweepRunCatalog.displayCriterion(
                                 provenance.criterion).metric)
                     }
+                    // The outcome lands HERE, beside the button that caused
+                    // it — not only in the status section far below and the
+                    // bell.
+                    promotionOutcomeLine(for: concept)
                 }
                 Spacer()
-                Button("Create Agent") {
-                    // Guarded like the grid-cell button: an unpinned promote
-                    // is exactly the ambient resolution the contract removes.
-                    promoteFromDisplayedRun(
-                        optimization: optimization, concept: concept)
+                let busy = promotingConcept == concept
+                VStack(alignment: .trailing, spacing: 4) {
+                    Button(busy ? "Creating Agent…" : "Create Agent") {
+                        // Guarded like the grid-cell button: an unpinned
+                        // promote is exactly the ambient resolution the
+                        // contract removes.
+                        promoteFromDisplayedRun(
+                            optimization: optimization, concept: concept)
+                    }
+                    .disabled(sweepRun == nil || promotingConcept != nil)
+                    .help(promoteRecommendationHelp(optimization))
+                    if busy {
+                        ProgressView().controlSize(.small)
+                    }
                 }
-                .disabled(sweepRun == nil)
-                .help(promoteRecommendationHelp(optimization))
             }
         case .failure(let message):
             VStack(alignment: .leading, spacing: 2) {
@@ -1339,21 +1605,93 @@ struct OptimizationRunsView: View {
     private func promoteFromDisplayedRun(
         optimization: OptimizationItem, concept: String
     ) {
+        // Re-entry guard on the same flag the buttons read: a server promote
+        // is a durable mint, and a second click was a second one.
+        guard promotingConcept == nil else { return }
         guard
             let pins = pinsForDisplayedRun(
                 experimentName: optimization.name, concept: concept)
         else {
-            panel.refuse(
-                .sweepSpec,
-                "cannot promote '\(concept)': this view has no loaded sweep "
-                    + "run to pin the promotion to. Reload the optimization, "
-                    + "or use the CLI's explicit --sweep-run if you mean to "
-                    + "name the evidence yourself")
+            let refusal = "cannot promote '\(concept)': this view has no "
+                + "loaded sweep run to pin the promotion to. Reload the "
+                + "optimization, or use the CLI's explicit --sweep-run if you "
+                + "mean to name the evidence yourself"
+            panel.refuse(.sweepSpec, refusal)
+            promotionOutcome = PromotionOutcome(
+                concept: concept, message: refusal, isFailure: true)
             return
         }
-        panel.promote(
-            experimentName: optimization.name, concept: concept,
-            route: promotionRoute(optimization), pins: pins)
+        promotionOutcome = nil
+        promotingConcept = concept
+        let mark = panel.notices.notices.last?.id
+        let route = promotionRoute(optimization)
+        Task {
+            if route == .activeServer {
+                // The same call `panel.promote` makes for this route, awaited
+                // so the busy state and the inline outcome are real.
+                await panel.promoteOnActiveServer(
+                    experimentName: optimization.name, concept: concept,
+                    pins: pins)
+            } else {
+                panel.promote(
+                    experimentName: optimization.name, concept: concept,
+                    route: .local, pins: pins)
+            }
+            promotingConcept = nil
+            promotionOutcome = Self.outcome(
+                concept: concept, after: mark, in: panel.notices.notices)
+        }
+    }
+
+    /// The override path, given the same busy state, re-entry guard and
+    /// inline outcome as the criterion path. Pins were CAPTURED when the sheet
+    /// opened; re-deriving them here would silently promote unpinned if the
+    /// loaded run changed or cleared while the sheet was up.
+    private func promoteOverride(_ promotion: OverridePromotion, reason: String) {
+        guard promotingConcept == nil else { return }
+        promotionOutcome = nil
+        promotingConcept = promotion.concept
+        let mark = panel.notices.notices.last?.id
+        let cell = (layer: promotion.layer, alpha: promotion.alpha)
+        Task {
+            if promotion.mintsOnServer {
+                await panel.promoteOnActiveServer(
+                    experimentName: promotion.experiment,
+                    concept: promotion.concept,
+                    cell: cell, overrideReason: reason, pins: promotion.pins)
+            } else {
+                panel.promote(
+                    experimentName: promotion.experiment,
+                    concept: promotion.concept,
+                    cell: cell, overrideReason: reason, route: .local,
+                    pins: promotion.pins)
+            }
+            promotingConcept = nil
+            promotionOutcome = Self.outcome(
+                concept: promotion.concept, after: mark,
+                in: panel.notices.notices)
+        }
+    }
+
+    /// What the promotion said, read off the notices it recorded. Verdict
+    /// notices (success/warning/error) win over the "promoting…" chatter and
+    /// over anything a follow-up refresh appended.
+    private static func outcome(
+        concept: String, after mark: UUID?, in notices: [PanelNotice]
+    ) -> PromotionOutcome? {
+        var fresh = notices
+        if let mark, let index = notices.firstIndex(where: { $0.id == mark }) {
+            fresh = Array(notices[notices.index(after: index)...])
+        }
+        let decisive = fresh.last {
+            $0.severity == .success || $0.severity == .error
+                || $0.severity == .warning
+        }
+        guard let notice = decisive ?? fresh.last else { return nil }
+        return PromotionOutcome(
+            concept: concept,
+            message: notice.message,
+            isFailure: notice.severity == .error || notice.severity == .warning)
     }
 
     private func promoteRecommendationHelp(_ optimization: OptimizationItem) -> String {
@@ -1392,9 +1730,7 @@ struct OptimizationRunsView: View {
             + "required margin \(format(control.margin)) — passed"
     }
 
-    private func format(_ value: Double) -> String {
-        value.formatted(.number.precision(.fractionLength(0 ... 3)))
-    }
+    private func format(_ value: Double) -> String { AlphaFormat.text(value) }
 }
 
 // MARK: - Sweep spec editor (draft manifests only)
@@ -1409,7 +1745,11 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
     let experimentName: String
     let panel: ExperimentPanel
     let onSaved: () -> Void
+    /// Ask the host to re-create this editor from the manifest on disk.
+    let reload: () -> Void
     @ViewBuilder let runControls: () -> RunControls
+    /// Set when Reload Spec was pressed on a dirty editor.
+    @State private var confirmReload = false
 
     @State private var layerFractionsText: String
     @State private var alphasText: String
@@ -1495,11 +1835,13 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
         spec: ExperimentManifest.SweepSpec?,
         panel: ExperimentPanel,
         onSaved: @escaping () -> Void,
+        reload: @escaping () -> Void,
         @ViewBuilder runControls: @escaping () -> RunControls
     ) {
         self.experimentName = experimentName
         self.panel = panel
         self.onSaved = onSaved
+        self.reload = reload
         self.runControls = runControls
         let initial = spec ?? ExperimentManifest.SweepSpec()
         let source = try? DraftAuthoringSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, name: experimentName)
@@ -1582,8 +1924,28 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
                 controlTopK: topK.map(String.init) ?? ""))
     }
 
+    private static let specInfo = """
+        Everything the sweep will do, as manifest data. The GRID is the cost: \
+        each layer fraction × each alpha is one generated cell per dev prompt, \
+        plus the capability battery, and the no-injection baseline cell is \
+        always implied. Layer fractions are network-depth fractions (0–1) \
+        resolved against the pinned model's depth; alphas are steering \
+        strengths in residual-norm units, never raw vector multiples.
+
+        The CRITERION is the rule that then picks a winning cell — objective, \
+        capability tolerance, coherence floor, and the optional matched-norm \
+        random control.
+
+        Saving validates the whole block the way freeze will, so a criterion \
+        whose instrument is missing is refused here rather than at sweep \
+        start. Optimize executes the SAVED spec, which is why it stays \
+        unreachable while the editor holds unsaved edits. Freeze then pins \
+        this spec and the SHA-256 of the dev-prompts and battery files; after \
+        that, drift in those bytes refuses sweep start.
+        """
+
     var body: some View {
-        Section("Optimization (sweep) spec — draft, editable") {
+        Section {
             gridFields
             criterionFields
             saveControls
@@ -1592,6 +1954,10 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
             // screen. Rather than warn, make it unreachable.
             runControls()
                 .disabled(isDirty)
+        } header: {
+            InfoSectionHeader(
+                title: "Optimization (sweep) spec — draft, editable",
+                text: Self.specInfo)
         }
     }
 
@@ -1613,6 +1979,9 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
         instrumentFileRow(label: "capability battery", path: batteryFile)
         sweepInputPinCaption
         TextField("Max tokens per generation", text: $maxTokensText)
+            .help("how long each cell's generation may run — the same budget "
+                + "for every cell, so the grid stays comparable; it multiplies "
+                + "straight into the sweep's cost")
     }
 
     /// §4.15(b): the grid is a cost and a preregistration, so the human
@@ -1892,6 +2261,30 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
                 save()
             }
             .keyboardShortcut("s", modifiers: .command)
+            .help("write the grid and criterion into this draft's manifest — "
+                + "validated the way freeze will validate it; Optimize then "
+                + "executes exactly what is saved (⌘S)")
+            // The repair the stale-review refusal names, as a button: the
+            // editor is re-created from the manifest, which is the only way
+            // to re-derive the review handle it needs.
+            Button("Reload Spec") {
+                if isDirty { confirmReload = true } else { reload() }
+            }
+            .help("re-read the saved spec from the manifest, discarding the "
+                + "unsaved edits in this editor (it asks first when there are "
+                + "any) — this is the repair for \"the displayed sweep is "
+                + "stale or unavailable\"")
+            .confirmationDialog(
+                "Discard the unsaved sweep-spec edits to '\(experimentName)'?",
+                isPresented: $confirmReload
+            ) {
+                Button("Discard and reload", role: .destructive) { reload() }
+                Button("Keep editing", role: .cancel) {}
+            } message: {
+                Text("The grid and criterion values you have changed here are "
+                    + "not in the manifest and cannot be recovered. The saved "
+                    + "spec is re-read from disk.")
+            }
             Spacer()
         }
         // Precedence: this form's own parse refusal, then the engine's
@@ -2004,7 +2397,9 @@ private struct SweepSpecEditorSection<RunControls: View>: View {
         // it records them in `panel.formErrors[.sweepSpec]` as well as the
         // notice feed, so `saveControls` can render them next to the button.
         guard let reviewed else {
-            formError = "The displayed sweep is stale or unavailable. Reopen the editor from the intended draft."
+            formError = "The displayed sweep is stale or unavailable — press "
+                + "Reload Spec to re-read this draft's saved spec from the "
+                + "manifest. Your edits here are not saved."
             return
         }
         if panel.setSweepSpec(spec, reviewed: reviewed, onSaved: { self.reviewed = $0 }) {
@@ -2041,7 +2436,9 @@ private struct DeclareOptimizationSheet: View {
                 .foregroundStyle(.secondary)
             sheetBody
             HStack {
-                Button("Cancel") { dismiss() }
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .help("close without declaring anything")
                 Spacer()
             }
         }
@@ -2061,12 +2458,17 @@ private struct DeclareOptimizationSheet: View {
                 dismiss()
                 openStudies()
             }
+            .help("leave this sheet and create a study in Studies — an "
+                + "optimization is declared on a draft study")
         } else {
             Picker("Draft study", selection: $candidate) {
                 ForEach(drafts, id: \.self) { name in
                     Text(name).tag(String?.some(name))
                 }
             }
+            .help("which draft study gets the sweep grid and selection "
+                + "criterion — only drafts without one are listed, because the "
+                + "spec is pinned data once a study is frozen")
             objectivePicker
             objectiveCaption
             HStack(spacing: 8) {
@@ -2075,12 +2477,21 @@ private struct DeclareOptimizationSheet: View {
                     dismiss()
                     declare(candidate, objective)
                 }
+                .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(candidate == nil || objective == nil)
+                .help(objective == nil
+                    ? "choose a selection objective first — there is no "
+                        + "default, because the criterion is pre-declared data"
+                    : "write the default layer×alpha grid and this objective "
+                        + "into the chosen draft's manifest, then open the spec "
+                        + "editor on it")
                 Button("New draft in Studies…") {
                     dismiss()
                     openStudies()
                 }
+                .help("leave this sheet and create a study in Studies — come "
+                    + "back here to declare its sweep")
             }
             Text("declares the default grid with the chosen objective — edit "
                 + "everything in the spec editor that opens on the new run")
@@ -2089,16 +2500,15 @@ private struct DeclareOptimizationSheet: View {
         }
     }
 
+    /// Short menu labels: the two outcome instruments carried the SAME
+    /// sentence-long recommendation, in a 440 pt sheet, and `objectiveCaption`
+    /// below already says which kind each one is.
     private var objectivePicker: some View {
         Picker("Selection objective", selection: $objective) {
             Text("choose…").tag(String?.none)
-            Text("judge score — outcome instrument "
-                + "(recommended when the claim is about a substantive outcome)")
-                .tag(String?.some("judgeScore"))
-            Text("logprob shift — outcome instrument "
-                + "(recommended when the claim is about a substantive outcome)")
-                .tag(String?.some("logprobShift"))
-            Text("marker density — smoke-test / manipulation check")
+            Text("judge score (outcome)").tag(String?.some("judgeScore"))
+            Text("logprob shift (outcome)").tag(String?.some("logprobShift"))
+            Text("marker density (manipulation check)")
                 .tag(String?.some("markerDensity"))
         }
         .help(
@@ -2115,19 +2525,32 @@ private struct DeclareOptimizationSheet: View {
                 + "substantive outcome")
                 .font(.caption2)
                 .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
         }
         if objective == "judgeScore" || objective == "logprobShift" {
-            Text("this objective needs its instrument on the draft: judgeScore "
-                + "a pinned rubric + judges (Studies › Evaluation), logprobShift "
-                + "a choice-prompts file (spec editor) — Declare surfaces the "
-                + "engine's refusal if they are missing")
+            Text("an outcome instrument — recommended when the claim is about "
+                + "a substantive outcome. It needs its instrument on the "
+                + "draft: judgeScore a pinned rubric + judges (Studies › "
+                + "Evaluation), logprobShift a choice-prompts file (spec "
+                + "editor) — Declare surfaces the engine's refusal if they are "
+                + "missing")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
 
 // MARK: - Supporting types
+
+/// ONE number formatter for this surface. The override sheet used to
+/// interpolate the raw `Double`, so the same cell could read "α0.13" in the
+/// grid and "α0.13000000000000001" in the dialog that promotes it.
+enum AlphaFormat {
+    static func text(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0 ... 3)))
+    }
+}
 
 /// Which tree an optimization row was read from: this workspace's manifests, or the
 /// active (non-paired) server's experiment listing.
@@ -2184,28 +2607,43 @@ struct OverridePromotionSheet: View {
             Text("Manual override required")
                 .font(.headline)
             Text(
-                "Cell L\(promotion.layer) α\(promotion.alpha) of "
-                    + "'\(promotion.concept)' is not the winner under the "
+                "Cell L\(promotion.layer) α\(AlphaFormat.text(promotion.alpha)) "
+                    + "of '\(promotion.concept)' is not the winner under the "
                     + "declared criterion.")
                 .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
             Label(
-                "This agent will be stamped promotedBy: manualOverride.",
+                "This agent will be recorded as a manual override "
+                    + "(promotedBy: manualOverride).",
                 systemImage: "exclamationmark.triangle.fill")
                 .font(.callout)
                 .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
             TextField("Reason (required — stamped into the birth certificate)",
                       text: $reason, axis: .vertical)
                 .lineLimit(2 ... 4)
                 .textFieldStyle(.roundedBorder)
+                .help("why this cell and not the criterion's winner — stored "
+                    + "verbatim in the agent's birth certificate and read by "
+                    + "everyone who later asks how it was chosen")
             HStack {
-                Button("Cancel") { dismiss() }
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .help("close without minting anything")
                 Spacer()
                 Button("Create Agent with override") {
                     promote(trimmedReason)
                     dismiss()
                 }
+                .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(trimmedReason.isEmpty)
+                .help(trimmedReason.isEmpty
+                    ? "write a reason first — an override without one is "
+                        + "exactly the undocumented deviation this path exists "
+                        + "to prevent"
+                    : "mint an agent from this non-winning cell, recorded as a "
+                        + "manual override with the reason above")
             }
         }
         .padding(16)
