@@ -1097,10 +1097,12 @@ class JobManager:
                                   else {"value": result})
                     parked = _resumable_directory_in(job.result)
                     if parked is not None:
+                        job.finished_at = time.time()
                         job.status = "cancelledResumable"
                         job.log("cancellation observed — the run parked "
                                 f"resumably at {parked}; Resume continues it")
                     else:
+                        job.finished_at = time.time()
                         job.status = "cancelled"
                         job.log("cancellation observed")
                 else:
@@ -1111,11 +1113,13 @@ class JobManager:
                     # chain needing a human came to render green in every
                     # client (2026-08-06 review round 2, P1).
                     if is_parked_result(job.result):
+                        job.finished_at = time.time()
                         job.status = "parked"
                         job.log("parked — terminal, but NOT a completion: "
                                 + str(job.result.get("reason")
                                       or "no reason recorded"))
                     else:
+                        job.finished_at = time.time()
                         job.status = "succeeded"
                     if isinstance(job.result, dict):
                         artifacts = job.result.get("outputArtifacts")
@@ -1126,6 +1130,7 @@ class JobManager:
                     # Work aborted by (or during) a cancel: the user asked for
                     # this stop — report it as the cancel it is, keeping the
                     # abort reason on record instead of masquerading as a bug.
+                    job.finished_at = time.time()
                     job.status = "cancelled"
                     job.error = f"{type(exc).__name__}: {exc}"
                     job.log(f"cancellation observed (work stopped: {job.error})")
@@ -1148,11 +1153,14 @@ class JobManager:
                     # partialEvidence stamp (visible whenever the handler's
                     # imports were cold).
                     _retain_partial_evidence(job, exc)
+                    job.finished_at = time.time()
                     job.status = "failed"
             finally:
                 current_job_id.reset(token)
                 current_run_directory.reset(run_dir_token)
-                job.finished_at = time.time()
+                # Every terminal flip above stamps finished_at FIRST; this is
+                # the fallback for a path that did not reach one.
+                job.finished_at = job.finished_at or time.time()
                 self.store.update(job)
 
         threading.Thread(target=runner, name=f"job-{job.id}", daemon=True).start()
