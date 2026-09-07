@@ -15,7 +15,7 @@ assert len({m['id'] for m in catalog['methods']}) == len(catalog['methods'])
 assert len({o['id'] for o in catalog['operations']}) == len(catalog['operations'])
 ids = {m['id'] for m in catalog['methods']}
 assert all(o['method'] in ids for o in catalog['operations'])
-files = ['catalog.json'] + [m['guide'] for m in catalog['methods']]
+files = ['catalog.json', 'workflows.json'] + [m['guide'] for m in catalog['methods']]
 assert set(files) == {p.name for p in source.iterdir() if p.is_file()}
 packaged = root / 'Server/steerlab_server/experiment/seed/prompts/method-guides'
 if args.write:
@@ -50,3 +50,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'Server'))
 from steerlab_server.api.route_roles import CENSUS
 from science_cli_census import check_actions
 check_actions(json.loads((Path(__file__).resolve().parents[2] / 'WorkspaceSeed/prompts/method-guides/catalog.json').read_text()), CENSUS)
+
+from steerlab_server.experiment.managed_methods import OPERATIONS
+workflows = json.loads((source / 'workflows.json').read_text())
+assert {o['id'] for o in workflows['operations']} == OPERATIONS
+assert len(workflows['operations']) == len(OPERATIONS)
+for operation in workflows['operations']:
+    assert operation['method'] == next(o['method'] for o in catalog['operations'] if o['id'] == operation['id'])
+    assert operation['claimBoundary'] and operation['questions']
+    assert len({f['id'] for f in operation['fields']}) == len(operation['fields'])
+    assert all(f['kind'] in {'text','integer','number','boolean','integers','numbers','artifact','artifacts','file','files','fileRef','documentFile'} for f in operation['fields'])
+print('Shared interviews cover every managed method with distinct catalog categories.')

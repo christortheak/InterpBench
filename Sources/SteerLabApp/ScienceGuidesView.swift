@@ -18,6 +18,15 @@ struct ScienceGuidesView: View {
         let client: ClusterClient
     }
     @State private var selectedOperation: ActionTarget?
+    private struct AuthoringTarget: Identifiable {
+        let id = UUID()
+        let workflow: ScienceCatalog.Workflow
+        let root: URL
+        let client: ClusterClient?
+    }
+    @State private var authoringTarget: AuthoringTarget?
+    @State private var workflows: [ScienceCatalog.Workflow] = []
+    @State private var saeRoot: URL?
     @State private var custodyRoot: URL?
 
     var body: some View {
@@ -47,6 +56,9 @@ struct ScienceGuidesView: View {
                             ForEach(operations) { operation in
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(operation.title).font(.headline)
+                                    if let workflow = workflows.first(where: { $0.id == operation.id }) {
+                                        Button("Author request…") { authoringTarget = AuthoringTarget(workflow: workflow, root: ExperimentStore.workspaceRoot, client: client) }
+                                    }
                                     Text(operation.engineCLI ?? "No direct engine CLI; use the listed HTTP interface.").font(.system(.body, design: .monospaced))
                                     Text(operation.mac)
                                     Text(operation.access.restriction).font(.caption)
@@ -58,8 +70,11 @@ struct ScienceGuidesView: View {
                                     Text(operation.restriction).foregroundStyle(.secondary)
                                 }.textSelection(.enabled)
                             }
-                            if guide.method.id == "optimization" || guide.method.id == "jspace" {
+                            if guide.method.id == "optimization" {
                                 Button("Open Optimizations") { dismiss(); openOptimizations() }
+                            }
+                            if guide.method.id == "sae" {
+                                Button("Inspect or pin SAE roster…") { saeRoot = ExperimentStore.workspaceRoot }
                             }
                             if guide.method.id == "multi-agent" {
                                 Button("Open study designs") { dismiss(); openTemplates() }
@@ -71,6 +86,12 @@ struct ScienceGuidesView: View {
                 }.frame(minWidth: 470)
             }
         }.padding().frame(minWidth: 780, minHeight: 580)
+        .sheet(isPresented: Binding(get: { saeRoot != nil }, set: { if !$0 { saeRoot = nil } })) {
+            if let root = saeRoot { SAERosterSheet(root: root) }
+        }
+        .sheet(item: $authoringTarget) { target in
+            MethodAuthoringSheet(workflow: target.workflow, root: target.root, client: target.client)
+        }
         .sheet(item: $selectedOperation) { target in
             ScientificActionSheet(operation: target.operation, client: target.client)
         }
@@ -79,6 +100,7 @@ struct ScienceGuidesView: View {
         }
         .task {
             do {
+                workflows = try ScienceCatalog.workflows()
                 methods = try ScienceCatalog.catalog().methods
                 selected = methods.first?.id
                 loadSelection()

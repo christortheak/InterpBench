@@ -29,7 +29,7 @@ retain their diagnostic/battery output types, and explicitly do not support
 checkpoint resume. Isolated input bundles, completed output export/import, offline
 custody and bounded policy-driven cleanup now compose across both clients and the
 app; see [the current handoff](REMOTE-CUSTODY-CLEANUP-HANDOFF.md). See
-[the cluster and execution handoff](CLUSTER-EXECUTION-WORKFLOW-HANDOFF.md). OptVec J-space is exploratory analysis, not
+[the cluster and execution handoff](CLUSTER-EXECUTION-WORKFLOW-HANDOFF.md). J-space is a separate exploratory analysis, not
 training. The catalog states these restrictions; a guide does not grant an
 unsupported engine capability. The detailed rows below retain their broader
 qualification tasks until live journeys are observed.
@@ -39,9 +39,14 @@ Existing HTTP actions now have catalog-driven `runner science-call` / `remote
 science-call` adapters and an app JSON action editor. The gate checks actual route
 and service-role declarations; original owner schemas, gates and artifacts remain
 authoritative. This closes invocation gaps for supported reader, fine-tune,
-J-lens, Gemma Scope and judgment-completion HTTP operations. Engine-only
-style rescoring, SAE tools and the nine OptVec verbs remain explicitly restricted;
-they are not counted as managed remote execution or bespoke app-form coverage.
+J-lens, Gemma Scope and judgment-completion HTTP operations. The continuation
+adds shared conceptual forms and managed execution for style rescoring, SAE
+reports/qualification, OptVec operations and separate J-space analysis. Offline
+SAE inspection/pinning is workbench-only. Campaign materialization, reviewed queue
+top-up/cancellation and complete evidence export are separate steps. See
+[the current implementation handoff](MANAGED-METHOD-AUTHORING-HANDOFF.md). These
+are source implementations; live numerical, scheduler and interactive
+qualification remains outstanding.
 
 ## How to read the matrix
 
@@ -104,10 +109,10 @@ or authorize new agent tasks. The source groups below provide navigable owners.
 | EXEC-04 extraction stability | Stability owner and diagnostic submission | `remote science-plan/science-submit` | Client runner science-plan/science-submit; Engine extract-stability | Python science plan/submit | Server Jobs scientific diagnostic | Reviewed staged inputs, queue-time drift, unchanged numeric owner; no native Mac numerical parity or checkpoint resume |
 | EXEC-05 standalone capability/floor battery | Battery owner and diagnostic submission | `remote science-plan/science-submit` | Client runner science-plan/science-submit; Engine battery run | Python science plan/submit | Server Jobs scientific diagnostic | Closed standalone request; no fake study, format-3 pin bypass or checkpoint resume; partial output locations retained |
 | METHOD-01 readers and reader scoring | Reader owners | Present reader family | Engine reader/data paths; Client file authoring | Python reader fit/score | Readers | Interpret a reader as an instrument; document training/evaluation split and model pins |
-| METHOD-02 optimized vectors | OptVec owners | Restricted execution; artifact consumers | Engine optvec family | No managed HTTP path in this slice; named engine CLI | Optimization | Index train/eval/geometry/family/interpret/fracture/campaign paths; identify envelope gaps |
+| METHOD-02 optimized vectors | Existing OptVec owners plus managed execution | Shared method interview/draft/publish and remote verbs | Matching client authoring and runner verbs; original engine CLI | Reviewed plan/submit; separate campaign action route | Method form and campaign coordination | CPU fixtures and queue gates; live GPU/campaign qualification outstanding |
 | METHOD-03 fine-tune adapters | FineTuneStore, Python fine-tune owners | Authoring/artifact surface; execution restricted | Engine finetune plan/train/submit | Python plan/train/submit | Adapters | Workbench plan versus runner train/submit authority must remain explicit |
 | METHOD-04 J-lens acquisition/qualification/readout | J-lens owners | Restricted execution, app rendering | Engine jlens family | Python J-lens workbench routes | J-lens | Publish all supported verbs, qualification and model/token/layer constraints |
-| METHOD-05 J-space exploratory analysis | OptVec J-space owner | Restricted execution | Engine optvec jspace | Engine-only, no managed HTTP action | Guide with explicit engine routing | Separate from J-lens readout and ordinary paired extraction; managed execution remains a gap |
+| METHOD-05 J-space exploratory analysis | Existing batch J-space owner | Shared independent J-space form and remote execution | `jspace` managed operation; historic engine `optvec jspace` | Reviewed plan/submit | Separate J-space category and interview | Current owner requires OptVec layer/dose metadata; readout evidence is not behavioral evidence; live qualification outstanding |
 | METHOD-06 SAE/Gemma Scope analysis/import/qualification | SAE/Gemma Scope owners | Restricted execution; artifact attachment | Client pin-sae; Engine sae/Gemma Scope | Python Gemma Scope routes | SAE/adapter coverage mixed | Preserve convention/qualification stamps and distinguish feature-ID versus report-ranked imports |
 | METHOD-07 vector parity/mirror/norm operations | Vector owners | Present vector family | Engine vectors; Client gap | Python vector operations | Exact controls unverified | Existing artifact writes need immutable-evidence admission audit; never relax it for parity |
 | CHAT-01 local and remote exploratory generation | Chat/variant services | Remote chat present; local CLI gap | Client mapping restricted | Swift chat; Python generate/variant | Playground | API-accessible; explicitly distinguish exploration from frozen study execution |

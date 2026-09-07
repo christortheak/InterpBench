@@ -13,6 +13,10 @@ def validate(invocation, count):
 
 def workspace_action(action, payload):
     required = {
+        'sae-check': {'path'}, 'sae-show': {'path'},
+        'sae-pin-plan': {'path', 'experiment'}, 'sae-pin': {'path', 'experiment', 'planSHA256'},
+        'interview': {'operation'}, 'draft': {'operation', 'answersText'},
+        'publish': {'operation', 'answersText', 'destination', 'planSHA256'},
         'input-plan': {'requestFile'}, 'package': {'requestFile', 'archivePath', 'planSHA256'},
         'import': {'archivePath', 'archiveSHA256'}, 'verify-custody': {'receiptSHA256'}, 'custody': set(),
     }
@@ -22,6 +26,17 @@ def workspace_action(action, payload):
     if not fields <= payload.keys() or payload.keys() - fields - optional or any(not isinstance(payload[k], str) or not payload[k] for k in fields):
         raise archives.Refusal('Supply exactly the declared action fields as nonempty strings.')
     root = str(Path(payload['workspaceRoot']).resolve())
+    if action.startswith('sae-'):
+        from ..experiment import sae_authoring
+        if action in ('sae-check', 'sae-show'): return sae_authoring.inspect('candidates' if action == 'sae-check' else 'qualification', payload['path'], root)
+        if action == 'sae-pin-plan': return sae_authoring.pin_plan(payload['experiment'], payload['path'], root)
+        return sae_authoring.pin(payload['experiment'], payload['path'], root, payload['planSHA256'])
+    if action in ('interview', 'draft', 'publish'):
+        from ..experiment import method_authoring
+        if action == 'interview': return method_authoring.interview(payload['operation'])
+        answers = json.loads(payload['answersText'])
+        if action == 'draft': return method_authoring.draft(payload['operation'], answers, root)
+        return method_authoring.publish(payload['operation'], answers, root, payload['destination'], payload['planSHA256'])
     if action in ('input-plan', 'package'):
         from ..experiment import diagnostic_inputs
         request = json.loads(Path(payload['requestFile']).read_bytes())
@@ -39,6 +54,12 @@ def local(invocation):
         verb = invocation.spec.verb; validate(invocation, 0 if verb == 'custody' else 1)
         value = invocation.positionals[0] if invocation.positionals else None
         payload = {'workspaceRoot': paths.project_root()}
+        if verb.startswith('sae-'): payload['path'] = value
+        if verb in ('sae-pin-plan', 'sae-pin'): payload['experiment'] = invocation.one('--experiment')
+        if verb == 'sae-pin': payload['planSHA256'] = invocation.one('--plan-sha256')
+        if verb in ('interview', 'draft', 'publish'): payload['operation'] = value
+        if verb in ('draft', 'publish'): payload['answersText'] = Path(invocation.one('--answers')).read_text()
+        if verb == 'publish': payload.update(destination=invocation.one('--destination'), planSHA256=invocation.one('--plan-sha256'))
         if verb in ('input-plan', 'package'): payload['requestFile'] = value
         if verb == 'package': payload.update(archivePath=invocation.one('--archive'), planSHA256=invocation.one('--plan-sha256'))
         if verb == 'import': payload.update(archivePath=value, archiveSHA256=invocation.one('--sha256'))

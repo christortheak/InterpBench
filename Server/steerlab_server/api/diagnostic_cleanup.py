@@ -43,6 +43,9 @@ def contains_reference(value, relative, absolute):
 
 
 def facts(job_id, custody, jobs, profile):
+    job = jobs.get(job_id)
+    if job is None or job.kind not in ('science:battery', 'science:stability'):
+        raise archives.Refusal('This retention policy covers battery and stability copies only; other scientific artifacts are retained.')
     declared = policy()
     reference = diagnostic_transport.export(job_id, jobs, profile)
     context = reference['context']

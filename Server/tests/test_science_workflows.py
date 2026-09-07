@@ -32,8 +32,8 @@ def test_shipped_resources_are_complete_and_gated():
             if route:
                 assert route in routes, (operation['id'], route)
     assert {o['id'] for o in catalog['operations'] if o['id'].startswith('optvec-')} == {
-        'optvec-' + v for v in ('train', 'eval', 'geometry', 'interpret', 'family', 'jspace', 'gradient', 'fracture', 'campaign')}
-    assert science_catalog.operation('rescore-style')['http'] is None
+        'optvec-' + v for v in ('train', 'eval', 'geometry', 'interpret', 'family', 'gradient-mint', 'gradient', 'fracture', 'campaign')}
+    assert science_catalog.operation('rescore-style')['http'] == 'POST /api/science/plan; POST /api/science/submit'
     assert all(science_catalog.operation(v)['http'] == 'POST /api/science/plan; POST /api/science/submit' for v in ('stability', 'battery'))
 
 

@@ -12,7 +12,7 @@ def test_catalog_http_actions_are_owned_and_engine_only_paths_refuse():
         for action in operation['actions']:
             assert routes[action['method']+' '+action['path']].role.value == action['serviceRole']
     with pytest.raises(science_catalog.ScienceRefusal, match='no supported HTTP'):
-        science_actions.request('optvec-jspace', 'execute', {'path': {}, 'query': {}, 'body': {}})
+        science_actions.request('jspace', 'execute', {'path': {}, 'query': {}, 'body': {}})
 
 
 def test_portable_action_calls_original_route_once_and_preserves_integers():

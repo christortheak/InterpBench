@@ -19,8 +19,19 @@ import Testing
         guard case .object(let fields) = result else { Issue.record("Missing action result"); return }
         #expect(fields["responseJSON"] == .string(#"{"seed":18446744073709551615}"#))
         #expect(throws: (any Error).self) {
-            try ScientificActionRequest.resolve(operation: "optvec-jspace", actionID: "execute", document: Data(#"{"path":{},"query":{},"body":{}}"#.utf8))
+            try ScientificActionRequest.resolve(operation: "jspace", actionID: "execute", document: Data(#"{"path":{},"query":{},"body":{}}"#.utf8))
         }
+    }
+
+    @Test func scientificActionPreservesOwnersReadOnlyResultForPost() async throws {
+        let client = ClusterClient(profile: .init(baseURL: URL(string: "https://runner.example.invalid")!), session: Self.session { request in
+            #expect(request.httpMethod == "POST")
+            return (Data(#"{"changed":false,"seed":18446744073709551615}"#.utf8), 200)
+        })
+        let result = try await client.callScientificAction(operation: "jspace", actionID: "post-science-plan", document: Data(#"{"path":{},"query":{},"body":{}}"#.utf8))
+        guard case .object(let fields) = result else { Issue.record("Missing action result"); return }
+        #expect(fields["changed"] == .bool(false))
+        #expect(fields["responseJSON"] == .string(#"{"changed":false,"seed":18446744073709551615}"#))
     }
 
     @Test func diagnosticCleanupRequiresExplicitConfirmationBeforeDispatch() throws {

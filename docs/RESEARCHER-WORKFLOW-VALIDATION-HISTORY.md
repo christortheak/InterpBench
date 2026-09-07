@@ -1252,3 +1252,54 @@ scheduler allocation, model download, real study, app installation or deployment
 was performed. Live scientific/GPU, external-only site transport, Linux atomic
 filesystem behavior and interactive app usability remain unqualified. Main is
 unchanged; source interface tests do not establish universal surface equivalence.
+
+
+## Managed methods and shared conceptual authoring — 2026-09-06
+
+Continuation after `e74a34a` on `codex/remote-custody-cleanup`, based on main
+`6a94a8f`. Read [the audit handoff](MANAGED-METHOD-AUTHORING-HANDOFF.md).
+
+- Final full Python suite: **6,122 passed, 9 skipped, 8 warnings**, 172.66 seconds;
+  `/private/tmp/managed-python-final.log`.
+- Final full serial Xcode beta suite: **277 SteeringKit + 4,594 ExperimentKit
+  passed**, `TEST SUCCEEDED`; `/private/tmp/managed-xcode-complete.log`.
+- Separate `SteerLabApp` build: `BUILD SUCCEEDED`;
+  `/private/tmp/managed-app-complete.log`.
+- Commands use the established main-checkout Python interpreter, with
+  `PYTHONPATH=Server HF_HUB_OFFLINE=1` for Python and the interpreter exported as
+  `TEST_RUNNER_STEERLAB_TEST_PYTHON` before Xcode. Xcode uses
+  `DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer`,
+  `TOOLCHAINS=com.apple.dt.toolchain.Metal.32023.920.1`,
+  `-skipMacroValidation`, serial macOS testing, external derived data at
+  `/private/tmp/interpbench-workflow-xcode` and `CLANG_COVERAGE_MAPPING=NO`.
+- Shared scientific resource, study-interview, client-reference, task-prompt
+  parser and normal/release bridge checks pass. Both CLI references are
+  regenerated, and the full suites include their census checks. Whitespace
+  checks pass. The implementation diff was read locally.
+- `audit-managed-scientific-owners.py` proves eleven existing scientific owner
+  ASTs unchanged against `6a94a8f`, and three lens consumers changed only by the
+  declared relocation resolver substitution/import. Negative controls pass.
+  The historical public-boundary audit intentionally targets its original
+  mechanical migration; running it on this feature continuation reports AST
+  differences and is not this slice's invariance gate.
+- Regression coverage includes actual CPU geometry, style and qualification
+  execution, converted-lens relocation without rewriting its record, immutable
+  request publication, stale input refusal, cross-client UInt64 preservation,
+  SAE pin idempotence, campaign model-grid identities, queued drift refusal,
+  failed-submit state reporting, cancellation reconciliation and scheduler-aware
+  export gates. Scheduler fixtures do not establish live scheduler behavior.
+- Initial runs exposed stale generated references, corrected before final runs.
+  One earlier full Python attempt terminated in a native PyTorch background
+  J-lens test before reaching the new managed tests; subsequent full runs,
+  including the final run above, completed. The cause of that transient native
+  failure was not established. Final counts include the later changed-status
+  and campaign reconciliation fixes.
+
+Independent maintainer review through the user remains required before landing;
+main is unchanged. No live cluster, model download, scientific outcome, real
+study, interactive app QA, app installation or deployment was performed. Linux
+filesystem qualification, live local/Slurm journeys and scientific applicability
+remain the next qualification stage. J-space is a separate method; its current
+batch owner still requires OptVec artifact metadata. New scientific output
+classes are retained rather than admitted to the narrower diagnostic cleanup
+policy.

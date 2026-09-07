@@ -53,4 +53,11 @@ def build_router(state):
             fields(body, ['custody', 'planSHA256', 'confirmRemoval'])
             return cleanup.apply(job_id, body['custody'], body['planSHA256'], state.jobs, ServerProfile.from_env(), confirmed=body['confirmRemoval'])
         return perform(work)
+    @router.post('/api/science/campaign/{job_id}/{action}')
+    def campaign(job_id: str, action: str, body: dict):
+        from . import managed_campaign
+        def work():
+            fields(body, [] if action in ('status', 'plan') else ['planSHA256', 'confirmAction'])
+            return managed_campaign.action(job_id, action, body.get('planSHA256'), body.get('confirmAction'), state.jobs, ServerProfile.from_env())
+        return perform(work)
     return router

@@ -76,11 +76,14 @@ def output(job_id, jobs, profile):
     else:
         root = Path(profile.root).resolve()
     if plan.get('root') != str(root): raise archives.Refusal('This job belongs to another serving root.')
-    directory = result.get('runDirectory') if job.kind == 'science:battery' else result.get('diagnosticDirectory')
+    if job.kind == 'science:optvec-campaign':
+        from . import managed_campaign
+        managed_campaign.require_complete(job_id, jobs, profile)
+    directory = result.get('diagnosticDirectory') if job.kind == 'science:stability' else result.get('runDirectory')
     if not directory: raise archives.Refusal('Job has no diagnostic output location.')
     relative = Path(directory).absolute().relative_to(root).as_posix()
     components = archives.parts(relative)
-    wanted = 'runs' if job.kind == 'science:battery' else 'diagnostics'
+    wanted = 'diagnostics' if job.kind == 'science:stability' else 'runs'
     if len(components) != 2 or components[0] != wanted:
         raise archives.Refusal('Output is outside the bounded diagnostic artifact class.')
     entries = archives.snapshot(root, archives.files_in(root, relative))

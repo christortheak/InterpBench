@@ -204,6 +204,13 @@ steerlab runner resubmit <job-id> --runner <url> [--ca-bundle <path>] [--timeout
 steerlab runner reconcile --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner recovery <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner recover <job-id> --confirm-owner-exited --reason <value> --review-token <value> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
+steerlab science sae-check <roster-path>
+steerlab science sae-show <qualification-path>
+steerlab science sae-pin-plan <roster-path> --experiment <value>
+steerlab science sae-pin <roster-path> --experiment <value> --plan-sha256 <value>
+steerlab science interview <operation>
+steerlab science draft <operation> --answers <value>
+steerlab science publish <operation> --answers <value> --destination <value> --plan-sha256 <value>
 steerlab science input-plan <request.json>
 steerlab science package <request.json> --archive <value> --plan-sha256 <value>
 steerlab science import <archive.tar.gz> --sha256 <digest>
@@ -2867,6 +2874,13 @@ steerlab-cli authoring study <intent>
 steerlab-cli science list
 steerlab-cli science guide <method>
 steerlab-cli science operation <operation>
+steerlab-cli science sae-check <roster-path>
+steerlab-cli science sae-show <qualification-path>
+steerlab-cli science sae-pin-plan <roster-path> --experiment <name>
+steerlab-cli science sae-pin <roster-path> --experiment <name> --plan-sha256 <value>
+steerlab-cli science interview <operation>
+steerlab-cli science draft <operation> --answers <value>
+steerlab-cli science publish <operation> --answers <value> --destination <value> --plan-sha256 <value>
 steerlab-cli science input-plan <request.json>
 steerlab-cli science package <request.json> --archive <value> --plan-sha256 <value>
 steerlab-cli science import <archive.tar.gz> --sha256 <hex>
@@ -2881,6 +2895,13 @@ steerlab-cli science verify-custody <receipt-sha256>
 | `science list` | List shipped methods, supported operation interfaces and engine restrictions; does not execute. |
 | `science guide` | Read the shared method guide, dataset schemas and coworker/reviewer instructions. |
 | `science operation` | Inspect exact public execution paths, outputs and restrictions for one operation. |
+| `science sae-check` | Inspect the SAE roster and qualification warnings without a model. |
+| `science sae-show` | Inspect an existing qualification record without changing its scientific status. |
+| `science sae-pin-plan` | Review roster and draft bytes before pinning. |
+| `science sae-pin` | Pin the reviewed roster to the unchanged draft. |
+| `science interview` | Read the shared method interview and exact form fields. |
+| `science draft` | Review conceptual answers, a machine request and its input hashes. |
+| `science publish` | Publish the reviewed request and rationale in a new requests directory. |
 | `science input-plan` | Discover and hash local diagnostic inputs using the portable archive owner. |
 | `science package` | Package exactly the reviewed diagnostic inputs for permitted transfer. |
 | `science import` | Verify and import diagnostic evidence into this workspace without replacing outputs. |

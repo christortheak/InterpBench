@@ -66,6 +66,25 @@ public enum ScienceCatalog {
         public let text: String
         public let guideSHA256: String
     }
+    public struct WorkflowField: Codable, Identifiable, Sendable {
+        public let id: String
+        public let label: String
+        public let kind: String
+        public let required: Bool
+        public let help: String
+        public let `default`: String?
+    }
+    public struct Workflow: Codable, Identifiable, Sendable {
+        public let id: String
+        public let title: String
+        public let purpose: String
+        public let claimBoundary: String
+        public let fields: [WorkflowField]
+    }
+    public static func workflows() throws -> [Workflow] {
+        struct Document: Decodable { let operations: [Workflow] }
+        return try JSONDecoder().decode(Document.self, from: resource("workflows.json")).operations
+    }
     static func resource(_ name: String) throws -> Data {
         let files = try JSONDecoder().decode([String: String].self, from: Data(ScienceResourceText.filesJSON.utf8))
         guard let text = files[name] else { throw malformed("The installed scientific guide is missing. Rebuild this installation.") }

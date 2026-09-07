@@ -176,11 +176,12 @@ qualification is claimed. See the audit handoff for review boundaries.
    receipts, and policy-bound removal across both clients and the app. See the
    [handoff](REMOTE-CUSTODY-CLEANUP-HANDOFF.md). Only successful isolated diagnostic
    output copies are eligible; broad remote maintenance remains outside scope.
-2. **Close explicit advanced execution limitations.** Existing HTTP actions now
-   have catalog-driven client/app access and a role-census gate. SAE engine tools,
-   style rescoring and nine OptVec verbs still require the named Python engine
-   CLI. Bespoke conceptual app forms and managed execution for those methods are
-   separate remaining implementation work.
+2. **Audit and qualify the managed method/authoring continuation.** Shared
+   method-specific interviews/forms, request publication, SAE offline pinning,
+   managed execution and explicit campaign coordination are now implemented on
+   this review branch. J-space remains a separate method with the existing
+   artifact-admission restriction. See the [handoff](MANAGED-METHOD-AUTHORING-HANDOFF.md)
+   for tests, limitations and the complete unlanded range.
 3. **Qualify complete researcher journeys (WP-5/7).** Exercise agent/CLI and app
    paths with actual documentation, model preparation, queueing, interruption,
    permitted external-only transport, receipt verification, policy refusal and

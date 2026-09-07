@@ -268,6 +268,13 @@ public enum ExperimentCLIParser {
     /// reference document's flag rows from it, and a switch statement cannot
     /// be enumerated.
     public static let specs: [ExperimentCLIVerbSpec] = [
+        .init(namespace: "science", verb: "sae-check", positional: "<roster-path>", purpose: "Inspect the SAE roster and qualification warnings without a model."),
+        .init(namespace: "science", verb: "sae-show", positional: "<qualification-path>", purpose: "Inspect an existing qualification record without changing its scientific status."),
+        .init(namespace: "science", verb: "sae-pin-plan", positional: "<roster-path>", purpose: "Review roster and draft bytes before pinning.", valueFlags: ["--experiment"], requiredFlags: ["--experiment"]),
+        .init(namespace: "science", verb: "sae-pin", positional: "<roster-path>", purpose: "Pin the reviewed roster to the unchanged draft.", valueFlags: ["--experiment", "--plan-sha256"], requiredFlags: ["--experiment", "--plan-sha256"]),
+        .init(namespace: "science", verb: "interview", positional: "<operation>", purpose: "Read the shared method interview and exact form fields."),
+        .init(namespace: "science", verb: "draft", positional: "<operation>", purpose: "Review conceptual answers, a machine request and its input hashes.", valueFlags: ["--answers"], requiredFlags: ["--answers"]),
+        .init(namespace: "science", verb: "publish", positional: "<operation>", purpose: "Publish the reviewed request and rationale in a new requests directory.", valueFlags: ["--answers", "--destination", "--plan-sha256"], requiredFlags: ["--answers", "--destination", "--plan-sha256"]),
         .init(namespace: "science", verb: "input-plan", positional: "<request.json>", purpose: "Discover and hash local diagnostic inputs using the portable archive owner."),
         .init(namespace: "science", verb: "package", positional: "<request.json>", purpose: "Package exactly the reviewed diagnostic inputs for permitted transfer.", valueFlags: ["--archive", "--plan-sha256"], requiredFlags: ["--archive", "--plan-sha256"]),
         .init(namespace: "science", verb: "import", positional: "<archive.tar.gz>", purpose: "Verify and import diagnostic evidence into this workspace without replacing outputs.", valueFlags: ["--sha256"], requiredFlags: ["--sha256"]),

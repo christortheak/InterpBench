@@ -3,7 +3,7 @@ import Foundation
 /// The Python archive owner is the portable format authority. Mac adapters call
 /// its local-only process entry point; no HTTP, model load or shell is involved.
 public enum DiagnosticWorkspace {
-    public static let actions = ["input-plan", "package", "import", "custody", "verify-custody"]
+    public static let actions = ["sae-check", "sae-show", "sae-pin-plan", "sae-pin", "interview", "draft", "publish", "input-plan", "package", "import", "custody", "verify-custody"]
 
     public static func perform(_ action: String, payload: [String: JSONValue],
                                python: URL? = nil, checkout: URL? = nil) async throws -> JSONValue {
@@ -89,10 +89,11 @@ enum DiagnosticWorkspaceCLI {
         let arguments = try DiagnosticArguments(invocation.args, namespace: "science", takesValue: invocation.verb != "custody")
         var payload: [String: JSONValue] = ["workspaceRoot": .string(ExperimentStore.workspaceRoot.path)]
         if let value = arguments.positional {
-            let key = ["input-plan", "package"].contains(arguments.verb) ? "requestFile" : (arguments.verb == "import" ? "archivePath" : "receiptSHA256")
+            let key = arguments.verb.hasPrefix("sae-") ? "path" : ["interview", "draft", "publish"].contains(arguments.verb) ? "operation" : (["input-plan", "package"].contains(arguments.verb) ? "requestFile" : (arguments.verb == "import" ? "archivePath" : "receiptSHA256"))
             payload[key] = .string(value)
         }
-        for (flag, key) in [("--archive", "archivePath"), ("--sha256", "archiveSHA256"), ("--plan-sha256", "planSHA256")] {
+        if let path = arguments.flags["--answers"] { payload["answersText"] = .string(try String(contentsOfFile: path, encoding: .utf8)) }
+        for (flag, key) in [("--experiment", "experiment"), ("--destination", "destination"), ("--archive", "archivePath"), ("--sha256", "archiveSHA256"), ("--plan-sha256", "planSHA256")] {
             if let value = arguments.flags[flag] { payload[key] = .string(value) }
         }
         let result = try await DiagnosticWorkspace.perform(arguments.verb, payload: payload)

@@ -3,6 +3,13 @@ from ..cli_envelope import CLIResult, VerbSpec
 from ..experiment import science_catalog
 
 VERB_SPECS = (
+    VerbSpec('science', 'sae-check', positional='<roster-path>', purpose='Inspect the SAE roster and surface qualification warnings without a model.'),
+    VerbSpec('science', 'sae-show', positional='<qualification-path>', purpose='Inspect an existing qualification record without changing its scientific status.'),
+    VerbSpec('science', 'sae-pin-plan', positional='<roster-path>', purpose='Review roster and draft bytes before pinning.', value_flags=frozenset({'--experiment'}), required_flags=frozenset({'--experiment'})),
+    VerbSpec('science', 'sae-pin', positional='<roster-path>', purpose='Pin the reviewed roster to the unchanged draft.', value_flags=frozenset({'--experiment', '--plan-sha256'}), required_flags=frozenset({'--experiment', '--plan-sha256'})),
+    VerbSpec('science', 'interview', positional='<operation>', purpose='Read the shared method-specific interview and exact form fields.'),
+    VerbSpec('science', 'draft', positional='<operation>', purpose='Resolve conceptual answers into a reviewed request and input hashes without publication.', value_flags=frozenset({'--answers'}), required_flags=frozenset({'--answers'})),
+    VerbSpec('science', 'publish', positional='<operation>', purpose='Publish the reviewed request and rationale together in a new requests directory.', value_flags=frozenset({'--answers', '--destination', '--plan-sha256'}), required_flags=frozenset({'--answers', '--destination', '--plan-sha256'})),
     VerbSpec('science', 'input-plan', positional='<request.json>', purpose='Discover and hash local standalone diagnostic inputs without execution.'),
     VerbSpec('science', 'package', positional='<request.json>', purpose='Package exactly the reviewed local diagnostic inputs for permitted transport.', value_flags=frozenset({'--archive', '--plan-sha256'}), required_flags=frozenset({'--archive', '--plan-sha256'})),
     VerbSpec('science', 'import', positional='<archive.tar.gz>', purpose='Verify and import diagnostic evidence into the captured local workspace without replacing outputs.', value_flags=frozenset({'--sha256'}), required_flags=frozenset({'--sha256'})),
@@ -17,7 +24,7 @@ VERB_SPECS = (
 def run(invocation):
     from ..client_cli import ClientRefusal
     verb, args = invocation.spec.verb, invocation.positionals
-    if verb in {'input-plan', 'package', 'import', 'custody', 'verify-custody'}:
+    if verb in {'sae-check', 'sae-show', 'sae-pin-plan', 'sae-pin', 'interview', 'draft', 'publish', 'input-plan', 'package', 'import', 'custody', 'verify-custody'}:
         from .diagnostic_commands import local
         return local(invocation)
     if len(args) != (0 if verb == 'list' else 1):

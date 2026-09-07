@@ -93,14 +93,14 @@
           "method": "POST",
           "path": "/api/science/plan",
           "serviceRole": "both",
-          "authorityReason": "Inspect staged standalone diagnostic inputs and execution resources without execution or authorship."
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
         },
         {
           "id": "post-science-submit",
           "method": "POST",
           "path": "/api/science/submit",
           "serviceRole": "both",
-          "authorityReason": "Execute a reviewed standalone diagnostic and retain its scientific output type."
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
         }
       ],
       "access": {
@@ -130,14 +130,14 @@
           "method": "POST",
           "path": "/api/science/plan",
           "serviceRole": "both",
-          "authorityReason": "Inspect staged standalone diagnostic inputs and execution resources without execution or authorship."
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
         },
         {
           "id": "post-science-submit",
           "method": "POST",
           "path": "/api/science/submit",
           "serviceRole": "both",
-          "authorityReason": "Execute a reviewed standalone diagnostic and retain its scientific output type."
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
         }
       ],
       "access": {
@@ -152,21 +152,36 @@
       "method": "style",
       "title": "Rescore recorded style",
       "engineCLI": "steerlab-server experiment rescore-style <study> --source <run> --json",
-      "mac": "steerlab-cli experiment rescore-style <study> --run <run> --json",
-      "http": null,
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
       "compute": "cpu",
       "outputs": [
         "runDirectory",
         "reasoning-style.csv",
         "reasoning-style.json"
       ],
-      "restriction": "Pinned taxonomy and source epoch admission; permitted measurement-only drift is recorded by the owner. Source run is never rewritten.",
-      "actions": [],
+      "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+        }
+      ],
       "access": {
-        "status": "engineOnly",
-        "client": null,
-        "macCLI": null,
-        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
       }
     },
     {
@@ -271,7 +286,7 @@
           "method": "POST",
           "path": "/api/reader/score",
           "serviceRole": "workbench",
-          "authorityReason": "Exact RepE reader inference over the resident model — proxied to the interactive worker."
+          "authorityReason": "Exact RepE reader inference over the resident model \u2014 proxied to the interactive worker."
         }
       ],
       "access": {
@@ -306,7 +321,7 @@
           "method": "POST",
           "path": "/api/finetune/train",
           "serviceRole": "runner",
-          "authorityReason": "Runs the LoRA training itself — GPU compute this deployment executes."
+          "authorityReason": "Runs the LoRA training itself \u2014 GPU compute this deployment executes."
         },
         {
           "id": "post-finetune-submit",
@@ -348,7 +363,7 @@
           "method": "POST",
           "path": "/api/jlens/lenses/acquire",
           "serviceRole": "workbench",
-          "authorityReason": "Fetches a lens into the HF cache. A cache fetch in shape, but the only consumer is the J-lens workbench — no batch verb needs a lens."
+          "authorityReason": "Fetches a lens into the HF cache. A cache fetch in shape, but the only consumer is the J-lens workbench \u2014 no batch verb needs a lens."
         },
         {
           "id": "post-jlens-lenses-import",
@@ -390,7 +405,7 @@
           "method": "POST",
           "path": "/api/jlens/g0",
           "serviceRole": "workbench",
-          "authorityReason": "The G0 feasibility gate — loads the model and generates, for the app's lens screen."
+          "authorityReason": "The G0 feasibility gate \u2014 loads the model and generates, for the app's lens screen."
         },
         {
           "id": "post-jlens-probe",
@@ -471,23 +486,31 @@
       }
     },
     {
-      "id": "sae",
+      "id": "sae-candidates",
       "method": "sae",
-      "title": "Sae",
+      "title": "Inspect and pin an SAE roster",
       "engineCLI": "steerlab-server sae --help",
-      "mac": "Read this guide; use the named existing pane/API or engine CLI.",
-      "http": null,
-      "compute": "existingOwner",
+      "mac": "Research methods: Inspect or pin SAE roster. Both clients: science sae-check/sae-pin-plan/sae-pin.",
+      "http": "POST /api/science/workspace/{action}",
+      "compute": "cpu",
       "outputs": [
         "See the selected operation public response and immutable artifact records."
       ],
-      "restriction": "Engine CLI; use the selected subcommand help. No generic submitted-study replacement.",
-      "actions": [],
+      "restriction": "Workbench-only authorship. Inspect warnings, review external manifest and roster hashes, then pin the unchanged draft. Pinning is neither qualification nor promotion.",
+      "actions": [
+        {
+          "id": "post-science-workspace",
+          "method": "POST",
+          "path": "/api/science/workspace/{action}",
+          "serviceRole": "workbench",
+          "authorityReason": "Author and publish local scientific requests, review and pin SAE rosters, or verify/import local custody; runner staging remains isolated execution."
+        }
+      ],
       "access": {
-        "status": "engineOnly",
-        "client": null,
-        "macCLI": null,
-        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
       }
     },
     {
@@ -495,19 +518,34 @@
       "method": "optimization",
       "title": "OptVec train",
       "engineCLI": "steerlab-server optvec train --help",
-      "mac": "Agents / Optimizations for exposed controls; engine CLI for this exact operation.",
-      "http": null,
-      "compute": "existingOwner",
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
+      "compute": "gpu",
       "outputs": [
         "Operation report and its provenance; inspect the declared run/config output."
       ],
-      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission.",
-      "actions": [],
+      "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+        }
+      ],
       "access": {
-        "status": "engineOnly",
-        "client": null,
-        "macCLI": null,
-        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
       }
     },
     {
@@ -515,19 +553,34 @@
       "method": "optimization",
       "title": "OptVec eval",
       "engineCLI": "steerlab-server optvec eval --help",
-      "mac": "Agents / Optimizations for exposed controls; engine CLI for this exact operation.",
-      "http": null,
-      "compute": "existingOwner",
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
+      "compute": "gpu",
       "outputs": [
         "Operation report and its provenance; inspect the declared run/config output."
       ],
-      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission.",
-      "actions": [],
+      "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+        }
+      ],
       "access": {
-        "status": "engineOnly",
-        "client": null,
-        "macCLI": null,
-        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
       }
     },
     {
@@ -535,19 +588,34 @@
       "method": "optimization",
       "title": "OptVec geometry",
       "engineCLI": "steerlab-server optvec geometry --help",
-      "mac": "Agents / Optimizations for exposed controls; engine CLI for this exact operation.",
-      "http": null,
-      "compute": "existingOwner",
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
+      "compute": "cpu",
       "outputs": [
         "Operation report and its provenance; inspect the declared run/config output."
       ],
-      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission.",
-      "actions": [],
+      "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+        }
+      ],
       "access": {
-        "status": "engineOnly",
-        "client": null,
-        "macCLI": null,
-        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
       }
     },
     {
@@ -555,19 +623,34 @@
       "method": "optimization",
       "title": "OptVec interpret",
       "engineCLI": "steerlab-server optvec interpret --help",
-      "mac": "Agents / Optimizations for exposed controls; engine CLI for this exact operation.",
-      "http": null,
-      "compute": "existingOwner",
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
+      "compute": "gpu",
       "outputs": [
         "Operation report and its provenance; inspect the declared run/config output."
       ],
-      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission.",
-      "actions": [],
+      "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+        }
+      ],
       "access": {
-        "status": "engineOnly",
-        "client": null,
-        "macCLI": null,
-        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
       }
     },
     {
@@ -575,19 +658,34 @@
       "method": "optimization",
       "title": "OptVec family",
       "engineCLI": "steerlab-server optvec family --help",
-      "mac": "Agents / Optimizations for exposed controls; engine CLI for this exact operation.",
-      "http": null,
-      "compute": "existingOwner",
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
+      "compute": "cpu",
       "outputs": [
         "Operation report and its provenance; inspect the declared run/config output."
       ],
-      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission.",
-      "actions": [],
+      "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+        }
+      ],
       "access": {
-        "status": "engineOnly",
-        "client": null,
-        "macCLI": null,
-        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
       }
     },
     {
@@ -595,19 +693,34 @@
       "method": "optimization",
       "title": "OptVec fracture",
       "engineCLI": "steerlab-server optvec fracture --help",
-      "mac": "Agents / Optimizations for exposed controls; engine CLI for this exact operation.",
-      "http": null,
-      "compute": "existingOwner",
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
+      "compute": "cpu",
       "outputs": [
         "Operation report and its provenance; inspect the declared run/config output."
       ],
-      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission.",
-      "actions": [],
+      "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+        }
+      ],
       "access": {
-        "status": "engineOnly",
-        "client": null,
-        "macCLI": null,
-        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
       }
     },
     {
@@ -615,39 +728,76 @@
       "method": "optimization",
       "title": "OptVec campaign",
       "engineCLI": "steerlab-server optvec campaign --help",
-      "mac": "Agents / Optimizations for exposed controls; engine CLI for this exact operation.",
-      "http": null,
-      "compute": "existingOwner",
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit; POST /api/science/campaign/{job_id}/{action}",
+      "compute": "cpu",
       "outputs": [
         "Operation report and its provenance; inspect the declared run/config output."
       ],
-      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission.",
-      "actions": [],
+      "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal. The first job materializes the campaign only. Cell submission and monitoring remain separate campaign operations. Use action status/plan with an empty body. Submit/cancel require the reviewed planSHA256 and confirmAction true. This performs one explicit queue top-up, never an unattended submission loop. After all cells finish, the ordinary science-export/fetch path captures the campaign and nested cell outputs.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+        },
+        {
+          "id": "post-science-campaign",
+          "method": "POST",
+          "path": "/api/science/campaign/{job_id}/{action}",
+          "serviceRole": "both",
+          "authorityReason": "Review and coordinate cells of a staged scientific campaign; numerical training remains runner execution."
+        }
+      ],
       "access": {
-        "status": "engineOnly",
-        "client": null,
-        "macCLI": null,
-        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
       }
     },
     {
-      "id": "optvec-jspace",
+      "id": "jspace",
       "method": "jspace",
-      "title": "OptVec jspace",
+      "title": "J-space analysis",
       "engineCLI": "steerlab-server optvec jspace --help",
-      "mac": "Agents / Optimizations for exposed controls; engine CLI for this exact operation.",
-      "http": null,
-      "compute": "existingOwner",
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
+      "compute": "gpu",
       "outputs": [
         "Operation report and its provenance; inspect the declared run/config output."
       ],
-      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission.",
-      "actions": [],
+      "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal. The batch owner currently requires OptVec artifact layer/dose metadata; J-space remains a separate method.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+        }
+      ],
       "access": {
-        "status": "engineOnly",
-        "client": null,
-        "macCLI": null,
-        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
       }
     },
     {
@@ -655,19 +805,167 @@
       "method": "optimization",
       "title": "OptVec gradient",
       "engineCLI": "steerlab-server optvec gradient --help",
-      "mac": "Agents / Optimizations for exposed controls; engine CLI for this exact operation.",
-      "http": null,
-      "compute": "existingOwner",
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
+      "compute": "gpu",
       "outputs": [
         "Operation report and its provenance; inspect the declared run/config output."
       ],
-      "restriction": "Engine operation with a closed config. No invented study verb or API alias; campaign owns its scheduler submission.",
-      "actions": [],
+      "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+        }
+      ],
       "access": {
-        "status": "engineOnly",
-        "client": null,
-        "macCLI": null,
-        "restriction": "Python-engine execution only: this operation has no managed HTTP adapter. Use the exact engineCLI on an approved Python compute host; the Mac app and both agent clients expose this restriction and command. Native MLX execution and managed remote submission are not supported for this operation."
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      }
+    },
+    {
+      "id": "optvec-gradient-mint",
+      "method": "optimization",
+      "title": "Mint a gradient comparison vector",
+      "engineCLI": "steerlab-server optvec gradient mint --help",
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
+      "compute": "cpu",
+      "outputs": [
+        "Diagnostic path and per-layer stability summary"
+      ],
+      "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      }
+    },
+    {
+      "id": "sae-family-report",
+      "method": "sae",
+      "title": "Report an SAE feature family",
+      "engineCLI": "steerlab-server sae family-report --help",
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
+      "compute": "cpu",
+      "outputs": [
+        "Diagnostic path and per-layer stability summary"
+      ],
+      "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      }
+    },
+    {
+      "id": "sae-qualification-record",
+      "method": "sae",
+      "title": "Record reviewed SAE qualification",
+      "engineCLI": "steerlab-server sae qualification record --help",
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
+      "compute": "cpu",
+      "outputs": [
+        "Diagnostic path and per-layer stability summary"
+      ],
+      "restriction": "Explicit config, reviewed input hashes and a fresh engine plan are required. GPU work requires immutable model revisions. Outputs are new records; local/Slurm execution uses the existing scientific owner. Native MLX numerical equivalence is not claimed. Remote training and analysis outputs are retained; the diagnostic cleanup policy does not authorize their removal.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      }
+    },
+    {
+      "id": "sae-qualification-show",
+      "method": "sae",
+      "title": "Inspect an SAE qualification record",
+      "engineCLI": "steerlab-server sae qualification show <path> --json",
+      "mac": "Research methods: Inspect or pin SAE roster; Show qualification record. Both clients: science sae-show.",
+      "http": "POST /api/science/workspace/{action}",
+      "compute": "cpu",
+      "outputs": [
+        "See the selected operation public response and immutable artifact records."
+      ],
+      "restriction": "Read-only inspection of existing recorded qualification. No status is inferred beyond the record.",
+      "actions": [
+        {
+          "id": "post-science-workspace",
+          "method": "POST",
+          "path": "/api/science/workspace/{action}",
+          "serviceRole": "workbench",
+          "authorityReason": "Author and publish local scientific requests, review and pin SAE rosters, or verify/import local custody; runner staging remains isolated execution."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
       }
     }
   ],

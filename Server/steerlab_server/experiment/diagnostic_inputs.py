@@ -8,6 +8,9 @@ def plan(request, root):
     from ..api.scientific_execution import request_document
     from . import paths
     request = request_document(request)
+    from . import managed_methods, managed_inputs
+    if request['operation'] in managed_methods.OPERATIONS:
+        return managed_inputs.plan(request, root)
     root = Path(root).resolve(); p = request['parameters']; files = set()
     def add(path):
         path = Path(path)

@@ -178,6 +178,7 @@ public final class WorkspaceStore {
         "prompts/authoring-prompts/reader-pairs.md",
         "prompts/authoring-prompts/validation-set.md",
         "prompts/method-guides/catalog.json",
+        "prompts/method-guides/workflows.json",
         "prompts/method-guides/extraction.md",
         "prompts/method-guides/readers.md",
         "prompts/method-guides/optimization.md",

@@ -13,6 +13,8 @@ would strand provenance that those artifacts assert (plan §4.2).
 
 from __future__ import annotations
 
+from . import artifact_paths
+
 import errno
 import os
 
@@ -126,7 +128,7 @@ def load_layer(record: JLensRecord, layer: int, *, root: str | None = None):
             f"layer {layer} is not a fitted source layer of '{record.lensID}' "
             f"(have {record.sourceLayers[0]}..{record.sourceLayers[-1]}; the "
             f"target layer {record.targetLayer} has no Jacobian by construction)")
-    path = paths.resolve(record.converted.path, root)
+    path = artifact_paths.converted_file(record.lensID, record.converted.path, root)
     if not os.path.exists(path):
         raise JLensError(
             f"converted lens artifact missing at '{path}' — it is a derived "

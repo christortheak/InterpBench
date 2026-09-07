@@ -415,9 +415,28 @@ type; these standalone diagnostics have no checkpoint resume. Existing HTTP
 scientific actions are listed with method, route and service role by `science
 operation`. Use `runner science-call` (Mac `remote science-call`) or the app's
 Scientific workflows actions with a method-guide request; the same server gates
-apply. Operations marked `engineOnly` still require their named Python engine
-CLI on the compute host. Do not invent a client study verb or scheduler script. OptVec's nine listed verbs include exploratory `jspace`
-analysis and `gradient`; J-space is not an optimization/training operation.
+apply. J-space has its own public operation `jspace`, separate from OptVec
+training. Its current batch owner requires OptVec artifact metadata for layer
+and dose; the historical `optvec jspace` command is an implementation namespace.
+Use `science interview <operation>` for the shared method form and decisions,
+then `science draft <operation> --answers <answers.json>` to review resolved input
+hashes. Publish with `science publish <operation> --answers <answers.json>
+--destination requests/<new-name> --plan-sha256 <reviewed-hash>`. Add `--json`
+to every command. Keep numeric answer values as strings, and preserve original
+advanced JSON; the owner writes exact integer seeds. The app authors through
+this same owner. Publication creates a request plus its review, not a study or
+execution authorization. Package and stage it before reviewing the engine plan.
+
+Managed operations include style rescoring, SAE family/qualification reports,
+OptVec training/evaluation/geometry/fracture/interpretation/family/gradient/mint,
+and separate J-space analysis. A campaign job first materializes its cells;
+`science-call optvec-campaign --action post-science-campaign` reaches status/plan
+or explicitly confirmed submit/cancel actions. Inspect uncertain scheduler
+outcomes before another top-up. Successful campaign export requires every cell
+complete and scheduler termination established. Non-diagnostic scientific outputs
+remain on the runner: the battery/stability cleanup policy does not cover them.
+For offline SAE roster work use `science sae-check`, `sae-show`, `sae-pin-plan`
+and `sae-pin`; the pin needs the reviewed external hash and an unchanged draft.
 Discovery or a passing source test does not qualify a numerical claim.
 
 CPU completion is available through

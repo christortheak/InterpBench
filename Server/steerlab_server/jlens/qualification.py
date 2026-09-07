@@ -65,6 +65,8 @@ is a foldable RMSNorm (:mod:`norm_convention`).
 
 from __future__ import annotations
 
+from . import artifact_paths
+
 import hashlib
 import json
 import os
@@ -340,7 +342,7 @@ def verify_converted(record, root: str | None = None) -> None:
 
     if record.converted is None or not record.converted.sha256:
         return
-    path = paths.resolve(record.converted.path, root)
+    path = artifact_paths.converted_file(record.lensID, record.converted.path, root)
     if not os.path.exists(path):
         raise QualificationRefused(
             f"converted lens artifact missing at '{path}' — it is a derived "

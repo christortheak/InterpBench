@@ -1,0 +1,720 @@
+{
+  "schemaVersion": 1,
+  "answerSchema": {
+    "purpose": "Research question in plain language",
+    "claim": "Proposed claim and its limits",
+    "controls": "Comparisons and controls",
+    "selection": "Training/selection/test separation or explanation of why it does not apply",
+    "fields": "Map of field IDs to text values from this interview",
+    "advanced": "Optional original config fields; cannot overwrite form fields"
+  },
+  "operations": [
+    {
+      "id": "optvec-train",
+      "title": "Train an optimized intervention",
+      "method": "optimization",
+      "purpose": "Change a declared behavior while preserving specified anchors and capability.",
+      "fields": [
+        {
+          "id": "modelID",
+          "label": "Model to execute",
+          "kind": "text",
+          "required": true,
+          "help": "Choose the prepared model; this does not acquire weights."
+        },
+        {
+          "id": "revision",
+          "label": "Model commit",
+          "kind": "text",
+          "required": true,
+          "help": "Inspect the immutable 40-character model commit. Never type a guessed pin."
+        },
+        {
+          "id": "layer",
+          "label": "Injection layer",
+          "kind": "integer",
+          "required": true,
+          "help": ""
+        },
+        {
+          "id": "alphaNormFactor",
+          "label": "Dose in residual-norm units",
+          "kind": "number",
+          "required": false,
+          "help": "Multiplied by the residual norm; this is not the J-space artifact-norm multiple.",
+          "default": "0.1"
+        },
+        {
+          "id": "residualNormArtifact",
+          "label": "Artifact supplying the residual norm",
+          "kind": "artifact",
+          "required": false,
+          "help": "Choose an inspected artifact with a residual norm table, or explicitly provide alphaAbsolute under advanced settings."
+        },
+        {
+          "id": "datasets.targetTrain",
+          "label": "Target training items",
+          "kind": "fileRef",
+          "required": true,
+          "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        },
+        {
+          "id": "datasets.targetVal",
+          "label": "Selection / validation items",
+          "kind": "fileRef",
+          "required": false,
+          "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        },
+        {
+          "id": "datasets.anchorTrain",
+          "label": "Behaviors to preserve",
+          "kind": "fileRef",
+          "required": true,
+          "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        },
+        {
+          "id": "datasets.anchorVal",
+          "label": "Anchor validation items",
+          "kind": "fileRef",
+          "required": false,
+          "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        },
+        {
+          "id": "datasets.capabilityTrain",
+          "label": "Capability training controls",
+          "kind": "fileRef",
+          "required": true,
+          "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        },
+        {
+          "id": "stepsMax",
+          "label": "Maximum optimization steps",
+          "kind": "integer",
+          "required": false,
+          "help": "",
+          "default": "500"
+        },
+        {
+          "id": "seed",
+          "label": "Random seed",
+          "kind": "integer",
+          "required": false,
+          "help": "Record the seed before execution.",
+          "default": "0"
+        },
+        {
+          "id": "name",
+          "label": "Name for this reading",
+          "kind": "text",
+          "required": false,
+          "help": "A new immutable result will be created."
+        }
+      ],
+      "claimBoundary": "Training objective improvement is not held-out behavioral validation.",
+      "questions": [
+        "What behavior should change, and in which direction?",
+        "Which judgments and capabilities must remain stable?",
+        "Is checkpoint selection based on validation, or are fixed steps predeclared? Keep final test data separate."
+      ]
+    },
+    {
+      "id": "optvec-eval",
+      "title": "Evaluate an optimized intervention",
+      "method": "optimization",
+      "purpose": "Measure held-out behavior, capability costs and dose dependence.",
+      "fields": [
+        {
+          "id": "modelID",
+          "label": "Model to execute",
+          "kind": "text",
+          "required": true,
+          "help": "Choose the prepared model; this does not acquire weights."
+        },
+        {
+          "id": "revision",
+          "label": "Model commit",
+          "kind": "text",
+          "required": true,
+          "help": "Inspect the immutable 40-character model commit. Never type a guessed pin."
+        },
+        {
+          "id": "vectorArtifact",
+          "label": "Intervention to test",
+          "kind": "artifact",
+          "required": true,
+          "help": ""
+        },
+        {
+          "id": "datasets.targetTest",
+          "label": "Held-out target test items",
+          "kind": "fileRef",
+          "required": true,
+          "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        },
+        {
+          "id": "datasets.anchorTest",
+          "label": "Held-out anchor items",
+          "kind": "fileRef",
+          "required": false,
+          "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        },
+        {
+          "id": "datasets.capabilityEval",
+          "label": "Held-out capability items",
+          "kind": "fileRef",
+          "required": false,
+          "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        },
+        {
+          "id": "neutralTexts",
+          "label": "Neutral fluency texts",
+          "kind": "fileRef",
+          "required": false,
+          "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        },
+        {
+          "id": "alphaMultiples",
+          "label": "Multiples of the trained dose",
+          "kind": "numbers",
+          "required": true,
+          "help": "",
+          "default": "0.5, 1, 2"
+        },
+        {
+          "id": "seed",
+          "label": "Random seed",
+          "kind": "integer",
+          "required": false,
+          "help": "Record the seed before execution.",
+          "default": "0"
+        },
+        {
+          "id": "name",
+          "label": "Name for this reading",
+          "kind": "text",
+          "required": false,
+          "help": "A new immutable result will be created."
+        }
+      ],
+      "claimBoundary": "Test results cannot be reused to select the training checkpoint without declaring that selection.",
+      "questions": [
+        "Which files were kept out of training and checkpoint selection?",
+        "Which dose grid and controls were fixed before seeing these results?"
+      ]
+    },
+    {
+      "id": "optvec-geometry",
+      "title": "Compare vector geometry",
+      "method": "optimization",
+      "purpose": "Describe similarity and multiplicity among declared intervention artifacts.",
+      "fields": [
+        {
+          "id": "artifacts",
+          "label": "Vector artifacts, one per line",
+          "kind": "artifacts",
+          "required": true,
+          "help": ""
+        },
+        {
+          "id": "layer",
+          "label": "Layer (optional consistency check)",
+          "kind": "integer",
+          "required": false,
+          "help": ""
+        },
+        {
+          "id": "name",
+          "label": "Name for this reading",
+          "kind": "text",
+          "required": false,
+          "help": "A new immutable result will be created."
+        }
+      ],
+      "claimBoundary": "Geometric similarity or clustering is not behavioral equivalence or a calibrated statistical test.",
+      "questions": [
+        "Which independent solutions are being compared?",
+        "What would similarity or separation mean for the research question?"
+      ]
+    },
+    {
+      "id": "optvec-fracture",
+      "title": "Describe solution basins",
+      "method": "optimization",
+      "purpose": "Describe similarity and multiplicity among declared intervention artifacts.",
+      "fields": [
+        {
+          "id": "artifacts",
+          "label": "Vector artifacts, one per line",
+          "kind": "artifacts",
+          "required": true,
+          "help": ""
+        },
+        {
+          "id": "layer",
+          "label": "Layer (optional consistency check)",
+          "kind": "integer",
+          "required": false,
+          "help": ""
+        },
+        {
+          "id": "items",
+          "label": "Artifact-to-item grouping",
+          "kind": "documentFile",
+          "required": false,
+          "help": "Choose a JSON map prepared from declared item identities; never infer grouping from filenames."
+        },
+        {
+          "id": "gradients",
+          "label": "Optional gradient tensor file",
+          "kind": "file",
+          "required": false,
+          "help": ""
+        },
+        {
+          "id": "threshold",
+          "label": "Clustering cosine threshold",
+          "kind": "number",
+          "required": false,
+          "help": "",
+          "default": "0.8"
+        },
+        {
+          "id": "name",
+          "label": "Name for this reading",
+          "kind": "text",
+          "required": false,
+          "help": "A new immutable result will be created."
+        }
+      ],
+      "claimBoundary": "Geometric similarity or clustering is not behavioral equivalence or a calibrated statistical test.",
+      "questions": [
+        "Which independent solutions are being compared?",
+        "What would similarity or separation mean for the research question?"
+      ]
+    },
+    {
+      "id": "optvec-interpret",
+      "title": "Interpret an optimized intervention",
+      "method": "optimization",
+      "purpose": "Read logit-lens, probe, optional SAE/J-lens and library measurements.",
+      "fields": [
+        {
+          "id": "modelID",
+          "label": "Model to execute",
+          "kind": "text",
+          "required": true,
+          "help": "Choose the prepared model; this does not acquire weights."
+        },
+        {
+          "id": "revision",
+          "label": "Model commit",
+          "kind": "text",
+          "required": true,
+          "help": "Inspect the immutable 40-character model commit. Never type a guessed pin."
+        },
+        {
+          "id": "vectorArtifact",
+          "label": "Intervention to inspect",
+          "kind": "artifact",
+          "required": true,
+          "help": ""
+        },
+        {
+          "id": "probePrompts",
+          "label": "Held-out probe prompts",
+          "kind": "fileRef",
+          "required": false,
+          "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        },
+        {
+          "id": "alphaMultiples",
+          "label": "Artifact dose multiples",
+          "kind": "numbers",
+          "required": false,
+          "help": "",
+          "default": "1"
+        },
+        {
+          "id": "jlensLensID",
+          "label": "Optional imported J-lens ID",
+          "kind": "text",
+          "required": false,
+          "help": ""
+        },
+        {
+          "id": "seed",
+          "label": "Random seed",
+          "kind": "integer",
+          "required": false,
+          "help": "Record the seed before execution.",
+          "default": "0"
+        },
+        {
+          "id": "name",
+          "label": "Name for this reading",
+          "kind": "text",
+          "required": false,
+          "help": "A new immutable result will be created."
+        }
+      ],
+      "claimBoundary": "Self-explanations and readouts are suggestive measurements, not independent causal evidence. Optional failed stages remain visible.",
+      "questions": [
+        "Which readouts are relevant to the proposed claim?",
+        "Which optional stages and comparison libraries are predeclared?"
+      ]
+    },
+    {
+      "id": "optvec-family",
+      "title": "Summarize interpretation readings",
+      "method": "optimization",
+      "purpose": "Compare multiple completed interpretation reports.",
+      "fields": [
+        {
+          "id": "interpretRuns",
+          "label": "Interpretation runs, one per line",
+          "kind": "files",
+          "required": true,
+          "help": ""
+        },
+        {
+          "id": "matchNullPercentile",
+          "label": "Descriptive match percentile",
+          "kind": "number",
+          "required": false,
+          "help": "",
+          "default": "95"
+        },
+        {
+          "id": "name",
+          "label": "Name for this reading",
+          "kind": "text",
+          "required": false,
+          "help": "A new immutable result will be created."
+        }
+      ],
+      "claimBoundary": "A family summary reports descriptive matches; it does not establish a causal taxonomy.",
+      "questions": [
+        "Which completed interpretation readings belong in this family?"
+      ]
+    },
+    {
+      "id": "optvec-gradient",
+      "title": "Survey per-item gradient directions",
+      "method": "optimization",
+      "purpose": "Measure local derivatives and their finite-dose behavior.",
+      "fields": [
+        {
+          "id": "modelID",
+          "label": "Model to execute",
+          "kind": "text",
+          "required": true,
+          "help": "Choose the prepared model; this does not acquire weights."
+        },
+        {
+          "id": "revision",
+          "label": "Model commit",
+          "kind": "text",
+          "required": true,
+          "help": "Inspect the immutable 40-character model commit. Never type a guessed pin."
+        },
+        {
+          "id": "layer",
+          "label": "Injection layer",
+          "kind": "integer",
+          "required": true,
+          "help": ""
+        },
+        {
+          "id": "targetTrain",
+          "label": "Survey items",
+          "kind": "fileRef",
+          "required": true,
+          "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        },
+        {
+          "id": "alphaNormFactor",
+          "label": "Dose in residual-norm units",
+          "kind": "number",
+          "required": false,
+          "help": "Multiplied by the residual norm; this is not the J-space artifact-norm multiple.",
+          "default": "0.1"
+        },
+        {
+          "id": "residualNormArtifact",
+          "label": "Artifact supplying the residual norm",
+          "kind": "artifact",
+          "required": false,
+          "help": "Choose an inspected artifact with a residual norm table, or explicitly provide alphaAbsolute under advanced settings."
+        },
+        {
+          "id": "doseLadder",
+          "label": "Positive dose fractions",
+          "kind": "numbers",
+          "required": true,
+          "help": "",
+          "default": "0.25, 0.5, 1"
+        },
+        {
+          "id": "name",
+          "label": "Name for this reading",
+          "kind": "text",
+          "required": false,
+          "help": "A new immutable result will be created."
+        }
+      ],
+      "claimBoundary": "An alpha-to-zero derivative need not describe effects at a usable finite dose.",
+      "questions": [
+        "Which item population is being surveyed?",
+        "What dose ladder tests the local approximation?"
+      ]
+    },
+    {
+      "id": "optvec-gradient-mint",
+      "title": "Publish one surveyed direction",
+      "method": "optimization",
+      "purpose": "Create a new vector artifact from an explicitly selected survey item.",
+      "fields": [
+        {
+          "id": "surveyRun",
+          "label": "Completed gradient survey run",
+          "kind": "file",
+          "required": true,
+          "help": ""
+        },
+        {
+          "id": "itemID",
+          "label": "Explicit item ID",
+          "kind": "text",
+          "required": true,
+          "help": ""
+        },
+        {
+          "id": "name",
+          "label": "Name for this reading",
+          "kind": "text",
+          "required": false,
+          "help": "A new immutable result will be created."
+        }
+      ],
+      "claimBoundary": "Selecting an item after inspection is a selection decision; record the rationale before downstream testing.",
+      "questions": [
+        "Why was this item selected, and where will its direction be tested independently?"
+      ]
+    },
+    {
+      "id": "jspace",
+      "title": "Analyze an intervention in J-space",
+      "method": "jspace",
+      "purpose": "Inspect downstream residual changes through an imported J-lens. This does not optimize or train a vector.",
+      "fields": [
+        {
+          "id": "modelID",
+          "label": "Model to execute",
+          "kind": "text",
+          "required": true,
+          "help": "Choose the prepared model; this does not acquire weights."
+        },
+        {
+          "id": "revision",
+          "label": "Model commit",
+          "kind": "text",
+          "required": true,
+          "help": "Inspect the immutable 40-character model commit. Never type a guessed pin."
+        },
+        {
+          "id": "vectorArtifacts",
+          "label": "Intervention artifacts, one per line",
+          "kind": "artifacts",
+          "required": true,
+          "help": ""
+        },
+        {
+          "id": "lensID",
+          "label": "Imported J-lens ID",
+          "kind": "text",
+          "required": true,
+          "help": ""
+        },
+        {
+          "id": "probeItems",
+          "label": "Pinned choice-row probes",
+          "kind": "fileRef",
+          "required": true,
+          "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        },
+        {
+          "id": "observationLayers",
+          "label": "Observation layers (comma-separated)",
+          "kind": "integers",
+          "required": false,
+          "help": "Only fitted source layers at or above injection; leave blank for the engine\u2019s eligible ladder."
+        },
+        {
+          "id": "alphaMultiple",
+          "label": "Multiple of the artifact\u2019s own norm",
+          "kind": "number",
+          "required": true,
+          "help": "This is not ordinary residual-norm alpha.",
+          "default": "1"
+        },
+        {
+          "id": "nullSeed",
+          "label": "Matched-direction null seed",
+          "kind": "integer",
+          "required": false,
+          "help": "",
+          "default": "20260810"
+        },
+        {
+          "id": "nullDraws",
+          "label": "Matched-direction comparisons",
+          "kind": "integer",
+          "required": false,
+          "help": "",
+          "default": "1"
+        },
+        {
+          "id": "name",
+          "label": "Name for this reading",
+          "kind": "text",
+          "required": false,
+          "help": "A new immutable result will be created."
+        }
+      ],
+      "claimBoundary": "Arithmetic fidelity, predictive readout and behavioral/causal evidence are different. This operation supplies no behavioral causal test; null draws are comparators, not calibrated p-values. The current batch implementation requires OptVec artifact metadata for layer and dose; other artifact types are not yet accepted.",
+      "questions": [
+        "Which intervention, lens and probe distribution answer the question?",
+        "What observation layers and dose are justified?",
+        "What separate controlled behavioral study will test any causal interpretation?"
+      ]
+    },
+    {
+      "id": "rescore-style",
+      "title": "Rescore existing generations for style",
+      "method": "style",
+      "purpose": "Apply a pinned reasoning-style taxonomy to a completed generation run.",
+      "fields": [
+        {
+          "id": "experiment",
+          "label": "Study name",
+          "kind": "text",
+          "required": true,
+          "help": ""
+        },
+        {
+          "id": "sourceRun",
+          "label": "Completed generation run",
+          "kind": "file",
+          "required": true,
+          "help": ""
+        }
+      ],
+      "claimBoundary": "Rescoring changes measurement, not the original generations. The source epoch gate still applies.",
+      "questions": [
+        "Which taxonomy is pinned, and why does it measure the intended construct?",
+        "Is this a planned measurement or a post-hoc analysis?"
+      ]
+    },
+    {
+      "id": "sae-family-report",
+      "title": "Compare intervention families",
+      "method": "sae",
+      "purpose": "Produce a descriptive cross-family report from artifacts and behavioral evidence.",
+      "fields": [
+        {
+          "id": "artifacts",
+          "label": "Family entries",
+          "kind": "documentFile",
+          "required": true,
+          "help": "Choose the reviewed JSON array of vector references and/or labeled behavior-only entries."
+        },
+        {
+          "id": "discoverPromotions",
+          "label": "Inspect promotion provenance",
+          "kind": "boolean",
+          "required": false,
+          "help": "",
+          "default": "true"
+        },
+        {
+          "id": "name",
+          "label": "Name for this reading",
+          "kind": "text",
+          "required": false,
+          "help": "A new immutable result will be created."
+        }
+      ],
+      "claimBoundary": "Behavioral deltas are copied from their declared evidence; this report adds no inferential statistics.",
+      "questions": [
+        "Which family members and behavioral sources are comparable?"
+      ]
+    },
+    {
+      "id": "sae-qualification-record",
+      "title": "Record SAE feature qualification",
+      "method": "sae",
+      "purpose": "Bind declared qualification evidence to the exact imported feature.",
+      "fields": [
+        {
+          "id": "artifact",
+          "label": "Imported feature artifact",
+          "kind": "artifact",
+          "required": true,
+          "help": ""
+        },
+        {
+          "id": "inputs",
+          "label": "Reviewed qualification inputs",
+          "kind": "documentFile",
+          "required": true,
+          "help": "Use the shipped SAE qualification template and an independent reviewer; select the completed inputs file."
+        }
+      ],
+      "claimBoundary": "A qualification declaration must be supported by the feature identity, dose coverage and evidence; it does not seat an agent or prove a broad construct.",
+      "questions": [
+        "Who reviewed the feature identity, construct probes, sign/dose coverage and final rationale?"
+      ]
+    },
+    {
+      "id": "optvec-campaign",
+      "title": "Prepare an optimization campaign",
+      "method": "optimization",
+      "purpose": "Materialize a reviewed grid of training cells; scheduler top-up is a separate explicit action.",
+      "fields": [
+        {
+          "id": "name",
+          "label": "Campaign name",
+          "kind": "text",
+          "required": true,
+          "help": ""
+        },
+        {
+          "id": "baseConfig",
+          "label": "Reviewed base training configuration",
+          "kind": "documentFile",
+          "required": true,
+          "help": ""
+        },
+        {
+          "id": "grid",
+          "label": "Reviewed grid of layers, seeds and conditions",
+          "kind": "documentFile",
+          "required": true,
+          "help": ""
+        },
+        {
+          "id": "slurm",
+          "label": "Reviewed scheduler settings",
+          "kind": "documentFile",
+          "required": true,
+          "help": ""
+        }
+      ],
+      "claimBoundary": "A materialized campaign is not completed training. Cell outcomes and uncertain submissions remain individually visible.",
+      "questions": [
+        "Which axes and stopping/attempt budgets were chosen before results?",
+        "Which resource and queue policies apply to every cell?"
+      ]
+    }
+  ]
+}

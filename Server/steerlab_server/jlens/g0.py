@@ -48,6 +48,8 @@ Server-only (hard requirement); any model with a published lens.
 
 from __future__ import annotations
 
+from . import artifact_paths
+
 import json
 import os
 import time
@@ -268,7 +270,7 @@ def _check_acquisition(record, *, root: str | None) -> CheckResult:
     if record.converted is None:
         problems.append("the lens has no converted per-layer artifact")
     else:
-        path = paths.resolve(record.converted.path, root)
+        path = artifact_paths.converted_file(record.lensID, record.converted.path, root)
         measured["convertedPath"] = record.converted.path
         measured["convertedDtype"] = record.converted.dtype
         measured["convertedLayerCount"] = record.converted.layerCount

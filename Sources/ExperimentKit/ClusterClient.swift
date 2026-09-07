@@ -2773,9 +2773,11 @@ public struct ClusterClient: Sendable {
         }
         let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)
+        struct MutationStatus: Decodable { let changed: Bool? }
+        let reported = (try? JSONDecoder().decode(MutationStatus.self, from: data))?.changed
         return .object(["operation": .string(operation), "action": .string(actionID),
                         "responseJSON": .string(String(decoding: data, as: UTF8.self)),
-                        "changed": .bool(resolved.method != "GET")])
+                        "changed": .bool(reported ?? (resolved.method != "GET"))])
     }
 
     /// Download to a fixed name; the archive owner verifies its exported digest

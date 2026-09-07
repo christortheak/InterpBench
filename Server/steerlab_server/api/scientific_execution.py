@@ -32,12 +32,15 @@ def request_document(raw):
     if not isinstance(raw, dict) or set(raw) != {'operation', 'parameters'}:
         raise ScientificRefusal('Supply exactly operation and parameters.')
     operation, parameters = raw['operation'], raw['parameters']
+    from ..experiment import managed_methods
+    if isinstance(operation, str) and operation in managed_methods.OPERATIONS:
+        return managed_methods.request(operation, parameters)
     allowed = {
         'battery': {'batteryFile', 'agents', 'modelID', 'revision', 'alphaUnits', 'dtype', 'device'},
         'stability': {'experiment', 'concept', 'resamples', 'fraction', 'seed', 'orderShuffles', 'dtype', 'device'},
     }
     if not isinstance(operation, str) or operation not in allowed or not isinstance(parameters, dict) or set(parameters) - allowed[operation]:
-        raise ScientificRefusal('Choose battery or stability and only its declared parameters.')
+        raise ScientificRefusal('Choose a catalogued scientific operation and only its declared parameters.')
     p = dict(parameters)
     for key in ('dtype', 'device', 'modelID', 'revision', 'alphaUnits', 'batteryFile', 'experiment', 'concept'):
         if key in p and (not isinstance(p[key], str) or not p[key].strip()):
@@ -81,6 +84,14 @@ def workspace_file(root, relative):
 def input_plan(request, root):
     request = request_document(request)
     p = request['parameters']
+    from ..experiment import managed_methods, managed_inputs
+    if request['operation'] in managed_methods.OPERATIONS:
+        from . import managed_validation
+        captured = managed_inputs.plan(request, root)
+        validated = managed_validation.validate(request, root)
+        return {'request': request, 'root': str(Path(root).resolve()), 'inputSHA256': digest(captured),
+                'models': validated['models'], 'effectiveConfig': validated['effectiveConfig'],
+                'resumable': False, 'compute': managed_methods.METHODS[request['operation']].compute if request['operation'] in managed_methods.METHODS else 'cpu'}
     if request['operation'] == 'battery':
         from ..experiment import battery_run
         workspace_file(root, p['batteryFile'])
@@ -124,14 +135,14 @@ def plan(request, profile):
     with submitting():
         if server_role(profile) == 'gpu-session':
             raise ScientificRefusal('Submit through the controller; session workers own no durable job queue.')
-        if server_role(profile) == 'controller' and profile.executor != 'slurm':
-            raise ScientificRefusal('A controller must submit this GPU work through Slurm.')
         execution_root = profile.root
         staged_digest = None
         if isinstance(request, dict) and set(request) == {'inputBundleSHA256'}:
             from . import diagnostic_transport
             staged_digest = request['inputBundleSHA256']
             request, execution_root = diagnostic_transport.resolve(staged_digest, profile)
+        if isinstance(request, dict) and request.get('operation') == 'optvec-campaign' and not staged_digest:
+            raise ScientificRefusal('Managed campaigns require an isolated staged input bundle.')
         result = input_plan(request, execution_root)
         if staged_digest:
             result['inputBundleSHA256'] = staged_digest
@@ -139,11 +150,14 @@ def plan(request, profile):
         host, pid = job_ownership.current_owner()
         result['controller'] = {'host': host, 'pid': pid, 'metadataRoot': str(Path(profile.metadata_root).resolve())}
         result['memoryFit'] = 'notChecked'
-        result['executor'] = profile.executor
+        selected_executor = 'local' if result.get('compute') == 'cpu' else profile.executor
+        if server_role(profile) == 'controller' and result.get('compute') != 'cpu' and selected_executor != 'slurm':
+            raise ScientificRefusal('A controller must submit this GPU work through Slurm.')
+        result['executor'] = selected_executor
         resources = SlurmResources.from_env(job_name='scientific-diagnostic')
         resources.auto_resubmit = False  # These owners have no checkpoint/resume protocol.
-        result['resources'] = asdict(resources) if profile.executor == 'slurm' else {'executor': 'local'}
-        if profile.executor == 'slurm':
+        result['resources'] = asdict(resources) if selected_executor == 'slurm' else {'executor': 'local'}
+        if selected_executor == 'slurm':
             # Render without writing to apply the same required-header and GRES
             # gates before any submission directory or allocation exists.
             result['schedulerPreview'] = render_slurm_script(JobBundle(
@@ -151,6 +165,7 @@ def plan(request, profile):
                 resources=SlurmResources(**result['resources']), stdout_path='<submission>/slurm-%j.out',
                 stderr_path='<submission>/slurm-%j.err', script_path='<submission>/run.sbatch',
                 manifest_path='<submission>/bundle.json'))
+        result['changed'] = False
         result['planSHA256'] = digest(result)
         return result
 
@@ -179,11 +194,11 @@ def submit(request, expected, *, profile, jobs, registry=None):
             return [sys.executable, '-m', 'steerlab_server.api.scientific_execution',
                     str(packet), job_id, str(records / (job_id + '.json')), reviewed['planSHA256']]
 
-        if profile.executor == 'local':
+        if reviewed['executor'] == 'local':
             def work(job):
                 job.result = dict(base)
                 jobs.store.update(job)
-                if registry is not None:
+                if registry is not None and reviewed.get('compute') != 'cpu':
                     registry.unload_all()
                 proc = LocalExecutor().run(command(job.id), log=job.log,
                                             should_cancel=lambda: job.cancelled)
@@ -226,7 +241,11 @@ def execute_packet(packet, job_id, record, expected_plan_sha256=None):
     started = time.time()
     reviewed = json.loads(Path(packet).read_text())
     root = reviewed['root']
+    prior_environment = {key: os.environ.get(key) for key in ('STEERLAB_ROOT', 'STEERLAB_RUN_ROOT')}
+    prior_cwd = os.getcwd()
     os.environ['STEERLAB_ROOT'] = root
+    os.environ['STEERLAB_RUN_ROOT'] = str(Path(root) / 'runs')
+    os.chdir(root)
     directory = Path(packet).parent
     result = {'scientificPlan': reviewed, 'resumable': False,
               'recordsDirectory': str(Path(record).parent), 'submissionDirectory': str(directory)}
@@ -256,7 +275,18 @@ def execute_packet(packet, job_id, record, expected_plan_sha256=None):
         if current['inputSHA256'] != reviewed['inputSHA256']:
             raise ScientificRefusal('Inputs changed while queued; diagnostic refused before model loading.')
         p = current['request']['parameters']
-        if current['request']['operation'] == 'battery':
+        from ..experiment import managed_methods
+        if current['request']['operation'] in managed_methods.OPERATIONS:
+            # The isolated child owns process-global workspace resolution used
+            # by legacy numerical owners. No shared server root is retargeted.
+            result.update(partial=True, outputRoot=str(Path(root) / 'runs'))
+            write_json(Path(record), {'id': job_id, 'result': result, **executor_identity})
+            report = managed_methods.execute(current['request']['operation'], p['config'], root, log=print)
+            result.pop('partial', None)
+            result.update(report)
+            if report.get('campaignDirectory'):
+                result['runDirectory'] = report['campaignDirectory']
+        elif current['request']['operation'] == 'battery':
             from ..experiment import battery_run
             report = battery_run.execute(p['batteryFile'], p['agents'], root=root,
                 model_id=p.get('modelID'), revision=p.get('revision'), alpha_units=p['alphaUnits'],
@@ -277,6 +307,10 @@ def execute_packet(packet, job_id, record, expected_plan_sha256=None):
         write_json(Path(record), {'id': job_id, 'kind': 'science:' + reviewed['request']['operation'],
             'status': status, 'result': result, 'error': error, 'finishedAt': time.time(), **executor_identity,
             'elapsedSeconds': time.time() - started})
+    os.chdir(prior_cwd)
+    for key, value in prior_environment.items():
+        if value is None: os.environ.pop(key, None)
+        else: os.environ[key] = value
     return 0 if status == 'succeeded' else 70
 
 
