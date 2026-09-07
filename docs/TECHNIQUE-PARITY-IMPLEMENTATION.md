@@ -3,9 +3,10 @@
 2026-09-07. Foundation based on main `293888e`. This is the active refinement of
 [the technique brief](ADDING-A-TECHNIQUE-BRIEF-2026-09-07.md) and
 [the parity brief](PARITY-PROGRAM-BRIEF-2026-09-07.md), incorporating the
-researcher's guidance-first principle. It changes neither a scientific owner nor
-an existing frozen artifact. The work below is ordered; publication of the plan
-does not mean its future packages have been implemented or measured.
+researcher's guidance-first principle. The foundation changed no scientific owner or frozen artifact. Step 3 is now
+implemented on the review branch; see its handoff below. The work is ordered;
+publication of this plan does not mean the remaining packages are implemented
+or measured.
 
 ## Product outcome
 
@@ -100,8 +101,12 @@ and offer an honest supported mode, rather than silently ignoring the seed.
 
 ## 3. Complete promised Swift semantics and provenance
 
-Land small reviewable slices. Prioritize the reader's `finalTest` separation: the
-current Swift `RepEReader.Dataset.heldOut` selects every non-train row. Final-test
+**Implemented on the branch, pending independent review.** See
+[step 3 handoff](TECHNIQUE-PARITY-STEP3-HANDOFF.md) for the owners, tests and
+remaining scope boundaries. The following criteria describe this package.
+
+Land small reviewable slices. Prioritize the reader's `finalTest` separation:
+before this step, Swift `RepEReader.Dataset.heldOut` selected every non-train row. Final-test
 rows must not select a sign or layer. Add shared role fixtures and show final-test
 results separately without requiring that exploratory datasets have such a split.
 
@@ -180,9 +185,13 @@ reviewed evidence and must never be an automatic regeneration step.
 
 ## Completion and review
 
-Current foundation: guide, worked example, inventoried capabilities and corrected
-implementation/qualification contract. Remaining execution packages are 3–6;
-independent guide trials and hardware qualification remain explicitly pending.
+Completed on the branch: guide, worked example, inventoried capabilities,
+corrected implementation/qualification contract, and step 3's native scientific
+semantics/provenance. Step 3 awaits independent review and integration through
+the researcher. Remaining packages are **4–6**: scoped seeded MLX sampling,
+hardware qualification, and extension/registration simplification. Steps 4 and 6
+still require coding; live testing is not the only remaining work. Independent
+guide trials and hardware qualification remain explicitly pending.
 Mac-cluster scheduling is still a separate product decision, not implied by this
 program. Managed runtime cleanup is a separate installation-lifecycle task.
 

@@ -12,6 +12,13 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Native scientific parity: reader final-test rows stay outside fitting and
+  selection, with optional app authoring controls and preserved evidence-role
+  fields; measured ordinary/saved-agent runs record intervention scope; native
+  `experiment extract-stability` writes reproducible row/order diagnostics;
+  completed MLX training records its direct adapter multiplier. Historical
+  artifacts stay unchanged. Numerical fixtures are not hardware qualification.
+
 - Technique-extension guide and backend parity foundation. A disposable managed
   operation example, catalog-checked substrate inventory, and ordered execution
   plan distinguish implementation, artifact compatibility and measured scientific

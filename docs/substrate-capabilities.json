@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reviewedSource": "293888e",
+  "reviewedSource": "293888e plus step 3 (docs/TECHNIQUE-PARITY-STEP3-HANDOFF.md)",
   "profiles": {
     "python-model": {
       "python": "Python owns execution; model work uses its configured device and executor.",
@@ -34,13 +34,13 @@
     },
     "reader": {
       "python": "Python reader fitting/scoring, with model activation capture on its selected device.",
-      "swift": "Native RepE fitting/scoring exists. Its non-train selection currently includes finalTest rows; use Python for that split contract until corrected.",
+      "swift": "Native fitting/scoring separates final-test rows from sign/layer selection and preserves evidence roles across clients.",
       "cuda": "implementedUnqualified",
       "mps": "implementedUnqualified",
-      "mlx": "partialUnqualified",
+      "mlx": "implementedUnqualified",
       "qualificationEvidence": [],
-      "notes": "Artifact reading and arithmetic fixtures do not establish split-role equivalence. This known limitation is concrete, not a generic ban on exploratory reader fitting.",
-      "sources": ["Server/steerlab_server/steering/repe_reader.py", "Sources/SteeringKit/Extraction/RepEReader.swift", "docs/REPE-IMPLEMENTATION-BRIEF.md"]
+      "notes": "Cross-client role fixtures and synthetic fitting tests establish the split contract; they do not qualify model-level numerical agreement.",
+      "sources": ["Server/steerlab_server/steering/repe_reader.py", "Sources/SteeringKit/Extraction/RepEReader.swift", "docs/REPE-IMPLEMENTATION-BRIEF.md", "Tests/SteeringKitTests/ReaderEvidenceRoleTests.swift"]
     },
     "training": {
       "python": "Python LoRA training on the selected engine device; adapter-family admission is explicit.",
@@ -49,7 +49,7 @@
       "mps": "implementedUnqualified",
       "mlx": "implementedUnqualified",
       "qualificationEvidence": [],
-      "notes": "Native training does not imply all Python objectives/adapter families are interchangeable. Adapter-scale and evidence-role parity work remains.",
+      "notes": "New native training stamps the direct adapter multiplier. Objectives, schedules, evidence admission and adapter formats remain distinct; no trained-weight equivalence is claimed.",
       "sources": ["Server/steerlab_server/experiment/lora_train.py", "Sources/ExperimentKit/FineTuneTrainer.swift", "docs/TRAINING-RECIPES.md"]
     },
     "jlens": {
@@ -91,10 +91,20 @@
       "qualificationEvidence": [],
       "notes": "Do not infer MPS campaign scheduling support from a training kernel. Cell execution and local/Slurm orchestration need separate qualification.",
       "sources": ["Server/steerlab_server/api/managed_campaign.py", "Server/steerlab_server/api/managed_campaign_engine.py", "Server/steerlab_server/experiment/optvec_campaign.py"]
+    },
+    "stability": {
+      "python": "Python model diagnostic on the selected device; local and Slurm routing use existing owners.",
+      "swift": "Native ExtractStability captures pinned inputs and reports row/order sensitivity through steerlab-cli experiment extract-stability. The existing Mac science job sheet continues to drive Python.",
+      "cuda": "implementedUnqualified",
+      "mps": "implementedUnqualified",
+      "mlx": "implementedUnqualified",
+      "qualificationEvidence": [],
+      "notes": "Shared seeds and numerical fixture results establish implementation parity; actual model/backend comparisons remain unqualified.",
+      "sources": ["Sources/ExperimentKit/ExtractStability.swift", "Sources/SteeringKit/Extraction/DirectionStability.swift", "Tests/SteeringKitTests/ScientificScopeStabilityTests.swift", "Server/steerlab_server/experiment/extract_stability.py"]
     }
   },
   "operations": {
-    "stability": "diagnostic-model",
+    "stability": "stability",
     "battery": "diagnostic-model",
     "rescore-style": "python-cpu",
     "sweep-judgment": "python-cpu",

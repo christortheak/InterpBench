@@ -1889,13 +1889,20 @@ struct ConceptsPanelView: View {
             value: $builder.readerHeldOutPairCount,
             in: 0 ... max(0, builder.readerRowCount))
             .help(
-                "the LAST k rows are written with split \"test\" and score the "
+                "rows before the final-test reservation are written with split \"test\" and score the "
                     + "fitted probe they did not train — and they are what fixes "
                     + "each layer's SIGN under the paper's step 4")
+        Stepper("Final-test rows (optional): \(builder.readerFinalTestRowCount)",
+            value: $builder.readerFinalTestRowCount, in: 0 ... max(0, builder.readerRowCount - 2))
+            .help("Reserve the final rows for evaluation after fitting and selection. The preview shows the exact split; final-test rows are reserved first, with at least two rows kept for training.")
         Text(preview.note)
             .font(.caption2)
             .foregroundStyle(preview.signSelectionWillFallBack ? .orange : .secondary)
             .fixedSize(horizontal: false, vertical: true)
+        if !preview.finalTestRowIDs.isEmpty {
+            Text("final test: " + preview.finalTestRowIDs.joined(separator: ", "))
+                .font(.caption2.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+        }
         if !preview.heldOutRowIDs.isEmpty {
             Text("held out: " + preview.heldOutRowIDs.joined(separator: ", "))
                 .font(.caption2.monospaced())

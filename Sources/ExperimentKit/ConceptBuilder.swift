@@ -3729,9 +3729,10 @@ public final class ConceptBuilder {
     public var selectedReaderTemplateID: String?
     public var useCustomReaderTemplate = false
     public var customReaderTemplateText = ""
-    /// The LAST k pairs of the working set are written with split "test" and
-    /// score the fitted probe they did not train.
+    /// Rows immediately before the optional final-test tail carry split "test"
+    /// for sign/layer selection. The split preview names their exact IDs.
     public var readerHeldOutPairCount = 0
+    public var readerFinalTestRowCount = 0
     /// The seed for the unsupervised T+/T− orientation draw, stamped into
     /// every artifact of an `unsupervisedTemplatePair` fit. Declarable because
     /// the reference implementation's shuffle is unseeded and therefore
@@ -4016,6 +4017,13 @@ public final class ConceptBuilder {
                 ReaderDetailRow(
                     label: "sign fallback", value: reason, isCaution: true))
         }
+        if let accuracy = artifact.finalTestAccuracy {
+            rows.append(.init(label: "final-test accuracy",
+                value: String(format: "%.0f%%", accuracy * 100)
+                    + (artifact.finalTestPairCount.map { " (\($0) reserved rows)" } ?? " (row count unstamped)")))
+        }
+        rows.append(.init(label: "accuracy roles",
+            value: artifact.evidenceRoleNote ?? RepEReader.evidenceRoleNote))
         let score = ReaderLayerScore(artifact: artifact)
         rows.append(
             ReaderDetailRow(
@@ -4057,7 +4065,8 @@ public final class ConceptBuilder {
         rows.append(
             ReaderDetailRow(
                 label: "dataset", value: "\(artifact.datasetHash.prefix(12))… · "
-                    + "\(artifact.trainPairCount) train / \(artifact.heldOutPairCount) held out"))
+                    + "\(artifact.trainPairCount) train / \(artifact.heldOutPairCount) held out"
+                    + (artifact.finalTestPairCount.map { " / \($0) final test" } ?? "")))
         rows.append(
             ReaderDetailRow(
                 label: "binding",
@@ -4302,9 +4311,17 @@ public final class ConceptBuilder {
         public let trainRows: Int
         /// The row ids that will carry `split: "test"`, in file order.
         public let heldOutRowIDs: [String]
+        public var finalTestRows: Int = 0
+        public var requestedFinalTest: Int = 0
+        public var finalTestRowIDs: [String] = []
+
+        public func split(at index: Int) -> String {
+            if index >= trainRows + heldOutRows { return "finalTest" }
+            return index >= trainRows ? "test" : "train"
+        }
 
         /// True when the request was cut back to protect the train split.
-        public var wasClamped: Bool { heldOutRows != requestedHeldOut }
+        public var wasClamped: Bool { heldOutRows != requestedHeldOut || finalTestRows != requestedFinalTest }
 
         /// True when the held-out split cannot decide any layer's sign, so
         /// every artifact will stamp `signConvention: "trainMajority"` plus a
@@ -4319,15 +4336,15 @@ public final class ConceptBuilder {
             let minimum = RepEReader.minimumHeldOutPairsForSignSelection
             if totalRows == 0 { return "no rows authored yet" }
             var parts = ["\(trainRows) train / \(heldOutRows) held out"]
+            if finalTestRows > 0 || requestedFinalTest > 0 { parts[0] += " / \(finalTestRows) final test" }
             if wasClamped {
-                parts.append(
-                    "clamped from \(requestedHeldOut): at least 2 rows must stay train")
+                parts.append("split reduced to keep at least 2 train rows; requested \(requestedHeldOut) held out and \(requestedFinalTest) final test")
             }
             if signSelectionWillFallBack {
                 parts.append(
                     "below the \(minimum)-pair minimum, so every layer's sign falls "
                         + "back to train-label majority and stamps a signFallbackReason "
-                        + "— accuracies are train-only")
+                        + "— the sign is chosen on train rows")
             } else {
                 parts.append(
                     "enough for the paper's held-out sign selection (minimum \(minimum))")
@@ -4341,22 +4358,25 @@ public final class ConceptBuilder {
     /// pane and the writer cannot disagree about which rows are held out.
     public nonisolated static func readerSplitPreview(
         concept: String, rowCount: Int, requestedHeldOut: Int,
-        rowShape: ReaderRowShape
+        rowShape: ReaderRowShape, requestedFinalTest: Int = 0
     ) -> ReaderSplitPreview {
-        let heldOut = min(max(0, requestedHeldOut), max(0, rowCount - 2))
-        let ids = (max(0, rowCount - heldOut) ..< max(0, rowCount)).map {
-            "\(concept)-\(rowShape.rowIDStem)-\($0)"
+        let total = max(0, rowCount)
+        let finalTest = min(max(0, requestedFinalTest), max(0, total - 2))
+        let heldOut = min(max(0, requestedHeldOut), max(0, total - finalTest - 2))
+        let train = total - heldOut - finalTest
+        func ids(_ range: Range<Int>) -> [String] {
+            range.map { "\(concept)-\(rowShape.rowIDStem)-\($0)" }
         }
-        return ReaderSplitPreview(
-            totalRows: rowCount, requestedHeldOut: max(0, requestedHeldOut),
-            heldOutRows: heldOut, trainRows: max(0, rowCount - heldOut),
-            heldOutRowIDs: ids)
+        return ReaderSplitPreview(totalRows: total, requestedHeldOut: max(0, requestedHeldOut),
+            heldOutRows: heldOut, trainRows: train, heldOutRowIDs: ids(train ..< train + heldOut),
+            finalTestRows: finalTest, requestedFinalTest: max(0, requestedFinalTest),
+            finalTestRowIDs: ids(train + heldOut ..< total))
     }
 
     public var readerSplitPreview: ReaderSplitPreview {
-        Self.readerSplitPreview(
-            concept: currentConceptName, rowCount: readerRowCount,
-            requestedHeldOut: readerHeldOutPairCount, rowShape: readerRowShape)
+        Self.readerSplitPreview(concept: currentConceptName, rowCount: readerRowCount,
+            requestedHeldOut: readerHeldOutPairCount, rowShape: readerRowShape,
+            requestedFinalTest: readerFinalTestRowCount)
     }
 
     // MARK: Reader fit gate
@@ -4406,19 +4426,20 @@ public final class ConceptBuilder {
     }
 
     /// Sorted-keys JSONL rows for a reader pairs file: one `RepEReader.Pair`
-    /// per matched (positive, negative) index, the LAST k pairs written with
-    /// split "test". This single encoder feeds BOTH the local pinned copy
+    /// per matched (positive, negative) index. Optional final-test rows occupy
+    /// the tail; held-out rows precede them and train rows come first. This single encoder feeds BOTH the local pinned copy
     /// (`prompts/readers/<concept>/pairs.jsonl`, git-versioned truth shared
     /// by both engines) and the inline `pairsJSONL` payload of the server fit
     /// route — so the written bytes, and therefore the dataset hash, are
     /// identical on both substrates.
     nonisolated static func readerPairRows(
         concept: String, positives: [String], negatives: [String],
-        heldOutPairCount: Int, templateID: String
+        heldOutPairCount: Int, templateID: String, finalTestRowCount: Int = 0
     ) throws -> [String] {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        let heldOut = min(max(0, heldOutPairCount), max(0, positives.count - 2))
+        let split = readerSplitPreview(concept: concept, rowCount: positives.count,
+            requestedHeldOut: heldOutPairCount, rowShape: .contentPair, requestedFinalTest: finalTestRowCount)
         var lines: [String] = []
         for (index, pair) in zip(positives, negatives).enumerated() {
             let row = RepEReader.Pair(
@@ -4426,7 +4447,7 @@ public final class ConceptBuilder {
                 concept: concept,
                 positiveStimulus: pair.0,
                 negativeStimulus: pair.1,
-                split: index >= positives.count - heldOut ? "test" : "train",
+                split: split.split(at: index),
                 templateID: templateID)
             lines.append(String(decoding: try encoder.encode(row), as: UTF8.self))
         }
@@ -4434,7 +4455,7 @@ public final class ConceptBuilder {
     }
 
     /// Sorted-keys JSONL rows for a SINGLE-STIMULUS reader dataset — one
-    /// `stimulus` row per text, the LAST k written with split "test"
+    /// `stimulus` row per text, with the same train/held-out/final-test split
     /// (REPE-IMPLEMENTATION-BRIEF §3, the paper's §3.1 step 1b shape). The
     /// engine wave left this shape unauthorable: `readerPairRows` writes
     /// content pairs only, so a T+/T− template had no dataset the Concept Lab
@@ -4445,18 +4466,19 @@ public final class ConceptBuilder {
     /// in a diff.
     nonisolated static func readerStimulusRows(
         concept: String, stimuli: [String],
-        heldOutPairCount: Int, templateID: String
+        heldOutPairCount: Int, templateID: String, finalTestRowCount: Int = 0
     ) throws -> [String] {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        let heldOut = min(max(0, heldOutPairCount), max(0, stimuli.count - 2))
+        let split = readerSplitPreview(concept: concept, rowCount: stimuli.count,
+            requestedHeldOut: heldOutPairCount, rowShape: .singleStimulus, requestedFinalTest: finalTestRowCount)
         var lines: [String] = []
         for (index, stimulus) in stimuli.enumerated() {
             let row = RepEReader.Pair.templatePair(
                 id: "\(concept)-row-\(index)",
                 concept: concept,
                 stimulus: stimulus,
-                split: index >= stimuli.count - heldOut ? "test" : "train",
+                split: split.split(at: index),
                 templateID: templateID)
             lines.append(String(decoding: try encoder.encode(row), as: UTF8.self))
         }
@@ -4503,7 +4525,8 @@ public final class ConceptBuilder {
         rowShape: ReaderRowShape = .contentPair,
         stimuli: [String] = [],
         extractionRendering: ExtractionRendering? = nil,
-        orientationSeed: UInt64? = nil
+        orientationSeed: UInt64? = nil,
+        finalTestRowCount: Int = 0
     ) throws -> ReaderFitRequest {
         let templateID: String?
         let templateJSON: String?
@@ -4536,11 +4559,11 @@ public final class ConceptBuilder {
         case .contentPair:
             lines = try readerPairRows(
                 concept: concept, positives: positives, negatives: negatives,
-                heldOutPairCount: heldOutPairCount, templateID: pinnedTemplateID)
+                heldOutPairCount: heldOutPairCount, templateID: pinnedTemplateID, finalTestRowCount: finalTestRowCount)
         case .singleStimulus:
             lines = try readerStimulusRows(
                 concept: concept, stimuli: stimuli,
-                heldOutPairCount: heldOutPairCount, templateID: pinnedTemplateID)
+                heldOutPairCount: heldOutPairCount, templateID: pinnedTemplateID, finalTestRowCount: finalTestRowCount)
         }
         let pairsJSONL = lines.joined(separator: "\n") + "\n"
         // A custom scaffold renders EVERY row here, before this request is
@@ -4611,8 +4634,9 @@ public final class ConceptBuilder {
         }
         let rowCount = readerRowShape == .contentPair
             ? pairedRows.positive.count : readerStimuli.count
-        let heldOut = min(max(0, readerHeldOutPairCount), max(0, rowCount - 2))
-        guard rowCount - heldOut >= 2 else {
+        let split = readerSplitPreview
+        let heldOut = split.heldOutRows
+        guard split.trainRows >= 2 else {
             status = "need at least 2 train rows (have \(rowCount) rows, "
                 + "\(heldOut) held out)"
             return
@@ -4639,7 +4663,7 @@ public final class ConceptBuilder {
                 stimuli: readerStimuli,
                 extractionRendering: serverExtractionRendering,
                 orientationSeed: readerRowShape == .singleStimulus
-                    ? readerOrientationSeed : nil)
+                    ? readerOrientationSeed : nil, finalTestRowCount: readerFinalTestRowCount)
 
             try await ensureSelectedServerModelLoaded(host: host, client: client)
             let jobID = try await client.fitReader(
@@ -4856,8 +4880,9 @@ public final class ConceptBuilder {
         }
         let rowCount = readerRowShape == .contentPair
             ? pairedRows.positive.count : readerStimuli.count
-        let heldOut = min(max(0, readerHeldOutPairCount), max(0, rowCount - 2))
-        guard rowCount - heldOut >= 2 else {
+        let split = readerSplitPreview
+        let heldOut = split.heldOutRows
+        guard split.trainRows >= 2 else {
             status = "need at least 2 train rows (have \(rowCount) rows, "
                 + "\(heldOut) held out)"
             return
@@ -4934,11 +4959,11 @@ public final class ConceptBuilder {
                     concept: name,
                     positives: pairedRows.positive,
                     negatives: pairedRows.negative,
-                    heldOutPairCount: readerHeldOutPairCount, templateID: template.id)
+                    heldOutPairCount: readerHeldOutPairCount, templateID: template.id, finalTestRowCount: readerFinalTestRowCount)
             case .singleStimulus:
                 lines = try Self.readerStimulusRows(
                     concept: name, stimuli: readerStimuli,
-                    heldOutPairCount: readerHeldOutPairCount, templateID: template.id)
+                    heldOutPairCount: readerHeldOutPairCount, templateID: template.id, finalTestRowCount: readerFinalTestRowCount)
             }
             let pairsURL = VectorCatalog.pairedStimuliFile(family: .readers, name: name)
             try (lines.joined(separator: "\n") + "\n").write(

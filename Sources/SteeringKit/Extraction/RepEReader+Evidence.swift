@@ -47,15 +47,19 @@ extension RepEReader {
     /// versus final-test overlap are assessed by that contract.
     public static func checkSplitOverlap(_ dataset: Dataset, source: String = "reader dataset") throws {
         func normalized(_ text: String) -> String {
-            text.components(separatedBy: .whitespacesAndNewlines)
-                .filter { !$0.isEmpty }.joined(separator: " ")
+            // Python str.split includes the information separators as well
+            // as Unicode White_Space. Preserve normalization form: Python's
+            // casefold does not equate composed and decomposed spellings.
+            text.unicodeScalars.split {
+                $0.properties.isWhitespace || (0x1c ... 0x1f).contains($0.value)
+            }.map { String(String.UnicodeScalarView($0)) }.joined(separator: " ")
                 .folding(options: .caseInsensitive, locale: Locale(identifier: "en_US_POSIX"))
         }
-        func key(_ pair: Pair) -> String {
-            if let stimulus = pair.stimulus { return normalized(stimulus) }
-            return normalized(pair.positiveStimulus) + "\0" + normalized(pair.negativeStimulus)
+        func key(_ pair: Pair) -> Data {
+            if let stimulus = pair.stimulus { return Data(normalized(stimulus).utf8) }
+            return Data((normalized(pair.positiveStimulus) + "\0" + normalized(pair.negativeStimulus)).utf8)
         }
-        var train: [String: String] = [:]
+        var train: [Data: String] = [:]
         for (index, pair) in dataset.pairs.enumerated() where pair.split.lowercased() == "train" {
             train[key(pair)] = train[key(pair)] ?? (pair.id ?? "#\(index + 1)")
         }

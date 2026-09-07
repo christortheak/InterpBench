@@ -753,6 +753,10 @@ public enum ExperimentCLIParser {
             namespace: "experiment", verb: "extract", positional: "<name>",
             purpose: "Derive the manifest's concept vectors on this engine."),
         .init(
+            namespace: "experiment", verb: "extract-stability", positional: "<name> <concept>",
+            purpose: "Diagnose row/order sensitivity of a contrastive extraction; writes diagnostics without changing the study. Defaults: 32 resamples, fraction 0.5, seed 0, 8 order shuffles.",
+            valueFlags: ["--resamples", "--fraction", "--seed", "--order-shuffles"]),
+        .init(
             namespace: "experiment", verb: "validate", positional: "<name>",
             purpose: "Score each vector on its held-out probe and report "
                 + "cross-concept similarity."),

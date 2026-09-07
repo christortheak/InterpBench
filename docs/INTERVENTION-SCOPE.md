@@ -261,11 +261,18 @@ mechanics, and the tests on both sides pin them against each other:
 - `ChatService.currentInjections` — same `neutralMean` centering semantics and
   the same mean-alignment advisory threshold.
 
-**Owed on the Swift side.** The *descriptor* is Python-only: Swift has no
-`InterventionScope`, no `scope()` on its intervention types, and no
-`intervention-scope.json`. Until the constants in
-`Server/steerlab_server/steering/intervention.py` are ported verbatim (they are
-deliberately written as module-level constants for exactly this reason), a
-Swift-executed run stamps no sidecar — and a reader must not read that absence
-as a claim about what a Mac run did. The trainable path has no Swift twin at
-all: optimization is server-only.
+**Descriptors now mirrored.** `InterventionScope`, `VectorInjector.scope()` and
+`SubspaceAblator.scope()` describe the objects the Swift planner builds.
+`scripts/ci/check-intervention-scopes.py` generates/checks the shared prose from
+Python's constants. Native ordinary and saved-agent measured runs write
+`intervention-scope.json` before generation, with the whole condition matrix,
+actual resolved doses/ranks and declared centering. Existing files are retained;
+failed resolutions are named in `unresolved` rows and left to the execution loop.
+The prompt count is identified as per-item, not reported as a fabricated number.
+
+This is parity with the Python ordinary/variant stamp, not coverage of every
+entry point: neither a standalone Playground conversation nor the native
+multi-agent runner gains this run-sidecar here. Native trainable/SAE-latent
+intervention execution remains unsupported; use the Python owner. Historical
+runs without the sidecar remain unmodified, and absence still makes no claim
+about their intervention scope.

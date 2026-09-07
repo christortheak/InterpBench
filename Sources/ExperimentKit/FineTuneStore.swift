@@ -60,6 +60,19 @@ public struct FineTuneArtifact: Codable, Sendable, Equatable {
     public var fineTuneType: String
     public var rank: Int
     public var scale: Float
+    /// Newly completed native training records the multiplier it actually used.
+    /// Absent on old artifacts and untrained registrations; never inferred on read.
+    public var adapterScaleConvention: String? = nil
+    public var effectiveAdapterScale: Float? = nil
+    public var requestedAdapterScale: Float? = nil
+    public var requestedAdapterScaleConvention: String? = nil
+
+    public mutating func recordTrainingScale(_ appliedScale: Float) {
+        adapterScaleConvention = "direct"
+        effectiveAdapterScale = appliedScale
+        requestedAdapterScale = appliedScale
+        requestedAdapterScaleConvention = "direct"
+    }
     public var adaptedLayers: Int
     public var trainingWorkspacePath: String?
     public var trainingDataPath: String?

@@ -80,7 +80,7 @@ fails it is a refusal (`:691-694`), while a row over the 768-token ceiling is a
 | Convention | PEFT: `lora_alpha / r` (`…lora_train.py:1157-1159` builds `LoraConfig` without `use_rslora`, so PEFT's default applies) | same (`…lora_train.py:910-912`) | direct multiplier — **no alpha and no rank division exists on this path** (`FineTuneTrainer.swift:262-265`) |
 | Effective multiplier | `alpha / rank` | `alpha / rank` | `scale` |
 | Defaults | `rank 8`, `alpha 16.0` → `2.0` (`…lora_train.py:228-229`) | same → `2.0` | `rank 8`, `scale 10.0` → `10.0` (`FineTuningPanel.swift:24-25`) |
-| Stamped as | `adapterScaleConvention: "peft:lora_alpha/r"` + `effectiveAdapterScale` (`…lora_train.py:106`, `:520-522`) | same (one writer) | `rank` and `scale` are stamped (`FineTuneStore.swift:61-62`); a convention key is **not found in code** |
+| Stamped as | `adapterScaleConvention: "peft:lora_alpha/r"` + `effectiveAdapterScale` (`…lora_train.py:106`, `:520-522`) | same (one writer) | `adapterScaleConvention: "direct"`, `effectiveAdapterScale`, `requestedAdapterScale`, and `requestedAdapterScaleConvention: "direct"` on newly completed training (`FineTuneArtifact.recordTrainingScale`); old/untrained sidecars keep these absent |
 
 **This is the row that most invites a wrong comparison.** `alpha` and `scale`
 are both "the LoRA strength knob" and they are not the same quantity: A's and

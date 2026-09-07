@@ -263,6 +263,11 @@ public struct ExperimentCLIRunner: Sendable {
                     reason: error.reason, repairAction: error.repairAction),
                 code: error.code, repairAction: error.repairAction)
 
+        } catch let error as ExtractStability.Failure {
+            return outcome(namespace: namespace, verb: verb, state: error.state, exitCode: 1,
+                failure: .init(reason: error.reason, repairAction: error.repairAction),
+                code: error.code, repairAction: error.repairAction)
+
         } catch let error as ExperimentError {
             // The freeze-gate refusal is the one error that already knows its
             // own gate ids (WP0 step 2); carry them out instead of dropping
@@ -3549,6 +3554,19 @@ public struct ExperimentCLIRunner: Sendable {
                 message: "extracted vectors for '\(args[1])'", changed: true,
                 payload: ["experiment": .string(args[1])],
                 nextAction: .init(verb: "experiment validate \(args[1])"))
+
+        case "extract-stability":
+            guard args.count >= 3,
+                  let resamples = Int(flag("--resamples") ?? "32"),
+                  let fraction = Double(flag("--fraction") ?? "0.5"),
+                  let seed = UInt64(flag("--seed") ?? "0"),
+                  let shuffles = Int(flag("--order-shuffles") ?? "8") else {
+                throw ExperimentError(reason: "usage: experiment extract-stability <name> <concept> [--resamples <integer>] [--fraction <number>] [--seed <UInt64>] [--order-shuffles <integer>]")
+            }
+            let result = try await ExtractStability.run(experiment: args[1], concept: args[2],
+                resamples: resamples, fraction: fraction, seed: seed, orderShuffles: shuffles)
+            return ExperimentCLIResult(message: "Stability diagnostic → \(result.path.path). \(ExtractStability.diagnosticNote)",
+                changed: true, payload: result.summary)
 
         case "validate":
             guard args.count >= 2 else {

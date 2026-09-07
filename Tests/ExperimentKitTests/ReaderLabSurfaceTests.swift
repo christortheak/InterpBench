@@ -29,6 +29,16 @@ struct ReaderLabSurfaceTests {
         }
     }
 
+    @Test func finalEvaluationDetailPreservesAnUnstampedCount() {
+        var reader = artifact()
+        reader.finalTestAccuracy = 0.75
+        let details = ConceptBuilder.readerArtifactDetails(reader)
+        let final = details.first { $0.label == "final-test accuracy" }
+        #expect(final?.value == "75% (row count unstamped)")
+        reader.finalTestPairCount = 4
+        #expect(ConceptBuilder.readerArtifactDetails(reader).first { $0.label == "final-test accuracy" }?.value == "75% (4 reserved rows)")
+    }
+
     // MARK: - Fixtures
 
     private static let stancePair = RepEReader.TaskTemplate(
@@ -118,7 +128,7 @@ struct ReaderLabSurfaceTests {
         #expect(preview.heldOutRows == 1)
         #expect(preview.trainRows == 2)
         #expect(preview.wasClamped)
-        #expect(preview.note.contains("clamped from 99"))
+        #expect(preview.note.contains("requested 99 held out"))
     }
 
     // MARK: - Item 2: single-stimulus rows, and the request that carries them

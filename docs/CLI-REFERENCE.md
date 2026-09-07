@@ -1454,6 +1454,7 @@ skippable. A forced freeze remains non-citable — but checkably so, by stamp.
 
 ```
 steerlab-cli experiment extract <name>
+steerlab-cli experiment extract-stability <name> <concept> [--fraction <value>] [--order-shuffles <value>] [--resamples <value>] [--seed <value>]
 steerlab-cli experiment validate <name>
 steerlab-cli experiment sweep <name>
 steerlab-cli experiment run <name> [--prompts <path>]
@@ -1462,6 +1463,7 @@ steerlab-cli experiment run <name> [--prompts <path>]
 | Verb | Purpose |
 |---|---|
 | `experiment extract` | Derive the manifest's concept vectors on this engine. |
+| `experiment extract-stability` | Diagnose row/order sensitivity of a contrastive extraction; writes diagnostics without changing the study. Defaults: 32 resamples, fraction 0.5, seed 0, 8 order shuffles. |
 | `experiment validate` | Score each vector on its held-out probe and report cross-concept similarity. |
 | `experiment sweep` | Sweep layer × alpha on the dev split and record a recommendation per concept. |
 | `experiment run` | Generate the measured run for every declared condition. |

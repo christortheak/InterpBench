@@ -49,7 +49,7 @@ owners, not mechanically inferred from CLI counts.
 | Capability | Python | Native Swift/MLX | Current evidence boundary |
 | --- | --- | --- | --- |
 | Five extraction recipes | `experiment/extraction_workflow.py`, `steering/vector_math.py` | `ConceptBuilder`, `ExtractionRecipe`, `SteeringVectorMath` | Mathematical/identity tests exist; a configuration-specific MPS comparison remains to be measured. |
-| Additive injection / ablation | `steering/injector.py`, `ablator.py`, `plan.py` | `VectorInjector`, `SubspaceAblator`, `InterventionPlan` | Shared mechanics; Swift descriptor and scope sidecar still owed. |
+| Additive injection / ablation | `steering/injector.py`, `ablator.py`, `plan.py` | `VectorInjector`, `SubspaceAblator`, `InterventionPlan` | Shared mechanics and scope descriptors; native ordinary/saved-agent measured runs now stamp the scope sidecar. Hardware comparison remains unqualified. |
 | Standard measured generation | `experiment/condition_execution.py`, `sampling.py` | `ExperimentTasks` | Python records effective seed policy; current native measured runs are greedy-only. |
 | Multi-agent measured generation | `experiment/multi_agent.py` | `MultiAgentRunner`, `ExperimentTasks` | Python derives seeds per turn with common streams across conditions; native measured sampling remains greedy-only. |
 | Sweep, run and analysis | Python stage owners via `experiment/tasks.py` | `ExperimentTasks` and stage owners | Same surface intent does not establish identical numerical output; inspect artifacts and effective configuration. |
@@ -74,13 +74,13 @@ measurements; the generator only checks references, not scientific truth.
 
 | Catalog operation | Execution profile | CUDA | MPS | MLX |
 | --- | --- | --- | --- | --- |
-| `stability` — Extraction stability | [diagnostic-model](#diagnostic-model) | implemented; comparison unqualified | implemented; comparison unqualified | no native implementation |
+| `stability` — Extraction stability | [stability](#stability) | implemented; comparison unqualified | implemented; comparison unqualified | implemented; comparison unqualified |
 | `battery` — Standalone capability battery | [diagnostic-model](#diagnostic-model) | implemented; comparison unqualified | implemented; comparison unqualified | no native implementation |
 | `rescore-style` — Rescore recorded style | [python-cpu](#python-cpu) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
 | `sweep-judgment` — Sweep Judgment | [python-cpu](#python-cpu) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
 | `evaluate-judgment` — Evaluate Judgment | [python-cpu](#python-cpu) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
-| `reader-fit` — Reader Fit | [reader](#reader) | implemented; comparison unqualified | implemented; comparison unqualified | partial; comparison unqualified |
-| `reader-score` — Reader Score | [reader](#reader) | implemented; comparison unqualified | implemented; comparison unqualified | partial; comparison unqualified |
+| `reader-fit` — Reader Fit | [reader](#reader) | implemented; comparison unqualified | implemented; comparison unqualified | implemented; comparison unqualified |
+| `reader-score` — Reader Score | [reader](#reader) | implemented; comparison unqualified | implemented; comparison unqualified | implemented; comparison unqualified |
 | `finetune` — Finetune | [training](#training) | implemented; comparison unqualified | implemented; comparison unqualified | implemented; comparison unqualified |
 | `jlens` — Jlens | [jlens](#jlens) | implemented; comparison unqualified | implemented; comparison unqualified | no native implementation |
 | `gemmascope` — Gemmascope | [sae-import](#sae-import) | implemented; comparison unqualified | implemented; comparison unqualified | no native implementation |
@@ -135,11 +135,11 @@ Source: [Server/steerlab_server/experiment/extract_stability.py](../Server/steer
 
 **Python:** Python reader fitting/scoring, with model activation capture on its selected device.
 
-**Swift/app:** Native RepE fitting/scoring exists. Its non-train selection currently includes finalTest rows; use Python for that split contract until corrected.
+**Swift/app:** Native fitting/scoring separates final-test rows from sign/layer selection and preserves evidence roles across clients.
 
-Artifact reading and arithmetic fixtures do not establish split-role equivalence. This known limitation is concrete, not a generic ban on exploratory reader fitting.
+Cross-client role fixtures and synthetic fitting tests establish the split contract; they do not qualify model-level numerical agreement.
 
-Source: [Server/steerlab_server/steering/repe_reader.py](../Server/steerlab_server/steering/repe_reader.py), [Sources/SteeringKit/Extraction/RepEReader.swift](../Sources/SteeringKit/Extraction/RepEReader.swift), [docs/REPE-IMPLEMENTATION-BRIEF.md](../docs/REPE-IMPLEMENTATION-BRIEF.md).
+Source: [Server/steerlab_server/steering/repe_reader.py](../Server/steerlab_server/steering/repe_reader.py), [Sources/SteeringKit/Extraction/RepEReader.swift](../Sources/SteeringKit/Extraction/RepEReader.swift), [docs/REPE-IMPLEMENTATION-BRIEF.md](../docs/REPE-IMPLEMENTATION-BRIEF.md), [Tests/SteeringKitTests/ReaderEvidenceRoleTests.swift](../Tests/SteeringKitTests/ReaderEvidenceRoleTests.swift).
 
 ### training
 
@@ -147,7 +147,7 @@ Source: [Server/steerlab_server/steering/repe_reader.py](../Server/steerlab_serv
 
 **Swift/app:** Native MLX LoRA training exists; use the training recipe matrix to compare objectives, scaling and data treatment.
 
-Native training does not imply all Python objectives/adapter families are interchangeable. Adapter-scale and evidence-role parity work remains.
+New native training stamps the direct adapter multiplier. Objectives, schedules, evidence admission and adapter formats remain distinct; no trained-weight equivalence is claimed.
 
 Source: [Server/steerlab_server/experiment/lora_train.py](../Server/steerlab_server/experiment/lora_train.py), [Sources/ExperimentKit/FineTuneTrainer.swift](../Sources/ExperimentKit/FineTuneTrainer.swift), [docs/TRAINING-RECIPES.md](../docs/TRAINING-RECIPES.md).
 
@@ -190,6 +190,16 @@ Source: [Server/steerlab_server/experiment/optvec_jspace.py](../Server/steerlab_
 Do not infer MPS campaign scheduling support from a training kernel. Cell execution and local/Slurm orchestration need separate qualification.
 
 Source: [Server/steerlab_server/api/managed_campaign.py](../Server/steerlab_server/api/managed_campaign.py), [Server/steerlab_server/api/managed_campaign_engine.py](../Server/steerlab_server/api/managed_campaign_engine.py), [Server/steerlab_server/experiment/optvec_campaign.py](../Server/steerlab_server/experiment/optvec_campaign.py).
+
+### stability
+
+**Python:** Python model diagnostic on the selected device; local and Slurm routing use existing owners.
+
+**Swift/app:** Native ExtractStability captures pinned inputs and reports row/order sensitivity through steerlab-cli experiment extract-stability. The existing Mac science job sheet continues to drive Python.
+
+Shared seeds and numerical fixture results establish implementation parity; actual model/backend comparisons remain unqualified.
+
+Source: [Sources/ExperimentKit/ExtractStability.swift](../Sources/ExperimentKit/ExtractStability.swift), [Sources/SteeringKit/Extraction/DirectionStability.swift](../Sources/SteeringKit/Extraction/DirectionStability.swift), [Tests/SteeringKitTests/ScientificScopeStabilityTests.swift](../Tests/SteeringKitTests/ScientificScopeStabilityTests.swift), [Server/steerlab_server/experiment/extract_stability.py](../Server/steerlab_server/experiment/extract_stability.py).
 
 <!-- END SUBSTRATE-CATALOG -->
 

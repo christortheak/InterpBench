@@ -77,7 +77,7 @@ public enum CLIReferenceDocument {
         .init(
             id: "swift-experiment-running",
             verbLabels: [
-                "experiment extract", "experiment validate", "experiment sweep",
+                "experiment extract", "experiment extract-stability", "experiment validate", "experiment sweep",
                 "experiment run",
             ]),
         .init(

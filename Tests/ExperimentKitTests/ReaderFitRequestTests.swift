@@ -27,6 +27,35 @@ import Testing
         }
     }
 
+    @Test func optionalFinalTestReservationMatchesPreviewAndBothRequestShapes() throws {
+        let positive = (0 ..< 7).map { "p\($0)" }
+        let negative = (0 ..< 7).map { "n\($0)" }
+        for shape in [ConceptBuilder.ReaderRowShape.contentPair, .singleStimulus] {
+            let request = try ConceptBuilder.readerFitRequest(concept: "signal",
+                positives: positive, negatives: negative, heldOutPairCount: 2,
+                registryTemplateID: "template", customTemplateText: nil,
+                rowShape: shape, stimuli: positive, finalTestRowCount: 2)
+            let dataset = try RepEReader.parsePairs(Data(request.pairsJSONL.utf8), source: "request")
+            let preview = ConceptBuilder.readerSplitPreview(concept: "signal", rowCount: 7,
+                requestedHeldOut: 2, rowShape: shape, requestedFinalTest: 2)
+            #expect(dataset.train.count == 3)
+            #expect(dataset.heldOut.count == 2)
+            #expect(dataset.finalTest.count == 2)
+            #expect(dataset.heldOut.compactMap(\.id) == preview.heldOutRowIDs)
+            #expect(dataset.finalTest.compactMap(\.id) == preview.finalTestRowIDs)
+            let localLines = try shape == .contentPair
+                ? ConceptBuilder.readerPairRows(concept: "signal", positives: positive,
+                    negatives: negative, heldOutPairCount: 2, templateID: "template", finalTestRowCount: 2)
+                : ConceptBuilder.readerStimulusRows(concept: "signal", stimuli: positive,
+                    heldOutPairCount: 2, templateID: "template", finalTestRowCount: 2)
+            #expect(localLines.joined(separator: "\n") + "\n" == request.pairsJSONL)
+        }
+        let constrained = ConceptBuilder.readerSplitPreview(concept: "signal", rowCount: 4,
+            requestedHeldOut: 3, rowShape: .contentPair, requestedFinalTest: 2)
+        #expect(constrained.trainRows == 2 && constrained.heldOutRows == 0 && constrained.finalTestRows == 2)
+        #expect(constrained.wasClamped && constrained.signSelectionWillFallBack)
+    }
+
     // MARK: - Pair rows (the shared local-file / inline-payload encoder)
 
     @Test func pairRowsAreSortedKeysWithTailHeldOutSplit() throws {

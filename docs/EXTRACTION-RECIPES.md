@@ -515,8 +515,20 @@ run rather than discovered after it.
 
 `Server/steerlab_server/steering/vector_math.py` is documented as a 1:1 port of
 `Sources/SteeringKit/…/SteeringVectorMath.swift` (`vector_math.py:1-13`).
-`direction_stability` / `stability_by_layer` / `DirectionStability` and the
-`experiment extract-stability` verb are **server-only as of this document**; the
-Swift twin is owed. Nothing else in §§1–6 is engine-specific: the recipes, the
-identity form, the denominator conventions and the reading-position vocabulary
-are all cross-engine contracts with named Swift twins at the cited lines.
+`direction_stability` / `stability_by_layer` / `DirectionStability` now have
+native counterparts in `DirectionStability.swift`. Both clients expose
+`experiment extract-stability <study> <concept>` (Mac: `steerlab-cli`; Python
+engine: `steerlab-server`). Native execution captures each class once using the
+pinned reading/rendering settings, resamples in memory, and writes
+`diagnostics/<unique-directory>/stability.json` without modifying the study.
+Defaults are 32 resamples, fraction 0.5, seed 0 and 8 order shuffles. The report
+uses the same shared/per-layer partition and retains exact UInt64 draw seeds;
+the Mac envelope reports summary scalars and links the full document.
+
+The diagnostic covers mean difference, paired-difference PCA (`lat`) and
+designated reference, including unpaired classes for the latter. Other methods
+need their own stability question. Resampling and order shuffling stay separate;
+summary statistics use only successful resamples. Native/Python fixture
+agreement is implementation evidence, not MLX/MPS/CUDA model qualification.
+Nothing else in §§1–6 is engine-specific: the recipes, identity form, denominator
+conventions and reading-position vocabulary are cross-engine contracts.

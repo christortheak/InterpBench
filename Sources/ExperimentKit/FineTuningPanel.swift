@@ -2133,6 +2133,7 @@ public final class FineTuningPanel {
         // "hf-peft-lora"). Application paths refuse explicitly-foreign stamps.
         artifact.substrate = AdapterSubstrateGate.localSubstrate
         artifact.adapterFormat = AdapterSubstrateGate.localAdapterFormat
+        artifact.recordTrainingScale(result.adapterScale)
         if let trainingDataPath = artifact.trainingDataPath {
             artifact.trainingDataHash = datasetHash(
                 for: FineTuneStore.absoluteURL(trainingDataPath),

@@ -78,6 +78,7 @@ public struct FineTuneTrainingResult: Sendable {
     public var configURL: URL
     public var trainExamples: Int
     public var validationExamples: Int
+    public var adapterScale: Float
 }
 
 public enum FineTuneTrainingEvent: Sendable, CustomStringConvertible {
@@ -390,7 +391,8 @@ public enum FineTuneTrainer {
             adapterURL: adapterURL,
             configURL: configURL,
             trainExamples: trainExampleCount,
-            validationExamples: validationExampleCount)
+            validationExamples: validationExampleCount,
+            adapterScale: request.scale)
     }
 
     public static func loadDataset(path: String, defaultFilename: String) -> [String] {

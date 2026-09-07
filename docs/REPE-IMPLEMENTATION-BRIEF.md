@@ -141,10 +141,15 @@ must share ONE concept and ONE shape.
 (`ConceptBuilder`), its import parser and the reader-pairs authoring prompt
 have always used for held-out rows, on both engines, so repurposing that word
 would have changed the meaning of every existing corpus; the final-evaluation
-role got a new word instead (2026-09-05). **Swift parity owed:** the Swift
-reader still reads every non-`train` row as held out, so it would treat a
-`"finalTest"` row as a selection row. A dataset that uses the role must be
-fitted on the Python engine until that lands.
+role got a new word instead (2026-09-05). Both engines now keep `finalTest`
+rows out of sign selection and layer recommendation, score them separately,
+and stamp their evidence role. Reserving this split is optional for exploration;
+without it, report selection/validation evidence rather than final evaluation.
+The app exposes an optional final-test row reservation. Its split preview names
+the actual row IDs and any reduction needed to retain two training rows. Local
+and server requests use the same row encoder: train, then held-out, then final
+test. Final-test rows are reserved first; the remaining held-out count controls
+whether sign selection can run.
 
 **Cross-split leakage is refused, not reported.** A held-out or final-test row whose
 stimulus text repeats a train row's is a leak: the fit already read those words,
@@ -202,15 +207,13 @@ One artifact per concept × layer × template × model × substrate. The full
 template record is embedded so inference is standalone and drift-proof;
 `templateID`/`templateHash` remain the registry pins.
 
-Both engines write the same keys, with one current exception: the six
-evidence-role and final-test keys below (`finalTestAccuracy`, `finalTestPairCount`,
-`evidenceRoles`, `evidenceRolesBasis`, `evidenceRoleNote`, `splitOverlap`) are
-written by the Python engine only, pending the Swift twin. They are additive
-and absent-means-legacy, and Swift's decoder reads the keys it declares and
-ignores the rest, so the schema version stays **2** on both sides — a bump would
-buy nothing and break the twin's pin. A Swift round trip of such an artifact
-DROPS them, which is why a reader re-encoded on the Mac loses its roles until
-the twin lands.
+Both engines now read and write the six additive evidence/final-test keys
+(`finalTestAccuracy`, `finalTestPairCount`, `evidenceRoles`, `evidenceRolesBasis`,
+`evidenceRoleNote`, `splitOverlap`). The schema stays **2**. New Swift fits stamp
+these fields, and a Python-to-Swift round trip preserves them. Historical Swift
+artifacts with absent fields keep them absent on encode; `resolvedEvidenceRoles`
+is a reading of existing stamps, not a retroactively recorded measurement.
+Newly derived steering vectors also carry `readerEvidenceRoles`.
 
 | Key | Meaning |
 |---|---|

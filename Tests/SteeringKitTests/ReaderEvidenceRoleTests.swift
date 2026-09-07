@@ -95,6 +95,19 @@ import Testing
         #expect(decoded.resolvedEvidenceRoles.heldOutAccuracy == "selection")
     }
 
+    @Test func overlapUsesCasefoldWhitespaceButNotCanonicalUnicodeEquality() throws {
+        let (original, _, _) = fixture()
+        var pairs = Array(original.pairs.prefix(2))
+        pairs[0].positiveStimulus = "Straße\u{1f}Σ"; pairs[0].negativeStimulus = "n"
+        pairs[1].positiveStimulus = "STRASSE σ"; pairs[1].negativeStimulus = "N"
+        pairs[1].split = "finalTest"
+        #expect(throws: RepEReader.ReaderError.self) {
+            try RepEReader.checkSplitOverlap(.init(concept: "signal", pairs: pairs, hash: "fixture"))
+        }
+        pairs[0].positiveStimulus = "é"; pairs[1].positiveStimulus = "e\u{301}"
+        try RepEReader.checkSplitOverlap(.init(concept: "signal", pairs: pairs, hash: "fixture"))
+    }
+
     @Test func exactTrainOverlapIsCheckedForProgrammaticFitsAndParsedInputs() throws {
         let (original, template, captured) = fixture()
         var pairs = original.pairs

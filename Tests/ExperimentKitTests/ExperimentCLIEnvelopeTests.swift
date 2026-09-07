@@ -741,7 +741,7 @@ import Testing
             // the engine and can no more be typed than a registry hash can.
             "experiment set-evaluation-sampling",
             "experiment set-style-taxonomy", "experiment verify",
-            "experiment freeze", "experiment duplicate", "experiment extract",
+            "experiment freeze", "experiment duplicate", "experiment extract", "experiment extract-stability",
             "experiment validate", "experiment sweep", "experiment run",
             "experiment analyze", "experiment rescore-style",
             "experiment evaluate", "experiment promote", "experiment confirm",
@@ -810,7 +810,7 @@ import Testing
         // the design lived in a command line rather than in the artifact
         // chain the evidence travels in.
         #expect(
-            declared.filter { $0.hasPrefix("experiment ") }.count == 35,
+            declared.filter { $0.hasPrefix("experiment ") }.count == 36,
             "the experiment lifecycle includes reviewed agent/vector attachment and prompt import")
     }
 
