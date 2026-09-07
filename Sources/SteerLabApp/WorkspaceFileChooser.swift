@@ -128,6 +128,10 @@ struct WorkspacePathChooseButton: View {
             Image(systemName: "folder.badge.plus")
         }
         .buttonStyle(.plain)
+        // Icon-only: VoiceOver would otherwise read "folder.badge.plus".
+        .accessibilityLabel("Choose a file in the workspace")
+        .frame(minWidth: 20, minHeight: 20)
+        .contentShape(Rectangle())
         .help(
             "choose a file inside the workspace — the path is stored "
                 + "workspace-relative (typing it still works too)")

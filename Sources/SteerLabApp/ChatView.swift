@@ -90,16 +90,48 @@ struct ChatView: View {
     /// sidebar navigation; the VIEWER — the thing you watch (chat transcript,
     /// live logs, run summaries) — is on the right. The swap is positional
     /// only: modes, pinning, and chat-only-in-Playground are unchanged.
+    ///
+    /// Two floors have to hold here at once, and before the 2026-09-06 audit
+    /// neither did (headline 1: the controls pane rendered at ≈444 pt in a
+    /// 560 pt section, and the Results header wrapped to "Run directo-ries").
+    ///
+    /// 1. **The controls pane may never render below the section's floor.**
+    ///    `HSplitView` keeps ONE divider position for the whole split and a
+    ///    new minimum only constrains DRAGGING, not the position it is
+    ///    already holding: a divider left at Playground's 340 pt floor stayed
+    ///    at 340–450 pt after a switch to a 560 pt section, and stayed there
+    ///    even when the window was zoomed wider. Re-identifying the split on
+    ///    the floor itself makes SwiftUI build a fresh split view whenever the
+    ///    floor changes, so the divider is recomputed against the new minimum
+    ///    instead of being carried across. The cost is deliberate and small: a
+    ///    section switch that crosses a floor boundary resets a divider the
+    ///    researcher had dragged (and re-mounts a pinned viewer, whose content
+    ///    lives in the stores, not in the view). Switches inside one floor —
+    ///    every 560 pt section to every other — keep the divider.
+    /// 2. **The viewer still takes the surplus.** It used to get that from
+    ///    `.layoutPriority(1)` alone, which also made the CONTROLS pane the
+    ///    one that yields whenever the two minimums did not both fit — the
+    ///    other half of the same bug, because the window could restore under
+    ///    its own floor (fixed with `.windowResizability(.contentMinSize)` and
+    ///    a floor that fits the sidebar at its maximum, `SteerLabApp`). The
+    ///    priority stays, but the controls pane now asks for exactly its floor
+    ///    as its IDEAL width, so the surplus has one obvious home and the
+    ///    stack offers the viewer `total − floor` rather than squeezing the
+    ///    controls to make room for a viewer that wanted more.
     private var detailSplit: some View {
         HSplitView {
             sectionContent
-                .frame(minWidth: section.minimumContentWidth, maxWidth: .infinity)
+                .frame(
+                    minWidth: section.minimumContentWidth,
+                    idealWidth: section.minimumContentWidth,
+                    maxWidth: .infinity)
             activityViewerColumn
                 .frame(minWidth: 420, maxWidth: .infinity)
                 // The viewer takes the surplus at first layout; the divider
                 // stays user-draggable.
                 .layoutPriority(1)
         }
+        .id(section.minimumContentWidth)
     }
 
     @ViewBuilder
@@ -108,7 +140,9 @@ struct ChatView: View {
         case .home:
             HomeDashboardView(
                 service: service, workspace: workspace, navigate: navigate,
-                openOptimizations: openOptimizations)
+                openOptimizations: openOptimizations,
+                openAdapterTraining: openAdapterTraining,
+                openAgent: openAgent)
         case .agents:
             ModelVariantsPanelView(
                 service: service, region: $agentsRegion, navigate: navigate)
@@ -151,6 +185,25 @@ struct ChatView: View {
     private func openAgentsLibrary() {
         agentsRegion = .library
         section = .agents
+    }
+
+    /// Cross-section landing on ONE agent: preselect it, then open the
+    /// Library — the same two-step the Data section's derived scope performs.
+    /// Home's agent rows use it so a listed agent is reachable from the
+    /// dashboard (2026-09-06 audit: the rows were inert while study rows,
+    /// which look identical, opened their study).
+    private func openAgent(_ id: ModelVariantRecord.ID) {
+        service.fineTuning.selectAgent(id: id)
+        openAgentsLibrary()
+    }
+
+    /// Cross-section landing on Data › Adapter Training. `navigate(.data)`
+    /// alone lands on whichever tool was last shown (2026-09-06 audit), so a
+    /// button that names Adapter Training has to set the tool as well — the
+    /// same shape as `openOptimizations` for Agents › Optimizations.
+    private func openAdapterTraining() {
+        dataTool = .adapterTraining
+        section = .data
     }
 
     // MARK: Activity viewer (the contextual right-hand pane)

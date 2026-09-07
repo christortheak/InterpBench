@@ -41,8 +41,10 @@ struct MarkdownMessageText: View {
                         .font(.system(.callout, design: .monospaced))
                         .padding(6)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        // `.quaternary` reads on a light AND a dark bubble;
+                        // black at 12% was invisible on the dark one.
                         .background(
-                            .black.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                            .quaternary, in: RoundedRectangle(cornerRadius: 6))
                 }
             }
         }

@@ -11,15 +11,28 @@ struct WorkspaceSelector: View {
     @Bindable var workspace: WorkspaceStore
     let service: ChatService
     let catalog: SubstrateCatalog
+    /// A failure title names what failed; "Workspace" alone is a noun, not a
+    /// report (2026-09-06 audit).
+    @State private var errorTitle = "Workspace"
     @State private var errorMessage: String?
 
     var body: some View {
         Menu {
-            Section(workspace.rootURL.path) {
+            // The folder NAME as the section header: the absolute path used
+            // to be the header and widened the whole menu. The full path is
+            // one hover away (this menu's help) and on Home.
+            Section(workspace.displayName) {
                 Button("New Workspace…") { newWorkspace() }
                     .disabled(workspace.isEnvironmentPinned)
+                    .help(
+                        "create a new workspace folder (prompts/, experiments/, "
+                            + "runs/) and switch every panel to it")
                 Button("Open Workspace…") { openWorkspace() }
                     .disabled(workspace.isEnvironmentPinned)
+                    .help(
+                        "switch to an existing workspace folder — panels re-scan "
+                            + "in place; jobs already running keep writing to the "
+                            + "previous one")
             }
             Divider()
             computeBindingSection
@@ -27,6 +40,7 @@ struct WorkspaceSelector: View {
             Button("Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([workspace.rootURL])
             }
+            .help("show this workspace's folder in Finder")
             if workspace.isEnvironmentPinned {
                 Text("pinned by STEERLAB_WORKSPACE — switch by relaunching without it")
             }
@@ -45,9 +59,18 @@ struct WorkspaceSelector: View {
         .labelStyle(.titleAndIcon)
         .help(helpText)
         .alert(
-            "Workspace", isPresented: showingError,
-            actions: { Button("OK") { errorMessage = nil } },
+            errorTitle, isPresented: showingError,
+            actions: { Button("OK", role: .cancel) { errorMessage = nil } },
             message: { Text(errorMessage ?? "") })
+    }
+
+    /// One place to raise a failure, so every path names what failed and
+    /// renders the error's own message (`localizedDescription`, which every
+    /// ExperimentKit error type answers through `ErrorMessages`) instead of
+    /// its raw Swift description.
+    private func report(_ title: String, _ error: Error) {
+        errorTitle = title
+        errorMessage = error.localizedDescription
     }
 
     private var showingError: Binding<Bool> {
@@ -74,6 +97,13 @@ struct WorkspaceSelector: View {
             }
             .pickerStyle(.inline)
             .labelsHidden()
+            .help(
+                "what this workspace's data is FOR — the engine whose "
+                    + "artifacts and evidence are native here. A declaration "
+                    + "about the folder, not about today's connection: it "
+                    + "survives the server being offline or moved, and the "
+                    + "lifecycle reads it when deciding whether a vector or a "
+                    + "run belongs to this study")
             if !workspace.isComputeDeclared {
                 // An inference must not masquerade as a decision.
                 Text("inferred from this workspace's runs — choose to confirm")
@@ -89,7 +119,7 @@ struct WorkspaceSelector: View {
             get: { workspace.compute },
             set: { choice in
                 do { try workspace.declareCompute(choice) } catch {
-                    errorMessage = "\(error)"
+                    report("Could not declare this workspace's compute", error)
                 }
             })
     }
@@ -101,8 +131,8 @@ struct WorkspaceSelector: View {
         let target = service.cluster.activeWorkspace
         switch (workspace.compute, target) {
         case (.cluster, .local):
-            return "Compute is set to MLX, but this workspace's data is "
-                + "cluster data — switch Compute to the server before running"
+            return "Compute is set to Local (MLX), but this workspace's data "
+                + "is cluster data — switch Compute to the server before running"
         case (.localMLX, .server):
             return "Compute is set to \(service.cluster.substrateLabel), but "
                 + "this workspace is declared local — its artifacts are MLX"
@@ -111,11 +141,14 @@ struct WorkspaceSelector: View {
         }
     }
 
-    /// "MLX" locally, "Server: <name>" on a server workspace — appended to
-    /// the selector label so the active substrate is always visible.
+    /// "Local (MLX)" locally, "Server: <name>" on a server workspace —
+    /// appended to the selector label so the active substrate is always
+    /// visible. One spelling for the local engine everywhere: the same one
+    /// `ClusterConnectionStore.substrateLabel` and `WorkspaceCompute.label`
+    /// use (2026-09-06 audit, headline 18).
     private var substrateSuffix: String {
         switch service.cluster.activeWorkspace {
-        case .local: return "MLX"
+        case .local: return "Local (MLX)"
         case .server: return "Server: \(service.cluster.substrateLabel)"
         }
     }
@@ -156,7 +189,7 @@ struct WorkspaceSelector: View {
             try workspace.createAndSwitch(to: url, computing: chooser.selected)
             resetCatalogs()
         } catch {
-            errorMessage = "\(error)"
+            report("Could not create the workspace", error)
         }
     }
 
@@ -172,7 +205,7 @@ struct WorkspaceSelector: View {
             try workspace.switchTo(url)
             resetCatalogs()
         } catch {
-            errorMessage = "\(error)"
+            report("Could not open that workspace", error)
         }
     }
 
@@ -216,6 +249,12 @@ struct InstallModelButton: View {
     @State private var showingInstaller = false
     @State private var modelID = ""
 
+    /// Both buttons send this to the server; neither has anything to send
+    /// while it is blank (Plan used to POST "" and get a server error back).
+    private var trimmedModelID: String {
+        modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var body: some View {
         Button {
             showingInstaller = true
@@ -233,14 +272,28 @@ struct InstallModelButton: View {
                 TextField("HF repo id (e.g. Qwen/Qwen3-4B)", text: $modelID)
                     .textFieldStyle(.roundedBorder)
                     .frame(minWidth: 280)
+                    .help(
+                        "the Hugging Face repository to prefetch, owner/name — "
+                            + "full-precision ids only (an MLX repo is refused "
+                            + "with its family twin named)")
                 HStack {
                     Button("Plan") {
-                        Task { await cluster.previewModelPreparation(modelID) }
+                        Task { await cluster.previewModelPreparation(trimmedModelID) }
                     }
+                    .disabled(trimmedModelID.isEmpty)
+                    .help(
+                        "ask the server what installing this repo would cost — "
+                            + "disk, files, and whether it is already cached — "
+                            + "without queueing anything")
                     Button("Install") {
-                        Task { await cluster.installModel(modelID) }
+                        Task { await cluster.installModel(trimmedModelID) }
                     }
-                    .disabled(modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(trimmedModelID.isEmpty)
+                    .help(
+                        "queue the prefetch as a durable job on "
+                            + "\(cluster.substrateLabel); it keeps running after "
+                            + "this popover closes and shows up in Compute › Jobs")
                     Spacer()
                 }
                 if cluster.modelPreparation.endpoint == cluster.connectionProfile?.baseURL,
@@ -290,6 +343,10 @@ struct AddLocalModelButton: View {
                     text: $modelID)
                     .textFieldStyle(.roundedBorder)
                     .frame(minWidth: 300)
+                    .help(
+                        "the Hugging Face repository to download here, "
+                            + "owner/name — MLX-quantized repos, since this Mac "
+                            + "loads them through MLX")
                 Text("Downloads the full weights — typically 3–35 GB. It keeps "
                     + "running while you work, and a cancelled download resumes.")
                     .font(.caption)
@@ -305,8 +362,15 @@ struct AddLocalModelButton: View {
                         service.modelInstaller.isInstalling
                             || modelID.trimmingCharacters(in: .whitespacesAndNewlines)
                                 .isEmpty)
+                    .help(
+                        "fetch the weights into this Mac's Hugging Face cache "
+                            + "now — it keeps running while you work, and a "
+                            + "cancelled download resumes where it stopped")
                     if service.modelInstaller.isInstalling {
                         Button("Cancel Download") { service.modelInstaller.cancel() }
+                            .help(
+                                "stop fetching — the bytes already written stay "
+                                    + "in the cache and Download resumes from there")
                     }
                     Spacer()
                 }
