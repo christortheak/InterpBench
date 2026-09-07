@@ -1,0 +1,11 @@
+{"batteryFormat": 2, "scoring": "choiceProbability", "promptMode": "chatAssistant", "maxTokens": 24, "description": "SimpleQA-style short factual recall read as answer-token choices."}
+{"id": "factual-01", "prompt": "What is the capital of Japan?", "answer": "Tokyo", "options": ["Tokyo", "Osaka", "Kyoto"]}
+{"id": "factual-02", "prompt": "Which gas do humans need to breathe?", "answer": "Oxygen", "options": ["Oxygen", "Nitrogen", "Hydrogen"]}
+{"id": "factual-03", "prompt": "How many continents are taught in the seven-continent model?", "answer": "7", "options": ["5", "6", "7"]}
+{"id": "factual-04", "prompt": "Who wrote the play Hamlet?", "answer": "Shakespeare", "options": ["Shakespeare", "Chaucer", "Marlowe"]}
+{"id": "factual-05", "prompt": "Which planet is known as the Red Planet?", "answer": "Mars", "options": ["Mars", "Venus", "Saturn"]}
+{"id": "factual-06", "prompt": "What is H2O commonly called?", "answer": "Water", "options": ["Water", "Salt", "Sugar"]}
+{"id": "factual-07", "prompt": "How many sides does a triangle have?", "answer": "3", "options": ["3", "4", "5"]}
+{"id": "factual-08", "prompt": "Which is the largest ocean on Earth?", "answer": "Pacific", "options": ["Pacific", "Atlantic", "Indian"]}
+{"id": "factual-09", "prompt": "Which month comes after April?", "answer": "May", "options": ["May", "June", "July"]}
+{"id": "factual-10", "prompt": "What is the freezing point of water in degrees Celsius?", "answer": "0", "options": ["0", "10", "32"]}

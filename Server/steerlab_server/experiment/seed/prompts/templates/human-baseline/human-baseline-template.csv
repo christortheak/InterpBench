@@ -1,0 +1,2 @@
+endpoint,deltaHuman,ciLower,ciUpper,source,n,notes
+primary_outcome_rate,0.12,0.05,0.19,"Example et al. (2020), Table 3",412,"transcribed 2026-07-13; verified against the published table"

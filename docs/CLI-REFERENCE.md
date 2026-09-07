@@ -192,6 +192,9 @@ The command table below is checked against the declared client verb specs.
 <!-- BEGIN CLIENT-STUDY-ASSEMBLY -->
 
 ```text
+steerlab workspace init <directory> [--no-git]
+steerlab workspace inspect
+steerlab workspace handoff
 steerlab runner science-call <operation> --action <value> --request <value> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner science-stage <server-archive-path> --runner <url> --sha256 <digest> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner science-export <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
@@ -250,7 +253,7 @@ steerlab model status <job-id> --runner <url> [--ca-bundle <path>] [--timeout <s
 steerlab model cancel <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 ```
 
-All commands accept `--root <directory>` and `--json`; `--out` writes the envelope.
+All commands accept `--json`; `--out` writes the envelope. Workspace init takes its destination positionally; other commands accept `--root <directory>`.
 
 <!-- END CLIENT-STUDY-ASSEMBLY -->
 

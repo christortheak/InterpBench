@@ -114,7 +114,7 @@ import os
 import sys
 
 from . import cli_envelope as envelope
-from .client import study_assembly, design_commands, authoring_commands, model_commands, science_commands
+from .client import study_assembly, design_commands, authoring_commands, model_commands, science_commands, bootstrap_commands
 from .cli_envelope import (HELP_FLAG, JSON_FLAG, OUT_FLAG, CLIResult,
                            UsageError, VerbSpec)
 
@@ -251,6 +251,7 @@ def _authoring_prompt_kinds():
 
 
 CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
+    *bootstrap_commands.VERB_SPECS,
     *science_commands.VERB_SPECS,
     *study_assembly.VERB_SPECS,
     *design_commands.VERB_SPECS,
@@ -542,7 +543,7 @@ SOLO_FAMILIES: dict = {"run": "run"}
 #: a SEPARATE family precisely so the exclusion is a line in a table rather
 #: than a judgement call about a flag name.
 AUTHORING_FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "pack", "design", "agent", "panel",
-                                       "model")
+                                       "model", "workspace")
 
 #: The generation-prompt emitter. NOT in :data:`AUTHORING_FAMILIES` despite
 #: its name, and the distinction is the point: an authoring family WRITES into
@@ -972,8 +973,8 @@ def resolve_workspace(explicit: str | None) -> str:
             repair_action=(
                 f"{PROGRAM} {ROOT_FLAG} ~/SteerLab/Workspaces/<study> <verb> … "
                 f"or: export {WORKSPACE_ENV}=~/SteerLab/Workspaces/<study>  "
-                "(create one with `steerlab-cli workspace init <dir>` on a "
-                "Mac, or point at an existing workspace directory)"))
+                "(create one with `steerlab workspace init <dir>`, or use a "
+                "shared existing workspace directory)"))
     root = os.path.realpath(os.path.abspath(os.path.expanduser(raw)))
     if not os.path.isdir(root):
         raise ClientRefusal(
@@ -4114,7 +4115,7 @@ def _iso(value) -> str | None:
         return None
 
 
-HANDLERS = {"science": science_commands.run, "experiment": _experiment, "concept": _concept, "bundle": _bundle,
+HANDLERS = {"workspace": bootstrap_commands.run, "science": science_commands.run, "experiment": _experiment, "concept": _concept, "bundle": _bundle,
             "pack": study_assembly.run, "design": design_commands.run, "agent": lambda i: authoring_commands.run(i) if i.spec.verb == "list" else design_commands.run(i), "panel": authoring_commands.run,
             "model": _model,
             "authoring": _authoring_prompt, "runner": _runner, "run": _run}
@@ -4411,8 +4412,12 @@ def main(argv: list | None = None) -> int:
         # nothing else is — a --root pointing at a non-directory still
         # refuses, on every family.
         try:
-            resolve_workspace(explicit_root)
-            resolved = True
+            if family == "workspace" and invocation.spec.verb == "init":
+                if explicit_root is not None:
+                    raise ClientRefusal(code="usage", reason="Workspace init takes its destination as a positional argument, not --root.", repair_action="steerlab workspace init <directory> --json")
+            else:
+                resolve_workspace(explicit_root)
+                resolved = True
         except ClientRefusal as workspace_exc:
             if not (family in WORKSPACE_OPTIONAL_FAMILIES
                     and workspace_exc.code == WORKSPACE_UNSET_CODE):

@@ -1,0 +1,11 @@
+{"batteryFormat": 2, "scoring": "choiceProbability", "promptMode": "chatAssistant", "maxTokens": 24, "description": "IFEval-style constraint checks posed as choices: the model picks the candidate that satisfies the stated rule."}
+{"id": "instruction-01", "prompt": "A rule says the response must be exactly two letters long. Which candidate obeys it?", "answer": "AB", "options": ["AB", "XYZ", "MNPQ"]}
+{"id": "instruction-02", "prompt": "A rule says to give only the final digit of 12345. Which candidate obeys it?", "answer": "5", "options": ["1", "3", "5"]}
+{"id": "instruction-03", "prompt": "A rule says to give only the first letter of the word justice. Which candidate obeys it?", "answer": "j", "options": ["j", "u", "e"]}
+{"id": "instruction-04", "prompt": "Is 12 greater than 7?", "answer": "Yes", "options": ["Yes", "No", "Equal"]}
+{"id": "instruction-05", "prompt": "Is 4 greater than 9?", "answer": "No", "options": ["Yes", "No", "Equal"]}
+{"id": "instruction-06", "prompt": "Choose A, B, or C. The correct option is B.", "answer": "B", "options": ["A", "B", "C"]}
+{"id": "instruction-07", "prompt": "Which token is the JSON literal for a true boolean value?", "answer": "true", "options": ["true", "null", "yes"]}
+{"id": "instruction-08", "prompt": "A rule says the word must be written in lowercase. Which candidate obeys it?", "answer": "calm", "options": ["calm", "LOUD", "Mixed"]}
+{"id": "instruction-09", "prompt": "A rule says the response must be exactly one word. Which candidate obeys it?", "answer": "lantern", "options": ["lantern", "two words", "three whole words"]}
+{"id": "instruction-10", "prompt": "A rule says to list the colors red, green, blue in reverse order. Which candidate obeys it?", "answer": "blue, green, red", "options": ["blue, green, red", "green, blue, red", "red, green, blue"]}

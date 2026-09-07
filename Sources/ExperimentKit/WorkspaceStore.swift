@@ -98,11 +98,7 @@ public final class WorkspaceStore {
     /// `prompts/taxonomies/<file>.json` in its own usage and refusals
     /// (`ExperimentStore.taxonomiesRelativeDirectory`), and seeding never
     /// created it — the verb promised a directory that did not exist.
-    public nonisolated static let promptSubdirectories = [
-        "concepts", "emotions", "rubrics", "batteries", "neutral", "templates",
-        "tasks", "readers", "probes", "dev", "generation", "parsers", "panels",
-        "taxonomies",
-    ]
+    public nonisolated static let promptSubdirectories = WorkspaceBootstrapText.promptDirectories
 
     /// THE SEED ALLOWLIST (WP1): every file a new workspace receives, named
     /// one by one, relative to the seed root (`CodeResources.workspaceSeed()`
@@ -139,110 +135,7 @@ public final class WorkspaceStore {
     ///
     /// Nothing is removed from the repository — existing workspaces keep
     /// every file they were ever given. Only NEW workspaces change.
-    public nonisolated static let seedManifest: [String] = [
-        // Capability probes. `basic.jsonl` is the engine default; the rest
-        // are the sets `VariantRobustness` presets name.
-        "prompts/batteries/basic.jsonl",
-        "prompts/batteries/factual-short.jsonl",
-        "prompts/batteries/instruction-following.jsonl",
-        "prompts/batteries/reasoning-small.jsonl",
-        "prompts/batteries/study-guardrail.jsonl",
-        "prompts/batteries/truthfulness-small.jsonl",
-        // Sweep dev split + robustness/coherence prompts (both engine
-        // defaults; generic, concept-content-free).
-        "prompts/dev/dev-prompts.jsonl",
-        "prompts/dev/robustness-coherence.jsonl",
-        // Dataset-generation prompt templates. Both engines RENDER these
-        // files by name (`ConceptBuilder.templatePrompt`,
-        // `authoring.TEMPLATE_FILES`), resolving the workspace's copy first
-        // and the seed copy second — a workspace without them makes the
-        // Concept Lab's "copy LLM prompt" buttons and the server's
-        // `authoring template` endpoint fail. The study's own authoring job
-        // cards are NOT here; only the seven the code names, plus a README
-        // written for this list.
-        // Generation-prompt templates for the `authoring prompt <kind>`
-        // emitter. The DIRECTORY is that registry's index (one file per kind,
-        // kind == filename stem), and both engines resolve the workspace's
-        // copy first and the seed copy second — so a study can edit the
-        // wording for itself, and the emission's `promptSpecHash` follows the
-        // bytes that were actually rendered. The two `_`-prefixed files are
-        // shared partials, not kinds.
-        "prompts/authoring-prompts/README.md",
-        "prompts/authoring-prompts/_delivery.md",
-        "prompts/authoring-prompts/_discipline.md",
-        "prompts/authoring-prompts/_reader-shape-contentPair.md",
-        "prompts/authoring-prompts/_reader-shape-singleStimulus.md",
-        "prompts/authoring-prompts/battery.md",
-        "prompts/authoring-prompts/choice-prompts.md",
-        "prompts/authoring-prompts/contrastive-pairs.md",
-        "prompts/authoring-prompts/reader-pairs.md",
-        "prompts/authoring-prompts/validation-set.md",
-        "prompts/method-guides/catalog.json",
-        "prompts/method-guides/workflows.json",
-        "prompts/method-guides/extraction.md",
-        "prompts/method-guides/readers.md",
-        "prompts/method-guides/optimization.md",
-        "prompts/method-guides/finetuning.md",
-        "prompts/method-guides/jlens.md",
-        "prompts/method-guides/jspace.md",
-        "prompts/method-guides/sae.md",
-        "prompts/method-guides/stability.md",
-        "prompts/method-guides/batteries.md",
-        "prompts/method-guides/judging.md",
-        "prompts/method-guides/style.md",
-        "prompts/method-guides/multi-agent.md",
-        "prompts/study-interviews/study-conceptStudy.md",
-        "prompts/study-interviews/study-agentComparison.md",
-        "prompts/study-interviews/study-multiAgent.md",
-        "prompts/generation/README.md",
-        "prompts/generation/caa-paired-stimuli.md",
-        "prompts/generation/emotion-grand-mean-stories.md",
-        "prompts/generation/grand-mean-cowork-agent.md",
-        "prompts/generation/neutral-dialogues-anthropic-style.md",
-        "prompts/generation/neutral-norm-corpus.md",
-        "prompts/generation/probe-validation-items.md",
-        "prompts/generation/repe-paired-reader-data.md",
-        // The residual-norm denominator corpus — a fixed denominator is what
-        // makes α comparable across concepts.
-        "prompts/neutral/corpus.jsonl",
-        // Declared numeric unit grammars; its default entry reproduces the
-        // built-in parser, so `numericParser` is nameable on day one.
-        "prompts/parsers/parser-registry.json",
-        // Judge rubrics: the pin convention, and the historical default
-        // criterion (pinnable so pre-versioning behavior is reproducible).
-        "prompts/rubrics/README.md",
-        "prompts/rubrics/default-paired-v1.md",
-        // A worked task-prompts file showing `responseFormat` (which
-        // instruments may legitimately read an item) and `options`/`target`.
-        "prompts/tasks/example-task-prompts.jsonl",
-        // Templates: the shapes every study-data scaffold copies from
-        // (`StudyDataReadiness.Template.seedRelativePath` names several of
-        // these exactly), plus the three RepE reader task templates the
-        // Concept Lab's registry picker scans — two single-template
-        // (supervised content contrast) and one T+/T− template pair (the
-        // paper's unsupervised construction, §3.1 step 1b).
-        "prompts/templates/amount-in-scenario-v1.json",
-        "prompts/templates/unnamed-scenario-v1.json",
-        "prompts/templates/instructed-stance-pair-v1.json",
-        "prompts/templates/battery/capability-battery-v2.template.jsonl",
-        "prompts/templates/human-baseline/README.md",
-        "prompts/templates/human-baseline/human-baseline-template.csv",
-        "prompts/templates/markers/README.md",
-        "prompts/templates/markers/markers-template.json",
-        "prompts/templates/reasoning-style/README.md",
-        "prompts/templates/reasoning-style/reasoning-style-generic-template.json",
-        "prompts/templates/reasoning-style/reasoning-style-structure-template.json",
-        "prompts/templates/rubrics/README.md",
-        "prompts/templates/rubrics/rubric-template.md",
-        "prompts/templates/scenario/README.md",
-        "prompts/templates/scenario/scenario-template.json",
-        "prompts/templates/task-prompts-choice/README.md",
-        "prompts/templates/task-prompts-choice/task-prompts-choice-template.jsonl",
-        "prompts/templates/task-prompts-transcript/README.md",
-        "prompts/templates/task-prompts-transcript/task-prompts-transcript-template.jsonl",
-        "prompts/templates/validation/README.md",
-        "prompts/templates/validation/validation-template.jsonl",
-    ]
+    public nonisolated static let seedManifest = WorkspaceBootstrapText.seedFiles
 
     public nonisolated static let markerFileName = "WORKSPACE.md"
 
@@ -377,7 +270,7 @@ public final class WorkspaceStore {
         // dangling-by-design links into every freeze auto-commit.
         // `WorkspaceRunCatalog.ensureGitignored` adds the line to workspaces
         // made before this rule; here it is present from the first commit.
-        try "runs/\ncatalog/\nadapters/**/*.safetensors\n.DS_Store\n".write(
+        try WorkspaceBootstrapText.gitignore.write(
             to: root.appending(component: ".gitignore"), atomically: true,
             encoding: .utf8)
 
@@ -564,31 +457,9 @@ public final class WorkspaceStore {
     }
 
     private nonisolated static func markerContents() -> String {
-        """
-        # SteerLab Workspace
-
-        Created by SteerLab (\(SteerLabVersion.current)) on \
-        \(ISO8601DateFormatter().string(from: Date())).
-
-        This folder is a SteerLab *data workspace* — the app's Workspace menu
-        points here; the code repository keeps only seed/template data.
-
-        Layout:
-        - `prompts/` — git-versioned inputs: `concepts/` (contrastive stimulus
-          sets), `emotions/` (grand-mean story corpora), `rubrics/`,
-          `batteries/`, `neutral/`, `templates/`, `tasks/`, `readers/`,
-          `probes/`, `dev/`
-        - `experiments/` — experiment manifests (freezable recipes; frozen
-          ones carry a `pinned/` snapshot of every pinned input)
-        - `runs/` — immutable run outputs (gitignored; never edited)
-        - `adapters/` — per-adapter homes (`adapters/<name>/` with
-          `training/` and `validation/` data folders; trained weight files
-          are gitignored, the data is versioned)
-
-        The workspace is git-managed invisibly: creating it makes the initial
-        commit, and freezing an experiment commits the workspace as part of
-        the freeze gesture.
-        """
+        WorkspaceBootstrapText.markerTemplate
+            .replacingOccurrences(of: "{{version}}", with: SteerLabVersion.current)
+            .replacingOccurrences(of: "{{createdAt}}", with: ISO8601DateFormatter().string(from: Date()))
     }
 
     /// The workspace-facing agent contract (`AGENTS.md`). Generated in code,

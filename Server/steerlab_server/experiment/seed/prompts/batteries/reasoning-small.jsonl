@@ -1,0 +1,11 @@
+{"batteryFormat": 2, "scoring": "choiceProbability", "promptMode": "chatAssistant", "maxTokens": 24, "description": "Compact arithmetic, pattern, and syllogistic reasoning probes read as answer-token choices."}
+{"id": "reasoning-01", "prompt": "Mia has 12 apples and gives away 5. How many remain?", "answer": "7", "options": ["5", "7", "17"]}
+{"id": "reasoning-02", "prompt": "A book costs 6 dollars. How much do 4 books cost?", "answer": "24", "options": ["10", "24", "64"]}
+{"id": "reasoning-03", "prompt": "Which word continues the pattern red, blue, red, blue, red?", "answer": "blue", "options": ["blue", "red", "green"]}
+{"id": "reasoning-04", "prompt": "Which is heavier?", "answer": "2 kilograms of steel", "options": ["2 kilograms of steel", "1 kilogram of feathers", "They weigh the same"]}
+{"id": "reasoning-05", "prompt": "There are 10 chairs and 3 people sit down. How many chairs are empty?", "answer": "7", "options": ["3", "7", "13"]}
+{"id": "reasoning-06", "prompt": "If today is Monday, which day is two days later?", "answer": "Wednesday", "options": ["Tuesday", "Wednesday", "Thursday"]}
+{"id": "reasoning-07", "prompt": "How many items are in a dozen?", "answer": "12", "options": ["10", "12", "20"]}
+{"id": "reasoning-08", "prompt": "Which word does not belong: apple, banana, carrot, grape?", "answer": "carrot", "options": ["apple", "carrot", "grape"]}
+{"id": "reasoning-09", "prompt": "All bloops are razzies, and Fim is a bloop. Is Fim a razzy?", "answer": "Yes", "options": ["Yes", "No", "Maybe"]}
+{"id": "reasoning-10", "prompt": "No birds are cars, and a robin is a bird. Is a robin a car?", "answer": "No", "options": ["Yes", "No", "Maybe"]}

@@ -1,0 +1,21 @@
+{"batteryFormat": 2, "scoring": "choiceProbability", "promptMode": "chatAssistant", "maxTokens": 24, "description": "Twenty broader arithmetic, factual, logical, and instruction-constraint probes for reportable study runs, read as answer-token choices."}
+{"id": "guardrail-01", "prompt": "What is 17 + 26?", "answer": "43", "options": ["41", "42", "43"]}
+{"id": "guardrail-02", "prompt": "What is 9 times 8?", "answer": "72", "options": ["63", "72", "81"]}
+{"id": "guardrail-03", "prompt": "Which number continues the sequence 2, 4, 6, 8?", "answer": "10", "options": ["9", "10", "12"]}
+{"id": "guardrail-04", "prompt": "Which number is larger, 0.7 or 0.07?", "answer": "0.7", "options": ["0.7", "0.07", "0.007"]}
+{"id": "guardrail-05", "prompt": "A box holds 3 red marbles and 5 blue marbles. How many marbles are in the box?", "answer": "8", "options": ["2", "8", "15"]}
+{"id": "guardrail-06", "prompt": "A train leaves at 3:00 PM and the trip takes two hours. When does it arrive?", "answer": "5:00 PM", "options": ["4:00 PM", "5:00 PM", "6:00 PM"]}
+{"id": "guardrail-07", "prompt": "What is the word 'cat' spelled backwards?", "answer": "tac", "options": ["tac", "cta", "atc"]}
+{"id": "guardrail-08", "prompt": "What is the capital of France?", "answer": "Paris", "options": ["Paris", "Madrid", "Lisbon"]}
+{"id": "guardrail-09", "prompt": "Which color results from mixing blue and yellow paint?", "answer": "green", "options": ["green", "purple", "orange"]}
+{"id": "guardrail-10", "prompt": "Which day of the week comes immediately after Tuesday?", "answer": "Wednesday", "options": ["Wednesday", "Thursday", "Saturday"]}
+{"id": "guardrail-11", "prompt": "How many legs does a spider have?", "answer": "8", "options": ["6", "8", "10"]}
+{"id": "guardrail-12", "prompt": "Which ocean is larger, the Pacific or the Atlantic?", "answer": "Pacific", "options": ["Pacific", "Atlantic", "They are equal"]}
+{"id": "guardrail-13", "prompt": "How many squares are rectangles?", "answer": "All of them", "options": ["All of them", "None of them", "Some of them"]}
+{"id": "guardrail-14", "prompt": "How many rectangles are squares?", "answer": "Some of them", "options": ["All of them", "None of them", "Some of them"]}
+{"id": "guardrail-15", "prompt": "At sea level, at what temperature in degrees Celsius does water normally boil?", "answer": "100", "options": ["37", "50", "100"]}
+{"id": "guardrail-16", "prompt": "What orbits what, once per year?", "answer": "Earth orbits the Sun", "options": ["Earth orbits the Sun", "The Sun orbits Earth", "The Moon orbits the Sun"]}
+{"id": "guardrail-17", "prompt": "A rule says the response must be exactly two letters long. Which candidate obeys it?", "answer": "AB", "options": ["AB", "XYZ", "MNPQ"]}
+{"id": "guardrail-18", "prompt": "A rule says the word must be written in lowercase. Which candidate obeys it?", "answer": "calm", "options": ["calm", "LOUD", "Mixed"]}
+{"id": "guardrail-19", "prompt": "Which word comes first alphabetically, lemon or apple?", "answer": "apple", "options": ["apple", "lemon", "They tie"]}
+{"id": "guardrail-20", "prompt": "Which animal is larger, a mouse or an elephant?", "answer": "elephant", "options": ["elephant", "mouse", "They are equal"]}

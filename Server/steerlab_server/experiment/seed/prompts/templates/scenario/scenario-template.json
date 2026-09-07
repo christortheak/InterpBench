@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "name": "two-agent-allocation-template",
+  "description": "Minimal two-agent template: a proposer suggests how to split a shared resource pool and a reviewer responds. Replace materials, prompts, and models with your study's own.",
+  "baseModelID": "Qwen/Qwen3-4B-MLX-4bit",
+  "sharedMaterials": "Two teams share a pool of 100 credits for the coming cycle. Team North runs the archive; Team South runs the workshop. Any credits left unallocated are lost.",
+  "agents": [
+    {
+      "id": "agent-proposer",
+      "name": "Proposer",
+      "baseModelID": "Qwen/Qwen3-4B-MLX-4bit",
+      "systemPrompt": "You represent Team North. Propose an allocation of the shared credits and justify it briefly."
+    },
+    {
+      "id": "agent-reviewer",
+      "name": "Reviewer",
+      "baseModelID": "Qwen/Qwen3-4B-MLX-4bit",
+      "systemPrompt": "You represent Team South. Evaluate the proposal you receive and state whether you accept it, with one revision if you decline."
+    }
+  ],
+  "turns": [
+    {
+      "id": "turn-propose",
+      "title": "Proposal",
+      "speakerAgentID": "agent-proposer",
+      "promptTemplate": "Propose a split of the 100 credits between Team North and Team South. State the numbers first, then at most three sentences of justification.",
+      "outputLabel": "proposal",
+      "routing": "all",
+      "routedAgentIDs": [],
+      "includeScenarioMaterials": true,
+      "includeSpeakerContext": true,
+      "maxTokens": 256
+    },
+    {
+      "id": "turn-review",
+      "title": "Review",
+      "speakerAgentID": "agent-reviewer",
+      "promptTemplate": "You have read the proposal above. Accept or decline it. State your decision on its own line, exactly as 'Decision: accept' or 'Decision: decline'. If you decline, give exactly one revised split and one sentence explaining the revision.",
+      "outputLabel": "review",
+      "routing": "all",
+      "routedAgentIDs": [],
+      "includeScenarioMaterials": true,
+      "includeSpeakerContext": true,
+      "maxTokens": 256,
+      "endpoint": {
+        "name": "decision",
+        "kind": "choice",
+        "marker": "Decision:",
+        "vocabulary": ["accept", "decline"]
+      }
+    }
+  ],
+  "temperature": 0,
+  "maxTokens": 2048
+}

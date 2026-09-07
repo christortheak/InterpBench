@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "parsers": {
+    "sentencing-months": {
+      "kind": "durationMonths",
+      "description": "Sentence lengths in months. The shipped default reproduces the built-in judicial sentencing parser exactly: English and German units, compound durations like '8 years 3 months' (both terms count), '18 to 24 months' reads as the midpoint, decimal commas accepted. Unit tokens map to a months multiplier; add tokens (e.g. 'ans': 12, 'mois': 1) to extend the vocabulary without touching code.",
+      "units": {
+        "year": 12,
+        "years": 12,
+        "yr": 12,
+        "yrs": 12,
+        "jahr": 12,
+        "jahre": 12,
+        "jahren": 12,
+        "month": 1,
+        "months": 1,
+        "mo": 1,
+        "mos": 1,
+        "monat": 1,
+        "monate": 1,
+        "monaten": 1
+      },
+      "joiners": ["and", "und"],
+      "range": "mean",
+      "decimalComma": true
+    },
+    "plain-number": {
+      "kind": "number",
+      "description": "The first plain number in the response. A range like '5-7' is refused (counted as a parse failure — declare 'mean' or 'first' to take the midpoint or the first value instead); '42%' reads as 42 (declare percent 'fraction' for 0.42 or 'refuse' to fail on percentages); decimal commas accepted.",
+      "range": "refuse",
+      "percent": "accept",
+      "decimalComma": true
+    }
+  }
+}

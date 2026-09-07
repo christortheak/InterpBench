@@ -753,6 +753,11 @@ public struct ExperimentCLIRunner: Sendable {
                 // old/fallback root — this verb takes its target as a
                 // positional and never switches the process over to it).
                 workspaceOverride: root.path)
+        case "inspect", "handoff":
+            guard args.count == 1 else { throw ExperimentError(reason: "Workspace inspect and handoff take no positional arguments; select the workspace with --root.") }
+            let root = URL(filePath: ExperimentStore.workspaceRoot.path)
+            let payload = try args.first == "handoff" ? WorkspaceBootstrap.handoff(root) : WorkspaceBootstrap.inspect(root)
+            return ExperimentCLIResult(message: "Workspace information ready.", changed: false, payload: payload)
         default:
             throw ExperimentError(reason: "usage: workspace init <path>")
         }

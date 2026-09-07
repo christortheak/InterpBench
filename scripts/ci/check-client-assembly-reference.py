@@ -13,7 +13,8 @@ from steerlab_server.client.authoring_commands import VERB_SPECS as AUTHORING_SP
 MODEL_SPECS = tuple(s for s in client_cli.CLIENT_VERB_SPECS if s.family == "model" and s.verb in ("plan", "install", "status", "cancel"))
 from steerlab_server.client.science_commands import VERB_SPECS as SCIENCE_SPECS
 REMOTE_SPECS = tuple(s for s in client_cli.CLIENT_VERB_SPECS if s.family == "runner" and s.verb in ("science-stage", "science-export", "science-fetch", "science-call", "cleanup-plan", "cleanup-apply", "science-plan", "science-submit", "recovery", "recover", "resubmit", "reconcile"))
-VERB_SPECS = (*REMOTE_SPECS, *SCIENCE_SPECS, *ASSEMBLY_SPECS, *DESIGN_SPECS, *AUTHORING_SPECS, *MODEL_SPECS)
+from steerlab_server.client.bootstrap_commands import VERB_SPECS as BOOTSTRAP_SPECS
+VERB_SPECS = (*BOOTSTRAP_SPECS, *REMOTE_SPECS, *SCIENCE_SPECS, *ASSEMBLY_SPECS, *DESIGN_SPECS, *AUTHORING_SPECS, *MODEL_SPECS)
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--write", action="store_true")
@@ -25,7 +26,7 @@ end = "<!-- END CLIENT-STUDY-ASSEMBLY -->"
 start = text.index(begin) + len(begin)
 stop = text.index(end, start)
 body = "\n```text\n" + "\n".join(client_cli.synopsis(s) for s in VERB_SPECS) + "\n```\n\n"
-body += "All commands accept `--root <directory>` and `--json`; `--out` writes the envelope.\n"
+body += "All commands accept `--json`; `--out` writes the envelope. Workspace init takes its destination positionally; other commands accept `--root <directory>`.\n"
 if args.write:
     path.write_text(text[:start] + "\n" + body + "\n" + text[stop:])
 else:

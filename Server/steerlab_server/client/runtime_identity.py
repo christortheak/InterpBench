@@ -11,8 +11,9 @@ from pathlib import Path
 def source_sha256(package_root=None):
     root = Path(package_root) if package_root is not None else Path(__file__).resolve().parents[1]
     paths = set(root.rglob('*.py'))
-    paths.update(p for p in (root / 'experiment/seed').rglob('*')
-                 if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc')
+    for resource in ('experiment/seed', 'client/resources'):
+        paths.update(p for p in (root / resource).rglob('*')
+                     if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc')
     digest = hashlib.sha256(b'steerlab-python-client-source-v1\0')
     for path in sorted(paths, key=lambda p: p.relative_to(root).as_posix().encode('utf-8')):
         if path.is_symlink():

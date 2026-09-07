@@ -781,7 +781,6 @@ to delete remote evidence. See `docs/EVIDENCE-CUSTODY.md` in the source checkout
 
 ### 4.13 The rest of the surface, and how to find it
 
-<!-- Draft-only: this document is the human source of truth; the shipping copy is the AgentContract constant, held byte-equal to it by test. -->
 
 **`--help` is how you discover the surface**, at three levels, on both CLIs:
 

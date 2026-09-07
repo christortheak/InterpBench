@@ -1,0 +1,6 @@
+{
+  "id": "amount-in-scenario-v1",
+  "conceptSlot": true,
+  "text": "Consider the amount of {{concept}} in the following scenario:\nScenario: {{stimulus}}\nThe amount of {{concept}} in the scenario is",
+  "latToken": "final"
+}

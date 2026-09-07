@@ -302,6 +302,9 @@ public enum ExperimentCLIParser {
             namespace: "workspace", verb: "init", positional: "<path>",
             purpose: "Create and seed a data workspace, and git-init it."),
 
+        .init(namespace: "workspace", verb: "inspect", purpose: "Inspect an existing workspace without modifying it."),
+        .init(namespace: "workspace", verb: "handoff", purpose: "Return installed-client instructions for a research agent."),
+
         // data
         .init(
             namespace: "data", verb: "check", positional: "<experiment>",

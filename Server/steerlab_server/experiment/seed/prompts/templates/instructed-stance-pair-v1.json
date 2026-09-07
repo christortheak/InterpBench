@@ -1,0 +1,11 @@
+{
+  "id": "instructed-stance-pair-v1",
+  "conceptSlot": false,
+  "text": "{{instruction}}\nScenario: {{stimulus}}\nThe described state is",
+  "latToken": "final",
+  "instructionPair": {
+    "experimental": "Read the following scenario as someone for whom the quality under study is strongly present.",
+    "reference": "Read the following scenario as someone for whom the quality under study is entirely absent."
+  },
+  "divergence": "synthetic-neutral-instruction-pair — a T+/T- template-pair example (RepE §3.1 step 1b). The paper's instructions NAME the concept ('pretend you're an honest person making statements about the world'); this shipped example never does, so a reader fitted through it cannot become a concept-word detector. A study that wants the paper's construction verbatim writes its own registry file and accepts that divergence deliberately."
+}

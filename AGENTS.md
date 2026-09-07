@@ -11,7 +11,7 @@ work — this file is only the bootstrap.
 lifecycle (extract/validate/sweep/promote/freeze/run/analyze), the `cluster`
 family, and the app's companion. `steerlab` is the cross-platform Python
 client: local authoring, the bundle round trip, a managed local runner, and the
-composite `run`. The client has no `workspace init` and no extraction verbs; a
+composite `run`. Both clients create complete workspaces with `workspace init`. The Python client has no Mac extraction verbs; a
 Mac-lifecycle verb typed under `steerlab` exits `64`. Step 1 picks which one
 this machine gets, and each has its own verification banner.
 
@@ -94,10 +94,9 @@ Pick the first path that applies:
    Windows by name — but nothing in this project is tested on it, so make
    no promise about it to the person you are helping; someone who clones
    this codebase and wants Windows is welcome to pursue it themselves.
-   The client has no
-   `workspace init` and none of the Mac lifecycle verbs (extract, validate,
-   sweep, promote, analyze); bring a Mac-created or shared workspace, or
-   author into a plain directory. The full contract is
+   Create a workspace with `steerlab workspace init <directory> --json`.
+   The Python client has none of the Mac lifecycle verbs (extract, validate,
+   sweep, promote, analyze); use its method catalog for managed execution. The full contract is
    `docs/PORTABILITY-CONTRACTS.md`, and `docs/CLI-REFERENCE.md` §1.4 is the
    verb-by-verb reference.
 
