@@ -28,16 +28,17 @@ import Testing
         let exported = try JSONDecoder().decode([String: JSONValue].self, from: data)
         let digest = try #require(exported["bundleSha256"])
         let local = temporary.appending(component: "local")
-        let imported = try await DiagnosticWorkspace.perform("import", payload: ["workspaceRoot": .string(local.path), "archivePath": .string(temporary.appending(component: "evidence.tar.gz").path), "archiveSHA256": digest], python: URL(filePath: python), checkout: repository)
+        try FileManager.default.createDirectory(at: local, withIntermediateDirectories: false)
+        let imported = try await DiagnosticWorkspace.perform("import", payload: ["workspaceRoot": .string(local.path), "archivePath": .string(temporary.appending(component: "evidence.tar.gz").path), "archiveSHA256": digest], python: URL(filePath: python), source: repository.appending(component: "Server"))
         guard case .object(let fields) = imported else { Issue.record("Missing receipt"); return }
         let receipt = try #require(fields["receiptSHA256"])
         let payload: [String: JSONValue] = ["workspaceRoot": .string(local.path), "receiptSHA256": receipt]
-        let verified = try await DiagnosticWorkspace.perform("verify-custody", payload: payload, python: URL(filePath: python), checkout: repository)
+        let verified = try await DiagnosticWorkspace.perform("verify-custody", payload: payload, python: URL(filePath: python), source: repository.appending(component: "Server"))
         guard case .object(let check) = verified else { Issue.record("Missing verification"); return }
         #expect(check["verified"] == .bool(true))
         try Data("changed".utf8).write(to: local.appending(path: "diagnostics/example/report.json"))
         await #expect(throws: (any Error).self) {
-            try await DiagnosticWorkspace.perform("verify-custody", payload: payload, python: URL(filePath: python), checkout: repository)
+            try await DiagnosticWorkspace.perform("verify-custody", payload: payload, python: URL(filePath: python), source: repository.appending(component: "Server"))
         }
     }
 }

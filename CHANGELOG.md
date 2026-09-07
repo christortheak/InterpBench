@@ -12,6 +12,17 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Shared method interviews resolve blank optional answers to their declared
+  defaults; every managed interview is tested through its real config validator.
+  Evidence import requires an existing destination workspace.
+- Mac scientific workspace actions can use a lightweight client environment and
+  the app's bundled Python payload without a checkout. A compiled source identity
+  refuses mismatched clients before workspace dispatch; see
+  `docs/PYTHON-CLIENT-RUNTIME.md` for setup and release checks.
+- Cancellation lifecycle tests now wait for the durable terminal result, closing
+  a timing-dependent assertion against SQLite before the final write completed.
+  Lens audit controls require the intended relocation and reject real mutations.
+
 - Standalone diagnostic inputs can be reviewed, packaged and staged as isolated
   execution copies. Completed output exports import without replacement and
   retain byte-pinned custody receipts that both clients and the app verify offline.

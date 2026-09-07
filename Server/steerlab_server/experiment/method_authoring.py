@@ -16,7 +16,7 @@ def interview(operation):
 
 def value(field, text, root, evidence):
     kind = field['kind']
-    if not isinstance(text, str): raise archives.Refusal('Interview field values must be text, preserving exact integer spellings.')
+    if not isinstance(text, str): raise archives.Refusal('Interview field values must be text, preserving integer values without floating-point conversion.')
     text = text.strip()
     if kind == 'integer': return int(text)
     if kind == 'number':
@@ -73,6 +73,8 @@ def draft(operation, answers, root):
     for field in schema['fields']:
         text = fields.get(field['id'], field.get('default', ''))
         if not isinstance(text, str): raise archives.Refusal('Interview values must be text.')
+        if not text.strip() and not field['required']:
+            text = field.get('default', '')
         if not text.strip():
             if field['required']: raise archives.Refusal('Answer the required field: ' + field['label'])
             continue

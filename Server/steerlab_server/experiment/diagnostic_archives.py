@@ -213,7 +213,9 @@ def _inspect(archive_path, expected, *, extract_to=None):
 
 def import_evidence(archive, expected, root, *, expected_context=None):
     if not isinstance(expected, str) or len(expected) != 64 or any(c not in '0123456789abcdef' for c in expected): raise Refusal('Invalid archive digest.')
-    root = Path(root).resolve(); root.mkdir(parents=True, exist_ok=True)
+    root = Path(root).resolve()
+    if not root.is_dir():
+        raise Refusal('Evidence import needs an existing workspace directory. Select the intended workspace or explicitly create it before importing; no directories were created.')
     with manifest_files.transaction(str(root / '.steerlab/diagnostic-import'), workspace_root=str(root)):
         cache = ordinary(root, '.steerlab/diagnostic-archives', missing=True); cache.mkdir(parents=True, exist_ok=True)
         retained = ordinary(root, '.steerlab/diagnostic-archives/' + expected + '.tar.gz', missing=True)

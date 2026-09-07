@@ -69,8 +69,14 @@ class _Submission:
         self.db_path, self.record_path = db_path, record_path
 
     def wait(self, timeout: float = 30.0):
-        _wait_for(lambda: self.jobs.get(self.job_id).status in TERMINAL, timeout)
-        return self.jobs.get(self.job_id)
+        # The live Job changes before the worker's final SQLite update. Wait
+        # for the same committed snapshot whose evidence assertions read below.
+        def terminal():
+            row = self.durable()
+            return row if row.status in TERMINAL else None
+        row = _wait_for(terminal, timeout)
+        assert row is not None, 'the local job never committed a terminal result'
+        return row
 
     def durable(self):
         """The job as the STORE has it — not the in-memory object. A stamp
@@ -490,3 +496,52 @@ def test_cancelling_a_local_job_stops_it_and_keeps_its_evidence(path, tmp_path,
     assert result.get("runDirectory") == run_dir
     assert result.get("partialEvidence") is True
     assert submission.durable().status == "cancelled"
+
+
+@pytest.mark.parametrize('path', ['study', 'bundle'])
+def test_lifecycle_wait_includes_durable_evidence_commit(path, tmp_path, monkeypatch):
+    """Pause precisely between in-memory cancellation and its SQLite commit.
+
+    Independent clients must observe terminal status and evidence together;
+    test synchronization must not confuse a live object with a committed row.
+    """
+    import threading
+    entered = threading.Event()
+    release = threading.Event()
+    returned = threading.Event()
+    original = DurableJobStore.update
+
+    def held_update(store, job):
+        if job.status == 'cancelled' and job.result and job.result.get('runDirectory'):
+            entered.set()
+            assert release.wait(10), 'test did not release the durable update'
+        return original(store, job)
+
+    monkeypatch.setattr(DurableJobStore, 'update', held_update)
+    run_dir = str(tmp_path / 'runs' / 'cancel-evidence')
+    submission = _submit(path, tmp_path, monkeypatch, CHILD_RECORD_THEN_SLEEP,
+                         args=(run_dir, str(tmp_path / 'marker')))
+    assert _wait_for(lambda: os.path.isfile(submission.record_path), 20)
+    submission.jobs.cancel(submission.job_id)
+    observed = []
+
+    def wait():
+        observed.append(submission.wait())
+        returned.set()
+
+    waiter = threading.Thread(target=wait, daemon=True)
+    try:
+        assert entered.wait(10)
+        assert submission.jobs.get(submission.job_id).result['runDirectory'] == run_dir
+        assert submission.durable().status not in TERMINAL
+        waiter.start()
+        assert not returned.wait(0.2), 'wait returned before evidence reached SQLite'
+    finally:
+        release.set()
+        if waiter.ident is not None:
+            waiter.join(10)
+    assert returned.is_set()
+    assert observed[0].status == 'cancelled'
+    durable = submission.durable()
+    assert durable.result['runDirectory'] == run_dir
+    assert durable.result['partialEvidence'] is True

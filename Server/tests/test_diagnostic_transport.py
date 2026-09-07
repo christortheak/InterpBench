@@ -14,7 +14,9 @@ from test_scientific_execution import setup
 
 
 @pytest.fixture
-def completed(setup, monkeypatch):
+def completed(setup, monkeypatch, tmp_path):
+    # Import requires a deliberately created destination workspace.
+    (tmp_path / 'local').mkdir()
     root, request, profile = setup
     reviewed = diagnostic_inputs.plan(request, root)
     archive = root / 'runs/input.tar.gz'
@@ -48,6 +50,26 @@ def test_round_trip_isolated_inputs_output_and_offline_custody(completed, tmp_pa
     with pytest.raises(archives.Refusal): archives.verify(imported['receiptSHA256'], local)
     with pytest.raises(archives.Refusal): archives.import_evidence(reference['bundlePath'], reference['bundleSha256'], local)
     assert output.exists()
+
+
+def test_import_refuses_missing_root_without_creating_parents(completed, tmp_path, capsys):
+    from steerlab_server import client_cli
+    _, profile, jobs, job, _ = completed
+    reference = transport.export(job.id, jobs, profile)
+    missing = tmp_path / 'mistyped' / 'workspace'
+    with pytest.raises(archives.Refusal, match='existing workspace'):
+        archives.import_evidence(reference['bundlePath'], reference['bundleSha256'], missing)
+    assert client_cli.main(['science', 'import', reference['bundlePath'],
+                           '--sha256', reference['bundleSha256'], '--root', str(missing), '--json']) == 66
+    response = json.loads(capsys.readouterr().out)
+    assert 'existing workspace' in str(response)
+    assert not missing.parent.exists()
+
+    file_root = tmp_path / 'file-root'
+    file_root.write_text('unchanged')
+    with pytest.raises(archives.Refusal, match='existing workspace'):
+        archives.import_evidence(reference['bundlePath'], reference['bundleSha256'], file_root)
+    assert file_root.read_text() == 'unchanged'
 
 
 def test_input_review_and_staged_bytes_cannot_drift(setup):
@@ -210,7 +232,7 @@ def test_http_client_round_trip_and_cleanup_over_real_loopback(completed, tmp_pa
         uploaded = wire.upload_run_bundle(str(root / 'runs/input.tar.gz'))
         staged = wire.stage_diagnostic(uploaded['path'], uploaded['sha256'])
         assert staged['request']['inputBundleSHA256'] == uploaded['sha256']
-        local = tmp_path / 'local'; local.mkdir()
+        local = tmp_path / 'local'
         assert client_cli.main(['runner', 'science-fetch', job.id, '--runner', endpoint, '--root', str(local), '--json']) == 0
         receipt = archives.inventory(local)['receipts'][0]['receiptSHA256']
         assert client_cli.main(['runner', 'cleanup-apply', job.id, '--runner', endpoint, '--root', str(local), '--receipt-sha256', receipt, '--plan-sha256', '0'*64, '--json']) != 0

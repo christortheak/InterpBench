@@ -8,6 +8,9 @@ performed here. The maintainer's designated reviewing/integration agent, through
 the researcher, owns independent diff review, both full suites, AST checks and
 any eventual fast-forward landing. Recheck current main before landing.
 
+For the subsequent N1–N6 review fixes and updated runtime contract, see
+[the workflow hardening handoff](WORKFLOW-REVIEW-HARDENING-HANDOFF.md).
+
 ## What changes for a researcher
 
 A researcher can choose a named scientific operation in Research methods, answer

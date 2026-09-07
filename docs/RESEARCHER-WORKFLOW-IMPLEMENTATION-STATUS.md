@@ -1,16 +1,17 @@
 # Researcher workflow implementation status
 
-Current branch: `codex/cluster-execution-workflow`, based directly on landed main
-`73bfbd7`. It includes the reviewed scientific-workflow slice, its changelog
-follow-up and the independent final-norm dtype fix. The main checkout and installed
-applications remain unchanged by this implementation branch.
+Current branch: `codex/workflow-review-hardening`, based directly on landed main
+`7301e6c`, including the reviewed custody, managed-method and gradient-field fixes.
+The main checkout and installed applications remain unchanged by this branch.
 
-This checkpoint adds acceptance of sourced cluster-profile companions and reviewed
-standalone battery/stability jobs across the app, remote CLIs and HTTP. Recovery
-and reconciliation now have public client/app adapters over the existing owners.
-See [the current handoff](CLUSTER-EXECUTION-WORKFLOW-HANDOFF.md) for exact interfaces,
-review scope and the distinction between implemented controls and live qualification.
-Earlier sections below retain their historical checkpoint and validation claims.
+This checkpoint addresses the N1–N6 review follow-ups: consistent interview
+defaults, existing-root import admission, all-operation authoring validation,
+matching Mac/Python sources without a checkout dependency for scientific workspace
+actions, durable cancellation-test synchronization and stronger lens audit
+controls. Cleanup retains its bounded policy and locking guarantee. See
+[the current handoff](WORKFLOW-REVIEW-HARDENING-HANDOFF.md) for review scope,
+deployment requirements and remaining qualification. Earlier sections below
+retain their historical checkpoint and validation claims.
 
 The [implementation plan](RESEARCHER-WORKFLOW-IMPLEMENTATION-PLAN.md) remains
 authoritative; WP-5 and WP-6 remain in scope. This branch authorizes no live

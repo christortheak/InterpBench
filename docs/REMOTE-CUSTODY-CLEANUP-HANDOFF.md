@@ -129,6 +129,14 @@ exclusive transaction; foreign-controller registrations and updates cannot race
 admission/removal. Existing workspace admission also excludes local submissions.
 Ordinary out-of-band filesystem writers are not a supported coordination mechanism.
 
+These locks are held during export/tree/archive hashing and, on apply, quarantine
+verification and deletion. Same-controller bookkeeping waits; other controllers'
+SQLite writes may time out after 30 seconds. Even small outputs can be slow on a
+shared filesystem. Before expanding artifact scope, measure critical-section time
+and test competing controllers; retain fresh dependency and byte admission when
+shortening locks. See the N1 acceptance criteria in
+[the review follow-up](WORKFLOW-REVIEW-HARDENING-HANDOFF.md).
+
 Every shipped cleanup adapter re-verifies the local receipt immediately before
 plan/apply. The server cannot inspect a different machine's disk: it compares the
 client's custody attestation to its own exact export context and members. The

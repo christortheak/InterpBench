@@ -1303,3 +1303,60 @@ remain the next qualification stage. J-space is a separate method; its current
 batch owner still requires OptVec artifact metadata. New scientific output
 classes are retained rather than admitted to the narrower diagnostic cleanup
 policy.
+
+
+## Workflow review hardening — 2026-09-07
+
+Branch `codex/workflow-review-hardening`, based on landed main `7301e6c`.
+See [the review follow-up handoff](WORKFLOW-REVIEW-HARDENING-HANDOFF.md) and
+[the Mac Python client runtime contract](PYTHON-CLIENT-RUNTIME.md).
+
+- Final full Python suite: **6,151 passed, 9 skipped, 8 warnings**, 183.84 seconds;
+  `/private/tmp/workflow-hardening-python-final.log`.
+- Final full serial Xcode beta suite: **277 SteeringKit + 4,596 ExperimentKit
+  passed**, `TEST SUCCEEDED`; `/private/tmp/workflow-hardening-xcode-verified.log`.
+  Separate `SteerLabApp` build: `BUILD SUCCEEDED`;
+  `/private/tmp/workflow-hardening-app-verified.log`.
+- Focused authoring, custody, loopback, client-identity and local lifecycle tests:
+  **66 passed**; `/private/tmp/workflow-hardening-focused.log`. The strengthened
+  Python runtime refusal checks also pass after the final guard changes.
+- The deterministic cancellation tests fail on both study and bundle paths with
+  the original test wait helper; `/private/tmp/workflow-cancel-negative.log`.
+  Both pass after waiting on the committed terminal row, together with the
+  original two cancellation cases; `/private/tmp/workflow-cancel-verified.log`.
+  Production `api/jobs.py`, `api/submissions.py` and `api/executors.py` are
+  byte-identical to `7301e6c`. This demonstrates an observation-ordering cause
+  for the assertion, not persistent loss of the child's evidence.
+- Shared scientific resource, client-source identity, interview, CLI-reference,
+  task-prompt parser and normal/release bridge gates pass. The scoped scientific
+  audit proves eleven original numerical owner ASTs unchanged and requires the
+  intended lens relocation substitutions. Removed migration, wrong-root and
+  changed-consumer-body negative controls all fail through the actual gate;
+  AST-unparsed positive controls pass. No mechanical move is claimed.
+- The actual `make-server-payload.sh` output has the same source identity as the
+  compiled client; `/private/tmp/workflow-hardening-payload-final.log`. The
+  Python and Swift fixtures execute copied release payloads without a checkout
+  or venv inside them, and refuse modified sources before workspace dispatch.
+- Initial focused validation ran inside the sandbox and its real-loopback test
+  was denied socket binding; the approved focused rerun passed. That first run
+  also corrected a test expectation: the Python CLI already refused a missing
+  root with exit 66, while the shared import owner needed the new check.
+- Initial full Swift attempts exposed a new fixture's fragile relative-path
+  slicing when copying a staged payload. Direct package copying fixed the
+  fixture; both focused runtime tests then passed. No production resource
+  selection or compatibility refusal was weakened to accommodate the fixture.
+
+Python uses the established main-checkout interpreter with
+`PYTHONPATH=Server HF_HUB_OFFLINE=1`. Xcode uses
+`DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer`,
+`TOOLCHAINS=com.apple.dt.toolchain.Metal.32023.920.1`, explicit
+`TEST_RUNNER_STEERLAB_TEST_PYTHON`, serial macOS testing and
+`CLANG_COVERAGE_MAPPING=NO`. Derived data stays outside iCloud at
+`/private/tmp/interpbench-workflow-xcode`. The final full suites run sequentially.
+
+The implementation diff was read locally. Independent maintainer review through
+the user remains required before landing. No user workspace, frozen manifest,
+existing run, installed Python environment, deployed app or main checkout was
+changed. No model download, live cluster, clean-machine client installation,
+Linux filesystem or interactive app qualification is claimed. Cleanup's lock
+cost remains documented and its larger-artifact scope remains closed.

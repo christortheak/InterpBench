@@ -15,17 +15,17 @@ import Testing
         let answers: [String: Any] = ["purpose":"Compare a declared intervention", "claim":"Held-out behavioral change", "controls":"Separate control data before execution", "selection":"Fixed steps chosen before outcomes", "fields":fields, "advanced":["alphaAbsolute":1]]
         let text = String(decoding: try JSONSerialization.data(withJSONObject: answers), as: UTF8.self)
         let payload: [String: JSONValue] = ["workspaceRoot":.string(root.path), "operation":.string("optvec-train"), "answersText":.string(text)]
-        let review = try await DiagnosticWorkspace.perform("draft", payload: payload, python: python, checkout: repository)
+        let review = try await DiagnosticWorkspace.perform("draft", payload: payload, python: python, source: repository.appending(component: "Server"))
         guard case .object(let object) = review else { Issue.record("Missing review"); return }
         let hash = try #require(object["planSHA256"])
         let publication = payload.merging(["destination":.string("requests/training"), "planSHA256":hash]) { _, new in new }
-        _ = try await DiagnosticWorkspace.perform("publish", payload: publication, python: python, checkout: repository)
+        _ = try await DiagnosticWorkspace.perform("publish", payload: publication, python: python, source: repository.appending(component: "Server"))
         let request = try String(contentsOf: root.appending(path:"requests/training/request.json"), encoding:.utf8)
         #expect(request.contains("\"seed\":18446744073709551615"))
         #expect(request.contains("\"alphaAbsolute\":1"))
         try Data("changed input".utf8).write(to: input)
         await #expect(throws:(any Error).self) {
-            _ = try await DiagnosticWorkspace.perform("publish", payload: payload.merging(["destination":.string("requests/revised"),"planSHA256":hash]) { _, new in new }, python:python, checkout:repository)
+            _ = try await DiagnosticWorkspace.perform("publish", payload: payload.merging(["destination":.string("requests/revised"),"planSHA256":hash]) { _, new in new }, python:python, source:repository.appending(component: "Server"))
         }
         #expect(!FileManager.default.fileExists(atPath:root.appending(path:"requests/revised").path))
         let workflows = try ScienceCatalog.workflows()

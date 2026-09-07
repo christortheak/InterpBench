@@ -2,18 +2,24 @@ import Foundation
 
 /// The Python archive owner is the portable format authority. Mac adapters call
 /// its local-only process entry point; no HTTP, model load or shell is involved.
+/// Release builds read the bundled ServerPayload; only the interpreter and
+/// client dependencies live outside the signed bundle.
 public enum DiagnosticWorkspace {
     public static let actions = ["sae-check", "sae-show", "sae-pin-plan", "sae-pin", "interview", "draft", "publish", "input-plan", "package", "import", "custody", "verify-custody"]
 
     public static func perform(_ action: String, payload: [String: JSONValue],
-                               python: URL? = nil, checkout: URL? = nil) async throws -> JSONValue {
+                               python: URL? = nil, source: URL? = nil) async throws -> JSONValue {
         guard actions.contains(action) else { throw ExperimentError(reason: "Unknown diagnostic workspace action.") }
-        guard let interpreter = python ?? LocalPythonRuntime.venvPython,
-              let source = checkout ?? LocalPythonRuntime.repoRoot,
-              FileManager.default.isExecutableFile(atPath: interpreter.path) else {
-            throw ExperimentError.malformed("Diagnostic transport requires the local Python client environment.", repair: LocalPythonRuntime.setupHint)
+        let source = try source ?? CodeResources.serverPayload()
+        guard FileManager.default.fileExists(atPath: source.appending(path: "steerlab_server/__init__.py").path),
+              FileManager.default.fileExists(atPath: source.appending(path: "steerlab_server/client/diagnostic_workspace.py").path) else {
+            throw ExperimentError.malformed("The scientific Python payload is incomplete.", repair: ScientificPythonRuntime.setupHint)
         }
-        let input = try JSONEncoder().encode(JSONValue.object(["action": .string(action), "payload": .object(payload)]))
+        guard let interpreter = python ?? ScientificPythonRuntime.interpreter,
+              FileManager.default.isExecutableFile(atPath: interpreter.path) else {
+            throw ExperimentError.malformed("Scientific workspace actions require a local Python client environment.", repair: ScientificPythonRuntime.setupHint)
+        }
+        let input = try JSONEncoder().encode(JSONValue.object(["action": .string(action), "payload": .object(payload), "clientSHA256": .string(PythonClientIdentity.sourceSHA256)]))
         return try await Task.detached {
             let temporary = FileManager.default.temporaryDirectory.appending(component: UUID().uuidString)
             try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -27,21 +33,26 @@ public enum DiagnosticWorkspace {
             defer { try? stdin.close(); try? stderr.close() }
             let process = Process(); let output = Pipe()
             process.executableURL = interpreter
-            process.arguments = ["-m", "steerlab_server.client.diagnostic_workspace"]
-            process.currentDirectoryURL = source
+            process.arguments = ["-B", "-s", "-m", "steerlab_server.client.diagnostic_workspace"]
+            process.currentDirectoryURL = temporary
             var environment = ProcessInfo.processInfo.environment
-            environment["PYTHONPATH"] = source.appending(component: "Server").path
+            environment["PYTHONPATH"] = source.path
+            environment.removeValue(forKey: "PYTHONHOME")
             process.environment = environment
             process.standardInput = stdin; process.standardOutput = output; process.standardError = stderr
             try process.run()
             let bytes = output.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
             guard let value = try? JSONDecoder().decode(JSONValue.self, from: bytes), case .object(let object) = value else {
-                throw ExperimentError(reason: "The local diagnostic client returned no result. Check the Python client installation.")
+                throw ExperimentError.malformed("The local Python client returned no result.", repair: ScientificPythonRuntime.setupHint)
+            }
+            guard object["clientSHA256"] == .string(PythonClientIdentity.sourceSHA256) else {
+                throw ExperimentError.malformed("The Mac and Python sources differ, or the runtime is too old to confirm compatibility.", repair: ScientificPythonRuntime.setupHint)
             }
             guard process.terminationStatus == 0, object["ok"] == .bool(true), let result = object["result"] else {
                 let reason: String = if case .string(let text) = object["reason"] { text } else { "Diagnostic workspace operation refused." }
-                throw ExperimentError.malformed(reason, repair: "Inspect the archive, receipt and originating workspace; retain remote originals until custody verifies.")
+                let repair: String = if case .string(let text) = object["repairAction"] { text } else { ScientificPythonRuntime.setupHint }
+                throw ExperimentError.malformed(reason, repair: repair)
             }
             return result
         }.value

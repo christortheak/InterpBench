@@ -5,7 +5,7 @@
     "claim": "Proposed claim and its limits",
     "controls": "Comparisons and controls",
     "selection": "Training/selection/test separation or explanation of why it does not apply",
-    "fields": "Map of field IDs to text values from this interview",
+    "fields": "Map of field IDs to text values. Omitted or blank optional fields use the interview default when present; required fields cannot be blank. Integers preserve their values without floating-point conversion.",
     "advanced": "Optional original config fields; cannot overwrite form fields"
   },
   "operations": [
