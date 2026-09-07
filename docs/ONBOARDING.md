@@ -79,55 +79,117 @@ reader from the PCA family that used to borrow its name.
 
 ## 3. What you need
 
-**Swift engine and macOS app:** an Apple silicon Mac (Intel is not supported),
-macOS 26.4+. Xcode 27 only if you build from source — SteerLab.app carries the
-command line it was built with, so an app install needs no developer tools. If
-you do build, it has to be `xcodebuild` rather than `swift build`: SwiftPM
-alone cannot build the Metal shader library MLX needs, and nothing touching the
-GPU works without it (one time: `xcodebuild -downloadComponent MetalToolchain`).
-Size memory to your model tier: roughly 3 GB for a 4-bit 4B model, 13–16 GB at
-the 12–14B tier, plus headroom for the KV cache.
+**To author a study** (write stimuli, design conditions, review a plan): an
+Apple Silicon Mac on macOS 26.4 or later for the app, or any Apple Silicon
+Mac or x86_64 Linux machine (glibc) for the app-free client. Internet access
+for the one-time client setup. Nothing else: no Xcode, no repository
+checkout, no Python of your own. Windows is not supported.
 
-**Python engine:** Linux with an NVIDIA CUDA GPU for real work; it also installs
-and runs on macOS for parity checks. Python 3.10+, 3.12 preferred.
+**To run a study**: a model and suitable compute. Supported studies can run
+locally on an Apple Silicon Mac or through the Python engine on a
+workstation or cluster. Choose according to the method, model size and
+available memory; [SUBSTRATES.md](SUBSTRATES.md) says which methods run
+where and what has been measured. Remote results return to your local
+workspace with their evidence verified. As a rough guide, a 4-bit 4B model
+needs a few gigabytes of memory and a 12 to 14B model in the low tens,
+before the KV cache and activations, which grow with context length; the
+exact fit depends on precision, context and the method, and the model plan
+verb (`model plan`, [LOCAL-MODEL-PREPARATION.md](LOCAL-MODEL-PREPARATION.md))
+reports what it can check without loading weights.
 
-**Both:** disk for the Hugging Face cache at `~/.cache/huggingface`. No weights
-are distributed here — you download the models you choose, under their own
-licenses. Some of those licenses carry use restrictions that plausibly extend to
-artifacts you derive, including steering vectors you publish. Read the license
-of the model you use; see [NOTICE](../NOTICE).
+**Disk**: the Hugging Face cache (`~/.cache/huggingface` by default) holds
+the models you download. No weights are distributed with SteerLab; you
+download the models you choose under their own licenses, some of which carry
+use restrictions that plausibly extend to artifacts you derive, including
+steering vectors you publish. Read the license of the model you use; see
+[NOTICE](../NOTICE).
 
 ---
 
 ## 4. Install
 
-**From the app (no Xcode).** SteerLab.app ships the CLI it was built from, at
-`Contents/Helpers/steerlab-cli` — the same binary the app calls into, signed
-with the bundle and carrying its own copy of the Metal shader library. Give it
-a name on your `PATH` and you are done:
+Pick the first route that fits. Release files carry the version and a short
+source revision in their names (`SteerLab-<version>+<revision>.zip`,
+`steerlab-client-<version>+<revision>.tar.gz`); the release notes give the
+client archive's SHA-256, and the archive carries a `SHA256SUMS` for its
+contents.
+
+### 4.1 The Mac app
+
+Download the app zip from the
+[Releases page](https://github.com/christortheak/InterpBench/releases/latest),
+unzip it, and open SteerLab. Keep the app wherever you like, such as
+`/Applications` or a `SteerLab` folder in your home directory. On first
+launch, or any time from the Workspace menu, **Research Setup** does three
+things: creates or opens a workspace folder for your studies, shows you a
+plan for installing the small Python helper that study authoring uses and
+installs it when you approve, and, behind **Copy Agent Handoff**, copies the
+text to paste into your coding-agent tool.
+
+<details>
+<summary>The app's command line</summary>
+
+The app carries its own command line at
+`SteerLab.app/Contents/Helpers/steerlab-cli`, the same binary the app calls
+into, signed with the bundle and carrying its own copy of the Metal shader
+library. Run it in place by its full path, or give it a name on your `PATH`:
 
 ```bash
 mkdir -p ~/.local/bin
-ln -s ~/SteerLab/SteerLab.app/Contents/Helpers/steerlab-cli ~/.local/bin/steerlab-cli
+ln -s "<path-to>/SteerLab.app/Contents/Helpers/steerlab-cli" ~/.local/bin/steerlab-cli
 export PATH="$HOME/.local/bin:$PATH"
-steerlab-cli --version
+steerlab-cli --version      # reports 6/6 resource families resolved
 ```
 
-`steerlab-cli` is the binary's own name, the one refusals print, and the one
-these docs type for every Mac verb. Do **not** also link it as `steerlab`:
-that shorter spelling belongs to the cross-platform Python **client** (its
-console script; see CLI-REFERENCE §1.4), which is a different product with a
-different verb surface, and one name for two things is how a lifecycle command
-ends up exiting `64` for someone who copied it faithfully. A symlink is enough:
-the binary resolves its shaders and the app's bundled resources against its real
-location inside the bundle, not the link's, and invoking it in place by full
-path is identical. `steerlab-cli --version` prints where each shipped resource
-family resolved — **6/6 resolved** is the quick answer to "is this install
-intact"; the app's code signature is the integrity guarantee, and there is
-deliberately no writable manifest inside a signed bundle.
+A symlink is enough: the binary resolves its shaders and bundled resources
+against its real location inside the bundle, not the link's. `--version`
+prints where each shipped resource family resolved, and **6/6 resolved** is
+the quick answer to "is this install intact"; the app's code signature is the
+integrity guarantee. Do not also link it as `steerlab`: that name belongs to
+the Python client below, a different product with a different verb surface,
+and one name for two things is how a lifecycle command ends up exiting `64`
+for someone who copied it faithfully.
 
-**From source (the developer path).** Optional, and the only one that needs
-Xcode 27:
+One macOS wrinkle: keychain access is granted per binary identity, so the
+first verb that actually *uses* a stored credential may prompt once for your
+Mac password. Run one interactively before pointing an unattended agent at
+the install.
+
+</details>
+
+### 4.2 The app-free client
+
+Download the client archive from the Releases page and extract it. The
+folder contains an installer and an `AGENTS.md` written for a coding agent
+pointed at it; you can hand the folder to your agent with the prompt in the
+[README](../README.md), or run the four steps yourself:
+
+```sh
+sh install-client.sh plan                                  # read-only; prints a plan hash
+sh install-client.sh install --expect <planSHA256> --yes   # installs a managed Python and the client
+<executable> setup start ~/steerlab-studies/first --create --json
+<executable> workspace handoff --root ~/steerlab-studies/first --json
+```
+
+The installer prints the absolute path of the `steerlab` executable; use that
+path, or add its `bin` directory to your `PATH` yourself. It provisions its
+own Python, verifies every download by hash, never replaces a folder it did
+not create, and does not edit your shell startup files. A correct install
+answers `steerlab --version` with `steerlab <version> (client)`. Full details,
+including repair and upgrades, are in
+[CLIENT-FIRST-RUN.md](CLIENT-FIRST-RUN.md).
+
+### 4.3 From a source checkout
+
+For development, or to run the Python engine yourself. A coding agent should
+start from the repository's [AGENTS.md](../AGENTS.md); a person follows it
+too. A source install gives you command lines, not a workspace: create one
+afterwards with `steerlab-cli workspace init <dir>` or
+`steerlab workspace init <dir>`.
+
+**The Mac CLI** needs Xcode 27 (`xcodebuild`, not `swift build`, because
+SwiftPM alone cannot build the Metal shader library MLX needs; one time,
+`xcodebuild -downloadComponent MetalToolchain`):
 
 ```bash
 git clone <this repository> && cd <checkout>
@@ -136,74 +198,50 @@ export PATH="$HOME/.local/bin:$PATH"
 steerlab-cli --version
 ```
 
-Re-runnable, no `sudo`, and it stages everything before swapping the live tree,
-so a failed install leaves the previous one untouched. The binary lands in
-`~/.local/libexec/steerlab/` beside the Metal shader library it needs, with a
-shim at `~/.local/bin/steerlab-cli` — which is why the installed CLI needs no
-environment variables, unlike running out of a build directory. Set
-`DEVELOPER_DIR` first if `xcode-select` points at an older Xcode.
+Re-runnable, no `sudo`, and it stages everything before swapping the live
+tree, so a failed install leaves the previous one untouched. The binary lands
+in `~/.local/libexec/steerlab/` beside the Metal shader library, with a shim
+at `~/.local/bin/steerlab-cli`; the installer never writes a `steerlab` alias
+unless you pass `--short-name` on a machine that will never install the
+client. Set `DEVELOPER_DIR` first if `xcode-select` points at an older Xcode.
+`steerlab-cli install verify` re-hashes the installed tree against its own
+manifest. `scripts/build-app.sh` assembles the signed app from the same
+checkout (it needs `uv` on `PATH`); `./scripts/run-app.sh` builds and
+launches it as a plain developer binary instead.
 
-**The short name `steerlab` is the Python client's**, so the installer never
-writes it as an alias unless you ask: pass `--short-name`, on a machine that
-will never install the client. (Even then, an existing `~/.local/bin/steerlab`
-the installer did not write itself — a symlink you made to the app's bundled
-binary, say — is left alone.) The rule used to be conditional, "write it when
-nothing else answers to the name", and that condition is evaluated the day you
-install: the client arriving a week later would find its own console script
-shadowed by PATH order. An install from before this policy may have left a
-Swift-CLI shim at `~/.local/bin/steerlab`; if this machine also gets the
-client, delete it so the name has one owner. `steerlab-cli install verify`
-re-hashes the installed tree against its own manifest and answers "is what I
-am running what was installed".
-
-One macOS wrinkle the installer warns about: keychain access is granted per
-binary identity, so the first verb that actually *uses* a stored credential may
-prompt once for your Mac password. Run one interactively before pointing an
-unattended agent at the install.
-
-`scripts/build-app.sh` assembles the signed app — CLI included — from the same
-checkout; `./scripts/run-app.sh` builds and launches it as a plain developer
-binary instead, without the bundle. The app is the richest surface for authoring
-concepts, watching a dose-response sweep, and chatting under steering, but
-everything that matters for a paper is reproducible through `steerlab-cli` —
-the app calls into the same engine, never the reverse.
-
-**The Python engine:**
+**The Python engine** is installed from the committed lock for your
+platform, never from the version floors alone:
 
 ```bash
 python3.12 -m venv Server/.venv.nosync
-Server/.venv.nosync/bin/pip install -r Server/requirements-macos-arm64.lock
+Server/.venv.nosync/bin/pip install -r Server/requirements-macos-arm64.lock   # or requirements-linux-x86_64.lock
 Server/.venv.nosync/bin/pip install -e "Server[all]"
+Server/.venv.nosync/bin/python -m steerlab_server.cli serve --root <workspace>
 ```
 
-Install **from the committed lock** (`requirements-macos-arm64.lock` or
-`requirements-linux-x86_64.lock`), not from the floors in `pyproject.toml`: two
-sites satisfying the same floors can resolve different `torch` and
+Two sites satisfying the same floors can resolve different `torch` and
 `transformers` and produce different numbers, on the substrate where the
 reproducibility claims live. The lock is the *intended* resolution; the
-*achieved* one is stamped into every run (`config.json`'s `pythonEnvironment`),
-and a run whose installed versions differ says so in an advisory rather than
-dying. Regeneration and the cluster's site-owned-torch exception are in
-[Server/README.md](../Server/README.md). Once the venv exists, `install-cli.sh`
-also drops a `steerlab-server` shim on your PATH.
+*achieved* one is stamped into every run (`config.json`'s
+`pythonEnvironment`), and a run whose installed versions differ says so in an
+advisory rather than dying. Lock regeneration, the extras, and the cluster's
+site-owned-torch exception are maintained in
+[Server/README.md](../Server/README.md) under "Dependency locks". Serve with
+an explicit `--root <workspace>`; the artifact root must be the workspace,
+not `Server/`. Read [SECURITY.md](../SECURITY.md) before binding it to
+anything but loopback. Once the venv exists, `install-cli.sh` also drops a
+`steerlab-server` shim on your `PATH`.
 
-**The cross-platform `steerlab` client.** A third command line, and a different
-product from the two engines: `pip install -e Server` (no extras, no torch,
-~30 MB, any OS with Python 3.10+) installs `steerlab`, which authors a
-workspace locally, freezes it, packages a hash-pinned bundle, and hands it to
-an engine over `--runner <url>` — `steerlab run <experiment> --runner <url>` is
-that whole round trip, evidence verified on the way home. A correct install
-says so: `steerlab --version` prints `steerlab <version> (client)`. It does not
-report resource families, and it does not answer the Mac lifecycle verbs this
-document types — no `workspace init`, no `extract`, no `sweep` — so a command
-from §5 or §6 typed under `steerlab` exits `64`, correctly. Add the `[runner]`
-extra to execute locally through `steerlab runner serve` (macOS and Linux;
-Windows is out of scope — untested and unsupported, and `runner serve` refuses
-that verb there). The verb-by-verb reference is
-[CLI-REFERENCE.md](CLI-REFERENCE.md) §1.4, and the contracts behind it are
+**The `steerlab` client from source**: `pip install -e Server` (no extras,
+no torch) installs the same client the release archive carries; add the
+`[runner]` extra to execute locally through `steerlab runner serve` (macOS
+and Linux). The verb-by-verb reference is [CLI-REFERENCE.md](CLI-REFERENCE.md)
+§1.4, and the contracts behind it are
 [PORTABILITY-CONTRACTS.md](PORTABILITY-CONTRACTS.md) §7–§10.
 
-**Where to put things.** A `SteerLab/` folder in your home directory holds your
+### 4.4 Where things go on a Mac
+
+A `SteerLab/` folder in your home directory holds your
 workspaces, your private site library, the app, and — if you have one — the
 checkout as siblings, so one directory moves, backs up, and is handed to an
 agent as a unit. One command materializes it:
@@ -279,8 +317,18 @@ and misleading at worst. You derive it on your own machine, which is exactly
 what the firewall asks of every study.
 
 Every command from here through §7 is **`steerlab-cli`**, the Mac instrument of
-§4 — not the cross-platform `steerlab` client, which authors and submits but
-does not extract, sweep, or measure.
+§4.1 or §4.3. **If you took the app-free route (§4.2)**, your instrument is the
+`steerlab` client, which authors and submits but does not extract, sweep, or
+measure locally. Your first hour starts from the workspace handoff instead:
+read the workspace's own `AGENTS.md`, ask `steerlab authoring study
+<intent> --json` for the researcher interview (`conceptStudy`,
+`agentComparison` or `multiAgent`), and follow the Python study-authoring
+guides, [PYTHON-STUDY-ASSEMBLY-WORKFLOW.md](PYTHON-STUDY-ASSEMBLY-WORKFLOW.md)
+and [PYTHON-DESIGN-INTERVIEW-WORKFLOW.md](PYTHON-DESIGN-INTERVIEW-WORKFLOW.md),
+which build the same study through pack preview and apply. Execution then
+goes through a runner (`steerlab run <experiment> --runner <url>`, or the
+managed local runner from the `[runner]` extra); the concepts in §5 through
+§7 apply unchanged, and §8 and §9 are written for both clients.
 
 ```bash
 cp -R SampleWorkspace ~/SteerLab/Workspaces/first-hour

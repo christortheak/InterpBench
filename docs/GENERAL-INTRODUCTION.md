@@ -494,6 +494,7 @@ through.)*
 | Read | For |
 |---|---|
 | [README.md](../README.md) | Orientation, requirements, install, quickstart |
+| [TECHNICAL-OVERVIEW.md](TECHNICAL-OVERVIEW.md) | The engines, the artifact model and the design philosophy, in full |
 | [ONBOARDING.md](ONBOARDING.md) | **Start here to use it.** The hands-on tour: first vector, first experiment, first freeze |
 | [METHODS.md](METHODS.md) | The math, the source lineage, and every logged divergence from it |
 | [REPE-IMPLEMENTATION-BRIEF.md](REPE-IMPLEMENTATION-BRIEF.md) | What is actually implemented from Zou et al.'s Representation Engineering: pipeline, schemas, and the faithful-vs-departure table |
