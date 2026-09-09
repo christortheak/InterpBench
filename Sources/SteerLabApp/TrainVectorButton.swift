@@ -1,4 +1,5 @@
 import ExperimentKit
+import Foundation
 import SwiftUI
 
 /// All entry points author through the same maintained interview and client owner.
@@ -6,27 +7,36 @@ struct TrainVectorButton: View {
     let service: ChatService
     var operation = "optvec-train"
     var title = "Train a vector…"
-    @State private var workflow: ScienceCatalog.Workflow?
+
+    /// One presentation value captures the selected operation and its origin.
+    /// A Boolean plus an optional workflow can present before the workflow is
+    /// visible to the sheet closure, producing an empty first presentation.
+    private struct Request: Identifiable {
+        let workflow: ScienceCatalog.Workflow
+        let root: URL
+        let client: ClusterClient?
+        var id: String { workflow.id }
+    }
+    @State private var request: Request?
     @State private var failure: String?
-    @State private var presented = false
-    @State private var root = ExperimentStore.workspaceRoot
-    @State private var client: ClusterClient?
 
     var body: some View {
         VStack(alignment: .leading) {
             Button(title) {
                 do {
-                    workflow = try ScienceCatalog.workflows().first { $0.id == operation }
-                    guard workflow != nil else { failure = "Training form unavailable in this build."; return }
-                    root = ExperimentStore.workspaceRoot
-                    client = service.cluster.client
-                    presented = true
+                    guard let workflow = try ScienceCatalog.workflows().first(where: { $0.id == operation }) else {
+                        failure = "Training form unavailable in this build."
+                        return
+                    }
+                    failure = nil
+                    request = Request(workflow: workflow, root: ExperimentStore.workspaceRoot,
+                        client: service.cluster.client)
                 } catch { failure = error.localizedDescription }
             }
             if let failure { Text(failure).font(.caption).foregroundStyle(.red) }
         }
-        .sheet(isPresented: $presented) {
-            if let workflow { MethodAuthoringSheet(workflow: workflow, root: root, client: client) }
+        .sheet(item: $request) { context in
+            MethodAuthoringSheet(workflow: context.workflow, root: context.root, client: context.client)
         }
     }
 }

@@ -97,6 +97,32 @@ must pass on the reviewed tip. Any later change described as a mechanical move
 also needs its corresponding AST audit. Fast-forward only after the maintainer's
 reviewing agents approve; rebuild the app and its matching Python payload together.
 
+## Isolated UI walkthrough
+
+A separately identified, ad-hoc preview bundle was assembled from the tested
+Debug binaries and matching payload. It used a new temporary workspace; the
+installed app and its preferences were not replaced. This was a UI check, not
+release-build or scientific qualification.
+
+Verified interactively:
+
+- Concept Vector Builder exposes an editable recipe selector, OptVec entry and
+  SAE import entry. Calibration/projection starts collapsed at the bottom.
+- The expanded projection group has one label per field, with examples in help.
+  Entering two properties and requesting a preview placed those properties in
+  the prompt; the stored corpus remained at 200 rows.
+- View existing examples opened the JSONL reader. Next page reached byte
+  115,331 of 115,331 and disabled Next; Previous remained available.
+- Switching to Templates showed template terminology and its own explanation.
+- Creating an empty adapter project in the disposable workspace exposed the two
+  primary data rows with Browse and Choose. Storage details remained collapsed.
+  No training or dataset generation was started.
+- OptVec exposed train, evaluation and campaign actions. The initial walkthrough
+  caught an empty first-click training sheet. The follow-up uses one item-based
+  presentation value containing the workflow, workspace and client, instead of
+  a Boolean plus separately updated optional state. SAE confirmation similarly
+  passes its reviewed request through SwiftUI's presenting parameter.
+
 ## Live acceptance still required
 
 1. At ordinary and narrow window sizes, walk Templates, Adapter Training,

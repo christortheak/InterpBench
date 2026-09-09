@@ -83,13 +83,11 @@ private struct SAEFeatureImportSheet: View {
             Text(status).font(.caption).textSelection(.enabled)
         }.padding().frame(minWidth: 680, minHeight: 500)
         .interactiveDismissDisabled(busy)
-        .confirmationDialog("Import this feature?", isPresented: $confirming, titleVisibility: .visible) {
-            Button("Import feature") { if let review { submit(review) } }
+        .confirmationDialog("Import this feature?", isPresented: $confirming, titleVisibility: .visible, presenting: review) { reviewed in
+            Button("Import feature") { submit(reviewed) }
             Button("Cancel", role: .cancel) {}
-        } message: {
-            if let review {
+        } message: { review in
                 Text("\(review.model)\n\(review.release) / \(review.saeID)\nFeature \(review.feature), label: \(review.label)\nCalibration: \(review.residualNormArtifact)\nThis may download SAE weights. The engine saves a new vector scaled to the measured residual norm.")
-            }
         }
         .task {
             do { donors = try await client.vectorArtifacts() }
