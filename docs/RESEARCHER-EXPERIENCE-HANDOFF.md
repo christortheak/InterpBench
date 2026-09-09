@@ -122,6 +122,12 @@ Verified interactively:
   presentation value containing the workflow, workspace and client, instead of
   a Boolean plus separately updated optional state. SAE confirmation similarly
   passes its reviewed request through SwiftUI's presenting parameter.
+- After rebuilding the preview from the tested follow-up, the first training
+  click opened the populated form with research decisions, data selectors and
+  review controls. Evaluation and campaign actions each opened their own
+  populated form as well. All three were dismissed without publishing a request
+  or submitting compute. This closes the observed empty-sheet regression; it
+  does not replace the authoring-to-evidence acceptance journey below.
 
 ## Live acceptance still required
 
