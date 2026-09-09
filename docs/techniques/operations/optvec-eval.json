@@ -54,7 +54,7 @@
         "label": "Model commit",
         "kind": "text",
         "required": true,
-        "help": "Inspect the immutable 40-character model commit. Never type a guessed pin."
+        "help": "The exact version of the model. Inspect the selected model to fill its commit automatically; an agent can also supply a verified commit. This prevents silently switching model versions."
       },
       {
         "id": "vectorArtifact",
@@ -68,28 +68,32 @@
         "label": "Held-out target test items",
         "kind": "fileRef",
         "required": true,
-        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        "help": "Unseen examples for measuring the desired behavior after training and selection. Keep these out of training and checkpoint selection. Use one JSON object per line (.jsonl), with distinct item IDs across splits. The example below illustrates syntax only; it is not a ready-made research dataset.",
+        "example": "{\"id\": \"example-1\", \"prompt\": \"A box contains two red balls and one blue ball. Which color is more common? A: red. B: blue. Answer A or B.\", \"options\": [\"A\", \"B\"], \"target\": \"A\"}"
       },
       {
         "id": "datasets.anchorTest",
         "label": "Held-out anchor items",
         "kind": "fileRef",
         "required": false,
-        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        "help": "Unseen preservation examples for measuring changes to other judgments after training. Use one JSON object per line (.jsonl), with distinct item IDs across splits. The example below illustrates syntax only; it is not a ready-made research dataset.",
+        "example": "{\"id\": \"example-1\", \"prompt\": \"A box contains two red balls and one blue ball. Which color is more common? A: red. B: blue. Answer A or B.\", \"options\": [\"A\", \"B\"], \"target\": \"A\"}"
       },
       {
         "id": "datasets.capabilityEval",
         "label": "Held-out capability items",
         "kind": "fileRef",
         "required": false,
-        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        "help": "Unseen questions with correct target answers for checking retained abilities. Use one JSON object per line (.jsonl), with distinct item IDs across splits. The example below illustrates syntax only; it is not a ready-made research dataset.",
+        "example": "{\"id\": \"example-1\", \"prompt\": \"A box contains two red balls and one blue ball. Which color is more common? A: red. B: blue. Answer A or B.\", \"options\": [\"A\", \"B\"], \"target\": \"A\"}"
       },
       {
         "id": "neutralTexts",
         "label": "Neutral fluency texts",
         "kind": "fileRef",
         "required": false,
-        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        "help": "Independent passages for checking whether steering harms ordinary language fluency. Use one passage per line, either plain text or a JSON object with a text field. These are not multiple-choice training rows. The example illustrates syntax only; choose passages suitable for your study.",
+        "example": "{\"text\": \"Describe how to organize a bookshelf.\"}"
       },
       {
         "id": "alphaMultiples",

@@ -1,4 +1,9 @@
-# Inspect a design and create reviewed studies
+# Inspect a template and create reviewed studies
+
+The app calls reusable study settings **templates**. Both command lines currently
+use the `design` family for those same objects, and stored fields retain that
+spelling. Use “template” in researcher-facing explanations; `design list`, for
+example, lists templates. This terminology does not change artifact identities.
 
 A design holds the settings shared by a family of studies. Instantiating it
 creates an ordinary study with its own casting and provenance. A description

@@ -218,3 +218,67 @@ server startup instead of printing help. The probe could not bind a socket and
 exited; its newly created, ignored bookkeeping directory was moved out of the
 checkout into a temporary directory. No study data was changed. Treat this as a
 separate CLI-help defect, not a documented read-only discovery command.
+
+## Response to the maintainer's review of `9d0f4fe`
+
+The review's findings are accepted. Its proposed landing repairs were not yet
+present on this branch or main when this follow-up began. They are now included
+on this branch for the maintainer's agents to review before fast-forwarding.
+Do not apply the review's proposed specification port a second time.
+
+- **F1:** The seven operation specifications now own the improved help, examples,
+  and catalog route declarations. Regenerating from the initial port reproduced
+  the `9d0f4fe` catalog, workflows, and execution bindings byte for byte.
+  Subsequent example corrections described below deliberately change generated
+  resources. Use `scripts/ci/check-generated.py --audits` as the entry point.
+- The registration audit retains its historical baseline and its owner-body,
+  execution-binding, and input-role checks. Declaration checks allow only named
+  presentation fields and additional actions to evolve. Original actions remain
+  unchanged, and duplicate action IDs fail. Interview field identities, types,
+  requirements, defaults, ordering, and other non-presentation keys stay checked.
+  Automated negative controls now change field IDs, types, requirements, defaults,
+  action paths, and service roles, and remove fields/actions. Each must fail the
+  actual declaration comparison. A presentation-only change must pass.
+- **F2:** Unreleased now includes the researcher-experience changes.
+- **N1:** Repository and workspace guidance, shared interviews, and the authoring
+  reference explicitly map researcher-facing “template” to the current `design`
+  command family. This is a terminology clarification, not a command or stored
+  schema rename. A full CLI terminology migration is outside this repair.
+- **N2:** The Oxford-comma rule is under Writing style, below the ground rules.
+  Workspace guidance carries the same instruction.
+- **N3:** No cache is added without a measured performance problem. Inventory
+  scans remain an observation for live testing with a large model cache.
+- **N4:** A completed local projection build after a workspace switch now reports
+  success and its original saved path. It does not refresh or select a basis in
+  the newly opened workspace.
+- **N5:** An already-mismatched selected model returns HTTP 400 before a job is
+  created. The check under the acquired model lock remains, protecting against
+  a model change after request admission. Regression tests cover both checks,
+  matching-model admission, and callers that omit the optional expectation.
+- **Additional finding:** OptVec's `neutralTexts` and `probePrompts` examples used
+  choice rows, which their text loader skips. Their operation specifications now
+  provide text-field JSONL examples and explain the actual accepted format. New
+  tests load both examples through `load_neutral_texts`, which serves those two
+  inputs. Existing choice-row tests remain. No dataset is created for a user.
+- **N6:** The managed reference-input/evidence round trip, locating the previously
+  missing derived vector, and the live acceptance journeys remain open. The
+  unrelated `serve --help` defect also remains open. These repairs do not claim
+  further backend qualification.
+
+General J-lens and SAE artifact importers are the next implementation slice,
+after the maintainer's agents land this branch. That slice should start from the
+landed main, preserve actual source/model metadata and input bytes, and expose
+the same import owners through the dialogs, CLIs, and HTTP API. It must distinguish
+a decoder vector from a complete SAE and a fitted lens from its derived vectors;
+none of those imports implies fitting an SAE or a lens.
+
+The new source and generated Python identity must ship with a rebuilt app and
+its matching Python payload. The installed app and main are not changed here.
+
+Follow-up verification on the final source: **6,210 Python tests passed**, with
+nine skips and eight warnings. The subsequent serial Xcode beta run passed
+**290 SteeringKit and 4,611 ExperimentKit tests** (`TEST SUCCEEDED`), using the
+Metal toolchain, external derived data, and the explicit test Python executable.
+The complete unified generator/audit entry point, public scan, and diff check
+passed. The implementation diff was read; no scientific numerical body changes
+are claimed. Live acceptance remains as listed above.

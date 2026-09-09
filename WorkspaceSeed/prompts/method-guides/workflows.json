@@ -178,8 +178,8 @@
           "label": "Neutral fluency texts",
           "kind": "fileRef",
           "required": false,
-          "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review. Use one JSON object per line (.jsonl), with distinct item IDs across splits. The example below illustrates syntax only; it is not a ready-made research dataset.",
-          "example": "{\"id\": \"example-1\", \"prompt\": \"A box contains two red balls and one blue ball. Which color is more common? A: red. B: blue. Answer A or B.\", \"options\": [\"A\", \"B\"], \"target\": \"A\"}"
+          "help": "Independent passages for checking whether steering harms ordinary language fluency. Use one passage per line, either plain text or a JSON object with a text field. These are not multiple-choice training rows. The example illustrates syntax only; choose passages suitable for your study.",
+          "example": "{\"text\": \"Describe how to organize a bookshelf.\"}"
         },
         {
           "id": "alphaMultiples",
@@ -333,8 +333,8 @@
           "label": "Held-out probe prompts",
           "kind": "fileRef",
           "required": false,
-          "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review. Use one JSON object per line (.jsonl), with distinct item IDs across splits. The example below illustrates syntax only; it is not a ready-made research dataset.",
-          "example": "{\"id\": \"example-1\", \"prompt\": \"A box contains two red balls and one blue ball. Which color is more common? A: red. B: blue. Answer A or B.\", \"options\": [\"A\", \"B\"], \"target\": \"A\"}"
+          "help": "Held-out prompts for inspecting the trained vector’s behavior. Use one prompt per line, either plain text or a JSON object with a text field. These are not multiple-choice training rows. The example illustrates syntax only; choose prompts suitable for your study.",
+          "example": "{\"text\": \"Describe how to organize a bookshelf.\"}"
         },
         {
           "id": "alphaMultiples",

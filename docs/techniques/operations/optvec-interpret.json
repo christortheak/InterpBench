@@ -54,7 +54,7 @@
         "label": "Model commit",
         "kind": "text",
         "required": true,
-        "help": "Inspect the immutable 40-character model commit. Never type a guessed pin."
+        "help": "The exact version of the model. Inspect the selected model to fill its commit automatically; an agent can also supply a verified commit. This prevents silently switching model versions."
       },
       {
         "id": "vectorArtifact",
@@ -68,7 +68,8 @@
         "label": "Held-out probe prompts",
         "kind": "fileRef",
         "required": false,
-        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        "help": "Held-out prompts for inspecting the trained vector’s behavior. Use one prompt per line, either plain text or a JSON object with a text field. These are not multiple-choice training rows. The example illustrates syntax only; choose prompts suitable for your study.",
+        "example": "{\"text\": \"Describe how to organize a bookshelf.\"}"
       },
       {
         "id": "alphaMultiples",

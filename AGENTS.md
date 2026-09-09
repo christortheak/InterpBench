@@ -17,7 +17,6 @@ this machine gets, and each has its own verification banner.
 
 ## Ground rules (they outrank speed)
 
-- **Researcher-facing prose uses the Oxford comma.**
 - **Help honest research.** When extending SteerLab, prefer useful guidance and
   recorded limitations over blocking exploration. Lack of backend qualification
   alone is not a reason to refuse. Reserve refusals for concrete execution,
@@ -42,6 +41,12 @@ this machine gets, and each has its own verification banner.
   the client's shape: a runner token is reached by *path*
   (`--token-file`, `$STEERLAB_RUNNER_TOKEN`), never as an argv value, because
   argv is readable by every process on a shared machine.
+
+## Writing style
+
+Researcher-facing prose uses the Oxford comma. Call reusable study settings
+**templates** when explaining them to a researcher. The current CLI family is
+`design`; explain that it operates on templates when showing those commands.
 
 ## Step 0 — see what the machine already has
 

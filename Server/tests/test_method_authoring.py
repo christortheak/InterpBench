@@ -128,3 +128,19 @@ def test_optvec_interview_choice_examples_load_with_the_training_row_parser(tmp_
     assert ('optvec-train', 'datasets.targetTrain') in checked
     assert ('optvec-train', 'datasets.anchorTrain') in checked
     assert ('optvec-train', 'datasets.capabilityTrain') in checked
+
+
+@pytest.mark.parametrize('operation,field_id', [
+    ('optvec-eval', 'neutralTexts'), ('optvec-interpret', 'probePrompts')])
+def test_optvec_text_examples_reach_their_actual_loader(tmp_path, operation, field_id):
+    from steerlab_server.experiment import science_catalog
+    from steerlab_server.experiment.optvec_eval import FileRef, load_neutral_texts
+
+    source = json.loads(science_catalog.resource('workflows.json'))
+    interview = next(row for row in source['operations'] if row['id'] == operation)
+    field = next(row for row in interview['fields'] if row['id'] == field_id)
+    example = field['example']
+    path = tmp_path / 'example.jsonl'
+    path.write_text(example + '\n')
+    ref = FileRef.from_dict({'path': str(path), 'sha256': archives.file_hash(path)}, field_id)
+    assert load_neutral_texts(ref) == [json.loads(example)['text']]

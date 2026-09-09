@@ -38,9 +38,9 @@
   },
   "interview": {
     "id": "optvec-train",
-    "title": "Train an optimized intervention",
+    "title": "Train a steering vector",
     "method": "optimization",
-    "purpose": "Change a declared behavior while preserving specified anchors and capability.",
+    "purpose": "Teach a vector to favor a chosen answer over an alternative, while preserving other judgments and abilities. Start with your own choice prompts or prompts prepared from study outputs.",
     "fields": [
       {
         "id": "modelID",
@@ -54,21 +54,21 @@
         "label": "Model commit",
         "kind": "text",
         "required": true,
-        "help": "Inspect the immutable 40-character model commit. Never type a guessed pin."
+        "help": "The exact version of the model. Inspect the selected model to fill its commit automatically; an agent can also supply a verified commit. This prevents silently switching model versions."
       },
       {
         "id": "layer",
         "label": "Injection layer",
         "kind": "integer",
         "required": true,
-        "help": ""
+        "help": "The transformer layer where the learned vector is added (zero-based). Choose a layer supported by your model and study design; no universal best layer is assumed."
       },
       {
         "id": "alphaNormFactor",
         "label": "Dose in residual-norm units",
         "kind": "number",
         "required": false,
-        "help": "Multiplied by the residual norm; this is not the J-space artifact-norm multiple.",
+        "help": "Steering strength relative to the model’s typical activation size. For example, 0.1 means one tenth of the measured residual norm. This is not a J-space artifact-norm multiple.",
         "default": "0.1"
       },
       {
@@ -83,42 +83,47 @@
         "label": "Target training items",
         "kind": "fileRef",
         "required": true,
-        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        "help": "Examples of the behavior to change. For each prompt, state two answer choices and the answer to encourage. Training increases its log-probability relative to the other choice. Study outputs must first be authored into this choice-row format; they are not consumed directly. Use one JSON object per line (.jsonl), with distinct item IDs across splits. The example below illustrates syntax only; it is not a ready-made research dataset.",
+        "example": "{\"id\": \"example-1\", \"prompt\": \"A box contains two red balls and one blue ball. Which color is more common? A: red. B: blue. Answer A or B.\", \"options\": [\"A\", \"B\"], \"target\": \"A\"}"
       },
       {
         "id": "datasets.targetVal",
         "label": "Selection / validation items",
         "kind": "fileRef",
         "required": false,
-        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        "help": "Separate examples of the same behavior, used for checkpoint selection or monitoring. Do not reuse training or final-test rows. A declared fixed-step run can omit this file. Use one JSON object per line (.jsonl), with distinct item IDs across splits. The example below illustrates syntax only; it is not a ready-made research dataset.",
+        "example": "{\"id\": \"example-1\", \"prompt\": \"A box contains two red balls and one blue ball. Which color is more common? A: red. B: blue. Answer A or B.\", \"options\": [\"A\", \"B\"], \"target\": \"A\"}"
       },
       {
         "id": "datasets.anchorTrain",
         "label": "Behaviors to preserve",
         "kind": "fileRef",
         "required": true,
-        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        "help": "Judgments you want to leave unchanged. The optimizer penalizes changes to the unsteered model’s answer probabilities on these prompts, rather than teaching the target label as a new answer. Use one JSON object per line (.jsonl), with distinct item IDs across splits. The example below illustrates syntax only; it is not a ready-made research dataset.",
+        "example": "{\"id\": \"example-1\", \"prompt\": \"A box contains two red balls and one blue ball. Which color is more common? A: red. B: blue. Answer A or B.\", \"options\": [\"A\", \"B\"], \"target\": \"A\"}"
       },
       {
         "id": "datasets.anchorVal",
         "label": "Anchor validation items",
         "kind": "fileRef",
         "required": false,
-        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        "help": "Separate preservation examples for checking whether the trained vector changes judgments you meant to preserve. Keep them distinct from the preservation training rows. Use one JSON object per line (.jsonl), with distinct item IDs across splits. The example below illustrates syntax only; it is not a ready-made research dataset.",
+        "example": "{\"id\": \"example-1\", \"prompt\": \"A box contains two red balls and one blue ball. Which color is more common? A: red. B: blue. Answer A or B.\", \"options\": [\"A\", \"B\"], \"target\": \"A\"}"
       },
       {
         "id": "datasets.capabilityTrain",
         "label": "Capability training controls",
         "kind": "fileRef",
         "required": true,
-        "help": "Choose a workspace-relative file. Its actual SHA-256 is read during review."
+        "help": "Questions with objectively correct answers, such as basic reasoning or factual tasks. Here target is the correct answer; the optimizer penalizes losing it. Use examples relevant to the abilities your study needs. Use one JSON object per line (.jsonl), with distinct item IDs across splits. The example below illustrates syntax only; it is not a ready-made research dataset.",
+        "example": "{\"id\": \"example-1\", \"prompt\": \"A box contains two red balls and one blue ball. Which color is more common? A: red. B: blue. Answer A or B.\", \"options\": [\"A\", \"B\"], \"target\": \"A\"}"
       },
       {
         "id": "stepsMax",
         "label": "Maximum optimization steps",
         "kind": "integer",
         "required": false,
-        "help": "",
+        "help": "Upper limit on optimizer updates, not the number of examples. The existing default is a starting setting to review, not a recommended value for every study.",
         "default": "500"
       },
       {

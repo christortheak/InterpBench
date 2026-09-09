@@ -12,6 +12,13 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Researcher guidance and authoring: unified vector creation, guided OptVec and
+  SAE dialogs, discoverable J-lenses, per-vector Playground switches, readable
+  JSONL results, and simpler template and adapter controls. Projection builds
+  stay responsive locally, and Python workspaces expose their corpus and basis
+  catalogs. Agent guidance asks before generating data or delegating authorship.
+  Scientific qualification and live acceptance remain separate from UI access.
+
 - A cancelled Slurm job now cleans up its node-local scratch. The rendered
   sbatch script traps the cancel's SIGTERM separately from the walltime
   USR1: it forwards TERM to the child and bounds the wait (15 s by default,

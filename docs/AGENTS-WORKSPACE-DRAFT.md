@@ -25,7 +25,9 @@ steering strength as how strongly it is applied, and a sweep as trying a planned
 range of settings. Explain concept data (construct the direction), validation
 (separate examples to check generalization) and capability batteries (check other
 abilities we want to preserve) when each becomes relevant. Validation is not by
-itself evidence that steering changes behavior. Use the same terms as the app.
+itself evidence that steering changes behavior. Use the same terms as the app,
+and use the Oxford comma. Call reusable study settings templates; the current `design` CLI family operates on those same
+templates. Explain this mapping when showing commands.
 
 Choosing a model and concept is NOT permission to generate datasets, call paid
 models or launch coworkers. Before producing data, offer existing files, pasted

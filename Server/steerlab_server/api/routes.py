@@ -3038,13 +3038,18 @@ def build_router(state: ServiceState) -> APIRouter:
 
     @router.post("/api/neutral-pcs/build")
     def neutral_pcs_build(body: dict | None = None):
-        state.require_model()
+        model = state.require_model()
+        body = body or {}
+        expected_model = body.get("expectedModelID")
+        if expected_model and model.model_id != expected_model:
+            raise HTTPException(
+                status_code=400,
+                detail="The loaded model differs from the selected model; load the selected model and review the build again.")
         from ..experiment import neutral
         from ..steering import token_bank_downsampling
         from ..steering.extractor import neutral_activation_bank
         from ..steering.reading_position import mean_from_token
 
-        body = body or {}
         corpus_name = body.get("corpus") or None
         min_variance = float(body.get("minVariance", 0.5))
         from ..steering.extractor import DEFAULT_MAX_NEUTRAL_PCS, DEFAULT_MAX_TOKEN_ROWS
@@ -3069,7 +3074,7 @@ def build_router(state: ServiceState) -> APIRouter:
             seed = token_bank_downsampling.seed_from_corpus_hash(
                 corpus_hash or "")
             with state.acquire_active() as model:
-                expected_model = body.get("expectedModelID")
+                # Recheck under the model lock: it may change after admission.
                 if expected_model and model.model_id != expected_model:
                     raise RuntimeError("The loaded model changed; load the selected model and review the build again.")
                 bank = neutral_activation_bank(model, texts,

@@ -2202,7 +2202,10 @@ public final class ChatService {
                 try Task.checkCancellation()
                 return try NeutralPCStore.save(basis, directory: destination)
             }.value
-            guard VectorCatalog.projectRoot == workspaceRoot else { return }
+            guard VectorCatalog.projectRoot == workspaceRoot else {
+                neutralPCStatus = "Projection directions saved in the original workspace at \(record.url.path)."
+                return
+            }
             refreshNeutralPCBases()
             selectedNeutralPCBasisID = record.id
             neutralPCStatus =

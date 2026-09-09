@@ -54,7 +54,7 @@
         "label": "Layer (optional consistency check)",
         "kind": "integer",
         "required": false,
-        "help": ""
+        "help": "The transformer layer where the learned vector is added (zero-based). Choose a layer supported by your model and study design; no universal best layer is assumed."
       },
       {
         "id": "items",
