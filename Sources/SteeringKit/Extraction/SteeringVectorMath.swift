@@ -126,7 +126,7 @@ public enum ExtractionMethod: String, Codable, Sendable, CaseIterable {
         case .designatedReference: "Designated reference (stories − reference stories)"
         case .pinnedArtifact: "Pinned artifact (hash-pinned derived vectors)"
         case .optvec: "Optimized injection vector (OptVec)"
-        case .gemmaScopeSAE: "Gemma Scope SAE feature (decoder row)"
+        case .gemmaScopeSAE: "SAE feature (decoder row)"
         case .repeReaderLAT: "RepE reader LAT (derived from a fitted reader)"
         }
     }

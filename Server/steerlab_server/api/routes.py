@@ -267,7 +267,8 @@ def _max_upload_bytes() -> int:
     remote client can otherwise exhaust the staging disk. Read per-request (not a
     module constant) so deployments can tune it without a restart. Override with
     STEERLAB_MAX_UPLOAD_BYTES; default 4 GiB."""
-    return int(os.environ.get("STEERLAB_MAX_UPLOAD_BYTES", str(4 * 1024**3)))
+    from .transfer_policy import max_upload_bytes
+    return max_upload_bytes()
 
 
 def _safe_name(name: str) -> None:

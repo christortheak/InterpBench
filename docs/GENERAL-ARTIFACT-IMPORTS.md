@@ -89,8 +89,9 @@ The Python workbench exposes:
 
 - `POST /api/artifact-imports/stage/{source_id}/{file_path}`: stream original
   bytes with `X-Content-SHA256`. Use a fresh 32-character lowercase hex source ID.
-  Paths are ordinary relative components. Each file is create-only, and uploads
-  exceeding 32 GiB need the existing cluster file-transfer tools instead.
+  Paths are ordinary relative components. Each file is create-only. Uploads obey
+  `STEERLAB_MAX_UPLOAD_BYTES` (default 4 GiB), with a ceiling of 32 GiB. Larger
+  files need the existing external file-transfer tools instead.
 - `POST /api/artifact-imports/plan` with `{"descriptionFile":"<staged-path>"}`.
   Returns geometry, limitations, file hashes, and `planSHA256` without publishing.
 - `POST /api/artifact-imports/import` with the same `descriptionFile` and

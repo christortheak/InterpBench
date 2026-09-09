@@ -44,6 +44,7 @@ private struct SAEFeatureImportSheet: View {
             Text("Model: " + modelID)
             Text("Use a feature's decoder direction as an intervention. Its description is a hypothesis to test; importing it does not validate its behavioral effect.")
                 .font(.caption)
+            ArtifactImportButton(service: service, kind: "sae-decoder")
             Form {
                 Section("1. Choose a feature") {
                     Text("An SAE separates model activations into learned features. Importing one adds its decoder direction to your steering-vector library; you can then test its effect in the matching model.")

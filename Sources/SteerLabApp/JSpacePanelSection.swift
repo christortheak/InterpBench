@@ -104,6 +104,7 @@ struct JSpacePanelSection: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("1. Choose a published lens, download it to the Python engine’s cache, and import it into the workspace. 2. Select the imported lens below. 3. Look up a token and derive its vector. The Python engine can run on this Mac using MPS; this does not require a remote cluster.")
                 .font(.callout).fixedSize(horizontal: false, vertical: true)
+            ArtifactImportButton(service: service, kind: "jlens") { Task { await refresh() } }
             Picker("Model with a known or imported lens", selection: $selectedModelID) {
                 Text("Choose a model…").tag("")
                 ForEach(lensModelIDs, id: \.self) { Text($0).tag($0) }
@@ -132,7 +133,7 @@ struct JSpacePanelSection: View {
             }
             Text("Download may fetch several gigabytes. Import converts those cached bytes into a workspace lens; it does not download again.").font(.caption).foregroundStyle(.secondary)
             DisclosureGroup("Lenses you made or obtained elsewhere") {
-                Text("They should be usable when their tensor layout, fitted model, layer mapping, and direction convention match the importer. This build’s import action reads the published repository’s format; it does not yet accept an arbitrary local file or another repository. Do not rename a custom artifact to impersonate a published lens. A general file-import workflow remains to be implemented.")
+                Text("Use Import my own lens files with a JSON description and its tensor file. The importer checks explicit layer mapping and geometry, retains unknown fit revisions, and adds a separate lens to the library. Safetensors and tensor-only PyTorch checkpoints are supported; other formats need an explicit adapter. Import is not scientific qualification.")
                     .font(.caption).fixedSize(horizontal: false, vertical: true)
             }
             let lenses = catalog?.lenses ?? []

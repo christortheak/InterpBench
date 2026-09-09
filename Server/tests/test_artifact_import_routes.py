@@ -80,3 +80,14 @@ def test_external_transfer_policy_is_checked_before_staging(tmp_path, monkeypatc
     assert response.status_code == 403
     assert response.json()['detail']['code'] == 'external_transfer_required'
     assert not (tmp_path / '.steerlab').exists()
+
+
+def test_deployment_size_limit_applies_and_discards_partial_upload(tmp_path, monkeypatch):
+    monkeypatch.setenv('STEERLAB_ROOT', str(tmp_path))
+    monkeypatch.setenv('STEERLAB_MAX_UPLOAD_BYTES', '2')
+    app = FastAPI(); app.include_router(build_router(SimpleNamespace()))
+    data = b'larger'
+    response = TestClient(app).post('/api/artifact-imports/stage/' + 'a'*32 + '/source.json',
+        content=data, headers={'X-Content-SHA256': hashlib.sha256(data).hexdigest()})
+    assert response.status_code == 400 and '2 bytes' in response.text
+    assert not list((tmp_path / '.steerlab/artifact-inputs' / ('a'*32)).iterdir())

@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from .profile import ServerProfile
 from .workspace_lock import submitting
-from .transfer_policy import require_http_transfer
+from .transfer_policy import require_http_transfer, max_upload_bytes
 from ..experiment import artifact_imports, artifact_sources, diagnostic_archives
 
 
@@ -43,6 +43,7 @@ def build_router(state):
             expected = request.headers.get('x-content-sha256', '')
             if not re.fullmatch('[0-9a-f]{64}', expected):
                 raise artifact_sources.ImportRefusal('Supply X-Content-SHA256 for the exact file being uploaded.')
+            cap = min(max_upload_bytes(), 32 * 1024**3)
             root = Path(ServerProfile.from_env().root).resolve()
             relative = '.steerlab/artifact-inputs/' + source_id + '/' + file_path
             target = diagnostic_archives.ordinary(root, relative, missing=True)
@@ -55,8 +56,8 @@ def build_router(state):
                 with incoming.open('xb') as stream:
                     async for chunk in request.stream():
                         total += len(chunk)
-                        if total > 32 * 1024**3:
-                            raise artifact_sources.ImportRefusal('This file exceeds the 32 GiB HTTP staging limit; stage it through the cluster file-transfer tools.')
+                        if total > cap:
+                            raise artifact_sources.ImportRefusal(f'This file exceeds the HTTP staging limit of {cap} bytes (STEERLAB_MAX_UPLOAD_BYTES, at most 32 GiB); use the deployment’s external file-transfer tools.')
                         digest.update(chunk)
                         await asyncio.to_thread(stream.write, chunk)
                 if digest.hexdigest() != expected:

@@ -1,6 +1,12 @@
 """Enforce the deployment's bulk-transfer policy before opening a stream."""
 from fastapi import HTTPException
+import os
 from .profile import ServerProfile
+
+
+def max_upload_bytes() -> int:
+    """Per-request deployment limit shared by artifact upload endpoints."""
+    return int(os.environ.get("STEERLAB_MAX_UPLOAD_BYTES", str(4 * 1024**3)))
 
 
 def require_http_transfer() -> None:
