@@ -30,7 +30,7 @@ struct TrainVectorButton: View {
                     }
                     failure = nil
                     request = Request(workflow: workflow, root: ExperimentStore.workspaceRoot,
-                        client: service.cluster.client)
+                        client: service.cluster.computeTarget == .server ? service.cluster.client : nil)
                 } catch { failure = error.localizedDescription }
             }
             if let failure { Text(failure).font(.caption).foregroundStyle(.red) }

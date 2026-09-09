@@ -17,6 +17,7 @@ this machine gets, and each has its own verification banner.
 
 ## Ground rules (they outrank speed)
 
+- **Researcher-facing prose uses the Oxford comma.**
 - **Help honest research.** When extending SteerLab, prefer useful guidance and
   recorded limitations over blocking exploration. Lack of backend qualification
   alone is not a reason to refuse. Reserve refusals for concrete execution,

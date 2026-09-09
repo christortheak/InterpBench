@@ -15,10 +15,13 @@ import SwiftUI
 @MainActor
 struct JSpacePanelSection: View {
     @Bindable var service: ChatService
+    var includesAnalysis = true
 
     @State private var catalog: JLensCatalog?
     @State private var selectedModelID: String = ""
     @State private var selectedLensID: String?
+    @State private var otherModelID = ""
+    @State private var declaredTier = "testing"
     @State private var detail: JLensRecord?
     @State private var status: String?
     @State private var isBusy = false
@@ -52,12 +55,17 @@ struct JSpacePanelSection: View {
             }
         }
         .task { await refresh() }
+        .onChange(of: selectedModelID) { _, _ in
+            selectedToken = nil; tokenOptions = nil
+        }
         if isServerWorkspace {
             Section("Token → direction") {
                 tokenDirectionBuilder
             }
-            JLensSupportSection(service: service)
-            JLensTraceSection(service: service)
+            if includesAnalysis {
+                JLensSupportSection(service: service)
+                JLensTraceSection(service: service)
+            }
         }
     }
 
@@ -65,14 +73,7 @@ struct JSpacePanelSection: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("""
-                 Reads what the model is poised to verbalize, and derives steering \
-                 directions from a lens. Server-only: lens artifacts \
-                 are PyTorch/HF-native and activations do not transfer across \
-                 substrates, so everything here runs on the connected server. \
-                 Scores are estimated verbalizable representations — never access \
-                 to beliefs or reasoning.
-                 """)
+            Text("A Jacobian lens can derive a steering direction for one exact vocabulary token. Choose its model and lens first, then name the token to investigate. A token direction is a starting intervention to test, not proof that it represents a psychological concept. These artifacts use the Python engine, including MPS on this Mac; they are not interchangeable with MLX artifacts.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -87,14 +88,9 @@ struct JSpacePanelSection: View {
     private var noServerNotice: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 6) {
-                Label("Needs a server workspace", systemImage: "bolt.horizontal.circle")
+                Label("Choose a Python engine", systemImage: "bolt.horizontal.circle")
                     .font(.callout.bold())
-                Text(
-                    "This workspace computes on \(service.cluster.substrateLabel), "
-                        + "and J-Space has no local equivalent by design. Point "
-                        + "the workspace at a server in Compute — the lens, its "
-                        + "derivations, and its readouts all live on the "
-                        + "substrate that can actually run them.")
+                Text("Select a Python engine in Compute, then reopen this library. It can run on this Mac using MPS or on a remote machine. The model, imported lens, and derived vectors stay with that engine’s workspace. Choosing Local (MLX) uses a different implementation and cannot apply these Python lens artifacts.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -106,42 +102,42 @@ struct JSpacePanelSection: View {
 
     private var lensLibrary: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let supported = catalog?.supported, !supported.isEmpty {
-                HStack(spacing: 10) {
-                    Picker("Model", selection: $selectedModelID) {
-                        ForEach(supported) { model in
-                            Text("\(model.modelID) — \(model.tier)").tag(model.modelID)
-                        }
-                    }
-                    .frame(maxWidth: 380)
-                    .help(
-                        "which model's published lens the two buttons act on — "
-                        + "a lens only reads the model it was fitted for")
-                    Button("Acquire lens") { run(.acquire) }
-                        .disabled(isBusy || selectedModelID.isEmpty)
-                        .help("fetch the published lens bytes into the server's HF cache")
-                    Button("Import lens") { run(.importLens) }
-                        .disabled(isBusy || selectedModelID.isEmpty)
-                        .help("convert a cached lens into the server workspace")
-                    if isBusy { ProgressView().controlSize(.small) }
+            Text("1. Choose a published lens, download it to the Python engine’s cache, and import it into the workspace. 2. Select the imported lens below. 3. Look up a token and derive its vector. The Python engine can run on this Mac using MPS; this does not require a remote cluster.")
+                .font(.callout).fixedSize(horizontal: false, vertical: true)
+            Picker("Model with a known or imported lens", selection: $selectedModelID) {
+                Text("Choose a model…").tag("")
+                ForEach(lensModelIDs, id: \.self) { Text($0).tag($0) }
+            }
+            DisclosureGroup("Another published model") {
+                Text("The curated list is not an allowlist. Enter a Hugging Face model identifier to look for its lens in neuronpedia/jacobian-lens. Download checks that repository’s published configurations; it does not invent a lens for a model without one.")
+                    .font(.caption)
+                HStack {
+                    TextField("Model identifier (owner/model-name)", text: $otherModelID)
+                    Button("Use this model") { selectedModelID = otherModelID.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .disabled(otherModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isBusy)
                 }
-                if let tier = supported.first(where: { $0.modelID == selectedModelID }),
-                   !tier.isEvidenceTier {
-                    TierBadge(tier: tier.tier, expanded: true)
+            }
+            if !(catalog?.supported.contains(where: { $0.modelID == selectedModelID }) ?? false), !selectedModelID.isEmpty {
+                Picker("Declared research scope", selection: $declaredTier) {
+                    Text("Exploratory / testing").tag("testing")
+                    Text("Intended for study evidence").tag("evidence")
                 }
-            } else if catalog != nil {
-                // Empty `supported` used to hide the picker and leave every
-                // button permanently disabled with no explanation.
-                Text(
-                    "this server publishes no supported lens models, so there "
-                        + "is nothing to acquire, import, or derive from here — "
-                        + "the catalog's supported list is empty")
-                    .font(.caption).foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text("This records intended use, not a successful qualification. Model and lens compatibility still need checking before interpreting results.").font(.caption)
+            }
+            HStack {
+                Button("Download published lens") { run(.acquire) }.disabled(isBusy || selectedModelID.isEmpty)
+                Button("Import downloaded lens") { run(.importLens) }.disabled(isBusy || selectedModelID.isEmpty)
+                Button("Refresh library") { Task { await refresh() } }.disabled(isBusy)
+                if isBusy { ProgressView().controlSize(.small) }
+            }
+            Text("Download may fetch several gigabytes. Import converts those cached bytes into a workspace lens; it does not download again.").font(.caption).foregroundStyle(.secondary)
+            DisclosureGroup("Lenses you made or obtained elsewhere") {
+                Text("They should be usable when their tensor layout, fitted model, layer mapping, and direction convention match the importer. This build’s import action reads the published repository’s format; it does not yet accept an arbitrary local file or another repository. Do not rename a custom artifact to impersonate a published lens. A general file-import workflow remains to be implemented.")
+                    .font(.caption).fixedSize(horizontal: false, vertical: true)
             }
             let lenses = catalog?.lenses ?? []
             if lenses.isEmpty {
-                Text("No lenses imported on this server yet — Acquire, then Import.")
+                Text("No lenses imported in this execution workspace yet. Download a published lens, then import it.")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
                 ForEach(lenses) { lens in
@@ -150,6 +146,12 @@ struct JSpacePanelSection: View {
             }
             if let detail { provenance(detail) }
         }
+    }
+
+    private var lensModelIDs: [String] {
+        Array(Set((catalog?.supported.map(\.modelID) ?? [])
+            + (catalog?.lenses.compactMap { $0.fit?.modelID } ?? [])
+            + [selectedModelID])).filter { !$0.isEmpty }.sorted()
     }
 
     /// A real Button, not a tap gesture: the row is focusable, keyboard
@@ -384,6 +386,9 @@ struct JSpacePanelSection: View {
 
     private func select(_ lens: JLensRecord) {
         selectedLensID = lens.lensID
+        if let model = lens.fit?.modelID { selectedModelID = model }
+        selectedToken = nil
+        tokenOptions = nil
         detail = lens
         Task {
             guard let client = service.cluster.client else { return }
@@ -454,6 +459,7 @@ struct JSpacePanelSection: View {
             deriveResult = nil
         }
         let modelID = action == .derive ? deriveModelID : selectedModelID
+        let importTier = (catalog?.supported.contains(where: { $0.modelID == modelID }) ?? false) ? nil : declaredTier
         Task {
             defer { isBusy = false }
             do {
@@ -463,7 +469,8 @@ struct JSpacePanelSection: View {
                     jobID = try await client.jlensAcquire(modelID: modelID)
                     title = "J-lens acquire: \(modelID)"
                 case .importLens:
-                    jobID = try await client.jlensImport(modelID: modelID)
+                    jobID = try await client.jlensImport(modelID: modelID,
+                        tier: importTier)
                     title = "J-lens import: \(modelID)"
                 case .derive:
                     guard let lensID = selectedLensID, let token = selectedToken else { return }
@@ -568,5 +575,26 @@ struct TierBadge: View {
               ? "evidence tier: this study's chosen model — may be qualified and cited"
               : "testing tier: fully usable, but outside this study's evidence "
                 + "scope, so it cannot be qualified or cited here")
+    }
+}
+
+/// The library is always discoverable from the vector builder, even before a
+/// compatible model is chosen. The existing owners still perform every action.
+struct JLensLibraryButton: View {
+    let service: ChatService
+    @State private var presented = false
+    var body: some View {
+        Button("J-lens: import a lens or create a vector…") { presented = true }
+            .sheet(isPresented: $presented) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("J-lens vector library").font(.title2)
+                        Spacer()
+                        Button("Done") { presented = false }
+                    }
+                    Form { JSpacePanelSection(service: service, includesAnalysis: false) }
+                        .formStyle(.grouped)
+                }.padding(24).frame(minWidth: 800, minHeight: 700)
+            }
     }
 }

@@ -162,11 +162,11 @@ extension ClusterClient {
     }
 
     /// Convert a cached lens into the server workspace (privileged; offline).
-    public func jlensImport(modelID: String) async throws -> String {
-        struct Body: Encodable { let modelID: String }
+    public func jlensImport(modelID: String, tier: String? = nil) async throws -> String {
+        struct Body: Encodable { let modelID: String; let tier: String? }
         struct Reply: Decodable { let jobId: String }
         let reply: Reply = try await post("/api/jlens/lenses/import",
-                                         body: Body(modelID: modelID))
+                                         body: Body(modelID: modelID, tier: tier))
         return reply.jobId
     }
 

@@ -278,6 +278,7 @@ struct ConceptsPanelView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 TrainVectorButton(service: service, title: "Train with OptVec…")
                 SAEFeatureImportButton(service: service)
+                JLensLibraryButton(service: service)
                 recipeFamilyPicker
 
                 // A derived direction has no concept, no stimuli, and nothing to

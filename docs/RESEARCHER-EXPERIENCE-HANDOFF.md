@@ -155,3 +155,66 @@ Verified interactively:
    projected steering on development and separate held-out data, with preserved
    capabilities and comparable strength conventions. UI access and unit tests
    do not establish behavioral benefit or broad backend qualification.
+
+
+## Follow-up: researcher guidance in the authoring dialogs
+
+The next review includes these responses to hands-on feedback:
+
+- SAE import uses a padded, grouped form with two stages: identify the feature,
+  then select measured steering calibration. Labels and help explain release,
+  dictionary, feature number, and calibration; a Neuronpedia link can fill the
+  source identifiers. A description is not represented as behavioral validation.
+- Method authoring separates model, data, settings, notes, and review. Steps with
+  no model or file inputs are omitted. The connected engine supplies a model
+  picker; a separately prepared model can still be entered explicitly. Inspect
+  selected model fills a returned exact revision without acquiring weights.
+  Changing the model clears the prior revision. Local MLX no longer supplies a
+  fallback loopback Python client to the OptVec form.
+- Notes have examples and explain their actual use: stored rationale, not
+  optimizer parameters. Existing nonempty-note admission remains unchanged.
+  Required fields are named as required, rather than marked with unexplained
+  asterisks. Defaults for settings are unchanged; data examples are syntax
+  examples, never auto-selected study data.
+- OptVec file roles and JSONL examples are maintained in the shared interview,
+  so Python agents receive them too. The choice examples pass the training
+  owner's row parser. Training increases the target/contrast log-probability
+  margin; anchor training preserves baseline choice distributions, and
+  capability training penalizes incorrect answers. Study outputs require
+  explicit preparation as choice rows, not direct ingestion by this form.
+- Review explains that it captures inputs and settings without executing. It
+  shows effective settings, notes, and input paths, with fingerprints and exact
+  engine JSON under disclosures. Saving chooses a unique requests subdirectory
+  automatically; an override is available only under Storage details. Existing
+  stale-input and create-only publication checks remain authoritative.
+- A J-lens library button always appears in Concept Vector Builder. Its dialog
+  reuses the existing catalog, acquisition, import, token lookup, and derivation
+  owners. The model picker includes known and imported lenses. Another published
+  model can be named explicitly, with the existing declared-tier parameter sent
+  through to the import owner. This is not a qualification claim.
+- **General custom J-lens file/repository import is still absent.** The existing
+  engine importer is tied to the published repository's format and provenance.
+  A follow-up must accept explicit source artifacts, retain their actual source
+  and fitted-model metadata, verify dimensions and layer conventions, publish
+  without replacing existing evidence, and expose the same operation to agents
+  and the app. Merely relabeling files as a curated model is not an implementation.
+- Repository instructions now explicitly require the Oxford comma in
+  researcher-facing prose.
+
+
+Follow-up verification: the full Python suite passed **6,204 tests**, with nine
+skips, including the new shared-example parser check. The serial Swift suite
+passed **290 SteeringKit and 4,611 ExperimentKit tests** on the final source,
+including the disconnected-model hint and multiline note-example wrapping. Shared
+science resources, compiled Python identity, bridge retirement, and the task
+parser AST gate pass. In a separately identified preview, the model, data,
+notes, and review pages were inspected visually, and the always-visible J-lens
+button opened its library dialog. The Python-connected SAE layout and the new
+uncurated import path still need interactive acceptance with the reviewer’s
+engine; no feature import, model load, or lens download was executed.
+
+An unrelated diagnostic was also observed: the engine's `serve --help` enters
+server startup instead of printing help. The probe could not bind a socket and
+exited; its newly created, ignored bookkeeping directory was moved out of the
+checkout into a temporary directory. No study data was changed. Treat this as a
+separate CLI-help defect, not a documented read-only discovery command.

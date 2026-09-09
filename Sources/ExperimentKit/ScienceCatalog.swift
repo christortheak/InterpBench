@@ -73,6 +73,7 @@ public enum ScienceCatalog {
         public let required: Bool
         public let help: String
         public let `default`: String?
+        public let example: String?
     }
     public struct Workflow: Codable, Identifiable, Sendable {
         public let id: String

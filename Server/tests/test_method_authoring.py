@@ -107,3 +107,24 @@ def test_every_interview_field_is_a_key_its_owner_accepts():
             else: managed_methods.config_owner(item['id'], config)
         except Exception as exc:  # value refusals are fine; unknown keys are not
             assert 'unknown' not in str(exc).lower(), item['id'] + ': ' + str(exc)
+
+
+def test_optvec_interview_choice_examples_load_with_the_training_row_parser(tmp_path):
+    """The syntax examples shown in the form must be actual choice rows."""
+    from steerlab_server.experiment import science_catalog
+    from steerlab_server.experiment.sweep_selection import load_choice_rows
+    source = json.loads(science_catalog.resource('workflows.json'))
+    checked = []
+    for operation in source['operations']:
+        for field in operation['fields']:
+            example = field.get('example')
+            if not example or 'options' not in json.loads(example):
+                continue
+            path = tmp_path / 'example.jsonl'
+            path.write_text(example + '\n')
+            rows, _ = load_choice_rows(str(path), 'example.jsonl')
+            assert len(rows) == 1
+            checked.append((operation['id'], field['id']))
+    assert ('optvec-train', 'datasets.targetTrain') in checked
+    assert ('optvec-train', 'datasets.anchorTrain') in checked
+    assert ('optvec-train', 'datasets.capabilityTrain') in checked
