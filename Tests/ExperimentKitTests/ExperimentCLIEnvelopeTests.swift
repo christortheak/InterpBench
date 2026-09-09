@@ -778,7 +778,7 @@ import Testing
             // more often than it meets a missing verb.
             "authoring prompt", "authoring study", "pack preview", "pack apply", "pack export",
             "experiment import-prompts", "experiment inspect-artifact", "experiment attach-artifact",
-            "science list", "science guide", "science operation", "science interview", "science draft", "science publish", "science sae-check", "science sae-show", "science sae-pin-plan", "science sae-pin", "science input-plan", "science package", "science import", "science custody", "science verify-custody",
+            "science list", "science guide", "science operation", "science interview", "science draft", "science publish", "science artifact-plan", "science artifact-import", "science sae-check", "science sae-show", "science sae-pin-plan", "science sae-pin", "science input-plan", "science package", "science import", "science custody", "science verify-custody",
         ]
         #expect(declared == expected)
         for spec in ExperimentCLIParser.specs where spec.namespace == "remote" && spec.verb.hasPrefix("model-") {

@@ -268,6 +268,8 @@ public enum ExperimentCLIParser {
     /// reference document's flag rows from it, and a switch statement cannot
     /// be enumerated.
     public static let specs: [ExperimentCLIVerbSpec] = [
+        .init(namespace: "science", verb: "artifact-plan", positional: "<description.json>", purpose: "Inspect a custom lens or SAE decoder and hash its source files without publishing."),
+        .init(namespace: "science", verb: "artifact-import", positional: "<description.json>", purpose: "Import the reviewed instrument into a fresh library destination.", valueFlags: ["--plan-sha256"], requiredFlags: ["--plan-sha256"]),
         .init(namespace: "science", verb: "sae-check", positional: "<roster-path>", purpose: "Inspect the SAE roster and qualification warnings without a model."),
         .init(namespace: "science", verb: "sae-show", positional: "<qualification-path>", purpose: "Inspect an existing qualification record without changing its scientific status."),
         .init(namespace: "science", verb: "sae-pin-plan", positional: "<roster-path>", purpose: "Review roster and draft bytes before pinning.", valueFlags: ["--experiment"], requiredFlags: ["--experiment"]),

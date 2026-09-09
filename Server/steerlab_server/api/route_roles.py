@@ -46,6 +46,9 @@ R, W, B = Role.RUNNER, Role.WORKBENCH, Role.BOTH
 
 #: THE CENSUS. Every (method, template) the app serves must appear here.
 CENSUS: tuple[RouteRole, ...] = (
+    _r("POST", "/api/artifact-imports/stage/{source_id}/{file_path:path}", W, "Stage reviewed instrument source bytes in the workbench; never replace existing sources."),
+    _r("POST", "/api/artifact-imports/plan", W, "Inspect custom instrument files and their geometry in the workbench workspace."),
+    _r("POST", "/api/artifact-imports/import", W, "Publish a custom lens or SAE decoder vector into the workbench library from reviewed bytes."),
     _r("POST", "/api/science/workspace/{action}", W, "Author and publish local scientific requests, review and pin SAE rosters, or verify/import local custody; runner staging remains isolated execution."),
     _r("POST", "/api/science/stage", B, "Verify and stage isolated execution copies; never edit workbench source documents."),
     _r("POST", "/api/science/campaign/{job_id}/{action}", B, "Review and coordinate cells of a staged scientific campaign; numerical training remains runner execution."),

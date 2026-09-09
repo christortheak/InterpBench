@@ -12,6 +12,13 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- General fitted-artifact imports beneath the J-lens and SAE dialogs, with the
+  same reviewed owner available to agents through both clients and the workbench
+  API. Import explicit layer mappings from safetensors, numeric NPZ, or safe
+  tensor-only PyTorch checkpoints; retain original bytes, hashes, and unknown
+  provenance without rewriting existing artifacts. SAE decoder features use
+  measured model calibration. Imports confer no scientific qualification.
+
 - Researcher guidance and authoring: unified vector creation, guided OptVec and
   SAE dialogs, discoverable J-lenses, per-vector Playground switches, readable
   JSONL results, and simpler template and adapter controls. Projection builds

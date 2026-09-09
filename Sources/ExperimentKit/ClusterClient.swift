@@ -5122,3 +5122,22 @@ public enum CodableValue: Codable, Sendable {
         }
     }
 }
+
+extension ClusterClient {
+    /// Upload from a file URL rather than materializing multi-gigabyte tensors.
+    public func stageArtifactSource(_ source: ArtifactImportSelection.SourceFile,
+                                    sourceID: String) async throws -> String {
+        try await requireHTTPTransfer()
+        let sha = try await Task.detached { try ArtifactImportSelection.fileSHA256(source.url) }.value
+        var request = try makeRequest(path: "/api/artifact-imports/stage/\(sourceID)/\(source.relativePath)", method: "POST")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        request.setValue(sha, forHTTPHeaderField: "X-Content-SHA256")
+        request.timeoutInterval = 3600
+        let (data, response) = try await session.upload(for: request, fromFile: source.url)
+        try validate(response: response, data: data)
+        struct Reply: Decodable { let path: String; let sha256: String }
+        let reply = try decoder.decode(Reply.self, from: data)
+        guard reply.sha256 == sha else { throw ExperimentError(reason: "The staged source hash differs from the selected file.") }
+        return reply.path
+    }
+}

@@ -26,6 +26,9 @@ def build_router(state):
                 root = ServerProfile.from_env().root
                 if not isinstance(body.get('workspaceRoot'), str) or Path(body['workspaceRoot']).resolve() != Path(root).resolve():
                     raise archives.Refusal('This workbench is serving another workspace.')
+                if action in ('artifact-plan', 'artifact-import'):
+                    from .artifact_import_routes import description_path
+                    description_path(body.get('descriptionFile'), root)
                 return workspace_action(action, body)
         except (ValueError, OSError, KeyError, TypeError) as exc:
             raise HTTPException(409, detail={'code': 'diagnosticTransportRefused', 'reason': str(exc), 'repairAction': archives.Refusal.repair_action}) from exc

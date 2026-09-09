@@ -263,7 +263,11 @@ def derive_direction(lens_id: str, token_id: int, *, model_id: str,
     import torch
 
     record: JLensRecord = lens_store.resolve(lens_id, root)
+    if record.fit.modelID and record.fit.modelID != model_id:
+        raise JLensError(f"lens '{lens_id}' was fitted on '{record.fit.modelID}', not '{model_id}' — select its fitted model")
     revision = revision or cached_revision_of(model_id)
+    if record.fit.revision and record.fit.revision != revision:
+        raise JLensError("The lens names a different fit-time model revision; select that checkpoint for token-direction derivation.")
     n_layers = runtime_layer_count(model_id, revision)
 
     if record.dModel <= 0:
@@ -327,7 +331,7 @@ def derive_direction(lens_id: str, token_id: int, *, model_id: str,
         substrate=vector_store.SUBSTRATE,
         extractionMethod=RECIPE_METHOD,
         recipeMethod=RECIPE_METHOD,
-        source=SOURCE,
+        source="custom-jacobian-lens" if record.tierSource == "custom-artifact" else SOURCE,
     )
 
     run_dir = paths.make_unique_run_directory("jlens-direction", root)

@@ -877,6 +877,8 @@ def _jlens_supported() -> list[dict]:
 def build_router(state: ServiceState) -> APIRouter:
     from .science_routes import build_science_router
     router = APIRouter()
+    from . import artifact_import_routes
+    router.include_router(artifact_import_routes.build_router(state))
     router.include_router(build_science_router())
     from .scientific_execution_routes import build_scientific_execution_router
     router.include_router(build_scientific_execution_router(state))

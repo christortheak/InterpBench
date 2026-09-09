@@ -5,7 +5,7 @@ import Foundation
 /// Release builds read the bundled ServerPayload; only the interpreter and
 /// client dependencies live outside the signed bundle.
 public enum DiagnosticWorkspace {
-    public static let actions = ["setup-start", "setup-inspect", "sae-check", "sae-show", "sae-pin-plan", "sae-pin", "interview", "draft", "publish", "input-plan", "package", "import", "custody", "verify-custody"]
+    public static let actions = ["artifact-plan", "artifact-import", "setup-start", "setup-inspect", "sae-check", "sae-show", "sae-pin-plan", "sae-pin", "interview", "draft", "publish", "input-plan", "package", "import", "custody", "verify-custody"]
 
     public static func perform(_ action: String, payload: [String: JSONValue],
                                python: URL? = nil, source: URL? = nil) async throws -> JSONValue {
@@ -65,6 +65,13 @@ public enum DiagnosticWorkspace {
                   try ManifestFileTransaction.canonicalPath(URL(filePath: path)) == ManifestFileTransaction.canonicalPath(root) else {
                 throw ExperimentError(reason: "The workbench is serving another workspace.")
             }
+            if action.hasPrefix("artifact-"), case .string(let source) = payload["descriptionFile"] {
+                let file = URL(filePath: source, relativeTo: root).standardizedFileURL.resolvingSymlinksInPath()
+                let base = root.standardizedFileURL.resolvingSymlinksInPath()
+                guard file.path.hasPrefix(base.path + "/") else {
+                    throw ExperimentError(reason: "Stage the description and source files in this workbench workspace first.")
+                }
+            }
             return .json(try await perform(action, payload: payload))
         } catch { return StudyAuthoringHTTP.failure(error) }
     }
@@ -100,7 +107,7 @@ enum DiagnosticWorkspaceCLI {
         let arguments = try DiagnosticArguments(invocation.args, namespace: "science", takesValue: invocation.verb != "custody")
         var payload: [String: JSONValue] = ["workspaceRoot": .string(ExperimentStore.workspaceRoot.path)]
         if let value = arguments.positional {
-            let key = arguments.verb.hasPrefix("sae-") ? "path" : ["interview", "draft", "publish"].contains(arguments.verb) ? "operation" : (["input-plan", "package"].contains(arguments.verb) ? "requestFile" : (arguments.verb == "import" ? "archivePath" : "receiptSHA256"))
+            let key = arguments.verb.hasPrefix("artifact-") ? "descriptionFile" : arguments.verb.hasPrefix("sae-") ? "path" : ["interview", "draft", "publish"].contains(arguments.verb) ? "operation" : (["input-plan", "package"].contains(arguments.verb) ? "requestFile" : (arguments.verb == "import" ? "archivePath" : "receiptSHA256"))
             payload[key] = .string(value)
         }
         if let path = arguments.flags["--answers"] { payload["answersText"] = .string(try String(contentsOfFile: path, encoding: .utf8)) }

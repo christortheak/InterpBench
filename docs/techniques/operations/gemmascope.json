@@ -6,8 +6,8 @@
     "method": "sae",
     "title": "Gemmascope",
     "engineCLI": "steerlab-server gemmascope import-id --help",
-    "mac": "Data → Concepts & Vectors → Import an SAE feature; Analysis → Compare with Gemma Scope features.",
-    "http": "GET /api/gemmascope/info; POST /api/gemmascope/run; POST /api/gemmascope/import; POST /api/gemmascope/import-id; GET /api/gemmascope/resolve-feature",
+    "mac": "Data → Concepts & Vectors → Import an SAE feature; Analysis → Compare with Gemma Scope features. Custom artifact files: use the file-import button in the J-lens or SAE dialog; both clients expose science artifact-plan and artifact-import.",
+    "http": "GET /api/gemmascope/info; POST /api/gemmascope/run; POST /api/gemmascope/import; POST /api/gemmascope/import-id; GET /api/gemmascope/resolve-feature; POST /api/artifact-imports/plan; POST /api/artifact-imports/import",
     "compute": "existingOwner",
     "outputs": [
       "See the selected operation public response and immutable artifact records."
@@ -48,6 +48,20 @@
         "path": "/api/gemmascope/resolve-feature",
         "serviceRole": "both",
         "authorityReason": "Resolves a feature link using installed directory metadata; no authoring or URL fetch."
+      },
+      {
+        "id": "post-artifact-plan",
+        "method": "POST",
+        "path": "/api/artifact-imports/plan",
+        "serviceRole": "workbench",
+        "authorityReason": "Inspect custom instrument files and their geometry in the workbench workspace."
+      },
+      {
+        "id": "post-artifact-import",
+        "method": "POST",
+        "path": "/api/artifact-imports/import",
+        "serviceRole": "workbench",
+        "authorityReason": "Publish a custom lens or SAE decoder vector into the workbench library from reviewed bytes."
       }
     ],
     "access": {

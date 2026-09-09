@@ -3,6 +3,8 @@ from ..cli_envelope import CLIResult, VerbSpec
 from ..experiment import science_catalog
 
 VERB_SPECS = (
+    VerbSpec('science', 'artifact-plan', positional='<description.json>', purpose='Inspect a custom lens or SAE decoder and hash its source files without publishing.'),
+    VerbSpec('science', 'artifact-import', positional='<description.json>', purpose='Import the reviewed instrument into a fresh library destination.', value_flags=frozenset({'--plan-sha256'}), required_flags=frozenset({'--plan-sha256'})),
     VerbSpec('science', 'sae-check', positional='<roster-path>', purpose='Inspect the SAE roster and surface qualification warnings without a model.'),
     VerbSpec('science', 'sae-show', positional='<qualification-path>', purpose='Inspect an existing qualification record without changing its scientific status.'),
     VerbSpec('science', 'sae-pin-plan', positional='<roster-path>', purpose='Review roster and draft bytes before pinning.', value_flags=frozenset({'--experiment'}), required_flags=frozenset({'--experiment'})),
@@ -24,7 +26,7 @@ VERB_SPECS = (
 def run(invocation):
     from ..client_cli import ClientRefusal
     verb, args = invocation.spec.verb, invocation.positionals
-    if verb in {'sae-check', 'sae-show', 'sae-pin-plan', 'sae-pin', 'interview', 'draft', 'publish', 'input-plan', 'package', 'import', 'custody', 'verify-custody'}:
+    if verb in {'artifact-plan', 'artifact-import', 'sae-check', 'sae-show', 'sae-pin-plan', 'sae-pin', 'interview', 'draft', 'publish', 'input-plan', 'package', 'import', 'custody', 'verify-custody'}:
         from .diagnostic_commands import local
         return local(invocation)
     if len(args) != (0 if verb == 'list' else 1):

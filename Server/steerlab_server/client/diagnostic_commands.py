@@ -23,6 +23,7 @@ def workspace_action(action, payload):
         from . import setup
         return setup.inspect(payload.get('workspaceRoot'))
     required = {
+        'artifact-plan': {'descriptionFile'}, 'artifact-import': {'descriptionFile', 'planSHA256'},
         'sae-check': {'path'}, 'sae-show': {'path'},
         'sae-pin-plan': {'path', 'experiment'}, 'sae-pin': {'path', 'experiment', 'planSHA256'},
         'interview': {'operation'}, 'draft': {'operation', 'answersText'},
@@ -36,6 +37,10 @@ def workspace_action(action, payload):
     if not fields <= payload.keys() or payload.keys() - fields - optional or any(not isinstance(payload[k], str) or not payload[k] for k in fields):
         raise archives.Refusal('Supply exactly the declared action fields as nonempty strings.')
     root = str(Path(payload['workspaceRoot']).resolve())
+    if action in ('artifact-plan', 'artifact-import'):
+        from ..experiment import artifact_imports
+        if action == 'artifact-plan': return artifact_imports.inspect_source(payload['descriptionFile'], root)
+        return artifact_imports.publish(payload['descriptionFile'], root, payload['planSHA256'])
     if action.startswith('sae-'):
         from ..experiment import sae_authoring
         if action in ('sae-check', 'sae-show'): return sae_authoring.inspect('candidates' if action == 'sae-check' else 'qualification', payload['path'], root)
@@ -60,10 +65,13 @@ def workspace_action(action, payload):
 
 def local(invocation):
     from ..client_cli import ClientRefusal
+    from ..experiment.artifact_sources import ImportRefusal
     try:
         verb = invocation.spec.verb; validate(invocation, 0 if verb == 'custody' else 1)
         value = invocation.positionals[0] if invocation.positionals else None
         payload = {'workspaceRoot': paths.project_root()}
+        if verb in ('artifact-plan', 'artifact-import'): payload['descriptionFile'] = value
+        if verb == 'artifact-import': payload['planSHA256'] = invocation.one('--plan-sha256')
         if verb.startswith('sae-'): payload['path'] = value
         if verb in ('sae-pin-plan', 'sae-pin'): payload['experiment'] = invocation.one('--experiment')
         if verb == 'sae-pin': payload['planSHA256'] = invocation.one('--plan-sha256')
@@ -78,6 +86,8 @@ def local(invocation):
         print(json.dumps(result, indent=2))
         return CLIResult(message='Diagnostic workspace operation completed; custody is byte verification, not scientific qualification.',
                          changed=result.get('changed', verb in ('package', 'import')), payload=result)
+    except ImportRefusal as exc:
+        raise ClientRefusal(code='artifactImportRefused', reason=str(exc), repair_action=exc.repair_action, state='refused') from exc
     except science_catalog.ScienceRefusal as exc:
         raise ClientRefusal(code=exc.code, reason=str(exc), repair_action=exc.repair_action) from exc
     except (ValueError, OSError, KeyError) as exc:
