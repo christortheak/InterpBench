@@ -3196,11 +3196,19 @@ process-wide setting rather than a per-verb one.
 
 ```
 steerlab-server serve [--port N] [--host H] [--root DIR] [--dev-open-loopback]
+                      [--service-role runner|workbench]
 ```
 
+- `--help` (or `-h`) prints the verb's usage page on stdout and exits 0 before
+  anything else happens: no auth posture is resolved, no token file is
+  written, no artifact root is announced, no `.steerlab` bookkeeping directory
+  is created, and no socket is bound. Until 2026-09-09 the flag was
+  unrecognised and `serve --help` started the server.
 - `--port` default 8080 (GPU-session role: `STEERLAB_SESSION_PORT`, else a port
   derived from `SLURM_JOB_ID`).
 - `--host` default `STEERLAB_BIND` or `127.0.0.1`.
+- `--service-role runner|workbench` sets the runtime authority
+  (`STEERLAB_SERVICE_ROLE`, §2.2); default `workbench`.
 - `--dev-open-loopback` selects the single-user open tier (`auth_mode=none`).
   Without it — and without an explicit `STEERLAB_AUTH_MODE` — `serve` resolves
   **token mode** and prints the token-file path plus the `Authorization: Bearer`
@@ -5600,11 +5608,18 @@ the columns a human reads.
 `--help` is the **only** flag this change declared. Every other undeclared flag
 is still `EX_USAGE` (64) on both engines, before the verb does any work.
 
-Residual: the non-agent-path verbs (`artifacts`, `jlens`, `optvec`, `sae`,
-`bundle`, `finetune`, `housekeeping`, `profile`) are hand-parsed and have no
-`--help`; they still print their own usage line on error. Swift's `panel`
-family left this list on 2026-08-19 with `panel compile` (open-issues §18);
-the server's `panel list`/`check` (§6.2) have not.
+Residual, closed 2026-09-09: the server's hand-parsed families (`serve`,
+`docs`, `profile`, `bundle`, `housekeeping`, `panel`, `jlens`, `optvec`, `sae`,
+`gemmascope`, plus `finetune` and `ledger`, which already had `--help`) now
+answer `--help` and `-h` on stdout at exit 0 before the verb reads a positional
+or does any work; the same page on stderr at 64 is still the usage error. The
+case that forced this was `serve --help`: unrecognised, it ran the server's
+startup (auth posture, token file, bookkeeping directory, bind) and printed no
+help at all (§4.2). These pages are hand-maintained text rather than rendered
+from a table, so they are outside the generated regions and have no `--json`
+form; a `--help` after the `--` separator of `bundle create|submit` belongs to
+the wrapped command. Swift's `panel` family left the hand-parsed list on
+2026-08-19 with `panel compile` (open-issues §18).
 
 ### 7.8 Cluster lifecycle: what is proven and what is not
 

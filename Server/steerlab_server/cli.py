@@ -101,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
     # `steerlab-server --help` with no family: the same page the usage error
     # prints, on stdout, exit 0 (WP0 step 11). Asking what the families are was
     # never an error.
-    if args and args[0] in ("--help", "-h"):
+    if args and args[0] in _HELP_FLAGS:
         sys.stdout.write(_usage_text())
         return 0
 
@@ -113,6 +113,7 @@ def _usage_text() -> str:
     return (
         "usage: steerlab-server --config <path.json> "
         "| serve [--port N] [--root DIR] [--host H] [--dev-open-loopback] "
+        "[--service-role runner|workbench] "
         "| experiment <verb> <name> … | profile show|validate "
         "| jobs list|recovery|recover|reconcile … | bundle run|evidence|inspect|import|create|submit … "
         "| study submit <experiment> … "
@@ -350,6 +351,9 @@ def _docs(args: list[str]) -> int:
     66 = no document to read.
     """
     from . import cli_reference
+    if _help_requested(args):
+        sys.stdout.write(_DOCS_USAGE)
+        return 0
     if not args or args[0] != "cli-reference":
         sys.stderr.write(_DOCS_USAGE)
         return 64
@@ -797,6 +801,57 @@ def _print_jlens_report(report: dict) -> None:
                       + f"; n={cell['conditionCount']})")
 
 
+_JLENS_USAGE = (
+    "usage: steerlab-server jlens supported [--published]   # curated rows; --published lists every upstream lens (egress)\n"
+    "       steerlab-server jlens acquire <model-id>   # bytes -> HF cache (needs egress; any model with a published lens)\n"
+    "       steerlab-server jlens import <model-id> [--tier evidence|testing]\n"
+    "                                                  # convert -> workspace (offline); --tier REQUIRED off the curated table\n"
+    "       steerlab-server jlens list\n"
+    "       steerlab-server jlens inspect <lens-id>\n"
+    "       steerlab-server jlens support <lens-id> <runDir>/<vectorName> "
+    "[--layers 5,17,29] [--k 25] [--json]\n"
+    "                                                  # what vocabulary is "
+    "this vector made of\n"
+    "       steerlab-server jlens token-options <model-id> <text> [--case-variants]\n"
+    "       steerlab-server jlens derive <lens-id> <model-id> --token-id N "
+    "[--piece P] [--name N] [--revision R]\n"
+    "       steerlab-server jlens qualify <lens-id> <model-id> "
+    "[--revision R] [--layers 20,26,32]\n"
+    "                                                  [--alpha-range "
+    "0.04:0.12 | 0.04,0.08,0.12] [--token-id N]\n"
+    "                                                  [--watchlist "
+    "id,id] [--prompts P] [--battery P] [--dtype D] [--device D]\n"
+    "                                                  # Stage 4: accept "
+    "this lens against ONE exact runtime (exit 3 = did not qualify)\n"
+    "       steerlab-server jlens g0 <model-id> [--lens L] [--revision R] "
+    "[--endpoint <rows.jsonl>] [--layers …]\n"
+    "                                                  [--watchlist id,id] "
+    "[--alpha-range …] [--top-k K] [--token-id N] [--piece P]\n"
+    "                                                  [--band-stride N "
+    "| 0 to skip the readable-band sweep] [--prompts P]\n"
+    "                                                  [--device D] "
+    "[--dtype T]\n"
+    "                                                  # the G0 1b "
+    "feasibility gate: two arms, verdicted separately (exit 3 = "
+    "mechanics failed)\n"
+    "       steerlab-server jlens probe <model-id> --prompt-file P | "
+    "--prompt TEXT\n"
+    "                                                  [--layers 31,40,48] "
+    "[--pin \' therefore, however\'] [--pin-id N,N]\n"
+    "                                                  [--lens L] "
+    "[--revision R] [--directions <runDir>/<name>,…] [--top-k K]\n"
+    "                                                  [--stride N] "
+    "[--max-tokens N] [--device D] [--dtype T] [--json]\n"
+    "                                                  [--variant "
+    "<runDir>/<agent>.json] [--prompt-mode M] [--system-prompt S]\n"
+    "                                                  # position x layer "
+    "readout over ONE prompt: rank trajectories, direction cosines, top-k\n"
+    "       steerlab-server jlens report <runDir> [--baseline NAME] "
+    "[--band 20,26] [--bands N] [--json]\n"
+    "                                                  # cross-condition "
+    "J-Space roll-up into the run directory\n")
+
+
 def _jlens(args: list[str]) -> int:
     """J-lens reading instruments — server-only; any model with a published lens.
 
@@ -809,6 +864,9 @@ def _jlens(args: list[str]) -> int:
     from .jlens import importer, lens_store
     from .jlens.schemas import JLensError
 
+    if _help_requested(args):
+        sys.stdout.write(_JLENS_USAGE)
+        return 0
     verb = args[0] if args else None
 
     try:
@@ -1042,56 +1100,11 @@ def _jlens(args: list[str]) -> int:
         sys.stderr.write(f"steerlab-server jlens: {exc}\n")
         return 1
 
-    sys.stderr.write(
-        "usage: steerlab-server jlens supported [--published]   # curated rows; --published lists every upstream lens (egress)\n"
-        "       steerlab-server jlens acquire <model-id>   # bytes -> HF cache (needs egress; any model with a published lens)\n"
-        "       steerlab-server jlens import <model-id> [--tier evidence|testing]\n"
-        "                                                  # convert -> workspace (offline); --tier REQUIRED off the curated table\n"
-        "       steerlab-server jlens list\n"
-        "       steerlab-server jlens inspect <lens-id>\n"
-        "       steerlab-server jlens support <lens-id> <runDir>/<vectorName> "
-        "[--layers 5,17,29] [--k 25] [--json]\n"
-        "                                                  # what vocabulary is "
-        "this vector made of\n"
-        "       steerlab-server jlens token-options <model-id> <text> [--case-variants]\n"
-        "       steerlab-server jlens derive <lens-id> <model-id> --token-id N "
-        "[--piece P] [--name N] [--revision R]\n"
-        "       steerlab-server jlens qualify <lens-id> <model-id> "
-        "[--revision R] [--layers 20,26,32]\n"
-        "                                                  [--alpha-range "
-        "0.04:0.12 | 0.04,0.08,0.12] [--token-id N]\n"
-        "                                                  [--watchlist "
-        "id,id] [--prompts P] [--battery P] [--dtype D] [--device D]\n"
-        "                                                  # Stage 4: accept "
-        "this lens against ONE exact runtime (exit 3 = did not qualify)\n"
-        "       steerlab-server jlens g0 <model-id> [--lens L] [--revision R] "
-        "[--endpoint <rows.jsonl>] [--layers …]\n"
-        "                                                  [--watchlist id,id] "
-        "[--alpha-range …] [--top-k K] [--token-id N] [--piece P]\n"
-        "                                                  [--band-stride N "
-        "| 0 to skip the readable-band sweep] [--prompts P]\n"
-        "                                                  [--device D] "
-        "[--dtype T]\n"
-        "                                                  # the G0 1b "
-        "feasibility gate: two arms, verdicted separately (exit 3 = "
-        "mechanics failed)\n"
-        "       steerlab-server jlens probe <model-id> --prompt-file P | "
-        "--prompt TEXT\n"
-        "                                                  [--layers 31,40,48] "
-        "[--pin \' therefore, however\'] [--pin-id N,N]\n"
-        "                                                  [--lens L] "
-        "[--revision R] [--directions <runDir>/<name>,…] [--top-k K]\n"
-        "                                                  [--stride N] "
-        "[--max-tokens N] [--device D] [--dtype T] [--json]\n"
-        "                                                  [--variant "
-        "<runDir>/<agent>.json] [--prompt-mode M] [--system-prompt S]\n"
-        "                                                  # position x layer "
-        "readout over ONE prompt: rank trajectories, direction cosines, top-k\n"
-        "       steerlab-server jlens report <runDir> [--baseline NAME] "
-        "[--band 20,26] [--bands N] [--json]\n"
-        "                                                  # cross-condition "
-        "J-Space roll-up into the run directory\n")
+    sys.stderr.write(_JLENS_USAGE)
     return 64
+
+
+_PANEL_USAGE = "usage: steerlab-server panel list | panel check <path-or-name>\n"
 
 
 def _panel(args: list[str]) -> int:
@@ -1105,6 +1118,9 @@ def _panel(args: list[str]) -> int:
     from . import cli_envelope as cli_envelope_module
     from .experiment import multi_agent
 
+    if _help_requested(args):
+        sys.stdout.write(_PANEL_USAGE)
+        return 0
     verb = args[0] if args else None
     # Answered before anything else, so `panel compile` gets the redirect
     # rather than a usage line that implies the verb does not exist anywhere
@@ -1159,7 +1175,7 @@ def _panel(args: list[str]) -> int:
                   "make prompts quietly wrong, so fix them before measuring.")
         return 0
 
-    sys.stderr.write("usage: panel list | panel check <path-or-name>\n")
+    sys.stderr.write(_PANEL_USAGE)
     return 64
 
 
@@ -1193,7 +1209,37 @@ def _apply_serve_posture(host: str, dev_open_flag: bool) -> int:
     return 0
 
 
+_SERVE_USAGE = (
+    "usage: steerlab-server [--root DIR] serve [--port N] [--host H] "
+    "[--dev-open-loopback]\n"
+    "                                          [--service-role runner|workbench]\n"
+    "  Start the HTTP engine over the artifact root and serve until\n"
+    "  interrupted. The root is --root, else STEERLAB_ROOT, else the\n"
+    "  current directory; it must hold prompts/ and experiments/.\n"
+    "  --port N              listen port (default 8080; the GPU-session role\n"
+    "                        reads STEERLAB_SESSION_PORT, else derives one\n"
+    "                        from SLURM_JOB_ID)\n"
+    "  --host H              bind address (default STEERLAB_BIND, else\n"
+    "                        127.0.0.1); a non-loopback bind needs token mode\n"
+    "  --dev-open-loopback   the single-user open tier (auth mode none), on a\n"
+    "                        loopback bind only; refused off loopback and\n"
+    "                        under STEERLAB_EXECUTOR=slurm\n"
+    "  --service-role ROLE   runtime authority, runner or workbench (default\n"
+    "                        workbench; also STEERLAB_SERVICE_ROLE)\n"
+    "  Without --dev-open-loopback (and without STEERLAB_AUTH_MODE) the\n"
+    "  server resolves token mode: it prints the token file's path, never\n"
+    "  its value, and writes the file when it is absent. --help and -h print\n"
+    "  this page and exit 0 before any of that happens.\n")
+
+
 def _serve(args: list[str]) -> int:
+    # FIRST, before the posture is resolved, the token file is hydrated, the
+    # artifact root is announced, the bookkeeping directory is created, or a
+    # socket is bound: until 2026-09-09 `serve --help` did all of that and
+    # printed no help, exiting only when the bind failed.
+    if _help_requested(args):
+        sys.stdout.write(_SERVE_USAGE)
+        return 0
     from .api.service_authority import service_role
     if "--service-role" in args:
         role = _flag(args, "--service-role")
@@ -1335,11 +1381,17 @@ def _hf_token_configured() -> bool:
     return os.path.isfile(os.path.join(cache, "token"))
 
 
+_PROFILE_USAGE = "usage: steerlab-server profile show|validate [--json]\n"
+
+
 def _profile(args: list[str]) -> int:
     from .api.profile import ServerProfile, capability_snapshot, validate_profile
+    if _help_requested(args):
+        sys.stdout.write(_PROFILE_USAGE)
+        return 0
     verb = args[0] if args else "show"
     if verb not in {"show", "validate"}:
-        sys.stderr.write("usage: profile show|validate [--json]\n")
+        sys.stderr.write(_PROFILE_USAGE)
         return 64
     profile = ServerProfile.from_env()
     data = capability_snapshot()
@@ -1414,21 +1466,30 @@ def _jobs(args: list[str]):
     return 64
 
 
+_BUNDLE_USAGE = (
+    "usage:\n"
+    "  bundle run <experiment> [--out path]\n"
+    "  bundle evidence <run-dir> [--out path]\n"
+    "  bundle inspect <bundle.tar.gz>\n"
+    "  bundle import <bundle.tar.gz> [--target root] [--overwrite] [--sha256 <outer digest>]\n"
+    "  bundle execute <bundle.tar.gz> --verb <verify|extract|validate|sweep|run|evaluate|analyze|pipeline> [--target root] [--shard k/K] [--resume <run-dir>]\n"
+    "  bundle create|submit <bundle-dir> [--gres A100] [--walltime HH:MM:SS] -- <cmd...>\n")
+
+
 def _bundle(args: list[str]) -> int:
     from .experiment import bundles
 
     from .api.executors import SlurmExecutor, SlurmResources
+    # Before the verb reads its positional: `bundle run --help` used to try to
+    # package an experiment NAMED `--help`. A `--help` after the `--` separator
+    # of create|submit belongs to the wrapped command and is left alone.
+    if _help_requested(args):
+        sys.stdout.write(_BUNDLE_USAGE)
+        return 0
     if not args or args[0] not in {
         "run", "evidence", "inspect", "import", "execute", "create", "submit"
     }:
-        sys.stderr.write(
-            "usage:\n"
-            "  bundle run <experiment> [--out path]\n"
-            "  bundle evidence <run-dir> [--out path]\n"
-            "  bundle inspect <bundle.tar.gz>\n"
-            "  bundle import <bundle.tar.gz> [--target root] [--overwrite] [--sha256 <outer digest>]\n"
-            "  bundle execute <bundle.tar.gz> --verb <verify|extract|validate|sweep|run|evaluate|analyze|pipeline> [--target root] [--shard k/K] [--resume <run-dir>]\n"
-            "  bundle create|submit <bundle-dir> [--gres A100] [--walltime HH:MM:SS] -- <cmd...>\n")
+        sys.stderr.write(_BUNDLE_USAGE)
         return 64
     verb = args[0]
     if verb == "run":
@@ -1791,7 +1852,7 @@ def _finetune(args: list[str]) -> int:
     unreadable config or a refused request (plan drift, an unconfirmed
     evidence-grade plan, a failing preflight); 1 = failed; 64 = usage.
     """
-    if args and "--help" in args:
+    if _help_requested(args):
         # Asking what the arguments are was never an error (WP0 step 11's
         # rule, applied to this family's own usage page).
         sys.stdout.write(_FINETUNE_USAGE)
@@ -2071,11 +2132,19 @@ def _load_finetune_splits(config):
                                      root=config.dataset_root)
 
 
+_HOUSEKEEPING_USAGE = (
+    "usage: steerlab-server housekeeping status [--refresh] "
+    "| housekeeping maintenance set --file <windows.json>\n")
+
+
 def _housekeeping(args: list[str]) -> int:
     """WS3 chores, headless: the same functions the /api/housekeeping routes
     call, so the health card and the terminal always agree."""
     from .api import housekeeping
 
+    if _help_requested(args):
+        sys.stdout.write(_HOUSEKEEPING_USAGE)
+        return 0
     if not args or args[0] == "status":
         if "--refresh" in args:
             from .api.jobs import JobManager
@@ -2103,9 +2172,7 @@ def _housekeeping(args: list[str]) -> int:
             return 1
         print(json.dumps(stored, indent=2, sort_keys=True))
         return 0
-    sys.stderr.write(
-        "usage: housekeeping status [--refresh] "
-        "| housekeeping maintenance set --file <windows.json>\n")
+    sys.stderr.write(_HOUSEKEEPING_USAGE)
     return 64
 
 
@@ -3989,6 +4056,9 @@ def _optvec(args: list[str]) -> int:
     sbatch failed — a success document carrying failures, never buried in a
     zero. :func:`_optvec_exception_envelope` is the one place the mapping
     lives."""
+    if _help_requested(args):
+        sys.stdout.write(_OPTVEC_USAGE)
+        return 0
     if not args:
         sys.stderr.write(_OPTVEC_USAGE)
         return 64
@@ -4430,6 +4500,9 @@ def _sae(args: list[str]) -> int:
     from .experiment import experiment_store as es
     from .experiment import sae_candidates
 
+    if _help_requested(args):
+        sys.stdout.write(_SAE_USAGE)
+        return 0
     if args and args[0] == "family-report":
         return _sae_family_report(args[1:])
     if len(args) >= 2 and args[0] == "qualification":
@@ -4630,6 +4703,9 @@ def _gemmascope(args: list[str]) -> int:
     dimension/layer/model mismatch, unresolvable SAE, existing artifact);
     64 = usage.
     """
+    if _help_requested(args):
+        sys.stdout.write(_GEMMASCOPE_USAGE)
+        return 0
     if args and args[0] == "resolve-feature":
         from .experiment.sae_feature_lookup import resolve_feature_url
         url = _flag(args[1:], "--url")
@@ -4720,7 +4796,7 @@ _LEDGER_USAGE = (
 #: ``--…`` token must refuse at 64 rather than be silently dropped, and the
 #: refusal has to be able to say what the verb DOES accept.
 _LEDGER_IMPACT_FLAGS: dict = {"--code-checkout": True, "--json": False,
-                              "--out": True, "--help": False}
+                              "--out": True, "--help": False, "-h": False}
 
 
 def _ledger(args: list[str]) -> int:
@@ -4745,7 +4821,7 @@ def _ledger(args: list[str]) -> int:
         return 64
     rest = args[1:]
     json_mode = "--json" in rest
-    if "--help" in rest:
+    if _help_requested(rest):
         sys.stdout.write(_LEDGER_USAGE)
         return 0
 
@@ -4825,6 +4901,36 @@ def _ledger(args: list[str]) -> int:
                                 result=summary)
     return envelope.emit(document, json_mode=json_mode, out_path=out_path,
                          stream=document_stream)
+
+
+#: The two spellings of "print this verb's page": the top level has always
+#: answered both (``steerlab-server -h``), and the hand-parsed families answer
+#: the same pair. The agent-path verbs declare only ``--help`` in their tables
+#: (``cli_envelope``), and that is unchanged here.
+_HELP_FLAGS = ("--help", "-h")
+
+
+def _help_requested(args: list[str]) -> bool:
+    """True when the caller asked for a usage page, BEFORE anything runs.
+
+    Scans only the tokens before a bare ``--``: everything after that
+    separator belongs to a wrapped command (``bundle submit <dir> -- <cmd>``),
+    and a ``--help`` meant for the wrapped command is not one meant for us.
+
+    The rule this serves (WP0 step 11, extended 2026-09-09 to every hand-parsed
+    family): asking what the arguments are is never an error and never work.
+    The page goes to stdout and the exit is 0; the same page on stderr at 64
+    is the usage error. ``serve --help`` used to be the counter-example — the
+    flag was unrecognised, so the invocation resolved the auth posture, wrote
+    a token file, created the bookkeeping directory in the working directory,
+    and bound a socket, and printed no help at all.
+    """
+    for token in args:
+        if token == "--":
+            return False
+        if token in _HELP_FLAGS:
+            return True
+    return False
 
 
 def _flag(args: list[str], name: str) -> str | None:

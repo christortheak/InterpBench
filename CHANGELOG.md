@@ -12,6 +12,19 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- `steerlab-server serve --help` (and `-h`) now prints the verb's usage page
+  and exits 0 before anything else happens. The flag was unrecognised: the
+  invocation resolved the auth posture, wrote the token file when it was
+  absent, created the `.steerlab` bookkeeping directory in the working
+  directory, and started the server, exiting only when the bind failed. The
+  other hand-parsed engine families (`docs`, `profile`, `bundle`,
+  `housekeeping`, `panel`, `jlens`, `optvec`, `sae`, `gemmascope`) answer
+  `--help` and `-h` the same way, on stdout at exit 0 ahead of any positional
+  (`bundle run --help` used to try to package an experiment named `--help`),
+  and `finetune` and `ledger` accept the short spelling too. A `--help` after
+  the `--` separator of `bundle create|submit` still belongs to the wrapped
+  command. The usage error keeps printing the same page on stderr at 64.
+
 - General fitted-artifact imports beneath the J-lens and SAE dialogs, with the
   same reviewed owner available to agents through both clients and the workbench
   API. Import explicit layer mappings from safetensors, numeric NPZ, or safe
