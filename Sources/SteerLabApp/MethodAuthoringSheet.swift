@@ -1,4 +1,5 @@
 import ExperimentKit
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -52,9 +53,20 @@ struct MethodAuthoringSheet: View {
                     }
                 } else if step == 1 {
                     Section("Supply your data") {
-                        Text("Use existing files, prepare them yourself, or ask an agent for an authoring prompt. Keep training, validation, and final-test examples separate. Files must be in this workspace before you select them.")
+                        Text(workflow.id == "jlens-fit"
+                             ? "Supply varied text from the population where you want to use the lens. This is fitting text, not positive/negative concept data. Reserve separate passages to assess readouts afterward. Files must be in this workspace before selection."
+                             : "Use existing files, prepare them yourself, or ask an agent for an authoring prompt. Keep training, validation, and final-test examples separate. Files must be in this workspace before you select them.")
                             .font(.caption).foregroundStyle(.secondary)
                         ForEach(workflow.fields.filter { isData($0) }) { field in inputRow(field) }
+                        if workflow.id == "jlens-fit" {
+                            Button("Copy corpus instructions for my agent") {
+                                do {
+                                    let guide = try ScienceCatalog.guide("jlens").text
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(guide, forType: .string)
+                                } catch { failure = error.localizedDescription }
+                            }
+                        }
                     }
                 } else if step == 2 {
                     Section("Training or evaluation settings") {
@@ -68,10 +80,10 @@ struct MethodAuthoringSheet: View {
                     Section("Explain the plan in your own words") {
                         Text("These notes are saved beside the request so you and collaborators can understand the plan later. They do not set the optimizer, choose data, or score your scientific claims. Each note needs a brief answer to save. If a choice is unresolved, say so; these fields do not require a polished research proposal.")
                             .font(.callout)
-                        note("Research question", text: $purpose, example: "Does this intervention increase the chosen behavior on new prompts?")
-                        note("What the result could show", text: $claim, example: "An exploratory behavioral effect on this model and prompt population; not a general claim about the concept.")
-                        note("Comparisons and checks", text: $controls, example: "Compare the same model with and without the vector. Check preserved judgments and abilities on separate examples.")
-                        note("How settings and data were chosen", text: $selection, example: "State whether settings are exploratory, chosen on validation data, or fixed in advance. Reserve final-test data for the final evaluation.")
+                        note("Research question", text: $purpose, example: workflow.id == "jlens-fit" ? "How useful are the lens readouts on the text population I want to study?" : "Does this intervention increase the chosen behavior on new prompts?")
+                        note("What the result could show", text: $claim, example: workflow.id == "jlens-fit" ? "An exploratory instrument for this model and corpus. Fitting alone does not validate the meaning of a readout." : "An exploratory behavioral effect on this model and prompt population; not a general claim about the concept.")
+                        note("Comparisons and checks", text: $controls, example: workflow.id == "jlens-fit" ? "Qualify the lens on its exact runtime, then assess readouts on separate text. Compare fits from different corpus samples if appropriate." : "Compare the same model with and without the vector. Check preserved judgments and abilities on separate examples.")
+                        note("How settings and data were chosen", text: $selection, example: workflow.id == "jlens-fit" ? "Start with a four-row timing pilot. Explain the corpus source, layer coverage, and any later changes made after inspecting results." : "State whether settings are exploratory, chosen on validation data, or fixed in advance. Reserve final-test data for the final evaluation.")
                         Text(workflow.claimBoundary).font(.caption).foregroundStyle(.secondary)
                     }
                 } else {

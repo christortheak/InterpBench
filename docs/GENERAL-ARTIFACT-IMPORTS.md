@@ -48,7 +48,7 @@ the description explicitly supplies the conversion contract.
   Token-vector derivation currently requires every source layer before the final
   block, so the review explains when a partial lens cannot create that vector.
   Each selected matrix is finite, square, and `hiddenSize`
-  wide. Optional `promptsFitted`, `corpus`, and `maxSeqLen` retain fitting metadata.
+  wide. Optional `promptsFitted`, `corpus`, and `maxSeqLen` retain fitting metadata. Optional `fitDtype` records the known model execution precision (float32, float16, or bfloat16); omit it when unknown.
   A saved checkpoint's geometry and prompt count must agree with the description.
 - An SAE description supplies `sae.layer`, `feature`, `decoderKey`, `featureAxis`
   (`rows`, `columns`, or `vector` for one exported direction), `site: resid_post`,

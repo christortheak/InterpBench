@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 1,
+  "order": 24,
+  "catalog": {
+    "id": "jlens-fit",
+    "method": "jlens",
+    "title": "Fit a J-lens",
+    "engineCLI": null,
+    "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+    "http": "POST /api/science/plan; POST /api/science/submit",
+    "compute": "gpu",
+    "outputs": [
+      "Immutable fitting run, float32 Jacobians, fitting report, checkpoint, and a ready-to-import artifact description."
+    ],
+    "restriction": "Fits with the pinned reference Jacobian estimator on a prepared, unquantized checkpoint. Start with a small timing pilot. Automatic scheduler resume is disabled; an explicit checkpoint continues in a new reviewed run. Export/fetch/import returns completed runs; artifact-plan/import then registers the lens. Partial checkpoint recovery uses permitted file transfer. Fitting is not qualification or behavioral evidence.",
+    "actions": [
+      {
+        "id": "post-science-plan",
+        "method": "POST",
+        "path": "/api/science/plan",
+        "serviceRole": "both",
+        "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+      },
+      {
+        "id": "post-science-submit",
+        "method": "POST",
+        "path": "/api/science/submit",
+        "serviceRole": "both",
+        "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  },
+  "interview": {
+    "id": "jlens-fit",
+    "title": "Fit a new J-lens",
+    "method": "jlens",
+    "purpose": "Build a model-specific instrument that maps intermediate residual activations into the final-layer basis. Choose your text, measure a pilot, and retain the fitting recipe.",
+    "fields": [
+      {
+        "id": "modelID",
+        "label": "Model to fit",
+        "kind": "text",
+        "required": true,
+        "help": "Choose a prepared Hugging Face checkpoint. Fitting does not download model weights or change them."
+      },
+      {
+        "id": "revision",
+        "label": "Exact model version",
+        "kind": "text",
+        "required": true,
+        "help": "Inspect the model to pin its 40-character commit. The resulting lens belongs to this checkpoint."
+      },
+      {
+        "id": "corpus",
+        "label": "Text corpus for fitting",
+        "kind": "fileRef",
+        "required": true,
+        "help": "Use varied text representative of where you intend to read the model. This is not positive/negative concept data. Supply UTF-8 JSONL with one unique id and text per row. Choose existing text, or ask for an authoring prompt; no data is generated automatically.",
+        "example": "{\"id\":\"sample-1\",\"text\":\"Replace this sentence with a sufficiently long passage from your chosen, documented corpus.\"}"
+      },
+      {
+        "id": "maxPrompts",
+        "label": "Maximum corpus rows (start with a small pilot)",
+        "kind": "integer",
+        "required": false,
+        "default": "4",
+        "help": "Fits the first N rows in file order. Four rows provide a timing pilot, not a well-established lens. Increase after reviewing time, memory, and corpus coverage. Short rows are counted in this limit and recorded as skipped."
+      },
+      {
+        "id": "sourceLayers",
+        "label": "Source layers",
+        "kind": "integers",
+        "required": false,
+        "help": "Blank fits all layers before the final block. Select fewer layers for a cheaper or targeted instrument; token-vector creation needs full coverage. Layer numbers start at zero."
+      },
+      {
+        "id": "maxSeqLen",
+        "label": "Maximum tokens per passage",
+        "kind": "integer",
+        "required": false,
+        "default": "128",
+        "help": "Longer text is truncated to this many tokens. Raw text uses the tokenizer\u2019s native special tokens; no chat template is added."
+      },
+      {
+        "id": "skipFirst",
+        "label": "Leading token positions to omit",
+        "kind": "integer",
+        "required": false,
+        "default": "16",
+        "help": "The reference estimator omits early positions and the final token. A passage must have more than this value plus one token after tokenization."
+      },
+      {
+        "id": "dimBatch",
+        "label": "Jacobian dimensions per backward pass",
+        "kind": "integer",
+        "required": false,
+        "default": "1",
+        "help": "A memory/performance control. The model repeats the passage this many times per pass. Larger values need more activation memory; start with 1 on a large model."
+      },
+      {
+        "id": "checkpointEvery",
+        "label": "Checkpoint every N considered rows",
+        "kind": "integer",
+        "required": false,
+        "default": "4",
+        "help": "A checkpoint may contain several gigabytes. Smaller intervals preserve more progress but increase disk traffic. Active scratch keeps the latest complete snapshot; completed runs retain their final snapshot."
+      },
+      {
+        "id": "dtype",
+        "label": "Model precision",
+        "kind": "text",
+        "required": false,
+        "default": "bfloat16",
+        "help": "Choose bfloat16, float32, or float16. The fitted Jacobian accumulates and saves in float32. Quantized fitting is not implemented."
+      },
+      {
+        "id": "device",
+        "label": "Python execution device",
+        "kind": "text",
+        "required": false,
+        "default": "cuda",
+        "help": "cuda (or cuda:0) on the cluster, mps on a compatible Mac, or cpu for small numerical tests. The pilot must verify backward support on this architecture."
+      },
+      {
+        "id": "tier",
+        "label": "Intended lens use",
+        "kind": "text",
+        "required": false,
+        "default": "testing",
+        "help": "testing for rehearsal, or evidence for intended study use. This declaration does not qualify the lens or validate a behavioral interpretation."
+      },
+      {
+        "id": "checkpoint",
+        "label": "Continue from a completed checkpoint (optional)",
+        "kind": "fileRef",
+        "required": false,
+        "help": "Choose state.json beside its sums.safetensors after the original job has stopped. Both files travel with this request. The corpus, model, runtime, and estimator must match; only the prompt budget may increase. Continuation creates a new run."
+      }
+    ],
+    "claimBoundary": "An averaged Jacobian is an instrument fitted to this corpus and runtime. Stable fitting statistics are not evidence of semantic validity or causal steering effects.",
+    "questions": [
+      "What text population should the lens represent?",
+      "How will you assess readouts on held-out text after fitting?"
+    ]
+  },
+  "interviewOrder": 18,
+  "inputRoleProfile": "managed-v1",
+  "inputRoles": {},
+  "binding": {
+    "module": "jlens_fit",
+    "config_class": "FitConfig",
+    "function": "fit",
+    "compute": "gpu"
+  }
+}

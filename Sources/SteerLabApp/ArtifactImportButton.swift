@@ -175,7 +175,7 @@ private struct ArtifactImportSheet: View {
     }
 
     private func detailLabel(_ key: String) -> String {
-        ["tier": "Intended use", "sourceLayers": "Fitted source layers", "targetLayer": "Final target layer",
+        ["tier": "Intended use", "fitDtype": "Model precision during fitting", "sourceLayers": "Fitted source layers", "targetLayer": "Final target layer",
          "hiddenSize": "Residual-stream width", "promptsFitted": "Prompts used for fitting",
          "conversion": "Conversion", "layer": "Injection layer", "feature": "Feature number",
          "label": "Feature label", "rawDecoderNorm": "Original decoder length",

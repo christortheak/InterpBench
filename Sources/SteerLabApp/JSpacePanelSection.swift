@@ -25,6 +25,7 @@ struct JSpacePanelSection: View {
     @State private var detail: JLensRecord?
     @State private var status: String?
     @State private var isBusy = false
+    @State private var fittingWorkflow: ScienceCatalog.Workflow?
 
     @State private var tokenQuery: String = ""
     @State private var includeCaseVariants = false
@@ -48,6 +49,11 @@ struct JSpacePanelSection: View {
     var body: some View {
         Section("J-Space — Jacobian lens") {
             header
+            Button("Fit a new lens…") {
+                do { fittingWorkflow = try ScienceCatalog.workflows().first { $0.id == "jlens-fit" } }
+                catch { status = error.localizedDescription }
+            }
+            .help("Choose a prepared model and your text corpus, start with a small pilot, and run fitting on a Python engine. This does not train the model or create data.")
             if isServerWorkspace {
                 lensLibrary
             } else {
@@ -55,6 +61,10 @@ struct JSpacePanelSection: View {
             }
         }
         .task { await refresh() }
+        .sheet(item: $fittingWorkflow) { workflow in
+            MethodAuthoringSheet(workflow: workflow, root: ExperimentStore.workspaceRoot,
+                                 client: isServerWorkspace ? service.cluster.client : nil)
+        }
         .onChange(of: selectedModelID) { _, _ in
             selectedToken = nil; tokenOptions = nil
         }

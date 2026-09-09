@@ -12,6 +12,14 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Fit a J-lens from a researcher-supplied text corpus through the shared app,
+  client, and HTTP scientific workflow. The engine uses the pinned reference
+  Jacobian estimator and a prepared model, with a small pilot by default,
+  captured inputs, timing diagnostics, and explicit checkpoint continuation in
+  a new run. Returned fits include a description for the existing reviewed lens
+  importer. Fitting preserves model weights and does not qualify the instrument;
+  real-model GPU qualification remains separate.
+
 - `steerlab-server serve --help` (and `-h`) now prints the verb's usage page
   and exits 0 before anything else happens. The flag was unrecognised: the
   invocation resolved the auth posture, wrote the token file when it was

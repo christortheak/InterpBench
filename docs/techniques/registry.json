@@ -29,8 +29,8 @@
       },
       {
         "id": "jlens",
-        "title": "Acquire and qualify a J-lens",
-        "purpose": "Inspect a lens under its model, layer and token constraints.",
+        "title": "Fit, import, and qualify a J-lens",
+        "purpose": "Build or import a model-specific lens, then assess its readouts separately.",
         "guide": "jlens.md"
       },
       {

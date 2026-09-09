@@ -49,6 +49,9 @@ def inventory(operation, config, root):
         elif isinstance(value, list):
             for item in value: walk(item)
     walk(config)
+    if operation == 'jlens-fit':
+        from .jlens_fit import checkpoint_files
+        for relative in checkpoint_files(config, root): add(relative)
     if operation == 'rescore-style':
         from . import experiment_store
         document = experiment_store.load_raw(config.get('experiment', ''), str(root))

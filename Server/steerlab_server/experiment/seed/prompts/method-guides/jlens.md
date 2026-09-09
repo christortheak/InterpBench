@@ -72,3 +72,85 @@ readout still needs qualification bound to the exact lens bytes, runtime, and
 layers, plus the study's normal pins. To change intended use, update the source
 description, review a fresh plan, and import a new lens; keep existing artifacts
 unchanged. Published-source imports retain their existing tier policy.
+
+## Fit a new lens from your own text
+
+The managed operation is `jlens-fit`. In the app's J-lens dialog choose
+**Fit a new lens…**, or open its interview under Research methods. Both clients
+expose `science interview jlens-fit --json`, then the usual
+`science draft`/`publish` and execution/collection workflow. The engine uses
+the same owner through `POST /api/science/plan` and `/api/science/submit`.
+Use an installed engine with the pinned optional `jlens` extra. Authoring is
+available without GPU packages; fitting loads only an already-prepared model.
+
+Supply a UTF-8 JSONL corpus with exactly `id` and `text` per row:
+
+```json
+{"id":"passage-1","text":"Replace this example with a sufficiently long passage from your documented text source."}
+```
+
+Use text representative of the population where you will use the lens. This is
+not paired positive/negative concept data. Preserve source and licensing details
+in the authoring notes. Keep separate text for assessing readouts; fitting
+convergence is not held-out validity. The default considers the first four rows
+as a timing pilot. Increase the limit after inspecting cost and coverage.
+There is no hidden shuffle or chat template. Tokenization uses the checkpoint's
+native special-token settings; the reference position mask omits the first
+16 positions and the final token. Short rows are explicitly recorded as skipped.
+
+Configuration fields: `modelID`, immutable 40-hex `revision`, `corpus`
+(`{path,sha256}`), optional `sourceLayers` (blank/null means every source
+layer), `maxPrompts` (4), `maxSeqLen` (128), `skipFirst` (16),
+`dimBatch` (1), `checkpointEvery` (4), `dtype` (bfloat16),
+`device` (cuda), `tier` (testing), and optional `checkpoint`
+(`{path,sha256}` naming state.json beside sums.safetensors).
+
+The estimator sums output cotangents over valid target positions, averages
+gradients over valid source positions, and averages the resulting matrices over
+usable prompts. The final target is the last residual block before normalization.
+Source layers are explicit; a partial lens can support readouts, while the current
+token-vector builder needs every source layer. Weights never change. Accumulation
+and final lens storage use float32 even when model execution uses bfloat16.
+
+Cost includes one replicated forward and roughly hidden-size/dimBatch backward
+passes per usable passage. More dimensions per pass need more activation memory.
+A successful inference run does not prove that a hybrid attention implementation
+supports this backward calculation. Measure a pilot on the actual checkpoint,
+engine, and hardware before scheduling a large fit. Runtime or numerical errors
+are reported; they are not silently counted as short corpus rows.
+
+Completed fits return an immutable run with fit-report.json,
+jacobians.safetensors, artifact-description.json, captured input text, and a
+checkpoint. Use normal science export/fetch/import and verify custody to bring
+the run home. Then review artifact-description.json with artifact-plan and use
+artifact-import to register this particular fit in the lens library. In the app,
+use **Import my own lens files…** on that returned description. Fitting precision,
+model revision, corpus hash, and original report survive registration. Qualify
+that registered lens for its intended runtime separately; fitting is not
+qualification and supplies no claim about causal behavioral meaning.
+
+Periodic checkpoint snapshots live in the run's named
+`.steerlab/jlens-fitting-state/` scratch directory. Each snapshot is published
+coherently before this invocation prunes its prior scratch snapshot. Completed
+runs retain an immutable final checkpoint and the source checkpoint metadata/hashes;
+private working copies are then removed. Cancellation retains the last completed
+scratch snapshot. Wait for the original job to stop, use the site's permitted
+transfer tools to recover state.json and sums.safetensors together if needed,
+and select state.json in a new request. The corpus, model, runtime, and estimator
+must match. The row limit may increase; progress is never appended to the old run.
+The managed scheduler still reports automatic resume as unavailable: checkpoint
+continuation is a new, explicit reviewed job. Failed jobs are not evidence exports.
+No general cleanup of fitting runs or recovered checkpoints is authorized.
+
+### Corpus-authoring prompt to copy
+
+Help me choose or prepare a fitting corpus for a J-lens on my selected model.
+First ask what text population the lens should represent and whether I want to
+use existing files, author the text myself, or delegate data creation. Do not
+generate passages or launch agents without my agreement. If authoring is agreed,
+return UTF-8 JSONL with unique id and nonempty text fields only, with enough
+tokens after the chosen truncation and skipped-position settings. Keep source
+and licensing notes separately. Propose held-out passages separately for later
+readout assessment. Explain that this corpus fits an averaged instrument and
+does not establish a behavioral concept. Do not invent model commits, execute
+fitting, or download weights.

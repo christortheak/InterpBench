@@ -48,8 +48,9 @@ def require_pin(model, revision):
 
 def validate(operation, config, root):
     if operation in METHODS:
-        _, parsed = config_owner(operation, config)
+        module, parsed = config_owner(operation, config)
         if METHODS[operation].compute == 'gpu': require_pin(config.get('modelID'), config.get('revision'))
+        if operation == 'jlens-fit': module.preflight(parsed, root)
         return parsed
     if operation == 'optvec-campaign':
         from . import optvec_campaign
@@ -75,7 +76,7 @@ def validate(operation, config, root):
     return config
 
 
-def execute(operation, config, root, log=print):
+def execute(operation, config, root, log=print, on_run_created=None):
     parsed = validate(operation, config, root)
     if operation in METHODS:
         import inspect
@@ -85,6 +86,7 @@ def execute(operation, config, root, log=print):
         kwargs = {}
         if 'root' in parameters: kwargs['root'] = root
         if 'log' in parameters: kwargs['log'] = log
+        if 'on_run_created' in parameters: kwargs['on_run_created'] = on_run_created
         return function(parsed, **kwargs)
     if operation == 'rescore-style':
         from . import tasks

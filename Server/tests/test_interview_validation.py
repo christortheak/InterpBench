@@ -7,7 +7,7 @@ OPERATIONS = (
     'optvec-train', 'optvec-eval', 'optvec-geometry', 'optvec-fracture',
     'optvec-interpret', 'optvec-family', 'optvec-gradient', 'optvec-gradient-mint',
     'jspace', 'rescore-style', 'sae-family-report', 'sae-qualification-record',
-    'optvec-campaign',
+    'optvec-campaign', 'jlens-fit',
 )
 
 
@@ -17,6 +17,9 @@ def interview_answers(operation, root):
     items = root / 'items.jsonl'
     items.write_text('{"id":"item-1","prompt":"Choose","options":["a","b"],"target":"a"}\n')
     fields = {}
+    if operation == 'jlens-fit':
+        items.write_text('{"id":"passage-1","text":"Example fitting passage"}\n')
+        fields.update(modelID='example/model', revision='a' * 40, corpus='items.jsonl')
     advanced = {}
     if operation in ('optvec-train', 'optvec-eval', 'optvec-interpret', 'optvec-gradient', 'jspace'):
         fields.update(modelID='example/model', revision='a' * 40)

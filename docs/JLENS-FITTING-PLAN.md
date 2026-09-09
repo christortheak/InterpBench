@@ -1,6 +1,6 @@
 # Fit a J-lens: implementation and acceptance plan
 
-Start from landed main `2b67199`, in `codex/jlens-fitting`.
+Start from landed main `d42376f` (including the CLI help fix), in `codex/jlens-fitting`.
 
 The researcher supplies a text corpus and a prepared Hugging Face checkpoint.
 The Python engine fits average residual-stream Jacobians with the pinned jlens
@@ -18,11 +18,11 @@ a steering vector. UI, both CLIs, and HTTP share one managed operation.
    loading only. Preserve the reference estimator: sum cotangents over valid
    target positions, average valid source positions, then average prompts.
    Record short prompts skipped and surface all other numerical errors.
-3. Append-only checkpoint snapshots with input/configuration identity and tensor
+3. Coherently published checkpoint snapshots with input/configuration identity and tensor
    hashes. A continuation copies a selected checkpoint into a fresh run; it
    never modifies the old run. Model, corpus, estimator, and geometry must match.
    Increasing the prompt budget is permitted; scheduler auto-resubmit is not.
-   Cancellation retains completed snapshots. An explicit snapshot can travel as
+   Cancellation retains the latest completed scratch snapshot. Periodic snapshots live outside runs; only the current invocation’s prior scratch snapshot is pruned after its replacement is published. Completed runs retain one immutable final checkpoint. An explicit snapshot can travel as
    ordinary reviewed scientific input; partial jobs are not evidence exports.
 4. A complete output run with preserved corpus bytes, effective configuration,
    timings, diagnostics, a final safetensors lens, and an artifact-import

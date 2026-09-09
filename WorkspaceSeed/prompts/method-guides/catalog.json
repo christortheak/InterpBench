@@ -27,8 +27,8 @@
     },
     {
       "id": "jlens",
-      "title": "Acquire and qualify a J-lens",
-      "purpose": "Inspect a lens under its model, layer and token constraints.",
+      "title": "Fit, import, and qualify a J-lens",
+      "purpose": "Build or import a model-specific lens, then assess its readouts separately.",
       "guide": "jlens.md"
     },
     {
@@ -995,6 +995,41 @@
           "path": "/api/science/workspace/{action}",
           "serviceRole": "workbench",
           "authorityReason": "Author and publish local scientific requests, review and pin SAE rosters, or verify/import local custody; runner staging remains isolated execution."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      }
+    },
+    {
+      "id": "jlens-fit",
+      "method": "jlens",
+      "title": "Fit a J-lens",
+      "engineCLI": null,
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
+      "compute": "gpu",
+      "outputs": [
+        "Immutable fitting run, float32 Jacobians, fitting report, checkpoint, and a ready-to-import artifact description."
+      ],
+      "restriction": "Fits with the pinned reference Jacobian estimator on a prepared, unquantized checkpoint. Start with a small timing pilot. Automatic scheduler resume is disabled; an explicit checkpoint continues in a new reviewed run. Export/fetch/import returns completed runs; artifact-plan/import then registers the lens. Partial checkpoint recovery uses permitted file transfer. Fitting is not qualification or behavioral evidence.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
         }
       ],
       "access": {

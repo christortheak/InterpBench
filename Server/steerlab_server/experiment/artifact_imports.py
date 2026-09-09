@@ -65,11 +65,13 @@ def tensor_keys(spec):
 
 def lens_details(spec, tensors):
     block = spec.get('lens')
-    if not isinstance(block, dict) or block.keys() - {'targetLayer', 'layers', 'promptsFitted', 'corpus', 'maxSeqLen', 'tier'}:
+    if not isinstance(block, dict) or block.keys() - {'targetLayer', 'layers', 'promptsFitted', 'corpus', 'maxSeqLen', 'tier', 'fitDtype'}:
         raise ImportRefusal('Supply lens targetLayer and layers (source layer → tensor key), with optional fitting metadata.')
     if 'sae' in spec or 'calibrationArtifact' in spec:
         raise ImportRefusal('A lens import does not select an SAE feature or use vector calibration.')
     tier = block.get('tier', 'testing')
+    if 'fitDtype' in block and block['fitDtype'] not in ('float32', 'float16', 'bfloat16'):
+        raise ImportRefusal('fitDtype must name the known fitting precision; omit it when unknown.')
     if tier not in ('testing', 'evidence'):
         raise ImportRefusal('Set lens.tier to testing (rehearsal) or evidence (intended study use). Qualification is separate.')
     target = artifact_sources.integer(block.get('targetLayer'), 'targetLayer')
@@ -105,7 +107,8 @@ def lens_details(spec, tensors):
     if 'corpus' in block:
         artifact_sources.text(block['corpus'], 'the fitting corpus')
     return {'sourceLayers': sorted(layers), 'targetLayer': target, 'hiddenSize': spec['hiddenSize'],
-            'promptsFitted': prompts, 'tier': tier, 'conversion': 'J_l @ h; preserve stored dtype and explicit layer mapping'}
+            'promptsFitted': prompts, 'tier': tier, 'fitDtype': block.get('fitDtype'),
+            'conversion': 'J_l @ h; preserve stored dtype and explicit layer mapping'}
 
 
 def sae_details(spec, tensors, root, files):
@@ -207,7 +210,7 @@ def publish_lens(spec, plan, tensors, staged, target, root, artifact_id):
                        tensorSHA256=plan['files']['tensorFile']['sha256'],
                        configSHA256=plan['files']['description']['sha256'])
     record = JLensRecord(lensID=artifact_id, source=source,
-        fit=FitProvenance(modelID=spec['modelID'], revision=spec.get('modelRevision'),
+        fit=FitProvenance(modelID=spec['modelID'], revision=spec.get('modelRevision'), dtype=details['fitDtype'],
             revisionKnown=spec.get('modelRevision') is not None, corpus=spec['lens'].get('corpus'),
             promptsFitted=details['promptsFitted'], maxSeqLen=spec['lens'].get('maxSeqLen')),
         sourceLayers=details['sourceLayers'], dModel=spec['hiddenSize'], targetLayer=details['targetLayer'],

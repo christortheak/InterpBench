@@ -104,6 +104,7 @@
     }
   },
   "operations": {
+    "jlens-fit": "python-model",
     "stability": "stability",
     "battery": "diagnostic-model",
     "rescore-style": "python-cpu",

@@ -73,6 +73,27 @@ def declaration_controls(original, filename):
     assert not declaration_preserved(example, mutant, filename), 'Removal control accepted'
 
 
+
+def original_dispatch(text):
+    """Remove only the reviewed fitting preflight/callback additions.
+
+    These are functional extensions, not mechanical moves. Matching exact
+    additions keeps the historical audit effective for every existing owner.
+    """
+    extensions = [
+        ("module, parsed = config_owner(operation, config)\n        if METHODS[operation].compute",
+         "_, parsed = config_owner(operation, config)\n        if METHODS[operation].compute"),
+        ("        if operation == 'jlens-fit': module.preflight(parsed, root)\n", ""),
+        ("def execute(operation, config, root, log=print, on_run_created=None):",
+         "def execute(operation, config, root, log=print):"),
+        ("        if 'on_run_created' in parameters: kwargs['on_run_created'] = on_run_created\n", ""),
+    ]
+    for new, old in extensions:
+        assert text.count(new) == 1, 'Declared fitting dispatch extension changed'
+        text = text.replace(new, old)
+    return text
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base', default='d84968c')
@@ -87,8 +108,15 @@ def main():
     assert {name: BINDINGS[name] for name in expected} == expected, 'Existing execution bindings changed'
     assert SPECIAL >= ast.literal_eval(assignment['SPECIAL'])
     current = (ROOT / 'Server/steerlab_server/experiment/managed_methods.py').read_text()
-    assert bodies(old) == bodies(current), 'Dispatch/config/validation bodies changed'
-    mutant = ast.parse(current)
+    assert bodies(old) == bodies(original_dispatch(current)), 'Dispatch/config/validation bodies changed'
+    for fragment in ("module.preflight(parsed, root)", "kwargs['on_run_created'] = on_run_created"):
+        try:
+            original_dispatch(current.replace(fragment, 'pass', 1))
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError('Fitting extension mutation control accepted')
+    mutant = ast.parse(original_dispatch(current))
     function = next(n for n in mutant.body if isinstance(n, ast.FunctionDef))
     function.body.insert(0, ast.parse('raise RuntimeError("audit mutation")').body[0])
     assert bodies(old) != bodies(ast.unparse(mutant)), 'Body mutation control accepted'

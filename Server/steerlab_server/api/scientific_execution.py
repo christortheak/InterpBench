@@ -281,7 +281,7 @@ def execute_packet(packet, job_id, record, expected_plan_sha256=None):
             # by legacy numerical owners. No shared server root is retargeted.
             result.update(partial=True, outputRoot=str(Path(root) / 'runs'))
             write_json(Path(record), {'id': job_id, 'result': result, **executor_identity})
-            report = managed_methods.execute(current['request']['operation'], p['config'], root, log=print)
+            report = managed_methods.execute(current['request']['operation'], p['config'], root, log=print, on_run_created=created)
             result.pop('partial', None)
             result.update(report)
             if report.get('campaignDirectory'):

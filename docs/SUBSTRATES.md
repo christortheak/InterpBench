@@ -99,6 +99,7 @@ measurements; the generator only checks references, not scientific truth.
 | `sae-family-report` — Report an SAE feature family | [python-cpu](#python-cpu) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
 | `sae-qualification-record` — Record reviewed SAE qualification | [python-cpu](#python-cpu) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
 | `sae-qualification-show` — Inspect an SAE qualification record | [python-cpu](#python-cpu) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
+| `jlens-fit` — Fit a J-lens | [python-model](#python-model) | implemented; comparison unqualified | implemented; comparison unqualified | no native implementation |
 
 The following profiles explain production and artifact use.
 
