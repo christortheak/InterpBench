@@ -446,6 +446,7 @@ struct JSpacePanelSection: View {
         isBusy = true
         // A slow submit used to look like a dead click: the buttons dimmed
         // and nothing was said until the server answered with a job id.
+        let origin = service.cluster.activeWorkspace
         status = submitStatus(action)
         if action == .derive {
             // Stale success from an earlier derive must not sit under a new
@@ -484,8 +485,13 @@ struct JSpacePanelSection: View {
                 if job.status == "succeeded" {
                     status = "\(title): done"
                     if action == .derive {
-                        deriveResult = "derived — appears in the ordinary vector "
-                            + "catalog; choose layer and alpha as usual"
+                        let refreshed = service.cluster.activeWorkspace == origin
+                            ? await service.catalog.refreshRemoteVectors() : false
+                        let artifact = job.result?["artifact"]
+                        deriveResult = "Vector saved on \(client.profile.baseURL.absoluteString). "
+                            + (refreshed ? "Library refreshed. Select this model in Data → Concepts & Vectors or Playground → Steering Vectors."
+                                : "Return to that execution workspace and refresh its vector library to see it. \(service.catalog.remoteVectorsError ?? "")")
+                            + (artifact.map { " Artifact: \($0)" } ?? "")
                     }
                     await refresh()
                 } else {

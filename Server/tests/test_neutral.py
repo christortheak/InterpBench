@@ -63,3 +63,20 @@ def test_save_basis_stamps_downsample_provenance(tmp_path):
     assert artifact["tokenPositionsTotal"] == 1000
     assert artifact["tokenPositionsKept"] == 64
     assert artifact["downsampleSeed"] == 7
+
+
+def test_basis_catalog_exposes_identity_and_layers_and_skips_malformed(tmp_path):
+    import json
+    target = tmp_path / "runs" / "basis"
+    target.mkdir(parents=True)
+    neutral.save_basis(model_id="org/model", revision="revision-a", corpus_name="reference",
+                       corpus_hash="abc", components_by_layer={2: [[1., 0.]], 10: [[0., 1.]]},
+                       residual_norm_per_layer=[1.] * 11, token_rows=4, run_directory=str(target))
+    bad = tmp_path / "runs" / "bad"
+    bad.mkdir()
+    (bad / "neutral-pc-basis.json").write_text(json.dumps({"componentsByLayer": {"invalid": []}}))
+    catalog = neutral.list_bases(str(tmp_path))
+    assert len(catalog) == 1
+    assert catalog[0]["modelID"] == "org/model"
+    assert catalog[0]["revision"] == "revision-a"
+    assert catalog[0]["layers"] == [2, 10]

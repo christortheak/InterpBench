@@ -103,7 +103,7 @@ struct ScienceGuidesView: View {
                                 Button("Open Templates") { dismiss(); openTemplates() }
                                     .help(
                                         "close this reference and land on Templates, "
-                                            + "the design library these scenarios are cast from")
+                                            + "the template library these scenarios are cast from")
                             }
                             Text(
                                 "Command line: steerlab-cli science guide "

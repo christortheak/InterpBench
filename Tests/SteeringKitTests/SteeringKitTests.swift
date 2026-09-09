@@ -26,12 +26,16 @@ import Foundation
             at: modelDir.appending(component: "refs"), withIntermediateDirectories: true)
         try "abc123".write(to: modelDir.appending(components: "refs", "main"), atomically: true, encoding: .utf8)
 
+        let snapshot = modelDir.appending(components: "snapshots", "abc123")
+        try FileManager.default.createDirectory(at: snapshot, withIntermediateDirectories: true)
+        try #"{"architectures":["Qwen3ForCausalLM"]}"#.write(
+            to: snapshot.appending(component: "config.json"), atomically: true, encoding: .utf8)
         #expect(SteeredContainerLoader.localModelIDs(cacheRoot: root) == ["Qwen/Qwen3-4B-MLX-4bit"])
     }
 
-    /// "Is it downloaded?" and "what is downloaded?" must be the same
-    /// question: the load gate and the picker's availability badge both read
-    /// this one enumeration, so they cannot disagree about a model.
+    /// The legacy marker probe keeps its historical meaning. Generation
+    /// inventory additionally checks architecture metadata; exact-revision
+    /// load admission below remains the complete-snapshot authority.
     @Test func isCachedAgreesWithTheCacheEnumeration() throws {
         let root = FileManager.default.temporaryDirectory
             .appending(component: "hf-\(UUID().uuidString)")

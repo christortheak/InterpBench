@@ -1650,6 +1650,16 @@ public final class ConceptBuilder {
             promptNotice("save or name the concept before copying a cowork prompt")
             return nil
         }
+        if recipeFamily == .designatedReference {
+            let reference = designatedReferenceConcept.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !reference.isEmpty else {
+                promptNotice("Choose the reference concept before copying its authoring prompt.")
+                return nil
+            }
+            return templatePromptOrNotice(filename: "designated-reference-cowork-agent.md",
+                replacements: ["concept": name, "reference": reference,
+                    "count": "\(max(1, generationCount))"])
+        }
         guard recipeFamily == .emotionGrandMean else {
             promptNotice("cowork corpus prompts are for Grand mean multi-concept story corpora")
             return nil

@@ -1464,15 +1464,18 @@ struct RunFilePreviewBox: View {
     /// differ: a remote preview's whole file is not on this machine, so
     /// "open the file" names nothing a researcher can act on.
     let isRemote: Bool
+    var localURL: URL? = nil
+    @State private var showingReader = false
 
     init(
         name: String, size: Int, preview: RunBrowser.FilePreview,
-        isRemote: Bool = false
+        isRemote: Bool = false, localURL: URL? = nil
     ) {
         self.name = name
         self.size = size
         self.preview = preview
         self.isRemote = isRemote
+        self.localURL = localURL
     }
 
     init(
@@ -1481,13 +1484,17 @@ struct RunFilePreviewBox: View {
     ) {
         self.init(
             name: file.name, size: file.size, preview: preview,
-            isRemote: isRemote)
+            isRemote: isRemote, localURL: isRemote ? nil : file.url)
     }
 
     var body: some View {
         GroupBox {
-            content
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 8) {
+                if localURL != nil {
+                    Button("Read complete file…") { showingReader = true }
+                }
+                content.frame(maxWidth: .infinity, alignment: .leading)
+            }
         } label: {
             HStack(spacing: 6) {
                 Text(name)
@@ -1497,6 +1504,9 @@ struct RunFilePreviewBox: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
+        }
+        .sheet(isPresented: $showingReader) {
+            if let localURL { TextFileReader(url: localURL) }
         }
     }
 
@@ -1532,8 +1542,7 @@ private func previewTruncationCaption(_ shown: String, isRemote: Bool) -> String
         return "preview shows \(shown) — the full file stays on the server; "
             + "Import Evidence to read it here"
     }
-    return "preview shows \(shown) — Quick Look the file, or open it in its "
-        + "default app, for the whole thing"
+    return "Preview shows \(shown). Choose Read complete file to inspect every page in the app."
 }
 
 private struct KeyValuePreviewGrid: View {

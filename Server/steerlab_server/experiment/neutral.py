@@ -165,10 +165,12 @@ def list_bases(root: str | None = None) -> list[dict]:
                 with open(path, encoding="utf-8") as handle:
                     a = json.load(handle)
                 out.append({"runDirectory": os.path.join(runs, entry),
-                            "modelID": a.get("modelID"), "corpusName": a.get("corpusName"),
+                            "modelID": a.get("modelID"), "revision": a.get("revision"),
+                            "layers": sorted(int(k) for k in (a.get("componentsByLayer") or {})),
+                            "corpusName": a.get("corpusName"),
                             "totalComponents": a.get("totalComponents"),
                             "tokenRows": a.get("tokenRows")})
-            except (OSError, json.JSONDecodeError):
+            except (OSError, ValueError, TypeError):
                 continue
     return out
 

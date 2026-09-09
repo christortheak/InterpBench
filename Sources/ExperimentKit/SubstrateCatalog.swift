@@ -168,18 +168,25 @@ public final class SubstrateCatalog {
 
     /// Fetch the *active* server's catalog. No-op (cleared) when the Local
     /// workspace is active — inactive servers are never polled.
-    public func refreshRemoteVectors() async {
+    @discardableResult
+    public func refreshRemoteVectors() async -> Bool {
+        let origin = store.activeWorkspace
         guard case .server = store.activeWorkspace, let client = store.client else {
             remoteVectors = []
             remoteVectorsError = nil
-            return
+            return false
         }
         do {
-            remoteVectors = try await client.vectorArtifacts()
+            let vectors = try await client.vectorArtifacts()
+            guard store.activeWorkspace == origin else { return false }
+            remoteVectors = vectors
             remoteVectorsError = nil
+            return true
         } catch {
+            guard store.activeWorkspace == origin else { return false }
             remoteVectors = []
             remoteVectorsError = "could not list server vectors: \(error.localizedDescription)"
+            return false
         }
     }
 

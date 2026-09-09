@@ -176,11 +176,62 @@ public final class ChatService {
     /// in composed specs while the selection still points at it, so hashes
     /// and artifact paths survive the seed → edit round trip.
     private var seededServerAdapterRef: ModelVariantArtifact.AdapterRef?
-    /// Neutral-basis pin carried through from a seeded server variant. Not
-    /// editable in chat yet (no server neutral-basis catalog); preserved so an
-    /// edited spec doesn't silently drop the variant's basis.
+    /// Selected server basis; the same reference feeds generation and saved agents.
     public private(set) var serverNeutralPCBasisPath: String?
     public private(set) var serverNeutralPCBasisLabel: String?
+    public private(set) var serverNeutralCatalog: RemoteNeutralCatalog?
+    public private(set) var serverNeutralCatalogError: String?
+    private var serverNeutralBasisOrigin: ClusterConnectionStore.Workspace?
+    private var serverNeutralBasisModel: String?
+    private var serverNeutralBasisRevision: String?
+
+    /// A selected artifact cannot silently follow a switch to unrelated compute.
+    public var serverNeutralBasisProblem: String? {
+        guard serverNeutralPCBasisPath != nil else { return nil }
+        if let origin = serverNeutralBasisOrigin, origin != cluster.activeWorkspace {
+            return "This projection basis belongs to another engine. Choose a basis here, or select None to use the original vectors."
+        }
+        if let model = serverNeutralBasisModel, model != selectedRemoteModelID {
+            return "This projection basis belongs to \(model). Choose a basis for the selected model, or select None."
+        }
+        if cluster.remoteState?.loadedModel == selectedRemoteModelID,
+           let revision = serverNeutralBasisRevision,
+           let loaded = cluster.remoteState?.loadedRevision, revision != loaded {
+            return "This projection basis was measured on a different model revision. Load that revision or choose a matching basis; None disables removal."
+        }
+        return nil
+    }
+
+    public func refreshServerNeutralBases() async {
+        guard isServerWorkspace, let client = cluster.client else {
+            serverNeutralCatalog = nil
+            return
+        }
+        let origin = cluster.activeWorkspace
+        do {
+            let listing = try await client.neutralCatalog()
+            guard cluster.activeWorkspace == origin else { return }
+            serverNeutralCatalog = listing; serverNeutralCatalogError = nil
+        } catch {
+            guard cluster.activeWorkspace == origin else { return }
+            serverNeutralCatalog = nil; serverNeutralCatalogError = error.localizedDescription
+        }
+    }
+
+    public func selectServerNeutralBasis(path: String?) {
+        guard let path else {
+            serverNeutralPCBasisPath = nil; serverNeutralPCBasisLabel = nil
+            serverNeutralBasisOrigin = nil; serverNeutralBasisModel = nil; serverNeutralBasisRevision = nil
+            return
+        }
+        guard let basis = serverNeutralCatalog?.bases.first(where: { $0.id == path }),
+              basis.modelID == workspaceSelectedModelID else { return }
+        serverNeutralPCBasisPath = basis.id
+        serverNeutralPCBasisLabel = basis.label
+        serverNeutralBasisOrigin = cluster.activeWorkspace
+        serverNeutralBasisModel = basis.modelID
+        serverNeutralBasisRevision = basis.revision
+    }
     /// Concept names for seeded vector refs that are not (or not yet) in the
     /// fetched server vector catalog — kept so composing preserves the spec.
     private var serverSlotConceptFallback: [String: String] = [:]
@@ -255,6 +306,18 @@ public final class ChatService {
     /// Vectors whose concept's stimulus files have changed since extraction.
     public private(set) var staleVectorIDs: Set<VectorArtifact.ID> = []
     public var steeringEnabled = false
+
+    /// A slot's switch is the complete Playground action. An old master-muted
+    /// mix must not reactivate other slots when one vector is switched on.
+    public func setVectorEnabled(id: UUID, enabled: Bool) {
+        guard let index = slots.firstIndex(where: { $0.id == id }) else { return }
+        if enabled && !steeringEnabled {
+            for i in slots.indices { slots[i].enabled = false }
+            steeringEnabled = true
+        }
+        slots[index].enabled = enabled
+    }
+
     /// Runtime nuisance removal: when enabled, active steering vectors are
     /// projected away from the selected neutral-corpus PC basis immediately
     /// before injection. The saved concept vector artifact is not mutated.
@@ -1646,6 +1709,9 @@ public final class ChatService {
 
         serverNeutralPCBasisPath = artifact.neutralPCBasisPath
         serverNeutralPCBasisLabel = artifact.neutralPCBasisLabel
+        serverNeutralBasisOrigin = cluster.activeWorkspace
+        serverNeutralBasisModel = artifact.baseModelID
+        serverNeutralBasisRevision = artifact.baseRevision
 
         serverSlotConceptFallback = Dictionary(
             artifact.injections.map { ($0.vectorArtifactID, $0.concept) },
@@ -2025,6 +2091,22 @@ public final class ChatService {
     /// but an all-layer bank is still ~3× the memory and ~3× the PCA of the
     /// band, and steering lives in the middle third anyway. `allLayers: true`
     /// is the explicit, expensive opt-out.
+    @ObservationIgnored private var neutralPCBuildTask: Task<Void, Never>?
+
+    public func startNeutralPCBuild(allLayers: Bool) {
+        guard neutralPCBuildTask == nil else { return }
+        neutralPCBuildTask = Task { [weak self] in
+            guard let self else { return }
+            await buildNeutralPCBasis(allLayers: allLayers)
+            neutralPCBuildTask = nil
+        }
+    }
+
+    public func cancelNeutralPCBuild() {
+        neutralPCBuildTask?.cancel()
+        neutralPCStatus = "Stopping after the current model operation…"
+    }
+
     public func buildNeutralPCBasis(
         minimumExplainedVariance: Double = 0.5,
         maximumComponentCount: Int =
@@ -2032,6 +2114,13 @@ public final class ChatService {
         allLayers: Bool = false
     ) async {
         guard !isBuildingNeutralPCBasis else { return }
+        let corpusRecord = selectedNeutralCorpus
+        let destination = NeutralPCStore.directory
+        let corpusPath = NeutralCorpusStore.relativePath(for: corpusRecord.url)
+        let workspaceRoot = VectorCatalog.projectRoot
+        isBuildingNeutralPCBasis = true
+        neutralPCStatus = "Preparing model and reference examples…"
+        defer { isBuildingNeutralPCBasis = false }
         // The panel's model selector drives the capture: a bank measured on
         // the model that happened to be resident would be stamped with the
         // wrong modelID and silently mis-calibrate every alpha derived from it.
@@ -2047,13 +2136,12 @@ public final class ChatService {
             neutralPCStatus = "load a model before building neutral directions"
             return
         }
-        isBuildingNeutralPCBasis = true
-        neutralPCStatus = "building neutral directions from prompts/neutral/corpus.jsonl…"
-        defer { isBuildingNeutralPCBasis = false }
 
         do {
-            let corpusRecord = selectedNeutralCorpus
-            let corpus = try NeutralCorpusStore.loadTexts(record: corpusRecord)
+            try Task.checkCancellation()
+            let corpus = try await Task.detached(priority: .userInitiated) {
+                try NeutralCorpusStore.loadTexts(record: corpusRecord)
+            }.value
             let readingPosition = ReadingPosition.meanFromToken(50)
             let shape = try await ConceptExtractor.residualShape(container: container)
             let captureLayers =
@@ -2076,13 +2164,24 @@ public final class ChatService {
                 })
             let selection = VectorExtractionRecipe.NeutralPCSelection.explainedVariance(
                 minimumExplainedVariance, maximumCount: maximumComponentCount)
-            let components = try bank.componentsByLayer(selection: selection)
+            try Task.checkCancellation()
+            neutralPCStatus = "Finding projection components — you can keep using the app…"
+            let computation = Task.detached(priority: .userInitiated) {
+                try Task.checkCancellation()
+                return try bank.componentsByLayer(selection: selection)
+            }
+            let components = try await withTaskCancellationHandler {
+                try await computation.value
+            } onCancel: {
+                computation.cancel()
+            }
+            try Task.checkCancellation()
             let basis = NeutralPCBasis(
                 modelID: loadedModelID,
                 corpusKind: corpusRecord.kind,
                 corpusName: corpusRecord.name,
                 corpusHash: corpus.hash,
-                corpusPath: NeutralCorpusStore.relativePath(for: corpusRecord.url),
+                corpusPath: corpusPath,
                 readingPosition: readingPosition,
                 selectionDescription:
                     "neutral PCs \(Int((minimumExplainedVariance * 100).rounded()))% variance "
@@ -2099,15 +2198,21 @@ public final class ChatService {
                 minimumExplainedVariance: minimumExplainedVariance,
                 maximumComponentCount: selection.resolvedMaximumCount,
                 layerSelectionDescription: bandDescription)
-            let record = try NeutralPCStore.save(basis)
+            let record = try await Task.detached(priority: .userInitiated) {
+                try Task.checkCancellation()
+                return try NeutralPCStore.save(basis, directory: destination)
+            }.value
+            guard VectorCatalog.projectRoot == workspaceRoot else { return }
             refreshNeutralPCBases()
             selectedNeutralPCBasisID = record.id
             neutralPCStatus =
                 "saved \(corpusRecord.label) directions: \(basis.totalComponentCount) PCs across "
                 + "\(basis.layers.count) layers (\(bandDescription)) from "
                 + "\(bank.usedRowsPerLayer)/\(bank.sourceRowsPerLayer) token rows per layer"
+        } catch is CancellationError {
+            neutralPCStatus = "Projection build cancelled; no completed basis was published."
         } catch {
-            neutralPCStatus = "neutral direction build failed: \(error)"
+            neutralPCStatus = "Projection build failed: \(error.localizedDescription)"
         }
     }
 
@@ -3310,6 +3415,10 @@ public final class ChatService {
         // server) — but never silently. Refresh the catalog once to close the
         // staleness window (new vector not yet listed, failed earlier fetch),
         // re-resolve, and surface whatever still drops as a persistent error.
+        if let problem = serverNeutralBasisProblem {
+            errorMessage = problem
+            return
+        }
         var resolution = serverControlResolution()
         if !resolution.unresolvedVectorIDs.isEmpty {
             await catalog.refreshRemoteVectors()

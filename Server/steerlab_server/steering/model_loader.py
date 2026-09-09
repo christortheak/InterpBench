@@ -14,6 +14,7 @@ separately-validated model variant — not a transplant of the Mac results.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -1315,8 +1316,25 @@ def _has_causal_lm_config(repo_dir: str) -> bool:
         revisions = os.listdir(snapshots)
     except OSError:
         return False
-    return any(os.path.exists(os.path.join(snapshots, rev, "config.json"))
-               for rev in revisions)
+    for rev in revisions:
+        try:
+            with open(os.path.join(snapshots, rev, "config.json"), encoding="utf-8") as handle:
+                config = json.load(handle)
+            if not isinstance(config, dict):
+                continue
+            architectures = config.get("architectures")
+            # Explicit encoder/classifier/SAE architectures are not generation
+            # choices. Legacy configs without the field remain loader-owned.
+            if architectures is not None and not (
+                isinstance(architectures, list) and any(
+                    isinstance(name, str) and ("ForCausalLM" in name
+                        or "ForConditionalGeneration" in name or name == "GPT2LMHeadModel")
+                    for name in architectures)):
+                continue
+            return True
+        except (OSError, ValueError):
+            continue
+    return False
 
 
 def _hf_cache_root() -> str:

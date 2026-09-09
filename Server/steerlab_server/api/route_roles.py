@@ -446,6 +446,8 @@ CENSUS: tuple[RouteRole, ...] = (
        "turn by turn from the app. Proxied to the interactive worker."),
 
     # ── Gemma Scope: SAE tooling ───────────────────────────────────────────
+    _r("GET", "/api/gemmascope/resolve-feature", B,
+       "Resolves a feature link using installed directory metadata; no authoring or URL fetch."),
     _r("GET", "/api/gemmascope/info", W,
        "Which Gemma Scope releases this deployment can reach. Catalog."),
     _r("POST", "/api/gemmascope/run", W,

@@ -266,7 +266,19 @@ struct ChatView: View {
         case .studyOverview:
             StudyViewerColumn(service: service)
         case .activity(let title):
-            ActivityFeedColumn(service: service, title: title)
+            if section == .templates && !viewerPin.isPinned {
+                ResearchContextColumn(service: service, title: "Templates",
+                    explanation: "A template is a reusable starting point for a study. Select one to inspect its settings, create a study from it, or edit its description. Creating a study does not run it.")
+            } else if section == .data && dataTool != .inventory && !viewerPin.isPinned {
+                ResearchContextColumn(service: service, title: dataTool.rawValue,
+                    explanation: dataTool == .optvec
+                        ? "OptVec learns a steering vector from a training objective. Start with Train a vector, supply examples and preservation controls, review the work, then evaluate on separate data. This is different from J-lens derivation or trying different strengths of an existing vector."
+                        : dataTool == .adapterTraining
+                        ? "An adapter is a learned modification loaded alongside a base model. Supply training examples and separate validation examples, review training, then add the completed adapter to an agent."
+                        : "An agent combines a base model with vectors and/or adapters. Concept data estimates a direction; separate validation tests generalization, and capability tasks check abilities you want to preserve. Choose how to create a vector in Concept Vector Builder.")
+            } else {
+                ActivityFeedColumn(service: service, title: title)
+            }
         }
     }
 
@@ -1462,20 +1474,16 @@ struct ChatView: View {
                 probeControls
                 generationControls
             }
-            // Dimmed + disabled while the master switch is off: the boxes
-            // hold the configured mix, but nothing applies or edits until
-            // injection is on (one unambiguous "is this chat steered?").
+            // Per-vector switches remain editable even in an unsteered session.
             // Live in BOTH workspaces: server boxes drive the composed
             // variant spec exactly as local boxes drive the MLX injectors.
             ForEach($service.slots) { $slot in
                 slotSection($slot)
-                    .disabled(!service.steeringEnabled)
-                    .opacity(service.steeringEnabled ? 1 : 0.45)
             }
 
             Section {
                 Button("Add Vector") { service.addSlot() }
-                    .disabled(workspaceVectorsEmpty || !service.steeringEnabled)
+                    .disabled(workspaceVectorsEmpty)
                     .help(
                         "add another steering box (inherits this one's settings). All "
                             + "enabled boxes inject simultaneously as a linear combination — "
@@ -1672,8 +1680,10 @@ struct ChatView: View {
     /// conditional concatenations blow the view type-checker's budget.
     @ViewBuilder
     private var injectionMasterControls: some View {
-        Toggle("Inject vectors", isOn: $service.steeringEnabled)
-            .help(injectVectorsHelp)
+        Text("Steering Vectors: \(service.activeSlotCount) active")
+            .font(.headline)
+        Text("Switch individual vectors on or off below. Changes apply to the next message; adapter settings are independent.")
+            .font(.caption).foregroundStyle(.secondary)
 
         Stepper(
             "Layer band: \(service.layerBandWidth)",
@@ -1688,20 +1698,6 @@ struct ChatView: View {
         Toggle("Alpha in residual-norm units", isOn: $service.alphaInNormUnits)
             .disabled(!service.normUnitsAvailable && !service.alphaInNormUnits)
             .help(normUnitsHelp)
-    }
-
-    private var injectVectorsHelp: String {
-        var help =
-            "master switch: every enabled vector box below adds its α·v to "
-            + "the residual stream on each generated token — multiple boxes "
-            + "inject the linear combination h + Σ αᵢ·vᵢ. Applies from the "
-            + "next message, so it can be toggled mid-conversation"
-        if isServerWorkspace {
-            help +=
-                ". In a server workspace the injection runs server-side "
-                + "through an agent spec composed from these controls"
-        }
-        return help
     }
 
     private var layerBandHelp: String {
@@ -1799,17 +1795,18 @@ struct ChatView: View {
         }
     }
 
-    /// Neutral-direction removal — an MLX-local projection at injection time.
-    /// Genuinely unbacked on server workspaces (no server neutral-basis
-    /// catalog yet); a seeded variant's own basis pin is preserved verbatim
-    /// in composed inline specs, so nothing is silently dropped.
+    /// Each substrate owns its basis catalog and applies projection at injection.
+    /// Server references remain server paths when saved in an agent.
     @ViewBuilder
     private var neutralDirectionControls: some View {
+        if isServerWorkspace {
+            ServerNeutralBasisControls(service: service)
+        } else {
         Toggle(
             "Remove neutral directions",
             isOn: $service.removeNeutralDirectionsAtSteering
         )
-        .disabled(isServerWorkspace)
+
         .help(
             "projects each active steering vector away from the selected neutral-corpus "
                 + "principal components immediately before injection. The saved vector "
@@ -1829,7 +1826,7 @@ struct ChatView: View {
         .disabled(
             !service.removeNeutralDirectionsAtSteering
                 || service.compatibleNeutralPCBases.isEmpty
-                || isServerWorkspace
+
         )
         .help(
             "model-specific neutral PC artifacts built from prompts/neutral/corpus.jsonl")
@@ -1842,10 +1839,7 @@ struct ChatView: View {
                 .foregroundStyle(.secondary)
         }
 
-        serverAvailabilityCaption(
-            "neutral-direction removal",
-            reason: "no server neutral-basis catalog yet; a seeded agent's "
-                + "basis pin is kept in composed specs")
+        }
 
         Toggle(
             "Center ablations on the neutral mean",
@@ -2070,9 +2064,11 @@ struct ChatView: View {
     private func serverSlotSection(_ slot: Binding<ChatService.SteerSlot>) -> some View {
         let value = slot.wrappedValue
         let record = service.serverVectorRecord(for: value)
-        Section(service.serverSlotConcept(for: value) ?? "vector") {
+        Section("Steering Vectors · " + (service.serverSlotConcept(for: value) ?? "Choose a vector")) {
             HStack(spacing: 6) {
-                Toggle("Include this vector", isOn: slot.enabled)
+                Toggle("Use this vector", isOn: Binding(
+                    get: { service.steeringEnabled && slot.wrappedValue.enabled },
+                    set: { service.setVectorEnabled(id: value.id, enabled: $0) }))
                     .labelsHidden()
                     .help(
                         "include this vector in the composed agent spec the "
@@ -2245,9 +2241,11 @@ struct ChatView: View {
     private func localSlotSection(_ slot: Binding<ChatService.SteerSlot>) -> some View {
         let value = slot.wrappedValue
         let artifact = service.artifact(for: value)
-        Section(artifact?.sidecar.concept ?? "vector") {
+        Section("Steering Vectors · " + (artifact?.sidecar.concept ?? "Choose a vector")) {
             HStack(spacing: 6) {
-                Toggle("Include this vector", isOn: slot.enabled)
+                Toggle("Use this vector", isOn: Binding(
+                    get: { service.steeringEnabled && slot.wrappedValue.enabled },
+                    set: { service.setVectorEnabled(id: value.id, enabled: $0) }))
                     .labelsHidden()
                     .help("include this vector in the injected sum")
                 Picker("Vector", selection: slot.vectorID) {

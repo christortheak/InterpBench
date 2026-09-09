@@ -283,13 +283,15 @@ public struct NeutralActivationBank: Sendable {
             let count = min(selection.count ?? 0, maximum)
             guard count > 0 else { return layers.map { _ in [] } }
             return try rowsByLayer.map {
-                try SteeringVectorMath.principalComponents(of: $0, count: count)
+                try Task.checkCancellation()
+                return try SteeringVectorMath.principalComponents(of: $0, count: count)
             }
         case .explainedVariance:
             let fraction = Float(selection.minimumExplainedVariance ?? 0)
             guard fraction > 0 else { return layers.map { _ in [] } }
             return try rowsByLayer.map {
-                try SteeringVectorMath.principalComponents(
+                try Task.checkCancellation()
+                return try SteeringVectorMath.principalComponents(
                     of: $0, minimumExplainedVariance: fraction, maximumCount: maximum
                 ).components
             }

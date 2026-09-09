@@ -301,7 +301,7 @@ struct StudyManagementSection: View {
                 Button("Open Templates") { openTemplates() }
                     .buttonStyle(.link)
                     .help(
-                        "switches to the Templates tab — the design library, "
+                        "switches to the Templates tab — the template library, "
                             + "where a study you intend to repeat is saved as "
                             + "a design")
             }

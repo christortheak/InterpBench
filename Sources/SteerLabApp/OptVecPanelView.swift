@@ -2,13 +2,8 @@ import ExperimentKit
 import SteeringKit
 import SwiftUI
 
-/// Data → OptVec: the read-only v1 surface over OptVec campaign bundles and
-/// their server-produced results, plus the ONE action — attaching a trained
-/// OptVec artifact to a draft study. This file decides nothing: every fact
-/// renders from `OptVecPanel` (which reads the two stateless stores), and
-/// the attach button calls the panel's action. Bundles and results are
-/// WORKSPACE truth; where live scheduler state is unknowable from this Mac,
-/// the label says so instead of guessing.
+/// Data → OptVec authors managed requests and displays local evidence.
+/// Forms use the shared method owner; inventory and attachment use OptVecPanel.
 struct OptVecPanelView: View {
     @Bindable var service: ChatService
 
@@ -16,6 +11,17 @@ struct OptVecPanelView: View {
 
     var body: some View {
         Form {
+            Section("Train a steering vector with OptVec") {
+                Text("Learn a vector that encourages a chosen behavior while checking judgments and abilities you want to preserve. This trains a direction; it is different from trying strengths of an existing vector.")
+                    .font(.callout)
+                Text("Supply training examples, preservation controls and separate evaluation data. You can use your files or ask an authoring tool for data after agreeing its scope and cost. Review the training request before running it.")
+                    .font(.caption).foregroundStyle(.secondary)
+                TrainVectorButton(service: service)
+                TrainVectorButton(service: service, operation: "optvec-eval", title: "Evaluate a trained vector…")
+                TrainVectorButton(service: service, operation: "optvec-campaign", title: "Plan a campaign…")
+                Text("The form creates a reviewed request. Its execution and evidence action then guides submission and bringing results back to this workspace.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             bundlesSection
             runsSection
             attachSection
@@ -859,12 +865,8 @@ struct OptVecPanelView: View {
                 // The stability protocol, at the point of commitment: this is
                 // where one trained vector becomes a study's pinned concept.
                 Text(
-                    "a trained vector is ONE SAMPLE of an equivalence class — "
-                        + "a different seed finds a different solution with the "
-                        + "same loss. Only the loadings that hold across 2–3 "
-                        + "seeds are interpretable; pin siblings and report "
-                        + "their intersection, not one run's coordinates.")
-                    .foregroundStyle(.orange)
+                    "Different training runs can learn different directions. Repeat training to assess stability before claiming a particular internal direction is reproducible. Agreement alone does not establish a causal explanation.")
+                    .foregroundStyle(.secondary)
             }
             .font(.caption2)
         }

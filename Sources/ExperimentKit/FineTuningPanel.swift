@@ -1418,6 +1418,10 @@ public final class FineTuningPanel {
         // git-versioned recipes, visible in every workspace; only the refs
         // are per-substrate.
         if host.cluster.computeTarget == .server {
+            if let problem = host.serverNeutralBasisProblem {
+                note(problem, severity: .error)
+                return
+            }
             // Honest capture: any enabled slot that fails to resolve against
             // the server catalog would silently vanish from the definition —
             // a provenance hazard (an empty-injections "steered" recipe).

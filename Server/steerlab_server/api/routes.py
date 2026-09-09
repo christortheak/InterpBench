@@ -3069,6 +3069,9 @@ def build_router(state: ServiceState) -> APIRouter:
             seed = token_bank_downsampling.seed_from_corpus_hash(
                 corpus_hash or "")
             with state.acquire_active() as model:
+                expected_model = body.get("expectedModelID")
+                if expected_model and model.model_id != expected_model:
+                    raise RuntimeError("The loaded model changed; load the selected model and review the build again.")
                 bank = neutral_activation_bank(model, texts,
                                                reading_position=mean_from_token(50),
                                                max_token_rows=max_token_rows,
@@ -4677,6 +4680,14 @@ def build_router(state: ServiceState) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return {"vectorPath": run_dir, "name": os.path.basename(path)}
+
+    @router.get("/api/gemmascope/resolve-feature")
+    def gemmascope_resolve_feature(url: str):
+        from ..experiment.sae_feature_lookup import resolve_feature_url
+        try:
+            return resolve_feature_url(url)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.post("/api/gemmascope/import-id")
     def gemmascope_import_id(body: dict):

@@ -64,7 +64,7 @@ public enum SteeredContainerLoader {
     /// membership in the same enumeration `localModelIDs` reports, so a
     /// picker's "installed" badge and a load's refusal can never disagree.
     public static func isCached(modelID: String, cacheRoot override: URL? = nil) -> Bool {
-        localModelIDs(cacheRoot: override).contains(modelID)
+        cachedRepositoryIDs(cacheRoot: override, requireGenerationConfig: false).contains(modelID)
     }
 
     /// The files `LLMModelFactory._load` OPENS, and therefore the ones whose
@@ -225,6 +225,10 @@ public enum SteeredContainerLoader {
     }
 
     public static func localModelIDs(cacheRoot override: URL? = nil) -> [String] {
+        cachedRepositoryIDs(cacheRoot: override, requireGenerationConfig: true)
+    }
+
+    private static func cachedRepositoryIDs(cacheRoot override: URL?, requireGenerationConfig: Bool) -> [String] {
         let cacheRoot = override ?? huggingFaceCacheRoot()
         let hub = cacheRoot.appending(component: "hub")
         guard
@@ -241,12 +245,35 @@ public enum SteeredContainerLoader {
                 || FileManager.default.fileExists(
                     atPath: url.appending(component: "snapshots").path)
             guard markerExists else { return nil }
+            if requireGenerationConfig {
+            let snapshots = (try? FileManager.default.contentsOfDirectory(
+                at: url.appending(component: "snapshots"), includingPropertiesForKeys: nil)) ?? []
+            guard snapshots.contains(where: { snapshot in
+                guard let data = try? Data(contentsOf: snapshot.appending(component: "config.json")),
+                    let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                else { return false }
+                return isGenerativeModelConfiguration(config)
+            }) else { return nil }
+            }
 
             let encoded = String(name.dropFirst("models--".count))
             let parts = encoded.components(separatedBy: "--")
             guard parts.count >= 2 else { return encoded }
             return parts[0] + "/" + parts.dropFirst().joined(separator: "--")
         }.sorted()
+    }
+
+    /// Use artifact metadata rather than publisher/repository-name guesses.
+    /// Base completion models remain valid; an instruction tune is not required.
+    public static func isGenerativeModelConfiguration(_ config: [String: Any]) -> Bool {
+        if let architectures = config["architectures"] as? [String], !architectures.isEmpty {
+            return architectures.contains {
+                $0.contains("ForCausalLM") || $0.contains("ForConditionalGeneration")
+                    || $0 == "GPT2LMHeadModel"
+            }
+        }
+        return config["model_type"] is String
+            && (config["vocab_size"] is NSNumber || config["text_config"] is [String: Any])
     }
 
     private static func huggingFaceCacheRoot() -> URL {

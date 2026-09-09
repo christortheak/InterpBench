@@ -4608,6 +4608,7 @@ def _sae_qualification(args: list[str]) -> int:
 
 
 _GEMMASCOPE_USAGE = (
+    "usage: steerlab-server gemmascope resolve-feature --url <https-feature-link>\n"
     "usage: steerlab-server gemmascope import-id --model <id> --release <rel> "
     "--sae-id <sae> --feature <n> --label <construct> "
     "--residual-norm-artifact <runDir/name> [--layer <n>] "
@@ -4629,6 +4630,18 @@ def _gemmascope(args: list[str]) -> int:
     dimension/layer/model mismatch, unresolvable SAE, existing artifact);
     64 = usage.
     """
+    if args and args[0] == "resolve-feature":
+        from .experiment.sae_feature_lookup import resolve_feature_url
+        url = _flag(args[1:], "--url")
+        if not url:
+            sys.stderr.write("gemmascope resolve-feature requires --url <feature-link>\n")
+            return 64
+        try:
+            print(json.dumps(resolve_feature_url(url), sort_keys=True))
+            return 0
+        except ValueError as exc:
+            sys.stderr.write(str(exc) + "\n")
+            return 65
     if not args or args[0] != "import-id":
         sys.stderr.write(_GEMMASCOPE_USAGE)
         return 64

@@ -168,7 +168,7 @@ public enum NeutralPCStore {
     }
 
     @discardableResult
-    public static func save(_ basis: NeutralPCBasis) throws -> NeutralPCArtifactRecord {
+    public static func save(_ basis: NeutralPCBasis, directory: URL = directory) throws -> NeutralPCArtifactRecord {
         let slug = "neutral-pcs-\(slugify(basis.modelID))-\(basis.corpusHash.prefix(10))"
         let run = try VectorCatalog.makeUniqueRunDirectory(slug: slug, under: directory)
         try RunMetadata.write(

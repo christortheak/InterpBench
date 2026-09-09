@@ -39,7 +39,7 @@ struct ReadingPositionField: View {
             }
             .labelsHidden()
             .frame(width: 186)
-            .help(help)
+            .help(help + "\n" + Self.positionExplanation(choice))
             // `labelsHidden()` leaves the accessible name EMPTY: the visible
             // context is the enclosing `LabeledContent`, which VoiceOver does
             // not attach to the picker itself.
@@ -48,10 +48,37 @@ struct ReadingPositionField: View {
             // (`ExperimentPanel`/`ConceptBuilder` both do it on the way in),
             // so the two sites cannot drift into two conveniences.
             if let caption = choice.parameterCaption {
-                TextField(caption, value: $parameter, format: .number)
-                    .frame(width: 52)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(Self.parameterLabel(choice)).font(.caption2)
+                    TextField(caption, value: $parameter, format: .number)
+                        .labelsHidden().textFieldStyle(.roundedBorder)
+                        .frame(width: 65)
+                }
                     .help(Self.parameterHelp(choice, caption: caption))
             }
+        }
+    }
+
+    static func parameterLabel(_ choice: ReadingPositionChoice) -> String {
+        switch choice {
+        case .meanFromToken, .meanContentFromToken: "Start index"
+        case .offsetFromEnd, .contentOffset: "Tokens back"
+        case .postInstruction: "Token after (1–5)"
+        default: "Position"
+        }
+    }
+
+    static func positionExplanation(_ choice: ReadingPositionChoice) -> String {
+        switch choice {
+        case .recipeDefault: "Use this extraction method's default reading position."
+        case .lastToken: "Read the final token in the entire rendered input, including any conversation wrapper."
+        case .lastContentToken: "Read the final token of the example itself, before the conversation wrapper closes."
+        case .turnCloseToken: "Read the conversation template's closing token for this turn. Requires a template that exposes this boundary."
+        case .meanFromToken: "Average tokens starting at the zero-based index through the end of the rendered input."
+        case .meanContentFromToken: "Average example-content tokens from the zero-based index; omit conversation wrapper tokens."
+        case .offsetFromEnd: "Count backwards from the rendered input's last token. Zero selects the last token."
+        case .contentOffset: "Count backwards from the example's last content token. Zero selects that token."
+        case .postInstruction: "Read the first through fifth token after the instruction content. Requires a supported conversation template."
         }
     }
 
@@ -94,7 +121,7 @@ struct ExtractionRenderingField: View {
             }
             .labelsHidden()
             .frame(width: 140)
-            .help(help)
+            .help(help + "\nRaw sends the example without a conversation wrapper. Chat template formats it as a turn using this model's template. This changes model activations and may change which token is last.")
             .accessibilityLabel("Extraction rendering")
             if choice.mode == .chatTemplate {
                 Picker("", selection: $choice.voice) {

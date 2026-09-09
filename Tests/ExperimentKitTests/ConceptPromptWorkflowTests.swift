@@ -49,6 +49,12 @@ struct ConceptPromptWorkflowTests {
             let cowork = try #require(builder.coworkGenerationPrompt())
             #expect(!cowork.isEmpty)
             #expect(!cowork.contains("Template unavailable"))
+            builder.recipeFamily = .designatedReference
+            builder.designatedReferenceConcept = "reference-example"
+            let referencePrompt = try #require(builder.coworkGenerationPrompt())
+            #expect(referencePrompt.contains("reference-example"))
+            #expect(referencePrompt.contains("practical-wisdom"))
+            #expect(!referencePrompt.contains("{{"))
         }
     }
 

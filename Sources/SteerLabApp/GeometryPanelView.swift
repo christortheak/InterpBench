@@ -212,7 +212,11 @@ struct GeometryPanelView: View {
 
             Section("Logit Lens") { logitLensSectionContent }
 
-            Section("Gemma Scope") {
+            Section("Compare with Gemma Scope features") {
+                Text("Compare a selected steering vector with published SAE feature directions for a compatible Gemma model. Select exactly one vector below the model controls, then run analysis. Similarity is a clue to investigate, not proof of a behavioral effect.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("Suite, release and SAE identifiers describe the resolved resource; they are not input fields. To add a feature you found elsewhere, use Import an SAE feature in Concept Vector Builder.")
+                    .font(.caption).foregroundStyle(.secondary)
                 if isServerWorkspace {
                     serverGemmaScopeSectionContent
                 } else {

@@ -69,7 +69,8 @@
     "prompts/templates/task-prompts-transcript/README.md",
     "prompts/templates/task-prompts-transcript/task-prompts-transcript-template.jsonl",
     "prompts/templates/validation/README.md",
-    "prompts/templates/validation/validation-template.jsonl"
+    "prompts/templates/validation/validation-template.jsonl",
+    "prompts/generation/designated-reference-cowork-agent.md"
   ],
   "directories": [
     "prompts/concepts",

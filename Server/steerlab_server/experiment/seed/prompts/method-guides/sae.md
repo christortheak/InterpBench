@@ -2,7 +2,7 @@
 
 Preserve feature identity and the import/normalization convention.
 
-Choose the model, release, layer, width, feature IDs and intended use before searching for persuasive examples. Use the existing Gemma Scope pane or /api/gemmascope operations for analysis and import; steerlab-server gemmascope import-id provides a direct named-feature path. The sae family exposes check, pin, family-report and qualification operations.
+Choose the model, release, layer, width, feature IDs and intended use before searching for persuasive examples. In the app, Data → Concepts & Vectors → Import an SAE feature accepts explicit identifiers or a Neuronpedia feature link. Link lookup uses the installed SAELens directory; it never guesses an unknown mapping or downloads weights. The researcher reviews the selected feature and calibration before import can download weights. Analysis → Compare with Gemma Scope features compares existing vectors with features. Agents use `steerlab-server gemmascope resolve-feature --url <link>`, then `gemmascope import-id`, or the corresponding `/api/gemmascope` operations. The sae family exposes check, pin, family-report and qualification operations.
 
 Inputs are release/model metadata, feature identity and any declared analysis corpus. A feature selected from a report and a feature imported directly by ID have different normalization conventions. Preserve the sidecar's gemmascopeConvention: analyzed-vector-norm-match for report-ranked imports, residual-norm-match for direct feature-ID imports. An unstamped legacy artifact requires the documented re-import/qualification repair before evidence use.
 

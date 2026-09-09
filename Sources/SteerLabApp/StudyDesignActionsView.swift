@@ -58,8 +58,8 @@ struct StudyDesignActionsView: View {
     /// The two ways this study's settings become a design — both visible, both
     /// worded for what they do, neither a default.
     ///
-    /// "Save back to design" is the return leg of Templates' "Edit design…": it
-    /// OVERWRITES the design the lineage line names. "Save as new design" is the
+    /// "Save back to template" is the return leg of Templates' "Edit template…": it
+    /// OVERWRITES the design the lineage line names. "Save as new template" is the
     /// existing mint, which adds an entry. The difference matters enough to be
     /// two buttons rather than one button with a mode: one of them grows the
     /// library and the other does not.
@@ -71,7 +71,7 @@ struct StudyDesignActionsView: View {
         let refusal = panel.designs.saveBackToDesignRefusal(for: manifest)
         HStack(spacing: 8) {
             if let target {
-                Button("Save back to design '\(target)'") {
+                Button("Save back to template '\(target)'") {
                     do {
                         saveReview = SaveReview(source: try panel.reviewEditorDesignSource(),
                             design: try panel.designs.reviewedDesign(named: target))
@@ -94,7 +94,7 @@ struct StudyDesignActionsView: View {
                         + (review.source.panel?.warnings.isEmpty == false ? "\n\n" + (review.source.panel?.warnings.joined(separator: "\n") ?? "") : ""))
                 }
             }
-            Button("Save as new design") {
+            Button("Save as new template") {
                 do { panel.newDesignFromStudy(reviewedSource: try panel.reviewEditorDesignSource()) }
                 catch { panel.draft.formErrors[.template] = error.localizedDescription }
             }

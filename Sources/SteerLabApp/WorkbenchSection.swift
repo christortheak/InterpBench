@@ -48,7 +48,7 @@ enum WorkbenchSection: String, CaseIterable, Identifiable {
         case .agents: "the agent workbench — library, creation (manual or optimize from a concept vector), and optimization runs"
         case .playground: "interactive chat and exploratory steering — try a model, a vector, and a strength before anything is declared"
         case .data: "the workspace's data: inventory of every dataset and derived artifact, the one New Dataset flow, and the editors that author and build them (concepts, corpora, vectors, adapter training)"
-        case .templates: "the design library: a study's task, instruments, sampling and judges — with no agents and no compute"
+        case .templates: "the template library: a study's task, instruments, sampling and judges — with no agents and no compute"
         case .studies: "evidence-grade study protocols (draft → freeze → run)"
         case .multiAgent: "build a scenario several agents take turns in — who speaks when, what each one sees, and the rehearsal that tries it"
         case .results: "browse immutable run directories"

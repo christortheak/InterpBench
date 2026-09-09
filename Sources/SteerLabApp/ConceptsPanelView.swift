@@ -258,7 +258,6 @@ struct ConceptsPanelView: View {
 
             probeTrainingSection
 
-            neutralNormCorpusSection
 
             buildErrorBanner
 
@@ -275,13 +274,11 @@ struct ConceptsPanelView: View {
             }
 
             Section("Concept Vector Builder") {
-                // One control for the recipe, in the Dataset Builder where the
-                // choice is made; here the build only echoes it (2026-09-06
-                // audit, decision 5).
-                LabeledContent("Recipe", value: builder.recipeFamily.label)
-                    .help(
-                        "the recipe chosen in the Dataset Builder above — it "
-                            + "decides what this build reads; change it there")
+                Text("Choose a source for the vector: extract from examples, derive from a J-lens token, or train against an objective.")
+                    .font(.caption).foregroundStyle(.secondary)
+                TrainVectorButton(service: service, title: "Train with OptVec…")
+                SAEFeatureImportButton(service: service)
+                recipeFamilyPicker
 
                 // A derived direction has no concept, no stimuli, and nothing to
                 // pool — showing those controls would imply provenance it does
@@ -397,10 +394,15 @@ struct ConceptsPanelView: View {
                         ? "Concepts are reusable primitives. Saving writes the selected recipe dataset and creates a model-specific per-layer vector artifact with provenance."
                         : builder.recipeFamily == .designatedReference
                             ? "Designated-reference vectors read both story corpora whole — the concept's and the reference's — and pin the reference by name and stories hash."
-                            : "Grand-mean vectors use selected build rows only. Validation rows remain in the concept corpus but are held out from extraction."
+                            : builder.recipeFamily == .jlensTokenDirection
+                                ? "J-lens directions address one exact vocabulary token. Save them in the matching model’s vector library, then test their effect. They do not read concept datasets."
+                                : "Grand-mean vectors use selected build rows only. Validation rows remain in the concept corpus but are held out from extraction."
                 )
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+            }
+            DisclosureGroup("Advanced: calibration and projection") {
+                neutralNormCorpusSection
             }
         }
         .formStyle(.grouped)
@@ -2240,12 +2242,12 @@ struct ConceptsPanelView: View {
                 if let prompt = builder.coworkGenerationPrompt() {
                     copyToClipboard(
                         prompt,
-                        successMessage: "Claude Cowork prompt copied — paste the merged JSONL corpus into the Grand Mean story box")
+                        successMessage: "Authoring prompt copied — review the requested files before importing them for this method")
                 }
             }
-            .disabled(builder.recipeFamily != .emotionGrandMean)
+            .disabled(builder.recipeFamily != .emotionGrandMean && builder.recipeFamily != .designatedReference)
             .help(
-                "copies instructions for Claude Cowork to spawn parallel agents, generate a balanced concept × topic story grid, and return one JSONL corpus")
+                "copies method-specific authoring and review instructions. Agree on worker count and cost before starting agents; designated-reference uses separate target and reference files.")
 
             Text("paste JSONL back into the visible dataset box")
                 .font(.caption2)
@@ -2266,13 +2268,17 @@ struct ConceptsPanelView: View {
             isBuilding: service.isBuildingNeutralPCBasis) != nil
     }
 
+    @State private var neutralPromptPreview: String?
+
     @ViewBuilder
     private var neutralNormCorpusSection: some View {
         @Bindable var builder = service.concepts
         let selectedCorpus = service.selectedNeutralCorpus
         let summary = builder.neutralCorpusSummary
         let normSummary = builder.normNeutralCorpusSummary
-        Section("Neutral Corpora") {
+        Section("Reference data") {
+            Text("Calibration measures typical activation size for steering-strength units. Projection is an optional experiment: identify common activation patterns and test whether removing them improves your intervention. It can also remove useful signal.")
+                .font(.caption).foregroundStyle(.secondary)
             Picker(
                 "Selected corpus",
                 selection: Binding<String?>(
@@ -2280,68 +2286,76 @@ struct ConceptsPanelView: View {
                     set: { service.selectedNeutralCorpusID = $0 }))
             {
                 ForEach(service.neutralCorpora) { corpus in
-                    Text("\(corpus.label) · \(corpus.kind.label)")
+                    Text(corpus.label)
                         .tag(String?.some(corpus.id))
                 }
             }
             .help("choose the neutral corpus to import into or use for building neutral PCs")
 
-            LabeledContent("Selected rows", value: "\(summary.count)")
-            if let hash = summary.hash {
-                LabeledContent("Hash", value: String(hash.prefix(12)))
-                    .help("this hash is stamped into neutral PC basis artifacts")
+            LabeledContent("Examples in selected corpus", value: "\(summary.count)")
+            ReadTextFileButton(url: selectedCorpus.url, title: "View existing examples…")
+                .disabled(summary.count == 0)
+            if service.cluster.computeTarget == .server {
+                Text("These are the authoring workspace’s reference files. The engine build below lists its own staged reference datasets; selecting a local corpus does not upload it.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            LabeledContent("Norm rows", value: "\(normSummary.count)")
+            if let hash = summary.hash {
+                DisclosureGroup("Technical details") {
+                    Text(hash).font(.caption.monospaced()).textSelection(.enabled)
+                    Text(selectedCorpus.url.path).font(.caption).textSelection(.enabled)
+                }
+            }
+            LabeledContent("Calibration examples", value: "\(normSummary.count)")
                 .help("the broad calibration corpus remains separate from projection corpora")
 
-            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
-                GridRow {
-                    Text("Projection name")
-                    TextField("assistant-dialogue-neutral", text: $builder.projectionNeutralCorpusName)
-                        .textFieldStyle(.roundedBorder)
-                        .help(
-                            "the named projection corpus to use or create "
-                                + "under prompts/neutral/projection/")
-                    Button("Use projection corpus") {
+            GroupBox("Create a projection prompt") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Prepare instructions for an authoring tool. These fields do not change existing examples. Copy the prompt, then import the resulting data into a named corpus.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    LabeledContent("New corpus name") {
+                        TextField("Name", text: $builder.projectionNeutralCorpusName)
+                            .labelsHidden().textFieldStyle(.roundedBorder)
+                            .help("Example: reference-dialogues. This names the import destination, not an existing populated dataset.")
+                    }
+                    LabeledContent("Properties to avoid expressing") {
+                        TextField("Properties", text: $builder.projectionNeutralConceptsDraft)
+                            .labelsHidden().textFieldStyle(.roundedBorder)
+                            .help("List the concepts the reference examples should not express. If blank, the prompt asks the author to obtain your concepts before generating data.")
+                    }
+                    LabeledContent("Topics to cover") {
+                        TextField("Topics", text: $builder.projectionNeutralDomainsDraft)
+                            .labelsHidden().textFieldStyle(.roundedBorder)
+                            .help("Example: planning, factual questions, technical help. Match your concept data's topics. Blank uses the broader list shown in the prompt preview.")
+                    }
+                    LabeledContent("Situations to exclude") {
+                        TextField("Situations", text: $builder.projectionNeutralExclusionsDraft)
+                            .labelsHidden().textFieldStyle(.roundedBorder)
+                            .help("Example: danger, illness, conflict. Blank uses the exclusions shown in the preview.")
+                    }
+                    Button("Copy projection prompt") {
+                        if let prompt = builder.anthropicStyleNeutralDialoguePrompt() {
+                            copyToClipboard(prompt, successMessage: "Projection prompt copied; no data generated.")
+                        }
+                    }
+                    Button("Preview effective prompt") {
+                        neutralPromptPreview = builder.anthropicStyleNeutralDialoguePrompt()
+                    }
+                    if let neutralPromptPreview {
+                        ScrollView { Text(neutralPromptPreview).font(.caption).textSelection(.enabled) }
+                            .frame(maxHeight: 180)
+                        Text("This preview reflects the values at the last click. Preview again after editing.")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Button("Select this name for import") {
                         service.selectProjectionNeutralCorpus(named: builder.projectionNeutralCorpusName)
                     }
-                    .help("select or create a named projection corpus under prompts/neutral/projection/")
-                }
-                GridRow {
-                    Text("Neutral against")
-                    TextField("fear, joy, arousal, valence", text: $builder.projectionNeutralConceptsDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .gridCellColumns(2)
-                        .help(
-                            "the concepts this corpus must be neutral with "
-                                + "respect to; the copied prompt asks for rows "
-                                + "that express none of them")
-                }
-                GridRow {
-                    Text("Matched domains")
-                    TextField("workplace, household planning, technical help", text: $builder.projectionNeutralDomainsDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .gridCellColumns(2)
-                        .help(
-                            "the subject matter the rows should cover, matched "
-                                + "to the concept corpus so the corpora differ "
-                                + "in the concept and not the topic")
-                }
-                GridRow {
-                    Text("Avoid settings")
-                    TextField("danger, illness, moral judgment", text: $builder.projectionNeutralExclusionsDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .gridCellColumns(2)
-                        .help(
-                            "settings the copied prompt should steer clear of, "
-                                + "so the neutral rows carry no incidental "
-                                + "charge of their own")
-                }
+                    Text("Selecting a new name creates an empty destination for import. It does not generate examples or enable removal.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }.padding(6)
             }
-            .font(.caption)
 
             neutralCorpusActionRow(corpusLabel: selectedCorpus.label, rowCount: summary.count)
-            if let reason = neutralPCBuildDisabledReason(rowCount: summary.count) {
+            if service.cluster.computeTarget == .local, let reason = neutralPCBuildDisabledReason(rowCount: summary.count) {
                 Text(reason)
                     .font(.caption2)
                     .foregroundStyle(.orange)
@@ -2359,13 +2373,16 @@ struct ConceptsPanelView: View {
                     .frame(height: 120)
                     .help("paste JSONL rows like {\"text\":\"...\"}; JSON arrays and plain paragraph blocks also work")
                 if builder.neutralCorpusDraft.isEmpty {
-                    Text("Paste JSONL for \(selectedCorpus.label).")
+                    Text("Paste new data to import into \(selectedCorpus.label). Existing examples are not shown in this editor.")
                         .font(.callout)
                         .foregroundStyle(.tertiary)
                         .padding(.top, 8)
                         .padding(.leading, 5)
                         .allowsHitTesting(false)
                 }
+            }
+            if service.cluster.computeTarget == .server {
+                ServerNeutralBasisControls(service: service)
             }
             Text(
                 "Use the norm corpus for residual calibration. Use named projection corpora for steering-time or study-time nuisance removal; those can be matched to a concept family."
@@ -2407,17 +2424,7 @@ struct ConceptsPanelView: View {
         .help(
             "copies a prompt for long, domain-neutral passages suitable for token-50 residual norm calibration")
 
-        Button("Copy projection prompt") {
-            if let prompt = builder.anthropicStyleNeutralDialoguePrompt() {
-                copyToClipboard(
-                    prompt,
-                    successMessage: "projection-neutral dialogue prompt copied — paste JSONL below and import")
-            }
-        }
-        .help(
-            "copies a prompt for Human/Assistant dialogues neutral with respect to the listed concepts and matched domains")
-
-        Button("Import to selected") {
+        Button("Import pasted data into \(corpusLabel)") {
             pendingConfirmation = ConceptsConfirmation(
                 title: "Replace the rows in '\(corpusLabel)'?",
                 message:
@@ -2436,14 +2443,15 @@ struct ConceptsPanelView: View {
                 + "first, and the corpus hash is what gets stamped into "
                 + "neutral-PC and norm artifacts")
 
+        if service.cluster.computeTarget == .local {
         Button {
-            Task { await service.buildNeutralPCBasis(allLayers: neutralPCAllLayers) }
+            service.startNeutralPCBuild(allLayers: neutralPCAllLayers)
         } label: {
             if service.isBuildingNeutralPCBasis {
                 ProgressView()
                     .controlSize(.small)
             } else {
-                Text("Build neutral PCs")
+                Text("Build projection basis")
             }
         }
         .disabled(neutralPCBuildDisabled || rowCount == 0)
@@ -2452,13 +2460,19 @@ struct ConceptsPanelView: View {
                 + "selected neutral corpus, estimate token-position PCs "
                 + "over the middle-third layer band, and store them for optional steering-time projection")
 
+        if service.isBuildingNeutralPCBasis {
+            Button("Cancel build") { service.cancelNeutralPCBuild() }
+        }
+        Text("Build runs the model on the selected examples and saves recurring activation patterns. To apply them later, use Playground → Steering controls → Remove neutral directions. Building does not turn removal on.")
+            .font(.caption).foregroundStyle(.secondary)
         Toggle("All layers (expensive)", isOn: $neutralPCAllLayers)
             .toggleStyle(.checkbox)
             .font(.caption)
             .disabled(service.isBuildingNeutralPCBasis)
             .help(
                 "capture every layer instead of the middle-third band: ~3× the memory and "
-                    + "~3× the PCA time, and steering lives in the middle third anyway")
+                    + "~3× the PCA time. Choose layers to match your planned intervention.")
+        }
     }
 
     /// Why "Build neutral PCs" is off, in the row rather than nowhere at all
@@ -2469,10 +2483,6 @@ struct ConceptsPanelView: View {
                 + "some before building PCs"
         }
         if service.isBuildingNeutralPCBasis { return nil }
-        if service.cluster.computeTarget == .server, service.state != .ready {
-            return "neutral PCs are estimated in-process on this Mac: load a "
-                + "local model first"
-        }
         return service.localBuildBlockedReason(
             isBuilding: service.isBuildingNeutralPCBasis)
     }

@@ -83,16 +83,18 @@ struct FineTuningPanelView: View {
                 )
                 .textFieldStyle(.roundedBorder)
                 .help("Name for the adapter project and artifact. Use a stable research label, such as the corpus, method, or intended intervention.")
-                DirectoryPathRow(
-                    title: "Project directory",
-                    path: resolvedDisplayPath(panel.newAdapterProjectDirectory),
-                    placeholder: "Default: adapters/ in the workspace",
-                    chooseTitle: "Choose…",
-                    help: "Parent folder where SteerLab will create the adapter's home. Leave blank to store it under the workspace's adapters/ folder."
-                ) {
-                    openFolder(panel.newAdapterProjectDirectory)
-                } choose: {
-                    chooseDirectory { panel.newAdapterProjectDirectory = $0 }
+                DisclosureGroup("Storage details") {
+                    DirectoryPathRow(
+                        title: "Project directory",
+                        path: resolvedDisplayPath(panel.newAdapterProjectDirectory),
+                        placeholder: "Default: adapters/ in the workspace",
+                        chooseTitle: "Choose…",
+                        help: "Parent folder where SteerLab will create the adapter's home. Leave blank to store it under the workspace's adapters/ folder."
+                    ) {
+                        openFolder(panel.newAdapterProjectDirectory)
+                    } choose: {
+                        chooseDirectory { panel.newAdapterProjectDirectory = $0 }
+                    }
                 }
                 Button("Create Adapter") { panel.createAdapterProject() }
                     .disabled(createAdapterDisabledReason != nil)
@@ -136,44 +138,47 @@ struct FineTuningPanelView: View {
                     TextField("Name", text: $panel.adapterName)
                         .textFieldStyle(.roundedBorder)
                         .help("Editable display name stored in the adapter artifact sidecar.")
-                    DirectoryPathRow(
-                        title: "Project",
-                        path: resolvedDisplayPath(panel.adapterProjectDirectory),
-                        placeholder: "No project directory",
-                        chooseTitle: nil,
-                        help: "Root folder for this adapter project. Click the folder label to reveal it in Finder."
-                    ) {
-                        openFolder(panel.adapterProjectDirectory)
-                    } choose: {}
-                    DirectoryPathRow(
-                        title: "Adapter output",
-                        path: resolvedDisplayPath(panel.adapterDirectory),
-                        placeholder: "Choose adapter output folder",
-                        chooseTitle: "Choose…",
-                        help: "Folder where the trained adapter files live. A completed MLX adapter should contain adapter_config.json and adapters.safetensors."
-                    ) {
-                        openFolder(panel.adapterDirectory)
-                    } choose: {
-                        chooseDirectory { panel.adapterDirectory = $0 }
-                    }
-                    DirectoryPathRow(
-                        title: "Training workspace",
-                        path: resolvedDisplayPath(panel.trainingWorkspacePath),
-                        placeholder: "Choose training workspace folder",
-                        chooseTitle: "Choose…",
-                        help: "Workspace for raw source material and instruction templates before they are converted into train/validation datasets."
-                    ) {
-                        openFolder(panel.trainingWorkspacePath)
-                    } choose: {
-                        chooseDirectory { panel.trainingWorkspacePath = $0 }
+                    DisclosureGroup("Storage details") {
+                        DirectoryPathRow(
+                            title: "Project",
+                            path: resolvedDisplayPath(panel.adapterProjectDirectory),
+                            placeholder: "No project directory",
+                            chooseTitle: nil,
+                            help: "Root folder for this adapter project. Click the folder label to reveal it in Finder."
+                        ) {
+                            openFolder(panel.adapterProjectDirectory)
+                        } choose: {}
+                        DirectoryPathRow(
+                            title: "Saved adapter files",
+                            path: resolvedDisplayPath(panel.adapterDirectory),
+                            placeholder: "Choose adapter output folder",
+                            chooseTitle: "Choose…",
+                            help: "Folder where the trained adapter files live. A completed MLX adapter should contain adapter_config.json and adapters.safetensors."
+                        ) {
+                            openFolder(panel.adapterDirectory)
+                        } choose: {
+                            chooseDirectory { panel.adapterDirectory = $0 }
+                        }
+                        DirectoryPathRow(
+                            title: "Source materials (optional)",
+                            path: resolvedDisplayPath(panel.trainingWorkspacePath),
+                            placeholder: "Not set — optional",
+                            chooseTitle: "Choose…",
+                            help: "Optional reference to source material. This folder is not read by training; only Training data and Validation data supply examples."
+                        ) {
+                            openFolder(panel.trainingWorkspacePath)
+                        } choose: {
+                            chooseDirectory { panel.trainingWorkspacePath = $0 }
+                        }
                     }
                     DirectoryPathRow(
                         title: "Training data",
                         path: directoryDisplayPath(panel.trainingDataPath),
                         placeholder: "Choose training data folder",
                         chooseTitle: "Choose…",
-                        help: "Folder containing the examples the adapter learns from (.txt, .md, .json, .jsonl, .pdf). Drop files onto this row to copy them into the folder.",
-                        acceptsDrop: true
+                        help: "Examples used to update the adapter. Document adaptation learns from documents; instruction/chat tuning needs structured JSONL conversations with desired assistant responses. Drop files here to copy them into the training folder.",
+                        acceptsDrop: true,
+                        previewPath: resolvedDisplayPath(panel.trainingDataPath)
                     ) {
                         openFolder(panel.trainingDataPath)
                     } choose: {
@@ -188,8 +193,9 @@ struct FineTuningPanelView: View {
                         path: directoryDisplayPath(panel.validationDataPath),
                         placeholder: "Choose validation data folder",
                         chooseTitle: "Choose…",
-                        help: "Folder containing held-out examples used to monitor validation loss. Drop files onto this row to copy them into the folder.",
-                        acceptsDrop: true
+                        help: "Separate representative examples used to monitor loss without training on them. Use the same format as training and avoid duplicate source material. If you use validation to choose settings, reserve separate test examples for the final study.",
+                        acceptsDrop: true,
+                        previewPath: resolvedDisplayPath(panel.validationDataPath)
                     ) {
                         openFolder(panel.validationDataPath)
                     } choose: {
@@ -200,6 +206,8 @@ struct FineTuningPanelView: View {
                         return true
                     }
 
+                    Text("Training examples teach the adapter; separate validation examples check how it performs on material it has not learned from.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Divider()
 
                     Picker("Training data type", selection: $panel.trainingMode) {
@@ -571,6 +579,7 @@ private struct DirectoryPathRow: View {
     /// Rows that accept a file drop say so on screen: the drop used to be
     /// discoverable only through the tooltip (audit 2026-09-06).
     var acceptsDrop: Bool = false
+    var previewPath: String? = nil
     let open: () -> Void
     let choose: () -> Void
 
@@ -607,6 +616,7 @@ private struct DirectoryPathRow: View {
                             + "\(title.lowercased()) — the originals are left alone")
             }
 
+            if let previewPath { TrainingDataBrowseButton(path: previewPath) }
             if let chooseTitle {
                 Button(chooseTitle, action: choose)
                     .help("Choose a different folder for \(title.lowercased()).")

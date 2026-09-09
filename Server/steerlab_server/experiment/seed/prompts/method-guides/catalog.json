@@ -442,8 +442,8 @@
       "method": "sae",
       "title": "Gemmascope",
       "engineCLI": "steerlab-server gemmascope import-id --help",
-      "mac": "Read this guide; use the named existing pane/API or engine CLI.",
-      "http": "GET /api/gemmascope/info; POST /api/gemmascope/run; POST /api/gemmascope/import; POST /api/gemmascope/import-id",
+      "mac": "Data → Concepts & Vectors → Import an SAE feature; Analysis → Compare with Gemma Scope features.",
+      "http": "GET /api/gemmascope/info; POST /api/gemmascope/run; POST /api/gemmascope/import; POST /api/gemmascope/import-id; GET /api/gemmascope/resolve-feature",
       "compute": "existingOwner",
       "outputs": [
         "See the selected operation public response and immutable artifact records."
@@ -477,6 +477,13 @@
           "path": "/api/gemmascope/import-id",
           "serviceRole": "workbench",
           "authorityReason": "Imports a feature BY ID, going online to Hugging Face. Same destination and same caller as its report-based sibling."
+        },
+        {
+          "id": "get-gemmascope-resolve-feature",
+          "method": "GET",
+          "path": "/api/gemmascope/resolve-feature",
+          "serviceRole": "both",
+          "authorityReason": "Resolves a feature link using installed directory metadata; no authoring or URL fetch."
         }
       ],
       "access": {

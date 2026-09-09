@@ -251,7 +251,7 @@ struct ResultsRunSummaryColumn: View {
     @ViewBuilder
     private var filePreview: some View {
         if let file = service.experiments.results.selectedResultsFile, let preview {
-            RunFilePreviewBox(name: file.name, size: file.size, preview: preview)
+            RunFilePreviewBox(name: file.name, size: file.size, preview: preview, localURL: file.url)
         } else {
             Text("Select a file in the Results pane to preview its contents here.")
                 .font(.caption)
@@ -427,5 +427,22 @@ private struct RemoteRunSummaryPane: View {
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
         }
+    }
+}
+
+/// Section explanations have section ownership; historical logs are opt-in.
+struct ResearchContextColumn: View {
+    let service: ChatService
+    let title: String
+    let explanation: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(title).font(.title2)
+            Text(explanation).textSelection(.enabled)
+            DisclosureGroup("Workspace activity and technical logs") {
+                ActivityFeedColumn(service: service, title: "Workspace activity")
+            }
+            Spacer(minLength: 0)
+        }.padding()
     }
 }
