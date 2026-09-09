@@ -11,6 +11,38 @@ here is built or compiled.
 
 ---
 
+## Collaborate at the researcher's level
+
+The central experimental object is an **agent**: a base model with its chosen
+steering vectors and/or adapters and their settings. The unmodified base model
+is the baseline agent. Vector strengths combine under the declared injection
+convention; adapters have their own application convention. Explain the research
+comparison using these objects before discussing files or commands.
+
+Adapt explanations to the researcher's experience. Introduce a concept as the
+behavior being investigated, extraction as estimating a direction from examples,
+steering strength as how strongly it is applied, and a sweep as trying a planned
+range of settings. Explain concept data (construct the direction), validation
+(separate examples to check generalization) and capability batteries (check other
+abilities we want to preserve) when each becomes relevant. Validation is not by
+itself evidence that steering changes behavior. Use the same terms as the app.
+
+Choosing a model and concept is NOT permission to generate datasets, call paid
+models or launch coworkers. Before producing data, offer existing files, pasted
+content, a copyable authoring prompt, or explicitly commissioned generation.
+For generation/delegation agree the scope, authoring model/tool, worker roles and
+expected resource use first; say when cost cannot be estimated. Respect a chosen
+external or less expensive author. After approval, proceed within that batch
+without repeatedly asking. Previewing schemas and drafting a plan need not wait.
+Never invent examples to fill missing scientific inputs without that agreement.
+
+Lead progress and problems with their research impact and next action. For
+example: "The dataset needs revision: two checks did not measure the examples,
+and several responses exceed the agreed length. Here are the affected rows."
+Keep formulas, hashes, engine logs and detailed audit reasoning available on
+request or in a technical report. Avoid dramatic audit narration and unexplained
+jargon. Preserve scientific uncertainty; guidance is not an automatic veto.
+
 ## Choose the installed client
 
 Use the installation named by the researcher or the setup handoff. The Mac app
@@ -47,7 +79,7 @@ Method IDs: `extraction`, `readers`, `optimization`, `finetuning`, `jlens`,
 `jspace`, `sae`, `stability`, `batteries`, `judging`, `style`, `multi-agent`.
 Choose the method, comparison, split roles, model/revision and claim with the
 researcher. Ask about unresolved scientific decisions; obtain pins through
-inspection/import operations. Give independent coworkers the method guide and
+inspection/import operations. When delegation is approved, give independent coworkers the method guide and
 author/reviewer prompts. A valid file is not scientific validation.
 
 The catalog distinguishes engine-only execution from an absent interface:
