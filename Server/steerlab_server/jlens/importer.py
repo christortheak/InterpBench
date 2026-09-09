@@ -165,9 +165,12 @@ def tier_of(model_id: str | None, record=None) -> tuple[str, str]:
 
     One resolution for every consumer (qualify, freeze, run start, the
     J-space report), so a declared tier is honoured everywhere or nowhere.
-    A curated row always wins: a declaration made before the study decided
-    about a model does not survive the decision.
+    Custom artifacts carry the researcher's own intended use, including for
+    models in the published table. Published imports retain the table policy.
     """
+    if getattr(record, "tierSource", None) == "custom-artifact":
+        declared = getattr(record, "tier", None)
+        return (declared if declared in TIERS else "unknown"), "custom-artifact"
     curated = SUPPORTED.get(model_id or "")
     if curated is not None and curated.get("tier"):
         return curated["tier"], "curated"

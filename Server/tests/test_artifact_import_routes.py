@@ -1,4 +1,5 @@
 """File staging, owner invocation, and workbench authority for custom imports."""
+import pytest
 import hashlib
 import json
 from types import SimpleNamespace
@@ -91,3 +92,23 @@ def test_deployment_size_limit_applies_and_discards_partial_upload(tmp_path, mon
         content=data, headers={'X-Content-SHA256': hashlib.sha256(data).hexdigest()})
     assert response.status_code == 400 and '2 bytes' in response.text
     assert not list((tmp_path / '.steerlab/artifact-inputs' / ('a'*32)).iterdir())
+
+
+def test_description_path_accepts_root_alias_but_not_source_escapes(tmp_path):
+    from steerlab_server.api.artifact_import_routes import description_path
+    from steerlab_server.experiment.artifact_sources import ImportRefusal
+    root = tmp_path / 'workspace'
+    root.mkdir()
+    alias = tmp_path / 'alias'
+    alias.symlink_to(root, target_is_directory=True)
+    source = root / 'import.json'
+    source.write_text('{}')
+    assert description_path(str(alias / source.name), alias) == source
+    assert description_path(str(source), alias) == source
+    outside = tmp_path / 'outside.json'
+    outside.write_text('{}')
+    with pytest.raises(ImportRefusal):
+        description_path(str(outside), alias)
+    (root / 'redirect.json').symlink_to(outside)
+    with pytest.raises(ValueError):
+        description_path('redirect.json', alias)

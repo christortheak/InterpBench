@@ -19,9 +19,14 @@ def description_path(reference, root):
     base = Path(root).resolve()
     target = Path(reference)
     if target.is_absolute():
-        try: reference = target.relative_to(base).as_posix()
-        except ValueError as exc:
-            raise artifact_sources.ImportRefusal('Stage the source files in this workbench workspace first.') from exc
+        for anchor in (Path(root).absolute(), base):
+            try:
+                reference = target.relative_to(anchor).as_posix()
+                break
+            except ValueError:
+                continue
+        else:
+            raise artifact_sources.ImportRefusal('Stage the source files in this workbench workspace first.')
     return diagnostic_archives.ordinary(base, reference)
 
 

@@ -71,9 +71,9 @@ remote repository. The JSON description is the explicit conversion contract;
 optional original configuration is retained without interpreting arbitrary
 third-party configuration formats.
 
-## Verification
+## Original implementation verification
 
-Verified on the final implementation (2026-09-09), with the suites run serially:
+Verified on b5d64b3 (2026-09-09), with the suites run serially; the audit follow-up below records subsequent checks:
 
 | Check | Result |
 | --- | --- |
@@ -141,3 +141,78 @@ results through the researcher, then decide integration. This work does not merg
 main or replace the installed app. Check that the intended main is still an
 ancestor; integrate any intervening changes and rerun affected checks before
 landing. Rebuild the installed app and its matching Python payload afterward.
+
+## Audit follow-up to b5d64b3
+
+N1 is addressed with optional `lens.tier`: testing by default, or evidence
+for intended study use. The declaration is part of the reviewed source
+description and plan, and the saved record carries `tierSource: custom-artifact`.
+One correction to the review: previously, the shared tier resolver let a
+published table row override the hard-coded testing declaration. Custom records
+now consistently use their own declaration, including on catalogued models.
+Published-source policy remains unchanged. Qualification and freeze still need
+the exact runtime, layers, lens hashes, and qualification ID. The custom testing
+repair names the actual artifact-plan/import workflow. The import review and
+library badge show the same choice; Swift retains both tier fields when decoding
+and re-encoding a Python record. Changing intended use requires a fresh import,
+never editing a published lens.
+
+N2's existing published-lens model/revision checks are explicitly documented in
+the changelog.
+
+N3 resolves selected workspace and source-folder aliases once. Canonical and
+aliased paths produce the same plan hash. Files below the selected source folder
+still reject symlink redirects. HTTP paths still stay inside the served workspace,
+and missing roots are never created.
+
+N4 receives a bounded memory improvement: safetensors/NPZ readers materialize
+only selected keys; lens finite/shape validation uses stored precision. An
+unselected BF16 tensor no longer requires PyTorch for an otherwise portable
+source. SAE conversion arithmetic, source hashing, retained originals, and
+dtype-preserving publication remain unchanged. The writer still materializes
+selected output tensors, and PyTorch checkpoints can still load the whole file.
+
+A synthetic reader-only measurement on this Mac compared b5d64b3 with this
+follow-up: four BF16 4096×4096 tensors in a roughly 128 MiB safetensors file,
+one selected, fresh subprocesses, PyTorch imported before timing, one CPU thread.
+Three alternating trials used `resource.ru_maxrss` for whole-process peak RSS:
+
+| Reader | Peak RSS, MiB (three trials) | Reader + one validation, seconds |
+| --- | --- | --- |
+| b5d64b3 | 368.4, 368.0, 368.5 | 0.0350, 0.0172, 0.0160 |
+| Follow-up | 305.7, 304.6, 304.5 | 0.0226, 0.0220, 0.0215 |
+
+This supports lower peak memory, not a general speedup. It excludes source
+hashing, transfer, publication, and cold Python startup. It is not a large-fit
+acceptance result. N5's live GUI/workbench acceptance and managed return/cleanup
+limitations remain as listed above. Before extending this importer to very large
+fits, measure the actual source container and full import lifecycle.
+
+Follow-up regression coverage includes default/explicit/invalid intended use,
+catalogued and unlisted models, stale plans after a tier change, qualified custom
+evidence readouts and wrong qualification pins, workspace aliases, source
+redirects, HTTP escapes, selected NPZ/safetensors entries, and BF16 preservation.
+The native-precision regression forbids float64 conversion during lens import.
+The Swift parity test invokes the real Python owner, checks evidence intent and
+badge precedence, and round-trips the declaration.
+
+Final follow-up verification (2026-09-09), with the full suites run serially:
+
+| Check | Result |
+| --- | --- |
+| Full Python suite | 6,263 passed, 9 skipped, 8 warnings |
+| Full Xcode beta suite | TEST SUCCEEDED: 290 SteeringKit + 4,612 ExperimentKit |
+| Focused importer, route, and freeze tests | 98 passed |
+| Actual Python and Swift CLI smoke imports | Lens and SAE published with retained receipts; evidence intent preserved |
+| Packaged guides and operation discovery, both clients | Passed |
+| Unified generators, source identity, built-helper CLI reference | Passed |
+| Established AST audits, negative controls, and both bridge gates | Passed |
+| Complete diff read, whitespace, and public scan | Clean |
+
+The final suite/gate logs use the paths in the original verification section.
+Additional host-local logs are `/private/tmp/artifact-followup-targeted.log`,
+`/private/tmp/artifact-followup-surfaces.log`, and
+`/private/tmp/artifact-reader-benchmark.jsonl`; the reproducible synthetic reader
+driver is `/private/tmp/benchmark-artifact-reader.py`. No app was installed,
+no research workspace was changed, and main was not merged by this follow-up.
+The maintainer's agents should review this additional diff before integration.

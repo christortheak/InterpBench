@@ -124,3 +124,29 @@ is not source provenance: `gemmascopeSource.importPath` is `custom-sae-decoder`,
 with the actual source hashes, feature axis, layer, and calibration recorded.
 The app labels the family “SAE feature (decoder row).” This imports a decoder
 intervention, not the encoder, thresholds, or a complete latent SAE.
+
+## Intended use and large files
+
+For custom lenses, `lens.tier` declares `testing` (default) or `evidence`.
+The app shows this choice during review, and both clients return it in the plan.
+Ask the researcher which use they intend. Custom declarations take precedence
+over the published-model table; published-source imports keep their existing
+policy. Evidence intent does not establish validity: qualification for the exact
+lens bytes, runtime, and layers remains a separate step before ordinary freeze.
+Changing the choice creates a new reviewed import, never a rewrite of an old lens.
+
+Workspace folders and explicitly selected source folders can be reached through
+normal filesystem aliases. Relative files inside the selected source folder must
+remain ordinary files, without symlink redirects or parent traversal. HTTP
+imports remain confined to the served workspace. A missing workspace is refused.
+
+Safetensors and NPZ readers materialize only the declared tensor keys. Lens
+validation checks finite values in stored precision, avoiding a widened float64
+matrix copy. The optional BF16 reader is needed only when a selected tensor is
+BF16. SAE conversion retains its existing arithmetic. PyTorch checkpoints may
+still load the whole checkpoint, and publication still materializes the selected
+output tensors: this is not a streaming, constant-memory importer. Original
+source copies, output tensors, and repeated integrity hashing still consume
+disk space and time. Plan for at least the source copy plus converted output
+on disk, in addition to any staged upload. Measure a representative large fit
+before promising interactive import times.

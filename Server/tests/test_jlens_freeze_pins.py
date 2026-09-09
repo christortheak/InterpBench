@@ -805,3 +805,35 @@ def test_an_explicitly_pinned_null_markers_hash_is_preserved(tmp_path):
     with pytest.raises(store.ExperimentStoreError, match="markers.json"):
         store.freeze("s-confirm", force=True, root=root)
     assert Manifest.load("s-confirm", root=root).raw["markersHash"] is None
+
+
+@pytest.mark.parametrize("model", ["example/model", TESTING_MODEL])
+def test_custom_evidence_lens_still_needs_exact_qualification(tmp_path, model):
+    import numpy as np
+    from safetensors.numpy import save_file
+    from steerlab_server.experiment import artifact_imports
+    root = tmp_path / "ws"
+    root.mkdir()
+    weights = tmp_path / "weights.safetensors"
+    save_file({"map": np.eye(2, dtype=np.float32)}, str(weights))
+    description = tmp_path / "import.json"
+    spec = {"schemaVersion": 1, "kind": "jlens", "modelID": model,
+            "modelRevision": REV, "hiddenSize": 2, "layerCount": 3,
+            "tensorFile": weights.name,
+            "lens": {"targetLayer": 2, "layers": {"0": "map"}, "tier": "evidence"}}
+    description.write_text(json.dumps(spec))
+    plan = artifact_imports.inspect_source(description, root)
+    result = artifact_imports.publish(description, root, plan["planSHA256"])
+    record = lens_store.resolve(result["lensID"], str(root))
+    d = _manifest_dict(record, model_id=model, jlensReadout={"layers": [0]})
+    with pytest.raises(experiment_store.ExperimentStoreError, match="no passing qualification"):
+        experiment_store._check_jlens_readout("s", d, str(root))
+    _qualify(record, str(root), model_id=model, layers=(0,))
+    experiment_store._check_jlens_readout("s", d, str(root))
+    d["jlensReadout"]["qualificationID"] = "another"
+    with pytest.raises(experiment_store.ExperimentStoreError, match="no passing qualification"):
+        experiment_store._check_jlens_readout("s", d, str(root))
+    record.tier = "testing"
+    lens_store.save(record, str(root))
+    with pytest.raises(experiment_store.ExperimentStoreError, match="lens.tier"):
+        experiment_store._check_jlens_readout("s", d, str(root))

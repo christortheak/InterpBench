@@ -297,3 +297,119 @@ def test_publication_rederives_scaling_from_captured_bytes(source, monkeypatch):
     with pytest.raises(ImportRefusal, match='captured decoder or calibration'):
         imports.publish(path, root, plan['planSHA256'])
     assert not list((root / 'runs').glob('sae-import-*'))
+
+
+@pytest.mark.parametrize('model', ['example/model', 'google/gemma-3-27b-it', 'google/gemma-3-12b-it'])
+@pytest.mark.parametrize('tier', [None, 'testing', 'evidence'])
+def test_custom_intended_use_wins_over_published_policy(source, model, tier):
+    from steerlab_server.jlens import importer
+    path, root, spec = source
+    spec['modelID'] = model
+    if tier is not None:
+        spec['lens']['tier'] = tier
+    path.write_text(json.dumps(spec))
+    plan = imports.inspect_source(path, root)
+    assert plan['details']['tier'] == (tier or 'testing')
+    result = imports.publish(path, root, plan['planSHA256'])
+    record = lens_store.resolve(result['lensID'], str(root))
+    assert importer.tier_of(model, record) == (tier or 'testing', 'custom-artifact')
+    assert record.qualifications == []
+
+
+def test_intended_use_is_reviewed_and_validated(source):
+    path, root, spec = source
+    plan = imports.inspect_source(path, root)
+    spec['lens']['tier'] = 'evidence'
+    path.write_text(json.dumps(spec))
+    with pytest.raises(ImportRefusal, match='changed'):
+        imports.publish(path, root, plan['planSHA256'])
+    for invalid in ('qualified', None, [], {}):
+        spec['lens']['tier'] = invalid
+        path.write_text(json.dumps(spec))
+        with pytest.raises(ImportRefusal, match='lens.tier'):
+            imports.inspect_source(path, root)
+
+
+def test_selected_folder_aliases_work_but_nested_redirects_do_not(source, tmp_path):
+    path, root, spec = source
+    alias = tmp_path / 'alias'
+    alias.symlink_to(tmp_path, target_is_directory=True)
+    plan = imports.inspect_source(alias / 'source/import.json', alias / 'workspace')
+    canonical = imports.inspect_source(path, root)
+    assert plan == canonical
+    imports.publish(alias / 'source/import.json', alias / 'workspace', plan['planSHA256'])
+    (path.parent / 'nested').symlink_to(path.parent, target_is_directory=True)
+    spec['tensorFile'] = 'nested/weights.safetensors'
+    path.write_text(json.dumps(spec))
+    with pytest.raises(ImportRefusal, match='symbolic'):
+        imports.inspect_source(path, root)
+
+
+@pytest.mark.parametrize('container', ['npz', 'safetensors'])
+def test_reader_only_materializes_declared_keys(source, container, monkeypatch):
+    from steerlab_server.experiment import artifact_sources
+    path, root, spec = source
+    spec['tensorFile'] = 'selected.' + container
+    weights = path.with_name(spec['tensorFile'])
+    values = {'map': np.eye(2, dtype=np.float16), 'unused': np.full((3, 3), np.nan)}
+    if container == 'npz':
+        # An unselected object entry must not require unsafe pickle loading.
+        values['unused'] = np.array([object()])
+        np.savez(weights, **values)
+    else:
+        save_file(values, str(weights))
+    path.write_text(json.dumps(spec))
+    tensors = artifact_sources.read_tensors(weights, ['map'])
+    assert set(tensors.values) == {'map'}
+    def no_array(*args):
+        raise AssertionError('Lens validation must not widen tensors')
+    monkeypatch.setattr(artifact_sources.Tensors, 'array', no_array)
+    plan = imports.inspect_source(path, root)
+    imports.publish(path, root, plan['planSHA256'])
+
+
+def test_bf16_lens_validation_retains_native_precision(source, monkeypatch):
+    import torch
+    from safetensors.torch import save_file as save_torch
+    from steerlab_server.experiment import artifact_sources
+    path, root, _ = source
+    save_torch({'map': torch.eye(2, dtype=torch.bfloat16)}, str(path.with_name('weights.safetensors')))
+    original = torch.Tensor.to
+    def no_widen(self, *args, **kwargs):
+        assert kwargs.get('dtype') != torch.float64
+        return original(self, *args, **kwargs)
+    monkeypatch.setattr(torch.Tensor, 'to', no_widen)
+    plan = imports.inspect_source(path, root)
+    result = imports.publish(path, root, plan['planSHA256'])
+    record = lens_store.resolve(result['lensID'], str(root))
+    assert lens_store.load_layer(record, 1, root=str(root)).dtype == torch.bfloat16
+
+
+def test_unused_bf16_does_not_require_torch(source, monkeypatch):
+    import sys
+    import torch
+    from safetensors.torch import save_file as save_torch
+    from steerlab_server.experiment import artifact_sources
+    path, _, _ = source
+    weights = path.with_name('weights.safetensors')
+    save_torch({'map': torch.eye(2, dtype=torch.float16),
+                'unused': torch.ones((2, 2), dtype=torch.bfloat16)}, str(weights))
+    monkeypatch.setitem(sys.modules, 'torch', None)
+    reader = artifact_sources.read_tensors(weights, ['map'])
+    assert reader.framework == 'numpy'
+    assert reader.shape('map') == (2, 2)
+
+
+@pytest.mark.parametrize('container', ['npz', 'safetensors'])
+def test_selected_key_typo_names_available_tensors(source, container):
+    path, root, spec = source
+    spec['tensorFile'] = 'selected.' + container
+    weights = path.with_name(spec['tensorFile'])
+    if container == 'npz':
+        np.savez(weights, map=np.eye(2, dtype=np.float16))
+    else:
+        save_file({'map': np.eye(2, dtype=np.float16)}, str(weights))
+    spec['lens']['layers'] = {'1': 'typo'}
+    path.write_text(json.dumps(spec))
+    with pytest.raises(ImportRefusal, match="Tensor 'typo' is absent. Available keys: .*map"):
+        imports.inspect_source(path, root)

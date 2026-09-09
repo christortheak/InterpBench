@@ -23,7 +23,7 @@ import Testing
         try tensor.write(to: weights)
         let description = root.appending(component: "import.json")
         let spec: [String: Any] = ["schemaVersion": 1, "kind": "jlens", "modelID": "example/model", "hiddenSize": 2,
-                                  "layerCount": 4, "tensorFile": "weights.safetensors", "lens": ["targetLayer": 3, "layers": ["1": "map"]]]
+                                  "layerCount": 4, "tensorFile": "weights.safetensors", "lens": ["tier": "evidence", "targetLayer": 3, "layers": ["1": "map"]]]
         try JSONSerialization.data(withJSONObject: spec).write(to: description)
         let selection = try ArtifactImportSelection.read(description, expectedKind: "jlens")
         #expect(selection.files.count == 2)
@@ -32,6 +32,8 @@ import Testing
         let payload: [String: JSONValue] = ["workspaceRoot": .string(root.path), "descriptionFile": .string(description.path)]
         let review = try await DiagnosticWorkspace.perform("artifact-plan", payload: payload, python: python, source: repository.appending(component: "Server"))
         guard case .object(let object) = review else { Issue.record("Missing plan"); return }
+        guard case .object(let details) = object["details"] else { Issue.record("Missing details"); return }
+        #expect(details["tier"] == .string("evidence"))
         let hash = try #require(object["planSHA256"])
         let result = try await DiagnosticWorkspace.perform("artifact-import", payload: payload.merging(["planSHA256": hash]) { _, new in new }, python: python, source: repository.appending(component: "Server"))
         guard case .object(let output) = result, case .string(let directory) = output["outputDirectory"] else { Issue.record("Missing output"); return }
@@ -42,6 +44,14 @@ import Testing
         #expect(record.fit?.revisionKnown == false)
         #expect(record.sourceLayers == [1])
         #expect(record.qualifications?.isEmpty == true)
+        #expect(record.tier == "evidence")
+        #expect(record.tierSource == "custom-artifact")
+        #expect(record.intendedUse(catalogTier: "testing") == "evidence")
+        var testing = record
+        testing.tier = "testing"
+        #expect(testing.intendedUse(catalogTier: "evidence") == "testing")
+        testing.tierSource = "declared"
+        #expect(testing.intendedUse(catalogTier: "evidence") == "evidence")
         #expect(try JSONDecoder().decode(JLensRecord.self, from: JSONEncoder().encode(record)) == record)
         #expect(try Data(contentsOf: URL(filePath: directory + "/source/tensorFile.safetensors")) == tensor)
         try Data("changed".utf8).write(to: description)

@@ -90,8 +90,18 @@ public struct JLensRecord: Codable, Sendable, Identifiable, Equatable {
     public var substrate: String?
     public var importedAt: String?
     public var qualifications: [JLensQualification]?
+    public var tier: String?
+    public var tierSource: String?
 
     public var id: String { lensID }
+
+    /// Match the owner's custom declaration / published catalog precedence.
+    public func intendedUse(catalogTier: String?) -> String {
+        if tierSource == "custom-artifact" {
+            return ["testing", "evidence"].contains(tier ?? "") ? tier! : "unknown"
+        }
+        return catalogTier ?? tier ?? "unknown"
+    }
 
     public var passingQualifications: [JLensQualification] {
         (qualifications ?? []).filter(\.passed)

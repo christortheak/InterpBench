@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import re
 import stat
-import sys
 
 
 class ImportRefusal(ValueError):
@@ -23,13 +22,28 @@ def digest(path):
     return h.hexdigest()
 
 
-def ordinary(path):
+def workspace_root(path):
+    root = Path(path).resolve(strict=True)
+    if not root.is_dir():
+        raise ImportRefusal('Choose an existing workspace folder.')
+    return root
+
+
+def ordinary(path, *, root=None):
     path = Path(os.path.abspath(path))
-    # macOS presents temporary files through these system-owned aliases. Only
-    # normalize these aliases; arbitrary source symlinks still need repair.
-    if sys.platform == 'darwin' and len(path.parts) > 1 and path.parts[1] in ('tmp', 'var'):
-        path = Path('/private').joinpath(*path.parts[1:])
-    for component in [*reversed(path.parents), path]:
+    # The explicitly selected folder may be reached through a host's home or
+    # scratch alias. Files and relative components BELOW that anchor may not.
+    anchor = Path(root).absolute() if root is not None else path.parent
+    try:
+        relative = path.relative_to(anchor)
+    except ValueError as exc:
+        raise ImportRefusal('Source files must remain inside their selected folder.') from exc
+    base = workspace_root(anchor)
+    path = base / relative
+    current = base
+    for part in relative.parts:
+        current = current / part
+        component = current
         mode = component.lstat().st_mode
         if stat.S_ISLNK(mode) or not (stat.S_ISDIR(mode) or (component == path and stat.S_ISREG(mode))):
             raise ImportRefusal('Choose ordinary files and directories, without symbolic links.')
@@ -84,7 +98,7 @@ def description(path):
         relative = Path(filename)
         if relative.is_absolute() or '\\' in filename or '\0' in filename or any(p in ('', '.', '..') for p in filename.split('/')):
             raise ImportRefusal(f'{field} must be relative to the description folder, without parent traversal.')
-        files[field] = ordinary(path.parent / relative)
+        files[field] = ordinary(path.parent / relative, root=path.parent)
     source = spec.get('source', {})
     if not isinstance(source, dict) or source.keys() - {'repository', 'revision', 'url'}:
         raise ImportRefusal('Source provenance accepts repository, revision, and url; omit unknown values.')
@@ -97,20 +111,34 @@ def description(path):
     return spec, files
 
 
-def read_tensors(path):
+def read_tensors(path, keys=None):
     try:
-        return Tensors(path)
+        return Tensors(path, keys=keys)
     except ImportRefusal:
         raise
     except Exception as exc:
         raise ImportRefusal('Cannot read this tensor file in its declared format. Check that the download or export is complete, and use safetensors, numeric NPZ, or a tensor-only PyTorch checkpoint.') from exc
 
 
+def selected_keys(keys, available):
+    available = list(available)
+    if keys is None:
+        return available
+    for key in keys:
+        if key not in available:
+            raise ImportRefusal(f'Tensor {key!r} is absent. Available keys: {available}')
+    return keys
+
+
 class Tensors:
     """Retain source precision; NumPy handles portable floats, torch is optional."""
-    def __init__(self, path):
+    def __init__(self, path, *, keys=None):
         self.framework = 'numpy'
         self.metadata = {}
+        if keys is not None:
+            keys = list(keys)
+            if any(not isinstance(key, str) or not key for key in keys):
+                raise ImportRefusal('Supply nonempty tensor keys from the source file.')
         suffix = Path(path).suffix.lower()
         if suffix in ('.pt', '.pth'):
             try:
@@ -138,11 +166,12 @@ class Tensors:
                 if sum(item.file_size for item in archive.infolist()) > 32 * 1024**3:
                     raise ImportRefusal('The expanded NPZ exceeds the 32 GiB import bound; export the required tensors as safetensors.')
             with np.load(path, allow_pickle=False) as payload:
-                self.values = {key: payload[key] for key in payload.files}
+                self.values = {key: payload[key] for key in selected_keys(keys, payload.files)}
         elif suffix == '.safetensors':
             from safetensors import safe_open
             with safe_open(path, framework='numpy') as handle:
-                needs_torch = any(handle.get_slice(k).get_dtype() == 'BF16' for k in handle.keys())
+                selected = selected_keys(keys, handle.keys())
+                needs_torch = any(handle.get_slice(k).get_dtype() == 'BF16' for k in selected)
             if needs_torch:
                 try:
                     import torch  # noqa: F401 — optional BF16 reader
@@ -150,11 +179,11 @@ class Tensors:
                     raise ImportRefusal('BF16 sources need the optional PyTorch reader; use the Python engine or a source exported as F16/F32 safetensors.') from exc
                 self.framework = 'torch'
             with safe_open(path, framework='pt' if needs_torch else 'numpy', device='cpu') as handle:
-                self.values = {k: handle.get_tensor(k) for k in handle.keys()}
+                self.values = {k: handle.get_tensor(k) for k in selected}
         else:
             raise ImportRefusal('Choose .safetensors, numeric .npz, or a tensor-only .pt/.pth checkpoint. Other containers need an explicit format adapter.')
 
-    def array(self, key):
+    def validated(self, key):
         import numpy as np
         if not isinstance(key, str) or not key:
             raise ImportRefusal('Supply a nonempty tensor key from the source file.')
@@ -165,14 +194,27 @@ class Tensors:
             import torch
             if not isinstance(value, torch.Tensor) or not value.is_floating_point() or value.layout != torch.strided:
                 raise ImportRefusal(f'{key} must be a dense floating-point tensor.')
-            array = value.detach().to(dtype=torch.float64).numpy()
+            finite = bool(torch.isfinite(value).all())
         else:
             array = np.asarray(value)
             if array.dtype.kind != 'f' or array.dtype.itemsize not in (2, 4, 8):
                 raise ImportRefusal(f'{key} must be an F16, F32, or F64 floating-point tensor.')
-        if not np.isfinite(array).all():
+            finite = bool(np.isfinite(array).all())
+        if not finite:
             raise ImportRefusal(f'{key} contains NaN or infinity; supply finite fitted tensors.')
-        return array
+        return value
+
+    def shape(self, key):
+        return tuple(self.validated(key).shape)
+
+    def array(self, key):
+        # SAE arithmetic retains its existing conversion; lens validation uses
+        # shape() and never needs a widened NumPy copy of the matrix.
+        value = self.validated(key)
+        if self.framework == 'torch':
+            import torch
+            return value.detach().to(dtype=torch.float64).numpy()
+        return value
 
     def dtype_description(self, keys):
         kinds = {str(self.values[key].dtype).replace('torch.', '') for key in keys}

@@ -71,6 +71,11 @@ private struct ArtifactImportSheet: View {
                         Text("Model: \(plan.modelID)")
                         Text("Fit revision: \(plan.modelRevision ?? "Unknown — retained as unknown")")
                         Text("Workspace: \(plan.workspaceRoot)").font(.caption).textSelection(.enabled)
+                        if isLens, case .string(let tier) = plan.details["tier"] {
+                            Text("Intended use: \(tier == "evidence" ? "Study evidence" : "Testing and rehearsal")")
+                            Text("This choice comes from lens.tier in the description and defaults to testing. Study use still needs qualification for the exact model runtime; import does not establish validity.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         DisclosureGroup("Layer mapping and conversion details") {
                             ForEach(plan.details.keys.sorted(), id: \.self) { key in
                                 if let value = plan.details[key], let data = try? JSONEncoder().encode(value) {
@@ -161,7 +166,7 @@ private struct ArtifactImportSheet: View {
         Read the repository's docs/GENERAL-ARTIFACT-IMPORTS.md for the exact JSON schema and examples.
         Identify the actual model, layer mapping, tensor key/layout, and any known fit revision. Ask me about missing metadata; do not guess it.
         Keep original files, use relative paths beside the description, and leave unknown modelRevision null.
-        \(isLens ? "The lens must map declared source layers to the final block before final normalization." : "Import one residual-post SAE decoder feature, with explicit rows/columns orientation and a compatible measured calibrationArtifact from the destination workbench.")
+        \(isLens ? "The lens must map declared source layers to the final block before final normalization. Ask whether I intend testing or study evidence, and set lens.tier to testing or evidence accordingly; this is separate from qualification." : "Import one residual-post SAE decoder feature, with explicit rows/columns orientation and a compatible measured calibrationArtifact from the destination workbench.")
         Do not train anything, generate data, download weights, or transfer files until we agree to those actions.
         """
         let guide = (try? ScienceCatalog.guide(isLens ? "jlens" : "sae").text) ?? ""
@@ -170,7 +175,7 @@ private struct ArtifactImportSheet: View {
     }
 
     private func detailLabel(_ key: String) -> String {
-        ["sourceLayers": "Fitted source layers", "targetLayer": "Final target layer",
+        ["tier": "Intended use", "sourceLayers": "Fitted source layers", "targetLayer": "Final target layer",
          "hiddenSize": "Residual-stream width", "promptsFitted": "Prompts used for fitting",
          "conversion": "Conversion", "layer": "Injection layer", "feature": "Feature number",
          "label": "Feature label", "rawDecoderNorm": "Original decoder length",

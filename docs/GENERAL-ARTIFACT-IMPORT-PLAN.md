@@ -48,3 +48,22 @@ vector library. Check all declared client and API entry points, shared resources
 identity generation, both full suites, and the complete diff. Live cluster and
 scientific qualification remain separately recorded acceptance work. Integration
 is by the maintainer's agents through the researcher.
+
+## Audit follow-up (b5d64b3)
+
+- Custom lenses may declare `lens.tier` as `testing` (the default) or `evidence`.
+  This records intended use, not qualification. Custom declarations take priority
+  over the published-source model table; published imports retain their policy.
+  Freeze still checks exact instrument/runtime qualification and identity pins.
+- Canonicalize explicitly selected workspace/source-folder anchors once. Keep
+  source-file and within-anchor traversal/symlink checks; do not create a missing
+  workspace or allow an HTTP source outside the serving workspace.
+- N4: read only selected safetensors/NPZ keys, and check lens shapes/finiteness in
+  stored precision. Preserve SAE conversion arithmetic, saved tensor dtypes,
+  source hashes, and publication from reviewed copies. Keep the existing writer;
+  this does not claim a fully streaming or constant-memory import.
+- Explain the already-added model/revision derivation check in the changelog.
+  Validate intended-use resolution through freeze, aliases through import,
+  selected-key reads and precision preservation, both client surfaces, and both
+  full suites. Measure representative reader memory/time separately from model
+  execution or scientific qualification.

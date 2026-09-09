@@ -177,7 +177,9 @@ class JLensRecord:
     #: that came from: ``"curated"`` when the model has a row in
     #: ``importer.SUPPORTED``, ``"declared"`` when the researcher declared it
     #: at import (``jlens import --tier``) because the model has a published
-    #: lens but no curated row. A curated row always wins over a declaration.
+    #: lens but no curated row. ``"custom-artifact"`` carries the researcher's
+    #: intended use independently of the published table; for published imports,
+    #: a curated row still wins over a declaration.
     #: ``None`` on records written before 2026-09-05, which resolve through
     #: the curated table alone, exactly as they always did.
     tier: str | None = None

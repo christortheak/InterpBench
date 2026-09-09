@@ -159,8 +159,8 @@ struct JSpacePanelSection: View {
     /// reachable, and announced as a selectable control (audit 2026-09-06).
     private func lensRow(_ lens: JLensRecord) -> some View {
         let isSelected = selectedLensID == lens.lensID
-        let tier = catalog?.supported
-            .first(where: { $0.modelID == lens.fit?.modelID })?.tier ?? "testing"
+        let tier = lens.intendedUse(catalogTier: catalog?.supported
+            .first(where: { $0.modelID == lens.fit?.modelID })?.tier)
         return Button {
             select(lens)
         } label: {
@@ -561,7 +561,7 @@ struct TierBadge: View {
         Group {
             if expanded {
                 Label(
-                    "\(tier) tier — outside this study's evidence scope",
+                    isEvidence ? "Intended for study evidence; qualification is separate" : "\(tier) tier — outside this study's evidence scope",
                     systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
             } else {
@@ -573,9 +573,8 @@ struct TierBadge: View {
         .foregroundStyle(isEvidence ? Color.green : Color.orange)
         .clipShape(Capsule())
         .help(isEvidence
-              ? "evidence tier: this study's chosen model — may be qualified and cited"
-              : "testing tier: fully usable, but outside this study's evidence "
-                + "scope, so it cannot be qualified or cited here")
+              ? "Intended for study evidence. Qualification for the exact lens and runtime is still required."
+              : "Testing and rehearsal. You can explore and qualify this lens, but ordinary study freeze requires evidence intent.")
     }
 }
 

@@ -18,6 +18,13 @@ migration that rewrites frozen bytes.
   tensor-only PyTorch checkpoints; retain original bytes, hashes, and unknown
   provenance without rewriting existing artifacts. SAE decoder features use
   measured model calibration. Imports confer no scientific qualification.
+  Custom lenses declare testing or evidence intent independently of published
+  model policy; evidence use still needs runtime qualification. Selected tensor
+  loading and native-precision lens validation reduce import memory overhead.
+  Folder aliases work without admitting source redirects.
+  Token-vector derivation now checks known fit model and revision identities for
+  existing published lenses as well as custom lenses; mismatches need the
+  matching checkpoint or lens, and unknown fit revisions remain unknown.
 
 - Researcher guidance and authoring: unified vector creation, guided OptVec and
   SAE dialogs, discoverable J-lenses, per-vector Playground switches, readable

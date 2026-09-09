@@ -13,9 +13,7 @@ from .artifact_sources import ImportRefusal
 
 def inspect_source(description_file, root):
     """Read-only plan. Hashes cover the description, tensors, and calibration."""
-    root = artifact_sources.ordinary(root)
-    if not root.is_dir():
-        raise ImportRefusal('Choose an existing workspace folder.')
+    root = artifact_sources.workspace_root(root)
     description_file = Path(description_file)
     if not description_file.is_absolute(): description_file = root / description_file
     spec, files = artifact_sources.description(description_file)
@@ -25,7 +23,7 @@ def inspect_source(description_file, root):
         files['calibrationJSON'] = artifact_sources.ordinary(str(base) + '.json')
         files['calibrationTensors'] = artifact_sources.ordinary(str(base) + '.safetensors')
     before = {name: artifact_sources.digest(path) for name, path in files.items()}
-    tensors = artifact_sources.read_tensors(files['tensorFile'])
+    tensors = artifact_sources.read_tensors(files['tensorFile'], tensor_keys(spec))
     warnings = ['Import does not establish behavioral validity or qualify this instrument.']
     if spec.get('modelRevision') is None:
         warnings.append('The artifact’s fit-time model revision is unknown; it will remain unknown.')
@@ -50,12 +48,30 @@ def inspect_source(description_file, root):
     return plan
 
 
+def tensor_keys(spec):
+    if spec['kind'] == 'jlens':
+        block = spec.get('lens')
+        mapping = block.get('layers') if isinstance(block, dict) else None
+        if not isinstance(mapping, dict) or not mapping:
+            raise ImportRefusal('Declare each fitted source layer and its tensor key.')
+        keys = list(mapping.values())
+    else:
+        block = spec.get('sae')
+        keys = [block.get('decoderKey') if isinstance(block, dict) else None]
+    if any(not isinstance(key, str) or not key for key in keys):
+        raise ImportRefusal('Supply nonempty tensor keys from the source file.')
+    return keys
+
+
 def lens_details(spec, tensors):
     block = spec.get('lens')
-    if not isinstance(block, dict) or block.keys() - {'targetLayer', 'layers', 'promptsFitted', 'corpus', 'maxSeqLen'}:
+    if not isinstance(block, dict) or block.keys() - {'targetLayer', 'layers', 'promptsFitted', 'corpus', 'maxSeqLen', 'tier'}:
         raise ImportRefusal('Supply lens targetLayer and layers (source layer → tensor key), with optional fitting metadata.')
     if 'sae' in spec or 'calibrationArtifact' in spec:
         raise ImportRefusal('A lens import does not select an SAE feature or use vector calibration.')
+    tier = block.get('tier', 'testing')
+    if tier not in ('testing', 'evidence'):
+        raise ImportRefusal('Set lens.tier to testing (rehearsal) or evidence (intended study use). Qualification is separate.')
     target = artifact_sources.integer(block.get('targetLayer'), 'targetLayer')
     if target != spec['layerCount'] - 1:
         raise ImportRefusal('The current readout needs transport to the final block before final normalization. Supply that lens, not an intermediate-target map.')
@@ -69,7 +85,7 @@ def lens_details(spec, tensors):
         layer = int(number)
         if layer >= target:
             raise ImportRefusal('Fitted source layers must precede the final target layer.')
-        if tensors.array(key).shape != (spec['hiddenSize'], spec['hiddenSize']):
+        if tensors.shape(key) != (spec['hiddenSize'], spec['hiddenSize']):
             raise ImportRefusal(f'Tensor {key} must be a square hiddenSize × hiddenSize Jacobian.')
         layers.append(layer)
     if len(set(mapping.values())) != len(mapping):
@@ -89,7 +105,7 @@ def lens_details(spec, tensors):
     if 'corpus' in block:
         artifact_sources.text(block['corpus'], 'the fitting corpus')
     return {'sourceLayers': sorted(layers), 'targetLayer': target, 'hiddenSize': spec['hiddenSize'],
-            'promptsFitted': prompts, 'conversion': 'J_l @ h; preserve stored dtype and explicit layer mapping'}
+            'promptsFitted': prompts, 'tier': tier, 'conversion': 'J_l @ h; preserve stored dtype and explicit layer mapping'}
 
 
 def sae_details(spec, tensors, root, files):
@@ -162,8 +178,8 @@ def publish(description_file, root, expected):
             if artifact_sources.digest(copied) != item['sha256']:
                 raise ImportRefusal('A source changed while being copied. No artifact was published; review again.')
             captured[name] = copied
-        tensors = artifact_sources.read_tensors(captured['tensorFile'])
         spec = json.loads(captured['description'].read_bytes())
+        tensors = artifact_sources.read_tensors(captured['tensorFile'], tensor_keys(spec))
         if spec != plan['description']:
             raise ImportRefusal('Captured description differs from its review.')
         if kind == 'jlens':
@@ -198,7 +214,7 @@ def publish_lens(spec, plan, tensors, staged, target, root, artifact_id):
         nPrompts=details['promptsFitted'] or 0,
         converted=ConvertedRef(path=(target / tensor_path.name).relative_to(root).as_posix(),
             dtype=tensors.dtype_description(spec['lens']['layers'].values()), sha256=artifact_sources.digest(tensor_path), layerCount=len(details['sourceLayers'])),
-        configHash=plan['files']['description']['sha256'], tier='testing', tierSource='custom-artifact')
+        configHash=plan['files']['description']['sha256'], tier=details['tier'], tierSource='custom-artifact')
     write_record(record, str(staged / 'lens.json'))
     return {'kind': 'jlens', 'lensID': artifact_id, 'record': record.to_dict()}
 

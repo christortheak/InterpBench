@@ -3257,6 +3257,14 @@ def _check_jlens_readout(name: str, d: dict, root: str | None) -> None:
     # one thing no upstream file can supply). Resolved through ONE helper so
     # freeze, qualify and run start cannot disagree.
     tier, tier_source = jlens_importer.tier_of(model_id, record)
+    if tier_source == "custom-artifact" and tier != "evidence":
+        raise ExperimentStoreError(
+            f"cannot freeze '{name}': this custom lens is declared {tier}-tier. "
+            "For intended study use, set lens.tier to evidence in its source "
+            "description, review with science artifact-plan, and publish a new "
+            "lens with science artifact-import. Qualify that lens for this "
+            "runtime and update the draft's pins; the declaration alone is "
+            "not qualification.")
     if tier == "unknown":
         raise ExperimentStoreError(
             f"cannot freeze '{name}': '{model_id}' has no evidence tier — it "

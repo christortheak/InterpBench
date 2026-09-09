@@ -35,6 +35,7 @@ metadata, never infer a model revision or layer mapping from a filename.
   "layerCount": 4,
   "tensorFile": "lens.safetensors",
   "lens": {
+    "tier": "testing",
     "targetLayer": 3,
     "layers": {"0": "layer_0", "2": "layer_2"},
     "promptsFitted": 100,
@@ -62,3 +63,12 @@ The app's J-lens dialog offers **Import my own lens files** and explicitly stage
 files to the connected Python workbench before review. Import publishes a fresh
 lens ID, retains source copies, and does not qualify it or train anything. Use
 that explicit lens ID when several fits exist for the same model.
+
+Choose intended use with the researcher: optional `lens.tier` is `testing`
+(the default, for rehearsal) or `evidence` (intended study use). This declaration
+applies to every custom lens, including models in the published catalog. It is
+not a claim of validity or a passing qualification. Freezing a study with this
+readout still needs qualification bound to the exact lens bytes, runtime, and
+layers, plus the study's normal pins. To change intended use, update the source
+description, review a fresh plan, and import a new lens; keep existing artifacts
+unchanged. Published-source imports retain their existing tier policy.
