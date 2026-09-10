@@ -28,6 +28,7 @@ struct MethodAuthoringSheet: View {
     @State private var choosingField: String?
     @State private var showingImporter = false
     @State private var showingExecution = false
+    @State private var showingCorpusPreparation = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -59,6 +60,7 @@ struct MethodAuthoringSheet: View {
                             .font(.caption).foregroundStyle(.secondary)
                         ForEach(workflow.fields.filter { isData($0) }) { field in inputRow(field) }
                         if workflow.id == "jlens-fit" {
+                            Button("Prepare corpus from existing data…") { showingCorpusPreparation = true }
                             Button("Copy corpus instructions for my agent") {
                                 do {
                                     let guide = try ScienceCatalog.guide("jlens").text
@@ -145,6 +147,12 @@ struct MethodAuthoringSheet: View {
             guard let client else { return }
             do { modelOptions = try await client.state().models }
             catch { modelNotice = "Could not list engine models. You can still enter a verified model identifier: " + error.localizedDescription }
+        }
+        .sheet(isPresented: $showingCorpusPreparation) {
+            FittingCorpusPreparationSheet(root: root, modelID: fields["modelID"] ?? "", revision: fields["revision"] ?? "") { inputs in
+                for (key, path) in inputs { fields[key] = path }
+                invalidateReview()
+            }
         }
         .sheet(isPresented: $showingExecution) {
             DiagnosticLifecycleSheet(root: root, client: client, initialJobID: nil, initialRequestFile: published)

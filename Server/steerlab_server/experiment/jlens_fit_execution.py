@@ -97,6 +97,11 @@ def execute(config, *, root, log=print, on_run_created=None):
         if on_run_created: on_run_created(str(run))
         inputs = run / 'inputs'; inputs.mkdir()
         (inputs / 'corpus.jsonl').write_bytes(corpus)
+        if config.corpusReceipt:
+            from .corpus_preparation import validate_receipt
+            receipt_bytes = read_pinned(config.corpusReceipt, root)
+            validate_receipt(receipt_bytes, config.corpus['sha256'])
+            (inputs / 'corpus-preparation.json').write_bytes(receipt_bytes)
         # Captured inputs remain immutable; working snapshots are separate scratch.
         state_parent = archives.ordinary(root, '.steerlab/jlens-fitting-state/' + run_id, missing=True)
         state_parent.mkdir(parents=True)
@@ -200,6 +205,7 @@ def execute(config, *, root, log=print, on_run_created=None):
                   'promptsFitted': count, 'rowsConsidered': next_row, 'skippedIndices': skipped,
                   'promptsFittedThisRun': count - starting_count, 'rowsConsideredThisRun': next_row - starting_row,
                   'continuationCompatibility': jlens_fit_identity.review(captured[0], identity) if captured else None,
+                  'corpusReceipt': config.corpusReceipt,
                   'continuedFrom': config.checkpoint, 'elapsedSeconds': time.perf_counter() - started,
                   'tensorSHA256': archives.file_hash(run / 'jacobians.safetensors'),
                   'qualification': 'notPerformed', 'fullDepth': layers == list(range(target)),

@@ -96,7 +96,7 @@ def draft(operation, answers, root):
 
 def publish(operation, answers, root, destination, expected):
     result = draft(operation, answers, root)
-    if result['planSHA256'] != expected: raise archives.Refusal('The answers or input bytes changed; review a fresh draft before publication.')
+    if result['planSHA256'] != expected: raise archives.Refusal('The answers, input bytes, or review information changed (including cached model details). Review a fresh draft before publication.')
     if len(archives.parts(destination)) < 2 or archives.parts(destination)[0] != 'requests':
         raise archives.Refusal('Publish under requests/<new-name>, separate from studies and immutable runs.')
     target = archives.ordinary(root, destination, missing=True)

@@ -366,3 +366,19 @@ def test_http_plan_and_child_execution_use_registered_fitting_owner(fitting, mon
     assert output['status'] == 'succeeded'
     assert output['result']['promptsFitted'] == 3
     assert Path(output['result']['artifactDescription']).is_file()
+
+
+def test_prepared_corpus_receipt_travels_and_is_captured_in_run(fitting):
+    from steerlab_server.experiment import corpus_preparation
+    root, config = fitting
+    preview = corpus_preparation.preview({'source':{'kind':'local','files':['corpus.jsonl']}, 'count':4, 'selection':'first'}, root)
+    saved = corpus_preparation.publish(preview['previewID'],preview['planSHA256'],'prompts/fitting/example',root)
+    config.update(saved['fittingInputs'])
+    request = {'operation':'jlens-fit','parameters':{'config':config}}
+    plan = managed_inputs.plan(request, root)
+    assert any(entry['path'].endswith('preparation.json') for entry in plan['files'])
+    result = run(root,config)
+    directory = Path(result['runDirectory'])
+    captured = directory/'inputs/corpus-preparation.json'
+    assert archives.file_hash(captured) == config['corpusReceipt']['sha256']
+    assert json.loads((directory/'fit-report.json').read_bytes())['corpusReceipt'] == config['corpusReceipt']

@@ -5,7 +5,7 @@ import Foundation
 /// Release builds read the bundled ServerPayload; only the interpreter and
 /// client dependencies live outside the signed bundle.
 public enum DiagnosticWorkspace {
-    public static let actions = ["artifact-plan", "artifact-import", "setup-start", "setup-inspect", "sae-check", "sae-show", "sae-pin-plan", "sae-pin", "interview", "draft", "publish", "input-plan", "package", "import", "custody", "verify-custody"]
+    public static let actions = ["corpus-preview", "corpus-publish", "artifact-plan", "artifact-import", "setup-start", "setup-inspect", "sae-check", "sae-show", "sae-pin-plan", "sae-pin", "interview", "draft", "publish", "input-plan", "package", "import", "custody", "verify-custody"]
 
     public static func perform(_ action: String, payload: [String: JSONValue],
                                python: URL? = nil, source: URL? = nil) async throws -> JSONValue {
@@ -107,8 +107,8 @@ enum DiagnosticWorkspaceCLI {
         let arguments = try DiagnosticArguments(invocation.args, namespace: "science", takesValue: invocation.verb != "custody")
         var payload: [String: JSONValue] = ["workspaceRoot": .string(ExperimentStore.workspaceRoot.path)]
         if let value = arguments.positional {
-            let key = arguments.verb.hasPrefix("artifact-") ? "descriptionFile" : arguments.verb.hasPrefix("sae-") ? "path" : ["interview", "draft", "publish"].contains(arguments.verb) ? "operation" : (["input-plan", "package"].contains(arguments.verb) ? "requestFile" : (arguments.verb == "import" ? "archivePath" : "receiptSHA256"))
-            payload[key] = .string(value)
+            let key = arguments.verb == "corpus-preview" ? "specText" : arguments.verb == "corpus-publish" ? "previewID" : arguments.verb.hasPrefix("artifact-") ? "descriptionFile" : arguments.verb.hasPrefix("sae-") ? "path" : ["interview", "draft", "publish"].contains(arguments.verb) ? "operation" : (["input-plan", "package"].contains(arguments.verb) ? "requestFile" : (arguments.verb == "import" ? "archivePath" : "receiptSHA256"))
+            payload[key] = .string(arguments.verb == "corpus-preview" ? try String(contentsOfFile: value, encoding: .utf8) : value)
         }
         if let path = arguments.flags["--answers"] { payload["answersText"] = .string(try String(contentsOfFile: path, encoding: .utf8)) }
         for (flag, key) in [("--experiment", "experiment"), ("--destination", "destination"), ("--archive", "archivePath"), ("--sha256", "archiveSHA256"), ("--plan-sha256", "planSHA256")] {

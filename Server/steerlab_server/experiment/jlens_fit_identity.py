@@ -44,8 +44,12 @@ def review(state, identity):
         changed = sorted(k for k in old.keys() | new.keys() if k != 'runtime' and old.get(k) != new.get(k))
         changed += ['runtime.' + k for k in old['runtime'].keys() | new['runtime'].keys()
                     if old['runtime'].get(k) != new['runtime'].get(k)]
-        raise FitError('Checkpoint numerical compatibility differs (' + ', '.join(sorted(changed)) +
-                       '). Use the matching runtime and inputs, or assess compatibility before continuing.')
+        device_hint = (' Device names are compared literally: cuda uses the current CUDA device, '
+                       'and cuda:0 names device 0. A spelling difference alone does not establish '
+                       'a numerical difference. Use the saved spelling with the intended device, '
+                       'or review a device migration.') if 'runtime.device' in changed else ''
+        raise FitError('Checkpoint compatibility settings differ (' + ', '.join(sorted(changed)) +
+                       '). Use the matching runtime and inputs, or assess compatibility before continuing.' + device_hint)
     return {'fittingContract': CONTRACT, 'compatible': True,
             'legacyContractRecognized': 'fittingContract' not in saved,
             'sourceDriverSHA256': saved['runtime'].get('driverSHA256'),

@@ -31,7 +31,7 @@ def build_router(state):
                     description_path(body.get('descriptionFile'), root)
                 return workspace_action(action, body)
         except (ValueError, OSError, KeyError, TypeError) as exc:
-            raise HTTPException(409, detail={'code': 'diagnosticTransportRefused', 'reason': str(exc), 'repairAction': archives.Refusal.repair_action}) from exc
+            raise HTTPException(409, detail={'code': 'diagnosticTransportRefused', 'reason': str(exc), 'repairAction': getattr(exc, 'repair_action', archives.Refusal.repair_action)}) from exc
 
     @router.post('/api/science/stage')
     def stage(body: dict):

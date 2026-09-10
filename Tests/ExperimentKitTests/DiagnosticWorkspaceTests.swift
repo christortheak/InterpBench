@@ -42,3 +42,30 @@ import Testing
         }
     }
 }
+
+@Suite(.serialized) struct FittingCorpusWorkspaceTests {
+    @Test func macPreparesAndPublishesThroughThePortableOwner() async throws {
+        let repository = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let python = try #require(ProcessInfo.processInfo.environment["STEERLAB_TEST_PYTHON"])
+        let root = FileManager.default.temporaryDirectory.appending(component: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("A complete existing source document.\nA second line.".utf8).write(to: root.appending(component: "source.txt"))
+        let spec = #"{"source":{"kind":"local","files":["source.txt"]},"count":1,"selection":"first"}"#
+        let preview = try await DiagnosticWorkspace.perform("corpus-preview", payload: ["workspaceRoot": .string(root.path), "specText": .string(spec)], python: URL(filePath: python), source: repository.appending(component: "Server"))
+        guard case .object(let fields) = preview else { Issue.record("Missing corpus preview"); return }
+        let identifier = try #require(fields["previewID"])
+        let hash = try #require(fields["planSHA256"])
+        let saved = try await DiagnosticWorkspace.perform("corpus-publish", payload: ["workspaceRoot": .string(root.path), "previewID": identifier, "planSHA256": hash, "destination": .string("prompts/fitting/example")], python: URL(filePath: python), source: repository.appending(component: "Server"))
+        guard case .object(let result) = saved else { Issue.record("Missing corpus publication"); return }
+        #expect(result["changed"] == .bool(true))
+        let bytes = try Data(contentsOf: root.appending(path: "prompts/fitting/example/corpus.jsonl"))
+        let row = try JSONDecoder().decode([String: String].self, from: bytes)
+        #expect(row["text"] == "A complete existing source document.\nA second line.")
+        await #expect(throws: (any Error).self) {
+            try await DiagnosticWorkspace.perform("corpus-publish", payload: ["workspaceRoot": .string(root.path), "previewID": identifier, "planSHA256": hash, "destination": .string("prompts/fitting/example")], python: URL(filePath: python), source: repository.appending(component: "Server"))
+        }
+        #expect(ExperimentCLIParser.spec(namespace: "science", verb: "corpus-preview") != nil)
+        #expect(ExperimentCLIParser.spec(namespace: "science", verb: "corpus-publish")?.requiredFlags == ["--plan-sha256", "--destination"])
+    }
+}

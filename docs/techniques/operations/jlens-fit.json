@@ -65,6 +65,13 @@
         "example": "{\"id\":\"sample-1\",\"text\":\"Replace this sentence with a sufficiently long passage from your chosen, documented corpus.\"}"
       },
       {
+        "id": "corpusReceipt",
+        "label": "Corpus preparation receipt",
+        "kind": "fileRef",
+        "required": false,
+        "help": "Optional preparation.json saved beside a prepared corpus. It records source revisions, selected records, sampling, and token review, and travels with the fitting inputs. Existing manually authored corpora do not need a receipt."
+      },
+      {
         "id": "maxPrompts",
         "label": "Maximum corpus rows (start with a small pilot)",
         "kind": "integer",
@@ -85,7 +92,7 @@
         "kind": "integer",
         "required": false,
         "default": "128",
-        "help": "Longer text is truncated to this many tokens. Raw text uses the tokenizer’s native special tokens; no chat template is added."
+        "help": "Longer text is truncated to this many tokens. Raw text uses the tokenizer\u2019s native special tokens; no chat template is added."
       },
       {
         "id": "skipFirst",

@@ -23,6 +23,7 @@ def workspace_action(action, payload):
         from . import setup
         return setup.inspect(payload.get('workspaceRoot'))
     required = {
+        'corpus-preview': {'specText'}, 'corpus-publish': {'previewID', 'planSHA256', 'destination'},
         'artifact-plan': {'descriptionFile'}, 'artifact-import': {'descriptionFile', 'planSHA256'},
         'sae-check': {'path'}, 'sae-show': {'path'},
         'sae-pin-plan': {'path', 'experiment'}, 'sae-pin': {'path', 'experiment', 'planSHA256'},
@@ -37,6 +38,10 @@ def workspace_action(action, payload):
     if not fields <= payload.keys() or payload.keys() - fields - optional or any(not isinstance(payload[k], str) or not payload[k] for k in fields):
         raise archives.Refusal('Supply exactly the declared action fields as nonempty strings.')
     root = str(Path(payload['workspaceRoot']).resolve())
+    if action in ('corpus-preview', 'corpus-publish'):
+        from ..experiment import corpus_preparation
+        if action == 'corpus-preview': return corpus_preparation.preview(json.loads(payload['specText']), root)
+        return corpus_preparation.publish(payload['previewID'], payload['planSHA256'], payload['destination'], root)
     if action in ('artifact-plan', 'artifact-import'):
         from ..experiment import artifact_imports
         if action == 'artifact-plan': return artifact_imports.inspect_source(payload['descriptionFile'], root)
@@ -70,6 +75,8 @@ def local(invocation):
         verb = invocation.spec.verb; validate(invocation, 0 if verb == 'custody' else 1)
         value = invocation.positionals[0] if invocation.positionals else None
         payload = {'workspaceRoot': paths.project_root()}
+        if verb == 'corpus-preview': payload['specText'] = Path(value).read_text()
+        if verb == 'corpus-publish': payload.update(previewID=value, destination=invocation.one('--destination'), planSHA256=invocation.one('--plan-sha256'))
         if verb in ('artifact-plan', 'artifact-import'): payload['descriptionFile'] = value
         if verb == 'artifact-import': payload['planSHA256'] = invocation.one('--plan-sha256')
         if verb.startswith('sae-'): payload['path'] = value
@@ -91,7 +98,7 @@ def local(invocation):
     except science_catalog.ScienceRefusal as exc:
         raise ClientRefusal(code=exc.code, reason=str(exc), repair_action=exc.repair_action) from exc
     except (ValueError, OSError, KeyError) as exc:
-        raise ClientRefusal(code='diagnosticTransportRefused', reason=str(exc), repair_action=archives.Refusal.repair_action) from exc
+        raise ClientRefusal(code='diagnosticTransportRefused', reason=str(exc), repair_action=getattr(exc, 'repair_action', archives.Refusal.repair_action)) from exc
 
 
 def remote(client, invocation, common):

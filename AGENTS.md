@@ -102,7 +102,7 @@ Pick the first path that applies:
 
 4. **Not a Mac** (Linux): use the cross-platform Python client.
    From this checkout, `pip install -e "Server"` installs `steerlab` — a
-   ~30 MB, no-GPU client that authors, verifies, freezes, packages, and
+   no-GPU client that authors, verifies, freezes, packages, and
    drives a runner (`steerlab run <exp> --runner <url>` is the whole
    round trip; evidence comes home verified). Add the `[runner]` extra to
    also EXECUTE locally via `steerlab runner serve` (a managed loopback

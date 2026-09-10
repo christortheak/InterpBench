@@ -3,6 +3,8 @@ from ..cli_envelope import CLIResult, VerbSpec
 from ..experiment import science_catalog
 
 VERB_SPECS = (
+    VerbSpec('science', 'corpus-preview', positional='<spec.json>', purpose='Read chosen data sources and capture a reproducible fitting corpus preview; public dataset files may download.'),
+    VerbSpec('science', 'corpus-publish', positional='<preview-id>', purpose='Save the reviewed fitting corpus and provenance in a new directory.', value_flags=frozenset({'--plan-sha256', '--destination'}), required_flags=frozenset({'--plan-sha256', '--destination'})),
     VerbSpec('science', 'artifact-plan', positional='<description.json>', purpose='Inspect a custom lens or SAE decoder and hash its source files without publishing.'),
     VerbSpec('science', 'artifact-import', positional='<description.json>', purpose='Import the reviewed instrument into a fresh library destination.', value_flags=frozenset({'--plan-sha256'}), required_flags=frozenset({'--plan-sha256'})),
     VerbSpec('science', 'sae-check', positional='<roster-path>', purpose='Inspect the SAE roster and surface qualification warnings without a model.'),
@@ -26,7 +28,7 @@ VERB_SPECS = (
 def run(invocation):
     from ..client_cli import ClientRefusal
     verb, args = invocation.spec.verb, invocation.positionals
-    if verb in {'artifact-plan', 'artifact-import', 'sae-check', 'sae-show', 'sae-pin-plan', 'sae-pin', 'interview', 'draft', 'publish', 'input-plan', 'package', 'import', 'custody', 'verify-custody'}:
+    if verb in {'corpus-preview', 'corpus-publish', 'artifact-plan', 'artifact-import', 'sae-check', 'sae-show', 'sae-pin-plan', 'sae-pin', 'interview', 'draft', 'publish', 'input-plan', 'package', 'import', 'custody', 'verify-custody'}:
         from .diagnostic_commands import local
         return local(invocation)
     if len(args) != (0 if verb == 'list' else 1):

@@ -1113,12 +1113,13 @@ def test_the_runner_extra_carries_the_engine_stack_and_all_still_has_it():
     core = _names(re.search(r"^dependencies = \[(.*?)\]", text,
                             re.S | re.M).group(1))
 
-    assert {"torch", "transformers", "accelerate", "fastapi", "uvicorn"} \
+    assert {"torch", "accelerate", "fastapi", "uvicorn"} \
         <= runner
     assert runner <= every, f"`all` lost: {sorted(runner - every)}"
-    # The client's own set stays small and stays OUT of the runner extra —
+    # CPU corpus/tokenizer dependencies belong to the client. Execution stays
+    # OUT of the client, and each floor is declared only once —
     # a package in both would be a floor stated twice.
-    assert core == {"numpy", "safetensors", "httpx"}
+    assert core == {"numpy", "safetensors", "httpx", "pyarrow", "huggingface-hub", "transformers"}
     assert not (core & runner)
     # THE invariant that let the split land without touching the committed
     # locks or the app's Local Engine flow: `--extra all` must resolve the
@@ -1130,7 +1131,7 @@ def test_the_runner_extra_carries_the_engine_stack_and_all_still_has_it():
     # asserted directly below rather than asserted by assertion.
     assert core | runner == {
         "numpy", "safetensors", "httpx", "torch", "transformers", "accelerate",
-        "huggingface-hub", "fastapi", "uvicorn", "pydantic"}
+        "huggingface-hub", "fastapi", "uvicorn", "pydantic", "pyarrow"}
 
 
 @pytest.mark.parametrize("lock", ("requirements-macos-arm64.lock",
@@ -1151,7 +1152,7 @@ def test_the_new_client_dependency_was_already_in_the_locks(lock):
     # and httpcore's h11. (`sniffio` was anyio's dependency once and is not
     # any more, which is exactly why this list is read off `pip show` rather
     # than remembered.)
-    for package in ("httpx", "httpcore", "h11", "anyio", "certifi", "idna"):
+    for package in ("httpx", "httpcore", "h11", "anyio", "certifi", "idna", "pyarrow", "huggingface-hub", "transformers", "tokenizers"):
         assert package in pins, (
             f"{lock} does not pin {package} — adding httpx to the client's "
             "dependencies is no longer free and the locks must be regenerated "

@@ -30,7 +30,7 @@ requires-python = ">=3.10"
 # running `--help`) imports none of torch/transformers/fastapi/uvicorn/peft/
 # sae_lens.
 #
-# WHAT IS IN THE CLIENT SET AND WHY. All three are real imports on a client
+# WHAT IS IN THE ORIGINAL CLIENT SET AND WHY. All three are real imports on a client
 # path, measured rather than assumed: `numpy` (vector math in `steering`,
 # reached through `experiment_store`'s import graph), `safetensors`
 # (`steering.vector_store` reads/writes the artifact format a pinned-artifact
@@ -53,6 +53,10 @@ dependencies = [
     "numpy>=1.26",
     "safetensors>=0.4",
     "httpx>=0.27",
+    # CPU corpus readers and offline tokenizer previews; imported only on demand.
+    "pyarrow>=18",
+    "huggingface_hub>=0.24",
+    "transformers>=4.44",
 ]
 
 [project.optional-dependencies]
@@ -63,14 +67,12 @@ dependencies = [
 # (which is compiled with `--extra all`, so its resolution is unchanged by
 # this split). See Server/README.md "Install roles".
 #
-# Do NOT fold these back into `dependencies` to "simplify": the whole point is
-# that a client install of the package is a ~30 MB wheel set instead of a
-# multi-gigabyte one, on a machine that may have no GPU at all.
+# Corpus preparation also uses HF metadata and tokenizer code on the client.
+# The GPU runtime (torch, accelerate, and execution extras) remains separate.
+# Client preparation never loads model weights.
 runner = [
     "torch>=2.2",
-    "transformers>=4.44",
     "accelerate>=0.30",
-    "huggingface_hub>=0.24",
     "fastapi>=0.110",
     "uvicorn>=0.29",
     "pydantic>=2.6",
@@ -117,9 +119,7 @@ dev = ["uv>=0.12.5,<0.13"]
 # locks or the app's Local Engine flow.
 all = [
     "torch>=2.2",
-    "transformers>=4.44",
     "accelerate>=0.30",
-    "huggingface_hub>=0.24",
     "fastapi>=0.110",
     "uvicorn>=0.29",
     "pydantic>=2.6",

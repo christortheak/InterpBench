@@ -65,11 +65,15 @@ def test_managed_target_changes_invalidate_plan(tmp_path):
     assert original['planSHA256'] != updated['planSHA256']
 
 
-def test_installer_lock_contains_only_lightweight_distribution_closure():
+def test_installer_lock_contains_only_cpu_client_distribution_closure():
     import re
     names = set(re.findall(r'^([a-z0-9_-]+)==', (RESOURCES / 'client-requirements.lock').read_text(), re.M))
-    assert {'numpy', 'safetensors', 'httpx'} <= names
-    assert names <= {'numpy', 'safetensors', 'httpx', 'httpcore', 'h11', 'anyio', 'certifi', 'idna', 'sniffio', 'typing-extensions'}
+    assert {'numpy', 'safetensors', 'httpx', 'pyarrow', 'huggingface-hub', 'transformers'} <= names
+    assert names <= {'numpy', 'safetensors', 'httpx', 'httpcore', 'h11', 'anyio', 'certifi', 'idna', 'sniffio', 'typing-extensions',
+                     'annotated-doc', 'click', 'filelock', 'fsspec', 'hf-xet', 'huggingface-hub',
+                     'markdown-it-py', 'mdurl', 'packaging', 'pyarrow', 'pygments', 'pyyaml',
+                     'regex', 'rich', 'shellingham', 'tokenizers', 'tqdm', 'transformers', 'typer'}
+    assert not names & {'torch', 'accelerate', 'peft', 'sae-lens', 'datasets'}
 
 
 def test_download_failure_preserves_active_environment_and_returns_repair(tmp_path):

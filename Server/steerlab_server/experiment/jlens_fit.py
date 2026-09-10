@@ -39,6 +39,7 @@ class FitConfig:
     device: str = 'cuda'
     tier: str = 'testing'
     checkpoint: dict | None = None
+    corpusReceipt: dict | None = None
 
     @classmethod
     def from_dict(cls, value):
@@ -50,6 +51,7 @@ class FitConfig:
             raise FitError('Pin the exact 40-character model commit before fitting.')
         try:
             cfg = cls(**{**value, 'corpus': file_ref(value.get('corpus'), 'corpus'),
+                         'corpusReceipt': file_ref(value['corpusReceipt'], 'corpusReceipt') if value.get('corpusReceipt') is not None else None,
                          'checkpoint': file_ref(value['checkpoint'], 'checkpoint') if value.get('checkpoint') is not None else None})
         except TypeError as exc:
             raise FitError('Supply modelID, revision, and corpus.') from exc
@@ -137,6 +139,9 @@ def fit(config, *, root=None, log=print, on_run_created=None):
 
 def preflight(config, root, *, log=None):
     rows = corpus_rows(read_pinned(config.corpus, root))
+    if config.corpusReceipt:
+        from .corpus_preparation import validate_receipt
+        validate_receipt(read_pinned(config.corpusReceipt, root), config.corpus['sha256'])
     checkpoint_files(config.to_dict(), root, log=log)
     if config.checkpoint:
         from .jlens_fit_identity import verified_identity

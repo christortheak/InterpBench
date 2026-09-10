@@ -125,3 +125,23 @@ assert r['status'] == 'geometryUnavailable'
 '''
     result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_cost_cache_change_names_review_information(tmp_path, monkeypatch):
+    from steerlab_server.experiment import method_authoring
+    (tmp_path/'corpus.jsonl').write_text('{"id":"row","text":"An existing source passage."}\n')
+    answers = dict(purpose='Explore', claim='Assess', controls='Separate text', selection='Pilot',
+                   fields=dict(modelID='example/model', revision='a'*40, corpus='corpus.jsonl'), advanced={})
+    monkeypatch.setattr(costs, 'cached_config', lambda *args: None)
+    draft = method_authoring.draft('jlens-fit', answers, tmp_path)
+    monkeypatch.setattr(costs, 'cached_config', lambda *args: ({'hidden_size': 8, 'num_hidden_layers': 3}, 'a'*64))
+    with pytest.raises(archives.Refusal, match='review information changed'):
+        method_authoring.publish('jlens-fit', answers, tmp_path, 'requests/pilot', draft['planSHA256'])
+    assert not (tmp_path/'requests/pilot').exists()
+
+
+def test_device_spelling_repair_does_not_claim_numerical_change():
+    old = numerical_identity(); new = deepcopy(old)
+    old['runtime']['device'] = 'cuda'; new['runtime']['device'] = 'cuda:0'
+    with pytest.raises(FitError, match='spelling difference alone does not establish'):
+        identity.review(state(old), new)

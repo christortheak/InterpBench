@@ -181,3 +181,45 @@ and licensing notes separately. Propose held-out passages separately for later
 readout assessment. Explain that this corpus fits an averaged instrument and
 does not establish a behavioral concept. Do not invent model commits, execute
 fitting, or download weights.
+
+## Preparing an existing fitting corpus
+
+The app's Fit a new lens → Data → Prepare corpus flow and both clients expose
+`science corpus-preview <spec.json>` and `science corpus-publish <previewID>
+--plan-sha256 <planSHA256> --destination prompts/fitting/<new-name> --json`.
+Use `--root <workspace>` on command lines. The workbench API equivalents are
+`POST /api/science/workspace/corpus-preview` with `workspaceRoot` and `specText`,
+and `corpus-publish` with `workspaceRoot`, `previewID`, `planSHA256`, and
+`destination`. All call one portable preparation owner.
+
+A minimal local specification is
+`{"source":{"kind":"local","files":["sources/text.jsonl"]},"count":1000,"seed":0}`.
+Sources may be text, JSONL, CSV, or Parquet files already in the workspace; the
+app can copy selected local originals there. Public dataset sources use
+`{"kind":"huggingface","dataset":"owner/dataset","revision":"main","files":["train/*.parquet"]}`.
+Choose actual repository paths for the intended configuration and split;
+preview resolves and records the exact dataset commit. It can download those
+public files, never model weights or dataset scripts. Gated sources need a
+local export. Selected files are bounded to 2 GiB, and output to 64 MiB.
+
+Optional fields: `textColumn` (default `text`), `documentColumn` (default null),
+`selection` (`seeded` or `first`), `seed` (default 0), `count` (default 1000),
+`minChars` (default 1), `passageChars` (0 keeps records), and `scanLimit` (default
+100000). Sampling covers only scanned records; inspect the actual counts and
+warnings. `first` with minimum 600 characters preserves the reference-style
+long-record selection policy; seeded sampling is a different policy. A passage
+is one seeded character window, not sentence segmentation. An optional
+`tokenizer` object (`modelID`, exact `revision`, `maxSeqLen`, `skipFirst`) previews
+lengths with a locally cached tokenizer; absence is guidance, not a data refusal.
+
+Preview captures candidate bytes in `.steerlab/corpus-preparations/` and shows
+examples. Publication verifies those bytes, creates a fresh directory, and
+returns `fittingInputs.corpus` and `fittingInputs.corpusReceipt`. Use both in the
+fit config; the receipt records sources, sampling, selected records, and token
+review, and is captured in the fitting run. Existing manually authored corpora
+can omit it. Prepare assessment text separately, preferably from another source
+split; this action does not establish document-level independence.
+
+Ask the researcher about the text population and sampling choices in plain
+language. Do not infer permission to download, generate, or delegate dataset
+creation from a model or concept choice. Preparation does not start fitting.
