@@ -12,6 +12,14 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Create-only directory publication now works on filesystems that reject the
+  no-replace rename flag (Lustre and NFS answer EINVAL): the engine claims the
+  target name with `mkdir` and renames the staged directory over the empty
+  directory it just created, so a name another author holds still refuses and
+  nothing created by anyone else is replaced. Staging diagnostic inputs,
+  fitting checkpoint snapshots, corpus publication and artifact imports were
+  all refused on the cluster before this.
+
 - J-lens checkpoint continuation now uses a versioned numerical compatibility
   contract, retaining source hashes as provenance so documentation-only deploys
   do not prevent continuation. The reviewed original driver is recognized;

@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import time
 from types import SimpleNamespace
@@ -346,3 +347,60 @@ def test_cleanup_quarantined_byte_change_restores_output_and_records_attention(c
     audit = next((Path(profile.metadata_root) / 'diagnostic-cleanup').glob('*.json'))
     record = json.loads(audit.read_text())
     assert record['state'] == 'attention' and str(output) in record['retained'] and record['removed'] == []
+
+
+def _unsupported_noreplace(monkeypatch):
+    import errno
+    calls = []
+    def native(source, target):
+        calls.append((source, target)); return errno.EINVAL
+    monkeypatch.setattr(archives, '_rename_noreplace', native)
+    return calls
+
+
+def test_publication_falls_back_to_claim_where_noreplace_rename_is_unsupported(tmp_path, monkeypatch):
+    """Lustre and NFS answer EINVAL to RENAME_NOREPLACE; the claim path must keep create-only semantics."""
+    calls = _unsupported_noreplace(monkeypatch)
+    source = tmp_path / 'source'; source.mkdir(); (source / 'file').write_text('original')
+    target = tmp_path / 'target'
+    archives.publish_directory(source, target)
+    assert calls and not source.exists() and (target / 'file').read_text() == 'original'
+
+
+def test_claim_publication_never_replaces_a_directory_another_author_holds(tmp_path, monkeypatch):
+    import errno
+    _unsupported_noreplace(monkeypatch)
+    source = tmp_path / 'source'; source.mkdir(); (source / 'file').write_text('original')
+    for populated in (False, True):
+        target = tmp_path / ('taken-' + str(populated)); target.mkdir()
+        if populated: (target / 'theirs').write_text('another author')
+        with pytest.raises(OSError) as failure: archives.publish_directory(source, target)
+        assert failure.value.errno == errno.EEXIST
+        assert source.is_dir() and (source / 'file').exists()
+        assert sorted(x.name for x in target.iterdir()) == (['theirs'] if populated else [])
+
+
+def test_claim_publication_releases_its_claim_when_the_rename_fails(tmp_path, monkeypatch):
+    import errno
+    _unsupported_noreplace(monkeypatch)
+    source = tmp_path / 'source'; source.mkdir(); (source / 'file').write_text('original')
+    target = tmp_path / 'target'
+    real_rename = os.rename
+    def written_into(src, dst):
+        # Another process writes into the freshly claimed directory before the rename lands.
+        Path(dst, 'intruder').write_text('x')
+        return real_rename(src, dst)
+    monkeypatch.setattr(os, 'rename', written_into)
+    with pytest.raises(OSError) as failure: archives.publish_directory(source, target)
+    assert failure.value.errno in (errno.ENOTEMPTY, errno.EEXIST)
+    assert source.is_dir() and (source / 'file').exists()
+    assert target.is_dir() and [x.name for x in target.iterdir()] == ['intruder']  # left for its author
+
+
+def test_native_noreplace_failures_other_than_unsupported_still_refuse(tmp_path, monkeypatch):
+    import errno
+    monkeypatch.setattr(archives, '_rename_noreplace', lambda source, target: errno.EEXIST)
+    source = tmp_path / 'source'; source.mkdir()
+    target = tmp_path / 'target'
+    with pytest.raises(OSError) as failure: archives.publish_directory(source, target)
+    assert failure.value.errno == errno.EEXIST and not target.exists() and source.is_dir()

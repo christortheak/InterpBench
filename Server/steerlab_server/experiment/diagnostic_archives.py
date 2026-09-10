@@ -1,4 +1,5 @@
 """Bounded, portable diagnostic transport and local byte custody (no GPU imports)."""
+import errno
 import hashlib
 import io
 import json
@@ -92,9 +93,22 @@ def publish_file(source, target):
 def publish_directory(source, target):
     """Atomic create-only directory rename on the supported Mac/Linux clients.
 
-    Refuse if the filesystem lacks the primitive; never fall back to replacing
-    an empty directory created by another author between a check and rename.
+    Refuse if the platform lacks a create-only primitive; never replace a
+    directory another author created between a check and a rename. Where the
+    filesystem itself rejects the no-replace rename flag (Lustre and NFS
+    answer EINVAL), publication claims the name with `mkdir` first — see
+    `_publish_by_claim`.
     """
+    error = _rename_noreplace(source, target)
+    if error == 0:
+        return None
+    if error in _NOREPLACE_UNSUPPORTED:
+        return _publish_by_claim(source, target)
+    raise OSError(error, os.strerror(error), str(target))
+
+
+def _rename_noreplace(source, target):
+    """The native no-replace rename; returns 0 or the errno it failed with."""
     import ctypes
     import sys
     library = ctypes.CDLL(None, use_errno=True)
@@ -113,9 +127,35 @@ def publish_directory(source, target):
             os.close(source_fd); os.close(target_fd)
     else:
         raise Refusal('This platform lacks atomic create-only directory publication.')
-    if result:
-        error = ctypes.get_errno()
-        raise OSError(error, os.strerror(error), str(target))
+    return ctypes.get_errno() if result else 0
+
+
+# errno values a filesystem returns when it does not implement the
+# no-replace rename flag at all (Lustre and NFS answer EINVAL; older kernels
+# ENOSYS/ENOTSUP). EEXIST and everything else keep their meaning.
+_NOREPLACE_UNSUPPORTED = frozenset(x for x in (
+    getattr(errno, 'EINVAL', None), getattr(errno, 'ENOSYS', None),
+    getattr(errno, 'ENOTSUP', None), getattr(errno, 'EOPNOTSUPP', None)) if x is not None)
+
+
+def _publish_by_claim(source, target):
+    """Create-only publication where RENAME_NOREPLACE is unsupported.
+
+    `mkdir` claims the target name atomically (EEXIST if any author holds
+    it), then the staged directory is renamed over the empty directory this
+    call just created — POSIX rename replaces only an EMPTY directory, so a
+    claim another process wrote into in between refuses with ENOTEMPTY and
+    is left for its author. Nothing created by anyone else is ever replaced.
+    """
+    os.mkdir(target)  # raises FileExistsError (EEXIST) when the name is taken
+    try:
+        os.rename(source, target)
+    except OSError:
+        try:
+            os.rmdir(target)  # only succeeds while the claim is still ours and empty
+        except OSError:
+            pass
+        raise
 
 
 def package(root, paths, destination, *, kind, context, expected_entries=None):
