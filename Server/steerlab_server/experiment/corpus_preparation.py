@@ -8,7 +8,7 @@ import tempfile
 import uuid
 
 from . import diagnostic_archives as archives
-from .corpus_sources import CorpusError, source_files
+from .corpus_sources import CorpusError, CorpusDestinationExists, source_files
 from .corpus_sampling import settings, sample, token_review
 
 MAX_OUTPUT_BYTES = 64 * 1024**2
@@ -93,7 +93,10 @@ def publish(identifier, expected, destination, root):
             if archives.file_hash(staged/name) != plan.get(field):
                 raise CorpusError('Captured corpus bytes changed after review. Prepare a fresh preview.')
         validate_receipt((staged/'preparation.json').read_bytes(), plan['corpusSHA256'])
-        archives.publish_directory(staged, target)
+        try:
+            archives.publish_directory(staged, target)
+        except FileExistsError as exc:
+            raise CorpusDestinationExists('This corpus folder already exists: ' + destination + '. Choose a new name; the existing corpus is unchanged.') from exc
     return {'changed': True, 'directory': str(target), 'fittingInputs': {
         'corpus': {'path': destination+'/corpus.jsonl', 'sha256': plan['corpusSHA256']},
         'corpusReceipt': {'path': destination+'/preparation.json', 'sha256': plan['receiptSHA256']}},

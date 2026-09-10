@@ -65,3 +65,58 @@ def test_start_requires_explicit_creation_and_preserves_existing_workspace(tmp_p
     assert result['result']['handoff']['agentGuide'] == str(root / 'AGENTS.md')
     code, result = cli('setup', 'start', str(root), '--create')
     assert code == 65 and (root / 'AGENTS.md').read_bytes() == before
+
+
+def test_older_environment_reports_missing_corpus_tools_but_can_start(tmp_path, monkeypatch):
+    from steerlab_server import client_dependencies as dependencies
+    real_run = dependencies.subprocess.run
+    def older_probe(command, **kwargs):
+        if command[1:3] == ['-I','-c']:
+            # Execute the real probe with the newer dependencies made unavailable.
+            guard = """
+import importlib.abc,sys
+class MissingCorpus(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {'pyarrow','huggingface_hub','transformers'}:
+            raise ModuleNotFoundError('Not installed in older client: '+fullname)
+sys.meta_path.insert(0,MissingCorpus())
+"""
+            command = [*command[:3], guard + command[3], *command[4:]]
+        return real_run(command, **kwargs)
+    monkeypatch.setattr(dependencies.subprocess, 'run', older_probe)
+    report = setup.inspect()
+    assert not report['clientReady'] and report['basicClientReady']
+    assert report['capabilities']['basicAuthoring']['ready']
+    assert all(not report['capabilities'][name]['ready'] for name in ('parquet','huggingFace','tokenPreview'))
+    assert 'Research Setup' in report['repairAction']
+    result = setup.start(tmp_path/'workspace', create=True)
+    assert result['readiness']['authoringReady'] and not result['readiness']['clientReady']
+    assert (tmp_path/'workspace/AGENTS.md').exists()
+
+
+def test_probe_handles_installed_but_broken_package(tmp_path, monkeypatch):
+    from steerlab_server import client_dependencies as dependencies
+    real_run = dependencies.subprocess.run
+    def broken_probe(command, **kwargs):
+        guard = """
+import importlib.abc,sys
+class BrokenParquet(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'pyarrow': raise OSError('Binary extension could not load')
+sys.meta_path.insert(0,BrokenParquet())
+"""
+        return real_run([*command[:3], guard+command[3], *command[4:]], **kwargs)
+    monkeypatch.setattr(dependencies.subprocess, 'run', broken_probe)
+    report = setup.inspect()
+    assert report['dependencies']['pyarrow'] is not None
+    assert not report['clientReady'] and report['basicClientReady']
+    assert 'Binary extension' in report['capabilities']['parquet']['diagnostic']
+
+
+def test_probe_timeout_is_a_readiness_report(monkeypatch):
+    from steerlab_server import client_dependencies as dependencies
+    def timeout(*args, **kwargs): raise subprocess.TimeoutExpired('client-probe',30)
+    monkeypatch.setattr(dependencies.subprocess, 'run', timeout)
+    report = setup.inspect()
+    assert not report['clientReady'] and not report['basicClientReady']
+    assert 'Research Setup' in report['repairAction']

@@ -1,7 +1,9 @@
 # Fitting corpus preparation — audit handoff
 
 Branch: `codex/fitting-corpus-preparation`, based on main `abcb42a`.
-Implementation commit: `183528b`. The preceding plan commit is `c842ab8`.
+Corpus implementation commit: `183528b`; preceding plan: `c842ab8`.
+The audit follow-up is the change from reviewed tip `aa7d2ed` to this branch's
+current tip, covering F2 and N1 plus the approved F1 packaging decision.
 The maintainer's reviewing/integration agents decide landing through the user.
 No merge, app installation, engine deployment, model download, research dataset
 creation, or cluster fitting was performed.
@@ -25,7 +27,32 @@ Agents have the instructions in the shipped J-lens guide, including the rule
 that naming a model or concept does not authorize data generation, delegation,
 data downloads, or fitting.
 
-## Follow-up review N1–N5
+## Corpus-preparation audit follow-up
+
+The user approved keeping the complete CPU client as the default (**F1**).
+Parquet, public dataset downloads, and offline token previews are ordinary
+research workflows, so they should work after one setup without choosing extras.
+The client remains free of GPU execution packages; the larger footprint is an
+intentional packaging choice.
+
+**F2 fixed:** readiness and installer activation now share an isolated CPU import
+probe with separate capability results. `clientReady` requires all four groups;
+`basicClientReady` keeps existing authoring available when corpus libraries are
+missing. Missing or broken Parquet/download libraries produce typed CLI and HTTP errors
+and the same upgrade repair through the Mac process adapter. A missing tokenizer is
+advisory. Research Setup names the needed update. Installer activation refuses
+an incomplete staged environment before replacing the active runtime.
+
+**N1 fixed:** an occupied corpus destination names the folder and asks for a new
+name, preserving the same reviewed preview. The atomic publication race has the
+same repair and leaves the competing publication unchanged.
+
+**N2–N5:** shared HF cache configuration and retention are documented; publication
+continues to use the reviewed snapshot independently of the cache; token preview
+remains preparation-machine provenance; live download, app, and CUDA acceptance
+remain pending. No new cache or fitting-state cleanup policy is introduced.
+
+## Earlier fitting follow-up review N1–N5
 
 - **N1 fixed:** a stale fitting draft now names answers, input bytes, or review
   information, including cached model details. The cost review remains in the
@@ -101,13 +128,20 @@ A separate temporary environment was created only for validation.
 
 ## Verification
 
-- Final Python suite: **6,358 passed, 9 skipped, 8 warnings** (206.20 seconds).
+- Final Python suite: **6,367 passed, 9 skipped, 8 warnings** (233.45 seconds).
 - Full serial Xcode beta suite: **290 SteeringKit + 4,614 ExperimentKit passed**.
   The new test calls the real Python owner from Swift, verifies saved text,
   checks both verb declarations, and proves create-only publication.
 - A clean temporary environment installed from the hashed client lock, with
   no torch present, passed Parquet preparation, an offline synthetic-tokenizer
   preview, publication, and fitting preflight. No model weights were used.
+- Audit regressions cover older basic-only environments, installed-but-broken
+  imports, probe timeout, incomplete installer activation preserving the active
+  environment, missing dependencies through CLI/HTTP/Mac adapters, optional
+  tokenizer failure, and a publication race with an occupied destination.
+- The shared readiness probe also passed in the temporary CPU-only client
+  environment without torch. No installation or download was needed for this
+  follow-up check.
 - Shared Python tests cover JSONL, text, CSV, Parquet, deterministic selection,
   source mutation, candidate tampering, scan bounds, path containment, HTTP/CLI
   byte parity, mocked HF revision/authentication, altered HF cache bytes,

@@ -106,6 +106,12 @@ def token_review(rows, tokenizer):
         raise CorpusError('Token preview needs a model ID, exact 40-character revision, token limit, and skipped leading positions.')
     try:
         from transformers import AutoTokenizer
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        from ..client_dependencies import UPGRADE_REPAIR
+        return {'status': 'unavailable', 'request': tokenizer, 'reason': str(exc),
+                'message': 'Token preview support could not load. Update the client environment to enable it; corpus preparation can continue.',
+                'repairAction': UPGRADE_REPAIR}
+    try:
         model = AutoTokenizer.from_pretrained(tokenizer['modelID'], revision=tokenizer['revision'], local_files_only=True, trust_remote_code=False)
     except (ImportError, OSError, ValueError) as exc:
         return {'status': 'unavailable', 'request': tokenizer,

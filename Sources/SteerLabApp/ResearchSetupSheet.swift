@@ -33,10 +33,13 @@ struct ResearchSetupSheet: View {
                     }
                     GroupBox("2. Prepare study authoring") {
                         VStack(alignment: .leading, spacing: 8) {
-                            Label(model.clientReady ? "Client ready" : "Client setup needed", systemImage: model.clientReady ? "checkmark.circle" : "arrow.down.circle")
-                            Text("This lightweight setup supplies Python and the tools used by study interviews and evidence import. Model downloads and server setup are separate.")
+                            Label(model.clientReady ? "Client ready" : model.basicClientReady ? "Client update needed for corpus tools" : "Client setup needed", systemImage: model.clientReady ? "checkmark.circle" : "arrow.down.circle")
+                            Text("This CPU setup supplies Python and the tools for study interviews, evidence import, and corpus preparation. Model downloads and server setup are separate.")
+                            if model.basicClientReady && !model.clientReady {
+                                Text("Basic study authoring is available. Update the client to enable all corpus tools.").font(.caption)
+                            }
                             HStack {
-                                Button(model.clientReady ? "Review Repair Plan" : "Review Setup Plan") { Task { await model.preview() } }
+                                Button(model.clientReady ? "Review Repair Plan" : model.basicClientReady ? "Review Update Plan" : "Review Setup Plan") { Task { await model.preview() } }
                                 Button("Check Again") { Task { await model.refresh(workspace: selectedRoot) } }
                             }.disabled(model.busy)
                             if model.planHash != nil {
@@ -46,6 +49,9 @@ struct ResearchSetupSheet: View {
                                     .font(.caption).foregroundStyle(.secondary)
                                 Button("Approve and Install Client") { Task { await model.install(workspace: selectedRoot) } }
                                     .buttonStyle(.borderedProminent).disabled(model.busy)
+                            }
+                            if !model.clientReady, case .string(let repair) = model.readiness["repairAction"] {
+                                Text(repair).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                             }
                             if !model.clientReady, case .string(let reason) = model.readiness["reason"] {
                                 Text(reason).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)

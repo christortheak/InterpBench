@@ -71,6 +71,7 @@ def workspace_action(action, payload):
 def local(invocation):
     from ..client_cli import ClientRefusal
     from ..experiment.artifact_sources import ImportRefusal
+    from ..experiment.corpus_sources import CorpusError
     try:
         verb = invocation.spec.verb; validate(invocation, 0 if verb == 'custody' else 1)
         value = invocation.positionals[0] if invocation.positionals else None
@@ -93,6 +94,8 @@ def local(invocation):
         print(json.dumps(result, indent=2))
         return CLIResult(message='Diagnostic workspace operation completed; custody is byte verification, not scientific qualification.',
                          changed=result.get('changed', verb in ('package', 'import')), payload=result)
+    except CorpusError as exc:
+        raise ClientRefusal(code=exc.code, reason=str(exc), repair_action=exc.repair_action, state='refused') from exc
     except ImportRefusal as exc:
         raise ClientRefusal(code='artifactImportRefused', reason=str(exc), repair_action=exc.repair_action, state='refused') from exc
     except science_catalog.ScienceRefusal as exc:

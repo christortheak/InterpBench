@@ -98,3 +98,26 @@ def test_download_failure_preserves_active_environment_and_returns_repair(tmp_pa
     assert runtime.resolve() == old and (old / 'keep').read_bytes() == b'old runtime'
     assert not list(tmp_path.glob('.steerlab-client.*'))
     assert not (tmp_path / 'client-runtime.setup-lock').exists()
+
+
+def test_incomplete_client_does_not_activate_over_working_environment(tmp_path, monkeypatch):
+    import runpy
+    import pytest
+    from steerlab_server import client_dependencies
+    old = tmp_path / 'working'
+    old.mkdir()
+    (old / 'keep').write_bytes(b'working environment')
+    runtime = tmp_path / 'client-runtime'
+    runtime.symlink_to(old)
+    stage = tmp_path / 'staged'
+    stage.mkdir()
+    monkeypatch.setattr(client_dependencies, 'probe', lambda: {
+        'basicAuthoring': {'label': 'Basic study authoring', 'ready': True},
+        'parquet': {'label': 'Parquet corpus files', 'ready': False},
+    })
+    activate = runpy.run_path(str(RESOURCES / 'runtime-helper.py'))['activate']
+    with pytest.raises(RuntimeError, match='Parquet corpus files'):
+        activate(stage, runtime, 'reviewed-plan', tmp_path / 'release')
+    assert runtime.resolve() == old
+    assert (old / 'keep').read_bytes() == b'working environment'
+    assert list(stage.iterdir()) == []

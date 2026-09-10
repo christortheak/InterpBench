@@ -13,6 +13,7 @@ import Observation
     public init() {}
 
     public var clientReady: Bool { readiness["clientReady"] == .bool(true) }
+    public var basicClientReady: Bool { readiness["basicClientReady"] == .bool(true) }
     public var authoringReady: Bool { readiness["authoringReady"] == .bool(true) }
     public var planHash: String? { if case .string(let value) = plan["planSHA256"] { value } else { nil } }
     public var planDestination: String { if case .string(let value) = plan["runtime"] { value } else { "" } }

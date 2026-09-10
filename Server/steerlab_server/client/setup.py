@@ -1,5 +1,4 @@
 """Client readiness and adapters to the pre-Python installer; no engine imports."""
-import importlib.metadata
 import json
 import os
 from pathlib import Path
@@ -7,6 +6,7 @@ import subprocess
 import sys
 from .runtime_identity import source_sha256
 from . import workspace_bootstrap
+from .. import client_dependencies
 
 
 class SetupRefusal(ValueError):
@@ -14,23 +14,21 @@ class SetupRefusal(ValueError):
 
 
 def inspect(root=None):
-    dependencies = {}
-    for name in ('numpy', 'safetensors', 'httpx'):
-        try:
-            dependencies[name] = importlib.metadata.version(name)
-        except importlib.metadata.PackageNotFoundError:
-            dependencies[name] = None
-    probe = subprocess.run([sys.executable, '-I', '-c', 'import numpy, safetensors, httpx'], capture_output=True, text=True, timeout=30)
-    ready = probe.returncode == 0
+    dependencies = client_dependencies.versions()
+    capabilities = client_dependencies.probe()
+    basic_ready = capabilities['basicAuthoring']['ready']
+    ready = all(value['ready'] for value in capabilities.values())
+    unavailable = [value['label'] for value in capabilities.values() if not value['ready']]
     workspace = workspace_bootstrap.inspect(root) if root is not None else None
-    authoring = bool(ready and workspace and workspace['recognized'] and workspace['agentGuidePresent'])
-    return {'changed': False, 'clientReady': ready, 'authoringReady': authoring,
+    authoring = bool(basic_ready and workspace and workspace['recognized'] and workspace['agentGuidePresent'])
+    return {'changed': False, 'clientReady': ready, 'basicClientReady': basic_ready, 'authoringReady': authoring,
+            'capabilities': capabilities, 'reason': None if ready else 'Client update needed for: ' + ', '.join(unavailable) + '.',
             'python': sys.version.split()[0], 'interpreter': sys.executable,
             'sourceSHA256': source_sha256(), 'dependencies': dependencies,
             'workspace': workspace, 'execution': {'state': 'notAssessed', 'requiredForAuthoring': False,
                 'nextAction': 'When ready to execute, select a local runner or remote profile, check its connection and prepare the model through the existing execution plan.'},
-            'repairAction': ('Create or open a workspace, then read workspace handoff.' if ready and not authoring else 'Choose a method with the researcher.' if authoring else 'Use the matching release installer to repair the lightweight client environment.'),
-            'diagnostic': probe.stderr.strip() if not ready else None}
+            'repairAction': (client_dependencies.UPGRADE_REPAIR if not ready else 'Create or open a workspace, then read workspace handoff.' if not authoring else 'Choose a method with the researcher.'),
+            'diagnostic': '\n'.join(value['diagnostic'] for value in capabilities.values() if value.get('diagnostic')) or None}
 
 
 def release_directory(explicit=None):
@@ -68,7 +66,7 @@ def provision(operation, *, release=None, runtime=None, expected=None, approved=
 def start(directory, *, create=False):
     """One agent-friendly first-run operation after installing the client."""
     readiness = inspect()
-    if not readiness['clientReady']:
+    if not readiness['basicClientReady']:
         raise SetupRefusal('Repair the client imports before creating a workspace.')
     root = Path(directory).expanduser().absolute()
     changed = False

@@ -38,6 +38,13 @@ import Testing
         guard case .object(let result) = response, case .object(let readiness) = result["readiness"] else { Issue.record("Missing readiness"); return }
         #expect(result["changed"] == .bool(true))
         #expect(readiness["authoringReady"] == .bool(true))
+        #expect(readiness["basicClientReady"] == .bool(true))
+        guard case .object(let capabilities) = readiness["capabilities"],
+              case .object(let basic) = capabilities["basicAuthoring"] else {
+            Issue.record("Missing client capability readiness"); return
+        }
+        #expect(basic["ready"] == .bool(true))
+        #expect(Set(capabilities.keys) == ["basicAuthoring", "parquet", "huggingFace", "tokenPreview"])
         #expect(WorkspaceStore.isWorkspace(url: root))
         #expect(try String(contentsOf: root.appending(component: "AGENTS.md"), encoding: .utf8) == AgentContract.contents())
     }

@@ -159,7 +159,28 @@ source preparation is explicitly requested, review actual examples and limits,
 publish the selected bytes, and propose a small fitting pilot as the next step.
 
 Client releases now include CPU Parquet, Hugging Face, and tokenizer dependencies
-in their managed dependency lock. They still contain no torch or GPU runtime.
+in their managed dependency lock. This complete default client supports all
+preparation formats without an extra package-selection step. It still contains
+no torch or GPU runtime.
+
+`steerlab setup inspect --json` reports `capabilities` separately for basic
+authoring, Parquet, public dataset downloads, and offline token previews.
+`clientReady` means all four are ready; `basicClientReady` and `authoringReady`
+can remain true when an older environment lacks corpus tools. Continue basic
+authoring or plain-text preparation while arranging the update. Missing Parquet
+or download libraries return `clientSetupRequired` with an upgrade repair;
+missing tokenizer libraries produce an advisory and do not prevent preparation.
+Research Setup offers **Review Update Plan** when basic authoring works but
+corpus tools need an update. Activation checks all four capabilities before
+replacing the managed environment.
+
+An occupied publication folder returns `corpusDestinationExists`: choose a new
+`prompts/fitting/<name>` and publish the same reviewed preview again. The existing
+folder is unchanged, including if another process creates it during publication.
+
+Public dataset downloads use Hugging Face's shared cache and respect its existing
+cache configuration. Preparing or publishing a corpus does not delete cached
+source shards; receipt publication and shared-cache retention are independent.
 Rebuild the app and Python payload together before deploying these new actions;
 update an older managed client environment through its normal reviewed setup
 plan. The installed app and cluster were not changed by this branch.

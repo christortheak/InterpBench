@@ -43,6 +43,14 @@ without treating a missing model as a setup failure. Paths stay local to the
 authoring workspace; cluster execution receives copies through the managed
 submission and verified import operations.
 
+Readiness reports basic authoring, Parquet, public dataset downloads, and offline
+token previews separately. An older environment can continue basic authoring
+while Research Setup offers **Review Update Plan** for missing corpus tools.
+The complete default client includes these CPU tools; no optional package choice
+is required. `clientReady` means all capabilities are available, while
+`basicClientReady` and `authoringReady` report the usable authoring path.
+See [corpus preparation](FITTING-CORPUS-PREPARATION.md) for capability repairs.
+
 ## Repair and upgrades
 
 The installer never replaces an ordinary existing directory. Existing manually

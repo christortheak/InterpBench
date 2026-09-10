@@ -27,7 +27,7 @@ def test_deterministic_sampling_receipt_and_fitting_input(tmp_path):
     receipt = json.loads((Path(result['directory'])/'preparation.json').read_bytes())
     assert all(row['documentID'].startswith('doc-') for row in receipt['selectedRecords'])
     assert receipt['inputs'][0]['sha256'] == archives.file_hash(tmp_path/'source.jsonl')
-    with pytest.raises(OSError): prep.publish(one['previewID'], one['planSHA256'], 'prompts/fitting/sample', tmp_path)
+    with pytest.raises(sources.CorpusDestinationExists, match='already exists'): prep.publish(one['previewID'], one['planSHA256'], 'prompts/fitting/sample', tmp_path)
 
 
 def test_publication_uses_captured_bytes_not_later_source(tmp_path):
@@ -200,3 +200,93 @@ def test_scan_bound_does_not_decode_the_next_record(tmp_path):
     (tmp_path/'source.jsonl').write_text('{"text":"A valid first record."}\nnot JSON\n')
     p = prep.preview({'source':{'kind':'local','files':['source.jsonl']},'count':1,'scanLimit':1}, tmp_path)
     assert p['counts']['scanned'] == 1 and p['counts']['stoppedEarly']
+
+
+@pytest.mark.parametrize('dependency,source', [
+    ('pyarrow', {'kind':'local','files':['source.parquet']}),
+    ('huggingface_hub', {'kind':'huggingface','dataset':'example/dataset','revision':'main','files':['train.jsonl']}),
+])
+def test_missing_corpus_dependency_has_cli_http_and_mac_upgrade_repair(tmp_path, monkeypatch, capsys, dependency, source):
+    import builtins
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from steerlab_server import client_cli
+    from steerlab_server.api.diagnostic_transport_routes import build_router
+    real_import = builtins.__import__
+    def unavailable(name, *args, **kwargs):
+        if name.split('.')[0] == dependency: raise ModuleNotFoundError('Missing test dependency: ' + dependency)
+        return real_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, '__import__', unavailable)
+    monkeypatch.setenv('STEERLAB_ROOT', str(tmp_path))
+    (tmp_path/'source.parquet').write_bytes(b'PAR1')
+    spec = {'source': source, 'count': 1}
+    path = tmp_path/'spec.json'; path.write_text(json.dumps(spec))
+    assert client_cli.main(['science','corpus-preview',str(path),'--root',str(tmp_path),'--json']) == 65
+    envelope = json.loads(capsys.readouterr().out)
+    assert not envelope['changed']
+    assert envelope['error']['code'] == 'clientSetupRequired'
+    assert 'Research Setup' in envelope['error']['repairAction']
+    assert 'setup plan --release' in envelope['error']['repairAction']
+    app = FastAPI(); app.include_router(build_router(SimpleNamespace(jobs=None)))
+    response = TestClient(app).post('/api/science/workspace/corpus-preview',json=dict(workspaceRoot=str(tmp_path),specText=json.dumps(spec)))
+    assert response.status_code == 409
+    assert response.json()['detail']['code'] == 'clientSetupRequired'
+    assert response.json()['detail']['repairAction'] == envelope['error']['repairAction']
+    import io
+    import sys
+    from steerlab_server.client import diagnostic_workspace
+    document = dict(action='corpus-preview', payload=dict(workspaceRoot=str(tmp_path),specText=json.dumps(spec)),
+                    clientSHA256=diagnostic_workspace.source_sha256())
+    monkeypatch.setattr(sys, 'stdin', io.StringIO(json.dumps(document)))
+    assert diagnostic_workspace.main() == 65
+    mac = json.loads(capsys.readouterr().out)
+    assert not mac['ok'] and mac['repairAction'] == envelope['error']['repairAction']
+    assert not (tmp_path/'.steerlab/corpus-preparations').exists()
+
+
+def test_missing_tokenizer_support_is_advisory_with_upgrade_repair(tmp_path, monkeypatch):
+    import builtins
+    real_import = builtins.__import__
+    def unavailable(name, *args, **kwargs):
+        if name == 'transformers': raise ModuleNotFoundError('Missing tokenizer package')
+        return real_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, '__import__', unavailable)
+    spec = fixture(tmp_path, tokenizer=dict(modelID='example/model',revision='a'*40,maxSeqLen=128,skipFirst=16))
+    preview = prep.preview(spec,tmp_path)
+    assert preview['tokenReview']['status'] == 'unavailable'
+    assert 'Research Setup' in preview['tokenReview']['repairAction']
+    assert prep.publish(preview['previewID'],preview['planSHA256'],'prompts/fitting/text',tmp_path)['changed']
+
+
+def test_destination_created_during_publication_has_plain_repair(tmp_path, monkeypatch):
+    preview = prep.preview(fixture(tmp_path),tmp_path)
+    real_publish = archives.publish_directory
+    def competing_publication(staged, target):
+        target.mkdir(); (target/'keep.txt').write_text('Another publication')
+        real_publish(staged,target)
+    monkeypatch.setattr(archives, 'publish_directory', competing_publication)
+    with pytest.raises(sources.CorpusDestinationExists, match='Choose a new name') as exc:
+        prep.publish(preview['previewID'],preview['planSHA256'],'prompts/fitting/shared',tmp_path)
+    assert 'same reviewed preview' in exc.value.repair_action
+    assert (tmp_path/'prompts/fitting/shared/keep.txt').read_text() == 'Another publication'
+    assert not (tmp_path/'prompts/fitting/shared/corpus.jsonl').exists()
+
+
+def test_occupied_destination_has_cli_and_http_repair(tmp_path, monkeypatch, capsys):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from steerlab_server import client_cli
+    from steerlab_server.api.diagnostic_transport_routes import build_router
+    monkeypatch.setenv('STEERLAB_ROOT', str(tmp_path))
+    preview = prep.preview(fixture(tmp_path),tmp_path)
+    destination = 'prompts/fitting/existing'
+    saved = prep.publish(preview['previewID'],preview['planSHA256'],destination,tmp_path)
+    before = (Path(saved['directory'])/'corpus.jsonl').read_bytes()
+    assert client_cli.main(['science','corpus-publish',preview['previewID'],'--plan-sha256',preview['planSHA256'],'--destination',destination,'--root',str(tmp_path),'--json']) == 65
+    error = json.loads(capsys.readouterr().out)['error']
+    assert error['code'] == 'corpusDestinationExists' and 'Choose a new name' in error['reason']
+    app = FastAPI(); app.include_router(build_router(SimpleNamespace(jobs=None)))
+    response = TestClient(app).post('/api/science/workspace/corpus-publish',json=dict(workspaceRoot=str(tmp_path),previewID=preview['previewID'],planSHA256=preview['planSHA256'],destination=destination))
+    assert response.status_code == 409 and response.json()['detail']['code'] == error['code']
+    assert response.json()['detail']['repairAction'] == error['repairAction']
+    assert (Path(saved['directory'])/'corpus.jsonl').read_bytes() == before

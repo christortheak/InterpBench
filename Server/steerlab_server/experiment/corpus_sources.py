@@ -8,6 +8,7 @@ import re
 import stat
 
 from . import diagnostic_archives as archives
+from ..client_dependencies import UPGRADE_REPAIR
 
 MAX_SOURCE_BYTES = 2 * 1024**3
 MAX_ROW_BYTES = 8 * 1024**2
@@ -15,7 +16,18 @@ FORMATS = {'.txt': 'text', '.jsonl': 'jsonl', '.csv': 'csv', '.parquet': 'parque
 
 
 class CorpusError(ValueError):
+    code = 'corpusPreparationRefused'
     repair_action = 'Review the corpus source, text column, and sampling settings; preview again before saving. Existing sources and runs are unchanged.'
+
+
+class CorpusSetupError(CorpusError):
+    code = 'clientSetupRequired'
+    repair_action = UPGRADE_REPAIR
+
+
+class CorpusDestinationExists(CorpusError):
+    code = 'corpusDestinationExists'
+    repair_action = 'Choose a new prompts/fitting/<name> directory and publish the same reviewed preview again.'
 
 
 def local_path(root, name):
@@ -52,7 +64,10 @@ def source_files(source, root):
             raise CorpusError('Choose dataset file paths or glob patterns for the intended configuration and split.')
         for pattern in patterns:
             archives.parts(pattern)
-        from huggingface_hub import HfApi, hf_hub_download
+        try:
+            from huggingface_hub import HfApi, hf_hub_download
+        except (ImportError, OSError, RuntimeError, ValueError) as exc:
+            raise CorpusSetupError('Public dataset support could not load. Update the client environment through Research Setup or the matching release setup plan.') from exc
         try:
             info = HfApi(token=False).dataset_info(source['dataset'], revision=source['revision'], files_metadata=True)
         except Exception as exc:
@@ -146,7 +161,10 @@ def records(name, path, text_column, document_column):
             except csv.Error as exc:
                 raise CorpusError('CSV could not be read; check quoting and field sizes, or use JSONL for long documents.') from exc
     else:
-        import pyarrow.parquet as pq
+        try:
+            import pyarrow.parquet as pq
+        except (ImportError, OSError, RuntimeError, ValueError) as exc:
+            raise CorpusSetupError('Parquet support could not load. Update the client environment through Research Setup or the matching release setup plan; plain text, JSONL, and CSV remain available.') from exc
         file = pq.ParquetFile(path)
         columns = [x for x in (text_column, document_column) if x and x in file.schema_arrow.names]
         if text_column not in columns:
