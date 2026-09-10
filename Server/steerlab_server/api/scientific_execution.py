@@ -89,9 +89,13 @@ def input_plan(request, root):
         from . import managed_validation
         captured = managed_inputs.plan(request, root)
         validated = managed_validation.validate(request, root)
-        return {'request': request, 'root': str(Path(root).resolve()), 'inputSHA256': digest(captured),
+        result = {'request': request, 'root': str(Path(root).resolve()), 'inputSHA256': digest(captured),
                 'models': validated['models'], 'effectiveConfig': validated['effectiveConfig'],
                 'resumable': False, 'compute': managed_methods.METHODS[request['operation']].compute if request['operation'] in managed_methods.METHODS else 'cpu'}
+        if request['operation'] == 'jlens-fit':
+            from ..experiment.jlens_fit_review import review
+            result['fittingReview'] = review(validated['effectiveConfig'])
+        return result
     if request['operation'] == 'battery':
         from ..experiment import battery_run
         workspace_file(root, p['batteryFile'])

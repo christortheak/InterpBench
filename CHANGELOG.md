@@ -12,6 +12,15 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- J-lens checkpoint continuation now uses a versioned numerical compatibility
+  contract, retaining source hashes as provenance so documentation-only deploys
+  do not prevent continuation. The reviewed original driver is recognized;
+  dependency versions and numerical settings remain checked. Early fitting
+  failures retain their phase and recovery references. Shared request reviews
+  show costs from cached model metadata, with worked examples and explicit
+  status while large checkpoints are verified. No model download or numerical
+  estimator change is introduced.
+
 - Fit a J-lens from a researcher-supplied text corpus through the shared app,
   client, and HTTP scientific workflow. The engine uses the pinned reference
   Jacobian estimator and a prepared model, with a small pilot by default,

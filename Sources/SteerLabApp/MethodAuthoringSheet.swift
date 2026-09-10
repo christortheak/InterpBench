@@ -120,7 +120,11 @@ struct MethodAuthoringSheet: View {
                 Spacer()
                 Button("Next") { moveStep(1) }.disabled(step == availableSteps.last || busy)
             }
-            if busy { ProgressView() }
+            if busy {
+                ProgressView(workflow.id == "jlens-fit"
+                             ? "Checking model details and input files. Verifying a large checkpoint can take several minutes."
+                             : "Checking the request…")
+            }
             if let failure { Text(failure).foregroundStyle(.red).textSelection(.enabled) }
         }.padding().frame(minWidth: 820, minHeight: 720)
         .interactiveDismissDisabled(busy)
@@ -265,6 +269,17 @@ struct MethodAuthoringSheet: View {
     }
     private func reviewText(_ value: JSONValue) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            if case .object(let object) = value, let fitting = object["fittingReview"] {
+                Text("Fitting cost and checkpoint checks").font(.headline)
+                Text(string(fitting, "summary") ?? "Review fitting costs on the prepared engine.")
+                if case .object(let details) = fitting, let estimate = details["estimate"] {
+                    Text(string(estimate, "limitations") ?? "").font(.caption)
+                }
+                DisclosureGroup("Worked example") {
+                    Text(string(fitting, "workedExample") ?? "").font(.caption)
+                }
+                Text(string(fitting, "verification") ?? "").font(.caption)
+            }
             Text("Settings included in this plan").font(.headline)
             if case .object(let object) = value, case .object(let answers) = object["effectiveAnswers"] {
                 ForEach(workflow.fields) { field in

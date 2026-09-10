@@ -226,6 +226,73 @@ def test_preflight_rejects_checkpoint_identity_before_loading(fitting, monkeypat
         run(root, continued)
 
 
+def test_source_only_deploy_continues_with_both_source_hashes_recorded(fitting, monkeypatch):
+    root, config = fitting
+    def loaded(driver):
+        return lambda cfg, log: (Tiny(), {'dtype':'float32', 'device':'cpu', 'driverSHA256':driver})
+    monkeypatch.setattr(jlens_fit_model, 'load', loaded('a'*64))
+    first = run(root, {**config, 'maxPrompts':1})
+    source = Path(first['checkpoint']).read_bytes()
+    monkeypatch.setattr(jlens_fit_model, 'load', loaded('b'*64))
+    continued = run(root, checkpoint_config(root, config, first))
+    report = json.loads(Path(continued['reportPath']).read_bytes())
+    assert report['continuationCompatibility']['sourceDriverSHA256'] == 'a'*64
+    assert report['continuationCompatibility']['currentDriverSHA256'] == 'b'*64
+    assert Path(first['checkpoint']).read_bytes() == source
+    complete = run(root, config)
+    left = load_file(str(Path(continued['runDirectory'])/'jacobians.safetensors'))
+    right = load_file(str(Path(complete['runDirectory'])/'jacobians.safetensors'))
+    for key in left: torch.testing.assert_close(left[key], right[key], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize('stage', ['loading-model','restoring-checkpoint','capturing-checkpoint'])
+def test_early_failure_has_a_durable_run_and_recovery_record(fitting, monkeypatch, stage):
+    root, config = fitting
+    first = run(root, {**config, 'maxPrompts':1})
+    cfg = checkpoint_config(root, config, first)
+    source = Path(first['checkpoint']).read_bytes()
+    seen = []
+    def fail(*args, **kwargs): raise RuntimeError('fixture early failure')
+    if stage == 'loading-model': monkeypatch.setattr(jlens_fit_model, 'load', fail)
+    elif stage == 'restoring-checkpoint': monkeypatch.setattr(execution, 'restored', fail)
+    else: monkeypatch.setattr(execution, 'load_checkpoint', fail)
+    with pytest.raises(RuntimeError, match='fixture early failure'):
+        execution.execute(jlens_fit.FitConfig.from_dict(cfg), root=root, log=lambda _:None, on_run_created=seen.append)
+    assert len(seen) == 1
+    partial = Path(seen[0])
+    record = json.loads((partial/'fit-failure.json').read_bytes())
+    assert record['phase'] == stage and record['sourceCheckpoint'] == cfg['checkpoint']
+    assert not (partial/'COMPLETED').exists()
+    assert Path(first['checkpoint']).read_bytes() == source
+
+
+def test_failure_record_disk_error_preserves_original_failure(fitting, monkeypatch):
+    root, config = fitting
+    def fail(*args): raise RuntimeError('original model error')
+    monkeypatch.setattr(jlens_fit_model, 'load', fail)
+    original = execution.write_json
+    def full_disk(path, value):
+        if path.name == 'fit-failure.json': raise OSError('disk full')
+        original(path, value)
+    monkeypatch.setattr(execution, 'write_json', full_disk)
+    with pytest.raises(RuntimeError, match='original model error'): run(root, config)
+
+
+def test_checkpoint_verification_announces_before_reading_tensor_bytes(fitting, monkeypatch):
+    root, config = fitting
+    first = run(root, {**config, 'maxPrompts':1})
+    cfg = checkpoint_config(root, config, first)
+    messages = []
+    original = archives.file_hash
+    def check(path):
+        if Path(path).name == 'sums.safetensors':
+            assert messages and messages[-1].startswith('Verifying checkpoint tensors')
+        return original(path)
+    monkeypatch.setattr(archives, 'file_hash', check)
+    jlens_fit.preflight(jlens_fit.FitConfig.from_dict(cfg), root, log=messages.append)
+    assert messages[-1] == 'Checkpoint tensor verification completed.'
+
+
 @pytest.mark.parametrize('conditional', [False, True])
 def test_real_hybrid_decoder_fits_from_prepared_local_checkpoint(tmp_path, monkeypatch, conditional):
     """Random tiny architecture, actual HF loader and reference backward; no downloads."""
@@ -277,6 +344,8 @@ def test_http_plan_and_child_execution_use_registered_fitting_owner(fitting, mon
     from steerlab_server.api.scientific_execution_routes import build_scientific_execution_router
     from steerlab_server.api import scientific_execution
     root, config = fitting
+    from steerlab_server.experiment import jlens_fit_review
+    monkeypatch.setattr(jlens_fit_review, 'cached_config', lambda *args: ({'hidden_size':2, 'num_hidden_layers':3}, 'd'*64))
     monkeypatch.setenv('STEERLAB_ROOT', str(root))
     monkeypatch.setenv('STEERLAB_METADATA_ROOT', str(root/'.steerlab'))
     monkeypatch.setenv('STEERLAB_SERVER_ROLE', 'workstation')
@@ -289,6 +358,7 @@ def test_http_plan_and_child_execution_use_registered_fitting_owner(fitting, mon
     plan = response.json()
     assert plan['resumable'] is False
     assert plan['effectiveConfig']['maxPrompts'] == 4
+    assert plan['fittingReview']['estimate']['matrixSetBytes'] == 2*2*2*4
     packet = root/'packet.json'; packet.write_text(json.dumps(plan))
     record = root/'record.json'
     assert scientific_execution.execute_packet(packet, 'fixture-job', record) == 0

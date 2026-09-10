@@ -136,7 +136,7 @@ struct DiagnosticLifecycleSheet: View {
                     }
                 }
             }.disabled(busy)
-            if busy { ProgressView() }
+            if busy { ProgressView("Working on the request. Reading and verifying large input or evidence files can take several minutes.") }
             ScrollView { Text(output).font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
         }.padding().frame(minWidth: 1050, minHeight: 740)
         .interactiveDismissDisabled(busy)

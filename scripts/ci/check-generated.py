@@ -25,6 +25,7 @@ AUDITS = (
     ('audit-task-prompt-parser.py', 'ef3dec8'),
     ('audit-design-lazy-imports.py', '82da781'),
     ('audit-operation-registration.py', 'd84968c'),
+    ('audit-jlens-followup.py', '878bca2'),
 )
 
 

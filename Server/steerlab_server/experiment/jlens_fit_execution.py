@@ -9,7 +9,7 @@ import tempfile
 import time
 import uuid
 
-from . import diagnostic_archives as archives, jlens_fit_model
+from . import diagnostic_archives as archives, jlens_fit_model, jlens_fit_identity
 from .jlens_fit import ESTIMATOR, FitError, checkpoint_files, corpus_rows, preflight, read_pinned
 
 
@@ -38,8 +38,7 @@ def restored(state_and_path, identity, layers, width, budget, row_count):
     if state_and_path is None:
         return {layer: torch.zeros((width, width), dtype=torch.float32) for layer in layers}, 0, 0, []
     state, path = state_and_path
-    if state.get('identity') != identity or state.get('identitySHA256') != archives.digest(identity):
-        raise FitError('Checkpoint model, corpus, runtime, or estimator differs. Restore the matching inputs or start a new fit.')
+    jlens_fit_identity.review(state, identity)
     count, next_row = state.get('nDone'), state.get('nextIndex')
     skipped = state.get('skipped')
     if (type(count) is not int or type(next_row) is not int or not 0 <= count <= next_row <= row_count
@@ -76,7 +75,7 @@ def save_checkpoint(parent, identity, sums, count, next_row, skipped):
 
 
 def execute(config, *, root, log=print, on_run_created=None):
-    preflight(config, root)
+    preflight(config, root, log=log)
     try:
         import torch
         from jlens.fitting import jacobian_for_prompt, valid_position_mask
@@ -91,47 +90,53 @@ def execute(config, *, root, log=print, on_run_created=None):
     run_id = 'jlens-fit-' + uuid.uuid4().hex
     runs = archives.ordinary(root, 'runs', missing=True); runs.mkdir(exist_ok=True)
     run = runs / run_id; run.mkdir()
-    inputs = run / 'inputs'; inputs.mkdir()
-    (inputs / 'corpus.jsonl').write_bytes(corpus)
-    # Captured inputs remain immutable; working snapshots are separate scratch.
-    state_parent = archives.ordinary(root, '.steerlab/jlens-fitting-state/' + run_id, missing=True)
-    state_parent.mkdir(parents=True)
-    captured = load_checkpoint(config, root, state_parent / 'input-checkpoint')
-    if captured is not None:
-        shutil.copyfile(state_parent / 'input-checkpoint/state.json', inputs / 'checkpoint-source.json')
-    write_json(run / 'fitting-request.json', {
-        'config': config.to_dict(), 'checkpointScratch': state_parent.relative_to(root).as_posix(),
-        'rendering': 'raw text; tokenizer native special tokens; no chat template',
-        'estimator': ESTIMATOR})
-    if on_run_created: on_run_created(str(run))
-    log('Fitting run: ' + str(run))
-    log('Checkpoint scratch: ' + str(state_parent))
-    started = time.perf_counter()
-    model, runtime = jlens_fit_model.load(config, log)
-    width, target = model.d_model, model.n_layers - 1
-    layers = sorted(config.sourceLayers) if config.sourceLayers is not None else list(range(target))
-    if not layers or layers[-1] >= target:
-        raise FitError('Choose source layers before the final block; a model needs at least two blocks.')
-    # Bind numerics and corpus bytes, not output locations, prompt budget, or intent.
-    identity = {'estimator': ESTIMATOR, 'modelID': config.modelID, 'revision': config.revision,
-                'corpusSHA256': config.corpus['sha256'], 'sourceLayers': layers,
-                'targetLayer': target, 'hiddenSize': width, 'maxSeqLen': config.maxSeqLen,
-                'skipFirst': config.skipFirst, 'dimBatch': config.dimBatch, 'runtime': runtime}
-    sums, count, next_row, skipped = restored(captured, identity, layers, width, budget, len(rows))
-    starting_count, starting_row = count, next_row
-    write_run_config(str(run), 'jlens-fit', model_id=config.modelID, revision=config.revision,
-                     dtype=runtime['dtype'], notes={'fittingIdentity': identity, 'maxPrompts': budget, 'tier': config.tier})
-    estimates = {'matrixBytesFloat32': len(layers) * width * width * 4,
-                 'backwardPassesPerPrompt': math.ceil(width / config.dimBatch),
-                 'promptBudget': budget, 'sourceLayers': layers, 'targetLayer': target,
-                 'warning': 'Backward activations and model weights are additional; this is not a memory-fit guarantee.'}
-    write_json(run / 'resource-estimate.json', estimates)
-    log(f'{budget} corpus rows; {estimates["backwardPassesPerPrompt"]} backward passes per usable row. '
-        f'One float32 matrix set: {estimates["matrixBytesFloat32"]} bytes.')
     latest = None
-    pending = 0
-    diagnostics = run / 'progress.jsonl'
+    next_row = 0
+    phase = 'capturing-inputs'
     try:
+        if on_run_created: on_run_created(str(run))
+        inputs = run / 'inputs'; inputs.mkdir()
+        (inputs / 'corpus.jsonl').write_bytes(corpus)
+        # Captured inputs remain immutable; working snapshots are separate scratch.
+        state_parent = archives.ordinary(root, '.steerlab/jlens-fitting-state/' + run_id, missing=True)
+        state_parent.mkdir(parents=True)
+        phase = 'capturing-checkpoint'
+        captured = load_checkpoint(config, root, state_parent / 'input-checkpoint')
+        if captured is not None:
+            shutil.copyfile(state_parent / 'input-checkpoint/state.json', inputs / 'checkpoint-source.json')
+        write_json(run / 'fitting-request.json', {
+            'config': config.to_dict(), 'checkpointScratch': state_parent.relative_to(root).as_posix(),
+            'rendering': 'raw text; tokenizer native special tokens; no chat template',
+            'estimator': ESTIMATOR})
+        log('Fitting run: ' + str(run))
+        log('Checkpoint scratch: ' + str(state_parent))
+        started = time.perf_counter()
+        phase = 'loading-model'
+        model, runtime = jlens_fit_model.load(config, log)
+        width, target = model.d_model, model.n_layers - 1
+        layers = sorted(config.sourceLayers) if config.sourceLayers is not None else list(range(target))
+        if not layers or layers[-1] >= target:
+            raise FitError('Choose source layers before the final block; a model needs at least two blocks.')
+        # Bind numerics and corpus bytes, not output locations, prompt budget, or intent.
+        identity = {'fittingContract': jlens_fit_identity.CONTRACT, 'estimator': ESTIMATOR, 'modelID': config.modelID, 'revision': config.revision,
+                    'corpusSHA256': config.corpus['sha256'], 'sourceLayers': layers,
+                    'targetLayer': target, 'hiddenSize': width, 'maxSeqLen': config.maxSeqLen,
+                    'skipFirst': config.skipFirst, 'dimBatch': config.dimBatch, 'runtime': runtime}
+        phase = 'restoring-checkpoint'
+        sums, count, next_row, skipped = restored(captured, identity, layers, width, budget, len(rows))
+        starting_count, starting_row = count, next_row
+        write_run_config(str(run), 'jlens-fit', model_id=config.modelID, revision=config.revision,
+                         dtype=runtime['dtype'], notes={'fittingIdentity': identity, 'maxPrompts': budget, 'tier': config.tier})
+        estimates = {'matrixBytesFloat32': len(layers) * width * width * 4,
+                     'backwardPassesPerPrompt': math.ceil(width / config.dimBatch),
+                     'promptBudget': budget, 'sourceLayers': layers, 'targetLayer': target,
+                     'warning': 'Backward activations and model weights are additional; this is not a memory-fit guarantee.'}
+        write_json(run / 'resource-estimate.json', estimates)
+        log(f'{budget} corpus rows; {estimates["backwardPassesPerPrompt"]} backward passes per usable row. '
+            f'One float32 matrix set: {estimates["matrixBytesFloat32"]} bytes.')
+        pending = 0
+        diagnostics = run / 'progress.jsonl'
+        phase = 'fitting'
         for index in range(next_row, budget):
             row = rows[index]
             token_ids = model.encode(row['text'], max_length=config.maxSeqLen)
@@ -180,6 +185,7 @@ def execute(config, *, root, log=print, on_run_created=None):
             latest = save_checkpoint(state_parent, identity, sums, count, next_row, skipped)
         if count == 0:
             raise FitError('No corpus rows left enough tokens for fitting. Supply longer text or adjust the token-position settings.')
+        phase = 'publishing-output'
         shutil.copytree(latest, run / 'checkpoint')
         maps = {f'layer_{layer}': sums[layer] / count for layer in layers}
         save_file(maps, str(run / 'jacobians.safetensors'))
@@ -193,6 +199,7 @@ def execute(config, *, root, log=print, on_run_created=None):
         report = {'schemaVersion': 1, 'operation': 'jlens-fit', 'identity': identity,
                   'promptsFitted': count, 'rowsConsidered': next_row, 'skippedIndices': skipped,
                   'promptsFittedThisRun': count - starting_count, 'rowsConsideredThisRun': next_row - starting_row,
+                  'continuationCompatibility': jlens_fit_identity.review(captured[0], identity) if captured else None,
                   'continuedFrom': config.checkpoint, 'elapsedSeconds': time.perf_counter() - started,
                   'tensorSHA256': archives.file_hash(run / 'jacobians.safetensors'),
                   'qualification': 'notPerformed', 'fullDepth': layers == list(range(target)),
@@ -211,6 +218,12 @@ def execute(config, *, root, log=print, on_run_created=None):
                 'checkpoint': str(run / 'checkpoint/state.json'), 'promptsFitted': count,
                 'qualification': 'notPerformed'}
     except Exception as exc:
-        write_json(run / 'fit-failure.json', {'reason': str(exc), 'nextIndex': next_row,
-                    'checkpoint': str(latest.relative_to(root)) if latest else None})
+        # Preserve the original failure even if the disk cannot store its report.
+        try:
+            write_json(run / 'fit-failure.json', {'reason': str(exc), 'phase': phase,
+                       'nextIndex': next_row,
+                       'checkpoint': str(latest.relative_to(root)) if latest else None,
+                       'sourceCheckpoint': config.checkpoint})
+        except OSError as report_error:
+            log('Could not save the fitting failure record: ' + str(report_error))
         raise

@@ -53,6 +53,12 @@ import Testing
         #expect(config["maxPrompts"] == .number(4))
         #expect(config["tier"] == .string("testing"))
         #expect(config["corpus"] != nil)
+        guard case .object(let fittingReview) = object["fittingReview"] else {
+            Issue.record("Missing fitting cost review"); return
+        }
+        #expect(fittingReview["summary"] != nil)
+        #expect(fittingReview["workedExample"] != nil)
+        #expect(fittingReview["verification"] != nil)
         let hash = try #require(object["planSHA256"])
         _ = try await DiagnosticWorkspace.perform("publish", payload:payload.merging(
             ["destination":.string("requests/lens"), "planSHA256":hash]) { _, new in new },

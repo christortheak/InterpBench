@@ -106,7 +106,7 @@ def corpus_rows(data):
     return rows
 
 
-def checkpoint_files(config, root):
+def checkpoint_files(config, root, *, log=None):
     """Companion closure shared by packaging and execution; no tensor imports."""
     ref = config.get('checkpoint')
     if ref is None:
@@ -120,8 +120,13 @@ def checkpoint_files(config, root):
         raise FitError('Choose a J-lens checkpoint state.json and its adjacent sums.safetensors.')
     relative = (Path(ref['path']).parent / 'sums.safetensors').as_posix()
     path = archives.ordinary(root, relative)
+    if log is None:
+        import sys
+        log = lambda message: print(message, file=sys.stderr, flush=True)
+    log(f'Verifying checkpoint tensors ({path.stat().st_size / 1024**3:.2f} GiB): {relative}. Large files may take several minutes to read.')
     if archives.file_hash(path) != state.get('tensorSHA256'):
         raise FitError('Checkpoint tensors differ from their recorded hash; retain the original snapshot.')
+    log('Checkpoint tensor verification completed.')
     return [relative]
 
 
@@ -130,12 +135,13 @@ def fit(config, *, root=None, log=print, on_run_created=None):
     return execute(config, root=root, log=log, on_run_created=on_run_created)
 
 
-def preflight(config, root):
+def preflight(config, root, *, log=None):
     rows = corpus_rows(read_pinned(config.corpus, root))
-    checkpoint_files(config.to_dict(), root)
+    checkpoint_files(config.to_dict(), root, log=log)
     if config.checkpoint:
+        from .jlens_fit_identity import verified_identity
         state = json.loads(read_pinned(config.checkpoint, root, limit=8 * 1024**2))
-        identity = state.get('identity')
+        identity = verified_identity(state)
         expected = {'estimator': ESTIMATOR, 'modelID': config.modelID, 'revision': config.revision,
                     'corpusSHA256': config.corpus['sha256'], 'maxSeqLen': config.maxSeqLen,
                     'skipFirst': config.skipFirst, 'dimBatch': config.dimBatch}

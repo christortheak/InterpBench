@@ -119,6 +119,19 @@ supports this backward calculation. Measure a pilot on the actual checkpoint,
 engine, and hardware before scheduling a large fit. Runtime or numerical errors
 are reported; they are not silently counted as short corpus rows.
 
+For a worked example (not a specification for your selected model), width 5,376
+and 61 source layers require 5,376 backward passes per usable row at dimension
+batch 1. Each float32 matrix set occupies 6.57 GiB; sums and the current row's
+matrices alone need 13.14 GiB of CPU memory. Each checkpoint writes about
+6.57 GiB, and model weights, activations, temporary matrices, and serialization
+need additional space. Batch 8 processes eight dimensions together in 672
+passes, using more activation memory; it does not promise eightfold acceleration.
+Even four rows can be an expensive pilot. Measure before increasing the limit.
+The shared request review estimates these costs from the exact model's cached
+configuration when available, without loading or downloading weights. Otherwise
+it reports unknown geometry and asks for review on the prepared engine. These
+are arithmetic estimates, not measured peak memory or elapsed time.
+
 Completed fits return an immutable run with fit-report.json,
 jacobians.safetensors, artifact-description.json, captured input text, and a
 checkpoint. Use normal science export/fetch/import and verify custody to bring
@@ -136,11 +149,25 @@ runs retain an immutable final checkpoint and the source checkpoint metadata/has
 private working copies are then removed. Cancellation retains the last completed
 scratch snapshot. Wait for the original job to stop, use the site's permitted
 transfer tools to recover state.json and sums.safetensors together if needed,
-and select state.json in a new request. The corpus, model, runtime, and estimator
-must match. The row limit may increase; progress is never appended to the old run.
+and select state.json in a new request. The corpus, model, numerical runtime
+settings, dependency versions, and estimator must match under the versioned
+fitting compatibility contract. Source hashes remain recorded as provenance, so
+a documentation-only change does not prevent continuation. A narrowly identified
+checkpoint from the original fitting release is recognized under the same
+contract; unknown older formats require review. Numerical changes require a new
+contract or an explicitly assessed migration, not silently ignoring differences.
+The row limit may increase; progress is never appended to the old run. Review
+and execution independently read and verify checkpoint tensors, with a status
+message before hashing. Multi-gigabyte files can take several minutes on slow
+storage; do not interpret that alone as a hang.
 The managed scheduler still reports automatic resume as unavailable: checkpoint
 continuation is a new, explicit reviewed job. Failed jobs are not evidence exports.
 No general cleanup of fitting runs or recovered checkpoints is authorized.
+Failed runs accumulate intentionally. Ordinary errors after run creation,
+including model loading and checkpoint restoration, leave a failure record with
+the stage, reason, and recovery references when storage permits. An abrupt kill
+or full disk can prevent that record; the run has no completion marker, and its
+last completed scratch checkpoint remains the recovery point.
 
 ### Corpus-authoring prompt to copy
 

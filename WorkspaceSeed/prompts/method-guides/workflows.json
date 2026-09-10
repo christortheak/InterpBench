@@ -761,7 +761,7 @@
           "kind": "integer",
           "required": false,
           "default": "4",
-          "help": "Fits the first N rows in file order. Four rows provide a timing pilot, not a well-established lens. Increase after reviewing time, memory, and corpus coverage. Short rows are counted in this limit and recorded as skipped."
+          "help": "Fits the first N rows in file order. Four rows provide a timing pilot, not a well-established lens. Increase after reviewing time, memory, and corpus coverage. Short rows are counted in this limit and recorded as skipped. The request review shows matrix memory and backward-pass estimates when the pinned model configuration is cached locally; otherwise it explains how to obtain an engine estimate."
         },
         {
           "id": "sourceLayers",
@@ -792,7 +792,7 @@
           "kind": "integer",
           "required": false,
           "default": "1",
-          "help": "A memory/performance control. The model repeats the passage this many times per pass. Larger values need more activation memory; start with 1 on a large model."
+          "help": "A memory/performance control. The model repeats the passage this many times per pass. Larger values need more activation memory; start with 1 on a large model. For example, width 5,376 needs 5,376 backward passes per row at batch 1, or 672 at batch 8. Batching uses more activation memory; it does not promise proportional acceleration."
         },
         {
           "id": "checkpointEvery",
@@ -831,7 +831,7 @@
           "label": "Continue from a completed checkpoint (optional)",
           "kind": "fileRef",
           "required": false,
-          "help": "Choose state.json beside its sums.safetensors after the original job has stopped. Both files travel with this request. The corpus, model, runtime, and estimator must match; only the prompt budget may increase. Continuation creates a new run."
+          "help": "Choose state.json beside sums.safetensors after the original job has stopped. Both files travel with the request and are read and verified again at execution; multi-gigabyte files can take several minutes. Continuation creates a new run. Numerical settings and dependency versions must match; documentation-only driver changes do not prevent continuation under the same fitting contract."
         }
       ],
       "claimBoundary": "An averaged Jacobian is an instrument fitted to this corpus and runtime. Stable fitting statistics are not evidence of semantic validity or causal steering effects.",

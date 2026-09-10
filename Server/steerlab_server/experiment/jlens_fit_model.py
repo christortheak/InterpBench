@@ -32,6 +32,12 @@ def load(config, log):
         raise FitError('Prepare this exact model checkpoint in the engine cache before fitting.') from exc
     from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer
     hf_config = AutoConfig.from_pretrained(snapshot, local_files_only=True, trust_remote_code=False)
+    from .jlens_fit_review import estimate
+    text_config = hf_config.get_text_config()
+    cost = estimate(config, getattr(text_config, 'hidden_size', None), getattr(text_config, 'num_hidden_layers', None))
+    if cost:
+        log('Fitting cost before loading weights: ' + cost['summary'])
+        log(cost['limitations'])
     if getattr(hf_config, 'quantization_config', None):
         raise FitError('Use unquantized model weights for Jacobian fitting; this checkpoint declares quantization.')
     architecture = getattr(hf_config, 'architectures', []) or []
@@ -66,6 +72,6 @@ def load(config, log):
         'deterministicAlgorithms': torch.are_deterministic_algorithms_enabled(),
         'driverSHA256': hashlib.sha256(b''.join(
             Path(__file__).with_name(name + '.py').read_bytes()
-            for name in ('jlens_fit', 'jlens_fit_execution', 'jlens_fit_model'))).hexdigest(),
+            for name in ('jlens_fit', 'jlens_fit_execution', 'jlens_fit_model', 'jlens_fit_identity'))).hexdigest(),
     }
     return model, runtime
