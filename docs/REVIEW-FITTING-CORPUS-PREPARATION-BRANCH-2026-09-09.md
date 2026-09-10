@@ -169,3 +169,59 @@ Suite results on `aa7d2ed`:
 
 - Python: 6,358 passed, 9 skipped, 8 warnings (matching the handoff's claim).
 - Swift: `TEST SUCCEEDED`, 290 SteeringKit and 4,614 ExperimentKit tests.
+
+## 6. The follow-up, `53c2aba`, and what landed after it
+
+The refactoring agents took this review's landing commit onto the branch
+and answered F2 and N1 in one commit (19 files, +536/−31), with the
+maintainer's decision on F1 recorded. Read in full.
+
+- **F1, decided.** The complete CPU client stays the default. Parquet,
+  public dataset files and offline token previews are ordinary research
+  steps and should work after one setup; the client still carries no GPU
+  execution package. The guide and the first-run document say so.
+- **F2.** A shared `client_dependencies` module runs one isolated import
+  probe (`-I`, torch and TensorFlow backends disabled) for four capability
+  groups: basic authoring, Parquet, public dataset downloads, token
+  preview. `setup.inspect` reports `clientReady` (all four),
+  `basicClientReady` (the original three packages), per-capability
+  diagnostics, a reason line and the upgrade repair; `setup start` and
+  `authoringReady` key on the basic set so an older environment keeps
+  authoring. The installer's activation step runs the same probe and
+  refuses to replace a working runtime with an incomplete one (test: the
+  old runtime and its files survive). The two lazy imports in
+  `corpus_sources.py` now raise `CorpusSetupError` with code
+  `clientSetupRequired` and the same repair on the CLI (exit 65), the
+  workbench route (409, code carried through) and the Mac process adapter;
+  a missing tokenizer stays advisory in the preview. Research Setup shows
+  "Client update needed for corpus tools" and a "Review Update Plan"
+  button when the basic set is present.
+- **N1.** An occupied `prompts/fitting/<name>` refuses with
+  `corpusDestinationExists`, names the folder, and says to publish the same
+  reviewed preview under a new name; a directory created by a competing
+  publication mid-way gets the same refusal and is left untouched.
+- **N2 – N4.** Documented rather than changed: the hub cache is shared and
+  not cleaned, publication reads only the captured snapshot, and the
+  receipt's tokenizer versions are the preparation machine's.
+
+Verified independently on `53c2aba` in a clean worktree: the unified gates
+and audits, the public scan, whitespace, vocabulary in the diff and the
+commit message. Live, in this machine's un-upgraded managed client
+environment (`~/Library/Application Support/SteerLab/.steerlab-client.*/venv`,
+the exact F2 case) with the branch source on the path: `setup.inspect`
+returns `clientReady false`, `basicClientReady true`, the three corpus
+capabilities each with a "No module named …" diagnostic, and the Research
+Setup repair; a Parquet preview through the shared adapter raises
+`CorpusSetupError` with `clientSetupRequired`. In the full engine venv all
+four capabilities report ready. The probe costs under half a second here.
+
+Suite results on `53c2aba`:
+
+- Python: 6,367 passed, 9 skipped, 8 warnings (matching the handoff's claim).
+- Swift: `TEST SUCCEEDED`, 290 SteeringKit and 4,614 ExperimentKit tests.
+
+The branch changed shipped Python, the installer helper and the compiled
+identity, so the app and its Python payload are rebuilt together; the
+managed client environment on each machine still needs its reviewed update
+through Research Setup before the app's Parquet, dataset and token-preview
+paths are used.
