@@ -104,7 +104,8 @@ def preflight(config, root):
 
 def merge(config, *, root, log=print, on_run_created=None):
     import torch
-    from safetensors.torch import load_file, save_file
+    from safetensors import safe_open
+    from safetensors.torch import save_file
     from .jlens_fit_execution import save_checkpoint
     root=Path(root).resolve(strict=True)
     items,covered,expected,skipped,missing=reviewed(config,root)
@@ -113,24 +114,28 @@ def merge(config, *, root, log=print, on_run_created=None):
     # Driver hashes identify source provenance; record every input driver separately.
     identity['runtime']={**identity['runtime'],'driverSHA256':archives.file_hash(Path(__file__))}
     sums={}; count=0; sources=[]
+    layers=identity['sourceLayers']; width=identity['hiddenSize']
     for item in items:
-        values=load_file(str(item['directory']/'checkpoint/sums.safetensors'))
-        means=load_file(str(item['directory']/'jacobians.safetensors'))
-        layers=identity['sourceLayers']; width=identity['hiddenSize']
-        if set(values)!={str(i) for i in layers} or set(means)!={f'layer_{i}' for i in layers}: raise FitError('Merge tensor layers differ from the recorded geometry.')
-        for layer in layers:
-            v=values[str(layer)]
-            if v.dtype!=torch.float32 or tuple(v.shape)!=(width,width) or not bool(torch.isfinite(v).all()): raise FitError('Merge requires finite float32 sums.')
-            if not torch.equal(v/item['state']['nDone'],means[f'layer_{layer}']): raise FitError('The checkpoint sums and published mean differ; choose coherent completed output.')
-            if layer not in sums: sums[layer]=torch.zeros_like(v)
-            sums[layer]+=v
-            if not bool(torch.isfinite(sums[layer]).all()): raise FitError('Merged sums are non-finite.')
+        # The merge is a cpu-class operation and runs inside the controller
+        # process, whose host memory is small (16 GB on the first site). Read
+        # one layer at a time from each file instead of loading whole
+        # multi-gigabyte tensor sets; only the accumulator stays resident.
+        with safe_open(str(item['directory']/'checkpoint/sums.safetensors'), framework='pt') as values, \
+             safe_open(str(item['directory']/'jacobians.safetensors'), framework='pt') as means:
+            if set(values.keys())!={str(i) for i in layers} or set(means.keys())!={f'layer_{i}' for i in layers}: raise FitError('Merge tensor layers differ from the recorded geometry.')
+            for layer in layers:
+                v=values.get_tensor(str(layer))
+                if v.dtype!=torch.float32 or tuple(v.shape)!=(width,width) or not bool(torch.isfinite(v).all()): raise FitError('Merge requires finite float32 sums.')
+                if not torch.equal(v/item['state']['nDone'],means.get_tensor(f'layer_{layer}')): raise FitError('The checkpoint sums and published mean differ; choose coherent completed output.')
+                if layer not in sums: sums[layer]=torch.zeros_like(v)
+                sums[layer]+=v
+                if not bool(torch.isfinite(sums[layer]).all()): raise FitError('Merged sums are non-finite.')
+                del v
         count+=item['state']['nDone']
         sources.append({'run':str(item['directory'].relative_to(root)),'checkpointSHA256':item['checkpointSHA256'],
                         'tensorSHA256':item['tensorSHA256'],'driverSHA256':item['identity']['runtime'].get('driverSHA256'),
                         'globalRows':item['covered'],'promptsFitted':item['state']['nDone'],
                         'sourceCheckpointSHA256':item['report'].get('sourceCheckpointSHA256')})
-        del values,means
         if any(archives.file_hash(item['directory']/name)!=digest for name,digest in item['fingerprints'].items()):
             raise FitError('A merge input changed while being read. Keep completed source runs immutable, then review again.')
     parent=archives.ordinary(root,'runs',missing=True);parent.mkdir(exist_ok=True)
@@ -138,7 +143,10 @@ def merge(config, *, root, log=print, on_run_created=None):
     if on_run_created:on_run_created(str(run))
     checkpoint=save_checkpoint(run,identity,sums,count,len(covered),[covered.index(i) for i in skipped])
     checkpoint.rename(run/'checkpoint')
-    save_file({f'layer_{k}':v/count for k,v in sums.items()},str(run/'jacobians.safetensors'))
+    # The checkpoint above holds the raw sums; divide in place for the
+    # published mean so a second full tensor set is never resident.
+    for v in sums.values(): v.div_(count)
+    save_file({f'layer_{k}':v for k,v in sums.items()},str(run/'jacobians.safetensors'))
     report={'schemaVersion':1,'operation':'jlens-fit-merge','identity':identity,'promptsFitted':count,
             'rowsConsidered':len(covered),'skippedIndices':[covered.index(i) for i in skipped],
             'globalRowIndices':covered,'globalSkippedIndices':skipped,'expectedGlobalRows':expected,

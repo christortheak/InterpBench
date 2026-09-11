@@ -77,17 +77,18 @@ def test_stopping_checkpoint_cannot_turn_out_of_range_values_into_convergence():
 
 def test_merge_detects_source_mutation_during_loading(fitting,monkeypatch):
     from pathlib import Path
-    from safetensors import torch as tensors
+    import safetensors
     from steerlab_server.experiment import jlens_merge
     root,cfg=fitting
     fitted=run(root,cfg);directory=Path(fitted['runDirectory'])
-    original=tensors.load_file
+    original=safetensors.safe_open
     def changed(path,*args,**kwargs):
-        result=original(path,*args,**kwargs)
-        if path.endswith('/jacobians.safetensors'):
+        # The merge streams one layer at a time; mutate a sibling once the
+        # published mean is opened, after the fingerprints were taken.
+        if str(path).endswith('/jacobians.safetensors'):
             report=directory/'fit-report.json';report.write_bytes(report.read_bytes()+b' ')
-        return result
-    monkeypatch.setattr(tensors,'load_file',changed)
+        return original(path,*args,**kwargs)
+    monkeypatch.setattr(safetensors,'safe_open',changed)
     before=set((root/'runs').iterdir())
     config=jlens_merge.MergeConfig.from_dict({'fits':[str(directory.relative_to(root))]})
     with pytest.raises(ValueError,match='changed while being read'):jlens_merge.merge(config,root=root)
