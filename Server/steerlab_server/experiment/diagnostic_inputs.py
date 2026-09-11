@@ -82,4 +82,4 @@ def save_stage_reference(digest, root):
             if destination.read_bytes() != data:
                 raise archives.Refusal('The saved staged request differs; inspect it before planning.')
     return {'localRequestPath': str(destination), 'request': {'inputBundleSHA256': digest},
-            'nextAction': 'Use localRequestPath with science-plan --request, then science-submit --request and the reviewed planSHA256 on the same controller.'}
+            'nextAction': 'Pass localRequestPath as the positional request file to science-plan, then science-submit with the reviewed planSHA256 on the same controller.'}

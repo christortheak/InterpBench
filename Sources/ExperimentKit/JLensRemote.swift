@@ -85,6 +85,9 @@ public struct JLensRecord: Codable, Sendable, Identifiable, Equatable {
     public var converted: JLensConverted?
     public var referencePackage: String?
     public var referenceCommit: String?
+    public var kernelSHA256: String?
+    public var driverSHA256: String?
+    public var fitReportSHA256: String?
     public var readoutConvention: String?
     public var directionConvention: String?
     public var substrate: String?

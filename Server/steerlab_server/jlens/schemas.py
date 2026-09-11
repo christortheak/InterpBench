@@ -173,6 +173,9 @@ class JLensRecord:
     configHash: str | None = None
     referencePackage: str | None = None
     referenceCommit: str | None = None
+    kernelSHA256: str | None = None
+    driverSHA256: str | None = None
+    fitReportSHA256: str | None = None
     #: The evidence tier this lens's model holds IN THIS PROJECT, and where
     #: that came from: ``"curated"`` when the model has a row in
     #: ``importer.SUPPORTED``, ``"declared"`` when the researcher declared it

@@ -7,7 +7,7 @@ import shutil
 import tempfile
 import uuid
 
-from . import artifact_sources, diagnostic_archives
+from . import artifact_sources, diagnostic_archives, fit_artifact_provenance
 from .artifact_sources import ImportRefusal
 
 
@@ -29,6 +29,7 @@ def inspect_source(description_file, root):
         warnings.append('The artifact’s fit-time model revision is unknown; it will remain unknown.')
     if spec['kind'] == 'jlens':
         details = lens_details(spec, tensors)
+        details['fittingProvenance'] = fit_artifact_provenance.read(spec, files, before['tensorFile'])
         if details['sourceLayers'] != list(range(details['targetLayer'])):
             warnings.append('This lens supports readouts at its fitted layers. Creating a steering token vector currently needs every source layer before the final block; import a full-depth lens for that action.')
     else:
@@ -186,7 +187,7 @@ def publish(description_file, root, expected):
         if spec != plan['description']:
             raise ImportRefusal('Captured description differs from its review.')
         if kind == 'jlens':
-            result = publish_lens(spec, plan, tensors, staged, target, root, artifact_id)
+            result = publish_lens(spec, plan, tensors, captured, staged, target, root, artifact_id)
         else:
             result = publish_sae(spec, plan, tensors, captured, staged, target, root)
         receipt = {**plan, 'changed': True, 'outputRelative': target.relative_to(root).as_posix(),
@@ -196,9 +197,10 @@ def publish(description_file, root, expected):
     return {**result, 'changed': True, 'outputDirectory': str(target), 'warnings': plan['warnings']}
 
 
-def publish_lens(spec, plan, tensors, staged, target, root, artifact_id):
+def publish_lens(spec, plan, tensors, captured, staged, target, root, artifact_id):
     from ..jlens.schemas import SourceRef, ConvertedRef, FitProvenance, JLensRecord, write_record
     details = lens_details(spec, tensors)
+    details['fittingProvenance'] = fit_artifact_provenance.read(spec, captured, plan['files']['tensorFile']['sha256'])
     if details != plan['details']:
         raise ImportRefusal('The captured lens metadata differs from the review. Review these source bytes again.')
     tensor_path = staged / 'jacobians.safetensors'
@@ -217,7 +219,8 @@ def publish_lens(spec, plan, tensors, staged, target, root, artifact_id):
         nPrompts=details['promptsFitted'] or 0,
         converted=ConvertedRef(path=(target / tensor_path.name).relative_to(root).as_posix(),
             dtype=tensors.dtype_description(spec['lens']['layers'].values()), sha256=artifact_sources.digest(tensor_path), layerCount=len(details['sourceLayers'])),
-        configHash=plan['files']['description']['sha256'], tier=details['tier'], tierSource='custom-artifact')
+        configHash=plan['files']['description']['sha256'], tier=details['tier'], tierSource='custom-artifact',
+        **details['fittingProvenance'])
     write_record(record, str(staged / 'lens.json'))
     return {'kind': 'jlens', 'lensID': artifact_id, 'record': record.to_dict()}
 

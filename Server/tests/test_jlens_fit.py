@@ -441,3 +441,23 @@ def test_model_loading_failure_also_has_memory_and_repair(fitting, monkeypatch):
     assert failure['phase'] == 'loading-model'
     assert failure['dimBatch'] == 1 and 'telemetry' in failure
     assert 'larger allocation' in failure['repairAction']
+
+
+def test_registration_preserves_verified_fit_provenance(fitting, monkeypatch):
+    root, config = fitting
+    runtime = {'dtype': 'float32', 'device': 'cpu', 'referenceCommit': 'b'*40,
+               'kernelSHA256': 'c'*64, 'driverSHA256': 'd'*64}
+    monkeypatch.setattr(jlens_fit_model, 'load', lambda cfg, log: (Tiny(), runtime))
+    result = run(root, config)
+    path = Path(result['artifactDescription'])
+    plan = artifact_imports.inspect_source(path, root)
+    published = artifact_imports.publish(path, root, plan['planSHA256'])
+    record = lens_store.resolve(published['lensID'], str(root))
+    assert record.referencePackage == 'jlens' and record.referenceCommit == 'b'*40
+    assert record.kernelSHA256 == 'c'*64 and record.driverSHA256 == 'd'*64
+    assert record.fitReportSHA256 == archives.file_hash(path.with_name('fit-report.json'))
+    report = json.loads(path.with_name('fit-report.json').read_bytes())
+    report['tensorSHA256'] = 'f'*64
+    path.with_name('fit-report.json').write_text(json.dumps(report))
+    with pytest.raises(ValueError, match='different tensors'):
+        artifact_imports.inspect_source(path, root)
