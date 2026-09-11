@@ -16,7 +16,7 @@ def build_router(state):
             if state.jobs is None: raise archives.Refusal('Use the controller that owns durable job records.')
             return callback()
         except (ValueError, OSError, KeyError, TypeError) as exc:
-            raise HTTPException(409, detail={'code': 'diagnosticTransportRefused', 'reason': str(exc), 'repairAction': archives.Refusal.repair_action}) from exc
+            raise HTTPException(409, detail={'code': 'diagnosticTransportRefused', 'reason': str(exc), 'repairAction': getattr(exc, 'repair_action', archives.Refusal.repair_action)}) from exc
     @router.post('/api/science/workspace/{action}')
     def workspace(action: str, body: dict):
         from pathlib import Path

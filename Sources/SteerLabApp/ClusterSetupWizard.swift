@@ -478,6 +478,7 @@ struct ClusterSetupWizard: View {
             if let preview = provisioner.pushCommandPreview {
                 commandPreview(preview)
             }
+            Text("Pushing code does not restart a running controller. Check its build in Cluster health, then arrange a restart when active work permits.").font(.caption)
             Button("Run Push") {
                 Task { await provisioner.runPushCode() }
             }

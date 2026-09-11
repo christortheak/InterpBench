@@ -92,10 +92,11 @@ public struct ClusterEndpointProbeResult: Sendable, Equatable {
     public var serverRole: String?
     public var root: String?
     public var detail: String?
+    public var deployedBuild: String?
 
     public init(
         reachable: Bool, authFailed: Bool = false, serverBuild: String? = nil,
-        serverRole: String? = nil, root: String? = nil, detail: String? = nil
+        serverRole: String? = nil, root: String? = nil, detail: String? = nil, deployedBuild: String? = nil
     ) {
         self.reachable = reachable
         self.authFailed = authFailed
@@ -103,6 +104,7 @@ public struct ClusterEndpointProbeResult: Sendable, Equatable {
         self.serverRole = serverRole
         self.root = root
         self.detail = detail
+        self.deployedBuild = deployedBuild
     }
 }
 
@@ -123,12 +125,12 @@ public struct HTTPClusterEndpointProbe: ClusterEndpointProbe {
             let capabilities = try await client.capabilities()
             return ClusterEndpointProbeResult(
                 reachable: true,
-                serverBuild: [capabilities.engine, capabilities.serverVersion]
+                serverBuild: capabilities.runningEngineVersion ?? [capabilities.engine, capabilities.serverVersion]
                     .compactMap { $0 }
                     .joined(separator: " ")
                     .trimmingCharacters(in: .whitespaces),
                 serverRole: capabilities.serverRole,
-                root: capabilities.root)
+                root: capabilities.root, deployedBuild: capabilities.deployedBuildCommit)
         } catch ClusterClient.ClientError.badResponse(let code, let body) {
             if code == 401 || code == 403 {
                 return ClusterEndpointProbeResult(reachable: false, authFailed: true)
@@ -1034,7 +1036,7 @@ public struct ClusterProvisioningOperations: Sendable {
             succeeded: true,
             message: "server bundle pushed to "
                 + "\(hostLabel):\(configuration.remoteRepoPath)\(stampNote)"
-                + renderNote,
+                + renderNote + ". A running controller keeps its loaded code; this push does not restart it. Inspect cluster status, then arrange a reviewed restart when active work permits.",
             transcript: transcript)
         // What was deployed, for the caller to record as this site's intended
         // engine identity (see `ClusterDeployIntent`). Read from the payload

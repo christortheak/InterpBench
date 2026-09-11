@@ -17,11 +17,17 @@ def stage(path, expected, profile):
     if not source.is_absolute(): source = base / source
     # External transport stages under the configured run root, never an
     # arbitrary server path supplied by a remote caller.
-    source = archives.ordinary(base, source.relative_to(base).as_posix() if source.is_absolute() else str(source))
+    try: relative = source.relative_to(base).as_posix()
+    except ValueError as exc:
+        error = archives.Refusal('The archive must be transferred beneath the runner run root: ' + str(base))
+        error.repair_action = 'Use the site-approved transfer into ' + str(base) + ', then call science-stage with that server path and the archive SHA-256. This is an execution copy; keep local sources.'
+        raise error from exc
+    source = archives.ordinary(base, relative)
     metadata = archives.inspect(source, expected)
     if metadata['kind'] != 'diagnosticInput': raise archives.Refusal('Expected diagnostic inputs, not evidence.')
     target = archives.ordinary(base, 'diagnostic-input-' + expected, missing=True)
     with manifest_files.transaction(str(target), workspace_root=profile.metadata_root):
+        archives.refuse_empty_publication_claim(target)
         if not target.exists():
             with tempfile.TemporaryDirectory(dir=base) as temp:
                 capture = Path(temp) / 'input.tar.gz'; shutil.copyfile(source, capture)
@@ -38,7 +44,8 @@ def stage(path, expected, profile):
                 archives.publish_directory(Path(temp) / 'capsule', target)
         request, root = resolve(expected, profile)
     return {'inputBundleSHA256': expected, 'request': {'inputBundleSHA256': expected},
-            'executionRoot': str(root), 'operation': request['operation']}
+            'executionRoot': str(root), 'operation': request['operation'],
+            'nextAction': 'Plan and submit the returned request object on this controller. Client workspace paths in the original request are not runner paths.'}
 
 
 def resolve(expected, profile):

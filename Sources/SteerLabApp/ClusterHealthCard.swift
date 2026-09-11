@@ -19,6 +19,17 @@ struct ClusterHealthCard: View {
     var body: some View {
         Section("Cluster health — \(cluster.substrateLabel)") {
             connectionRow
+            if let capabilities = cluster.capabilities {
+                LabeledContent("Running controller", value: capabilities.runningEngineVersion ?? "Build not reported")
+                    .font(.caption).textSelection(.enabled)
+                LabeledContent("Deployed code", value: capabilities.deployedBuildCommit ?? "Build not reported")
+                    .font(.caption).textSelection(.enabled)
+                if let advisory = ClusterServerBuildReport(running: capabilities.runningEngineVersion, deployed: capabilities.deployedBuildCommit).advisory {
+                    Text(advisory).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+                }
+                Button("Refresh connection details") { Task { _ = await cluster.connect() } }
+                    .disabled(cluster.isConnecting)
+            }
             if cluster.capabilities == nil {
                 Text("connect to see housekeeping (toolbar connection dot)")
                     .font(.caption)

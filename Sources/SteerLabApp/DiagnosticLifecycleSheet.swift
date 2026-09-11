@@ -59,7 +59,7 @@ struct DiagnosticLifecycleSheet: View {
                             Button("Upload and stage inputs") { perform {
                                 let uploaded = try await client.uploadBundle(URL(filePath: inputArchiveFile))
                                 guard uploaded.sha256 == inputArchiveHash else { throw ExperimentError(reason: "Uploaded input hash differs from the reviewed archive.") }
-                                let result = try await client.stageDiagnostic(path: uploaded.path, sha256: inputArchiveHash)
+                                let result = try await DiagnosticRemote.stage(path: uploaded.path, sha256: inputArchiveHash, client: client, root: root)
                                 if case .object(let object) = result { stagedRequest = object["request"] }
                                 executionPlan = nil; show(result)
                             } }.disabled(inputArchiveFile.isEmpty || inputArchiveHash.isEmpty)
@@ -79,6 +79,7 @@ struct DiagnosticLifecycleSheet: View {
                     Text("Where HTTP transfer is prohibited, use the site's declared transport and the documented stage/import commands. A reviewed plan must be submitted within the same controller session.").font(.caption)
                 }
                 Section("Bring evidence home and inspect it offline") {
+                    Text("Large evidence exports can take several minutes to prepare before transfer begins. Keep this window open; the archive is verified before import.").font(.caption)
                     TextField("Originating job ID", text: $jobID).onChange(of: jobID) { _, _ in cleanupPlan = nil; confirmation = false; campaignPlan = nil; campaignConfirmed = false }
                     HStack {
                         if let client {

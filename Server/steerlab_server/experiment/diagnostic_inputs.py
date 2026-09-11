@@ -62,3 +62,24 @@ def package(request, root, destination, expected):
     context = {'request': reviewed['request'], 'sourcePlanSHA256': expected, 'sourceRoot': reviewed['sourceRoot']}
     return archives.package(root, [e['path'] for e in reviewed['files']], destination,
         kind='diagnosticInput', context=context, expected_entries=reviewed['files'])
+
+
+def save_stage_reference(digest, root):
+    """A local planning input naming the verified remote execution copy."""
+    import re
+    import tempfile
+    if not isinstance(digest, str) or not re.fullmatch('[0-9a-f]{64}', digest):
+        raise archives.Refusal('Use the inputBundleSHA256 returned by staging.')
+    root = Path(root).resolve(strict=True)
+    directory = archives.ordinary(root, '.steerlab/diagnostic-requests', missing=True)
+    directory.mkdir(parents=True, exist_ok=True)
+    destination = archives.ordinary(directory, digest + '.json', missing=True)
+    data = archives.encoded({'inputBundleSHA256': digest})
+    with tempfile.TemporaryDirectory(dir=directory) as temp:
+        source = Path(temp) / 'request.json'; source.write_bytes(data)
+        try: archives.publish_file(source, destination)
+        except FileExistsError:
+            if destination.read_bytes() != data:
+                raise archives.Refusal('The saved staged request differs; inspect it before planning.')
+    return {'localRequestPath': str(destination), 'request': {'inputBundleSHA256': digest},
+            'nextAction': 'Use localRequestPath with science-plan --request, then science-submit --request and the reviewed planSHA256 on the same controller.'}

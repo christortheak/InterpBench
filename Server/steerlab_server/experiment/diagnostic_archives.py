@@ -147,7 +147,12 @@ def _publish_by_claim(source, target):
     claim another process wrote into in between refuses with ENOTEMPTY and
     is left for its author. Nothing created by anyone else is ever replaced.
     """
-    os.mkdir(target)  # raises FileExistsError (EEXIST) when the name is taken
+    target = Path(target)
+    try:
+        os.mkdir(target)
+    except FileExistsError as exc:
+        refuse_empty_publication_claim(target)
+        raise
     try:
         os.rename(source, target)
     except OSError:
@@ -156,6 +161,15 @@ def _publish_by_claim(source, target):
         except OSError:
             pass
         raise
+
+
+def refuse_empty_publication_claim(target):
+    """Report an incomplete claim without deciding whether its publisher exited."""
+    target = Path(target)
+    if target.is_dir() and not target.is_symlink() and not any(target.iterdir()):
+        error = FileExistsError(errno.EEXIST, 'An empty publication directory already exists; it may be an active or abandoned claim', str(target))
+        error.repair_action = 'Confirm that no publisher is live, then remove only this empty directory by hand and retry. If uncertain, choose a new destination. Existing populated directories must be retained.'
+        raise error
 
 
 def package(root, paths, destination, *, kind, context, expected_entries=None):

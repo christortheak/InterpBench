@@ -957,6 +957,7 @@ struct ClusterProvisioningOperationsTests {
         let outcome = await operations.push(site: site(), configuration: configuration)
         #expect(outcome.succeeded)
         #expect(outcome.message.contains("BUILD_COMMIT stamped e9a93c9a"))
+        #expect(outcome.message.contains("does not restart"))
         #expect(!outcome.message.contains("no identity to stamp"))
         #expect(outcome.deployed?.payloadRevision == "e9a93c9a")
         #expect(outcome.deployed?.buildStamp == "e9a93c9a")

@@ -548,6 +548,7 @@ public struct ClusterLifecycleInspector: Sendable {
         if let baseURL = Self.baseURL(for: site, tunnel: state.tunnel) {
             let probe = await endpoint.probe(baseURL: baseURL, token: token)
             if probe.reachable {
+                state.deployedControllerBuild = probe.deployedBuild
                 state.serverHTTP = .reachable(
                     build: probe.serverBuild.flatMap { $0.isEmpty ? nil : $0 },
                     role: probe.serverRole, root: probe.root)

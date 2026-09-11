@@ -72,6 +72,6 @@ def load(config, log):
         'deterministicAlgorithms': torch.are_deterministic_algorithms_enabled(),
         'driverSHA256': hashlib.sha256(b''.join(
             Path(__file__).with_name(name + '.py').read_bytes()
-            for name in ('jlens_fit', 'jlens_fit_execution', 'jlens_fit_model', 'jlens_fit_identity'))).hexdigest(),
+            for name in ('jlens_fit', 'jlens_fit_execution', 'jlens_fit_model', 'jlens_fit_identity', 'jlens_fit_telemetry'))).hexdigest(),
     }
     return model, runtime

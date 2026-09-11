@@ -2571,6 +2571,16 @@ import Testing
         #expect(detail.status == "draft")
     }
 
+    @Test func diagnosticExportAndStageAllowLongPreparation() async throws {
+        let client = ClusterClient(profile: .init(baseURL: URL(string: "http://server.test")!), session: Self.session { request in
+            #expect(request.timeoutInterval == 3600)
+            #expect(request.httpMethod == "POST")
+            return (Data("{}".utf8), 200)
+        })
+        _ = try await client.exportDiagnostic("example-job")
+        _ = try await client.stageDiagnostic(path: "/runs/input.tar.gz", sha256: String(repeating: "a", count: 64))
+    }
+
     private static func session(
         handler: @escaping @Sendable (URLRequest) throws -> (Data, Int)
     ) -> URLSession {

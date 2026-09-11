@@ -14,7 +14,10 @@ import sys
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from .. import __version__
+from .. import __version__, build_identity
+
+# Capture while the controller loads, before a later code push changes disk.
+RUNNING_ENGINE_VERSION = build_identity.engine_version()
 
 
 _VALID_PROFILES = {"local", "workstation", "cluster"}
@@ -234,6 +237,8 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
     return {
         "serviceRole": service_role(),
         "serverVersion": __version__,
+        "runningEngineVersion": RUNNING_ENGINE_VERSION,
+        "deployedBuildCommit": build_identity.deployed_commit(),
         "apiSchemaVersion": "2026-07-01",
         "engine": "python-hf-transformers",
         # REALPATH of the artifact root, top-level for the app's connect flow

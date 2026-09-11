@@ -9,7 +9,7 @@ import tempfile
 import time
 import uuid
 
-from . import diagnostic_archives as archives, jlens_fit_model, jlens_fit_identity
+from . import diagnostic_archives as archives, jlens_fit_model, jlens_fit_identity, jlens_fit_telemetry
 from .jlens_fit import ESTIMATOR, FitError, checkpoint_files, corpus_rows, preflight, read_pinned
 
 
@@ -92,6 +92,9 @@ def execute(config, *, root, log=print, on_run_created=None):
     run = runs / run_id; run.mkdir()
     latest = None
     next_row = 0
+    kernel_observation = None
+    measurements = jlens_fit_telemetry.Measurements(torch, config.device, run / 'row-resources.jsonl')
+    jacobian_for_prompt = measurements.wrap(jacobian_for_prompt)
     phase = 'capturing-inputs'
     try:
         if on_run_created: on_run_created(str(run))
@@ -118,6 +121,7 @@ def execute(config, *, root, log=print, on_run_created=None):
         started = time.perf_counter()
         phase = 'loading-model'
         model, runtime = jlens_fit_model.load(config, log)
+        kernel_observation = jlens_fit_telemetry.KernelObservation(model)
         width, target = model.d_model, model.n_layers - 1
         layers = sorted(config.sourceLayers) if config.sourceLayers is not None else list(range(target))
         if not layers or layers[-1] >= target:
@@ -208,6 +212,11 @@ def execute(config, *, root, log=print, on_run_created=None):
                   'corpusReceipt': config.corpusReceipt,
                   'continuedFrom': config.checkpoint, 'elapsedSeconds': time.perf_counter() - started,
                   'tensorSHA256': archives.file_hash(run / 'jacobians.safetensors'),
+                  'telemetry': measurements.report(),
+                  'execution': {'compile': False, 'attention': runtime.get('attention'),
+                                'optionalKernelPackages': jlens_fit_telemetry.package_versions(),
+                                'kernelDispatch': kernel_observation.report()},
+                  'finiteByLayer': {str(layer): bool(torch.isfinite(maps[f'layer_{layer}']).all()) for layer in layers},
                   'qualification': 'notPerformed', 'fullDepth': layers == list(range(target)),
                   'nextStep': 'Review artifact-description.json with science artifact-plan, then artifact-import to add this fit to the lens library. Qualification and held-out assessment are separate.'}
         write_json(run / 'fit-report.json', report)
@@ -229,7 +238,12 @@ def execute(config, *, root, log=print, on_run_created=None):
             write_json(run / 'fit-failure.json', {'reason': str(exc), 'phase': phase,
                        'nextIndex': next_row,
                        'checkpoint': str(latest.relative_to(root)) if latest else None,
-                       'sourceCheckpoint': config.checkpoint})
+                       'sourceCheckpoint': config.checkpoint, 'dimBatch': config.dimBatch,
+                       'telemetry': measurements.report(),
+                       'repairAction': 'Review the failure phase and memory measurements. For an out-of-memory failure, try a smaller dimension batch or a larger allocation; retain the last completed checkpoint.'})
         except OSError as report_error:
             log('Could not save the fitting failure record: ' + str(report_error))
         raise
+
+    finally:
+        if kernel_observation is not None: kernel_observation.close()

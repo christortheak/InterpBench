@@ -23,6 +23,7 @@ def workspace_action(action, payload):
         from . import setup
         return setup.inspect(payload.get('workspaceRoot'))
     required = {
+        'staged-request': {'bundleSHA256'},
         'corpus-preview': {'specText'}, 'corpus-publish': {'previewID', 'planSHA256', 'destination'},
         'artifact-plan': {'descriptionFile'}, 'artifact-import': {'descriptionFile', 'planSHA256'},
         'sae-check': {'path'}, 'sae-show': {'path'},
@@ -38,6 +39,9 @@ def workspace_action(action, payload):
     if not fields <= payload.keys() or payload.keys() - fields - optional or any(not isinstance(payload[k], str) or not payload[k] for k in fields):
         raise archives.Refusal('Supply exactly the declared action fields as nonempty strings.')
     root = str(Path(payload['workspaceRoot']).resolve())
+    if action == 'staged-request':
+        from ..experiment.diagnostic_inputs import save_stage_reference
+        return save_stage_reference(payload['bundleSHA256'], root)
     if action in ('corpus-preview', 'corpus-publish'):
         from ..experiment import corpus_preparation
         if action == 'corpus-preview': return corpus_preparation.preview(json.loads(payload['specText']), root)
@@ -117,7 +121,12 @@ def remote(client, invocation, common):
             action, _, _, _ = request(value, invocation.one('--action'), document)
             changed = action['method'] != 'GET'
             result = client.science_call(value, invocation.one('--action'), document)
-        elif verb == 'science-stage': result = client.stage_diagnostic(value, invocation.one('--sha256'))
+        elif verb == 'science-stage':
+            result = client.stage_diagnostic(value, invocation.one('--sha256'))
+            from ..experiment.diagnostic_inputs import save_stage_reference
+            if result.get('request') != {'inputBundleSHA256': invocation.one('--sha256')}:
+                raise archives.Refusal('The stage response differs from the supplied archive digest.')
+            result = {**result, **save_stage_reference(invocation.one('--sha256'), root)}
         elif verb == 'science-export': result = client.export_diagnostic(value)
         elif verb == 'science-fetch':
             client.require_http_transfer()
@@ -126,7 +135,7 @@ def remote(client, invocation, common):
             incoming = archives.ordinary(root, '.steerlab/diagnostic-incoming', missing=True); incoming.mkdir(parents=True, exist_ok=True)
             destination = incoming / (reference['bundleSha256'] + '.tar.gz')
             if not destination.exists():
-                client.download_bundle(remote_path=reference['bundlePath'], expected_sha256=reference['bundleSha256'], destination=str(destination))
+                client.download_bundle(remote_path=reference['bundlePath'], expected_sha256=reference['bundleSha256'], destination=str(destination), request_timeout=client.diagnostic_timeout)
             result = archives.import_evidence(destination, reference['bundleSha256'], root, expected_context=reference['context'])
             if result['receipt']['context'] != reference['context']: raise archives.Refusal('Imported archive origin differs from the exporting job.')
         else:

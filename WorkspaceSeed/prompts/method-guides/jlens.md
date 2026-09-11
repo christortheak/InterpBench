@@ -223,3 +223,65 @@ split; this action does not establish document-level independence.
 Ask the researcher about the text population and sampling choices in plain
 language. Do not infer permission to download, generate, or delegate dataset
 creation from a model or concept choice. Preparation does not start fitting.
+
+## Pilot measurements and reliable remote collection
+
+A new fit writes `row-resources.jsonl` beside `progress.jsonl`. It records each
+reference-kernel call's dimension batch, elapsed seconds, tokens, and available
+CUDA memory measurements. `fit-report.json` includes per-layer finiteness,
+allocated and reserved device peaks, process-lifetime peak host RSS, compilation
+status, optional kernel package versions, and observations from executed
+attention modules. An installed package is not proof its fast kernel executed;
+unknown dispatch is reported as unverified. Non-CUDA device measurements are
+unavailable rather than zero. A failure report names the phase, batch, latest
+completed checkpoint, and available memory, including failures before backward.
+These measurements describe this runtime and corpus; they do not establish
+readout quality or predict proportional speedups from larger batches.
+
+After packaging inputs, transfer the archive beneath the runner's configured
+run root using the site's permitted transport. `runner science-stage` (Mac:
+`remote science-stage`) receives that server path and the archive SHA-256. Both
+clients save `.steerlab/diagnostic-requests/<digest>.json` in the local workspace
+and return its absolute `localRequestPath`. Use that file with `science-plan
+--request` and then `science-submit --request` with the reviewed plan hash on
+the same controller. The app carries this staged request automatically. An API
+caller uses the `request` object returned by `POST /api/science/stage` directly.
+Do not send the original published request to a runner that cannot see the
+local workspace: its file references describe authoring inputs, not staged
+execution copies.
+
+Staging and export may hash or compress gigabytes before sending response bytes.
+Both clients allow an hour for these requests; the Python client's explicit
+request timeout overrides that default. `science-fetch` streams the archive,
+checks its digest, and imports it through the existing custody owner. The
+complete archive still includes the final checkpoint. No checkpoint is dropped
+silently, and a verified transfer is not scientific qualification.
+
+For older deployments or site-required direct transfer, have the controller
+finish the idempotent export through its `/api/science/jobs/<job-id>/export`
+endpoint with a suitably long client timeout. Obtain the returned `bundlePath`
+and `bundleSha256`, transfer that **complete diagnostic evidence archive** using
+the permitted transport, then run locally:
+
+```sh
+steerlab science import <local-evidence.tar.gz> --sha256 <bundleSha256> --root <workspace> --json
+steerlab science verify-custody <receiptSHA256> --root <workspace> --json
+```
+
+The Mac equivalents use `steerlab-cli science`. A directory copied by rsync or
+an ordinary tar archive is not this evidence format. If export is still running,
+wait and request its reference again; do not resubmit the fit. Keep remote
+originals until local custody verifies. Register the collected lens through
+`science artifact-plan` and `science artifact-import`; qualification and held-out
+assessment remain separate decisions.
+
+A code push does not restart an existing controller. `cluster status` reports
+running and deployed build identities when the controller supports those fields;
+older controllers report them as unknown. Arrange a reviewed restart after
+checking active work, then make fresh execution plans. Do not treat a successful
+push as proof the running controller loaded the new code.
+
+On filesystems without native create-only rename, an interrupted publication can
+leave an empty directory claim. This is incomplete output. Confirm that no
+publisher is live before removing only that empty directory by hand and retrying;
+otherwise choose a new destination. Never delete populated output as a repair.

@@ -382,3 +382,62 @@ def test_prepared_corpus_receipt_travels_and_is_captured_in_run(fitting):
     captured = directory/'inputs/corpus-preparation.json'
     assert archives.file_hash(captured) == config['corpusReceipt']['sha256']
     assert json.loads((directory/'fit-report.json').read_bytes())['corpusReceipt'] == config['corpusReceipt']
+
+
+def test_fit_telemetry_records_rows_and_finite_output_without_changing_estimator(fitting):
+    root, config = fitting
+    result = run(root, config)
+    directory = Path(result['runDirectory'])
+    report = json.loads((directory/'fit-report.json').read_bytes())
+    telemetry = report['telemetry']
+    assert telemetry['measuredRows'] == 3
+    assert telemetry['deviceMemory'] is None
+    assert telemetry['peakHostRSSBytes'] > 0
+    assert report['finiteByLayer'] == {'0': True, '1': True}
+    assert report['execution']['compile'] is False
+    rows = [json.loads(line) for line in (directory/telemetry['rowMeasurementsFile']).read_text().splitlines()]
+    assert all(row['dimBatch'] == 1 and row['status'] == 'fitted' and row['seconds'] >= 0 for row in rows)
+    assert [row['tokens'] for row in rows] == [6,7,8]
+
+
+def test_kernel_failure_preserves_original_error_and_records_batch(fitting, monkeypatch):
+    import jlens.fitting
+    root, config = fitting
+    def oom(*args, **kwargs): raise RuntimeError('CUDA out of memory fixture')
+    monkeypatch.setattr(jlens.fitting, 'jacobian_for_prompt', oom)
+    with pytest.raises(RuntimeError, match='out of memory fixture'): run(root, config)
+    failure = json.loads(next((root/'runs').glob('*/fit-failure.json')).read_bytes())
+    assert failure['phase'] == 'fitting' and failure['dimBatch'] == 1
+    assert failure['telemetry']['lastMeasurement']['status'] == 'failed'
+    assert failure['checkpoint'] is None
+
+
+def test_cuda_telemetry_resets_each_row_and_retains_load_peak(tmp_path):
+    from steerlab_server.experiment.jlens_fit_telemetry import Measurements
+    class CUDA:
+        resets = 0
+        is_available = staticmethod(lambda: True)
+        synchronize = staticmethod(lambda device: None)
+        mem_get_info = staticmethod(lambda device: (80,100))
+        memory_allocated = staticmethod(lambda device: 20)
+        memory_reserved = staticmethod(lambda device: 25)
+        def reset_peak_memory_stats(self, device): self.resets += 1
+        def max_memory_allocated(self, device): return 40 if self.resets == 0 else 30
+        def max_memory_reserved(self, device): return 50
+    cuda = CUDA()
+    measurement = Measurements(SimpleNamespace(cuda=cuda), 'cuda:0', tmp_path/'resources.jsonl')
+    call = measurement.wrap(lambda *args, **kwargs: ({}, 8, 6))
+    call(dim_batch=8); call(dim_batch=16)
+    assert cuda.resets == 2 and measurement.report()['peakDeviceAllocatedBytes'] == 40
+    assert measurement.report()['peakDeviceReservedBytes'] == 50
+
+
+def test_model_loading_failure_also_has_memory_and_repair(fitting, monkeypatch):
+    root, config = fitting
+    def cannot_load(cfg, log): raise RuntimeError('Out of memory loading weights')
+    monkeypatch.setattr(jlens_fit_model, 'load', cannot_load)
+    with pytest.raises(RuntimeError, match='loading weights'): run(root, config)
+    failure = json.loads(next((root/'runs').glob('*/fit-failure.json')).read_bytes())
+    assert failure['phase'] == 'loading-model'
+    assert failure['dimBatch'] == 1 and 'telemetry' in failure
+    assert 'larger allocation' in failure['repairAction']

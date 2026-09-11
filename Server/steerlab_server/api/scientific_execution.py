@@ -24,6 +24,10 @@ class ScientificRefusal(ValueError):
     repair_action = 'Correct or restage the declared inputs, read science-plan on the same runner, then submit its exact planSHA256.'
 
 
+class ScientificInputUnavailable(ScientificRefusal):
+    pass
+
+
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
@@ -77,7 +81,7 @@ def workspace_file(root, relative):
         raise ScientificRefusal('Input paths must stay relative to the runner workspace.')
     target = Path(root) / path
     if not target.resolve().is_relative_to(Path(root).resolve()) or not target.is_file():
-        raise ScientificRefusal(f'Input is missing or outside the runner workspace: {relative}')
+        raise ScientificInputUnavailable(f'Input is missing or outside the runner workspace: {relative}')
     return target
 
 
@@ -147,7 +151,16 @@ def plan(request, profile):
             request, execution_root = diagnostic_transport.resolve(staged_digest, profile)
         if isinstance(request, dict) and request.get('operation') == 'optvec-campaign' and not staged_digest:
             raise ScientificRefusal('Managed campaigns require an isolated staged input bundle.')
-        result = input_plan(request, execution_root)
+        try:
+            result = input_plan(request, execution_root)
+        except (ValueError, OSError) as exc:
+            from ..experiment import diagnostic_archives
+            path_failure = isinstance(exc, (ScientificInputUnavailable, diagnostic_archives.Refusal, FileNotFoundError, NotADirectoryError))
+            if path_failure and not staged_digest and isinstance(request, dict) and 'parameters' in request:
+                error = ScientificRefusal(str(exc) + ' If these inputs were staged from another workspace, plan the staging response request, not the original workspace request.')
+                error.repair_action = 'Use the localRequestPath returned by science-stage, or its request object {"inputBundleSHA256": "<staged digest>"}, with science-plan on this controller.'
+                raise error from exc
+            raise
         if staged_digest:
             result['inputBundleSHA256'] = staged_digest
         from . import job_ownership

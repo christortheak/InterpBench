@@ -84,6 +84,8 @@ public struct ClusterCapabilities: Codable, Sendable {
     }
 
     public var serverVersion: String?
+    public var runningEngineVersion: String?
+    public var deployedBuildCommit: String?
     public var apiSchemaVersion: String?
     public var engine: String?
     /// REALPATH of the server's artifact root (its serving workspace, `serve
@@ -2784,7 +2786,8 @@ public struct ClusterClient: Sendable {
     /// before publishing anything into the local workspace.
     public func downloadDiagnosticArchive(path: String, to directory: URL) async throws -> URL {
         try await requireHTTPTransfer()
-        let request = try makeRequest(path: "/api/bundles/download", method: "GET", queryItems: [URLQueryItem(name: "path", value: path)])
+        var request = try makeRequest(path: "/api/bundles/download", method: "GET", queryItems: [URLQueryItem(name: "path", value: path)])
+        request.timeoutInterval = 3600
         let (temporary, response) = try await session.download(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             try validate(response: response, data: Data(contentsOf: temporary))

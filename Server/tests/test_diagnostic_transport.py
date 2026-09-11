@@ -404,3 +404,74 @@ def test_native_noreplace_failures_other_than_unsupported_still_refuse(tmp_path,
     target = tmp_path / 'target'
     with pytest.raises(OSError) as failure: archives.publish_directory(source, target)
     assert failure.value.errno == errno.EEXIST and not target.exists() and source.is_dir()
+
+
+def test_claim_interruption_is_visible_as_incomplete_and_has_repair(tmp_path, monkeypatch):
+    _unsupported_noreplace(monkeypatch)
+    source = tmp_path/'source'; source.mkdir(); (source/'COMPLETED').write_text('done')
+    target = tmp_path/'target'
+    real = os.rename
+    def interrupted(src, dst):
+        assert Path(dst).is_dir() and not (Path(dst)/'COMPLETED').exists()
+        raise KeyboardInterrupt('publisher interrupted after claiming')
+    monkeypatch.setattr(os, 'rename', interrupted)
+    with pytest.raises(KeyboardInterrupt): archives.publish_directory(source, target)
+    assert target.is_dir() and not list(target.iterdir()) and (source/'COMPLETED').exists()
+    monkeypatch.setattr(os, 'rename', real)
+    with pytest.raises(FileExistsError) as failure: archives.publish_directory(source, target)
+    assert 'no publisher is live' in failure.value.repair_action
+    assert target.exists()  # never infer safe removal from emptiness
+
+
+def test_claim_reader_sees_no_completion_until_atomic_replacement(tmp_path, monkeypatch):
+    _unsupported_noreplace(monkeypatch)
+    source = tmp_path/'source'; source.mkdir(); (source/'COMPLETED').write_text('done'); (source/'data').write_text('complete')
+    target = tmp_path/'target'
+    real = os.rename
+    def reader_between_steps(src, dst):
+        assert not (Path(dst)/'COMPLETED').exists()
+        real(src, dst)
+        assert (Path(dst)/'COMPLETED').exists() and (Path(dst)/'data').read_text() == 'complete'
+    monkeypatch.setattr(os, 'rename', reader_between_steps)
+    archives.publish_directory(source, target)
+
+
+def test_staged_reference_saved_locally_is_reusable_and_create_only(tmp_path):
+    from steerlab_server.experiment.diagnostic_inputs import save_stage_reference
+    saved = save_stage_reference('a'*64, tmp_path)
+    assert json.loads(Path(saved['localRequestPath']).read_bytes()) == {'inputBundleSHA256': 'a'*64}
+    assert save_stage_reference('a'*64, tmp_path) == saved
+    Path(saved['localRequestPath']).write_text('foreign content')
+    with pytest.raises(ValueError, match='saved staged request differs'): save_stage_reference('a'*64, tmp_path)
+    assert Path(saved['localRequestPath']).read_text() == 'foreign content'
+
+
+def test_stage_outside_run_root_explains_transfer(setup):
+    root, request, profile = setup
+    with pytest.raises(ValueError, match='runner run root') as failure:
+        transport.stage(str(root.parent/'elsewhere.tar.gz'), 'a'*64, profile)
+    assert str(transport.storage(profile)) in failure.value.repair_action
+
+
+def test_unstaged_client_paths_have_staging_repair(setup):
+    root, request, profile = setup
+    from copy import deepcopy
+    request = deepcopy(request)
+    request['parameters']['batteryFile'] = 'missing-client-file.json'
+    with pytest.raises(ValueError) as failure: scientific_execution.plan(request, profile)
+    assert 'localRequestPath' in failure.value.repair_action
+    assert 'inputBundleSHA256' in failure.value.repair_action
+
+
+def test_stage_abandoned_claim_returns_recovery_in_http(completed):
+    root, profile, jobs, job, output = completed
+    archive = root/'runs/input.tar.gz'
+    digest = archives.file_hash(archive)
+    import shutil
+    target = transport.storage(profile)/('diagnostic-input-' + digest)
+    shutil.rmtree(target); target.mkdir()  # simulate an interrupted claim
+    app = FastAPI(); app.include_router(build_router(SimpleNamespace(jobs=jobs)))
+    response = TestClient(app).post('/api/science/stage', json={'bundlePath':str(archive),'bundleSHA256':digest})
+    assert response.status_code == 409
+    assert 'no publisher is live' in response.json()['detail']['repairAction']
+    assert target.is_dir() and not list(target.iterdir())

@@ -89,3 +89,8 @@ def engine_version() -> str:
         _cached = (f"steerlab-server {__version__}+{commit}" if commit
                    else f"steerlab-server {__version__}")
     return _cached
+
+
+def deployed_commit() -> str | None:
+    """Current bytes on disk, independent of a running process's environment stamp."""
+    return _git_identity() or _file_identity()

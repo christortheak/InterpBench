@@ -2,10 +2,13 @@ import Foundation
 
 extension ClusterClient {
     public func stageDiagnostic(path: String, sha256: String) async throws -> JSONValue {
-        try await post("/api/science/stage", body: JSONValue.object(["bundlePath": .string(path), "bundleSHA256": .string(sha256)]))
+        try await post("/api/science/stage", body: JSONValue.object(["bundlePath": .string(path), "bundleSHA256": .string(sha256)]), timeout: 3600)
     }
     public func exportDiagnostic(_ jobID: String) async throws -> JSONValue {
-        try await post(diagnosticPath(jobID, "export"), body: JSONValue.object([:]))
+        do { return try await post(diagnosticPath(jobID, "export"), body: JSONValue.object([:]), timeout: 3600) }
+        catch let error as URLError where error.code == .timedOut {
+            throw ExperimentError.malformed("Evidence export timed out; preparation may still be running.", repair: "Restore the connection and request export for the same job again. Do not resubmit the fit. Direct transfer must use the complete exported archive and its SHA-256.")
+        }
     }
     public func planDiagnosticCleanup(_ jobID: String, custody: JSONValue) async throws -> JSONValue {
         try await post(diagnosticPath(jobID, "cleanup-plan"), body: JSONValue.object(["custody": custody]))
@@ -21,6 +24,15 @@ extension ClusterClient {
 }
 
 public enum DiagnosticRemote {
+    public static func stage(path: String, sha256: String, client: ClusterClient, root: URL) async throws -> JSONValue {
+        let result = try await client.stageDiagnostic(path: path, sha256: sha256)
+        guard case .object(var object) = result, object["request"] == .object(["inputBundleSHA256": .string(sha256)]) else {
+            throw ExperimentError(reason: "The stage response differs from the supplied archive digest.")
+        }
+        let saved = try await DiagnosticWorkspace.perform("staged-request", payload: ["workspaceRoot": .string(root.path), "bundleSHA256": .string(sha256)])
+        if case .object(let fields) = saved { object.merge(fields) { _, new in new } }
+        return .object(object)
+    }
     public static func fetch(_ jobID: String, client: ClusterClient, root: URL) async throws -> JSONValue {
         try await client.requireHTTPTransfer()
         let reference = try await client.exportDiagnostic(jobID)
@@ -56,7 +68,7 @@ enum DiagnosticRemoteCLI {
         switch parsed.verb {
         case "science-call":
             result = try await client.callScientificAction(operation: id, actionID: parsed.flags["--action"]!, document: Data(contentsOf: URL(filePath: parsed.flags["--request"]!)))
-        case "science-stage": result = try await client.stageDiagnostic(path: id, sha256: parsed.flags["--sha256"]!)
+        case "science-stage": result = try await DiagnosticRemote.stage(path: id, sha256: parsed.flags["--sha256"]!, client: client, root: root)
         case "science-export": result = try await client.exportDiagnostic(id)
         case "science-fetch": result = try await DiagnosticRemote.fetch(id, client: client, root: root)
         default: result = try await DiagnosticRemote.cleanup(id, client: client, root: root, receiptSHA256: parsed.flags["--receipt-sha256"]!, applyPlanSHA256: parsed.verb == "cleanup-apply" ? parsed.flags["--plan-sha256"] : nil)

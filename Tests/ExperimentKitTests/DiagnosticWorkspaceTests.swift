@@ -69,3 +69,35 @@ import Testing
         #expect(ExperimentCLIParser.spec(namespace: "science", verb: "corpus-publish")?.requiredFlags == ["--plan-sha256", "--destination"])
     }
 }
+
+
+@Suite(.serialized) struct PilotOperationsTests {
+    @Test func stagedRequestUsesThePortableOwner() async throws {
+        let repository = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let python = try #require(ProcessInfo.processInfo.environment["STEERLAB_TEST_PYTHON"])
+        let root = FileManager.default.temporaryDirectory.appending(component: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let digest = String(repeating: "a", count: 64)
+        let result = try await DiagnosticWorkspace.perform("staged-request", payload: ["workspaceRoot": .string(root.path), "bundleSHA256": .string(digest)], python: URL(filePath: python), source: repository.appending(component: "Server"))
+        guard case .object(let fields) = result, case .string(let path) = fields["localRequestPath"] else {
+            Issue.record("Missing local staged request"); return
+        }
+        let decoded = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: URL(filePath: path)))
+        #expect(decoded == ["inputBundleSHA256": digest])
+    }
+
+    @Test func controllerBuildDriftIsAdvisoryAndVisible() {
+        var observed = ClusterObservedState(siteID: "fixture", siteName: "Fixture")
+        observed.serverHTTP = .reachable(build: "steerlab-server 0.9+aaaaaaaa", role: "controller", root: "/runs")
+        observed.deployedControllerBuild = "bbbbbbbb"
+        #expect(observed.controllerBuildSummary.contains("aaaaaaaa"))
+        #expect(observed.controllerBuildSummary.contains("bbbbbbbb"))
+        #expect(observed.advisories.contains { $0.contains("reviewed restart") })
+        observed.deployedControllerBuild = "aaaaaaaa12345678"
+        #expect(observed.controllerBuildAdvisory == nil)
+        observed.deployedControllerBuild = nil
+        #expect(observed.controllerBuildSummary.contains("unknown"))
+        #expect(observed.controllerBuildAdvisory == nil)
+    }
+}

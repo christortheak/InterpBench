@@ -538,6 +538,7 @@ public struct ClusterObservedState: Sendable, Equatable {
     public var daemonHost: ClusterDaemonHostObservation
     public var tunnel: ClusterTunnelObservation
     public var serverHTTP: ClusterServerHTTPObservation
+    public var deployedControllerBuild: String? = nil
     public var registration: ClusterRegistrationObservation
     public var bearerToken: ClusterBearerTokenObservation
     /// Whether a durable bootstrap plan matching the CURRENT site +
@@ -600,9 +601,17 @@ public struct ClusterObservedState: Sendable, Equatable {
             ("daemonHost", daemonHost.summary),
             ("tunnel", tunnel.summary),
             ("serverHTTP", serverHTTP.summary),
+            ("controllerBuild", controllerBuildSummary),
             ("registration", registration.summary),
             ("bearerToken", bearerToken.summary),
         ]
+    }
+
+    public var controllerBuildSummary: String {
+        ClusterServerBuildReport(running: serverHTTP.serverBuild, deployed: deployedControllerBuild).summary
+    }
+    public var controllerBuildAdvisory: String? {
+        ClusterServerBuildReport(running: serverHTTP.serverBuild, deployed: deployedControllerBuild).advisory
     }
 
     /// Non-blocking findings: things a reader must be told even though the
@@ -611,7 +620,7 @@ public struct ClusterObservedState: Sendable, Equatable {
     /// anything, it just means the next hand `sbatch` is a chain-less
     /// controller, and the operator has to know that BEFORE the walltime.
     public var advisories: [String] {
-        [controllerScript.advisory(siteID: siteID)].compactMap { $0 }
+        [controllerScript.advisory(siteID: siteID), controllerBuildAdvisory].compactMap { $0 }
     }
 }
 
@@ -941,4 +950,31 @@ public enum ClusterLifecycleError: Error, LocalizedError, Equatable {
             note
         }
     }
+}
+
+/// Read-only build comparison shared by cluster status and the app.
+public struct ClusterServerBuildReport: Sendable, Equatable {
+    public var running: String?
+    public var deployed: String?
+    public init(running: String?, deployed: String?) {
+        self.running = running; self.deployed = deployed
+    }
+    public var summary: String {
+        "running: \(running ?? "unknown"); deployed: \(deployed ?? "unknown")"
+    }
+
+    public var advisory: String? {
+        guard let running = running, let deployed = deployed,
+              let suffix = running.split(separator: "+", maxSplits: 1).last,
+              running.contains("+") else { return nil }
+        let loaded = String(suffix)
+        // Prefix comparison is only meaningful for clean hexadecimal commit IDs.
+        let hex = CharacterSet(charactersIn: "0123456789abcdef")
+        let clean = [loaded, deployed].allSatisfy { value in
+            value.count >= 8 && value.unicodeScalars.allSatisfy { hex.contains($0) }
+        }
+        if loaded == deployed || (clean && (loaded.hasPrefix(deployed) || deployed.hasPrefix(loaded))) { return nil }
+        return "The running controller (\(loaded)) differs from deployed code (\(deployed)). A push does not reload it. Arrange a reviewed restart after checking active work, then make fresh execution plans."
+    }
+
 }

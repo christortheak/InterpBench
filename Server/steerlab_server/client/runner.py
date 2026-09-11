@@ -622,13 +622,13 @@ class RunnerClient:
                 "`steerlab runner jobs` before resubmitting anything."))
 
     def _request(self, method: str, path: str, *, params=None, json_body=None,
-                 content=None, headers=None):
+                 content=None, headers=None, timeout=None):
         url = self._url(path)
         import httpx
         try:
             response = self._client.request(
                 method, url, params=params, json=json_body, content=content,
-                headers=self._headers(headers))
+                headers=self._headers(headers), **({"timeout": httpx.Timeout(self.timeout, read=timeout)} if timeout is not None else {}))
         except httpx.HTTPError as exc:
             raise RunnerUnreachable(
                 self.scrub(f"{type(exc).__name__} reaching {url}: {exc}"),
@@ -885,11 +885,20 @@ class RunnerClient:
         if action["method"] != "GET": kwargs["json_body"] = body
         return self._json(action["method"], path, **kwargs)
 
+    @property
+    def diagnostic_timeout(self):
+        # Hashing/compressing multi-gigabyte evidence may produce no response
+        # bytes for minutes. Explicit caller budgets still take precedence.
+        return 3600.0 if self.timeout == DEFAULT_TIMEOUT else self.timeout
+
     def stage_diagnostic(self, path: str, sha256: str) -> dict:
-        return self._json("POST", "/api/science/stage", json_body={"bundlePath": path, "bundleSHA256": sha256})
+        return self._json("POST", "/api/science/stage", json_body={"bundlePath": path, "bundleSHA256": sha256}, timeout=self.diagnostic_timeout)
 
     def export_diagnostic(self, job_id: str) -> dict:
-        return self._json("POST", f"/api/science/jobs/{quote(job_id, safe='')}/export", json_body={})
+        try:
+            return self._json("POST", f"/api/science/jobs/{quote(job_id, safe='')}/export", json_body={}, timeout=self.diagnostic_timeout)
+        except RunnerUnreachable as exc:
+            raise RunnerUnreachable(str(exc), repair_action='Export may still be preparing on the controller. Restore the connection, then request science-export for the same job again; export is idempotent. Do not resubmit the fit. For site-required direct transfer, use the returned complete archive and SHA-256 with local science import.') from exc
 
     def diagnostic_cleanup_plan(self, job_id: str, custody: dict) -> dict:
         return self._json("POST", f"/api/science/jobs/{quote(job_id, safe='')}/cleanup-plan", json_body={"custody": custody})
@@ -1033,7 +1042,7 @@ class RunnerClient:
 
     def download_bundle(self, *, remote_path: str, expected_sha256: str,
                         destination: str, temp_path: str | None = None,
-                        max_bytes: int | None = None) -> dict:
+                        max_bytes: int | None = None, request_timeout: float | None = None) -> dict:
         """``GET /api/bundles/download`` — fetch an archive and verify it
         before it reaches ``destination``.
 
@@ -1176,7 +1185,7 @@ class RunnerClient:
         try:
             with self._client.stream(
                     "GET", url, params={"path": remote_path},
-                    headers=self._headers()) as response:
+                    headers=self._headers(), **({"timeout": httpx.Timeout(self.timeout, read=request_timeout)} if request_timeout is not None else {})) as response:
                 self._raise_for_status(response, url=url)
                 declared = response.headers.get("content-length")
                 if declared and declared.isdigit() and int(declared) > cap:
