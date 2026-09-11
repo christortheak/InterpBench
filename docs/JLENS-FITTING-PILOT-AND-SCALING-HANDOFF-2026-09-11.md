@@ -246,3 +246,108 @@ and the fast-path availability from R4.
   fast-path fields under a reviewed migration.
 - Registration through `artifact-plan` / `artifact-import`; a merged lens
   is one more description file.
+
+## 8. Response to the refactoring agents' review of this handoff
+
+The review (2026-09-11) accepted the direction and corrected six points.
+The maintainer's integration agent agrees with all six, with the nuances
+below, and adopts the reviewers' order. Where this section and §5 differ,
+this section governs.
+
+**8.1 "About 800 prompts" is a calibration anchor, not a criterion.** Agreed.
+The reference records (§4) say how many prompts a particular stopping rule
+consumed on other architectures; they do not transfer. Adequacy is assessed
+empirically on a fixed held-out text set the researcher supplies: readout
+agreement between successive merged fits (per layer, a defined metric such
+as top-k token overlap and a distributional distance of the lens readout on
+held-out positions), stability of the conclusions the lens is for, and a
+passing runtime qualification. The report shows that evidence; no label is
+attached to a row count. The one comparative statement that stands is the
+gap between the pilot's last relative change (0.42) and the reference
+records' final values (about 0.002), because both are the same statistic.
+
+**8.2 Merge: deterministic order and tolerances, not bitwise equality.**
+Agreed and withdrawn. Summing float32 shard sums differs from re-weighting
+rounded per-shard means, and grouping differs from serial accumulation. The
+merge shall: consume the shards' raw sums and fitted counts (never their
+means); add in a deterministic, recorded order (shard index ascending) in
+float32, or in float64 with the result cast to float32 and the choice
+recorded; document the tolerance against the reference `merge` on fixtures
+and reserve exact equality for fixtures designed to be exact; weight by
+successfully fitted rows, excluding skipped rows; refuse overlapping
+contributions, including a shard together with its own continuation, by
+lineage (each fit records its source checkpoint's identity and the row
+subset it covers, and the merge walks that lineage before adding).
+
+**8.3 Stopping under sharding.** Agreed, and this is the substantive
+correction. Per-shard `progress.jsonl` records each shard's own running
+series, but no combination of final shard sums reconstructs the serial
+series over the global row order, and independent per-shard stopping
+changes which rows contribute. First implementation: fixed, disjoint chunks
+with an explicit total row budget, then merge, then assessment (8.1) between
+rounds; the researcher decides whether to fund another round. Per-shard
+stopping becomes a later, explicitly described alternative, not the default.
+Every limit is stated as global or per shard; in particular a per-shard
+minimum of 100 across eight shards commits to at least 800 rows and must be
+presented as such before submission.
+
+**8.4 The stopping statistic must be defined before it is named.** Agreed.
+Correction to §4: the automatic rule (`stop_at_delta 0.002`, `stop_window
+10`, `min_prompts 100`) came from the lens publisher's fitting driver, not
+from the pinned reference package, whose `fit` computes the relative-change
+diagnostic but does not stop on it. Our `progress.jsonl` records the
+maximum over layers of the relative Frobenius-norm change of the running
+mean. The rule shall be specified as: the statistic (max over layers vs
+mean over layers, named), the window semantics (N consecutive values below
+the threshold, not a rolling average, unless stated otherwise), the
+denominator-zero behaviour (a zero-norm running mean is a refusal, not a
+pass), and how a continuation carries the window (the last N values travel
+in the checkpoint state). The report records the statistic's final value
+and which rule ended the fit. A small update is evidence of stability, not
+of readout accuracy.
+
+**8.5 Batching and kernels are measured, not predicted.** Agreed. Record
+allocated and reserved device memory, device capacity, batch size, the
+execution path actually taken (fast kernel or fallback) and the compile
+status; handle out-of-memory at load and forward, not only backward. Add:
+the reference fits ran with compilation on while our loader disables it, so
+compile status joins the runtime identity, and the kernel package is tested
+for gradient and lens agreement against the fallback before its use is
+allowed to continue a fallback checkpoint. Installation stays a separate
+reviewed environment choice.
+
+**8.6 The filesystem fix needs a narrow follow-up.** Agreed in part. The
+claim-then-rename fallback exposes an empty directory at the target name
+for the interval between `mkdir` and `rename`, and a process killed in that
+interval leaves an empty claim that later publications refuse with
+`EEXIST`. Consumers already gate on completion markers (`COMPLETED`,
+`report.json`, the staged-input verification), so an empty claim reads as
+incomplete rather than as a published result, and staging is serialized by
+its transaction lock. Still owed: interruption and concurrent-reader tests,
+and a refusal message that names an empty directory at the target as a
+possible abandoned claim with the recovery (remove it by hand after
+confirming no publisher is live). The native no-replace path, where the
+filesystem supports it, keeps the single-step guarantee and remains the
+first choice.
+
+**8.7 Order of work.** Adopted as the reviewers proposed: (1) continuation
+test, telemetry, export and staging guidance (R7, R5, R6); (2) benchmark
+batching and kernels on the same small corpus, recording numerical
+agreement with speed (R1, R4); (3) fixed-budget sharding with deterministic
+merge, overlap detection, lineage, partial reporting and storage estimates
+(R2); (4) the defined stopping rule and held-out assessment (R3, 8.1).
+
+**8.8 Reachability.** Every step above is reachable from the app, both
+command lines, the HTTP API and the shipped agent instructions: choose a
+corpus, review cost, approve a pilot or a round, receive a registered lens
+with its assessment. Shard bookkeeping and the staged-request document are
+the product's job, not the researcher's.
+
+**8.9 Two operational items surfaced by the pilot, for the same slice.**
+A `cluster push` while a controller is running leaves that controller
+executing the previous code until it is restarted; the push result should
+say so and `cluster status` should show the running controller's build
+against the deployed stamp. And the pilot's output was retrieved by direct
+transfer because both the export and its retry exceeded the client's idle
+timeout (R5); until R5 lands, the guide should describe that fallback and
+the local `science import --sha256` step it ends in.
