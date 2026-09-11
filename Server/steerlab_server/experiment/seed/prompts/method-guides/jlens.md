@@ -320,7 +320,8 @@ inspectable model-owned fallbacks; if the installed model has no such fallback,
 use the current policy and request a tested model adapter. `compareCompiled`
 adds compiled cases. The first case is the comparison baseline. Each case runs
 in a fresh subprocess, so a failed CUDA context does not contaminate the next.
-The report compares every fitted prompt's matrices and the final mean, not
+The report records the GPU name, compute capability, capacity, and CUDA build
+when available; each subprocess has separate compiler caches. It compares every fitted prompt's matrices and the final mean, not
 only a final score. Tolerances remain visible researcher choices.
 
 Timing excludes model loading, includes first-call compilation and temporary

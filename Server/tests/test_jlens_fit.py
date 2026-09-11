@@ -476,6 +476,7 @@ def test_benchmark_compares_prompt_gradients_and_lenses(fitting):
     assert all(case['agrees'] for case in report['cases'])
     assert report['cases'][0]['fittedIndices'] == [0,1,3]
     assert report['cases'][1]['rowsPerHour'] > 0
+    assert report['cases'][1]['hardware']['requestedDevice']=='cpu'
     assert report['cases'][1]['promptAgreement']['0']['0']['maxAbsError'] == 0
     assert report['qualification'] == 'notPerformed'
     from steerlab_server.experiment.jlens_fit_review import measured_throughput

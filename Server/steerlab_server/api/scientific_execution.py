@@ -102,6 +102,9 @@ def input_plan(request, root):
         if request['operation'] == 'jlens-fit':
             from ..experiment.jlens_fit_review import review
             result['fittingReview'] = review(validated['effectiveConfig'], root)
+        if request['operation'] in ('jlens-fit-benchmark','jlens-fit-round','jlens-fit-merge','jlens-fit-assess'):
+            from ..experiment.jlens_fit_review import operation_review
+            result['operationReview'] = operation_review(request['operation'], validated['effectiveConfig'], root)
         return result
     if request['operation'] == 'battery':
         from ..experiment import battery_run

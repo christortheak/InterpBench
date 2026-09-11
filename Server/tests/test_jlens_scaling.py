@@ -57,6 +57,13 @@ def test_new_interviews_draft_through_real_owners(fitting):
         plan=method_authoring.draft(operation,answer,root)
         config=plan['request']['parameters']['config']
         assert managed_methods.validate(operation,config,root)
+        review=plan['operationReview']
+        if operation=='jlens-fit-benchmark':assert review['totalRowBudget']==12
+        elif operation=='jlens-fit-round':assert review['globalRowBudget']==4
+        elif operation=='jlens-fit-merge':assert review['missingRows']==[]
+        else:assert review['rows']==4
+        from steerlab_server.api.scientific_execution import input_plan
+        assert input_plan(plan['request'],root)['operationReview']==review
 
 
 def test_stopping_checkpoint_cannot_turn_out_of_range_values_into_convergence():
@@ -85,3 +92,29 @@ def test_merge_detects_source_mutation_during_loading(fitting,monkeypatch):
     config=jlens_merge.MergeConfig.from_dict({'fits':[str(directory.relative_to(root))]})
     with pytest.raises(ValueError,match='changed while being read'):jlens_merge.merge(config,root=root)
     assert set((root/'runs').iterdir())==before
+
+
+def test_benchmark_records_device_without_host_or_site_identity():
+    from types import SimpleNamespace
+    from steerlab_server.experiment.jlens_benchmark import hardware
+    cuda=SimpleNamespace(is_available=lambda:True,get_device_properties=lambda device:SimpleNamespace(
+        name='Fixture GPU',total_memory=80*1024**3,major=9,minor=0))
+    result=hardware(SimpleNamespace(cuda=cuda,version=SimpleNamespace(cuda='fixture')),'cuda:0')
+    assert result['deviceName']=='Fixture GPU' and result['computeCapability']==[9,0]
+    assert result['deviceCapacityBytes']==80*1024**3
+    assert set(result)=={'requestedDevice','machine','cudaBuild','deviceName','deviceCapacityBytes','computeCapability'}
+
+
+def test_benchmark_worker_isolates_compiler_caches(tmp_path,monkeypatch):
+    import os
+    from types import SimpleNamespace
+    from steerlab_server.experiment import jlens_benchmark
+    def child(command,*,env,input,stdout,stderr):
+        assert env['TORCHINDUCTOR_CACHE_DIR']==str(tmp_path/'inductor-cache')
+        assert env['TRITON_CACHE_DIR']==str(tmp_path/'triton-cache')
+        (tmp_path/'result.json').write_text('{"fixture":true}')
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setenv('TORCHINDUCTOR_CACHE_DIR','original-fixture-cache')
+    monkeypatch.setattr(jlens_benchmark.subprocess,'run',child)
+    assert jlens_benchmark.subprocess_worker({},tmp_path,tmp_path)=={'fixture':True}
+    assert os.environ['TORCHINDUCTOR_CACHE_DIR']=='original-fixture-cache'

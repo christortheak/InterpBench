@@ -2,6 +2,8 @@
 from dataclasses import dataclass, asdict
 import json
 import math
+import os
+import platform
 from pathlib import Path
 import subprocess
 import sys
@@ -113,7 +115,7 @@ def worker(config, root, scratch):
         if not fitted: raise FitError('No usable rows in the benchmark pilot.')
         save_file({str(k): v/len(fitted) for k, v in sums.items()}, str(scratch/'mean.safetensors'))
         seconds = time.perf_counter() - started
-        result = {'runtime': runtime, 'fittedIndices': fitted, 'skippedIndices': skipped,
+        result = {'runtime': runtime, 'hardware': hardware(torch,config.device), 'fittedIndices': fitted, 'skippedIndices': skipped,
                   'seconds': seconds, 'rowsPerHour': len(fitted)*3600/seconds,
                   'telemetry': measurements.report(), 'kernelDispatch': observation.report()}
         (scratch/'result.json').write_bytes(archives.encoded(result))
@@ -123,10 +125,21 @@ def worker(config, root, scratch):
         if hasattr(model, 'steerlab_kernel_selection'): model.steerlab_kernel_selection.close()
 
 
+def hardware(torch, device):
+    result={'requestedDevice':device,'machine':platform.machine(),'cudaBuild':getattr(torch.version,'cuda',None)}
+    if str(device).startswith('cuda') and torch.cuda.is_available():
+        properties=torch.cuda.get_device_properties(device)
+        result.update(deviceName=properties.name, deviceCapacityBytes=properties.total_memory,
+                      computeCapability=[properties.major,properties.minor])
+    return result
+
+
 def subprocess_worker(config, root, scratch):
     # Each case starts fresh, so compilation caches and a failed CUDA context do
     # not contaminate the next case. Children inherit the diagnostic process group.
-    result = subprocess.run([sys.executable, '-m', __name__],
+    environment = dict(os.environ, TORCHINDUCTOR_CACHE_DIR=str(Path(scratch)/'inductor-cache'),
+                       TRITON_CACHE_DIR=str(Path(scratch)/'triton-cache'))
+    result = subprocess.run([sys.executable, '-m', __name__], env=environment,
         input=archives.encoded({'config': config, 'root': str(root), 'scratch': str(scratch)}),
         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if result.returncode:
@@ -143,7 +156,7 @@ def benchmark(config, *, root, log=print, on_run_created=None, run_case=None):
     if on_run_created: on_run_created(str(run))
     report = {'schemaVersion': 1, 'operation': 'jlens-fit-benchmark', 'config': config.to_dict(),
               'fittingConfig': base.to_dict(), 'cases': [], 'qualification': 'notPerformed',
-              'limitations': 'Pilot throughput excludes model loading, includes first-call compilation, and applies only to these rows and this runtime. Tolerances are researcher choices; passing is not lens qualification.'}
+              'limitations': 'Pilot throughput excludes model loading, includes first-call compilation with per-case compiler caches and temporary matrix writes, and applies only to these rows and this runtime. Tolerances are researcher choices; passing is not lens qualification.'}
     state = archives.ordinary(root, '.steerlab/jlens-benchmark-state', missing=True); state.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=state) as temporary:
         baseline, reference_result = None, None

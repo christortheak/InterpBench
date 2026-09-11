@@ -77,5 +77,14 @@ def measured_throughput(config, root):
         raise FitError('No unique successful matching benchmark case is available for this configuration.')
     rate=selected[0]['rowsPerHour']
     return {'report':config.benchmarkReport,'rowsPerHour':rate,'extrapolatedHoursAtRowCap':config.maxPrompts/rate,
-            'pilotRows':len(selected[0]['fittedIndices']), 'runtime':selected[0]['runtime'],
+            'pilotRows':len(selected[0]['fittedIndices']), 'runtime':selected[0]['runtime'], 'hardware':selected[0].get('hardware'),
             'limitation':'A pilot extrapolation, not a walltime guarantee. Different row lengths, hardware, contention, and skipped rows change throughput; review the measured runtime.'}
+
+
+def operation_review(operation, config, root):
+    """Expose actual budgets and coverage before execution, without GPU imports."""
+    from .managed_methods import config_owner
+    from .input_hashes import session
+    with session():
+        module, parsed = config_owner(operation, config)
+        return module.preflight(parsed, root)
