@@ -242,9 +242,11 @@ After packaging inputs, transfer the archive beneath the runner's configured
 run root using the site's permitted transport. `runner science-stage` (Mac:
 `remote science-stage`) receives that server path and the archive SHA-256. Both
 clients save `.steerlab/diagnostic-requests/<digest>.json` in the local workspace
-and return its absolute `localRequestPath`. Use that file with `science-plan
---request` and then `science-submit --request` with the reviewed plan hash on
-the same controller. The app carries this staged request automatically. An API
+and return its absolute `localRequestPath`. Pass that file as the request
+argument of `science-plan`, then of `science-submit` with the reviewed plan hash,
+on the same controller. Both verbs re-verify the staged files, so a request that
+carries a multi-gigabyte checkpoint can take minutes before either answers; both
+clients allow an hour for these calls. The app carries this staged request automatically. An API
 caller uses the `request` object returned by `POST /api/science/stage` directly.
 Do not send the original published request to a runner that cannot see the
 local workspace: its file references describe authoring inputs, not staged

@@ -25,11 +25,13 @@ public enum ScientificRequestDocument {
 
 extension ClusterClient {
     public func scientificPlan(_ request: JSONValue) async throws -> JSONValue {
-        try await post("/api/science/plan", body: request)
+        // A staged bundle is re-verified file by file at plan time; a multi-gigabyte
+        // checkpoint can take minutes before the first response byte.
+        try await post("/api/science/plan", body: request, timeout: 3600)
     }
     public func scientificSubmit(_ request: JSONValue, planSHA256: String) async throws -> JSONValue {
         let response: JSONValue = try await post("/api/science/submit", body: JSONValue.object([
-            "request": request, "planSHA256": .string(planSHA256)]))
+            "request": request, "planSHA256": .string(planSHA256)]), timeout: 3600)
         guard case .object(let object) = response, case .string(let id) = object["jobId"], !id.isEmpty else {
             throw ExperimentError(reason: "Diagnostic submission returned no job ID. Its outcome is uncertain; inspect jobs on this endpoint before any retry.")
         }

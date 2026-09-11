@@ -58,3 +58,15 @@ def test_download_budget_does_not_remove_hash_verification(tmp_path):
     with RunnerClient(base_url='http://localhost', http_client=httpx.Client(transport=httpx.MockTransport(handle))) as client:
         result = client.download_bundle(remote_path='/runs/evidence.tar.gz', expected_sha256=hashlib.sha256(content).hexdigest(), destination=str(tmp_path/'evidence.tar.gz'), request_timeout=client.diagnostic_timeout)
     assert result['verified'] and (tmp_path/'evidence.tar.gz').read_bytes() == content
+
+
+def test_plan_and_submit_share_the_long_budget_for_staged_bundles():
+    """Planning a staged bundle re-hashes its files; a 6 GB checkpoint outran the short budget live."""
+    requests = []
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(200, json={'jobId': 'fixture-job', 'status': 'submitted', 'planSHA256': 'b'*64})
+    with RunnerClient(base_url='http://localhost', http_client=httpx.Client(transport=httpx.MockTransport(handle))) as client:
+        client.scientific_plan({'inputBundleSHA256': 'a'*64})
+        client.scientific_submit({'inputBundleSHA256': 'a'*64}, 'b'*64)
+    assert [r.extensions['timeout']['read'] for r in requests] == [3600, 3600]

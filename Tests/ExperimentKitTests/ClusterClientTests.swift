@@ -2581,6 +2581,17 @@ import Testing
         _ = try await client.stageDiagnostic(path: "/runs/input.tar.gz", sha256: String(repeating: "a", count: 64))
     }
 
+    @Test func scientificPlanAndSubmitAllowStagedBundleVerification() async throws {
+        // Planning a staged bundle re-hashes its files; a 6 GB checkpoint outran the default budget live.
+        let client = ClusterClient(profile: .init(baseURL: URL(string: "http://server.test")!), session: Self.session { request in
+            #expect(request.timeoutInterval == 3600)
+            return (Data("{\"jobId\":\"fixture-job\",\"status\":\"submitted\"}".utf8), 200)
+        })
+        let staged = JSONValue.object(["inputBundleSHA256": .string(String(repeating: "a", count: 64))])
+        _ = try await client.scientificPlan(staged)
+        _ = try await client.scientificSubmit(staged, planSHA256: String(repeating: "b", count: 64))
+    }
+
     private static func session(
         handler: @escaping @Sendable (URLRequest) throws -> (Data, Int)
     ) -> URLSession {
