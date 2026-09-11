@@ -58,7 +58,7 @@ def restored(state_and_path, identity, layers, width, budget, row_count):
     return sums, count, next_row, skipped
 
 
-def save_checkpoint(parent, identity, sums, count, next_row, skipped):
+def save_checkpoint(parent, identity, sums, count, next_row, skipped, *, stopping_state=None):
     """Publish a coherent snapshot before pruning earlier scratch generations."""
     from safetensors.torch import save_file
     target = parent / ('snapshot-' + uuid.uuid4().hex)
@@ -69,6 +69,7 @@ def save_checkpoint(parent, identity, sums, count, next_row, skipped):
         state = {'schemaVersion': 1, 'identity': identity, 'identitySHA256': archives.digest(identity),
                  'nDone': count, 'nextIndex': next_row, 'skipped': skipped,
                  'tensorFile': tensors.name, 'tensorSHA256': archives.file_hash(tensors)}
+        if stopping_state is not None: state['stoppingState'] = stopping_state
         write_json(folder / 'state.json', state)
         archives.publish_directory(folder, target)
     return target
@@ -86,6 +87,9 @@ def execute(config, *, root, log=print, on_run_created=None):
     root = Path(root).resolve(strict=True)
     corpus = read_pinned(config.corpus, root)
     rows = corpus_rows(corpus)
+    from .jlens_fit_selection import indices
+    selected_indices = indices(config, len(rows))
+    rows = [rows[i] for i in selected_indices]
     budget = min(config.maxPrompts, len(rows))
     run_id = 'jlens-fit-' + uuid.uuid4().hex
     runs = archives.ordinary(root, 'runs', missing=True); runs.mkdir(exist_ok=True)
@@ -93,6 +97,7 @@ def execute(config, *, root, log=print, on_run_created=None):
     latest = None
     next_row = 0
     kernel_observation = None
+    model = None
     measurements = jlens_fit_telemetry.Measurements(torch, config.device, run / 'row-resources.jsonl')
     jacobian_for_prompt = measurements.wrap(jacobian_for_prompt)
     phase = 'capturing-inputs'
@@ -131,8 +136,13 @@ def execute(config, *, root, log=print, on_run_created=None):
                     'corpusSHA256': config.corpus['sha256'], 'sourceLayers': layers,
                     'targetLayer': target, 'hiddenSize': width, 'maxSeqLen': config.maxSeqLen,
                     'skipFirst': config.skipFirst, 'dimBatch': config.dimBatch, 'runtime': runtime}
+        if config.rowIndices is not None: identity['rowIndices'] = config.rowIndices
+        if config.shard is not None: identity['shard'] = config.shard
+        if config.stopping is not None: identity['stopping'] = config.stopping
         phase = 'restoring-checkpoint'
         sums, count, next_row, skipped = restored(captured, identity, layers, width, budget, len(rows))
+        from .jlens_stopping import Control
+        control = Control(config.stopping, captured[0].get('stoppingState') if captured else None, count)
         starting_count, starting_row = count, next_row
         write_run_config(str(run), 'jlens-fit', model_id=config.modelID, revision=config.revision,
                          dtype=runtime['dtype'], notes={'fittingIdentity': identity, 'maxPrompts': budget, 'tier': config.tier})
@@ -146,7 +156,9 @@ def execute(config, *, root, log=print, on_run_created=None):
         pending = 0
         diagnostics = run / 'progress.jsonl'
         phase = 'fitting'
+        if control.reached: budget = next_row
         for index in range(next_row, budget):
+            control.before(sums, count)
             row = rows[index]
             token_ids = model.encode(row['text'], max_length=config.maxSeqLen)
             length = int(token_ids.shape[1])
@@ -179,19 +191,21 @@ def execute(config, *, root, log=print, on_run_created=None):
                          'status': 'fitted', 'seconds': time.perf_counter() - begin,
                          'meanRelativeChangeMax': max(relative) if relative else None}
                 log(f'Row {index + 1}/{budget}: fitted in {event["seconds"]:.2f}s; {count} usable rows total.')
+            control.observe(event, count)
             with diagnostics.open('ab') as stream:
                 stream.write(archives.encoded(event) + b'\n')
             next_row = index + 1
             pending += 1
-            if pending >= config.checkpointEvery or next_row == budget:
-                new = save_checkpoint(state_parent, identity, sums, count, next_row, skipped)
+            if pending >= config.checkpointEvery or next_row == budget or control.reached:
+                new = save_checkpoint(state_parent, identity, sums, count, next_row, skipped, stopping_state=control.state)
                 log('Completed checkpoint: ' + str(new / 'state.json'))
                 # Only this invocation's prior scratch snapshot is pruned. Imported
                 # checkpoints, completed runs, and failed-job scratch are untouched.
                 if latest is not None: shutil.rmtree(latest)
                 latest = new; pending = 0
+            if control.reached: break
         if latest is None:
-            latest = save_checkpoint(state_parent, identity, sums, count, next_row, skipped)
+            latest = save_checkpoint(state_parent, identity, sums, count, next_row, skipped, stopping_state=control.state)
         if count == 0:
             raise FitError('No corpus rows left enough tokens for fitting. Supply longer text or adjust the token-position settings.')
         phase = 'publishing-output'
@@ -207,16 +221,21 @@ def execute(config, *, root, log=print, on_run_created=None):
                                 'corpus': 'sha256:' + config.corpus['sha256']}}
         report = {'schemaVersion': 1, 'operation': 'jlens-fit', 'identity': identity,
                   'promptsFitted': count, 'rowsConsidered': next_row, 'skippedIndices': skipped,
+                  'globalRowIndices': selected_indices[:next_row],
+                  'globalSkippedIndices': [selected_indices[i] for i in skipped],
+                  'sourceCheckpointSHA256': config.checkpoint['sha256'] if config.checkpoint else None,
                   'promptsFittedThisRun': count - starting_count, 'rowsConsideredThisRun': next_row - starting_row,
                   'continuationCompatibility': jlens_fit_identity.review(captured[0], identity) if captured else None,
                   'corpusReceipt': config.corpusReceipt,
                   'continuedFrom': config.checkpoint, 'elapsedSeconds': time.perf_counter() - started,
                   'tensorSHA256': archives.file_hash(run / 'jacobians.safetensors'),
                   'telemetry': measurements.report(),
-                  'execution': {'compile': False, 'attention': runtime.get('attention'),
+                  'execution': {'compile': config.compileModel,
+                                'kernelSelection': model.steerlab_kernel_selection.report() if hasattr(model, 'steerlab_kernel_selection') else None, 'attention': runtime.get('attention'),
                                 'optionalKernelPackages': jlens_fit_telemetry.package_versions(),
                                 'kernelDispatch': kernel_observation.report()},
                   'finiteByLayer': {str(layer): bool(torch.isfinite(maps[f'layer_{layer}']).all()) for layer in layers},
+                  'stopping': control.report(),
                   'qualification': 'notPerformed', 'fullDepth': layers == list(range(target)),
                   'nextStep': 'Review artifact-description.json with science artifact-plan, then artifact-import to add this fit to the lens library. Qualification and held-out assessment are separate.'}
         write_json(run / 'fit-report.json', report)
@@ -247,3 +266,5 @@ def execute(config, *, root, log=print, on_run_created=None):
 
     finally:
         if kernel_observation is not None: kernel_observation.close()
+        if model is not None and hasattr(model, "steerlab_kernel_selection"):
+            model.steerlab_kernel_selection.close()

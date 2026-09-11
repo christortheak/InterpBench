@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "order": 26,
+  "catalog": {
+    "id": "jlens-fit-round",
+    "method": "jlens",
+    "title": "Plan a fixed-budget fitting round",
+    "engineCLI": null,
+    "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+    "http": "POST /api/science/plan; POST /api/science/submit; POST /api/science/fitting-round/{job_id}/{action}",
+    "compute": "cpu",
+    "outputs": [
+      "Divide one global row budget into disjoint fitting requests, then review and top up the queue. Materialization starts no GPU work."
+    ],
+    "restriction": "Uses reviewed inputs and immutable scientific outputs. No environment installation, automatic retries, or scientific qualification.",
+    "actions": [
+      {
+        "id": "post-science-plan",
+        "method": "POST",
+        "path": "/api/science/plan",
+        "serviceRole": "both",
+        "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+      },
+      {
+        "id": "post-science-submit",
+        "method": "POST",
+        "path": "/api/science/submit",
+        "serviceRole": "both",
+        "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+      },
+      {
+        "id": "post-fitting-round",
+        "method": "POST",
+        "path": "/api/science/fitting-round/{job_id}/{action}",
+        "serviceRole": "both",
+        "authorityReason": "Review and coordinate disjoint fitting shards and a deterministic merge using durable scientific jobs."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  },
+  "interview": {
+    "id": "jlens-fit-round",
+    "title": "Plan a fixed-budget fitting round",
+    "method": "jlens",
+    "purpose": "Divide one global row budget into disjoint fitting requests, then review and top up the queue. Materialization starts no GPU work.",
+    "fields": [
+      {
+        "id": "modelID",
+        "label": "Model to fit",
+        "kind": "text",
+        "required": true,
+        "help": "Choose a prepared Hugging Face checkpoint. Fitting does not download model weights or change them."
+      },
+      {
+        "id": "revision",
+        "label": "Exact model version",
+        "kind": "text",
+        "required": true,
+        "help": "Inspect the model to pin its 40-character commit. The resulting lens belongs to this checkpoint."
+      },
+      {
+        "id": "fittingRequest",
+        "label": "Published fixed-budget fitting request",
+        "kind": "fileRef",
+        "required": true,
+        "help": "Choose a fresh request.json. Its maximum rows become the global round budget, not a per-shard budget."
+      },
+      {
+        "id": "shards",
+        "label": "Number of disjoint shards",
+        "kind": "integer",
+        "required": false,
+        "help": "Each shard retains its own lens and checkpoint, can be continued independently, and uses the same numerical settings.",
+        "default": "4"
+      },
+      {
+        "id": "maxConcurrent",
+        "label": "Maximum concurrent scientific jobs",
+        "kind": "integer",
+        "required": false,
+        "help": "Set within the site’s policy. Queue top-ups count active scientific jobs on this controller and require an explicit review.",
+        "default": "1"
+      },
+      {
+        "id": "startRow",
+        "label": "First global corpus row",
+        "kind": "integer",
+        "required": false,
+        "help": "Zero-based. Later rounds can select a disjoint range of the same pinned corpus.",
+        "default": "0"
+      },
+      {
+        "id": "layout",
+        "label": "Partition layout",
+        "kind": "text",
+        "required": false,
+        "help": "interleaved distributes successive rows across shards; contiguous gives each shard a consecutive block.",
+        "default": "interleaved"
+      }
+    ],
+    "claimBoundary": "Coverage and readout stability must be interpreted for the selected corpus and runtime. Outputs do not establish behavioral validity.",
+    "questions": [
+      "Which corpus range and resource budget answer the research question?",
+      "Which missing coverage or readout differences would change the conclusion?"
+    ]
+  },
+  "interviewOrder": 31,
+  "inputRoleProfile": "managed-v1",
+  "inputRoles": {},
+  "binding": {
+    "module": "jlens_round",
+    "config_class": "RoundConfig",
+    "function": "materialize",
+    "compute": "cpu"
+  }
+}

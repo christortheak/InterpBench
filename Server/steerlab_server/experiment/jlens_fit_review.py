@@ -41,7 +41,7 @@ def cached_config(model_id, revision):
         return None
 
 
-def review(config):
+def review(config, root=None):
     cfg = FitConfig.from_dict(config)
     result = {'status': 'geometryUnavailable',
               'summary': 'Model dimensions are not available in this client’s local cache. Review the estimate on the prepared engine before submitting; no weights are downloaded for this review.',
@@ -55,4 +55,27 @@ def review(config):
         if cost:
             result.update(status='estimatedFromCachedConfig', modelConfigSHA256=digest,
                           estimate=cost, summary=cost['summary'])
+    if root is not None and cfg.benchmarkReport:
+        result['pilotMeasurement'] = measured_throughput(cfg, root)
     return result
+
+
+def measured_throughput(config, root):
+    from .jlens_fit import read_pinned, FitError
+    report = json.loads(read_pinned(config.benchmarkReport, root, limit=8*1024**2))
+    if not isinstance(report, dict) or report.get('operation') != 'jlens-fit-benchmark':
+        raise FitError('Select a completed fitting benchmark report for the throughput estimate.')
+    fitted = report.get('fittingConfig', {})
+    keys = ('modelID', 'revision', 'sourceLayers', 'maxSeqLen', 'skipFirst', 'dtype', 'device')
+    if (any(fitted.get(k) != getattr(config,k) for k in keys)
+            or fitted.get('corpus',{}).get('sha256') != config.corpus['sha256']):
+        raise FitError('The pilot used different model, corpus, or numerical settings. Keep it as context, or benchmark the selected workload.')
+    selected = [case for case in report.get('cases',[]) if case.get('status')=='completed' and case.get('agrees') is True
+                and case.get('dimBatch')==config.dimBatch and case.get('compileModel')==config.compileModel
+                and case.get('kernelPolicy')==config.kernelPolicy]
+    if len(selected) != 1 or type(selected[0].get('rowsPerHour')) not in (int,float) or not math.isfinite(selected[0]['rowsPerHour']) or selected[0]['rowsPerHour']<=0:
+        raise FitError('No unique successful matching benchmark case is available for this configuration.')
+    rate=selected[0]['rowsPerHour']
+    return {'report':config.benchmarkReport,'rowsPerHour':rate,'extrapolatedHoursAtRowCap':config.maxPrompts/rate,
+            'pilotRows':len(selected[0]['fittedIndices']), 'runtime':selected[0]['runtime'],
+            'limitation':'A pilot extrapolation, not a walltime guarantee. Different row lengths, hardware, contention, and skipped rows change throughput; review the measured runtime.'}

@@ -10,7 +10,10 @@
       "mlx": "unsupported",
       "qualificationEvidence": [],
       "notes": "CUDA is the comparison reference. This inventory records no configuration-specific cross-backend qualification. Try supported Python execution with that limitation stated; exact device admission remains owner-specific.",
-      "sources": ["Server/steerlab_server/experiment/managed_methods.py", "Server/steerlab_server/api/scientific_execution.py"]
+      "sources": [
+        "Server/steerlab_server/experiment/managed_methods.py",
+        "Server/steerlab_server/api/scientific_execution.py"
+      ]
     },
     "python-cpu": {
       "python": "Python CPU owner; no GPU is required for this operation.",
@@ -20,7 +23,10 @@
       "mlx": "notApplicable",
       "qualificationEvidence": [],
       "notes": "CPU execution on a Mac is not MPS or MLX qualification. Numerical correctness and input roles still need owner tests.",
-      "sources": ["Server/steerlab_server/experiment/managed_methods.py", "Server/steerlab_server/experiment/science_catalog.py"]
+      "sources": [
+        "Server/steerlab_server/experiment/managed_methods.py",
+        "Server/steerlab_server/experiment/science_catalog.py"
+      ]
     },
     "diagnostic-model": {
       "python": "Python model diagnostic on the selected device; local and Slurm routing use existing owners.",
@@ -30,7 +36,11 @@
       "mlx": "unsupported",
       "qualificationEvidence": [],
       "notes": "Stability measures direction sensitivity; a battery measures its declared capability/generation checks. Neither is universal behavioral validation.",
-      "sources": ["Server/steerlab_server/experiment/extract_stability.py", "Server/steerlab_server/experiment/battery_run.py", "Sources/SteerLabApp/ScientificExecutionSheet.swift"]
+      "sources": [
+        "Server/steerlab_server/experiment/extract_stability.py",
+        "Server/steerlab_server/experiment/battery_run.py",
+        "Sources/SteerLabApp/ScientificExecutionSheet.swift"
+      ]
     },
     "reader": {
       "python": "Python reader fitting/scoring, with model activation capture on its selected device.",
@@ -40,7 +50,12 @@
       "mlx": "implementedUnqualified",
       "qualificationEvidence": [],
       "notes": "Cross-client role fixtures and synthetic fitting tests establish the split contract; they do not qualify model-level numerical agreement.",
-      "sources": ["Server/steerlab_server/steering/repe_reader.py", "Sources/SteeringKit/Extraction/RepEReader.swift", "docs/REPE-IMPLEMENTATION-BRIEF.md", "Tests/SteeringKitTests/ReaderEvidenceRoleTests.swift"]
+      "sources": [
+        "Server/steerlab_server/steering/repe_reader.py",
+        "Sources/SteeringKit/Extraction/RepEReader.swift",
+        "docs/REPE-IMPLEMENTATION-BRIEF.md",
+        "Tests/SteeringKitTests/ReaderEvidenceRoleTests.swift"
+      ]
     },
     "training": {
       "python": "Python LoRA training on the selected engine device; adapter-family admission is explicit.",
@@ -50,7 +65,11 @@
       "mlx": "implementedUnqualified",
       "qualificationEvidence": [],
       "notes": "New native training stamps the direct adapter multiplier. Objectives, schedules, evidence admission and adapter formats remain distinct; no trained-weight equivalence is claimed.",
-      "sources": ["Server/steerlab_server/experiment/lora_train.py", "Sources/ExperimentKit/FineTuneTrainer.swift", "docs/TRAINING-RECIPES.md"]
+      "sources": [
+        "Server/steerlab_server/experiment/lora_train.py",
+        "Sources/ExperimentKit/FineTuneTrainer.swift",
+        "docs/TRAINING-RECIPES.md"
+      ]
     },
     "jlens": {
       "python": "Python owns acquisition/import, model reference qualification and runtime readout; metadata-only steps do not establish device coverage.",
@@ -60,7 +79,11 @@
       "mlx": "unsupported",
       "qualificationEvidence": [],
       "notes": "The catalog entry groups multiple actions: qualify model-dependent paths separately from CPU metadata/import. Matching dimensions alone does not justify representation transfer.",
-      "sources": ["Server/steerlab_server/jlens/qualification.py", "Server/steerlab_server/jlens/importer.py", "Sources/SteerLabApp/JLensSupportSection.swift"]
+      "sources": [
+        "Server/steerlab_server/jlens/qualification.py",
+        "Server/steerlab_server/jlens/importer.py",
+        "Sources/SteerLabApp/JLensSupportSection.swift"
+      ]
     },
     "sae-import": {
       "python": "Python owns Gemma Scope analysis and feature import; distinguish reading/importing tensors from model execution.",
@@ -70,7 +93,10 @@
       "mlx": "unsupported",
       "qualificationEvidence": [],
       "notes": "Successful import alone does not qualify SAE feature behavior on MPS or validate transferring a feature into MLX activations.",
-      "sources": ["Server/steerlab_server/experiment/gemma_scope.py", "Sources/SteerLabApp/GeometryPanelView.swift"]
+      "sources": [
+        "Server/steerlab_server/experiment/gemma_scope.py",
+        "Sources/SteerLabApp/GeometryPanelView.swift"
+      ]
     },
     "jspace": {
       "python": "Python J-space analysis: intervention-dependent downstream residual readout using a qualified lens.",
@@ -80,7 +106,11 @@
       "mlx": "unsupported",
       "qualificationEvidence": [],
       "notes": "J-space is distinct from OptVec training. The current batch owner accepts OptVec artifact metadata for layer/dose; this is an admission limitation, not a definition of the method.",
-      "sources": ["Server/steerlab_server/experiment/optvec_jspace.py", "Sources/SteerLabApp/JSpacePanelSection.swift", "WorkspaceSeed/prompts/method-guides/jspace.md"]
+      "sources": [
+        "Server/steerlab_server/experiment/optvec_jspace.py",
+        "Sources/SteerLabApp/JSpacePanelSection.swift",
+        "WorkspaceSeed/prompts/method-guides/jspace.md"
+      ]
     },
     "campaign": {
       "python": "CPU materialization/coordination; training cells execute as separate Python GPU jobs.",
@@ -90,7 +120,11 @@
       "mlx": "unsupported",
       "qualificationEvidence": [],
       "notes": "Do not infer MPS campaign scheduling support from a training kernel. Cell execution and local/Slurm orchestration need separate qualification.",
-      "sources": ["Server/steerlab_server/api/managed_campaign.py", "Server/steerlab_server/api/managed_campaign_engine.py", "Server/steerlab_server/experiment/optvec_campaign.py"]
+      "sources": [
+        "Server/steerlab_server/api/managed_campaign.py",
+        "Server/steerlab_server/api/managed_campaign_engine.py",
+        "Server/steerlab_server/experiment/optvec_campaign.py"
+      ]
     },
     "stability": {
       "python": "Python model diagnostic on the selected device; local and Slurm routing use existing owners.",
@@ -100,7 +134,12 @@
       "mlx": "implementedUnqualified",
       "qualificationEvidence": [],
       "notes": "Shared seeds and numerical fixture results establish implementation parity; actual model/backend comparisons remain unqualified.",
-      "sources": ["Sources/ExperimentKit/ExtractStability.swift", "Sources/SteeringKit/Extraction/DirectionStability.swift", "Tests/SteeringKitTests/ScientificScopeStabilityTests.swift", "Server/steerlab_server/experiment/extract_stability.py"]
+      "sources": [
+        "Sources/ExperimentKit/ExtractStability.swift",
+        "Sources/SteeringKit/Extraction/DirectionStability.swift",
+        "Tests/SteeringKitTests/ScientificScopeStabilityTests.swift",
+        "Server/steerlab_server/experiment/extract_stability.py"
+      ]
     }
   },
   "operations": {
@@ -128,6 +167,10 @@
     "optvec-gradient-mint": "python-cpu",
     "sae-family-report": "python-cpu",
     "sae-qualification-record": "python-cpu",
-    "sae-qualification-show": "python-cpu"
+    "sae-qualification-show": "python-cpu",
+    "jlens-fit-benchmark": "python-model",
+    "jlens-fit-assess": "python-model",
+    "jlens-fit-round": "python-cpu",
+    "jlens-fit-merge": "python-cpu"
   }
 }

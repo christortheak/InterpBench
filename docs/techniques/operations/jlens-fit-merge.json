@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "order": 27,
+  "catalog": {
+    "id": "jlens-fit-merge",
+    "method": "jlens",
+    "title": "Merge completed fitting shards",
+    "engineCLI": null,
+    "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+    "http": "POST /api/science/plan; POST /api/science/submit",
+    "compute": "cpu",
+    "outputs": [
+      "Merge raw float32 sums in deterministic global-row order, weighted by fitted rows, with overlap detection and recorded source lineage."
+    ],
+    "restriction": "Uses reviewed inputs and immutable scientific outputs. No environment installation, automatic retries, or scientific qualification.",
+    "actions": [
+      {
+        "id": "post-science-plan",
+        "method": "POST",
+        "path": "/api/science/plan",
+        "serviceRole": "both",
+        "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+      },
+      {
+        "id": "post-science-submit",
+        "method": "POST",
+        "path": "/api/science/submit",
+        "serviceRole": "both",
+        "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  },
+  "interview": {
+    "id": "jlens-fit-merge",
+    "title": "Merge completed fitting shards",
+    "method": "jlens",
+    "purpose": "Merge raw float32 sums in deterministic global-row order, weighted by fitted rows, with overlap detection and recorded source lineage.",
+    "fields": [
+      {
+        "id": "fits",
+        "label": "Completed fitting runs",
+        "kind": "files",
+        "required": true,
+        "help": "One workspace-relative run directory per line. Include only the latest completed continuation of each shard; overlapping contributions are rejected."
+      },
+      {
+        "id": "allowPartial",
+        "label": "Allow and label incomplete coverage",
+        "kind": "boolean",
+        "required": false,
+        "help": "A partial merge records exactly which planned rows are missing. It does not silently pretend all shards finished.",
+        "default": "true"
+      },
+      {
+        "id": "tier",
+        "label": "Intended use",
+        "kind": "text",
+        "required": false,
+        "help": "testing or evidence. Qualification and held-out assessment remain separate.",
+        "default": "testing"
+      }
+    ],
+    "claimBoundary": "Coverage and readout stability must be interpreted for the selected corpus and runtime. Outputs do not establish behavioral validity.",
+    "questions": [
+      "Which corpus range and resource budget answer the research question?",
+      "Which missing coverage or readout differences would change the conclusion?"
+    ]
+  },
+  "interviewOrder": 32,
+  "inputRoleProfile": "managed-v1",
+  "inputRoles": {
+    "fits": "trees"
+  },
+  "binding": {
+    "module": "jlens_merge",
+    "config_class": "MergeConfig",
+    "function": "merge",
+    "compute": "cpu"
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "order": 25,
+  "catalog": {
+    "id": "jlens-fit-benchmark",
+    "method": "jlens",
+    "title": "Benchmark J-lens fitting",
+    "engineCLI": null,
+    "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+    "http": "POST /api/science/plan; POST /api/science/submit",
+    "compute": "gpu",
+    "outputs": [
+      "Timing, memory, per-prompt Jacobian agreement, and averaged-lens agreement for a small, fixed corpus."
+    ],
+    "restriction": "Runs sequential isolated cases; no model downloads or environment installation. A passed tolerance is not runtime qualification or scientific validation.",
+    "actions": [
+      {
+        "id": "post-science-plan",
+        "method": "POST",
+        "path": "/api/science/plan",
+        "serviceRole": "both",
+        "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+      },
+      {
+        "id": "post-science-submit",
+        "method": "POST",
+        "path": "/api/science/submit",
+        "serviceRole": "both",
+        "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  },
+  "interview": {
+    "id": "jlens-fit-benchmark",
+    "title": "Compare fitting speed and numerical agreement",
+    "method": "jlens",
+    "purpose": "Measure dimension batches, optional compilation, and prepared attention kernels on the same small text sample.",
+    "fields": [
+      {
+        "id": "modelID",
+        "label": "Model to fit",
+        "kind": "text",
+        "required": true,
+        "help": "Choose a prepared Hugging Face checkpoint. Fitting does not download model weights or change them."
+      },
+      {
+        "id": "revision",
+        "label": "Exact model version",
+        "kind": "text",
+        "required": true,
+        "help": "Inspect the model to pin its 40-character commit. The resulting lens belongs to this checkpoint."
+      },
+      {
+        "id": "fittingRequest",
+        "label": "Published pilot fitting request",
+        "kind": "fileRef",
+        "required": true,
+        "help": "Choose request.json from a fresh J-lens pilot with at most eight rows. Its corpus and preparation receipt travel with this benchmark."
+      },
+      {
+        "id": "dimBatches",
+        "label": "Dimension batches to compare",
+        "kind": "integers",
+        "required": false,
+        "default": "1, 8, 16",
+        "help": "Start with 1 as the reference. Each combination is a fresh worker; larger batches need more device memory."
+      },
+      {
+        "id": "kernelPolicies",
+        "label": "Kernel comparisons",
+        "kind": "text",
+        "required": false,
+        "default": "current",
+        "help": "current benchmarks the prepared environment; torch uses the inspectable fallback; torch,current compares both. Installing kernels is a separate reviewed environment change."
+      },
+      {
+        "id": "compareCompiled",
+        "label": "Also compare compiled blocks",
+        "kind": "boolean",
+        "required": false,
+        "default": "false",
+        "help": "Doubles the number of cases. Includes first-call compilation in timing."
+      },
+      {
+        "id": "rtol",
+        "label": "Relative numerical tolerance",
+        "kind": "number",
+        "required": false,
+        "default": "0.0001",
+        "help": "Elementwise tolerance for per-prompt Jacobians and averaged lenses. Review the reported maximum and relative errors as well."
+      },
+      {
+        "id": "atol",
+        "label": "Absolute numerical tolerance",
+        "kind": "number",
+        "required": false,
+        "default": "0.0001",
+        "help": "Absolute allowance near zero. This default is a comparison setting, not a claim of scientific adequacy."
+      }
+    ],
+    "claimBoundary": "Speed is conditional on these rows and this runtime. Agreement is measured with the displayed tolerances, not a universal scientific guarantee.",
+    "questions": [
+      "Which small corpus should represent the later fitting workload?",
+      "Which numerical differences are acceptable for the intended analysis?"
+    ]
+  },
+  "interviewOrder": 30,
+  "inputRoleProfile": "managed-v1",
+  "inputRoles": {},
+  "binding": {
+    "module": "jlens_benchmark",
+    "config_class": "BenchmarkConfig",
+    "function": "benchmark",
+    "compute": "gpu"
+  }
+}

@@ -26,6 +26,14 @@ def material(identity):
     # Exact source bytes are retained as provenance, including in the copied
     # source checkpoint. Library versions and every numerical setting stay bound.
     runtime.pop('driverSHA256', None)
+    # Prior drivers always disabled compilation; no optional package was bound.
+    # An environment with optional kernels now requires explicit comparison.
+    result.setdefault('rowIndices', None)
+    result.setdefault('shard', None)
+    result.setdefault('stopping', None)
+    runtime.setdefault('compile', False)
+    runtime.setdefault('kernelPolicy', 'current')
+    runtime.setdefault('optionalKernels', {})
     return result
 
 

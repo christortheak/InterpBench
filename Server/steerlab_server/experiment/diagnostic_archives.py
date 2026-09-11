@@ -8,7 +8,7 @@ from pathlib import Path
 import shutil
 import tarfile
 import tempfile
-from . import manifest_files
+from . import manifest_files, input_hashes
 
 META = 'steerlab-bundle.json'
 MAX_FILES = 20000
@@ -34,8 +34,7 @@ def digest(value):
 
 
 def file_hash(path):
-    with open(path, 'rb') as handle:
-        return hashlib.file_digest(handle, 'sha256').hexdigest()
+    return input_hashes.file_hash(path)
 
 
 def parts(relative):

@@ -102,6 +102,13 @@ gemmascope = ["sae-lens>=5.0"]
 jlens = [
     "jlens @ git+https://github.com/anthropics/jacobian-lens@581d398613e5602a5af361e1c34d3a92ea82ba8e",
 ]
+# Explicit CUDA benchmark candidates. Not included in all, bootstrap defaults,
+# or the platform locks. Qualification against the Torch fallback is still owed.
+# Review pip's dry-run report on the target allocation before installing.
+jlens-kernels = [
+    "flash-linear-attention==0.5.2; platform_system == 'Linux'",
+    "causal-conv1d==1.7.0; platform_system == 'Linux'",
+]
 test = ["pytest>=8.0"]
 # Dev-only TOOLING, never a runtime dependency and deliberately not in `all`:
 # `uv` is the resolver that generates the committed per-platform locks

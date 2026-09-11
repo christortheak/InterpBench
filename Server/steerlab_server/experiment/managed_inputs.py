@@ -1,4 +1,5 @@
 """Portable dependency closure for managed scientific requests (no GPU imports)."""
+from . import input_hashes
 import json
 from pathlib import Path
 from . import diagnostic_archives as archives, managed_methods, paths
@@ -49,6 +50,14 @@ def inventory(operation, config, root):
         elif isinstance(value, list):
             for item in value: walk(item)
     walk(config)
+    if operation == 'jlens-fit-round':
+        from .jlens_round import RoundConfig, prepare
+        for child in prepare(RoundConfig.from_dict(config), root)['shards']:
+            files.update(e['path'] for e in inventory('jlens-fit', child['parameters']['config'], root))
+    if operation == 'jlens-fit-benchmark':
+        from .jlens_benchmark import BenchmarkConfig, fitting_config
+        nested = fitting_config(BenchmarkConfig.from_dict(config), root).to_dict()
+        files.update(e['path'] for e in inventory('jlens-fit', nested, root))
     if operation == 'jlens-fit':
         from .jlens_fit import checkpoint_files
         for relative in checkpoint_files(config, root): add(relative)
@@ -77,6 +86,7 @@ def inventory(operation, config, root):
     return archives.snapshot(root, files)
 
 
+@input_hashes.operation
 def plan(request, root):
     normalized = managed_methods.request(request['operation'], request['parameters'])
     config = normalized['parameters']['config']

@@ -22,6 +22,9 @@ struct DiagnosticLifecycleSheet: View {
     @State private var executionPlan: String?
     @State private var campaignPlan: String?
     @State private var campaignConfirmed = false
+    @State private var roundPlan: String?
+    @State private var roundMergePlan: String?
+    @State private var roundConfirmed = false
     @State private var cleanupPlan: String?
     @State private var confirmation = false
     @State private var output = ""
@@ -80,7 +83,7 @@ struct DiagnosticLifecycleSheet: View {
                 }
                 Section("Bring evidence home and inspect it offline") {
                     Text("Large evidence exports can take several minutes to prepare before transfer begins. Keep this window open; the archive is verified before import.").font(.caption)
-                    TextField("Originating job ID", text: $jobID).onChange(of: jobID) { _, _ in cleanupPlan = nil; confirmation = false; campaignPlan = nil; campaignConfirmed = false }
+                    TextField("Originating job ID", text: $jobID).onChange(of: jobID) { _, _ in cleanupPlan = nil; confirmation = false; campaignPlan = nil; campaignConfirmed = false; roundPlan = nil; roundMergePlan = nil; roundConfirmed = false }
                     HStack {
                         if let client {
                             Button("Fetch and verify evidence") { perform {
@@ -119,6 +122,35 @@ struct DiagnosticLifecycleSheet: View {
                             }
                         }
                     }
+                    Section("J-lens fitting rounds") {
+                        Text("Use the originating job ID of a materialized fitting round. Review pending shards and capacity before topping up the queue. Each shard remains a separate durable job; failed or uncertain submissions are never retried automatically.").font(.caption)
+                        HStack {
+                            Button("Review shard queue") { perform {
+                                let result = try await fittingRound("plan", client: client)
+                                roundPlan = string(result, "planSHA256"); roundMergePlan = nil; roundConfirmed = false; show(result)
+                            } }.disabled(jobID.isEmpty)
+                            Button("Review merge of completed shards") { perform {
+                                let result = try await fittingRound("merge-plan", client: client)
+                                roundMergePlan = string(result, "planSHA256"); roundPlan = nil; roundConfirmed = false; show(result)
+                            } }.disabled(jobID.isEmpty)
+                        }
+                        Toggle("Apply the displayed fitting-round plan", isOn: $roundConfirmed)
+                        HStack {
+                            ForEach(["submit", "cancel"], id: \.self) { action in
+                                Button(action == "submit" ? "Top up shard queue" : "Request shard cancellation") { perform {
+                                    guard let hash = roundPlan else { return }
+                                    roundPlan = nil; roundConfirmed = false
+                                    show(try await fittingRound(action, client: client, hash: hash))
+                                } }.disabled(roundPlan == nil || !roundConfirmed)
+                            }
+                            Button("Merge completed shards") { perform {
+                                guard let hash = roundMergePlan else { return }
+                                roundMergePlan = nil; roundConfirmed = false
+                                show(try await fittingRound("merge-submit", client: client, hash: hash))
+                            } }.disabled(roundMergePlan == nil || !roundConfirmed)
+                        }
+                        Text("A partial merge records missing rows. After collection, register the merged lens and use the held-out assessment method to compare it with an earlier fit.").font(.caption)
+                    }
                     Section("Review remote cleanup") {
                         Text("Only isolated, completed diagnostic output copies are eligible. The server rechecks its declared policy and dependencies; this app re-verifies local custody before applying. Inputs, export archives and job records remain.").font(.caption)
                         HStack {
@@ -150,6 +182,13 @@ struct DiagnosticLifecycleSheet: View {
                 else { archiveFile = url.path; archiveHash = "" }
             } catch { output = error.localizedDescription }
         }
+    }
+    private func fittingRound(_ action: String, client: ClusterClient, hash: String? = nil) async throws -> JSONValue {
+        let body: [String: JSONValue] = hash.map { ["planSHA256": .string($0), "confirmAction": .bool(true)] } ?? [:]
+        let document: JSONValue = .object(["path": .object(["job_id": .string(jobID), "action": .string(action)]), "query": .object([:]), "body": .object(body)])
+        let result = try await client.callScientificAction(operation: "jlens-fit-round", actionID: "post-fitting-round", document: JSONEncoder().encode(document))
+        guard let text = string(result, "responseJSON") else { throw ExperimentError(reason: "Fitting round returned no readable result.") }
+        return try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
     }
     private func campaign(_ action: String, client: ClusterClient, hash: String? = nil) async throws -> JSONValue {
         let body: [String: JSONValue] = hash.map { ["planSHA256": .string($0), "confirmAction": .bool(true)] } ?? [:]

@@ -49,29 +49,38 @@ def load(config, log):
     hf.to(device)
     hf.config.use_cache = False
     # Preserve the tokenizer's recorded BOS behavior; no implicit chat rendering.
-    model = jlens.from_hf(hf, tokenizer, compile=False, force_bos=False)
-    text_config = hf.config.get_text_config()
-    text_config.use_cache = False
-    actual = str(next(hf.parameters()).dtype).replace('torch.', '')
-    if actual != config.dtype:
-        raise FitError('The loaded model dtype differs from the requested fitting precision.')
-    tokenizer_material = (tokenizer.backend_tokenizer.to_str() if hasattr(tokenizer, 'backend_tokenizer')
-                          else json.dumps(tokenizer.get_vocab(), sort_keys=True))
-    tokenizer_material += json.dumps(tokenizer.special_tokens_map, sort_keys=True)
-    runtime = {
-        'referenceCommit': REFERENCE_COMMIT,
-        'kernelSHA256': hashlib.sha256(Path(fitting.__file__).read_bytes()).hexdigest(),
-        'torch': torch.__version__, 'transformers': transformers.__version__,
-        'modelConfigSHA256': hashlib.sha256((Path(snapshot) / 'config.json').read_bytes()).hexdigest(),
-        'tokenizerSHA256': hashlib.sha256(tokenizer_material.encode()).hexdigest(),
-        'dtype': actual, 'device': device, 'attention': 'eager',
-        'modelClass': type(hf).__name__, 'forceBOS': False,
-        'float32MatmulPrecision': torch.get_float32_matmul_precision(),
-        'cudaTF32': torch.backends.cuda.matmul.allow_tf32,
-        'cudnnTF32': torch.backends.cudnn.allow_tf32,
-        'deterministicAlgorithms': torch.are_deterministic_algorithms_enabled(),
-        'driverSHA256': hashlib.sha256(b''.join(
-            Path(__file__).with_name(name + '.py').read_bytes()
-            for name in ('jlens_fit', 'jlens_fit_execution', 'jlens_fit_model', 'jlens_fit_identity', 'jlens_fit_telemetry'))).hexdigest(),
-    }
-    return model, runtime
+    from .jlens_kernel_policy import Selection
+    policy = Selection(hf, config.kernelPolicy)
+    try:
+        model = jlens.from_hf(hf, tokenizer, compile=config.compileModel, force_bos=False)
+        model.steerlab_kernel_selection = policy
+        text_config = hf.config.get_text_config()
+        text_config.use_cache = False
+        actual = str(next(hf.parameters()).dtype).replace('torch.', '')
+        if actual != config.dtype:
+            raise FitError('The loaded model dtype differs from the requested fitting precision.')
+        tokenizer_material = (tokenizer.backend_tokenizer.to_str() if hasattr(tokenizer, 'backend_tokenizer')
+                              else json.dumps(tokenizer.get_vocab(), sort_keys=True))
+        tokenizer_material += json.dumps(tokenizer.special_tokens_map, sort_keys=True)
+        runtime = {
+            'referenceCommit': REFERENCE_COMMIT,
+            'kernelSHA256': hashlib.sha256(Path(fitting.__file__).read_bytes()).hexdigest(),
+            'torch': torch.__version__, 'transformers': transformers.__version__,
+            'modelConfigSHA256': hashlib.sha256((Path(snapshot) / 'config.json').read_bytes()).hexdigest(),
+            'tokenizerSHA256': hashlib.sha256(tokenizer_material.encode()).hexdigest(),
+            'compile': config.compileModel, 'kernelPolicy': config.kernelPolicy,
+            'optionalKernels': policy.report()['packages'],
+            'dtype': actual, 'device': device, 'attention': 'eager',
+            'modelClass': type(hf).__name__, 'forceBOS': False,
+            'float32MatmulPrecision': torch.get_float32_matmul_precision(),
+            'cudaTF32': torch.backends.cuda.matmul.allow_tf32,
+            'cudnnTF32': torch.backends.cudnn.allow_tf32,
+            'deterministicAlgorithms': torch.are_deterministic_algorithms_enabled(),
+            'driverSHA256': hashlib.sha256(b''.join(
+                Path(__file__).with_name(name + '.py').read_bytes()
+                for name in ('jlens_fit', 'jlens_fit_execution', 'jlens_fit_model', 'jlens_fit_identity', 'jlens_fit_telemetry', 'jlens_kernel_policy', 'jlens_fit_selection', 'jlens_stopping'))).hexdigest(),
+        }
+        return model, runtime
+    except Exception:
+        policy.close()
+        raise

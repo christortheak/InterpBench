@@ -40,6 +40,12 @@ class FitConfig:
     tier: str = 'testing'
     checkpoint: dict | None = None
     corpusReceipt: dict | None = None
+    compileModel: bool = False
+    kernelPolicy: str = 'current'
+    rowIndices: list[int] | None = None
+    shard: dict | None = None
+    stopping: dict | None = None
+    benchmarkReport: dict | None = None
 
     @classmethod
     def from_dict(cls, value):
@@ -51,6 +57,7 @@ class FitConfig:
             raise FitError('Pin the exact 40-character model commit before fitting.')
         try:
             cfg = cls(**{**value, 'corpus': file_ref(value.get('corpus'), 'corpus'),
+                         'benchmarkReport': file_ref(value['benchmarkReport'], 'benchmarkReport') if value.get('benchmarkReport') is not None else None,
                          'corpusReceipt': file_ref(value['corpusReceipt'], 'corpusReceipt') if value.get('corpusReceipt') is not None else None,
                          'checkpoint': file_ref(value['checkpoint'], 'checkpoint') if value.get('checkpoint') is not None else None})
         except TypeError as exc:
@@ -68,8 +75,17 @@ class FitConfig:
             raise FitError('Choose float32, float16, or bfloat16; quantized fitting is not implemented.')
         if not isinstance(cfg.device, str) or not re.fullmatch(r'cpu|mps|cuda(?::[0-9]+)?', cfg.device):
             raise FitError('Choose cpu, mps, cuda, or cuda:<index>; device placement is explicit.')
+        if type(cfg.compileModel) is not bool or cfg.kernelPolicy not in ('current', 'torch'):
+            raise FitError('Choose compileModel true/false and kernelPolicy current or torch; packages are never installed by fitting.')
         if cfg.tier not in ('testing', 'evidence'):
             raise FitError('Choose testing or evidence intent; this does not qualify the fitted lens.')
+        from .jlens_stopping import validate
+        validate(cfg.stopping)
+        if cfg.shard is not None and cfg.stopping is not None:
+            raise FitError('Shards use fixed budgets; assess the merged round before choosing more rows.')
+        if cfg.shard is not None:
+            from .jlens_fit_selection import validate_shard
+            validate_shard(cfg)
         return cfg
 
     def to_dict(self):
@@ -139,6 +155,12 @@ def fit(config, *, root=None, log=print, on_run_created=None):
 
 def preflight(config, root, *, log=None):
     rows = corpus_rows(read_pinned(config.corpus, root))
+    from .jlens_fit_selection import indices
+    selected = indices(config, len(rows))
+    rows = [rows[i] for i in selected]
+    if config.benchmarkReport:
+        from .jlens_fit_review import measured_throughput
+        measured_throughput(config, root)
     if config.corpusReceipt:
         from .corpus_preparation import validate_receipt
         validate_receipt(read_pinned(config.corpusReceipt, root), config.corpus['sha256'])
@@ -149,12 +171,13 @@ def preflight(config, root, *, log=None):
         identity = verified_identity(state)
         expected = {'estimator': ESTIMATOR, 'modelID': config.modelID, 'revision': config.revision,
                     'corpusSHA256': config.corpus['sha256'], 'maxSeqLen': config.maxSeqLen,
-                    'skipFirst': config.skipFirst, 'dimBatch': config.dimBatch}
+                    'skipFirst': config.skipFirst, 'dimBatch': config.dimBatch,
+                    'rowIndices': config.rowIndices, 'shard': config.shard, 'stopping': config.stopping}
         if config.sourceLayers is not None: expected['sourceLayers'] = sorted(config.sourceLayers)
         if not isinstance(identity, dict) or any(identity.get(k) != v for k, v in expected.items()):
             raise FitError('Checkpoint model, corpus, or estimator differs; restore the matching inputs before loading.')
         if (not isinstance(identity.get('runtime'), dict) or identity['runtime'].get('dtype') != config.dtype
                 or type(state.get('nextIndex')) is not int or not 0 <= state['nextIndex'] <= min(config.maxPrompts, len(rows))):
             raise FitError('Checkpoint precision or progress does not match this continuation request.')
-    return {'rows': len(rows), 'rowsConsidered': min(config.maxPrompts, len(rows)),
+    return {'rows': len(rows), 'globalRowIndices': selected[:config.maxPrompts], 'rowsConsidered': min(config.maxPrompts, len(rows)),
             'rendering': 'raw', 'estimator': ESTIMATOR}

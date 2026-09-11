@@ -59,3 +59,14 @@ def test_route_catalog_gate_rejects_invented_actions_and_wrong_authority():
         operation = next(op for op in changed['operations'] if op['actions'])
         operation['actions'][0][key] = value
         with pytest.raises((AssertionError, KeyError)): gate.check_actions(changed, CENSUS)
+
+
+def test_round_review_uses_long_verification_timeout_and_catalog_route():
+    def respond(request):
+        assert request.url.path=='/api/science/fitting-round/round-fixture/plan'
+        assert request.extensions['timeout']['read']==3600
+        assert json.loads(request.content)=={}
+        return httpx.Response(200,json={'changed':False,'submitIndices':[0]})
+    client=RunnerClient(base_url='https://runner.example.invalid',http_client=httpx.Client(transport=httpx.MockTransport(respond)))
+    result=client.science_call('jlens-fit-round','post-fitting-round',{'path':{'job_id':'round-fixture','action':'plan'},'query':{},'body':{}})
+    assert result=={'changed':False,'submitIndices':[0]}

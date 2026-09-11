@@ -51,6 +51,7 @@ CENSUS: tuple[RouteRole, ...] = (
     _r("POST", "/api/artifact-imports/import", W, "Publish a custom lens or SAE decoder vector into the workbench library from reviewed bytes."),
     _r("POST", "/api/science/workspace/{action}", W, "Author and publish local scientific requests, review and pin SAE rosters, or verify/import local custody; runner staging remains isolated execution."),
     _r("POST", "/api/science/stage", B, "Verify and stage isolated execution copies; never edit workbench source documents."),
+    _r("POST", "/api/science/fitting-round/{job_id}/{action}", B, "Review and coordinate disjoint fitting shards and a deterministic merge using durable scientific jobs."),
     _r("POST", "/api/science/campaign/{job_id}/{action}", B, "Review and coordinate cells of a staged scientific campaign; numerical training remains runner execution."),
     _r("POST", "/api/science/jobs/{job_id}/export", B, "Package completed standalone execution output for verified local custody."),
     _r("POST", "/api/science/jobs/{job_id}/cleanup-plan", B, "Review exact diagnostic output removal under declared policy and local custody attestation."),

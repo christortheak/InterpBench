@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "order": 28,
+  "catalog": {
+    "id": "jlens-fit-assess",
+    "method": "jlens",
+    "title": "Assess successive lenses on held-out text",
+    "engineCLI": null,
+    "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+    "http": "POST /api/science/plan; POST /api/science/submit",
+    "compute": "gpu",
+    "outputs": [
+      "Measure agreement between two lenses and with the model’s actual final residual on declared held-out token positions."
+    ],
+    "restriction": "Uses reviewed inputs and immutable scientific outputs. No environment installation, automatic retries, or scientific qualification.",
+    "actions": [
+      {
+        "id": "post-science-plan",
+        "method": "POST",
+        "path": "/api/science/plan",
+        "serviceRole": "both",
+        "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+      },
+      {
+        "id": "post-science-submit",
+        "method": "POST",
+        "path": "/api/science/submit",
+        "serviceRole": "both",
+        "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  },
+  "interview": {
+    "id": "jlens-fit-assess",
+    "title": "Assess successive lenses on held-out text",
+    "method": "jlens",
+    "purpose": "Measure agreement between two lenses and with the model’s actual final residual on declared held-out token positions.",
+    "fields": [
+      {
+        "id": "modelID",
+        "label": "Model to fit",
+        "kind": "text",
+        "required": true,
+        "help": "Choose a prepared Hugging Face checkpoint. Fitting does not download model weights or change them."
+      },
+      {
+        "id": "revision",
+        "label": "Exact model version",
+        "kind": "text",
+        "required": true,
+        "help": "Inspect the model to pin its 40-character commit. The resulting lens belongs to this checkpoint."
+      },
+      {
+        "id": "corpus",
+        "label": "Held-out text corpus",
+        "kind": "fileRef",
+        "required": true,
+        "help": "Unique id and text per JSONL row. Choose text not used for fitting or method selection; a different file hash alone does not prove independence."
+      },
+      {
+        "id": "referenceLensID",
+        "label": "Reference registered lens",
+        "kind": "text",
+        "required": true,
+        "help": "Choose the earlier fit or comparison instrument from the lens library."
+      },
+      {
+        "id": "candidateLensID",
+        "label": "Candidate registered lens",
+        "kind": "text",
+        "required": true,
+        "help": "Choose the later fit or merged round from the same model and known model revision."
+      },
+      {
+        "id": "maxPrompts",
+        "label": "Maximum passages to assess",
+        "kind": "integer",
+        "required": false,
+        "help": "Uses the first N rows in this declared assessment corpus.",
+        "default": "16"
+      },
+      {
+        "id": "maxSeqLen",
+        "label": "Maximum tokens per passage",
+        "kind": "integer",
+        "required": false,
+        "help": "Raw text, with the prepared tokenizer’s native special tokens.",
+        "default": "128"
+      },
+      {
+        "id": "skipFirst",
+        "label": "Leading positions to omit",
+        "kind": "integer",
+        "required": false,
+        "help": "Early positions and the final token are excluded.",
+        "default": "16"
+      },
+      {
+        "id": "maxPositionsPerRow",
+        "label": "Maximum assessed positions per passage",
+        "kind": "integer",
+        "required": false,
+        "help": "Uses the first eligible positions and records them. Vocabulary logits are processed in small chunks.",
+        "default": "64"
+      },
+      {
+        "id": "topK",
+        "label": "Top tokens to compare",
+        "kind": "integer",
+        "required": false,
+        "help": "Reports top-k set overlap and Jensen–Shannon divergence, averaged equally over the recorded token positions.",
+        "default": "10"
+      },
+      {
+        "id": "dtype",
+        "label": "Model precision",
+        "kind": "text",
+        "required": false,
+        "help": "Use the prepared, unquantized runtime appropriate to the intended readout.",
+        "default": "bfloat16"
+      },
+      {
+        "id": "device",
+        "label": "Execution device",
+        "kind": "text",
+        "required": false,
+        "help": "cuda, mps, or cpu; this assessment does not download weights.",
+        "default": "cuda"
+      }
+    ],
+    "claimBoundary": "Coverage and readout stability must be interpreted for the selected corpus and runtime. Outputs do not establish behavioral validity.",
+    "questions": [
+      "Which corpus range and resource budget answer the research question?",
+      "Which missing coverage or readout differences would change the conclusion?"
+    ]
+  },
+  "interviewOrder": 33,
+  "inputRoleProfile": "managed-v1",
+  "inputRoles": {
+    "referenceLensID": "lens",
+    "candidateLensID": "lens"
+  },
+  "binding": {
+    "module": "jlens_assessment",
+    "config_class": "AssessmentConfig",
+    "function": "assess",
+    "compute": "gpu"
+  }
+}

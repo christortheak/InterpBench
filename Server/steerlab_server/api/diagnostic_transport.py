@@ -1,4 +1,5 @@
 """Runner execution copies and export references; never workbench authorship."""
+from ..experiment import input_hashes
 from pathlib import Path
 import shutil
 import tempfile
@@ -57,6 +58,7 @@ def resolve(expected, profile):
     return verify_inputs(root, expected), root
 
 
+@input_hashes.operation
 def verify_inputs(root, expected):
     """Re-read the complete portable closure at admission and on the queued child."""
     from ..experiment import diagnostic_inputs
@@ -78,8 +80,9 @@ def output(job_id, jobs, profile):
     if job is None or job.status != 'succeeded' or not job.finished_at or not job.kind.startswith('science:'):
         raise archives.Refusal('Only successfully completed diagnostic jobs are export/cleanup eligible; partial, active and resumable outputs stay protected.')
     result = job.result or {}; plan = result.get('scientificPlan') or {}
-    if plan.get('inputBundleSHA256'):
-        _, root = resolve(plan['inputBundleSHA256'], profile)
+    capsule = plan.get('inputBundleSHA256') or plan.get('executionCapsuleSHA256')
+    if capsule:
+        _, root = resolve(capsule, profile)
     else:
         root = Path(profile.root).resolve()
     if plan.get('root') != str(root): raise archives.Refusal('This job belongs to another serving root.')

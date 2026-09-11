@@ -20,6 +20,7 @@ which routes a runner profile *would* keep; it does not keep them. See
 from __future__ import annotations
 
 import re
+import ast
 from pathlib import Path
 
 import pytest
@@ -186,7 +187,16 @@ def test_the_adapters_endpoint_scan_finds_nothing_undeclared():
     source = _RUNNER_SOURCE.read_text(encoding="utf-8")
     found = {_shape(m) for m in re.findall(r'"(/api/[^"]*)"', source)}
     known = {_shape(template) for _, template in _ADAPTER_ROUTES}
-    unknown = sorted(found - known)
+    # A family-prefix test selects the verification timeout; it is not a route.
+    # Exempt only literals actually passed to startswith, and require that the
+    # prefix already contains declared endpoints. Exact request paths still gate.
+    prefixes = {arg.value for node in ast.walk(ast.parse(source))
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == 'startswith'
+                for arg in node.args if isinstance(arg, ast.Constant)
+                and isinstance(arg.value,str) and arg.value.endswith('/')}
+    assert all(any(path.startswith(prefix) for path in known) for prefix in prefixes)
+    unknown = sorted(found - known - prefixes)
     assert not unknown, (
         "The client adapter speaks /api paths that _ADAPTER_ROUTES does not "
         f"list: {unknown}. Add them there (with their method) so the census "

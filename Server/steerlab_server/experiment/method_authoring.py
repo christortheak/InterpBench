@@ -90,7 +90,7 @@ def draft(operation, answers, root):
               'nextAction': 'Package these reviewed inputs, stage on the intended engine, then review its effective config and exact execution plan. No execution is authorized by this draft.'}
     if operation == 'jlens-fit':
         from .jlens_fit_review import review
-        result['fittingReview'] = review(config)
+        result['fittingReview'] = review(config, root)
     return {**result, 'planSHA256': archives.digest(result), 'changed': False}
 
 

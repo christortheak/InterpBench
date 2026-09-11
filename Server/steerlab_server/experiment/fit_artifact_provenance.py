@@ -19,6 +19,8 @@ def read(spec, files, tensor_hash):
         return {}
     if not isinstance(report, dict) or report.get('operation') not in ('jlens-fit', 'jlens-fit-merge'):
         return {}
+    if report.get('schemaVersion') != 1:
+        return {}
     identity = report.get('identity')
     if not isinstance(identity, dict) or not isinstance(identity.get('runtime'), dict):
         raise ImportRefusal('The fitting report has no runtime identity. Select the report accompanying these tensors.')

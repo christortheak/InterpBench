@@ -63,4 +63,11 @@ def build_router(state):
             fields(body, [] if action in ('status', 'plan') else ['planSHA256', 'confirmAction'])
             return managed_campaign.action(job_id, action, body.get('planSHA256'), body.get('confirmAction'), state.jobs, ServerProfile.from_env())
         return perform(work)
+    @router.post('/api/science/fitting-round/{job_id}/{action}')
+    def fitting_round(job_id: str, action: str, body: dict):
+        from . import jlens_rounds
+        def work():
+            fields(body, [] if action in ('status', 'plan', 'merge-plan') else ['planSHA256', 'confirmAction'])
+            return jlens_rounds.action(job_id, action, body.get('planSHA256'), body.get('confirmAction'), state.jobs, ServerProfile.from_env())
+        return perform(work)
     return router

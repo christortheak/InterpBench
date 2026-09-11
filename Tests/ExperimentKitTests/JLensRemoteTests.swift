@@ -73,6 +73,22 @@ import Testing
         #expect(lens.passingQualifications.map(\.qualificationID) == ["q2"])
     }
 
+    @Test func fittedProvenanceSurvivesMacDecodeAndReencode() throws {
+        let bytes = Data("""
+        {"lensID":"fitted-fixture","referenceCommit":"reference","kernelSHA256":"kernel","driverSHA256":"driver","fitReportSHA256":"report"}
+        """.utf8)
+        let record = try JSONDecoder().decode(JLensRecord.self, from: bytes)
+        #expect(record.referenceCommit == "reference")
+        #expect(record.kernelSHA256 == "kernel")
+        #expect(record.driverSHA256 == "driver")
+        #expect(record.fitReportSHA256 == "report")
+        let again = try JSONDecoder().decode(JLensRecord.self, from: JSONEncoder().encode(record))
+        #expect(again == record)
+        let unknown = try JSONDecoder().decode(JLensRecord.self, from: Data("{\"lensID\":\"external\"}".utf8))
+        #expect(unknown.referenceCommit == nil && unknown.kernelSHA256 == nil)
+        #expect(unknown.driverSHA256 == nil && unknown.fitReportSHA256 == nil)
+    }
+
     @Test func tokenOptionsPreserveTheMultiTokenWarning() throws {
         // The captured payload is 'courage' on gemma-3-4b-it, which really does
         // split into 'c' + 'ourage'. Taking component [0] would derive a

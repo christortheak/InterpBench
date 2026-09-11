@@ -2769,6 +2769,7 @@ public struct ClusterClient: Sendable {
     public func callScientificAction(operation: String, actionID: String, document: Data) async throws -> JSONValue {
         let resolved = try ScientificActionRequest.resolve(operation: operation, actionID: actionID, document: document)
         var request = try makeRequest(path: resolved.path, method: resolved.method, queryItems: resolved.query)
+        if resolved.path.hasPrefix("/api/science/") { request.timeoutInterval = 3600 }
         if resolved.method != "GET" {
             request.httpBody = resolved.body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

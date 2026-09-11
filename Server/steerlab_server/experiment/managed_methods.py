@@ -51,6 +51,7 @@ def validate(operation, config, root):
         module, parsed = config_owner(operation, config)
         if METHODS[operation].compute == 'gpu': require_pin(config.get('modelID'), config.get('revision'))
         if operation == 'jlens-fit': module.preflight(parsed, root)
+        if operation in ('jlens-fit-benchmark', 'jlens-fit-round', 'jlens-fit-merge', 'jlens-fit-assess'): module.preflight(parsed, root)
         return parsed
     if operation == 'optvec-campaign':
         from . import optvec_campaign

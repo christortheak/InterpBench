@@ -2,8 +2,10 @@
 
 Inputs must already be staged under the runner root. Planning is read-only;
 submission pins that plan and the child rechecks inputs after queueing. Neither
-operation is a study stage, nor does either support checkpoint resumption.
+operation is a study stage. A fitting continuation is an explicit new request
+with a pinned checkpoint; the job queue never resumes or retries it implicitly.
 """
+from ..experiment import input_hashes
 from dataclasses import asdict
 import hashlib
 import json
@@ -85,6 +87,7 @@ def workspace_file(root, relative):
     return target
 
 
+@input_hashes.operation
 def input_plan(request, root):
     request = request_document(request)
     p = request['parameters']
@@ -98,7 +101,7 @@ def input_plan(request, root):
                 'resumable': False, 'compute': managed_methods.METHODS[request['operation']].compute if request['operation'] in managed_methods.METHODS else 'cpu'}
         if request['operation'] == 'jlens-fit':
             from ..experiment.jlens_fit_review import review
-            result['fittingReview'] = review(validated['effectiveConfig'])
+            result['fittingReview'] = review(validated['effectiveConfig'], root)
         return result
     if request['operation'] == 'battery':
         from ..experiment import battery_run
@@ -139,17 +142,21 @@ def input_plan(request, root):
             'inputSHA256': digest(material), 'models': models, 'resumable': False}
 
 
-def plan(request, profile):
+@input_hashes.operation
+def plan(request, profile, *, execution_capsule=None, round_submission=None):
     with submitting():
         if server_role(profile) == 'gpu-session':
             raise ScientificRefusal('Submit through the controller; session workers own no durable job queue.')
         execution_root = profile.root
+        if execution_capsule is not None:
+            from . import diagnostic_transport
+            _, execution_root = diagnostic_transport.resolve(execution_capsule, profile)
         staged_digest = None
         if isinstance(request, dict) and set(request) == {'inputBundleSHA256'}:
             from . import diagnostic_transport
             staged_digest = request['inputBundleSHA256']
             request, execution_root = diagnostic_transport.resolve(staged_digest, profile)
-        if isinstance(request, dict) and request.get('operation') == 'optvec-campaign' and not staged_digest:
+        if isinstance(request, dict) and request.get('operation') in ('optvec-campaign', 'jlens-fit-round') and not staged_digest:
             raise ScientificRefusal('Managed campaigns require an isolated staged input bundle.')
         try:
             result = input_plan(request, execution_root)
@@ -163,6 +170,8 @@ def plan(request, profile):
             raise
         if staged_digest:
             result['inputBundleSHA256'] = staged_digest
+        if execution_capsule is not None: result['executionCapsuleSHA256'] = execution_capsule
+        if round_submission is not None: result['roundSubmission'] = round_submission
         from . import job_ownership
         host, pid = job_ownership.current_owner()
         result['controller'] = {'host': host, 'pid': pid, 'metadataRoot': str(Path(profile.metadata_root).resolve())}
@@ -193,9 +202,9 @@ def write_json(path, document):
     os.replace(temporary, path)
 
 
-def submit(request, expected, *, profile, jobs, registry=None):
+def submit(request, expected, *, profile, jobs, registry=None, execution_capsule=None, round_submission=None):
     with submitting():
-        reviewed = plan(request, profile)
+        reviewed = plan(request, profile, execution_capsule=execution_capsule, round_submission=round_submission)
         if reviewed['planSHA256'] != expected:
             raise ScientificRefusal('The request, inputs, root or resource plan changed after review; nothing was submitted.')
         from ..experiment import paths
@@ -283,6 +292,9 @@ def execute_packet(packet, job_id, record, expected_plan_sha256=None):
         actual = digest({key: value for key, value in reviewed.items() if key != 'planSHA256'})
         if actual != reviewed['planSHA256'] or (expected_plan_sha256 is not None and actual != expected_plan_sha256):
             raise ScientificRefusal('The recorded diagnostic plan changed after submission; nothing was executed.')
+        if reviewed.get('executionCapsuleSHA256'):
+            from . import diagnostic_transport
+            diagnostic_transport.verify_inputs(root, reviewed['executionCapsuleSHA256'])
         if reviewed.get('inputBundleSHA256'):
             from . import diagnostic_transport
             staged_request = diagnostic_transport.verify_inputs(root, reviewed['inputBundleSHA256'])

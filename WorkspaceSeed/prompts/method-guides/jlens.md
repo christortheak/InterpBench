@@ -287,3 +287,159 @@ On filesystems without native create-only rename, an interrupted publication can
 leave an empty directory claim. This is incomplete output. Confirm that no
 publisher is live before removing only that empty directory by hand and retrying;
 otherwise choose a new destination. Never delete populated output as a repair.
+
+
+## From a pilot to a measured fitting round
+
+Ask first what readout the researcher needs, which text should represent it, and
+what compute budget they approve. Explain that a **fitting round** divides one
+fixed total of corpus rows among independent jobs; merging combines their
+contributions. More rows or a stable running average alone do not establish
+that a lens answers the research question. Keep the declared held-out text
+separate, and compare the readouts and the research conclusions.
+
+Four managed operations are available from **Research methods → Author request**
+in the app, `science interview/draft/publish` in either client, and the workbench
+`/api/science/workspace/{action}` routes. Execution uses the usual package,
+stage, plan, submit, inspect, fetch, and custody flow on either client or the
+HTTP API. A runner executes; it does not author the researcher's workspace.
+
+| Operation | Researcher choice | Result |
+| --- | --- | --- |
+| `jlens-fit-benchmark` | A published fresh fitting request of at most eight rows, dimension batches (baseline 1), kernel policy, compilation comparison, and numerical tolerances | Per-prompt gradient and mean-lens agreement, throughput, and memory, with failures visible |
+| `jlens-fit-round` | A published fixed-budget fit, shard count, first global corpus row, partition layout, and concurrency cap | Immutable shard requests and a round plan; materializing this plan starts no GPU fitting |
+| `jlens-fit-merge` | Completed disjoint fit directories, and whether missing planned rows are acceptable | A weighted merged lens, checkpoint, and explicit coverage/lineage report |
+| `jlens-fit-assess` | Two registered lens IDs, pinned held-out text, layers, and token-position budget | Per-layer readout agreement and comparisons with the final residual; no automatic qualification |
+
+### Measure speed and numerical agreement together
+
+Use the same small corpus and exact checkpoint for each benchmark case. Choose
+batches such as `1, 8, 16`; larger batches may exhaust memory. `kernelPolicies`
+can be `current`, `torch`, or `torch,current`. The explicit Torch policy uses
+inspectable model-owned fallbacks; if the installed model has no such fallback,
+use the current policy and request a tested model adapter. `compareCompiled`
+adds compiled cases. The first case is the comparison baseline. Each case runs
+in a fresh subprocess, so a failed CUDA context does not contaminate the next.
+The report compares every fitted prompt's matrices and the final mean, not
+only a final score. Tolerances remain visible researcher choices.
+
+Timing excludes model loading, includes first-call compilation and temporary
+matrix writes, and applies only to the measured rows and environment. Temporary
+matrices retain the baseline and current case until comparison, then are
+removed; allow disk space for both sets of per-row matrices. A killed worker
+can leave scratch under `.steerlab/jlens-benchmark-state/`. A benchmark report
+contains measurements, not an importable lens. Failed cases remain in the
+report; a `COMPLETED` report is not a claim that every case passed.
+
+A successful report can be selected as the optional **Measured pilot report**
+(`benchmarkReport`) in a later fit. The review shows its matching case's rows
+per hour and an extrapolation at the requested row cap, with runtime and
+limitations. This is not a scheduler walltime guarantee. The default dimension
+batch remains 1. No benchmark changes defaults or approves a continuation
+across a numerical-runtime mismatch. Kernel policy, compilation, optional
+package versions, Torch, and Transformers stay bound in checkpoint identity.
+
+Optional Linux kernel candidates are available in the explicit
+`Server[jlens-kernels]` extra. This is separate from normal setup and from the
+pinned `jlens` reference extra. It is **not a resolved CUDA environment lock or a
+qualified configuration**. After the researcher approves an environment change,
+the running agent should first obtain a `pip install --dry-run --report ...`
+plan in the intended environment, review dependencies and build prerequisites,
+and then install that reviewed selection. Installing `jlens-kernels` neither
+acquires weights nor imports lenses. Do not run `bootstrap --with-jlens` merely
+to add kernels: that existing option also acquires the curated lenses. Never
+change a running job's environment. Compare fallback and accelerated gradients
+and lenses before interpreting a speedup; package presence alone does not prove
+which kernel ran. Qualification remains a separate instrument check.
+
+### Review and execute a fixed-budget round
+
+The base fitting request's `maxPrompts` is the **global row budget**, including
+short rows later skipped. `startRow` is zero-based in the same pinned corpus.
+Interleaved partitions distribute successive rows across shards; contiguous
+partitions give each shard a consecutive block. The plan lists every global
+row and the per-shard count, and shows minimum retained lens/checkpoint storage
+when model dimensions are cached. Budget also for staging, exports, and
+recovered checkpoints. This is not a peak-memory estimate.
+
+After materialization, use its durable job ID in the app's **Scientific inputs,
+evidence and cleanup → J-lens fitting rounds** controls. Review the shard queue,
+confirm the displayed plan, and top it up. Review again as capacity becomes
+free. The cap counts active scientific jobs on this controller; it does not
+replace the site's scheduler policy or account for unrelated controllers.
+Uncertain submissions reserve capacity and are not retried. Inspect durable
+jobs and scheduler state before reconciling uncertainty; never resubmit merely
+because a request timed out. Cancellation requests must be followed by a job
+status check. There is no automatic background refill.
+
+Both command lines can invoke these same controls with `science-call`:
+
+```sh
+steerlab runner science-call jlens-fit-round --action post-fitting-round --request round-action.json --runner <url> --json
+steerlab-cli remote science-call jlens-fit-round --action post-fitting-round --request round-action.json --site <id> --json
+```
+
+For review, `round-action.json` is:
+
+```json
+{"path":{"job_id":"<materialized-round-job-id>","action":"plan"},"query":{},"body":{}}
+```
+
+The HTTP equivalent is `POST /api/science/fitting-round/<job-id>/plan` with `{}`.
+`status` and `merge-plan` also take an empty body. `submit`, `cancel`, and
+`merge-submit` require `{"planSHA256":"<fresh-plan-hash>","confirmAction":true}`.
+Use the hash from `plan` for submission/cancellation and the hash from
+`merge-plan` for merging. Mutations recheck inputs and capacity. The round's
+shard requests automatically use its verified execution capsule; do not hand
+edit their paths. Plan and submit allow time for multi-gigabyte verification.
+
+Each shard can be continued from its own checkpoint using ordinary `jlens-fit`
+continuation and its original row selection. A continuation is a new run. The
+round helper merges its original completed child jobs; for continued shards,
+author `jlens-fit-merge` explicitly with each shard's **latest** completed run.
+Never include both a shard and its continuation or an earlier merge covering
+the same rows. The owner checks global coverage under the same pinned corpus
+and numerical identity and refuses overlaps, including ancestor contributions.
+
+Merge uses raw float32 sums weighted by fitted-row counts, excluding skipped
+rows. It records accumulation order (ascending first global row, then checkpoint
+hash), missing rows, and source hashes. Grouped float32 addition can differ
+from serial addition; compare within declared tolerances. A partial merge stays
+labelled partial. Collect and verify its evidence, then register its
+`artifact-description.json` with the usual artifact-plan/import workflow.
+Registration now carries the fit report hash, reference commit, kernel hash,
+and driver hash when the verified source report supplies them. Third-party
+artifacts with unknown provenance remain unknown.
+
+### Define stopping and assess readouts
+
+Optional `stopping` on a serial fit has the shape
+`{"threshold":0.002,"window":10,"minPrompts":100}`. Those values are an example,
+not defaults or a promise that 100 rows suffice. The statistic is the maximum
+over source layers of the relative Frobenius change of the running mean.
+Stopping requires N consecutive valid values strictly below the threshold,
+after the minimum number of **successfully fitted** rows. Skipped rows do not
+advance the window. A zero-norm previous layer mean makes the statistic
+unavailable, clears the window, and continues to the row budget; it never
+counts as convergence. The window travels in checkpoint state. Reports name
+whether stability or the row budget ended the fit. Fixed-budget shards refuse
+per-shard stopping: independent stopping changes the sample and does not
+reconstruct the serial convergence series.
+
+For `jlens-fit-assess`, choose two registered versions and held-out text. On the
+same captured source activations, the owner applies each J matrix, then the
+model's actual final normalization and unembedding. It reports Jensen–Shannon
+divergence in nats and top-k token-set overlap, both between lenses and against
+the actual final residual. Aggregation weights assessed token positions equally;
+only the first eligible positions up to the declared cap are assessed. Position
+and layer choices are recorded. These are distributional readout comparisons,
+not causal interventions. A matching fitting-corpus hash is flagged; a different
+hash does not establish independence. Neither metric automatically qualifies a
+lens or decides whether the research conclusions are stable.
+
+The corpus, checkpoints, and completed runs remain immutable. Hash reuse is
+limited to unchanged regular files within one bounded input-review operation;
+a new request and the queued worker verify afresh. It does not eliminate every
+plan, submit, and worker read. No general fitting-run or checkpoint cleanup has
+been added. Keep original remote evidence until verified local custody, and
+follow the site's storage policy through an explicitly reviewed cleanup.

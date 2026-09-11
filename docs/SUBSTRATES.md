@@ -100,6 +100,10 @@ measurements; the generator only checks references, not scientific truth.
 | `sae-qualification-record` — Record reviewed SAE qualification | [python-cpu](#python-cpu) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
 | `sae-qualification-show` — Inspect an SAE qualification record | [python-cpu](#python-cpu) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
 | `jlens-fit` — Fit a J-lens | [python-model](#python-model) | implemented; comparison unqualified | implemented; comparison unqualified | no native implementation |
+| `jlens-fit-benchmark` — Benchmark J-lens fitting | [python-model](#python-model) | implemented; comparison unqualified | implemented; comparison unqualified | no native implementation |
+| `jlens-fit-round` — Plan a fixed-budget fitting round | [python-cpu](#python-cpu) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
+| `jlens-fit-merge` — Merge completed fitting shards | [python-cpu](#python-cpu) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
+| `jlens-fit-assess` — Assess successive lenses on held-out text | [python-model](#python-model) | implemented; comparison unqualified | implemented; comparison unqualified | no native implementation |
 
 The following profiles explain production and artifact use.
 

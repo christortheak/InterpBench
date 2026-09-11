@@ -1,6 +1,7 @@
 """Every shipped interview must reach its real owner with a valid config."""
 import json
 import pytest
+from test_jlens_fit import fitting
 from steerlab_server.experiment import method_authoring, managed_methods, diagnostic_archives as archives
 
 OPERATIONS = (
@@ -8,6 +9,7 @@ OPERATIONS = (
     'optvec-interpret', 'optvec-family', 'optvec-gradient', 'optvec-gradient-mint',
     'jspace', 'rescore-style', 'sae-family-report', 'sae-qualification-record',
     'optvec-campaign', 'jlens-fit',
+    'jlens-fit-benchmark', 'jlens-fit-round', 'jlens-fit-merge', 'jlens-fit-assess',
 )
 
 
@@ -86,8 +88,14 @@ def test_validation_cases_cover_every_managed_operation():
 
 
 @pytest.mark.parametrize('operation', OPERATIONS)
-def test_interview_draft_passes_real_owner_validation(operation, tmp_path):
-    answers = interview_answers(operation, tmp_path)
+def test_interview_draft_passes_real_owner_validation(operation, tmp_path, request):
+    if operation.startswith('jlens-fit-'):
+        from test_jlens_scaling import scaling_interview_fields
+        fields=scaling_interview_fields(request.getfixturevalue('fitting'))[operation]
+        answers=dict(purpose='Readout comparison',claim='Stability on selected text',controls='Same model and corpus',
+                     selection='Declared in advance',fields=fields,advanced={})
+    else:
+        answers = interview_answers(operation, tmp_path)
     review = method_authoring.draft(operation, answers, tmp_path)
     config = review['request']['parameters']['config']
     # No mocked parser and no swallowed refusal: every case must be accepted.

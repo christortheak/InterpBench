@@ -883,6 +883,7 @@ class RunnerClient:
         action, path, query, body = request(operation, action_id, document)
         # No proxy endpoint: the existing role/auth/gate owner receives the call.
         kwargs = {"params": query}
+        if path.startswith("/api/science/"): kwargs["timeout"] = self.diagnostic_timeout
         if action["method"] != "GET": kwargs["json_body"] = body
         return self._json(action["method"], path, **kwargs)
 

@@ -23,6 +23,19 @@ import Testing
         }
     }
 
+    @Test func fittingRoundUsesCatalogRouteAndLongVerificationTimeout() async throws {
+        let client = ClusterClient(profile: .init(baseURL: URL(string: "https://runner.example.invalid")!), session: Self.session { request in
+            #expect(request.url?.path == "/api/science/fitting-round/round-fixture/plan")
+            #expect(request.httpMethod == "POST")
+            #expect(request.timeoutInterval == 3600)
+            return (Data(#"{"changed":false,"submitIndices":[0],"planSHA256":"reviewed"}"#.utf8), 200)
+        })
+        let result = try await client.callScientificAction(operation: "jlens-fit-round", actionID: "post-fitting-round", document: Data(#"{"path":{"job_id":"round-fixture","action":"plan"},"query":{},"body":{}}"#.utf8))
+        guard case .object(let fields) = result else { Issue.record("Missing round plan"); return }
+        #expect(fields["changed"] == .bool(false))
+        #expect(fields["responseJSON"] == .string(#"{"changed":false,"submitIndices":[0],"planSHA256":"reviewed"}"#))
+    }
+
     @Test func scientificActionPreservesOwnersReadOnlyResultForPost() async throws {
         let client = ClusterClient(profile: .init(baseURL: URL(string: "https://runner.example.invalid")!), session: Self.session { request in
             #expect(request.httpMethod == "POST")

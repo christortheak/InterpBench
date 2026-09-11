@@ -1038,6 +1038,153 @@
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
       }
+    },
+    {
+      "id": "jlens-fit-benchmark",
+      "method": "jlens",
+      "title": "Benchmark J-lens fitting",
+      "engineCLI": null,
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
+      "compute": "gpu",
+      "outputs": [
+        "Timing, memory, per-prompt Jacobian agreement, and averaged-lens agreement for a small, fixed corpus."
+      ],
+      "restriction": "Runs sequential isolated cases; no model downloads or environment installation. A passed tolerance is not runtime qualification or scientific validation.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      }
+    },
+    {
+      "id": "jlens-fit-round",
+      "method": "jlens",
+      "title": "Plan a fixed-budget fitting round",
+      "engineCLI": null,
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit; POST /api/science/fitting-round/{job_id}/{action}",
+      "compute": "cpu",
+      "outputs": [
+        "Divide one global row budget into disjoint fitting requests, then review and top up the queue. Materialization starts no GPU work."
+      ],
+      "restriction": "Uses reviewed inputs and immutable scientific outputs. No environment installation, automatic retries, or scientific qualification.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+        },
+        {
+          "id": "post-fitting-round",
+          "method": "POST",
+          "path": "/api/science/fitting-round/{job_id}/{action}",
+          "serviceRole": "both",
+          "authorityReason": "Review and coordinate disjoint fitting shards and a deterministic merge using durable scientific jobs."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      }
+    },
+    {
+      "id": "jlens-fit-merge",
+      "method": "jlens",
+      "title": "Merge completed fitting shards",
+      "engineCLI": null,
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
+      "compute": "cpu",
+      "outputs": [
+        "Merge raw float32 sums in deterministic global-row order, weighted by fitted rows, with overlap detection and recorded source lineage."
+      ],
+      "restriction": "Uses reviewed inputs and immutable scientific outputs. No environment installation, automatic retries, or scientific qualification.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      }
+    },
+    {
+      "id": "jlens-fit-assess",
+      "method": "jlens",
+      "title": "Assess successive lenses on held-out text",
+      "engineCLI": null,
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
+      "compute": "gpu",
+      "outputs": [
+        "Measure agreement between two lenses and with the model’s actual final residual on declared held-out token positions."
+      ],
+      "restriction": "Uses reviewed inputs and immutable scientific outputs. No environment installation, automatic retries, or scientific qualification.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      }
     }
   ]
 }

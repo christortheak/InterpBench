@@ -461,3 +461,111 @@ def test_registration_preserves_verified_fit_provenance(fitting, monkeypatch):
     path.with_name('fit-report.json').write_text(json.dumps(report))
     with pytest.raises(ValueError, match='different tensors'):
         artifact_imports.inspect_source(path, root)
+
+
+def test_benchmark_compares_prompt_gradients_and_lenses(fitting):
+    from steerlab_server.experiment import jlens_benchmark as benchmark
+    root, config = fitting
+    request = root/'pilot.json'
+    request.write_text(json.dumps({'operation':'jlens-fit','parameters':{'config':config}}))
+    cfg = benchmark.BenchmarkConfig.from_dict(dict(modelID=config['modelID'], revision=config['revision'],
+        fittingRequest={'path':'pilot.json','sha256':archives.file_hash(request)}, dimBatches=[1,2]))
+    result = benchmark.benchmark(cfg, root=root, run_case=benchmark.worker, log=lambda _: None)
+    report = json.loads(Path(result['reportPath']).read_bytes())
+    assert len(report['cases']) == 2
+    assert all(case['agrees'] for case in report['cases'])
+    assert report['cases'][0]['fittedIndices'] == [0,1,3]
+    assert report['cases'][1]['rowsPerHour'] > 0
+    assert report['cases'][1]['promptAgreement']['0']['0']['maxAbsError'] == 0
+    assert report['qualification'] == 'notPerformed'
+    from steerlab_server.experiment.jlens_fit_review import measured_throughput
+    measurement_config=jlens_fit.FitConfig.from_dict({**config,'dimBatch':2,'benchmarkReport':{
+        'path':Path(result['reportPath']).relative_to(root).as_posix(),'sha256':archives.file_hash(Path(result['reportPath']))}})
+    estimate=measured_throughput(measurement_config,root)
+    assert estimate['pilotRows']==3 and estimate['extrapolatedHoursAtRowCap']>0
+    with pytest.raises(jlens_fit.FitError,match='different model'):
+        measured_throughput(jlens_fit.FitConfig.from_dict({**measurement_config.to_dict(),'maxSeqLen':512}),root)
+    request = {'operation':'jlens-fit-benchmark','parameters':{'config':cfg.to_dict()}}
+    assert {item['path'] for item in managed_inputs.plan(request,root)['files']} == {'pilot.json','corpus.jsonl'}
+    assert managed_methods.validate('jlens-fit-benchmark',cfg.to_dict(),root)
+
+
+def test_shards_merge_raw_sums_and_refuse_overlap(fitting):
+    from steerlab_server.experiment import jlens_round, jlens_merge
+    root,config=fitting
+    path=root/'request.json';path.write_text(json.dumps({'operation':'jlens-fit','parameters':{'config':config}}))
+    round_config=jlens_round.RoundConfig.from_dict(dict(modelID=config['modelID'],revision=config['revision'],fittingRequest={'path':'request.json','sha256':archives.file_hash(path)},shards=2))
+    plan=jlens_round.prepare(round_config,root)
+    assert plan['globalRowBudget']==4
+    children=[r['parameters']['config'] for r in plan['shards']]
+    assert [c['rowIndices'] for c in children]==[[0,2],[1,3]]
+    outputs=[run(root,c) for c in children]
+    paths=[Path(o['runDirectory']).relative_to(root).as_posix() for o in outputs]
+    merged=jlens_merge.merge(jlens_merge.MergeConfig.from_dict({'fits':paths}),root=root)
+    serial=run(root,config)
+    a=load_file(str(Path(merged['runDirectory'])/'jacobians.safetensors'))
+    b=load_file(str(Path(serial['runDirectory'])/'jacobians.safetensors'))
+    for key in a:torch.testing.assert_close(a[key],b[key],atol=1e-6,rtol=1e-6)
+    from jlens.lens import JacobianLens
+    reference=JacobianLens.merge([JacobianLens(jacobians={int(k.removeprefix('layer_')):v for k,v in load_file(str(Path(o['runDirectory'])/'jacobians.safetensors')).items()},
+        n_prompts=json.loads(Path(o['reportPath']).read_bytes())['promptsFitted'],d_model=2) for o in outputs])
+    for key in a:torch.testing.assert_close(a[key],reference.jacobians[int(key.removeprefix('layer_'))],atol=1e-6,rtol=1e-6)
+    assert merged['promptsFitted']==3 and not merged['partial']
+    with pytest.raises(jlens_fit.FitError,match='overlap'):
+        jlens_merge.merge(jlens_merge.MergeConfig.from_dict({'fits':paths+[Path(merged['runDirectory']).relative_to(root).as_posix()]}),root=root)
+    partial=jlens_merge.merge(jlens_merge.MergeConfig.from_dict({'fits':paths[:1]}),root=root)
+    assert partial['partial'] and partial['promptsFitted']==1
+    review=artifact_imports.inspect_source(merged['artifactDescription'],root)
+    artifact_imports.publish(merged['artifactDescription'],root,review['planSHA256'])
+
+
+def test_stopping_window_continues_and_does_not_stop_on_zero_mean(fitting,monkeypatch):
+    import jlens.fitting
+    root,config=fitting
+    rule={'threshold':1e-5,'window':2,'minPrompts':3}
+    def constant(*args,**kwargs):return {0:torch.eye(2),1:torch.eye(2)},6,4
+    monkeypatch.setattr(jlens.fitting,'jacobian_for_prompt',constant)
+    first=run(root,{**config,'maxPrompts':2,'stopping':rule})
+    cfg=checkpoint_config(root,{**config,'stopping':rule},first)
+    result=run(root,cfg)
+    report=json.loads(Path(result['reportPath']).read_bytes())
+    assert report['stopping']['endedBy']=='stabilityWindow' and report['promptsFitted']==3
+    def zero(*args,**kwargs):return {0:torch.zeros(2,2),1:torch.eye(2)},6,4
+    monkeypatch.setattr(jlens.fitting,'jacobian_for_prompt',zero)
+    result=run(root,{**config,'stopping':rule})
+    report=json.loads(Path(result['reportPath']).read_bytes())
+    assert report['stopping']['endedBy']=='rowBudget'
+    events=[json.loads(line) for line in Path(result['runDirectory'],'progress.jsonl').read_text().splitlines()]
+    assert all(e.get('meanRelativeChangeMax') is None for e in events)
+
+
+def test_assessment_reports_identical_lenses_without_claiming_qualification(fitting,monkeypatch):
+    from steerlab_server.experiment import jlens_assessment as assessment
+    root,config=fitting
+    output=run(root,config)
+    review=artifact_imports.inspect_source(output['artifactDescription'],root)
+    left=artifact_imports.publish(output['artifactDescription'],root,review['planSHA256'])
+    right=artifact_imports.publish(output['artifactDescription'],root,review['planSHA256'])
+    monkeypatch.setattr(Tiny,'unembed',lambda self,hidden:hidden,raising=False)
+    cfg=assessment.AssessmentConfig.from_dict({k:config[k] for k in ('modelID','revision','corpus','dtype','device','skipFirst')}|dict(referenceLensID=left['lensID'],candidateLensID=right['lensID'],maxPrompts=4,topK=1))
+    result=assessment.assess(cfg,root=root,log=lambda _:None)
+    report=json.loads(Path(result['reportPath']).read_bytes())
+    for group in report['layers'].values():
+        assert group['betweenLenses']['meanJSDivergence']==pytest.approx(0,abs=1e-7)
+        assert group['betweenLenses']['meanTopKOverlap']==1
+    assert report['heldOutStatus']=='sameCorpusAsFit' and report['qualification']=='notPerformed'
+    metrics=assessment.distances(torch.tensor([[10.,0.]]),torch.tensor([[0.,10.]]),1)
+    assert metrics['topKOverlapSum']==0 and 0<metrics['jsDivergenceSum']<0.7
+
+
+def test_cross_shard_continuation_and_ancestor_merge_are_rejected(fitting):
+    from steerlab_server.experiment import jlens_merge
+    root,cfg=fitting
+    first=run(root,{**cfg,'rowIndices':[0,1],'maxPrompts':1})
+    continued_config=checkpoint_config(root,{**cfg,'rowIndices':[0,1],'maxPrompts':2},first)
+    later=run(root,continued_config)
+    with pytest.raises(jlens_fit.FitError,match='differs'):
+        run(root,{**continued_config,'rowIndices':[1,3]})
+    paths=[Path(item['runDirectory']).relative_to(root).as_posix() for item in (first,later)]
+    with pytest.raises(jlens_fit.FitError,match='overlap'):
+        jlens_merge.preflight(jlens_merge.MergeConfig.from_dict({'fits':paths}),root)
