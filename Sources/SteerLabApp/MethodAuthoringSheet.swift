@@ -288,6 +288,13 @@ struct MethodAuthoringSheet: View {
                 }
                 Text(string(fitting, "verification") ?? "").font(.caption)
             }
+            let budgetLines = FittingReviewSummary.lines(operation: workflow.id, draft: value)
+            if !budgetLines.isEmpty {
+                Text("Compute and coverage").font(.headline)
+                ForEach(Array(budgetLines.enumerated()), id: \.offset) { _, line in
+                    Text(line).textSelection(.enabled)
+                }
+            }
             Text("Settings included in this plan").font(.headline)
             if case .object(let object) = value, case .object(let answers) = object["effectiveAnswers"] {
                 ForEach(workflow.fields) { field in
