@@ -21,6 +21,10 @@ class Refusal(ValueError):
     repair_action = 'Review the diagnostic archive, originating job and exact local workspace; retain remote originals until custody verifies.'
 
 
+class PathRefusal(Refusal):
+    """A missing or nonordinary input path, distinct from scientific validation."""
+
+
 def encoded(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
 
@@ -51,7 +55,7 @@ def ordinary(root, relative, *, missing=False):
         if not path.exists() and not path.is_symlink() and missing:
             continue
         if path.is_symlink() or (i < len(parts(relative)) - 1 and not path.is_dir()):
-            raise Refusal('Transport and custody refuse symlinks or non-directory ancestors: ' + relative)
+            raise PathRefusal('Transport and custody refuse symlinks or non-directory ancestors: ' + relative)
     return path
 
 
@@ -60,7 +64,7 @@ def files_in(root, relative):
     if target.is_file():
         return [relative]
     if not target.is_dir():
-        raise Refusal('Required input or output is missing: ' + relative)
+        raise PathRefusal('Required input or output is missing: ' + relative)
     result = []
     for directory, dirs, files in os.walk(target, followlinks=False):
         for name in dirs + files:

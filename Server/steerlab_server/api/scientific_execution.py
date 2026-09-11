@@ -155,7 +155,7 @@ def plan(request, profile):
             result = input_plan(request, execution_root)
         except (ValueError, OSError) as exc:
             from ..experiment import diagnostic_archives
-            path_failure = isinstance(exc, (ScientificInputUnavailable, diagnostic_archives.Refusal, FileNotFoundError, NotADirectoryError))
+            path_failure = isinstance(exc, (ScientificInputUnavailable, diagnostic_archives.PathRefusal, FileNotFoundError, NotADirectoryError))
             if path_failure and not staged_digest and isinstance(request, dict) and 'parameters' in request:
                 error = ScientificRefusal(str(exc) + ' If these inputs were staged from another workspace, plan the staging response request, not the original workspace request.')
                 error.repair_action = 'Use the localRequestPath returned by science-stage, or its request object {"inputBundleSHA256": "<staged digest>"}, with science-plan on this controller.'

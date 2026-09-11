@@ -2986,8 +2986,8 @@ def _runner(invocation: Invocation) -> CLIResult:
     ca_bundle = invocation.one("--ca-bundle")
     client = runner_api.RunnerClient(
         base_url=base_url, token=token,
-        timeout=_runner_float(invocation, "--timeout",
-                              runner_api.DEFAULT_TIMEOUT),
+        timeout=(_runner_float(invocation, "--timeout", runner_api.DEFAULT_TIMEOUT)
+                 if invocation.one("--timeout") is not None else None),
         verify=ca_bundle if ca_bundle else True)
     #: What EVERY runner payload starts from. Presence, never the value.
     common = {"runner": client.base_url, "tokenPresent": client.has_token}

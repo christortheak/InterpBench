@@ -461,7 +461,7 @@ class RunnerClient:
     """
 
     def __init__(self, *, base_url: str, token: str | None = None,
-                 timeout: float = DEFAULT_TIMEOUT,
+                 timeout: float | None = None,
                  verify=True, http_client=None,
                  max_download_bytes: int = DEFAULT_MAX_DOWNLOAD_BYTES) -> None:
         # NORMALIZED at the boundary, never merely accepted: `self.base_url`
@@ -469,7 +469,8 @@ class RunnerClient:
         # downstream reproduces, so this is the one place that can guarantee
         # none of them ever carries a credential (:func:`normalize_base_url`).
         self.base_url = normalize_base_url(base_url)
-        self.timeout = float(timeout)
+        self.timeout = DEFAULT_TIMEOUT if timeout is None else float(timeout)
+        self._diagnostic_timeout = 3600.0 if timeout is None else self.timeout
         self.verify = verify
         self.max_download_bytes = int(max_download_bytes)
         # Single underscore, and never rendered: see `__repr__` and `scrub`.
@@ -889,7 +890,7 @@ class RunnerClient:
     def diagnostic_timeout(self):
         # Hashing/compressing multi-gigabyte evidence may produce no response
         # bytes for minutes. Explicit caller budgets still take precedence.
-        return 3600.0 if self.timeout == DEFAULT_TIMEOUT else self.timeout
+        return self._diagnostic_timeout
 
     def stage_diagnostic(self, path: str, sha256: str) -> dict:
         return self._json("POST", "/api/science/stage", json_body={"bundlePath": path, "bundleSHA256": sha256}, timeout=self.diagnostic_timeout)

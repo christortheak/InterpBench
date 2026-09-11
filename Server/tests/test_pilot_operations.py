@@ -19,11 +19,12 @@ def test_export_and_stage_have_long_idle_budget_without_changing_other_calls():
     assert requests[2].extensions['timeout']['read'] != 3600
 
 
-def test_explicit_export_timeout_is_honored():
+@pytest.mark.parametrize('timeout', [12, 60])
+def test_explicit_export_timeout_is_honored(timeout):
     def handle(request):
-        assert request.extensions['timeout']['read'] == 12
+        assert request.extensions['timeout']['read'] == timeout
         return httpx.Response(200, json={})
-    with RunnerClient(base_url='http://localhost', timeout=12, http_client=httpx.Client(transport=httpx.MockTransport(handle))) as client:
+    with RunnerClient(base_url='http://localhost', timeout=timeout, http_client=httpx.Client(transport=httpx.MockTransport(handle))) as client:
         client.export_diagnostic('example-job')
 
 
