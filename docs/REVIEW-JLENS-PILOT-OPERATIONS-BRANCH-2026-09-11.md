@@ -104,6 +104,22 @@ controller.** Older controllers report both fields unknown, as the branch
 says; the first controller to show the advisory is the one started after
 this deploy.
 
+**N4 — a registered fit loses its reference-kernel commit.** Registering
+the pilot's lens through `artifact-plan` and `artifact-import` produced a
+record with `referenceCommit: null` and `referencePackage: null`, although
+`fit-report.json`, the description's declared `configFile`, records the
+pinned reference commit and kernel hash under `identity.runtime`. The
+importer reads the report only for geometry. It should carry the reference
+commit, kernel hash, and fit driver hash into the record, since a later
+qualification and any merge (scaling R2) will want to compare them.
+
+**N5 — the review path for the continuation went through the login node.**
+Until this landing's F1 reaches the cluster, a Mac client cannot plan or
+submit a staged bundle with a large checkpoint; the working path was the
+Python client module invoked on the login node with the site's own token
+file by path and a long explicit timeout. Recorded so the live walk can be
+repeated from the Mac after the deploy and the difference noted.
+
 ## 5. Landing shape
 
 Fast-forward to `b9a688c`, then one landing commit carrying F1, F2 and this
