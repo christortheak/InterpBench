@@ -104,6 +104,7 @@ measurements; the generator only checks references, not scientific truth.
 | `jlens-fit-round` — Plan a fixed-budget fitting round | [python-cpu](#python-cpu) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
 | `jlens-fit-merge` — Merge completed fitting shards | [python-cpu](#python-cpu) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
 | `jlens-fit-assess` — Assess successive lenses on held-out text | [python-model](#python-model) | implemented; comparison unqualified | implemented; comparison unqualified | no native implementation |
+| `probe-library` — Inspect the probe library | [probe-library](#probe-library) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
 
 The following profiles explain production and artifact use.
 
@@ -206,6 +207,16 @@ Source: [Server/steerlab_server/api/managed_campaign.py](../Server/steerlab_serv
 Shared seeds and numerical fixture results establish implementation parity; actual model/backend comparisons remain unqualified.
 
 Source: [Sources/ExperimentKit/ExtractStability.swift](../Sources/ExperimentKit/ExtractStability.swift), [Sources/SteeringKit/Extraction/DirectionStability.swift](../Sources/SteeringKit/Extraction/DirectionStability.swift), [Tests/SteeringKitTests/ScientificScopeStabilityTests.swift](../Tests/SteeringKitTests/ScientificScopeStabilityTests.swift), [Server/steerlab_server/experiment/extract_stability.py](../Server/steerlab_server/experiment/extract_stability.py).
+
+### probe-library
+
+**Python:** Shared read-only probe artifact inspection; no model or GPU is loaded.
+
+**Swift/app:** The Probes section and native CLI use the same portable owner via the local client runtime.
+
+Legacy bytes and unknown provenance remain unchanged. Library inspection is not model execution or cross-backend qualification.
+
+Source: [Server/steerlab_server/experiment/probe_library.py](../Server/steerlab_server/experiment/probe_library.py), [Server/steerlab_server/experiment/probe_artifacts.py](../Server/steerlab_server/experiment/probe_artifacts.py), [Sources/ExperimentKit/ProbeLibrary.swift](../Sources/ExperimentKit/ProbeLibrary.swift).
 
 <!-- END SUBSTRATE-CATALOG -->
 

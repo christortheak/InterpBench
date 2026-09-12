@@ -14,6 +14,7 @@ enum WorkbenchSection: String, CaseIterable, Identifiable {
     // agents are derived from, so the inventory precedes the derivations;
     // Multi-Agent follows Agents as the composition of them.
     case data = "Data"
+    case probes = "Probes"
     case agents = "Agents"
     case multiAgent = "Multi-Agent"
     // Templates immediately above Studies (researcher request 2026-08-06): a
@@ -33,6 +34,7 @@ enum WorkbenchSection: String, CaseIterable, Identifiable {
         case .agents: "person.crop.square.on.square.angled"
         case .playground: "bubble.left.and.text.bubble.right"
         case .data: "square.stack.3d.up"
+        case .probes: "waveform.path"
         case .templates: "square.on.square"
         case .studies: "checkmark.seal"
         case .multiAgent: "person.3.sequence"
@@ -48,6 +50,7 @@ enum WorkbenchSection: String, CaseIterable, Identifiable {
         case .agents: "the agent workbench — library, creation (manual or optimize from a concept vector), and optimization runs"
         case .playground: "interactive chat and exploratory steering — try a model, a vector, and a strength before anything is declared"
         case .data: "the workspace's data: inventory of every dataset and derived artifact, the one New Dataset flow, and the editors that author and build them (concepts, corpora, vectors, adapter training)"
+        case .probes: "inspect saved probes, their model bindings, score meanings, and provenance"
         case .templates: "the template library: a study's task, instruments, sampling and judges — with no agents and no compute"
         case .studies: "evidence-grade study protocols (draft → freeze → run)"
         case .multiAgent: "build a scenario several agents take turns in — who speaks when, what each one sees, and the rehearsal that tries it"

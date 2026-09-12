@@ -1,0 +1,274 @@
+{
+  "linear": {
+    "artifactType": "activation-probe",
+    "schemaVersion": 1,
+    "label": "Example instrument",
+    "createdAt": "2026-01-01T00:00:00Z",
+    "method": "linear-logit-v1",
+    "input": {
+      "modelID": "example/model",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "substrate": "pytorch",
+      "coordinateConvention": "residual-stream-v1",
+      "precision": "float32",
+      "hiddenSize": 2,
+      "site": {
+        "kind": "residualPost",
+        "layer": 1
+      },
+      "reading": {
+        "rendering": "raw",
+        "position": "lastNonPadding",
+        "population": "prompt"
+      },
+      "tokenizerSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "templateSHA256": null
+    },
+    "preprocessing": {
+      "center": [
+        1,
+        3
+      ],
+      "scale": [
+        2,
+        4
+      ]
+    },
+    "layers": [
+      {
+        "weights": [
+          [
+            2,
+            -1
+          ]
+        ],
+        "bias": [
+          0.5
+        ],
+        "activation": "identity"
+      }
+    ],
+    "output": {
+      "negativeLabel": "absent",
+      "positiveLabel": "present",
+      "scoreKind": "logit",
+      "threshold": 0
+    },
+    "training": {
+      "recipeID": "reference-fixture-v1",
+      "data": [
+        {
+          "role": "fit",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "settings": {
+        "seed": "18446744073709551615",
+        "note": "synthetic fixture, not a fitted research instrument"
+      }
+    }
+  },
+  "mlp": {
+    "artifactType": "activation-probe",
+    "schemaVersion": 1,
+    "label": "Example instrument",
+    "createdAt": "2026-01-01T00:00:00Z",
+    "method": "mlp-relu-logit-v1",
+    "input": {
+      "modelID": "example/model",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "substrate": "pytorch",
+      "coordinateConvention": "residual-stream-v1",
+      "precision": "float32",
+      "hiddenSize": 2,
+      "site": {
+        "kind": "residualPost",
+        "layer": 1
+      },
+      "reading": {
+        "rendering": "raw",
+        "position": "lastNonPadding",
+        "population": "prompt"
+      },
+      "tokenizerSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "templateSHA256": null
+    },
+    "preprocessing": {
+      "center": [
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1
+      ]
+    },
+    "layers": [
+      {
+        "weights": [
+          [
+            1,
+            -1
+          ],
+          [
+            -1,
+            1
+          ]
+        ],
+        "bias": [
+          0,
+          0
+        ],
+        "activation": "relu"
+      },
+      {
+        "weights": [
+          [
+            2,
+            2
+          ]
+        ],
+        "bias": [
+          -1
+        ],
+        "activation": "identity"
+      }
+    ],
+    "output": {
+      "negativeLabel": "absent",
+      "positiveLabel": "present",
+      "scoreKind": "logit",
+      "threshold": 0
+    },
+    "training": {
+      "recipeID": "reference-fixture-v1",
+      "data": [
+        {
+          "role": "fit",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "settings": {
+        "seed": "18446744073709551615",
+        "note": "synthetic fixture, not a fitted research instrument"
+      }
+    }
+  },
+  "mean": {
+    "artifactType": "activation-probe",
+    "schemaVersion": 1,
+    "label": "Example instrument",
+    "createdAt": "2026-01-01T00:00:00Z",
+    "method": "mean-difference-v1",
+    "input": {
+      "modelID": "example/model",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "substrate": "pytorch",
+      "coordinateConvention": "residual-stream-v1",
+      "precision": "float32",
+      "hiddenSize": 2,
+      "site": {
+        "kind": "residualPost",
+        "layer": 1
+      },
+      "reading": {
+        "rendering": "raw",
+        "position": "lastNonPadding",
+        "population": "prompt"
+      },
+      "tokenizerSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "templateSHA256": null
+    },
+    "preprocessing": {
+      "center": [
+        1,
+        3
+      ],
+      "scale": [
+        2,
+        4
+      ]
+    },
+    "layers": [
+      {
+        "weights": [
+          [
+            2,
+            -1
+          ]
+        ],
+        "bias": [
+          0.5
+        ],
+        "activation": "identity"
+      }
+    ],
+    "output": {
+      "negativeLabel": "absent",
+      "positiveLabel": "present",
+      "scoreKind": "signedMargin",
+      "threshold": 0
+    },
+    "training": {
+      "recipeID": "reference-fixture-v1",
+      "data": [
+        {
+          "role": "fit",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "settings": {
+        "seed": "18446744073709551615",
+        "note": "synthetic fixture, not a fitted research instrument"
+      }
+    }
+  },
+  "native": {
+    "modelID": "example/model",
+    "concept": "Example reader",
+    "layer": 1,
+    "recipeName": "existing-reading-recipe",
+    "createdAt": "2026-01-01T00:00:00Z",
+    "probe": {
+      "direction": [
+        1,
+        -1
+      ],
+      "projectionCenter": 0,
+      "projectionScale": 2,
+      "orientation": -1,
+      "positiveMean": -1,
+      "negativeMean": 1,
+      "activationCenter": [
+        0,
+        0
+      ]
+    },
+    "notes": "Original note retained."
+  },
+  "python": {
+    "kind": "readingProbe",
+    "modelID": "example/model",
+    "revision": null,
+    "concept": "Example reader",
+    "layer": 1,
+    "heldOutAccuracy": 0.75,
+    "buildCount": 8,
+    "valCount": 4,
+    "probe": {
+      "direction": [
+        1,
+        -1
+      ],
+      "projectionCenter": 0,
+      "projectionScale": 2,
+      "orientation": -1,
+      "positiveMean": -1,
+      "negativeMean": 1,
+      "activationCenter": [
+        0,
+        0
+      ]
+    }
+  }
+}

@@ -24,6 +24,7 @@ def workspace_action(action, payload):
         return setup.inspect(payload.get('workspaceRoot'))
     required = {
         'staged-request': {'bundleSHA256'},
+        'probe-list': set(), 'probe-inspect': {'path'},
         'corpus-preview': {'specText'}, 'corpus-publish': {'previewID', 'planSHA256', 'destination'},
         'artifact-plan': {'descriptionFile'}, 'artifact-import': {'descriptionFile', 'planSHA256'},
         'sae-check': {'path'}, 'sae-show': {'path'},
@@ -39,6 +40,12 @@ def workspace_action(action, payload):
     if not fields <= payload.keys() or payload.keys() - fields - optional or any(not isinstance(payload[k], str) or not payload[k] for k in fields):
         raise archives.Refusal('Supply exactly the declared action fields as nonempty strings.')
     root = str(Path(payload['workspaceRoot']).resolve())
+    if action in ('probe-list', 'probe-inspect'):
+        from ..experiment import probe_library
+        try:
+            return probe_library.inventory(root) if action == 'probe-list' else probe_library.inspect(payload['path'], root)
+        except OSError as exc:
+            raise probe_library.ProbeError(f'The selected probe library or file could not be read: {exc}') from exc
     if action == 'staged-request':
         from ..experiment.diagnostic_inputs import save_stage_reference
         return save_stage_reference(payload['bundleSHA256'], root)
@@ -77,14 +84,14 @@ def local(invocation):
     from ..experiment.artifact_sources import ImportRefusal
     from ..experiment.corpus_sources import CorpusError
     try:
-        verb = invocation.spec.verb; validate(invocation, 0 if verb == 'custody' else 1)
+        verb = invocation.spec.verb; validate(invocation, 0 if verb in ('custody', 'probe-list') else 1)
         value = invocation.positionals[0] if invocation.positionals else None
         payload = {'workspaceRoot': paths.project_root()}
         if verb == 'corpus-preview': payload['specText'] = Path(value).read_text()
         if verb == 'corpus-publish': payload.update(previewID=value, destination=invocation.one('--destination'), planSHA256=invocation.one('--plan-sha256'))
         if verb in ('artifact-plan', 'artifact-import'): payload['descriptionFile'] = value
         if verb == 'artifact-import': payload['planSHA256'] = invocation.one('--plan-sha256')
-        if verb.startswith('sae-'): payload['path'] = value
+        if verb.startswith('sae-') or verb == 'probe-inspect': payload['path'] = value
         if verb in ('sae-pin-plan', 'sae-pin'): payload['experiment'] = invocation.one('--experiment')
         if verb == 'sae-pin': payload['planSHA256'] = invocation.one('--plan-sha256')
         if verb in ('interview', 'draft', 'publish'): payload['operation'] = value
@@ -105,7 +112,7 @@ def local(invocation):
     except science_catalog.ScienceRefusal as exc:
         raise ClientRefusal(code=exc.code, reason=str(exc), repair_action=exc.repair_action) from exc
     except (ValueError, OSError, KeyError) as exc:
-        raise ClientRefusal(code='diagnosticTransportRefused', reason=str(exc), repair_action=getattr(exc, 'repair_action', archives.Refusal.repair_action)) from exc
+        raise ClientRefusal(code=getattr(exc, 'code', 'diagnosticTransportRefused'), reason=str(exc), repair_action=getattr(exc, 'repair_action', archives.Refusal.repair_action)) from exc
 
 
 def remote(client, invocation, common):

@@ -33,3 +33,41 @@ Help author the inputs for this method. First restate the researcher-approved co
 ## Independent review prompt
 
 Review the proposed inputs without assuming the author is correct. Check the declared method, schema, labels, split overlap, source/identity pins, baseline and controls, rendering/sampling settings and whether the requested claim follows from the planned measurements. Separate mechanical checks from scientific judgment. Name each blocker and its repair; passing a parser is not scientific validation.
+
+
+## Probe library: shared discovery and inspection
+
+The Probes section is the library for saved activation probes. Inspect it from
+an agent with `steerlab science probe-list --root <workspace> --json`, or
+`steerlab-cli science probe-list --workspace <workspace> --json`. Use
+`science probe-inspect runs/<run>/<name>.probe.json` with the same workspace flag
+to inspect one entry. Legacy Python `<name>-probe.json` files are also recognized.
+Both workbench HTTP implementations expose
+`POST /api/science/workspace/probe-list` with `{"workspaceRoot":"<workspace>"}`,
+and `POST /api/science/workspace/probe-inspect` with the same root and a `path`.
+These actions inspect the serving workbench's workspace; they do not access a
+runner's remote library or copy files automatically. Collect run evidence first.
+
+A list reports `probes`, `issues`, and `count`. Inspection reports the relative
+path, exact-byte SHA-256, format, model, layer, method, limitations, and original
+JSON document. The portable CLI places this under `result`; the native CLI's
+existing workspace adapter places it under `result.response`. HTTP returns it
+directly. All operations are read-only; malformed matching files are reported as
+issues rather than silently dropped. Inspection is bounded to 64 MiB per JSON
+file; activations belong in separate datasets. Hashes identify the original file,
+not a re-encoding of the returned document.
+
+Existing Mac readers and Python readers retain their original formats and score
+semantics. In particular, the legacy Python reader's `heldOutAccuracy` selected
+a layer; it is not final-test accuracy. Missing model, rendering, or coordinate
+pins stay unknown. Discovery does not establish cross-backend compatibility.
+Native Playground reading still uses its existing supported reader path; the
+new portable classifier artifact is not silently inserted into that picker.
+
+The new `activation-probe` v1 format supports explicit binary linear and small
+ReLU classifier parameters, preprocessing, input bindings, and score semantics.
+Its CPU reference scorer is an implementation/validation API, not a new model
+capture or fitting command. Unified training, study measurements, and conditional
+interventions are subsequent implementation slices. Do not invent training verbs
+or generate data because a researcher has only named a concept. Offer existing
+files, pasted data, author/reviewer prompts, or explicitly chosen coworkers.

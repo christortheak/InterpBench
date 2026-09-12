@@ -140,6 +140,20 @@
         "Tests/SteeringKitTests/ScientificScopeStabilityTests.swift",
         "Server/steerlab_server/experiment/extract_stability.py"
       ]
+    },
+    "probe-library": {
+      "python": "Shared read-only probe artifact inspection; no model or GPU is loaded.",
+      "swift": "The Probes section and native CLI use the same portable owner via the local client runtime.",
+      "cuda": "notApplicable",
+      "mps": "notApplicable",
+      "mlx": "notApplicable",
+      "qualificationEvidence": [],
+      "notes": "Legacy bytes and unknown provenance remain unchanged. Library inspection is not model execution or cross-backend qualification.",
+      "sources": [
+        "Server/steerlab_server/experiment/probe_library.py",
+        "Server/steerlab_server/experiment/probe_artifacts.py",
+        "Sources/ExperimentKit/ProbeLibrary.swift"
+      ]
     }
   },
   "operations": {
@@ -171,6 +185,7 @@
     "jlens-fit-benchmark": "python-model",
     "jlens-fit-assess": "python-model",
     "jlens-fit-round": "python-cpu",
-    "jlens-fit-merge": "python-cpu"
+    "jlens-fit-merge": "python-cpu",
+    "probe-library": "probe-library"
   }
 }

@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "order": 29,
+  "catalog": {
+    "id": "probe-library",
+    "method": "readers",
+    "title": "Inspect the probe library",
+    "engineCLI": null,
+    "mac": "Probes section. Both clients: science probe-list and science probe-inspect.",
+    "http": "POST /api/science/workspace/{action}",
+    "compute": "cpu",
+    "outputs": [
+      "Probe records with exact-byte identity, model binding, score meaning, and provenance limitations.",
+      "Malformed matching artifacts are reported as issues."
+    ],
+    "restriction": "Read-only workbench library. Original bytes are never migrated in place. Discovery does not establish backend compatibility; new training and study measurement workflows are separate implementation slices.",
+    "actions": [
+      {
+        "id": "post-science-workspace",
+        "method": "POST",
+        "path": "/api/science/workspace/{action}",
+        "serviceRole": "workbench",
+        "authorityReason": "Author and publish local scientific requests, review and pin SAE rosters, or verify/import local custody; runner staging remains isolated execution."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  }
+}

@@ -150,6 +150,10 @@ struct ChatView: View {
             steeringPanel
         case .data:
             DataSectionView(service: service, tool: $dataTool)
+        case .probes:
+            ProbesPanelView(root: workspace.rootURL, openLegacyTraining: {
+                dataTool = .concepts; section = .data
+            }).id(workspace.rootURL.path)
         case .templates:
             TemplatesPanelView(service: service, navigate: navigate)
         case .studies:

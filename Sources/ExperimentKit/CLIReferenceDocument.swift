@@ -115,7 +115,7 @@ public enum CLIReferenceDocument {
             ]),
         .init(id: "swift-agent", verbLabels: ["agent list", "agent inspect"]),
         .init(id: "swift-design", verbLabels: ["design expand", "design list", "design inspect", "design describe", "design instantiate", "design batch", "design save", "design update"]),
-        .init(id: "swift-authoring", verbLabels: ["authoring prompt", "authoring study", "science list", "science guide", "science operation", "science corpus-preview", "science corpus-publish", "science artifact-plan", "science artifact-import", "science sae-check", "science sae-show", "science sae-pin-plan", "science sae-pin", "science interview", "science draft", "science publish", "science input-plan", "science package", "science import", "science custody", "science verify-custody"]),
+        .init(id: "swift-authoring", verbLabels: ["authoring prompt", "authoring study", "science list", "science guide", "science operation", "science probe-list", "science probe-inspect", "science corpus-preview", "science corpus-publish", "science artifact-plan", "science artifact-import", "science sae-check", "science sae-show", "science sae-pin-plan", "science sae-pin", "science interview", "science draft", "science publish", "science input-plan", "science package", "science import", "science custody", "science verify-custody"]),
         .init(id: "swift-pack", verbLabels: ["pack preview", "pack apply", "pack export"]),
         .init(id: "swift-docs", verbLabels: ["docs cli-reference"]),
         .init(

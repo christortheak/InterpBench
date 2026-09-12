@@ -12,6 +12,13 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Inspect saved probes in a dedicated Probes section, through both clients'
+  `science probe-list` and `science probe-inspect` commands, and through the
+  workbench HTTP API. All paths share one library owner, preserve legacy bytes,
+  and explain incomplete provenance. New portable binary probe documents cover
+  mean-difference, linear, and small nonlinear scores with a CPU reference
+  scorer; training and study-time measurement remain separate follow-up work.
+
 - Create-only directory publication now works on filesystems that reject the
   no-replace rename flag (Lustre and NFS answer EINVAL): the engine claims the
   target name with `mkdir` and renames the staged directory over the empty
