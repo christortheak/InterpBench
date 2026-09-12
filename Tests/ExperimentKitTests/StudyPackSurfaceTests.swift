@@ -9,7 +9,9 @@ struct StudyPackSurfaceTests {
         manifest.taskPromptsFile = path
         manifest.conditions = [.init(name: "baseline", slots: [], bandWidth: 1, alphaInNormUnits: false)]
         let study = try JSONSerialization.jsonObject(with: JSONEncoder().encode(manifest))
-        let records = String(decoding: try JSONSerialization.data(withJSONObject: ["id": "item", "text": text]), as: UTF8.self) + "\n"
+        // Reuse is deliberately byte-exact. Independent fixture packs must
+        // encode their otherwise identical task records in a stable key order.
+        let records = String(decoding: try JSONSerialization.data(withJSONObject: ["id": "item", "text": text], options: [.sortedKeys]), as: UTF8.self) + "\n"
         return try JSONSerialization.data(withJSONObject: ["study": study, "files": [path: records]], options: [.sortedKeys])
     }
 
