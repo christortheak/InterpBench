@@ -105,6 +105,9 @@ measurements; the generator only checks references, not scientific truth.
 | `jlens-fit-merge` — Merge completed fitting shards | [python-cpu](#python-cpu) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
 | `jlens-fit-assess` — Assess successive lenses on held-out text | [python-model](#python-model) | implemented; comparison unqualified | implemented; comparison unqualified | no native implementation |
 | `probe-library` — Inspect the probe library | [probe-library](#probe-library) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
+| `probe-capture` — Capture labeled activations | [python-model](#python-model) | implemented; comparison unqualified | implemented; comparison unqualified | no native implementation |
+| `probe-train` — Fit a probe | [python-cpu](#python-cpu) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
+| `probe-evaluate` — Evaluate a probe | [python-cpu](#python-cpu) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
 
 The following profiles explain production and artifact use.
 

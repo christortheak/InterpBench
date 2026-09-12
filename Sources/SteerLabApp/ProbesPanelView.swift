@@ -6,7 +6,7 @@ import SwiftUI
 /// late responses. Scanning/reading runs in the shared Python worker off-main.
 struct ProbesPanelView: View {
     let root: URL
-    let openLegacyTraining: () -> Void
+    let service: ChatService
     @State private var inventory: ProbeLibrary.Inventory?
     @State private var selection: String?
     @State private var inspected: ProbeLibrary.Record?
@@ -15,6 +15,7 @@ struct ProbesPanelView: View {
     @State private var loading = false
     @State private var inspecting = false
     @State private var refreshID = UUID()
+    @State private var showingLegacy = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -25,8 +26,19 @@ struct ProbesPanelView: View {
             }
             Text("A probe reads a model’s activations and returns a score. It measures the model; it does not change its behavior.")
             Text("Library in \(root.path)").font(.caption).textSelection(.enabled)
-            Button("Train with the existing reader builder…", action: openLegacyTraining)
-                .help("Opens the current labeled-reader training controls in Data → Concepts & Vectors.")
+            Text("Capture labeled activations once, fit a classifier, and evaluate it on separate examples. Each button opens a guided request; execution follows an explicit review.").font(.caption)
+            TrainVectorButton(service: service, operation: "probe-capture", title: "1. Capture activations…", root: root)
+            TrainVectorButton(service: service, operation: "probe-train", title: "2. Fit a probe…", root: root)
+            TrainVectorButton(service: service, operation: "probe-evaluate", title: "3. Evaluate a probe…", root: root)
+            HStack {
+                Button("Copy data and review instructions") {
+                    do {
+                        let guide = try ScienceCatalog.guide("readers").text
+                        NSPasteboard.general.clearContents(); NSPasteboard.general.setString(guide, forType: .string)
+                    } catch { self.error = error.localizedDescription }
+                }
+                Button("Existing Playground readers…") { showingLegacy = true }
+            }
             if loading { ProgressView("Reading the probe library…") }
             if inspecting { ProgressView("Reading the selected probe…") }
             if let error { Text(error).foregroundStyle(.orange).textSelection(.enabled) }
@@ -65,6 +77,12 @@ struct ProbesPanelView: View {
             }
             Spacer(minLength: 0)
         }.padding()
+        .sheet(isPresented: $showingLegacy) {
+            VStack {
+                HStack { Spacer(); Button("Done") { showingLegacy = false } }
+                ScrollView { LegacyProbeTrainingView(service: service) }
+            }.padding(20).frame(minWidth: 640, minHeight: 550)
+        }
         .task(id: refreshID) {
             loading = true; error = nil; inspected = nil; selection = nil
             defer { if !Task.isCancelled { loading = false } }

@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "order": 32,
+  "catalog": {
+    "id": "probe-evaluate",
+    "method": "readers",
+    "title": "Evaluate a probe",
+    "engineCLI": null,
+    "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+    "http": "POST /api/science/plan; POST /api/science/submit",
+    "compute": "cpu",
+    "outputs": [
+      "Immutable run with pinned inputs, provenance, and inspectable probe evidence."
+    ],
+    "restriction": "Bounded binary probe workflow. Predictive accuracy is not causal evidence or calibrated probability. Capture uses the Python engine; fitting and evaluation use shared CPU owners. Legacy readers are preserved.",
+    "actions": [
+      {
+        "id": "post-science-plan",
+        "method": "POST",
+        "path": "/api/science/plan",
+        "serviceRole": "both",
+        "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+      },
+      {
+        "id": "post-science-submit",
+        "method": "POST",
+        "path": "/api/science/submit",
+        "serviceRole": "both",
+        "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  },
+  "interview": {
+    "id": "probe-evaluate",
+    "title": "Evaluate a probe",
+    "method": "readers",
+    "purpose": "Measure a pinned probe on separately chosen activations. Preserve the trained instrument and save a new report.",
+    "fields": [
+      {
+        "id": "probe",
+        "label": "Saved probe",
+        "kind": "fileRef",
+        "required": true,
+        "help": "Choose trained.probe.json. Existing legacy readers remain usable in their original paths; this evaluator needs the portable v1 input binding."
+      },
+      {
+        "id": "evaluationData",
+        "label": "Evaluation activations",
+        "kind": "fileRef",
+        "required": true,
+        "help": "Choose finalTest-activations.json for a final assessment, or another matching dataset for exploration. Same model, rendering, site, and coordinates are required."
+      },
+      {
+        "id": "purpose",
+        "label": "Purpose of this evaluation",
+        "kind": "text",
+        "required": false,
+        "help": "finalTest or exploratory. Known training/selection overlap is reported prominently without blocking exploration. Different hashes alone do not prove independence.",
+        "default": "finalTest"
+      }
+    ],
+    "claimBoundary": "An activation classifier predicts the supplied labels in this population. It does not establish that the model uses the predicted feature causally.",
+    "questions": [
+      "What do the labels mean, and which related examples belong in one group?",
+      "Which data are for fitting, choosing settings, and final assessment?"
+    ]
+  },
+  "interviewOrder": 36,
+  "inputRoleProfile": "managed-v1",
+  "inputRoles": {},
+  "binding": {
+    "module": "probe_evaluation",
+    "config_class": "EvaluateConfig",
+    "function": "evaluate",
+    "compute": "cpu"
+  }
+}

@@ -12,6 +12,14 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Capture labeled activations, fit mean-difference, linear, or small nonlinear
+  probes, and evaluate saved probes through shared managed operations. Probes
+  now opens the same guided forms as both clients and the HTTP workflow;
+  original Playground-reader controls move out of the Data panel. Reports keep
+  fitting, selection, and final-test evidence separate and explain known overlap.
+  Capture uses a prepared Python model engine; fitting and evaluation use CPU
+  owners. Study-time measurements and interventions remain follow-up work.
+
 - Inspect saved probes in a dedicated Probes section, through both clients'
   `science probe-list` and `science probe-inspect` commands, and through the
   workbench HTTP API. All paths share one library owner, preserve legacy bytes,

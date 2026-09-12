@@ -66,8 +66,98 @@ new portable classifier artifact is not silently inserted into that picker.
 
 The new `activation-probe` v1 format supports explicit binary linear and small
 ReLU classifier parameters, preprocessing, input bindings, and score semantics.
-Its CPU reference scorer is an implementation/validation API, not a new model
-capture or fitting command. Unified training, study measurements, and conditional
-interventions are subsequent implementation slices. Do not invent training verbs
+Its CPU reference scorer defines inspectable arithmetic. The managed capture,
+fitting, and evaluation workflow below produces these instruments. Study
+measurements and conditional interventions remain subsequent slices. Do not invent training verbs
 or generate data because a researcher has only named a concept. Offer existing
 files, pasted data, author/reviewer prompts, or explicitly chosen coworkers.
+
+## Capture, fit, and evaluate a portable probe
+
+Use `probe-capture`, `probe-train`, and `probe-evaluate` with `science interview`,
+`science draft`, and `science publish` in either client. The app's Probes section
+opens exactly these interviews. Requests then use the standard managed plan,
+submit, jobs, export/fetch/import, and custody workflow. No new engine CLI verb
+or implicit background training is needed. Capture runs on a Python model engine;
+fitting and evaluation are CPU operations without a loaded model.
+
+Explain the research choices in plain language: what the label means, which
+text population it represents, where to read the model, and what independent
+examples would show whether the probe generalizes. A probe reads activations;
+a steering vector or intervention changes them. Offer an existing file, pasted
+data prepared by the researcher, an authoring prompt, or explicitly selected
+coworkers. Do not start authoring datasets or delegating work from a concept name.
+
+### Text input and role assignment
+
+Capture takes a pinned UTF-8 JSONL file with one example per line:
+
+```json
+{"id":"example-1","group":"document-1","text":"Replace with a labeled example.","label":true,"split":"fit"}
+{"id":"example-2","group":"document-2","text":"Replace with a matched control.","label":false,"split":"selection"}
+{"id":"example-3","group":"document-3","text":"Replace with an independent example.","label":true,"split":"finalTest"}
+```
+
+These three format examples are not enough to train or validate a useful probe.
+IDs must be unique; related passages, paraphrases, or repeated observations share
+one group and role. Include both label classes in each intended role. Capture
+writes separate `fit-activations.json`, `selection-activations.json`, and
+`finalTest-activations.json` files for nonempty roles. Fitting needs at least two
+rows per class, but useful evaluation usually needs many independent groups.
+
+If role assignment is undecided, propose a split first. The explicit alternative
+`splitPolicy: groupHash` omits the `split` key and assigns whole groups using a
+seeded hash (60% fitting, 20% selection, and 20% final testing in expectation).
+Small splits are not automatically rebalanced. Review counts before training.
+
+Choose a zero-based decoder layer, input or output of the block, raw or chat
+rendering, and final non-padding token or each non-padding token. Chat capture
+uses one user message plus a generation cue. Raw complete-text capture replays
+text; it does not measure the original live generation. A full-text label is
+not automatically meaningful at every prefix. Capped tokenization and the first
+N selected rows are visible in the capture report; inspect actual token IDs.
+
+### Fit and assess
+
+Select fitting activations, choose a family, and give the probe a name. Mean
+difference is a simple linear reader; the regularized linear classifier learns
+a boundary; the small ReLU classifier can represent nonlinear boundaries but
+has more opportunity to overfit. Standardization uses fitting data alone.
+Optional selection activations report a comparison without changing the fit.
+Changing settings after reviewing that comparison is model selection: record it,
+and reserve final-test data. The optional shuffled-label fit is a separate control.
+
+Review input bytes and the effective settings, then explicitly execute. Capture
+has a 64 MiB activation JSON pilot budget and a row cap; fitting reuses those
+saved activations without reloading the model. CPU fitting uses float64 full-batch
+gradient descent with fixed steps, a recorded local seed, and weight-only L2.
+No final-test labels choose preprocessing, layers, thresholds, or stopping times.
+
+Evaluate a pinned `trained.probe.json` on matching saved activations. Read the
+new `evaluation-report.json`: class and group counts, confusion counts, accuracy,
+balanced accuracy, precision, recall, specificity, F1, ROC AUC, and constant-class
+baselines. Null metrics have undefined denominators; scores are not calibrated
+probabilities. The report flags known row/group/text or file-hash reuse. Reused
+inputs remain usable for exploration, but do not describe them as independent
+final-test evidence. Different hashes alone do not prove independence.
+
+New probes appear after evidence collection and library refresh. Existing native
+readers remain available for Playground highlighting. Portable study measurements
+and conditional interventions are later steps, not implied by successful fitting.
+
+### Prompt to offer a data author
+
+Prepare labeled text only after I approve the scope and number of examples.
+Use the JSONL schema above. State the positive and negative label definitions,
+match plausible confounds such as topic and length, and group related examples.
+Keep whole groups in one role. Supply the data and a short explanation of sources,
+label uncertainty, coverage, and known limitations. Do not claim to have run
+measurements or independent review that you have not performed.
+
+### Prompt to offer an independent reviewer
+
+Check the actual rows against the approved label definitions and JSONL schema.
+Inspect label correctness, duplicate text, related examples across splits, class
+balance, and confounding cues. Explain concrete problems in ordinary language,
+with row IDs and suggested repairs. Distinguish a format check from evidence
+that the labels measure the intended concept. Do not invent measurements.

@@ -111,3 +111,54 @@ import Testing
         #expect(!wrongRoot.succeeded)
     }
 }
+
+extension ProbeLibraryTests {
+    @Test func sharedTrainingDraftAndRealFittedArtifactReachTheNativeLibrary() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(component: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let python = try #require(ProcessInfo.processInfo.environment["STEERLAB_TEST_PYTHON"])
+        // A real, small CPU fit, not a mocked classifier or a model download.
+        let script = """
+        import json, pathlib, sys
+        from steerlab_server.experiment import probe_training, diagnostic_archives as a
+        root=pathlib.Path(sys.argv[1]).resolve(); fixtures=json.loads(pathlib.Path(sys.argv[2]).read_text())
+        rows=[{'id':str(i),'group':str(i),'sourceSHA256':a.digest(i),'label':i>1,'activation':[float(i-1.5),0.]} for i in range(4)]
+        dataset={'artifactType':'activation-dataset','schemaVersion':1,'input':fixtures['linear']['input'],'rows':rows,'provenance':{'role':'fit'}}
+        (root/'fit.json').write_bytes(a.encoded(dataset))
+        config={'fitData':{'path':'fit.json','sha256':a.file_hash(root/'fit.json')},'label':'Native round trip','steps':5}
+        result=probe_training.train(probe_training.TrainConfig.from_dict(config),root=root,log=lambda _:None)
+        print(json.dumps({'path':str(pathlib.Path(result['artifactPath']).relative_to(root))}))
+        """
+        let process = Process(); let output = Pipe()
+        process.executableURL = URL(filePath: python)
+        process.arguments = ["-c", script, root.path, repository.appending(path: "Tests/Fixtures/cross-engine/probe-artifacts.json").path]
+        process.environment = ProcessInfo.processInfo.environment.merging(["PYTHONPATH": repository.appending(path: "Server").path]) { _, new in new }
+        process.standardOutput = output
+        try process.run()
+        let bytes = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
+        try #require(process.terminationStatus == 0)
+        let result = try JSONDecoder().decode([String: String].self, from: bytes)
+        let path = try #require(result["path"])
+        let inspected: ProbeLibrary.Record = try ProbeLibrary.decode(await call("probe-inspect", root: root, path: path))
+        #expect(inspected.methodLabel == "Linear classifier")
+        #expect(inspected.label == "Native round trip")
+        #expect(inspected.sha256 == SHA256.hash(data: try Data(contentsOf: root.appending(path: path))).map { String(format: "%02x", $0) }.joined())
+        let answers: JSONValue = .object([
+            "purpose": .string("Predict labels"), "claim": .string("Readout only"),
+            "controls": .string("Constant baselines"), "selection": .string("Fixed settings"),
+            "fields": .object(["fitData": .string("fit.json"), "label": .string("Reviewed probe")]), "advanced": .object([:])
+        ])
+        let draft = try await DiagnosticWorkspace.perform("draft", payload: [
+            "workspaceRoot": .string(root.path), "operation": .string("probe-train"),
+            "answersText": .string(String(decoding: try JSONEncoder().encode(answers), as: UTF8.self))
+        ], python: URL(filePath: python), source: repository.appending(path: "Server"))
+        guard case .object(let object) = draft else { Issue.record("Expected shared review"); return }
+        #expect(object["operationReview"] != nil)
+        let workflows = try ScienceCatalog.workflows().filter { $0.id.hasPrefix("probe-") }
+        #expect(Set(workflows.map(\.id)) == ["probe-capture", "probe-train", "probe-evaluate"])
+        for workflow in workflows {
+            #expect(workflow.fields.contains { $0.kind == "fileRef" && $0.required })
+        }
+    }
+}

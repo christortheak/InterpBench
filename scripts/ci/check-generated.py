@@ -27,6 +27,7 @@ AUDITS = (
     ('audit-operation-registration.py', 'd84968c'),
     ('audit-jlens-followup.py', '878bca2'),
     ('audit-jlens-assessment.py', '224de64'),
+    ('audit-probe-contract-extraction.py', 'd25c9a2'),
 )
 
 

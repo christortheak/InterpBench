@@ -17,6 +17,13 @@ it proposes nothing.
 Line numbers are as of this commit; the surrounding function names are given so
 a moved line is still findable.
 
+## Activation probes
+
+The separate [probe training contract](PROBE-TRAINING-AND-EVALUATION.md) specifies
+`probe-fit-v1` mean-difference, regularized linear, and small ReLU recipes. Those
+fit activation readouts without changing base-model weights; the adapter matrix
+below continues to describe LoRA training only.
+
 ## 0. The three recipes
 
 | | **A — Python split-based** | **B — Python legacy inline** | **C — Swift/MLX** |

@@ -186,6 +186,9 @@
     "jlens-fit-assess": "python-model",
     "jlens-fit-round": "python-cpu",
     "jlens-fit-merge": "python-cpu",
-    "probe-library": "probe-library"
+    "probe-library": "probe-library",
+    "probe-capture": "python-model",
+    "probe-train": "python-cpu",
+    "probe-evaluate": "python-cpu"
   }
 }

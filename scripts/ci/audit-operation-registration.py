@@ -81,6 +81,7 @@ def original_dispatch(text):
     additions keeps the historical audit effective for every existing owner.
     """
     extensions = [
+        ("        if operation in ('probe-capture', 'probe-train', 'probe-evaluate'): module.preflight(parsed, root)\n", ""),
         ("        if operation in ('jlens-fit-benchmark', 'jlens-fit-round', 'jlens-fit-merge', 'jlens-fit-assess'): module.preflight(parsed, root)\n", ""),
         ("module, parsed = config_owner(operation, config)\n        if METHODS[operation].compute",
          "_, parsed = config_owner(operation, config)\n        if METHODS[operation].compute"),

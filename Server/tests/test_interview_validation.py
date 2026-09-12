@@ -9,11 +9,15 @@ OPERATIONS = (
     'optvec-interpret', 'optvec-family', 'optvec-gradient', 'optvec-gradient-mint',
     'jspace', 'rescore-style', 'sae-family-report', 'sae-qualification-record',
     'optvec-campaign', 'jlens-fit',
+    'probe-capture', 'probe-train', 'probe-evaluate',
     'jlens-fit-benchmark', 'jlens-fit-round', 'jlens-fit-merge', 'jlens-fit-assess',
 )
 
 
 def interview_answers(operation, root):
+    if operation.startswith('probe-'):
+        from test_probe_managed_workflow import interview_fields
+        return dict(purpose='Predict labels',claim='Readout only',controls='Constant baselines',selection='Fixed in advance',fields=interview_fields(operation,root),advanced={})
     from test_managed_methods import geometry_request
     artifacts = geometry_request(root)['parameters']['config']['artifacts']
     items = root / 'items.jsonl'

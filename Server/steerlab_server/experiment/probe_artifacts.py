@@ -93,14 +93,9 @@ def vector(value, size, path, positive=False):
             raise ProbeError(f'{path} requires strictly positive scales.')
 
 
-def validate(document):
-    finite_json(document)
-    d = object_fields(document, 'artifactType schemaVersion label createdAt method input preprocessing layers output training', 'probe')
-    if d['artifactType'] != 'activation-probe' or type(d['schemaVersion']) is not int or d['schemaVersion'] != 1:
-        raise ProbeError('Use artifactType activation-probe and schemaVersion 1.')
-    for key in ('label', 'createdAt'): text(d[key], key)
-    choice(d['method'], ('mean-difference-v1', 'linear-logit-v1', 'mlp-relu-logit-v1'), 'method')
-    binding = object_fields(d['input'], 'modelID revision substrate coordinateConvention precision hiddenSize site reading tokenizerSHA256 templateSHA256', 'input')
+def validate_input(value):
+    finite_json(value)
+    binding = object_fields(value, 'modelID revision substrate coordinateConvention precision hiddenSize site reading tokenizerSHA256 templateSHA256', 'input')
     for key in ('modelID', 'coordinateConvention', 'precision'): text(binding[key], 'input.' + key)
     digest(binding['revision'], 'revision', size=40, nullable=True)
     for key in ('tokenizerSHA256', 'templateSHA256'): digest(binding[key], key, nullable=True)
@@ -115,6 +110,17 @@ def validate(document):
         raise ProbeError('Raw rendering must have templateSHA256 null.')
     choice(reading['position'], ('lastNonPadding', 'eachNonPadding'), 'position')
     choice(reading['population'], ('prompt', 'generatedPrefix', 'completeText'), 'population')
+    return copy.deepcopy(binding)
+
+
+def validate(document):
+    finite_json(document)
+    d = object_fields(document, 'artifactType schemaVersion label createdAt method input preprocessing layers output training', 'probe')
+    if d['artifactType'] != 'activation-probe' or type(d['schemaVersion']) is not int or d['schemaVersion'] != 1:
+        raise ProbeError('Use artifactType activation-probe and schemaVersion 1.')
+    for key in ('label', 'createdAt'): text(d[key], key)
+    choice(d['method'], ('mean-difference-v1', 'linear-logit-v1', 'mlp-relu-logit-v1'), 'method')
+    binding = validate_input(d['input'])
     preprocessing = object_fields(d['preprocessing'], 'center scale', 'preprocessing')
     width = binding['hiddenSize']
     vector(preprocessing['center'], width, 'center')

@@ -7,6 +7,7 @@ struct TrainVectorButton: View {
     let service: ChatService
     var operation = "optvec-train"
     var title = "Train a vector…"
+    var root: URL? = nil
 
     /// One presentation value captures the selected operation and its origin.
     /// A Boolean plus an optional workflow can present before the workflow is
@@ -29,7 +30,7 @@ struct TrainVectorButton: View {
                         return
                     }
                     failure = nil
-                    request = Request(workflow: workflow, root: ExperimentStore.workspaceRoot,
+                    request = Request(workflow: workflow, root: root ?? ExperimentStore.workspaceRoot,
                         client: service.cluster.computeTarget == .server ? service.cluster.client : nil)
                 } catch { failure = error.localizedDescription }
             }

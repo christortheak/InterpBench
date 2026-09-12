@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 1,
+  "order": 30,
+  "catalog": {
+    "id": "probe-capture",
+    "method": "readers",
+    "title": "Capture labeled activations",
+    "engineCLI": null,
+    "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+    "http": "POST /api/science/plan; POST /api/science/submit",
+    "compute": "gpu",
+    "outputs": [
+      "Immutable run with pinned inputs, provenance, and inspectable probe evidence."
+    ],
+    "restriction": "Bounded binary probe workflow. Predictive accuracy is not causal evidence or calibrated probability. Capture uses the Python engine; fitting and evaluation use shared CPU owners. Legacy readers are preserved.",
+    "actions": [
+      {
+        "id": "post-science-plan",
+        "method": "POST",
+        "path": "/api/science/plan",
+        "serviceRole": "both",
+        "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+      },
+      {
+        "id": "post-science-submit",
+        "method": "POST",
+        "path": "/api/science/submit",
+        "serviceRole": "both",
+        "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  },
+  "interview": {
+    "id": "probe-capture",
+    "title": "Capture labeled activations",
+    "method": "readers",
+    "purpose": "Read one declared residual site for labeled text, saving reusable fitting, selection, and final-test files. This runs the model without changing its weights.",
+    "fields": [
+      {
+        "id": "modelID",
+        "label": "Prepared model",
+        "kind": "text",
+        "required": true,
+        "help": "Choose the model on the execution host. No weights are downloaded by capture."
+      },
+      {
+        "id": "revision",
+        "label": "Exact model version",
+        "kind": "text",
+        "required": true,
+        "help": "Pin the prepared checkpoint\u2019s 40-character commit."
+      },
+      {
+        "id": "examples",
+        "label": "Labeled text",
+        "kind": "fileRef",
+        "required": true,
+        "help": "UTF-8 JSONL: id, group, text, label (true/false), and split (fit, selection, or finalTest). Keep related examples in the same group. Copy the probe data instructions for examples and review prompts."
+      },
+      {
+        "id": "layer",
+        "label": "Layer to observe",
+        "kind": "integer",
+        "required": true,
+        "help": "Zero-based decoder block. A fixed layer avoids selecting a layer using final-test results."
+      },
+      {
+        "id": "site",
+        "label": "Before or after the block",
+        "kind": "text",
+        "required": false,
+        "help": "residualPre reads the block input; residualPost reads its output. This is not an individual weight.",
+        "default": "residualPost"
+      },
+      {
+        "id": "rendering",
+        "label": "Text rendering",
+        "kind": "text",
+        "required": false,
+        "help": "raw uses native special tokens. chatTemplate uses one user message and a generation cue.",
+        "default": "raw"
+      },
+      {
+        "id": "population",
+        "label": "What the text represents",
+        "kind": "text",
+        "required": false,
+        "help": "prompt or completeText. Capturing complete text does not establish performance on partial responses. Chat rendering supports prompt only.",
+        "default": "prompt"
+      },
+      {
+        "id": "position",
+        "label": "Positions to read",
+        "kind": "text",
+        "required": false,
+        "help": "lastNonPadding reads the final token present. eachNonPadding reads every token; the row label then applies to every prefix, which must make sense for your task.",
+        "default": "lastNonPadding"
+      },
+      {
+        "id": "splitPolicy",
+        "label": "How to assign data roles",
+        "kind": "text",
+        "required": false,
+        "help": "explicit uses each row\u2019s split. groupHash omits split and assigns whole groups by a stable seeded 60/20/20 hash. It does not guarantee balanced small splits.",
+        "default": "explicit"
+      },
+      {
+        "id": "seed",
+        "label": "Group split seed",
+        "kind": "integer",
+        "required": false,
+        "help": "Only affects groupHash. Record it before looking at outcomes.",
+        "default": "0"
+      },
+      {
+        "id": "maxExamples",
+        "label": "Maximum text examples",
+        "kind": "integer",
+        "required": false,
+        "help": "Captures the first N file rows. Start small to check costs, class balance, and tokenization.",
+        "default": "128"
+      },
+      {
+        "id": "maxSeqLen",
+        "label": "Maximum tokens per example",
+        "kind": "integer",
+        "required": false,
+        "help": "Long inputs are truncated. The report saves the actual token IDs and observed positions.",
+        "default": "256"
+      },
+      {
+        "id": "maxRecords",
+        "label": "Maximum activation rows",
+        "kind": "integer",
+        "required": false,
+        "help": "Every observed position consumes a row. Capture stops with a repair if the cap or 64 MiB JSON budget is exceeded; it never silently drops extra rows.",
+        "default": "4096"
+      },
+      {
+        "id": "dtype",
+        "label": "Model precision",
+        "kind": "text",
+        "required": false,
+        "help": "float32, bfloat16, or float16; choose a prepared unquantized model. Actual activation dtype is recorded.",
+        "default": "float32"
+      },
+      {
+        "id": "device",
+        "label": "Execution device",
+        "kind": "text",
+        "required": false,
+        "help": "cuda on a GPU runner, mps on a suitable Mac Python engine, or cpu for a small check. No native MLX capture is claimed.",
+        "default": "cuda"
+      }
+    ],
+    "claimBoundary": "An activation classifier predicts the supplied labels in this population. It does not establish that the model uses the predicted feature causally.",
+    "questions": [
+      "What do the labels mean, and which related examples belong in one group?",
+      "Which data are for fitting, choosing settings, and final assessment?"
+    ]
+  },
+  "interviewOrder": 34,
+  "inputRoleProfile": "managed-v1",
+  "inputRoles": {},
+  "binding": {
+    "module": "probe_capture",
+    "config_class": "CaptureConfig",
+    "function": "capture",
+    "compute": "gpu"
+  }
+}
