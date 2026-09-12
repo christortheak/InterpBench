@@ -95,9 +95,11 @@ Live acceptance after review and deployment:
 2. Verify the app’s choices against the connected controller. Plan one staged
    request with the default and another declared type, then check the scheduler
    preview and the submitted job record.
-3. Use a small two-shard round to submit different GPU types. Verify each actual
-   allocation and runtime device against requested placement, then collect the
-   evidence. Exercise a later top-up without relabeling already attempted shards.
+3. Use a small round with more shards than initial concurrency (for example,
+   four shards with two initial slots) to submit different GPU types. Verify each
+   actual allocation and runtime device against requested placement, then collect
+   the evidence. Exercise a later top-up that submits remaining pending shards
+   without relabeling already attempted shards.
 4. Run the separately approved cross-hardware benchmark. Mixed-GPU merging is
    permitted by the existing identity; numerical agreement still needs measuring.
 

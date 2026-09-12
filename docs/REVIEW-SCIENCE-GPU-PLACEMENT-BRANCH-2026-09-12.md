@@ -33,7 +33,7 @@ does and which the identity contract already treats as provenance.
 | Placement stays out of scientific content | `plan` adds `requestedGPUType` and `gpuReview` to the plan result only; `inputSHA256` is untouched (the fixture asserts child plans' input hashes are equal across types); no owner, identity, or request schema changed |
 | Round hash binds placement | `plan['placement']` is present only when a default or an override was supplied and sits inside the digest; a submit whose placement differs from the reviewed plan refuses with "changed" before any scheduler call, and the fixture drives real child plans and real bundle rendering with only `SlurmExecutor.submit` replaced |
 | Attempted shards are immutable | an override naming a shard whose status is not `pending` refuses; an uncertain submission keeps its recorded type from the state file's `placements` and cannot be redirected |
-| Default path unchanged | with no placement arguments the round plan has no `placement` key and the scientific plan has no `gpuReview`, so both hashes equal today's |
+| Default plan shape (corrected after review) | With no placement arguments, the standalone scientific plan has no `gpuReview` and retains its previous shape. A round has no `placement` key, but its shard rows now include `gpuType`, which enters the digest even without overrides. Historical round hashes are not preserved; review the round again before acting. |
 | Capability block | `sciencePlacement` is `available` only for a Slurm executor that is not a session worker; `defaultGPUType` is parsed from the controller's own gres; the Mac decodes it from `/api/capabilities` and treats absence as "server default only" |
 | Hardware observation | `runtime_hardware.describe` tolerates a failing CUDA query and reports `deviceName: null`; `observe` resolves the device through the engine's own resolver (so an MPS Mac is not mislabelled CPU); `execute_packet` writes the observation to the record before model loading, so a failed load still carries it |
 | Names and ordering assumed by the diff | `server_role` exists in `profile.py`; `Measurements.__init__` receives `torch`; `jlens_fit_review.review` emits `pilotMeasurement`; `executor_identity` is defined before the early record write |
@@ -106,8 +106,10 @@ review, are recomputed from whatever result was last displayed.
 **N4 — live acceptance is still owed and now has its shape.** The two
 benchmark legs running today (A100 and H100 on the same staged bundle) are
 the cross-hardware numerical comparison; the round-level acceptance is a
-two-shard round with one shard per type, a later top-up that leaves the
-attempted shards alone, and a check of each shard's recorded
+small round with more shards than its initial concurrency (for example,
+four shards and two initial slots, one submitted shard per GPU type), a later
+top-up that submits remaining pending shards and leaves attempted shards alone,
+and a check of each shard's recorded
 `runtimeHardware` against its requested type.
 
 ## 5. Landing shape
@@ -121,3 +123,16 @@ Suite results on `d52b107`:
 
 - Python: 6,440 passed, 9 skipped, 8 warnings (matching the handoff's claim).
 - Swift: `TEST SUCCEEDED`, 4,915 passed and 5 skipped of 4,920 (290 SteeringKit and 4,630 ExperimentKit).
+
+## Post-review clarification (2026-09-12)
+
+The default-plan row in §2 is corrected above: absence of a `placement` key
+alone does not imply an unchanged round hash. The new `shards[].gpuType`
+material is also hashed. The live acceptance in N4 now explicitly requires
+more shards than initial concurrency so that the later top-up exercises pending
+work, rather than an already exhausted queue. These are corrections to this
+report, not changes to the server's hash or submission rules.
+
+N2 and N3 are addressed in the separate
+[UI follow-up handoff](SCIENCE-GPU-REVIEW-UI-HANDOFF.md); the original findings
+above remain a record of what was reviewed at `d52b107`.
