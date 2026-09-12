@@ -20,6 +20,11 @@ struct ScientificExecutionSheet: View {
     @State private var alphaUnits = "norm"
     @State private var dtype = "auto"
     @State private var device = ""
+    @State private var gpuOptions: ScientificGPUPlacement?
+    @State private var gpuType = ""
+    @State private var plannedGPUType = ""
+    @State private var placementMessage = "Loading the controller’s GPU choices…"
+    @State private var gpuReview: [String] = []
     @State private var plan: JSONValue?
     @State private var plannedRequest: JSONValue?
     @State private var jobID: String?
@@ -52,6 +57,7 @@ struct ScientificExecutionSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             form
+            ForEach(gpuReview, id: \.self) { Text($0).font(.caption).textSelection(.enabled) }
             controls
             failureLine
             jobLine
@@ -64,6 +70,13 @@ struct ScientificExecutionSheet: View {
         }
         .padding()
         .frame(minWidth: 820, minHeight: 610)
+        .task {
+            do {
+                gpuOptions = try await client.scientificGPUPlacement()
+                placementMessage = gpuOptions == nil ? "This server does not advertise GPU choices. The server default will be used." : ""
+            } catch { placementMessage = "GPU choices could not be read. The server default remains available; reopen this sheet to retry." }
+        }
+        .onChange(of: gpuType) { _, _ in plan = nil; gpuReview = [] }
     }
 
     private var header: some View {
@@ -114,6 +127,9 @@ struct ScientificExecutionSheet: View {
                 TextField("Concept", text: $concept)
                     .help("which of that study's concepts to resample")
             }
+            if let gpuOptions, gpuOptions.available {
+                ScientificGPUSelection(options: gpuOptions, selection: $gpuType)
+            } else if !placementMessage.isEmpty { Text(placementMessage).font(.caption) }
             DisclosureGroup("Execution parameters") { parameters }
         }
         .disabled(busy || jobID != nil)
@@ -165,7 +181,9 @@ struct ScientificExecutionSheet: View {
                 Button(busy ? "Working…" : "Review plan") {
                     let captured = request
                     perform {
-                        plan = try await client.scientificPlan(captured)
+                        plan = try await client.scientificPlan(captured, gpuType: gpuType.isEmpty ? nil : gpuType)
+                        plannedGPUType = gpuType
+                        gpuReview = ScientificGPUPlacement.reviewLines(plan!)
                         plannedRequest = captured
                         output = describe(plan!)
                     }
@@ -181,9 +199,9 @@ struct ScientificExecutionSheet: View {
                         .controlSize(.small)
                 }
                 Button("Submit reviewed diagnostic") {
-                    guard let plannedRequest, let planHash, plannedRequest == request else { return }
+                    guard let plannedRequest, let planHash, plannedRequest == request, plannedGPUType == gpuType else { return }
                     perform {
-                        let result = try await client.scientificSubmit(plannedRequest, planSHA256: planHash)
+                        let result = try await client.scientificSubmit(plannedRequest, planSHA256: planHash, gpuType: plannedGPUType.isEmpty ? nil : plannedGPUType)
                         if case .object(let object) = result, case .string(let id) = object["jobId"] { jobID = id }
                         // Never retry an ambiguous submission automatically.
                         plan = nil
@@ -237,7 +255,7 @@ struct ScientificExecutionSheet: View {
         if jobID != nil { return "This diagnostic has been submitted." }
         if busy { return "Waiting for the server…" }
         if planHash == nil { return "Review the plan first — submission is pinned to its hash." }
-        if plannedRequest != request {
+        if plannedRequest != request || plannedGPUType != gpuType {
             return "The fields changed since the plan was reviewed — review it again."
         }
         return nil

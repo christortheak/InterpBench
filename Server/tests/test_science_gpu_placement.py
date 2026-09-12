@@ -127,3 +127,12 @@ def test_http_round_gpu_map_is_forwarded(round_job,monkeypatch):
         assert response.json()['childPlans']['0']['resources']['gres']=='gpu:H100:1'
         assert client.post(base+'/merge-plan',json={'gpuType':'H100'}).status_code==409
         assert client.post(base+'/plan',json={'gres':'gpu:H100:1'}).status_code==409
+
+
+def test_hardware_observation_uses_engine_device_resolution(monkeypatch):
+    # A missing device follows the engine environment, including MPS; it must
+    # not be mislabeled CPU merely because CUDA is absent on a Mac.
+    monkeypatch.setenv('STEERLAB_DEVICE', 'mps')
+    assert runtime_hardware.observe()['requestedDevice'] == 'mps'
+    assert runtime_hardware.observe('auto')['requestedDevice'] == 'mps'
+    assert runtime_hardware.observe('cpu')['requestedDevice'] == 'cpu'

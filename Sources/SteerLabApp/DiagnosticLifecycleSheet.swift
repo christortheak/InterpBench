@@ -19,6 +19,14 @@ struct DiagnosticLifecycleSheet: View {
     @State private var receiptHash = ""
     @State private var sourcePlan: String?
     @State private var stagedRequest: JSONValue?
+    @State private var gpuOptions: ScientificGPUPlacement?
+    @State private var gpuType = ""
+    @State private var requestUsesGPU = false
+    @State private var placementMessage = "Loading the controller’s GPU choices…"
+    @State private var gpuReview: [String] = []
+    @State private var roundGPUType = ""
+    @State private var shardGPUTypes: [Int: String] = [:]
+    @State private var pendingShards: [Int] = []
     @State private var executionPlan: String?
     @State private var campaignPlan: String?
     @State private var campaignConfirmed = false
@@ -44,6 +52,10 @@ struct DiagnosticLifecycleSheet: View {
             if let client { Text("Server: " + client.profile.baseURL.absoluteString).font(.caption).textSelection(.enabled) }
             Form {
                 Section("Prepare local inputs") {
+                    if requestUsesGPU, let gpuOptions, gpuOptions.available {
+                        ScientificGPUSelection(options: gpuOptions, selection: $gpuType)
+                    } else if client != nil, !placementMessage.isEmpty { Text(placementMessage).font(.caption) }
+                    ForEach(gpuReview, id: \.self) { Text($0).font(.caption).textSelection(.enabled) }
                     HStack {
                         Text(requestFile.isEmpty ? "Choose a diagnostic request prepared with the method guide or your agent." : requestFile).textSelection(.enabled)
                         Button("Choose request…") { choosingRequest = true; showingImporter = true }
@@ -69,13 +81,13 @@ struct DiagnosticLifecycleSheet: View {
                             } }.disabled(inputArchiveFile.isEmpty || inputArchiveHash.isEmpty)
                             Button("Review server plan") { perform {
                                 guard let stagedRequest else { return }
-                                let result = try await client.scientificPlan(stagedRequest)
-                                executionPlan = string(result, "planSHA256"); show(result)
+                                let result = try await client.scientificPlan(stagedRequest, gpuType: requestUsesGPU && !gpuType.isEmpty ? gpuType : nil)
+                                executionPlan = string(result, "planSHA256"); gpuReview = ScientificGPUPlacement.reviewLines(result); show(result)
                             } }.disabled(stagedRequest == nil)
                             Button("Submit reviewed job") { perform {
                                 guard let stagedRequest, let executionPlan else { return }
                                 self.executionPlan = nil
-                                let result = try await client.scientificSubmit(stagedRequest, planSHA256: executionPlan)
+                                let result = try await client.scientificSubmit(stagedRequest, planSHA256: executionPlan, gpuType: requestUsesGPU && !gpuType.isEmpty ? gpuType : nil)
                                 jobID = string(result, "jobId") ?? ""; show(result)
                             } }.disabled(executionPlan == nil)
                         }
@@ -124,10 +136,12 @@ struct DiagnosticLifecycleSheet: View {
                         }
                     }
                     Section("J-lens fitting rounds") {
+                        roundPlacement
                         Text("Use the originating job ID of a materialized fitting round. Review pending shards and capacity before topping up the queue. Each shard remains a separate durable job; failed or uncertain submissions are never retried automatically.").font(.caption)
                         HStack {
                             Button("Review shard queue") { perform {
                                 let result = try await fittingRound("plan", client: client)
+                                pendingShards = ScientificGPUPlacement.submitIndices(result)
                                 roundPlan = string(result, "planSHA256"); roundMergePlan = nil; roundConfirmed = false; show(result)
                             } }.disabled(jobID.isEmpty)
                             Button("Review merge of completed shards") { perform {
@@ -145,6 +159,7 @@ struct DiagnosticLifecycleSheet: View {
                                     guard let hash = roundPlan else { return }
                                     roundPlan = nil; roundConfirmed = false
                                     show(try await fittingRound(action, client: client, hash: hash))
+                                    pendingShards = []; shardGPUTypes = [:]
                                 } }.disabled(roundPlan == nil || !roundConfirmed)
                             }
                             Button("Merge completed shards") { perform {
@@ -178,6 +193,20 @@ struct DiagnosticLifecycleSheet: View {
         }.padding().frame(minWidth: 1050, minHeight: 740)
         .interactiveDismissDisabled(busy)
         .onAppear { jobID = initialJobID ?? ""; requestFile = initialRequestFile ?? "" }
+        .task {
+            refreshRequestKind()
+            if let client {
+                do {
+                    gpuOptions = try await client.scientificGPUPlacement()
+                    placementMessage = gpuOptions == nil ? "This server does not advertise GPU choices; the server default will be used." : ""
+                } catch { placementMessage = "GPU choices could not be read. The server default remains available; reopen this sheet to retry." }
+            }
+        }
+        .onChange(of: requestFile) { _, _ in refreshRequestKind(); gpuType = ""; executionPlan = nil; gpuReview = [] }
+        .onChange(of: gpuType) { _, _ in executionPlan = nil; gpuReview = [] }
+        .onChange(of: roundGPUType) { _, _ in roundPlan = nil; roundConfirmed = false }
+        .onChange(of: shardGPUTypes) { _, _ in roundPlan = nil; roundConfirmed = false }
+        .onChange(of: jobID) { _, _ in pendingShards = []; shardGPUTypes = [:]; roundGPUType = "" }
         .onDisappear { scopedURLs.forEach { $0.stopAccessingSecurityScopedResource() } }
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: choosingRequest ? [.json] : [.data]) { result in
             do {
@@ -187,8 +216,31 @@ struct DiagnosticLifecycleSheet: View {
             } catch { output = error.localizedDescription }
         }
     }
+    @ViewBuilder
+    private var roundPlacement: some View {
+        if let gpuOptions, gpuOptions.available {
+            ScientificGPUSelection(options: gpuOptions, selection: $roundGPUType, title: "GPU for this queue top-up")
+            if !shardGPUTypes.isEmpty { Button("Clear shard overrides") { shardGPUTypes = [:] } }
+            ForEach(pendingShards, id: \.self) { index in
+                Picker("Shard \(index) GPU", selection: Binding(get: { shardGPUTypes[index] ?? "" }, set: { shardGPUTypes[index] = $0 })) {
+                    Text("Use top-up selection").tag("")
+                    ForEach(gpuOptions.gpuTypes, id: \.self) { Text($0).tag($0) }
+                }
+            }
+            Text("Review the queue to see shards eligible for this top-up. Overrides apply only to those shards; submitted jobs keep their placement.").font(.caption)
+        }
+    }
+
+    private func refreshRequestKind() {
+        guard !requestFile.isEmpty,
+              let data = try? Data(contentsOf: URL(filePath: requestFile)),
+              let request = try? ScientificRequestDocument.read(data) else { requestUsesGPU = false; return }
+        requestUsesGPU = ScientificGPUPlacement.usesGPU(request)
+    }
     private func fittingRound(_ action: String, client: ClusterClient, hash: String? = nil) async throws -> JSONValue {
-        let body: [String: JSONValue] = hash.map { ["planSHA256": .string($0), "confirmAction": .bool(true)] } ?? [:]
+        let usesPlacement = ["plan", "submit", "cancel"].contains(action)
+        let body = ScientificGPUPlacement.roundBody(hash: hash, gpuType: usesPlacement ? roundGPUType : "",
+                                                    overrides: usesPlacement ? shardGPUTypes : [:])
         let document: JSONValue = .object(["path": .object(["job_id": .string(jobID), "action": .string(action)]), "query": .object([:]), "body": .object(body)])
         let result = try await client.callScientificAction(operation: "jlens-fit-round", actionID: "post-fitting-round", document: JSONEncoder().encode(document))
         guard let text = string(result, "responseJSON") else { throw ExperimentError(reason: "Fitting round returned no readable result.") }
@@ -211,7 +263,7 @@ struct DiagnosticLifecycleSheet: View {
         guard case .object(let object) = value else { return false }; return object[key] == .bool(true)
     }
     private func show(_ value: JSONValue) {
-        roundCapacity = FittingReviewSummary.capacityLines(value)
+        roundCapacity = FittingReviewSummary.capacityLines(value) + ScientificGPUPlacement.reviewLines(value)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         output = (try? String(decoding: encoder.encode(value), as: UTF8.self)) ?? "Could not display result."
     }
@@ -220,7 +272,7 @@ struct DiagnosticLifecycleSheet: View {
         Task {
             defer { busy = false }
             do { try await action() }
-            catch { cleanupPlan = nil; confirmation = false; executionPlan = nil; output = error.localizedDescription + "\nInspect the originating server's jobs before retrying an uncertain submission." }
+            catch { roundPlan = nil; roundMergePlan = nil; roundConfirmed = false; cleanupPlan = nil; confirmation = false; executionPlan = nil; output = error.localizedDescription + "\nInspect the originating server's jobs before retrying an uncertain submission." }
         }
     }
 }

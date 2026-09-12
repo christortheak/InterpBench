@@ -2624,6 +2624,20 @@ import Testing
         if case .object(let typed) = bodies[3] { #expect(typed["gpuType"] == .string("H100") && typed["planSHA256"] == .string(String(repeating: "b", count: 64))) } else { Issue.record("typed submit body") }
     }
 
+    @Test func scientificGPUChoicesComeFromCapturedController() async throws {
+        let client = ClusterClient(profile: .init(baseURL: URL(string: "http://server.test")!), session: Self.session { request in
+            #expect(request.url?.path == "/api/capabilities")
+            return (Data(#"{"sciencePlacement":{"available":true,"gpuTypes":["A100","H100"],"defaultGPUType":"H100","gpuVRAMGB":{"H100":80}}}"#.utf8), 200)
+        })
+        let choices = try await client.scientificGPUPlacement()
+        #expect(choices?.defaultGPUType == "H100")
+        #expect(choices?.gpuTypes == ["A100", "H100"])
+        let old = ClusterClient(profile: .init(baseURL: URL(string: "http://old.test")!), session: Self.session { _ in
+            (Data("{}".utf8), 200)
+        })
+        #expect(try await old.scientificGPUPlacement()?.available == nil)
+    }
+
     private static func session(
         handler: @escaping @Sendable (URLRequest) throws -> (Data, Int)
     ) -> URLSession {

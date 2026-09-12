@@ -19,7 +19,8 @@ def describe(torch, device):
 def observe(device=None):
     try:
         import torch
-        selected = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+        from ..steering.model_loader import resolve_device
+        selected = resolve_device(device)
         return describe(torch, selected)
     except Exception as exc:
         return {'requestedDevice': device, 'deviceName': None, 'observationError': str(exc)}
