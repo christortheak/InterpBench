@@ -5,6 +5,15 @@
 - For: the refactor agents
 - Priority: high; it blocks the H100 leg of the dimension-batch benchmark
   and, later, mixed-type fitting rounds.
+- **Status 2026-09-12 (later the same day): the core slice landed on main
+  as `c9f4f08`** — `gpuType` on plan and submit (HTTP, `--gpu-type` on both
+  CLIs), vocabulary validation, plan-hash binding, guide text, tests, CLI
+  reference — and was accepted live: the same staged bundle planned by
+  default (identical to the earlier plan apart from controller identity)
+  and with `--gpu-type H100` (`gpu:H100:1`, new hash), then submitted to an
+  H100. **Still open for the agents: §2's round per-shard `gpuType`, the
+  Mac execution-sheet picker, and recording the runtime GPU name in
+  telemetry.** §3 and the identity rule stand.
 
 ## 1. The problem, observed live
 
