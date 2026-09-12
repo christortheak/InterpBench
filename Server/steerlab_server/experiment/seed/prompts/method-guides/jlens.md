@@ -394,6 +394,14 @@ Use the hash from `plan` for submission/cancellation and the hash from
 shard requests automatically use its verified execution capsule; do not hand
 edit their paths. Plan and submit allow time for multi-gigabyte verification.
 
+Queue reviews identify the active scientific jobs occupying this controller's
+capacity, including jobs from other rounds or methods. Uncertain shard indices
+are listed separately and reserve slots until reconciled. The Mac shows this
+explanation beside the queue controls; API and CLI results carry the same
+`capacity` summary, job IDs, statuses, and round membership. A round with pending
+shards and no available slots may simply be waiting for another scientific job.
+Inspect those jobs and wait for capacity; do not resubmit an uncertain shard.
+
 Each shard can be continued from its own checkpoint using ordinary `jlens-fit`
 continuation and its original row selection. A continuation is a new run. The
 round helper merges its original completed child jobs; for continued shards,
@@ -408,6 +416,14 @@ hash), missing rows, and source hashes. Grouped float32 addition can differ
 from serial addition; compare within declared tolerances. A partial merge stays
 labelled partial. Collect and verify its evidence, then register its
 `artifact-description.json` with the usual artifact-plan/import workflow.
+Before adding any contribution, merge requires its raw sums divided by its
+fitted-row count to equal its published mean exactly. This checks that the
+checkpoint and lens are a matching completed output, without a tolerance that
+could hide a changed source. A mismatch names the run and layer. Select matching
+output; never repair this by editing completed runs. A future change to stored
+precision or division semantics needs an explicit format migration. Merge runs
+as a CPU child within the controller's allocation: its accumulator remains in
+host memory, while source sums and means are read one layer at a time.
 Registration now carries the fit report hash, reference commit, kernel hash,
 and driver hash when the verified source report supplies them. Third-party
 artifacts with unknown provenance remain unknown.
@@ -437,6 +453,26 @@ and layer choices are recorded. These are distributional readout comparisons,
 not causal interventions. A matching fitting-corpus hash is flagged; a different
 hash does not establish independence. Neither metric automatically qualifies a
 lens or decides whether the research conclusions are stable.
+
+Assessment forwards each usable row once and saves only the selected source
+and final-layer activations, preserving their dtype and token order. Temporary
+files live under `.steerlab/jlens-assessment-state/` in the execution root. It
+then compares all rows one source layer at a time: each of the two lens matrices
+is read and placed on the model device once per layer, with at most one layer
+pair resident. It does not cache two complete lenses in host or GPU memory.
+Eight-position readout chunks and per-layer accumulation order are unchanged.
+
+The input review (app, CLIs, and API) reports a temporary activation tensor-byte
+upper bound, the selected activation bytes per row, and the float32 lens-pair
+size. These are **not peak-memory estimates**: allow for model weights, forward
+activations, vocabulary logits, transfers, allocator overhead, and file headers.
+The report adds actual staged tensor bytes and row counts, plus lens-layer read
+and placement counts. CPU copies still occur on a CPU runner; these counts are
+not measurements of physical GPU transfers. Temporary activations are removed
+on success and ordinary exceptions. A killed process or machine restart can
+leave scratch files; no automatic recovery or managed cleanup is claimed.
+The completed report remains under `runs/`. Large-model throughput and peak
+memory still require measurement on the intended execution hardware.
 
 The corpus, checkpoints, and completed runs remain immutable. Hash reuse is
 limited to unchanged regular files within one bounded input-review operation;

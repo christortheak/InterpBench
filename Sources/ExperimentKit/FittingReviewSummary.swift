@@ -35,9 +35,31 @@ public enum FittingReviewSummary {
             }
         case "jlens-fit-assess":
             result.append("Up to \(number(review["rows"])) corpus rows across \(count(review["sourceLayers"])) source layers, using the selected position cap.")
+            if case .object(let resources) = review["resources"],
+               case .number(let staging) = resources["temporaryActivationBytesUpperBound"],
+               case .number(let pair) = resources["float32LensPairBytes"], staging.isFinite, pair.isFinite {
+                result.append("Selected activations need up to \(number(.number(staging / 1_073_741_824), decimals: 2)) GiB of temporary tensor storage. One lens layer pair uses \(number(.number(pair / 1_073_741_824), decimals: 2)) GiB at float32.")
+                result.append("These are tensor sizes, not peak memory. Allow additional space for model weights, forward activations, vocabulary logits, transfers, and file overhead. Temporary activations are removed when assessment exits normally or with an error.")
+            }
             result.append("This compares readouts. It does not prove that the text is independent of fitting data or qualify the lens.")
         default:
             break
+        }
+        return result
+    }
+
+    public static func capacityLines(_ plan: JSONValue) -> [String] {
+        guard case .object(let document) = plan,
+              case .object(let capacity) = document["capacity"],
+              case .string(let summary) = capacity["summary"] else { return [] }
+        var result = [summary]
+        if case .array(let jobs) = capacity["activeJobs"] {
+            for case .object(let job) in jobs {
+                if case .string(let id) = job["jobID"], case .string(let status) = job["status"] {
+                    let origin = job["belongsToThisRound"] == .bool(true) ? "this round" : "another scientific task"
+                    result.append("\(id): \(status) (\(origin)).")
+                }
+            }
         }
         return result
     }

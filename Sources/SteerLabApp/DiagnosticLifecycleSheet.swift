@@ -25,6 +25,7 @@ struct DiagnosticLifecycleSheet: View {
     @State private var roundPlan: String?
     @State private var roundMergePlan: String?
     @State private var roundConfirmed = false
+    @State private var roundCapacity: [String] = []
     @State private var cleanupPlan: String?
     @State private var confirmation = false
     @State private var output = ""
@@ -83,7 +84,7 @@ struct DiagnosticLifecycleSheet: View {
                 }
                 Section("Bring evidence home and inspect it offline") {
                     Text("Large evidence exports can take several minutes to prepare before transfer begins. Keep this window open; the archive is verified before import.").font(.caption)
-                    TextField("Originating job ID", text: $jobID).onChange(of: jobID) { _, _ in cleanupPlan = nil; confirmation = false; campaignPlan = nil; campaignConfirmed = false; roundPlan = nil; roundMergePlan = nil; roundConfirmed = false }
+                    TextField("Originating job ID", text: $jobID).onChange(of: jobID) { _, _ in cleanupPlan = nil; confirmation = false; campaignPlan = nil; campaignConfirmed = false; roundPlan = nil; roundMergePlan = nil; roundConfirmed = false; roundCapacity = [] }
                     HStack {
                         if let client {
                             Button("Fetch and verify evidence") { perform {
@@ -133,6 +134,9 @@ struct DiagnosticLifecycleSheet: View {
                                 let result = try await fittingRound("merge-plan", client: client)
                                 roundMergePlan = string(result, "planSHA256"); roundPlan = nil; roundConfirmed = false; show(result)
                             } }.disabled(jobID.isEmpty)
+                        }
+                        ForEach(roundCapacity, id: \.self) { line in
+                            Text(line).font(.caption).textSelection(.enabled)
                         }
                         Toggle("Apply the displayed fitting-round plan", isOn: $roundConfirmed)
                         HStack {
@@ -207,6 +211,7 @@ struct DiagnosticLifecycleSheet: View {
         guard case .object(let object) = value else { return false }; return object[key] == .bool(true)
     }
     private func show(_ value: JSONValue) {
+        roundCapacity = FittingReviewSummary.capacityLines(value)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         output = (try? String(decoding: encoder.encode(value), as: UTF8.self)) ?? "Could not display result."
     }

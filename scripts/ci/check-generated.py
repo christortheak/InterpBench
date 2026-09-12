@@ -26,6 +26,7 @@ AUDITS = (
     ('audit-design-lazy-imports.py', '82da781'),
     ('audit-operation-registration.py', 'd84968c'),
     ('audit-jlens-followup.py', '878bca2'),
+    ('audit-jlens-assessment.py', '224de64'),
 )
 
 

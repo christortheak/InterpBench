@@ -1,9 +1,9 @@
 """Compare two registered lenses on researcher-selected held-out activations."""
 from dataclasses import dataclass, asdict
-import json
+from tempfile import TemporaryDirectory
 from pathlib import Path
 import uuid
-from . import diagnostic_archives as archives
+from . import diagnostic_archives as archives, jlens_assessment_inputs as inputs
 from .jlens_fit import FitConfig, FitError, file_ref, corpus_rows, read_pinned
 
 
@@ -54,7 +54,9 @@ def instruments(config, root):
 def preflight(config, root):
     records,layers=instruments(config,root)
     rows=corpus_rows(read_pinned(config.corpus,root))
-    return {'rows':min(config.maxPrompts,len(rows)), 'sourceLayers':layers, 'qualification':'notPerformed'}
+    count = min(config.maxPrompts, len(rows))
+    return {'rows':count, 'sourceLayers':layers, 'qualification':'notPerformed',
+            'resources':inputs.resource_plan(config, count, records[0].dModel, layers, records[0].targetLayer)}
 
 
 def distances(left, right, top_k):
@@ -69,9 +71,37 @@ def distances(left, right, top_k):
     return {'positions':left.shape[0],'jsDivergenceSum':float(js.clamp_min(0).sum()),'topKOverlapSum':float(overlaps.sum()),'effectiveTopK':k}
 
 
-def assess(config, *, root, log=print, on_run_created=None):
+def compare_row(model, path, layer, target, devices, matrices, top_k, totals):
+    from safetensors import safe_open
+    import torch
+    with safe_open(str(path), framework='pt', device='cpu') as saved:
+        h = saved.get_tensor(str(layer)).to(device=devices[layer], dtype=torch.float32)
+        truth = saved.get_tensor(str(target)).to(device=devices[target])
+        # Preserve the previous eight-position chunks and accumulation order.
+        for start in range(0, len(h), 8):
+            hidden = h[start:start+8]
+            logits = [model.unembed(hidden @ matrix.T) for matrix in matrices]
+            final = model.unembed(truth[start:start+8])
+            for name, left, right in (('betweenLenses', logits[0], logits[1]), ('referenceToFinal', logits[0], final), ('candidateToFinal', logits[1], final)):
+                result = distances(left, right, top_k)
+                for key in ('positions', 'jsDivergenceSum', 'topKOverlapSum'):
+                    totals[name][key] += result[key]
+                totals[name]['effectiveTopK'] = result['effectiveTopK']
+
+
+def compare_layer(model, records, root, files, layer, target, devices, top_k, totals):
     import torch
     from ..jlens import lens_store
+    # Function scope releases this pair before the next layer is loaded. Never
+    # cache a complete lens or transfer the same matrix for each token chunk.
+    matrices = [lens_store.load_layer(record, layer, root=str(root)).to(
+        device=devices[layer], dtype=torch.float32) for record in records]
+    for path in files:
+        compare_row(model, path, layer, target, devices, matrices, top_k, totals)
+
+
+def assess(config, *, root, log=print, on_run_created=None):
+    import torch
     from . import jlens_fit_model
     records,layers=instruments(config,root)
     rows=corpus_rows(read_pinned(config.corpus,root))[:config.maxPrompts]
@@ -80,37 +110,20 @@ def assess(config, *, root, log=print, on_run_created=None):
     run=parent/('jlens-assessment-'+uuid.uuid4().hex);run.mkdir()
     if on_run_created:on_run_created(str(run))
     model,runtime=jlens_fit_model.load(config.model_config(),log)
-    captured={};handles=[]
     try:
         if model.d_model!=records[0].dModel or model.n_layers-1!=records[0].targetLayer: raise FitError('Loaded model geometry differs from the fitted instruments.')
         target=model.n_layers-1
-        for layer in [*layers,target]:
-            def collect(module,inputs,output,layer=layer):
-                captured[layer]=(output[0] if isinstance(output,tuple) else output).detach()
-            handles.append(model.layers[layer].register_forward_hook(collect))
         totals={str(layer):{name:{'positions':0,'jsDivergenceSum':0.,'topKOverlapSum':0.} for name in ('betweenLenses','referenceToFinal','candidateToFinal')} for layer in layers}
-        row_results=[]
-        with torch.no_grad():
-            for row in rows:
-                captured.clear();tokens=model.encode(row['text'],max_length=config.maxSeqLen)
-                length=int(tokens.shape[1]);positions=list(range(config.skipFirst,length-1))[:config.maxPositionsPerRow]
-                if not positions:row_results.append({'id':row['id'],'status':'skipped-too-short'});continue
-                model.forward(tokens)
-                for layer in layers:
-                    matrices=[lens_store.load_layer(record,layer,root=str(root)) for record in records]
-                    h=captured[layer][0,positions].float()
-                    truth=captured[target][0,positions]
-                    # Small position chunks bound vocabulary-logit memory.
-                    for start in range(0,len(positions),8):
-                        hidden=h[start:start+8]
-                        logits=[model.unembed(hidden @ matrix.to(device=hidden.device,dtype=torch.float32).T) for matrix in matrices]
-                        final=model.unembed(truth[start:start+8])
-                        for name,left,right in (('betweenLenses',logits[0],logits[1]),('referenceToFinal',logits[0],final),('candidateToFinal',logits[1],final)):
-                            result=distances(left,right,config.topK)
-                            for key in ('positions','jsDivergenceSum','topKOverlapSum'):totals[str(layer)][name][key]+=result[key]
-                            totals[str(layer)][name]['effectiveTopK']=result['effectiveTopK']
-                    del matrices
-                row_results.append({'id':row['id'],'status':'assessed','positions':positions})
+        scratch=archives.ordinary(root,'.steerlab/jlens-assessment-state',missing=True)
+        scratch.mkdir(parents=True,exist_ok=True)
+        with TemporaryDirectory(prefix=run.name+'-',dir=scratch) as directory, torch.no_grad():
+            row_results,files,devices,payload_bytes=inputs.capture(model,config,rows,layers,target,directory)
+            for layer in layers if files else []:
+                compare_layer(model,records,root,files,layer,target,devices,config.topK,totals[str(layer)])
+            resources={**inputs.resource_plan(config,len(rows),model.d_model,layers,target),
+                       'capturedActivationBytes':payload_bytes,'stagedRows':len(files),
+                       'lensLayerReads':2*len(layers) if files else 0,
+                       'lensLayerPlacements':2*len(layers) if files else 0}
         for groups in totals.values():
             for value in groups.values():
                 n=value['positions']
@@ -118,12 +131,11 @@ def assess(config, *, root, log=print, on_run_created=None):
                 value['meanTopKOverlap']=value['topKOverlapSum']/n if n else None
         same_corpus=any(record.fit.corpus=='sha256:'+config.corpus['sha256'] for record in records)
         report={'schemaVersion':1,'operation':'jlens-fit-assess','config':config.to_dict(),'runtime':runtime,
-                'lenses':[record.to_dict() for record in records],'layers':totals,'rows':row_results,
+                'lenses':[record.to_dict() for record in records],'layers':totals,'rows':row_results,'resources':resources,
                 'heldOutStatus':'sameCorpusAsFit' if same_corpus else 'researcherDeclared; overlapNotEstablished',
                 'qualification':'notPerformed','aggregation':'Equal weight per assessed token position; first eligible positions up to the displayed cap.',
                 'limitations':'Distributional agreement measures readout stability and agreement with the final residual at these positions. It does not prove causal validity, dataset independence, or adequacy for every research question.'}
         (run/'assessment-report.json').write_bytes(archives.encoded(report));(run/'COMPLETED').write_text('jlens-fit-assess\n')
         return {'runDirectory':str(run),'reportPath':str(run/'assessment-report.json'),'qualification':'notPerformed'}
     finally:
-        for handle in handles:handle.remove()
         if hasattr(model,'steerlab_kernel_selection'):model.steerlab_kernel_selection.close()

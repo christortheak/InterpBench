@@ -116,8 +116,8 @@ def merge(config, *, root, log=print, on_run_created=None):
     sums={}; count=0; sources=[]
     layers=identity['sourceLayers']; width=identity['hiddenSize']
     for item in items:
-        # The merge is a cpu-class operation and runs inside the controller
-        # process, whose host memory is small (16 GB on the first site). Read
+        # The merge is a CPU-class child process within the controller
+        # allocation, sharing its host-memory budget. Read
         # one layer at a time from each file instead of loading whole
         # multi-gigabyte tensor sets; only the accumulator stays resident.
         with safe_open(str(item['directory']/'checkpoint/sums.safetensors'), framework='pt') as values, \
@@ -126,7 +126,8 @@ def merge(config, *, root, log=print, on_run_created=None):
             for layer in layers:
                 v=values.get_tensor(str(layer))
                 if v.dtype!=torch.float32 or tuple(v.shape)!=(width,width) or not bool(torch.isfinite(v).all()): raise FitError('Merge requires finite float32 sums.')
-                if not torch.equal(v/item['state']['nDone'],means.get_tensor(f'layer_{layer}')): raise FitError('The checkpoint sums and published mean differ; choose coherent completed output.')
+                if not torch.equal(v/item['state']['nDone'],means.get_tensor(f'layer_{layer}')):
+                    raise FitError(f"Checkpoint sums divided by the fitted-row count do not exactly match the published mean in {item['directory'].name}, layer {layer}. Select the matching completed checkpoint and lens output; do not edit completed runs.")
                 if layer not in sums: sums[layer]=torch.zeros_like(v)
                 sums[layer]+=v
                 if not bool(torch.isfinite(sums[layer]).all()): raise FitError('Merged sums are non-finite.')

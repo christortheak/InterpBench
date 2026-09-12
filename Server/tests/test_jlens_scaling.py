@@ -2,10 +2,11 @@
 import json
 import sys
 import types
+from pathlib import Path
 import pytest
 from steerlab_server.experiment import method_authoring, managed_methods, diagnostic_archives as archives
 from steerlab_server.experiment.jlens_kernel_policy import Selection
-from test_jlens_fit import fitting, run
+from test_jlens_fit import fitting, run, torch
 
 
 def test_kernel_selection_is_explicit_reversible_and_rejects_unknown_fallback(monkeypatch):
@@ -119,3 +120,29 @@ def test_benchmark_worker_isolates_compiler_caches(tmp_path,monkeypatch):
     monkeypatch.setattr(jlens_benchmark.subprocess,'run',child)
     assert jlens_benchmark.subprocess_worker({},tmp_path,tmp_path)=={'fixture':True}
     assert os.environ['TORCHINDUCTOR_CACHE_DIR']=='original-fixture-cache'
+
+
+def test_merge_requires_exact_mean_values_and_names_the_source_layer(fitting):
+    from safetensors.torch import load_file, save_file
+    from steerlab_server.experiment import jlens_merge
+    root, cfg = fitting
+    output = run(root, cfg)
+    directory = Path(output['runDirectory'])
+    path = directory/'jacobians.safetensors'
+    values = load_file(str(path))
+    # Deliberately inconsistent test fixture: one float32 ULP, below ordinary
+    # allclose tolerance, with the file hash updated to reach the value check.
+    original = values['layer_0'].clone()
+    values['layer_0'][0,0] = torch.nextafter(values['layer_0'][0,0], torch.tensor(float('inf')))
+    assert torch.allclose(original, values['layer_0']) and not torch.equal(original, values['layer_0'])
+    save_file(values, str(path))
+    report_path = directory/'fit-report.json'
+    report = json.loads(report_path.read_bytes())
+    report['tensorSHA256'] = archives.file_hash(path)
+    report_path.write_bytes(archives.encoded(report))
+    before = set((root/'runs').iterdir())
+    with pytest.raises(jlens_merge.FitError, match=f'{directory.name}, layer 0') as error:
+        jlens_merge.merge(jlens_merge.MergeConfig(fits=[str(directory.relative_to(root))]), root=root)
+    assert 'do not exactly match' in str(error.value)
+    assert 'do not edit completed runs' in str(error.value)
+    assert set((root/'runs').iterdir()) == before

@@ -31,4 +31,20 @@ import Testing
         #expect(lines.first?.contains("4 corpus rows across 2 source layers") == true)
         #expect(lines.last?.contains("does not prove") == true)
     }
+
+    @Test func assessmentStorageIsSeparateFromPeakMemory() throws {
+        let value = try draft(#"{"operationReview":{"rows":16,"sourceLayers":[0,1],"resources":{"temporaryActivationBytesUpperBound":1073741824,"float32LensPairBytes":536870912}}}"#)
+        let lines = FittingReviewSummary.lines(operation: "jlens-fit-assess", draft: value)
+        #expect(lines.contains { $0.contains("1.00 GiB of temporary tensor storage") && $0.contains("0.50 GiB at float32") })
+        #expect(lines.contains { $0.contains("not peak memory") })
+    }
+
+    @Test func queueCapacityExplainsOtherJobsUsingOwnerSummary() throws {
+        let value = try draft(#"{"capacity":{"summary":"Two jobs occupy the controller capacity.","activeJobs":[{"jobID":"first","status":"running","belongsToThisRound":true},{"jobID":"second","status":"submitted","belongsToThisRound":false}]}}"#)
+        #expect(FittingReviewSummary.capacityLines(value) == [
+            "Two jobs occupy the controller capacity.",
+            "first: running (this round).", "second: submitted (another scientific task).",
+        ])
+        #expect(FittingReviewSummary.capacityLines(.object([:])).isEmpty)
+    }
 }

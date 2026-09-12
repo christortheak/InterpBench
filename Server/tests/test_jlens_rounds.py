@@ -41,6 +41,7 @@ def test_reviewed_topups_use_durable_jobs_and_do_not_exceed_capacity(round_job,m
     assert child.result['scientificPlan']['executionCapsuleSHA256']==parent.result['scientificPlan']['inputBundleSHA256']
     next_plan=jlens_rounds.action(parent.id,'plan',None,False,jobs,profile)
     assert next_plan['submitIndices']==[]
+    assert next_plan['capacity']['activeJobs'] == [{'jobID':child.id,'kind':child.kind,'status':child.status,'belongsToThisRound':True}]
     child.status='succeeded';jobs.store.update(child)
     final=jlens_rounds.action(parent.id,'plan',None,False,jobs,profile)
     assert final['submitIndices']==[1]
@@ -57,6 +58,8 @@ def test_uncertain_submission_is_not_retried(round_job,monkeypatch):
     review=jlens_rounds.action(parent.id,'plan',None,False,jobs,profile)
     assert review['shards'][0]['status']=='uncertain'
     assert review['submitIndices']==[] and review['availableSlots']==0
+    assert review['capacity']['uncertainShardIndices'] == [0]
+    assert review['capacity']['occupiedSlots'] == 1
 
 
 def test_round_plan_tampering_refuses_before_submission(round_job):
@@ -79,3 +82,23 @@ def test_http_round_review_and_exact_mutation_body(round_job):
         assert response.status_code==200 and response.json()['submitIndices']==[0]
         response=client.post('/api/science/fitting-round/'+parent.id+'/submit',json={})
         assert response.status_code==409 and 'Supply exactly' in response.json()['detail']['reason']
+
+
+def test_capacity_explains_unrelated_science_jobs_without_changing_scope(round_job):
+    parent, jobs, profile = round_job
+    unrelated = jobs.record_external('science:jlens-fit-assess', status='running', executor='slurm',
+                                     result={'scientificPlan':{'roundSubmission':None}})
+    jobs.record_external('science:jlens-fit', status='succeeded', executor='slurm')
+    jobs.record_external('chat', status='running', executor='local')
+    review = jlens_rounds.action(parent.id, 'plan', None, False, jobs, profile)
+    assert review['availableSlots'] == 0 and review['submitIndices'] == []
+    assert review['capacity']['activeJobs'] == [
+        {'jobID':unrelated.id,'kind':unrelated.kind,'status':'running','belongsToThisRound':False}]
+    assert review['capacity']['occupiedSlots'] == review['capacity']['limit'] == 1
+    assert 'Other scientific jobs on this controller count too' in review['capacity']['summary']
+    assert jlens_rounds.action(parent.id, 'plan', None, False, jobs, profile)['planSHA256'] == review['planSHA256']
+    unrelated.status = 'succeeded'; jobs.store.update(unrelated)
+    fresh = jlens_rounds.action(parent.id, 'plan', None, False, jobs, profile)
+    assert fresh['capacity']['activeJobs'] == [] and fresh['submitIndices'] == [0]
+    with pytest.raises(archives.Refusal, match='changed'):
+        jlens_rounds.action(parent.id, 'submit', review['planSHA256'], True, jobs, profile)

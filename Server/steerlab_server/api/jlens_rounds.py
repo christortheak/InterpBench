@@ -39,6 +39,26 @@ def matching_jobs(jobs,parent,index):
     return [j for j in jobs.list() if (j.result or {}).get('scientificPlan',{}).get('roundSubmission')=={'parentJobID':parent,'shardIndex':index}]
 
 
+def capacity_review(limit, active, rows, parent):
+    uncertain = [row['index'] for row in rows if row['status'] == 'uncertain']
+    occupied = len(active) + len(uncertain)
+    return {
+        'limit': limit,
+        'occupiedSlots': occupied,
+        'activeJobs': [
+            {'jobID': job.id, 'kind': job.kind, 'status': job.status,
+             'belongsToThisRound': ((job.result or {}).get('scientificPlan', {}).get('roundSubmission') or {}).get('parentJobID') == parent}
+            for job in sorted(active, key=lambda job: job.id)
+        ],
+        'uncertainShardIndices': uncertain,
+        'summary': f'{len(active)} active scientific jobs and {len(uncertain)} uncertain shard submissions '
+                   f'occupy {occupied} slots against this round’s limit of {limit}; {max(0, limit-occupied)} slots are available. '
+                   'Other scientific jobs on this controller count too. '
+                   + ('Wait for jobs to finish, or reconcile uncertain submissions before reviewing another top-up.'
+                      if occupied >= limit else 'Review pending shards before submitting a top-up; uncertain submissions are never retried automatically.'),
+    }
+
+
 def action(job_id,action,expected,confirmed,jobs,profile):
     if action not in ('status','plan','submit','cancel','merge-plan','merge-submit'):raise archives.Refusal('Unknown fitting-round action.')
     mutation=action in ('submit','cancel','merge-submit')
@@ -70,6 +90,7 @@ def action(job_id,action,expected,confirmed,jobs,profile):
             selected[str(index)]=scientific_execution.plan(round_plan['shards'][index],profile,
                 execution_capsule=capsule,round_submission={'parentJobID':job_id,'shardIndex':index})
         plan={'jobID':job_id,'roundPlanSHA256':round_plan['planSHA256'],'state':state,'shards':rows,
+              'capacity':capacity_review(round_plan['config']['maxConcurrent'],active,rows,job_id),
               'availableSlots':slots,'submitIndices':pending,'childPlans':selected,'changed':False,
               'scope':'Concurrency counts active scientific jobs on this controller. Set the declared cap within site policy; scheduler policy remains authoritative. Uncertain submissions reserve capacity until reconciled; top-ups never retry them.'}
         if action in ('merge-plan','merge-submit'):
