@@ -1,5 +1,8 @@
 # Probe contracts and library: P0/P1 implementation handoff
 
+P2 is now added on this branch. Read [the combined review handoff](PROBE-TRAINING-IMPLEMENTATION-HANDOFF.md)
+for current verification and the additional training/evaluation changes.
+
 Branch: `codex/probe-artifact-contracts`, from main `22f08a9`.
 Contract commit: `8f59b8d`. Implementation commit: `50764ba`.
 The user resolved the J-lens/GPU discussion and authorized the phase-1 program.

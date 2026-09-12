@@ -4,6 +4,10 @@ P0 decisions, 2026-09-12; implementation baseline `22f08a9`.
 The additional J-lens/GPU discussion is resolved. Initial targets are binary
 classification. Multiclass and regression are later extensions.
 
+P2 capture, fitting, and evaluation are now implemented on the same branch; see
+[the training contract](PROBE-TRAINING-AND-EVALUATION.md). The first-slice account
+below records P1; generation measurement and policies remain future work.
+
 ## First slice and surface scope
 
 P1 introduces one Python artifact owner and one library owner, consumed through
