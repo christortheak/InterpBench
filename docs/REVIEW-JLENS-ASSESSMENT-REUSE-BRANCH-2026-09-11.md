@@ -58,9 +58,9 @@ or zero when every row was short). The block states that these are tensor
 payloads, not peak memory.
 
 At the 27B defaults (16 rows, 64 positions, 63 source layers plus the
-target, width 5376) the activation bound is about 1.4 GB and the actual
+target, width 5120) the activation bound is about 1.3 GB and the actual
 bf16 payload about half that; the lens reads fall from roughly 200 GB to
-about 15 GB.
+about 13 GB.
 
 **Merge** (`jlens_merge.py`). The exact `torch.equal(sums / nDone, mean)`
 check stays; its message now names the source run directory and layer and
