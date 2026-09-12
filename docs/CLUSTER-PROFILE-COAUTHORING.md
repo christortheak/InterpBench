@@ -90,3 +90,24 @@ behavior. CLI smoke checks exercise the installed-style command/result shape usi
 disposable fixtures. Those checks do not count as a completed real-document agent
 interview, interactive SwiftUI review, connection or scientific qualification.
 The broader remote recovery/cleanup journey and remaining surface work stay in scope.
+
+## GPU choices for scientific submissions
+
+A controller’s declared GPU vocabulary and per-type memory capacities are
+exposed in `/api/capabilities` under `sciencePlacement`. The app uses this
+running declaration for its GPU picker. A local profile edit does not silently
+change the running controller’s environment.
+
+Researchers can select a declared GPU with `--gpu-type` on the native
+`remote science-plan/science-submit` or portable `runner science-plan/science-submit`
+commands. Selection is bound to the execution review, not written into the
+scientific request or checkpoint identity. Omitting it preserves the site
+default. Capacity is descriptive; managed science does not claim to have checked
+peak workload fit. The same partition, constraints, and other site resource
+settings remain in force; a GPU-type choice does not override scheduler policy.
+
+J-lens fitting rounds also accept a default for each reviewed queue top-up and
+per-shard overrides. See the maintained [J-lens guide](../WorkspaceSeed/prompts/method-guides/jlens.md)
+for the HTTP bodies shared by both CLIs and the app. Recorded runtime hardware
+supports comparisons; allowing mixed-GPU contributions does not establish
+numerical equivalence.

@@ -30,6 +30,8 @@ class Measurements:
         self.rows = 0
         self.peak_allocated = self.peak_reserved = None
         self.last = None
+        from .runtime_hardware import describe
+        self.hardware = describe(torch, device)
 
     def memory(self):
         if not self.cuda: return None
@@ -80,7 +82,7 @@ class Measurements:
         if memory:
             self.peak_allocated = max(self.peak_allocated or 0, memory['peakAllocatedBytes'])
             self.peak_reserved = max(self.peak_reserved or 0, memory['peakReservedBytes'])
-        return dict(device=self.device, deviceMemory=memory, peakDeviceAllocatedBytes=self.peak_allocated,
+        return dict(device=self.device, hardware=self.hardware, deviceMemory=memory, peakDeviceAllocatedBytes=self.peak_allocated,
                     peakDeviceReservedBytes=self.peak_reserved, peakHostRSSBytes=host_peak_bytes(),
                     rowMeasurementsFile=self.path.name, measuredRows=self.rows,
                     lastMeasurement=self.last, memoryScope='CUDA allocation peaks reset before each fitted row; host RSS is the process lifetime peak.')

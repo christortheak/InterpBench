@@ -9,10 +9,10 @@ from test_scientific_execution import setup
 
 
 @pytest.fixture
-def round_job(fitting,setup):
+def round_job(fitting,setup,request):
     root,cfg=fitting;_,_,profile=setup
     path=root/'fit.json';path.write_text(json.dumps({'operation':'jlens-fit','parameters':{'config':cfg}}))
-    config=jlens_round.RoundConfig.from_dict(dict(modelID=cfg['modelID'],revision=cfg['revision'],fittingRequest={'path':'fit.json','sha256':archives.file_hash(path)},shards=2,maxConcurrent=1))
+    config=jlens_round.RoundConfig.from_dict(dict(modelID=cfg['modelID'],revision=cfg['revision'],fittingRequest={'path':'fit.json','sha256':archives.file_hash(path)},shards=2,maxConcurrent=getattr(request, 'param', 1)))
     request={'operation':'jlens-fit-round','parameters':{'config':config.to_dict()}}
     plan=diagnostic_inputs.plan(request,root)
     (root/'runs').mkdir(exist_ok=True)

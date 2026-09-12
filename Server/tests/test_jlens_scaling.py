@@ -98,7 +98,7 @@ def test_merge_detects_source_mutation_during_loading(fitting,monkeypatch):
 
 def test_benchmark_records_device_without_host_or_site_identity():
     from types import SimpleNamespace
-    from steerlab_server.experiment.jlens_benchmark import hardware
+    from steerlab_server.experiment.runtime_hardware import describe as hardware
     cuda=SimpleNamespace(is_available=lambda:True,get_device_properties=lambda device:SimpleNamespace(
         name='Fixture GPU',total_memory=80*1024**3,major=9,minor=0))
     result=hardware(SimpleNamespace(cuda=cuda,version=SimpleNamespace(cuda='fixture')),'cuda:0')

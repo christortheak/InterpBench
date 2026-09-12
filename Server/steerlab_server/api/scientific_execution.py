@@ -190,15 +190,12 @@ def plan(request, profile, *, execution_capsule=None, round_submission=None, gpu
             # the plan and submit call, never inside the published request, and
             # it is bound into planSHA256 through the resources block below.
             if selected_executor != 'slurm':
-                raise ScientificRefusal('This operation runs on the controller without a GPU; omit gpuType.')
-            declared = list(resources.gpu_types)
-            if not isinstance(gpu_type, str) or gpu_type not in declared:
-                error = ScientificRefusal('GPU type ' + repr(gpu_type) + ' is not declared for this site: '
-                                          + (', '.join(declared) if declared else 'no GPU vocabulary declared') + '.')
-                error.repair_action = 'Choose one of the declared GPU types, or omit gpuType for the site default.'
-                raise error
+                raise ScientificRefusal('GPU-type placement requires a Slurm submission; omit gpuType for local or CPU execution.')
+            from . import science_placement
+            science_placement.validate(gpu_type, resources)
             resources.gres = 'gpu:' + gpu_type + ':' + str(resources.gpus)
             result['requestedGPUType'] = gpu_type
+            result['gpuReview'] = science_placement.review(resources, result.get('fittingReview', result.get('operationReview')))
         result['resources'] = asdict(resources) if selected_executor == 'slurm' else {'executor': 'local'}
         if selected_executor == 'slurm':
             # Render without writing to apply the same required-header and GRES
@@ -321,6 +318,15 @@ def execute_packet(packet, job_id, record, expected_plan_sha256=None):
         if current['inputSHA256'] != reviewed['inputSHA256']:
             raise ScientificRefusal('Inputs changed while queued; diagnostic refused before model loading.')
         p = current['request']['parameters']
+        if current.get('compute') != 'cpu':
+            from ..experiment import runtime_hardware
+            from . import science_placement
+            selected_device = p.get('config', {}).get('device', p.get('device'))
+            result['runtimeHardware'] = runtime_hardware.observe(selected_device)
+            if reviewed['executor'] == 'slurm':
+                result['runtimeHardware']['requestedGPUType'] = science_placement.gpu_type(SlurmResources(**reviewed['resources']))
+            # Persist before model loading so ordinary failures retain provenance.
+            write_json(Path(record), {'id': job_id, 'result': result, **executor_identity})
         from ..experiment import managed_methods
         if current['request']['operation'] in managed_methods.OPERATIONS:
             # The isolated child owns process-global workspace resolution used

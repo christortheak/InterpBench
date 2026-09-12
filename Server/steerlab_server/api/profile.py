@@ -234,7 +234,9 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
         except Exception:  # pragma: no cover
             devices = ["cpu"]
     from .service_authority import service_role
+    from . import science_placement
     return {
+        "sciencePlacement": science_placement.capabilities(profile),
         "serviceRole": service_role(),
         "serverVersion": __version__,
         "runningEngineVersion": RUNNING_ENGINE_VERSION,

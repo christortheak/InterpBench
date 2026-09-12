@@ -403,6 +403,40 @@ be submitted to another. The checkpoint identity records the device class, not
 the GPU model, so fits from different GPU types can be merged; compare their
 matrices numerically before relying on a mixed merge.
 
+The app reads GPU choices from the connected controller’s `/api/capabilities`
+`sciencePlacement` block, not from a possibly stale local site profile. The
+execution sheet offers **Site default** and the declared types for GPU jobs;
+CPU materialization and merge have no GPU picker. The declared memory capacity
+is context, not a workload-fit guarantee. Pilot throughput remains a measurement
+on the hardware named in that pilot; selecting another GPU does not turn it
+into a measurement on the new hardware. Actual device name, compute capability,
+and memory capacity are recorded separately in execution evidence and fitting
+telemetry when available. Missing hardware observations remain unknown.
+
+For a round, choose placement when topping up its GPU shard queue, not when
+materializing the CPU round. A `plan` body can be:
+
+```json
+{"gpuType":"<declared-default-for-this-top-up>","shardGPUTypes":{"1":"<another-declared-type>"}}
+```
+
+`gpuType` applies to this top-up only; the optional `shardGPUTypes` map overrides
+individual zero-based indices in this review’s `submitIndices`. Review the queue
+without overrides first to see which shards have capacity. Omission uses the
+controller default. Each child plan and the round status name the GPU type.
+Repeat the same placement fields alongside `planSHA256` and `confirmAction`
+when submitting (or cancelling against that same review). Changed placement
+needs a fresh review. CPU merge and status actions take no placement fields.
+These bodies use the existing `science-call` commands above on both clients.
+
+Already attempted shards cannot be redirected, including uncertain submissions.
+Their placement stays in durable job records and round bookkeeping; changing
+the top-up default affects only newly submitted shards. No automatic retry,
+queue refill, migration, or change to the immutable shard request is implied.
+After a successful top-up, review again for the next batch. If capacity has
+changed, clear obsolete per-shard overrides and review the currently eligible
+indices. The app provides a clear-overrides control for this purpose.
+
 Queue reviews identify the active scientific jobs occupying this controller's
 capacity, including jobs from other rounds or methods. Uncertain shard indices
 are listed separately and reserve slots until reconciled. The Mac shows this

@@ -67,7 +67,9 @@ def build_router(state):
     def fitting_round(job_id: str, action: str, body: dict):
         from . import jlens_rounds
         def work():
-            fields(body, [] if action in ('status', 'plan', 'merge-plan') else ['planSHA256', 'confirmAction'])
-            return jlens_rounds.action(job_id, action, body.get('planSHA256'), body.get('confirmAction'), state.jobs, ServerProfile.from_env())
+            placement_keys = {'gpuType', 'shardGPUTypes'} if action in ('plan', 'submit', 'cancel') else set()
+            fields({k: v for k, v in body.items() if k not in placement_keys}, [] if action in ('status', 'plan', 'merge-plan') else ['planSHA256', 'confirmAction'])
+            return jlens_rounds.action(job_id, action, body.get('planSHA256'), body.get('confirmAction'), state.jobs, ServerProfile.from_env(),
+                                      gpu_type=body.get('gpuType'), shard_gpu_types=body.get('shardGPUTypes'))
         return perform(work)
     return router

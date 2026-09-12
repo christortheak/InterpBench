@@ -3,7 +3,6 @@ from dataclasses import dataclass, asdict
 import json
 import math
 import os
-import platform
 from pathlib import Path
 import subprocess
 import sys
@@ -115,7 +114,7 @@ def worker(config, root, scratch):
         if not fitted: raise FitError('No usable rows in the benchmark pilot.')
         save_file({str(k): v/len(fitted) for k, v in sums.items()}, str(scratch/'mean.safetensors'))
         seconds = time.perf_counter() - started
-        result = {'runtime': runtime, 'hardware': hardware(torch,config.device), 'fittedIndices': fitted, 'skippedIndices': skipped,
+        result = {'runtime': runtime, 'hardware': measurements.hardware, 'fittedIndices': fitted, 'skippedIndices': skipped,
                   'seconds': seconds, 'rowsPerHour': len(fitted)*3600/seconds,
                   'telemetry': measurements.report(), 'kernelDispatch': observation.report()}
         (scratch/'result.json').write_bytes(archives.encoded(result))
@@ -123,15 +122,6 @@ def worker(config, root, scratch):
     finally:
         observation.close()
         if hasattr(model, 'steerlab_kernel_selection'): model.steerlab_kernel_selection.close()
-
-
-def hardware(torch, device):
-    result={'requestedDevice':device,'machine':platform.machine(),'cudaBuild':getattr(torch.version,'cuda',None)}
-    if str(device).startswith('cuda') and torch.cuda.is_available():
-        properties=torch.cuda.get_device_properties(device)
-        result.update(deviceName=properties.name, deviceCapacityBytes=properties.total_memory,
-                      computeCapability=[properties.major,properties.minor])
-    return result
 
 
 def subprocess_worker(config, root, scratch):
