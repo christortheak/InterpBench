@@ -38,7 +38,7 @@ public enum FittingReviewSummary {
             if case .object(let resources) = review["resources"],
                case .number(let staging) = resources["temporaryActivationBytesUpperBound"],
                case .number(let pair) = resources["float32LensPairBytes"], staging.isFinite, pair.isFinite {
-                result.append("Selected activations need up to \(number(.number(staging / 1_073_741_824), decimals: 2)) GiB of temporary tensor storage. One lens layer pair uses \(number(.number(pair / 1_073_741_824), decimals: 2)) GiB at float32.")
+                result.append("Budget up to \(number(.number(staging / 1_073_741_824), decimals: 2)) GiB of temporary tensor storage at float32 for selected activations. One lens layer pair uses \(number(.number(pair / 1_073_741_824), decimals: 2)) GiB at float32.")
                 result.append("These are tensor sizes, not peak memory. Allow additional space for model weights, forward activations, vocabulary logits, transfers, and file overhead. Temporary activations are removed when assessment exits normally or with an error.")
             }
             result.append("This compares readouts. It does not prove that the text is independent of fitting data or qualify the lens.")

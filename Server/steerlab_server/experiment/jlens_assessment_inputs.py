@@ -5,15 +5,18 @@ from pathlib import Path
 def resource_plan(config, row_count, width, layers, target):
     """Tensor payload estimates, excluding model, forward, and allocator memory."""
     positions = min(config.maxPositionsPerRow, max(0, config.maxSeqLen-config.skipFirst-1))
-    element_bytes = 4 if config.dtype == 'float32' else 2
-    row_bytes = len(set([*layers, target])) * positions * width * element_bytes
+    # Half-precision weights do not require half-precision residuals. Budget
+    # float32 for every captured layer; capture still preserves actual dtype.
+    row_bytes = len(set([*layers, target])) * positions * width * 4
     return {
         'strategy': 'selected activations on disk; one lens layer pair at a time',
         'maximumPositionsPerRow': positions,
+        'activationBudgetDtype': 'float32',
         'selectedActivationRowBytesUpperBound': row_bytes,
         'temporaryActivationBytesUpperBound': row_count * row_bytes,
         'float32LensPairBytes': 2 * width * width * 4,
-        'limitations': 'Tensor payload only, not peak memory or free-space requirements. '
+        'limitations': 'Float32 activation budget; actual dtypes are preserved. '
+                      'Tensor payload only, not peak memory or free-space requirements. '
                       'Allow for the model, forward activations, eight-position vocabulary logits, '
                       'transfers, file headers, and allocator overhead.',
     }

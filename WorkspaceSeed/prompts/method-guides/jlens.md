@@ -464,7 +464,9 @@ Eight-position readout chunks and per-layer accumulation order are unchanged.
 
 The input review (app, CLIs, and API) reports a temporary activation tensor-byte
 upper bound, the selected activation bytes per row, and the float32 lens-pair
-size. These are **not peak-memory estimates**: allow for model weights, forward
+size. Activation storage is budgeted at float32 even for half-precision weights,
+because some architectures retain residuals at higher precision. Actual captured
+dtypes are preserved. These are **not peak-memory estimates**: allow for model weights, forward
 activations, vocabulary logits, transfers, allocator overhead, and file headers.
 The report adds actual staged tensor bytes and row counts, plus lens-layer read
 and placement counts. CPU copies still occur on a CPU runner; these counts are

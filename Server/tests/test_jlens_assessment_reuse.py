@@ -139,10 +139,13 @@ def test_staging_preserves_only_selected_values_and_dtype(tmp_path, dtype):
     assert all(not layer._forward_hooks for layer in model.layers)
 
 
-def test_review_sizes_selected_payload_without_claiming_peak_memory(assessment_case):
+@pytest.mark.parametrize('requested_dtype', ['float16', 'bfloat16', 'float32'])
+def test_review_sizes_selected_payload_without_claiming_peak_memory(assessment_case, requested_dtype):
     root, config = assessment_case
+    config = assessment.AssessmentConfig.from_dict({**config.to_dict(), 'dtype': requested_dtype})
     review = assessment.preflight(config, root)
     resources = review['resources']
+    assert resources['activationBudgetDtype'] == 'float32'
     assert resources['maximumPositionsPerRow'] == 20
     assert resources['float32LensPairBytes'] == 2*2*2*4
     assert resources['selectedActivationRowBytesUpperBound'] == 3*20*2*4
