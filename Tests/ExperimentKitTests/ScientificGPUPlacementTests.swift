@@ -17,9 +17,28 @@ import Testing
         #expect(body == ["planSHA256":.string("review"), "confirmAction":.bool(true), "gpuType":.string("A100"), "shardGPUTypes":.object(["1":.string("H100")])])
         #expect(ScientificGPUPlacement.roundBody().isEmpty)
         for operation in ["jlens-fit-round", "jlens-fit-merge", "rescore-style"] {
-            #expect(!ScientificGPUPlacement.usesGPU(.object(["operation":.string(operation)])))
+            #expect(ScientificGPUPlacement.requirement(.object(["operation":.string(operation)])) == .notApplicable)
         }
-        #expect(ScientificGPUPlacement.usesGPU(.object(["operation":.string("jlens-fit")])))
+        #expect(ScientificGPUPlacement.requirement(.object(["operation":.string("jlens-fit")])) == .gpu)
+    }
+
+    @Test func unknownRequirementsStayUnknownUntilTheServerResolvesPlacement() {
+        let unknown: JSONValue = .object(["operation": .string("future-operation")])
+        #expect(ScientificGPUPlacement.requirement(unknown) == .unknown)
+        #expect(ScientificGPUPlacement.requirement(.object([:])) == .unknown)
+        #expect(ScientificGPUPlacement.requirement(unknown, serverPlan: .object([:])) == .unknown)
+        #expect(ScientificGPUPlacement.requirement(unknown, serverPlan: .object(["executor": .string("slurm")])) == .gpu)
+        #expect(ScientificGPUPlacement.requirement(unknown, serverPlan: .object(["executor": .string("local")])) == .notApplicable)
+        #expect(ScientificGPUPlacement.requirement(unknown, serverPlan: .object(["compute": .string("cpu")])) == .notApplicable)
+    }
+
+    @Test func serverExecutionTakesPrecedenceOverLocalCatalogHints() {
+        let model: JSONValue = .object(["operation": .string("jlens-fit")])
+        #expect(ScientificGPUPlacement.requirement(model) == .gpu)
+        #expect(ScientificGPUPlacement.requirement(model, serverPlan: .object(["executor": .string("local"), "compute": .string("model")])) == .notApplicable)
+        let cpu: JSONValue = .object(["operation": .string("jlens-fit-merge")])
+        #expect(ScientificGPUPlacement.requirement(cpu, serverPlan: .object(["executor": .string("slurm"), "compute": .string("model")])) == .gpu)
+        #expect(ScientificGPUPlacement.requirement(model, serverPlan: .object(["executor": .string("slurm"), "compute": .string("cpu")])) == .notApplicable)
     }
 
     @Test func reviewShowsActualShardPlacementAndPilotLimitations() throws {

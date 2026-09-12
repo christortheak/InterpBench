@@ -16,10 +16,20 @@ public struct ScientificGPUPlacement: Codable, Sendable {
         return "Site-declared memory: \(capacity) GB per GPU. This is not a peak-memory estimate or a verified workload fit."
     }
 
-    public static func usesGPU(_ request: JSONValue) -> Bool {
+    /// Whether a scheduler GPU choice applies, rather than whether the model
+    /// can ever use a GPU. A local executor has no scheduler placement choice.
+    public enum Requirement: Sendable {
+        case unknown, notApplicable, gpu
+    }
+
+    public static func requirement(_ request: JSONValue, serverPlan: JSONValue? = nil) -> Requirement {
+        if case .object(let plan) = serverPlan {
+            if plan["compute"] == .string("cpu") || plan["executor"] == .string("local") { return .notApplicable }
+            if plan["executor"] == .string("slurm") { return .gpu }
+        }
         guard case .object(let object) = request, case .string(let operation) = object["operation"],
-              let method = try? ScienceCatalog.operation(operation) else { return false }
-        return method.compute != "cpu"
+              let method = try? ScienceCatalog.operation(operation) else { return .unknown }
+        return method.compute == "cpu" ? .notApplicable : .gpu
     }
 
     public static func roundBody(hash: String? = nil, gpuType: String = "", overrides: [Int: String] = [:]) -> [String: JSONValue] {
