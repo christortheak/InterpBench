@@ -17,22 +17,30 @@ def build_scientific_execution_router(state):
             raise ValueError('This worker has no durable job queue; use its controller.')
         return state.jobs
 
+    def placement(body):
+        # A request document never has a top-level `request` key, so the wrapped
+        # form {request, gpuType} is unambiguous; a bare document keeps today's shape.
+        if isinstance(body, dict) and 'request' in body and set(body) <= {'request', 'gpuType'}:
+            return body['request'], body.get('gpuType')
+        return body, None
+
     @router.post('/api/science/plan')
     def plan(body: dict):
         try:
-            return scientific_execution.plan(body, ServerProfile.from_env())
+            request, gpu_type = placement(body)
+            return scientific_execution.plan(request, ServerProfile.from_env(), gpu_type=gpu_type)
         except (ValueError, OSError) as exc:
             raise refuse(exc) from exc
 
     @router.post('/api/science/submit')
     def submit(body: dict):
         try:
-            if set(body) != {'request', 'planSHA256'} or not isinstance(body['planSHA256'], str):
-                raise ValueError('Supply exactly request and planSHA256 from the reviewed plan.')
+            if not {'request', 'planSHA256'} <= set(body) <= {'request', 'planSHA256', 'gpuType'} or not isinstance(body['planSHA256'], str):
+                raise ValueError('Supply exactly request and planSHA256 from the reviewed plan, with the same gpuType if one was reviewed.')
             if state.jobs is None:
                 raise ValueError('Submit on the controller or workstation that owns the job queue.')
             return scientific_execution.submit(body['request'], body['planSHA256'],
-                profile=ServerProfile.from_env(), jobs=state.jobs, registry=state.registry)
+                profile=ServerProfile.from_env(), jobs=state.jobs, registry=state.registry, gpu_type=body.get('gpuType'))
         except (ValueError, OSError) as exc:
             raise refuse(exc) from exc
 

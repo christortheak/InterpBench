@@ -146,7 +146,7 @@ def input_plan(request, root):
 
 
 @input_hashes.operation
-def plan(request, profile, *, execution_capsule=None, round_submission=None):
+def plan(request, profile, *, execution_capsule=None, round_submission=None, gpu_type=None):
     with submitting():
         if server_role(profile) == 'gpu-session':
             raise ScientificRefusal('Submit through the controller; session workers own no durable job queue.')
@@ -185,6 +185,20 @@ def plan(request, profile, *, execution_capsule=None, round_submission=None):
         result['executor'] = selected_executor
         resources = SlurmResources.from_env(job_name='scientific-diagnostic')
         resources.auto_resubmit = False  # These owners have no checkpoint/resume protocol.
+        if gpu_type is not None:
+            # Placement is execution shape, not scientific content: it rides on
+            # the plan and submit call, never inside the published request, and
+            # it is bound into planSHA256 through the resources block below.
+            if selected_executor != 'slurm':
+                raise ScientificRefusal('This operation runs on the controller without a GPU; omit gpuType.')
+            declared = list(resources.gpu_types)
+            if not isinstance(gpu_type, str) or gpu_type not in declared:
+                error = ScientificRefusal('GPU type ' + repr(gpu_type) + ' is not declared for this site: '
+                                          + (', '.join(declared) if declared else 'no GPU vocabulary declared') + '.')
+                error.repair_action = 'Choose one of the declared GPU types, or omit gpuType for the site default.'
+                raise error
+            resources.gres = 'gpu:' + gpu_type + ':' + str(resources.gpus)
+            result['requestedGPUType'] = gpu_type
         result['resources'] = asdict(resources) if selected_executor == 'slurm' else {'executor': 'local'}
         if selected_executor == 'slurm':
             # Render without writing to apply the same required-header and GRES
@@ -205,9 +219,9 @@ def write_json(path, document):
     os.replace(temporary, path)
 
 
-def submit(request, expected, *, profile, jobs, registry=None, execution_capsule=None, round_submission=None):
+def submit(request, expected, *, profile, jobs, registry=None, execution_capsule=None, round_submission=None, gpu_type=None):
     with submitting():
-        reviewed = plan(request, profile, execution_capsule=execution_capsule, round_submission=round_submission)
+        reviewed = plan(request, profile, execution_capsule=execution_capsule, round_submission=round_submission, gpu_type=gpu_type)
         if reviewed['planSHA256'] != expected:
             raise ScientificRefusal('The request, inputs, root or resource plan changed after review; nothing was submitted.')
         from ..experiment import paths

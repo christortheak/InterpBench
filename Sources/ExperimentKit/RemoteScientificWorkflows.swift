@@ -24,14 +24,17 @@ public enum ScientificRequestDocument {
 }
 
 extension ClusterClient {
-    public func scientificPlan(_ request: JSONValue) async throws -> JSONValue {
+    public func scientificPlan(_ request: JSONValue, gpuType: String? = nil) async throws -> JSONValue {
         // A staged bundle is re-verified file by file at plan time; a multi-gigabyte
-        // checkpoint can take minutes before the first response byte.
-        try await post("/api/science/plan", body: request, timeout: 3600)
+        // checkpoint can take minutes before the first response byte. A GPU type is
+        // placement, so it wraps the request instead of editing it.
+        let body: JSONValue = gpuType.map { .object(["request": request, "gpuType": .string($0)]) } ?? request
+        return try await post("/api/science/plan", body: body, timeout: 3600)
     }
-    public func scientificSubmit(_ request: JSONValue, planSHA256: String) async throws -> JSONValue {
-        let response: JSONValue = try await post("/api/science/submit", body: JSONValue.object([
-            "request": request, "planSHA256": .string(planSHA256)]), timeout: 3600)
+    public func scientificSubmit(_ request: JSONValue, planSHA256: String, gpuType: String? = nil) async throws -> JSONValue {
+        var body: [String: JSONValue] = ["request": request, "planSHA256": .string(planSHA256)]
+        if let gpuType { body["gpuType"] = .string(gpuType) }
+        let response: JSONValue = try await post("/api/science/submit", body: JSONValue.object(body), timeout: 3600)
         guard case .object(let object) = response, case .string(let id) = object["jobId"], !id.isEmpty else {
             throw ExperimentError(reason: "Diagnostic submission returned no job ID. Its outcome is uncertain; inspect jobs on this endpoint before any retry.")
         }
@@ -81,13 +84,17 @@ enum RemoteScientificWorkflowsCLI {
         switch args[0] {
         case "science-plan", "science-submit":
             let request = try ScientificRequestDocument.read(Data(contentsOf: URL(filePath: positionals[0])))
-            if args[0] == "science-plan" { result = try await client.scientificPlan(request) }
+            let gpuType = flag("--gpu-type")
+            if let gpuType, gpuType.trimmingCharacters(in: .whitespaces).isEmpty {
+                throw ExperimentError.malformed("Supply a declared GPU type with --gpu-type, or omit it for the site default.", repair: "Read cluster preview for the site's declared GPU types.")
+            }
+            if args[0] == "science-plan" { result = try await client.scientificPlan(request, gpuType: gpuType) }
             else {
                 guard let expected = flag("--plan-sha256"), expected.count == 64,
                     expected.allSatisfy({ "0123456789abcdef".contains($0) }) else {
                     throw ExperimentError.malformed("Supply the exact planSHA256 from this endpoint's science-plan.", repair: "Review the request again and pass --plan-sha256 <digest>.")
                 }
-                result = try await client.scientificSubmit(request, planSHA256: expected)
+                result = try await client.scientificSubmit(request, planSHA256: expected, gpuType: gpuType)
             }
         case "reconcile": result = try await client.reconcileJobs()
         case "recovery": result = try await client.recoveryReview(positionals[0])

@@ -394,6 +394,15 @@ Use the hash from `plan` for submission/cancellation and the hash from
 shard requests automatically use its verified execution capsule; do not hand
 edit their paths. Plan and submit allow time for multi-gigabyte verification.
 
+The GPU type is chosen at plan time, not in the published request: pass
+`--gpu-type <type>` (Mac `remote science-plan`/`science-submit`, Python
+`runner science-plan`/`science-submit`, or `gpuType` beside the request on the
+HTTP routes). The type must be one the site declares; omitted means the site
+default. It is bound into the plan hash, so a plan reviewed for one type cannot
+be submitted to another. The checkpoint identity records the device class, not
+the GPU model, so fits from different GPU types can be merged; compare their
+matrices numerically before relying on a mixed merge.
+
 Queue reviews identify the active scientific jobs occupying this controller's
 capacity, including jobs from other rounds or methods. Uncertain shard indices
 are listed separately and reserve slots until reconciled. The Mac shows this

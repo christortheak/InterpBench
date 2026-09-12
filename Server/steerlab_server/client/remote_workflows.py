@@ -17,7 +17,9 @@ def run(client, invocation, common):
             request = json.loads(Path(value).read_text())
         except (OSError, ValueError) as exc:
             raise ClientRefusal(code='usage', reason=f'Cannot read diagnostic request: {exc}', repair_action='Supply a JSON document with operation and parameters.') from exc
-        document = client.scientific_plan(request) if verb == 'science-plan' else client.scientific_submit(request, invocation.one('--plan-sha256'))
+        gpu_type = invocation.one('--gpu-type')
+        document = (client.scientific_plan(request, gpu_type) if verb == 'science-plan'
+                    else client.scientific_submit(request, invocation.one('--plan-sha256'), gpu_type))
     elif verb == 'reconcile':
         document = client.reconcile_jobs()
     elif verb == 'resubmit':

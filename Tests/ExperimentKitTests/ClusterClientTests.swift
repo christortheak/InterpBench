@@ -2605,6 +2605,25 @@ import Testing
         _ = try await client.scientificSubmit(staged, planSHA256: String(repeating: "b", count: 64))
     }
 
+    @Test func scientificPlanAndSubmitWrapTheRequestOnlyWhenAGPUTypeIsChosen() async throws {
+        let staged = JSONValue.object(["inputBundleSHA256": .string(String(repeating: "a", count: 64))])
+        let recorded = RecordedBodies()
+        let client = ClusterClient(profile: .init(baseURL: URL(string: "http://server.test")!), session: Self.session { request in
+            if let data = Self.bodyData(from: request), let value = try? JSONDecoder().decode(JSONValue.self, from: data) { recorded.append(value) }
+            return (Data("{\"jobId\":\"fixture-job\",\"status\":\"submitted\"}".utf8), 200)
+        })
+        _ = try await client.scientificPlan(staged)
+        _ = try await client.scientificPlan(staged, gpuType: "H100")
+        _ = try await client.scientificSubmit(staged, planSHA256: String(repeating: "b", count: 64))
+        _ = try await client.scientificSubmit(staged, planSHA256: String(repeating: "b", count: 64), gpuType: "H100")
+        let bodies = recorded.values
+        #expect(bodies.count == 4)
+        #expect(bodies[0] == staged)
+        #expect(bodies[1] == .object(["request": staged, "gpuType": .string("H100")]))
+        if case .object(let plain) = bodies[2] { #expect(plain["gpuType"] == nil && plain["request"] == staged) } else { Issue.record("submit body") }
+        if case .object(let typed) = bodies[3] { #expect(typed["gpuType"] == .string("H100") && typed["planSHA256"] == .string(String(repeating: "b", count: 64))) } else { Issue.record("typed submit body") }
+    }
+
     private static func session(
         handler: @escaping @Sendable (URLRequest) throws -> (Data, Int)
     ) -> URLSession {
@@ -2642,6 +2661,13 @@ import Testing
 /// The scripted server's one mutable cell for the precheck→push→recheck
 /// flow test (class reference so the @Sendable handler closure can mutate
 /// it; the serialized suite keeps access single-threaded).
+private final class RecordedBodies: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [JSONValue] = []
+    func append(_ value: JSONValue) { lock.lock(); items.append(value); lock.unlock() }
+    var values: [JSONValue] { lock.lock(); defer { lock.unlock() }; return items }
+}
+
 private final class ScriptedManifestStore: @unchecked Sendable {
     var body: Data
     init(initial: Data) { body = initial }

@@ -909,16 +909,21 @@ class RunnerClient:
         return self._json("POST", f"/api/science/jobs/{quote(job_id, safe='')}/cleanup-apply",
             json_body={"custody": custody, "planSHA256": plan_sha256, "confirmRemoval": True})
 
-    def scientific_plan(self, request: dict) -> dict:
+    def scientific_plan(self, request: dict, gpu_type: str | None = None) -> dict:
         # Planning a staged bundle re-verifies every staged file; a multi-gigabyte
-        # checkpoint can take minutes before any response byte.
-        return self._json("POST", "/api/science/plan", json_body=request, timeout=self.diagnostic_timeout)
+        # checkpoint can take minutes before any response byte. A GPU type is
+        # placement, so it wraps the request instead of editing it.
+        body = request if gpu_type is None else {"request": request, "gpuType": gpu_type}
+        return self._json("POST", "/api/science/plan", json_body=body, timeout=self.diagnostic_timeout)
 
-    def scientific_submit(self, request: dict, plan_sha256: str) -> dict:
+    def scientific_submit(self, request: dict, plan_sha256: str, gpu_type: str | None = None) -> dict:
         # Exactly one POST. Inspect jobs after ambiguous transport failure.
         if not isinstance(plan_sha256, str) or not _SHA256_HEX.fullmatch(plan_sha256):
             raise RunnerRefusal("Use the exact SHA-256 from science-plan.", repair_action="Review science-plan on the intended runner.")
-        response = self._json("POST", "/api/science/submit", json_body={"request": request, "planSHA256": plan_sha256}, timeout=self.diagnostic_timeout)
+        body = {"request": request, "planSHA256": plan_sha256}
+        if gpu_type is not None:
+            body["gpuType"] = gpu_type
+        response = self._json("POST", "/api/science/submit", json_body=body, timeout=self.diagnostic_timeout)
         if not isinstance(response, dict) or not isinstance(response.get("jobId"), str) or not response["jobId"]:
             raise RunnerError("Diagnostic submission returned no job ID; its outcome is uncertain.", repair_action="Inspect runner jobs on the same endpoint before considering another submission.")
         return response

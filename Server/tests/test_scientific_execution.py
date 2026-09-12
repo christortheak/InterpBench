@@ -345,3 +345,51 @@ def test_portable_cli_dispatches_each_remote_workflow(tmp_path, monkeypatch, cap
     envelope = json.loads(capsys.readouterr().out)
     assert envelope['result']['response']['jobId'] == 'example-job'
     assert calls == [(method, route)]
+
+
+def test_gpu_type_is_reviewed_validated_and_bound_into_the_plan(setup, monkeypatch):
+    from dataclasses import replace
+    root, request, profile = setup
+    with pytest.raises(owner.ScientificRefusal, match='omit gpuType'):
+        owner.plan(request, profile, gpu_type='A100')  # local executor: no placement to choose
+    monkeypatch.setenv('STEERLAB_SERVER_ROLE', 'controller')
+    monkeypatch.setenv('STEERLAB_SLURM_GRES', 'gpu:A100:1')
+    monkeypatch.setenv('STEERLAB_SLURM_GPU_TYPES', 'A100,H100')
+    profile = replace(profile, executor='slurm')
+    default = owner.plan(request, profile)
+    assert owner.plan(request, profile, gpu_type=None) == default and 'requestedGPUType' not in default
+    same = owner.plan(request, profile, gpu_type='A100')
+    assert same['resources']['gres'] == 'gpu:A100:1' and same['requestedGPUType'] == 'A100'
+    other = owner.plan(request, profile, gpu_type='H100')
+    assert other['resources']['gres'] == 'gpu:H100:1' and other['requestedGPUType'] == 'H100'
+    assert '--gres=gpu:H100:1' in other['schedulerPreview'] and '--gres=gpu:A100:1' in default['schedulerPreview']
+    assert len({default['planSHA256'], same['planSHA256'], other['planSHA256']}) == 3
+    with pytest.raises(owner.ScientificRefusal, match='not declared for this site: A100, H100') as refusal:
+        owner.plan(request, profile, gpu_type='L4')
+    assert 'omit gpuType' in refusal.value.repair_action
+    jobs = JobManager(store=DurableJobStore(str(root / 'jobs.sqlite')), sweep_orphans=False)
+    with pytest.raises(owner.ScientificRefusal, match='changed after review'):
+        owner.submit(request, other['planSHA256'], profile=profile, jobs=jobs)  # reviewed for H100, submitted without it
+    assert jobs.list() == []
+
+
+def test_http_plan_and_submit_carry_the_gpu_type_beside_the_request(setup, monkeypatch):
+    from dataclasses import replace
+    root, request, profile = setup
+    monkeypatch.setenv('STEERLAB_SERVER_ROLE', 'controller')
+    monkeypatch.setenv('STEERLAB_EXECUTOR', 'slurm')
+    monkeypatch.setenv('STEERLAB_SLURM_GRES', 'gpu:A100:1')
+    monkeypatch.setenv('STEERLAB_SLURM_GPU_TYPES', 'A100,H100')
+    profile = replace(profile, executor='slurm')
+    jobs = JobManager(store=DurableJobStore(str(root / 'jobs.sqlite')), sweep_orphans=False)
+    app = FastAPI(); app.include_router(build_scientific_execution_router(SimpleNamespace(jobs=jobs, registry=None)))
+    client = TestClient(app)
+    bare = client.post('/api/science/plan', json=request).json()
+    wrapped = client.post('/api/science/plan', json={'request': request, 'gpuType': 'H100'}).json()
+    assert bare == owner.plan(request, profile) and wrapped['requestedGPUType'] == 'H100'
+    refused = client.post('/api/science/plan', json={'request': request, 'gpuType': 'L4'})
+    assert refused.status_code == 409 and 'not declared' in refused.json()['detail']['reason']
+    stale = client.post('/api/science/submit', json={'request': request, 'planSHA256': wrapped['planSHA256']})
+    assert stale.status_code == 409 and jobs.list() == []
+    malformed = client.post('/api/science/submit', json={'request': request, 'planSHA256': wrapped['planSHA256'], 'gres': 'gpu:H100:1'})
+    assert malformed.status_code == 409
