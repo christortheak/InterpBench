@@ -48,8 +48,9 @@ Top-level fields are closed: `artifactType: activation-probe`, `schemaVersion: 1
   affine layer. `mean-difference-v1` and `linear-logit-v1` have one identity
   layer with one output. `mlp-relu-logit-v1` has a ReLU hidden layer followed by
   one identity output. Shape checks bind every dimension. The reference scorer
-  uses sequential binary64 arithmetic; tensor-runtime parity is a later measured
-  contract, not implied by this reference implementation.
+  uses binary64 arithmetic and the interpreter's built-in `sum` for affine
+  reductions. Bitwise equality across interpreter versions or tensor backends
+  is not implied; tensor-runtime parity is a later measured contract.
 - `output`: distinct `negativeLabel` and `positiveLabel`, `scoreKind`
   (`signedMargin` for mean difference, `logit` for classifiers), and a finite
   `threshold`. Positive means score strictly greater than threshold; ties are

@@ -138,8 +138,8 @@ Proposed initial choices are the existing difference-of-means reader, a
 regularized linear classifier, and a small MLP classifier. Give different
 algorithms different method identities. Do not relabel an old reader as logistic
 regression, or change its behavior under an existing recipe identifier. Binary
-classification is a practical first vertical slice; settle target-type coverage
-at the post-discussion contract review. Do not silently add multiclass or
+classification is a practical first vertical slice; P0 settles initial target-type coverage
+as binary classification in the artifact contract. Do not silently add multiclass or
 regression training obligations to the agreed initial feature.
 
 Allow a fixed layer, and optionally an explicitly declared layer comparison or
@@ -226,7 +226,7 @@ The invocation context should provide the activation/logit tensor, semantic
 site, model identity, generation stage, position metadata and masks, sequence
 identity, declared probe inputs, and the provider's own state. Providers return
 typed measurements/actions and updated state. Exact type and field names are
-implementation proposals to settle after the next discussion, not a shipped API.
+defined in the P0 contract; executable tensor ABI types land with runtime tests.
 
 Register only requested locations. Execute providers in the model process, using
 device-side tensor operations where practical. Do not introduce per-layer HTTP,
@@ -369,14 +369,14 @@ fallback policy; never silently count a failed measurement as a successful one,
 or report an unapplied action as applied. Persist useful partial failure evidence
 without rewriting completed runs. Raw activation recording is opt-in and bounded.
 
-## 10. Ordered implementation work after authorization
+## 10. Authorized implementation order
 
 Each slice should be reviewable and committed independently. Rebase or merge
 current main's fixes using the established process before starting a code branch.
 
 | Slice | Work | Exit criterion |
 |---|---|---|
-| P0 — incorporate the next discussion | Amend scope, settle initial target types, artifact schemas, semantic sites, units, action ordering, provider ABI, and support matrix | User's additional consideration is explicitly resolved; contracts and initial scope are reviewable |
+| P0 — contracts (recorded) | Resolve the J-lens/GPU discussion; settle binary targets, artifacts, sites, units, ordering, and initial surface support | Authorization and contracts recorded; executable tensor ABI remains paired with P3–P5 implementation tests |
 | P1 — probe owners and artifact contract | Inventory legacy readers and data; separate training/evaluation/library responsibilities from panel coordinators; introduce versioned recipes and portable serialization | Independent numerical fixtures and cross-client artifact round trips; existing readers remain usable without rewritten bytes |
 | P2 — complete the probe journey | Implement managed capture/training/evaluation, Probes library, shared guided authoring, and programmatic lifecycle | App and agent can train, evaluate, publish, discover, and inspect a probe using real owners |
 | P3 — read-only study measurements | Add frozen measurement settings, position/stage alignment, compact recording, optional activation retention, and Results views | A study records multiple probes across selected conditions/agents; disabled instrumentation preserves baseline behavior |
