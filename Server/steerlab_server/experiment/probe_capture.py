@@ -157,6 +157,8 @@ def capture(config, *, root, log=print, on_run_created=None):
         'limitations':['Text is replayed once without generation or interventions. This does not measure a live response.',
                       'Tokenization is capped at maxSeqLen; inspect token IDs and positions in this report. Raw text uses native special tokens; chat uses one user message and a generation cue.',
                       'Group hashing is 60/20/20 in expectation; small groups may leave a split or class empty. Fitting validates its actual class counts.']}
+    if config.position == 'eachNonPadding':
+        report['limitations'].append('Each observed prefix inherits the whole example label. Decide whether that label is meaningful before the full example has been read.')
     data.save(run,'capture-report.json',report);(run/'COMPLETED').write_text('probe-capture\n')
     return {'runDirectory':str(run),'reportPath':str(run/'capture-report.json'),'datasets':files}
 
@@ -164,4 +166,5 @@ def capture(config, *, root, log=print, on_run_created=None):
 def preflight(config, root):
     rows=data.text_rows(data.read(config.examples,root),config.splitPolicy,config.seed)
     return {'examples':min(len(rows),config.maxExamples),'maxRecords':config.maxRecords,
-            'maxActivationJSONBytes':data.MAX_BYTES,'modelLoaded':False}
+            'maxActivationJSONBytes':data.MAX_BYTES,'modelLoaded':False,
+            'limitations':['Dataset limits do not bound model memory. Multimodal checkpoints can load vision components even for text-only capture; allow memory for the full checkpoint.']}

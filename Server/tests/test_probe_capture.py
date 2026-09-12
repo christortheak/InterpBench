@@ -101,3 +101,14 @@ def test_tokenizer_identity_covers_fast_normalization_and_keeps_slow_unknown():
     tokenizer.add_bos_token=True
     assert capture.tokenizer_identity(tokenizer)!=second
     assert capture.tokenizer_identity(SimpleNamespace(get_vocab=lambda:{'same':1})) is None
+
+
+def test_capture_reports_prefix_labeling_and_preflight_model_memory(tmp_path, monkeypatch):
+    monkeypatch.setattr(capture, 'load', lambda config, log: (Toy().eval(), Tokens(), {'tokenizerSHA256': 'b'*64, 'templateSHA256': None}))
+    cfg = capture.CaptureConfig.from_dict({'modelID': 'example/model', 'revision': 'a'*40,
+        'examples': capture_input(tmp_path), 'layer': 0, 'device': 'cpu', 'position': 'eachNonPadding'})
+    assert 'full checkpoint' in capture.preflight(cfg, tmp_path)['limitations'][0]
+    result = capture.capture(cfg, root=tmp_path, log=lambda _: None)
+    report = json.loads(Path(result['reportPath']).read_text())
+    assert any('inherits the whole example label' in note for note in report['limitations'])
+    assert report['counts']['fit']['rows'] == 12

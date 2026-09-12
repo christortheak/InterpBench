@@ -109,8 +109,8 @@ loaded too. Memory for the capture pilot is bounded by the model, not the
 data, and the cost review says so.
 
 **N4 — discovery is one level deep by design.** The library recognizes
-`runs/<run>/<name>.probe.json` and legacy `<name>-probe.json` only; a probe
-copied elsewhere is inspectable by path but not listed.
+`runs/<run>/<name>.probe.json` and legacy `<name>-probe.json` only; inspection enforces the same layout as discovery. A probe
+copied elsewhere is neither listed nor inspectable through this interface.
 
 **N5 — live acceptance is owed.** A real capture on the 27B or the 4B on
 CUDA, a fit and an evaluation collected through the managed round trip,
