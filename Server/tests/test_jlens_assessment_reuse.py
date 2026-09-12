@@ -1,7 +1,7 @@
 """Numerical equivalence and bounded lens residency against the landed owner."""
 import json
 from pathlib import Path
-import subprocess
+import hashlib
 import weakref
 from types import ModuleType, SimpleNamespace
 
@@ -39,10 +39,10 @@ def read_report(result):
 
 
 def baseline_owner():
-    # Frozen reviewed implementation, not a second formula that evolves with ours.
-    repo = Path(__file__).resolve().parents[2]
-    text = subprocess.check_output(['git', 'show',
-        '224de6464d5cd42df174c94d3f566fd6ffb91c8f:Server/steerlab_server/experiment/jlens_assessment.py'], cwd=repo)
+    # Byte-pinned, reviewed source fixture: the runtime suite also works in a
+    # shallow clone or exported release tree. The AST gate proves its origin.
+    text = (Path(__file__).parent/'fixtures/jlens/assessment-baseline-224de64.py.txt').read_bytes()
+    assert hashlib.sha256(text).hexdigest() == 'a18464536b824a95d9828b505cc3bcb7d094872ea1d6cf4acf82111f8ce0fd9d'
     owner = ModuleType('steerlab_server.experiment.assessment_baseline')
     owner.__package__ = 'steerlab_server.experiment'
     exec(compile(text, '<assessment baseline at 224de64>', 'exec'), owner.__dict__)

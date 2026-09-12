@@ -102,7 +102,9 @@ def action(job_id,action,expected,confirmed,jobs,profile):
             request={'operation':'jlens-fit-merge','parameters':{'config':{'fits':fits,'allowPartial':True}}}
             plan['mergeRequest']=request
             plan['mergePlan']=scientific_execution.plan(request,profile,execution_capsule=capsule)
-        plan['planSHA256']=archives.digest(plan)
+        # Capacity detail explains the reviewed slots; unrelated status-only
+        # changes must not introduce another submission precondition.
+        plan['planSHA256']=archives.digest({key:value for key,value in plan.items() if key!='capacity'})
         if not mutation:return plan
         if expected!=plan['planSHA256']:raise archives.Refusal('Round state, inputs, or queue capacity changed. Review a fresh plan.')
         if action=='cancel':

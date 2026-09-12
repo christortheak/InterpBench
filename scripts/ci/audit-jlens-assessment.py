@@ -50,7 +50,9 @@ def moved_chunk(node):
 
 
 def main():
-    old = ast.parse(subprocess.check_output(['git', 'show', BASE+':'+PATH], cwd=ROOT))
+    original = subprocess.check_output(['git', 'show', BASE+':'+PATH], cwd=ROOT)
+    assert (ROOT/'Server/tests/fixtures/jlens/assessment-baseline-224de64.py.txt').read_bytes() == original, 'Frozen runtime baseline differs from reviewed source'
+    old = ast.parse(original)
     new = ast.parse((ROOT/PATH).read_text())
     original_distance = function(old, 'distances')
     assert dump(original_distance) == dump(function(new, 'distances')), 'Distance body changed'

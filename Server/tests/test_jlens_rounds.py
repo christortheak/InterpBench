@@ -86,17 +86,21 @@ def test_http_round_review_and_exact_mutation_body(round_job):
 
 def test_capacity_explains_unrelated_science_jobs_without_changing_scope(round_job):
     parent, jobs, profile = round_job
-    unrelated = jobs.record_external('science:jlens-fit-assess', status='running', executor='slurm',
+    unrelated = jobs.record_external('science:jlens-fit-assess', status='submitted', executor='slurm',
                                      result={'scientificPlan':{'roundSubmission':None}})
     jobs.record_external('science:jlens-fit', status='succeeded', executor='slurm')
     jobs.record_external('chat', status='running', executor='local')
     review = jlens_rounds.action(parent.id, 'plan', None, False, jobs, profile)
     assert review['availableSlots'] == 0 and review['submitIndices'] == []
     assert review['capacity']['activeJobs'] == [
-        {'jobID':unrelated.id,'kind':unrelated.kind,'status':'running','belongsToThisRound':False}]
+        {'jobID':unrelated.id,'kind':unrelated.kind,'status':'submitted','belongsToThisRound':False}]
     assert review['capacity']['occupiedSlots'] == review['capacity']['limit'] == 1
     assert 'Other scientific jobs on this controller count too' in review['capacity']['summary']
     assert jlens_rounds.action(parent.id, 'plan', None, False, jobs, profile)['planSHA256'] == review['planSHA256']
+    unrelated.status = 'running'; jobs.store.update(unrelated)
+    status_only = jlens_rounds.action(parent.id, 'plan', None, False, jobs, profile)
+    assert status_only['capacity']['activeJobs'][0]['status'] == 'running'
+    assert status_only['planSHA256'] == review['planSHA256']
     unrelated.status = 'succeeded'; jobs.store.update(unrelated)
     fresh = jlens_rounds.action(parent.id, 'plan', None, False, jobs, profile)
     assert fresh['capacity']['activeJobs'] == [] and fresh['submitIndices'] == [0]
