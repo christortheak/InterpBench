@@ -212,15 +212,56 @@ are compared.
   result, and run `jlens-fit-assess` between the two lenses and against
   the final residual on held-out text. This is the readout-level answer to
   whether the batching difference matters, and it is the assessment
-  operation's live acceptance. Record the batching sensitivity from §3 in
-  the qualification record of any lens fitted at batch 4, with its
-  conditions.
+  operation's live acceptance. **Done; see §5a.** Record the batching
+  sensitivity from §3 in the qualification record of any lens fitted at
+  batch 4, with its conditions.
 - **Stopping rule: unchanged.** The running-mean-change statistic measures
   how much one more row moves the estimate; the benchmark measured how a
   change of computation moves it. They are different quantities, and
   nothing here justifies changing which layers the rule evaluates. (The
   first version of this document suggested otherwise; that suggestion is
   withdrawn.)
+
+## 5a. Readout-level result (added the same night)
+
+The experiment named in §5 ran. The pilot's eight rows were fitted at
+dimension batch 4 on an H100 (1 h 29 min, about 640 s per row; the
+running-mean-change statistic tracked the batch-1 fit row for row:
+0.478 / 0.363 / 0.306 / 0.257 against 0.473 / 0.370 / 0.311 / 0.254 on rows
+4–7). The result was registered and assessed against the batch-1 eight-row
+lens with `jlens-fit-assess` on sixteen held-out 700-character windows cut
+from the study's own case text (a different source from the fitting
+corpus), 64 positions per row after skipping 16, top-10 overlap:
+
+| Comparison | JS divergence, min / median / max over 63 layers | Top-10 overlap, layer 0 → 62 |
+|---|---|---|
+| batch-1 lens vs batch-4 lens | 0.0000 / 0.0001 / 0.0032 | 0.89 → 1.00 (1.00 from layer 48) |
+| batch-1 lens vs final residual | 0.141 / 0.662 / 0.689 | 0.00 → 0.60 |
+| batch-4 lens vs final residual | 0.141 / 0.662 / 0.689 | 0.00 → 0.60 |
+
+At readout level the two lenses are the same instrument on this text: the
+largest between-lens divergence at any layer is 0.003, the two lenses'
+agreement with the final residual is identical to three decimals at every
+layer, and their top-10 token sets coincide at 89% of positions even at
+layer 0, where the matrices differ by 5%. The 5% early-layer matrix gap
+does not change what a researcher would read. This is one held-out set of
+sixteen rows from one source, so it is evidence for this model, corpus,
+and text population, not a general guarantee; but it is the measurement
+§4 said was needed, and it favours fitting at batch 4.
+
+Two side observations. The assessment took five minutes on an H100 for
+16 rows and 126 lens-layer reads (671 MB of staged activations), which is
+the live acceptance of the assessment-reuse landing. And both eight-row
+lenses agree poorly with the final residual at every layer (JS above 0.6
+until the last few layers), which is what an eight-row fit should look
+like against a reference recipe that used about 800 rows; it says nothing
+about batching and everything about the funded round's row budget.
+
+Run: `runs/jlens-assessment-f29facc3…` in the workspace, with receipt.
+Requests: `requests/jlens-fit-27b-8rows-dimbatch4`,
+`requests/jlens-assess-27b-batch1-vs-batch4`; held-out corpus
+`prompts/fitting/jlens-heldout-ladder-12week` (derivation README in
+`prompts/fitting/sources/`).
 
 ## 6. Work for the agents
 
