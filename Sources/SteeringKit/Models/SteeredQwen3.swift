@@ -192,6 +192,7 @@ public class SteeredQwen3ModelInner: Module {
     // [SteerLab] residual-stream hooks; mutated only inside the
     // ModelContainer actor (see InterventionHookable).
     var interventions: [any LayerIntervention] = []
+    var residualRuntime: ResidualRuntime?
 
     public init(_ args: SteeredQwen3Configuration) throws {
         precondition(args.vocabularySize > 0)
@@ -217,10 +218,15 @@ public class SteeredQwen3ModelInner: Module {
         let offset = cache?.first?.offset ?? 0
 
         for (i, layer) in layers.enumerated() {
+            if let residualRuntime {
+                h = residualRuntime.apply(h, site: .pre(i), offset: offset)
+            }
             h = layer(h, mask: mask, cache: cache?[i])
             // [SteerLab] hook fires after every block, on every forward pass.
-            for intervention in interventions {
-                h = intervention.apply(h, layer: i, offset: offset)
+            if let residualRuntime {
+                h = residualRuntime.apply(h, site: .post(i), offset: offset, interventions: interventions)
+            } else {
+                h = ResidualRuntime.applyLegacy(h, interventions: interventions, layer: i, offset: offset)
             }
         }
 
@@ -377,5 +383,12 @@ public struct SteeredQwen3Configuration: Codable, Sendable {
 extension SteeredQwen3Model: LoRAModel {
     public var loraLayers: [Module] {
         model.layers
+    }
+}
+
+extension SteeredQwen3Model: ResidualRuntimeHookable {
+    public var residualRuntime: ResidualRuntime? {
+        get { model.residualRuntime }
+        set { model.residualRuntime = newValue }
     }
 }

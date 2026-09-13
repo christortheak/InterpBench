@@ -22,6 +22,7 @@ import torch.nn as nn
 
 from ..memory_diagnostic import enabled as _diagnostic_enabled, new_counters
 from .intervention import LayerIntervention
+from .runtime import Runtime, Site, apply_legacy
 
 
 def find_decoder_layers(model: nn.Module) -> nn.ModuleList:
@@ -142,12 +143,13 @@ class _Arming:
     is a decision the manager makes — see :meth:`HookedModel.disarm`.
     """
 
-    __slots__ = ("previous", "previous_arming", "abandonable")
+    __slots__ = ("previous", "previous_arming", "abandonable", "runtime")
 
     def __init__(self, previous, previous_arming, abandonable: bool):
         self.previous = previous
         self.previous_arming = previous_arming
         self.abandonable = abandonable
+        self.runtime = Runtime()
 
 
 class HookedModel:
@@ -174,6 +176,8 @@ class HookedModel:
         self.model = model
         self.layers = find_decoder_layers(model)
         self._handles: list = []
+        self._pre_handles: dict = {}
+        self._unscoped_runtime = Runtime()
         self._last_layer_index = len(self.layers) - 1
         self._cumulative_offset = 0
         self._current_offset = 0
@@ -209,10 +213,9 @@ class HookedModel:
 
     def _install(self) -> None:
         # The counting twin is installed ONLY when the memory diagnostic is
-        # armed. Unset — which is every ordinary run — the closure registered
-        # here is byte-for-byte the historical one, so the hot path (every
-        # layer of every decode step) gains nothing at all, not even a branch
-        # test. Resolved once per model load, never per token.
+        # armed. Ordinary runs use the uncounted dispatcher; choosing the
+        # diagnostic wrapper is still resolved once per model load. Named
+        # runtime lookup adds no tensor copies or scalar synchronization.
         counting = _diagnostic_enabled()
         if counting:
             self.counters = new_counters()
@@ -244,7 +247,8 @@ class HookedModel:
         runs, and still advances, at every layer exactly as before.
         """
         def hook(_module, _inputs, output):
-            if not self._interventions:
+            runtime = self.runtime
+            if not self._interventions and not runtime.subscriptions:
                 # Still advance the offset so a later-armed pass is labeled
                 # correctly within the same generate() call.
                 hidden = _hidden_of(output)
@@ -255,8 +259,10 @@ class HookedModel:
             if index == 0:
                 self._current_offset = self._cumulative_offset
             offset = self._current_offset
-            for intervention in self._interventions:
-                hidden = intervention.apply(hidden, index, offset)
+            if runtime.subscriptions:
+                hidden = runtime.apply(hidden, Site('residualPost', index), offset, self._interventions)
+            else:
+                hidden = apply_legacy(hidden, self._interventions, index, offset)
             self._advance(index, hidden.shape[1])
             if hidden is original:
                 return output
@@ -369,6 +375,7 @@ class HookedModel:
         """
         current = self._current_arming
         if current is not None and current.abandonable:
+            current.runtime.close()
             previous, previous_arming = [], None
         else:
             previous, previous_arming = self._interventions, current
@@ -388,6 +395,7 @@ class HookedModel:
         armed now, so a stale disarm is a NO-OP (and, in particular, does not
         reset the live scope's KV offsets). Idempotent for the same reason.
         """
+        handle.runtime.close()
         if self._current_arming is not handle:
             return False
         self._current_arming = handle.previous_arming
@@ -411,7 +419,51 @@ class HookedModel:
         finally:
             self.disarm(handle)
 
+    @property
+    def runtime(self):
+        return self._current_arming.runtime if self._current_arming else self._unscoped_runtime
+
+    @contextmanager
+    def readings(self, readings, *, identity=None, prompt_token_count=None):
+        """Subscribe under the current response owner, never torch callback order.
+
+        Pre-input hooks are installed only at requested layers and removed when
+        their last subscription exits. Their dispatch always uses the current
+        owner, so a suspended or superseded stream cannot leak old readings.
+        """
+        readings = tuple(readings)
+        if any(r.site.layer >= self.num_layers for r in readings):
+            raise ValueError('A reading names a layer outside this model.')
+        runtime = self.runtime
+        subscription = runtime.subscribe(readings, identity=identity, prompt_token_count=prompt_token_count)
+        requested = {r.site.layer for r in readings if r.site.kind == 'residualPre'}
+        acquired = []
+        try:
+            for index in requested:
+                if index not in self._pre_handles:
+                    def pre(module, args, kwargs, index=index):
+                        h = kwargs.get('hidden_states', args[0] if args else None)
+                        if h is None: raise ValueError('The decoder did not expose its block input.')
+                        offset = self._cumulative_offset if index == 0 else self._current_offset
+                        self.runtime.apply(h, Site('residualPre', index), offset)
+                    self._pre_handles[index] = [self.layers[index].register_forward_pre_hook(pre, with_kwargs=True), 0]
+                self._pre_handles[index][1] += 1
+                acquired.append(index)
+            yield subscription
+        finally:
+            runtime.unsubscribe(subscription)
+            for index in acquired:
+                entry = self._pre_handles.get(index)
+                if entry is not None:
+                    entry[1] -= 1
+                    if entry[1] == 0:
+                        entry[0].remove()
+                        del self._pre_handles[index]
+
     def remove(self) -> None:
         for handle in self._handles:
             handle.remove()
         self._handles.clear()
+        for handle, _ in self._pre_handles.values(): handle.remove()
+        self._pre_handles.clear()
+        self.runtime.close()

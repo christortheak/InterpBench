@@ -129,3 +129,7 @@ into Probes through shared owners with a mechanical audit where bodies move.
 P3 records study measurements using the runtime contract above. P4–P6 add legacy
 intervention adapters, policies, decision evidence, and remote/multi-agent paths.
 Every slice has concrete surface and numerical acceptance, not just verb counts.
+
+P4 residual dispatch and lifecycle details are in
+[PROBE-INTERVENTION-RUNTIME.md](PROBE-INTERVENTION-RUNTIME.md). Legacy action
+arithmetic is retained; policy decisions and sampling actions remain P5.

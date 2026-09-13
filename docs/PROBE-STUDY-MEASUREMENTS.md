@@ -128,3 +128,7 @@ claim. Its P3 behavior is covered by runtime tests. No prior baseline was change
 
 P4 remains the intervention-runtime adapters and ordering work, P5 conditional
 policies, P6 broader decision evidence and remote parity, and P7 live qualification.
+
+P4 now owns the named-site dispatch described in
+[PROBE-INTERVENTION-RUNTIME.md](PROBE-INTERVENTION-RUNTIME.md). Measurement
+settings, score arithmetic, and evidence remain the P3 contract above.

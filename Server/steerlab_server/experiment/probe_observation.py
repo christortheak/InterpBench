@@ -3,7 +3,7 @@
 The session is owned by the generation's existing model-hook lifetime. Each response
 gets independent offsets, limits, and evidence; no process-global observer state.
 """
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 import hashlib
 import json
 import uuid
@@ -28,10 +28,14 @@ class Observation:
     def observe_session(self, model, rendered):
         import torch
         self.prompt_ids = list(rendered.input_ids)
-        handles = []
+        readings = []
+        from ..steering.runtime import Reading, Site
+        sessions = ExitStack()
         try:
             base_model = model.model.get_base_model() if hasattr(model.model, 'get_base_model') else model.model
             blocks, path = probe_capture.decoder_layers(base_model)
+            if len(blocks) != len(model.hooked.layers) or any(a is not b for a, b in zip(blocks, model.hooked.layers)):
+                raise ProbeError('The declared probe sites differ from the armed decoder blocks. Use a tested model adapter for this checkpoint.')
             tokenizer_hash = probe_capture.tokenizer_identity(model.tokenizer)
             template = model.tokenizer.get_chat_template() if self.rendering == 'chatTemplate' else None
             template_hash = hashlib.sha256(template.encode()).hexdigest() if template else None
@@ -50,17 +54,8 @@ class Observation:
                 scale = torch.tensor(probe['preprocessing']['scale'], dtype=torch.float64)
                 layers = [(torch.tensor(x['weights'], dtype=torch.float64), torch.tensor(x['bias'], dtype=torch.float64), x['activation']) for x in probe['layers']]
                 callback = self.callback(item, probe, center, scale, layers)
-                if site['kind'] == 'residualPre':
-                    def pre(module, args, kwargs, callback=callback):
-                        h = kwargs.get('hidden_states', args[0] if args else None)
-                        callback(h)
-                    handles.append(blocks[layer].register_forward_pre_hook(pre, with_kwargs=True))
-                else:
-                    def post(module, args, output, callback=callback):
-                        callback(output[0] if isinstance(output, tuple) else output)
-                    # Existing action hooks were installed when the model loaded.
-                    # prepend reads the block output before them; ordinary order after.
-                    handles.append(blocks[layer].register_forward_hook(post, prepend=item['recordingStage'] == 'preAction'))
+                readings.append(Reading(item['id'], Site(site['kind'], layer), item['recordingStage'], callback))
+            sessions.enter_context(model.hooked.readings(readings, identity=self.context, prompt_token_count=len(self.prompt_ids)))
             yield
         except Exception as exc:
             self.failures.append(str(exc))
@@ -71,16 +66,14 @@ class Observation:
                     json.dump(self.result([]), handle, allow_nan=False)
             raise
         finally:
-            for handle in handles: handle.remove()
+            sessions.close()
 
     def callback(self, item, probe, center, scale, layers):
         import torch
-        offset = 0
-        def observe(h):
-            nonlocal offset
+        def observe(h, context, state):
             if not isinstance(h, torch.Tensor) or h.ndim != 3 or h.shape[0] != 1:
                 raise ProbeError('Study probe observation requires one unpadded sequence per forward pass.')
-            start = offset; offset += h.shape[1]
+            start = context.offset
             positions = []
             for local in range(h.shape[1]):
                 absolute = start + local

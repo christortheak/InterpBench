@@ -229,3 +229,12 @@ bound on model RAM or the entire evidence file. Scores remain when activation
 retention reaches its limit. Distinguish omissions, missing readings, and genuine
 scores. Do not describe scores as calibrated probabilities or causal effects.
 Do not silently choose labels, datasets, or cooperating agents for the researcher.
+
+Study measurements use an explicit order: requested readings before the site's
+steering actions, the existing ordered action chain, and requested readings after
+those actions. Before an action at this layer does not mean earlier layers or
+tokens were unsteered. Readings and their state belong to the current response
+and agent seat; a cancelled or superseded response must not affect another one.
+Existing additions and subspace removals retain their distinct units and token
+scopes. Conditional rules and token-selection actions are a later phase; the
+current measurement settings do not turn a reading into a policy.

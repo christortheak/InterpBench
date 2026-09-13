@@ -12,6 +12,12 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Route study probe readings and existing residual interventions through explicit
+  pre/action/post dispatch. Preserve legacy addition, ablation, and SAE arithmetic
+  and order; isolate measurement state across responses and agent seats. Native
+  model adapters expose block inputs and outputs for scoped runtime readers.
+  Conditional policies and token-selection actions remain a later slice.
+
 - Select trained probes as study measurements through the app, either client,
   or the workbench API. Python runs record prompt/decode scores at explicit
   residual sites, preserve seat/sample identity, and carry exact probe bytes

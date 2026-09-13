@@ -328,6 +328,7 @@ public class SteeredGemma3Model: Module {
     // [SteerLab] residual-stream hooks; mutated only inside the
     // ModelContainer actor (see InterventionHookable).
     var interventions: [any LayerIntervention] = []
+    var residualRuntime: ResidualRuntime?
 
     init(_ config: SteeredGemma3TextConfiguration) {
         self.config = config
@@ -377,10 +378,15 @@ public class SteeredGemma3Model: Module {
         for (i, layer) in layers.enumerated() {
             let isGlobal = (i % config.slidingWindowPattern == config.slidingWindowPattern - 1)
             let mask = isGlobal ? globalMask : slidingWindowMask
+            if let residualRuntime {
+                h = residualRuntime.apply(h, site: .pre(i), offset: offset)
+            }
             h = layer(h, mask: mask, cache: layerCache?[i])
             // [SteerLab] hook fires after every block, on every forward pass.
-            for intervention in interventions {
-                h = intervention.apply(h, layer: i, offset: offset)
+            if let residualRuntime {
+                h = residualRuntime.apply(h, site: .post(i), offset: offset, interventions: interventions)
+            } else {
+                h = ResidualRuntime.applyLegacy(h, interventions: interventions, layer: i, offset: offset)
             }
         }
         return norm(h)
@@ -514,5 +520,12 @@ extension SteeredGemma3TextModel: LogitLensReadable {
 extension SteeredGemma3TextModel: LoRAModel {
     public var loraLayers: [Module] {
         model.layers
+    }
+}
+
+extension SteeredGemma3TextModel: ResidualRuntimeHookable {
+    public var residualRuntime: ResidualRuntime? {
+        get { model.residualRuntime }
+        set { model.residualRuntime = newValue }
     }
 }

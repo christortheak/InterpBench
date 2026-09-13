@@ -1,7 +1,7 @@
 # Probes and interventions: phase 1 implementation plan
 
 - Date: 2026-09-12
-- Status: implementation authorized; P0/P1 underway on `codex/probe-artifact-contracts`.
+- Status: P0–P3 implemented; P4 prepared on `codex/intervention-runtime` for review.
 - Repository baseline inspected: main `22f08a9` (implementation start).
 - Purpose: a shared implementation brief for coding agents and reviewers.
 
@@ -380,7 +380,7 @@ current main's fixes using the established process before starting a code branch
 | P1 — probe owners and artifact contract | Inventory legacy readers and data; separate training/evaluation/library responsibilities from panel coordinators; introduce versioned recipes and portable serialization | Independent numerical fixtures and cross-client artifact round trips; existing readers remain usable without rewritten bytes |
 | P2 — complete the probe journey | Implement managed capture/training/evaluation, Probes library, shared guided authoring, and programmatic lifecycle | App and agent can train, evaluate, publish, discover, and inspect a probe using real owners |
 | P3 — read-only study measurements ([Python implementation](PROBE-STUDY-MEASUREMENTS.md)) | Add frozen measurement settings, position/stage alignment, compact recording, optional activation retention, and Results views | A study records multiple probes across selected conditions/agents; disabled instrumentation preserves baseline behavior |
-| P4 — general runtime with legacy adapters | Implement named sites, sequencing, state isolation, and action application; route existing add/ablate through reviewed adapters | Legacy interventions preserve their actual arithmetic, scopes, and ordering; all-off and read-only modes are verified |
+| [P4 — general runtime with legacy adapters](PROBE-INTERVENTION-RUNTIME.md) | Implement named sites, sequencing, state isolation, and action application; route existing add/ablate through reviewed adapters | Legacy interventions preserve their actual arithmetic, scopes, and ordering; all-off and read-only modes are verified |
 | P5 — policies and agent attachment | Add threshold/adaptive built-ins, custom-provider interface, logits actions, authoring, and agent identity integration | No-policy, fixed-policy, and conditional-policy agents can be compared; impossible timing and action conflicts have clear outcomes |
 | P6 — evidence and remote parity | Complete decision traces, analysis, dependency closure, managed execution, collection, import, and supported multi-agent paths | Local and isolated remote journeys carry the same declared objects and alignable evidence; missing support is explicit |
 | P7 — qualification and handoff | Measure representative local/remote behavior and overhead; run full checks; document scope and remaining limitations | Independent review has a clean diff, both suites, required audits, and live acceptance evidence or explicitly pending qualifications |
