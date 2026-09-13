@@ -20,7 +20,14 @@ def inventory(operation, config, root):
             archives.parts(value)
             if '/' in value: raise archives.Refusal('Lens IDs must be single components.')
             directory = Path(paths.jlens_lens_directory(value, str(root)))
-            add(directory.relative_to(root).as_posix())
+            # Ship the record, its import receipt, and the converted tensor the
+            # engine reads; not the `source/` provenance copy of the original
+            # bytes, which doubles a multi-gigabyte lens and is never read at
+            # execution. The receipt still names the source hashes.
+            lens_dir = directory.relative_to(root).as_posix()
+            add(lens_dir + '/lens.json')
+            if archives.ordinary(root, lens_dir + '/import-receipt.json', missing=True).is_file():
+                add(lens_dir + '/import-receipt.json')
             record = json.loads((directory / 'lens.json').read_bytes())
             from ..jlens import artifact_paths
             converted = record.get('converted') or {}

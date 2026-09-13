@@ -151,3 +151,21 @@ def test_review_sizes_selected_payload_without_claiming_peak_memory(assessment_c
     assert resources['selectedActivationRowBytesUpperBound'] == 3*20*2*4
     assert resources['temporaryActivationBytesUpperBound'] == 4*3*20*2*4
     assert 'not peak memory' in resources['limitations']
+
+
+def test_managed_lens_closure_ships_record_receipt_and_converted_tensor_only(assessment_case):
+    # A registered lens keeps a provenance copy of its source bytes under
+    # source/; two 27B lenses with those copies exceed the 16 GiB transport
+    # bound, and execution never reads them.
+    from steerlab_server.experiment import managed_inputs
+    root, config = assessment_case
+    entries = managed_inputs.inventory('jlens-fit-assess', config.to_dict(), root)
+    paths = [e['path'] for e in entries]
+    for lens in (config.referenceLensID, config.candidateLensID):
+        prefix = f'runs/jlens-lenses/{lens}/'
+        shipped = sorted(p[len(prefix):] for p in paths if p.startswith(prefix))
+        assert 'lens.json' in shipped and 'import-receipt.json' in shipped
+        assert any(name.endswith('.safetensors') and not name.startswith('source/') for name in shipped)
+        assert not any(name.startswith('source/') for name in shipped), shipped
+        assert (root/prefix/'source').is_dir()  # the provenance copy still exists locally
+    assert 'assessment.jsonl' in paths
