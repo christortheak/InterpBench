@@ -23,6 +23,9 @@ def workspace_action(action, payload):
         from . import setup
         return setup.inspect(payload.get('workspaceRoot'))
     required = {
+        'policy-list': set(), 'policy-inspect': {'path'},
+        'policy-review': {'settingsText'}, 'policy-publish': {'settingsText', 'planSHA256'},
+        'policy-attach-review': {'settingsText'}, 'policy-attach': {'settingsText', 'planSHA256'},
         'staged-request': {'bundleSHA256'},
         'measurements-review': {'experiment', 'settingsText'}, 'measurements-save': {'experiment', 'settingsText', 'planSHA256'},
         'probe-list': set(), 'probe-inspect': {'path'},
@@ -41,6 +44,15 @@ def workspace_action(action, payload):
     if not fields <= payload.keys() or payload.keys() - fields - optional or any(not isinstance(payload[k], str) or not payload[k] for k in fields):
         raise archives.Refusal('Supply exactly the declared action fields as nonempty strings.')
     root = str(Path(payload['workspaceRoot']).resolve())
+    if action.startswith('policy-'):
+        from ..experiment import policy_authoring
+        if action == 'policy-list': return policy_authoring.inventory(root)
+        if action == 'policy-inspect': return policy_authoring.inspect(payload['path'], root)
+        settings = policy_authoring.artifacts.probes.read_json(payload['settingsText'].encode())
+        if action == 'policy-review': return policy_authoring.review(settings, root)
+        if action == 'policy-publish': return policy_authoring.publish(settings, root, payload['planSHA256'])
+        if action == 'policy-attach-review': return policy_authoring.attachment_review(settings, root)
+        return policy_authoring.attach(settings, root, payload['planSHA256'])
     if action in ('measurements-review', 'measurements-save'):
         from ..experiment import probe_measurements
         settings = json.loads(payload['settingsText'])
@@ -90,9 +102,13 @@ def local(invocation):
     from ..experiment.artifact_sources import ImportRefusal
     from ..experiment.corpus_sources import CorpusError
     try:
-        verb = invocation.spec.verb; validate(invocation, 0 if verb in ('custody', 'probe-list') else 1)
+        verb = invocation.spec.verb; validate(invocation, 0 if verb in ('custody', 'probe-list', 'policy-list') else 1)
         value = invocation.positionals[0] if invocation.positionals else None
         payload = {'workspaceRoot': paths.project_root()}
+        if verb.startswith('policy-'):
+            if verb == 'policy-inspect': payload['path'] = value
+            elif verb != 'policy-list': payload['settingsText'] = Path(value).read_text()
+            if verb in ('policy-publish', 'policy-attach'): payload['planSHA256'] = invocation.one('--plan-sha256')
         if verb.startswith('measurements-'):
             payload.update(experiment=value, settingsText=Path(invocation.one('--settings')).read_text())
             if verb == 'measurements-save': payload['planSHA256'] = invocation.one('--plan-sha256')

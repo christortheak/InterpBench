@@ -29,6 +29,9 @@ enum AgentCreateMode: String, CaseIterable, Identifiable {
 }
 
 struct ModelVariantsPanelView: View {
+    @State private var showingPolicies = false
+    @State private var interventionPolicies: [JSONValue]?
+
     private struct InjectionDraft: Identifiable, Equatable {
         let id = UUID()
         var vectorArtifactID: VectorArtifact.ID?
@@ -95,9 +98,11 @@ struct ModelVariantsPanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             regionBar
+            Button("Intervention policies…") { showingPolicies = true }.padding(8)
             Divider()
             regionContent
         }
+        .sheet(isPresented: $showingPolicies) { InterventionPoliciesView(root: ExperimentStore.workspaceRoot) }
         .confirmationDialog(
             deleteDialogTitle,
             isPresented: $confirmDelete,
@@ -1421,6 +1426,7 @@ struct ModelVariantsPanelView: View {
 
     private func loadEditor(from artifact: ModelVariantArtifact) {
         name = artifact.name
+        interventionPolicies = artifact.interventionPolicies
         // Programmatic write: arm the classifier so the onChange this fires
         // preserves the artifact's own adapter/basis instead of clearing or
         // re-picking them.
@@ -1595,7 +1601,8 @@ struct ModelVariantsPanelView: View {
             promptMode: promptMode.rawValue,
             qwenThinkingEnabled: qwenThinkingEnabled,
             temperature: temperature,
-            systemPrompt: systemPrompt)
+            systemPrompt: systemPrompt,
+            interventionPolicies: interventionPolicies)
     }
 
     private func currentSteeringArtifact(name: String) -> ModelVariantArtifact {

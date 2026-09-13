@@ -268,6 +268,12 @@ public enum ExperimentCLIParser {
     /// reference document's flag rows from it, and a switch statement cannot
     /// be enumerated.
     public static let specs: [ExperimentCLIVerbSpec] = [
+        .init(namespace: "science", verb: "policy-list", purpose: "List saved intervention policies."),
+        .init(namespace: "science", verb: "policy-inspect", positional: "<path>", purpose: "Inspect a policy and its exact input bindings."),
+        .init(namespace: "science", verb: "policy-review", positional: "<settings.json>", purpose: "Review policy settings and embed their exact input bytes."),
+        .init(namespace: "science", verb: "policy-publish", positional: "<settings.json>", purpose: "Publish the reviewed policy as an immutable artifact.", valueFlags: ["--plan-sha256"], requiredFlags: ["--plan-sha256"]),
+        .init(namespace: "science", verb: "policy-attach-review", positional: "<settings.json>", purpose: "Review a new agent version with the selected policies."),
+        .init(namespace: "science", verb: "policy-attach", positional: "<settings.json>", purpose: "Create the reviewed agent version without editing its source.", valueFlags: ["--plan-sha256"], requiredFlags: ["--plan-sha256"]),
         .init(namespace: "science", verb: "measurements-review", positional: "<experiment>", purpose: "Review probe measurement settings and pinned inputs for a draft study.", valueFlags: ["--settings"], requiredFlags: ["--settings"]),
         .init(namespace: "science", verb: "measurements-save", positional: "<experiment>", purpose: "Save reviewed probe measurement settings to the unchanged draft.", valueFlags: ["--settings", "--plan-sha256"], requiredFlags: ["--settings", "--plan-sha256"]),
         .init(namespace: "science", verb: "probe-list", purpose: "List portable and legacy probes in the local workspace without changing artifacts."),

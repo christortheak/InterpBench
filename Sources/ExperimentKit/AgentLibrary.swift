@@ -26,6 +26,7 @@ public enum AgentLibrary {
         public var isPromoted: Bool
         /// …and it was stamped `promotedBy: "manualOverride"`.
         public var isManualOverride: Bool
+        public var policyCount: Int
         public var neutralPCBasisLabel: String?
 
         public init(
@@ -34,8 +35,10 @@ public enum AgentLibrary {
             injections: [ModelVariantArtifact.InjectionRef] = [],
             isPromoted: Bool = false,
             isManualOverride: Bool = false,
-            neutralPCBasisLabel: String? = nil
+            neutralPCBasisLabel: String? = nil,
+            policyCount: Int = 0
         ) {
+            self.policyCount = policyCount
             self.baseModelID = baseModelID
             self.adapters = adapters
             self.injections = injections
@@ -52,7 +55,8 @@ public enum AgentLibrary {
             injections: artifact.injections,
             isPromoted: artifact.promotion != nil,
             isManualOverride: artifact.promotion?.promotedBy == "manualOverride",
-            neutralPCBasisLabel: artifact.neutralPCBasisLabel)
+            neutralPCBasisLabel: artifact.neutralPCBasisLabel,
+            policyCount: artifact.interventionPolicies?.count ?? 0)
     }
 
     // MARK: Kind
@@ -160,6 +164,7 @@ public enum AgentLibrary {
     public static func isRunnableLocally(
         _ artifact: Components, availability: Availability
     ) -> Bool {
+        guard artifact.policyCount == 0 else { return false }
         guard availability.localModelIDs.contains(artifact.baseModelID) else {
             return false
         }
@@ -449,6 +454,7 @@ public enum AgentLibrary {
         if let label = artifact.neutralPCBasisLabel {
             parts.append("neutral \(label)")
         }
+        if artifact.policyCount > 0 { parts.append("\(artifact.policyCount) intervention policies · Python Compute") }
         if parts.isEmpty { parts.append("base model settings only") }
         return parts.joined(separator: " · ")
     }

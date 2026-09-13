@@ -69,7 +69,7 @@ def _adapter_cache(model) -> model_variant.ChatAdapterCache:
 @contextmanager
 def prepared_variant(model, variant: model_variant.ModelVariant,
                      *, strip_interventions: bool = False):
-    injections = [] if strip_interventions else model_variant.variant_injections(variant)
+    injections = [] if strip_interventions else model_variant.variant_injections(variant, **({'allow_policies': True} if variant.intervention_policies else {}))
     cache = _adapter_cache(model)
     # Chat-only adapter reuse: activate() loads the adapter once per
     # (directory, content-hash) and reuses it across turns; deactivate() parks
@@ -133,6 +133,11 @@ def generate_with_variant(model, variant: model_variant.ModelVariant,
             qwen_thinking_enabled=variant.qwen_thinking_enabled,
             on_chunk=on_chunk,
         )
+        from ..experiment import policy_execution
+        policy = policy_execution.create(variant if not request.strip_interventions else None,
+            rendering=kwargs['prompt_mode'], context={'mode': 'playground'})
+        policy_ids = []
+        if policy is not None: kwargs.update(observers=[policy], token_ids_out=policy_ids)
         if request.messages is not None:
             output = generate_messages(
                 model, request.messages,
@@ -147,6 +152,7 @@ def generate_with_variant(model, variant: model_variant.ModelVariant,
         "stripInterventions": request.strip_interventions,
         "prompt": prompt,
     }
+    if policy is not None: result['interventionDecisions'] = policy.result(policy_ids)
     # Provenance in the response record: which transcript turns were
     # researcher-authored (seeded) or researcher-altered after generation
     # (edited), and whether this generation continued a seeded assistant
@@ -191,6 +197,8 @@ def evaluate_battery_with_variant(model, variant: model_variant.ModelVariant,
     from ..experiment import battery as battery_mod
     from ..experiment.choice_scoring import battery_backends
 
+    if variant.intervention_policies and not strip_interventions:
+        raise ValueError('This battery scoring path does not yet execute intervention policies. Evaluate the complete agent in a sampled-response study, or explicitly select the unmodified baseline.')
     arming = battery_mod.resolve_arming(spec)
     with prepared_variant(model, variant,
                           strip_interventions=strip_interventions) as injections:
@@ -231,6 +239,10 @@ def stream_with_variant(model, variant: model_variant.ModelVariant,
             qwen_thinking_enabled=variant.qwen_thinking_enabled,
             should_stop=should_stop,
         )
+        from ..experiment import policy_execution
+        policy = policy_execution.create(variant if not request.strip_interventions else None,
+            rendering=kwargs['prompt_mode'], context={'mode': 'playground'})
+        if policy is not None: kwargs['observers'] = [policy]
         if request.messages is not None:
             yield from stream_generate_messages(
                 model, request.messages,

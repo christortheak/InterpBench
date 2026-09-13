@@ -581,7 +581,7 @@ def effective_variant_condition(vc, manifest, model, root, *,
                     "disabled"))
     return EffectiveCondition(
         name=vc.name,
-        injections=model_variant.variant_injections(variant),
+        injections=model_variant.variant_injections(variant, **({'allow_policies': True} if variant.intervention_policies else {})),
         intervention_state=_variant_intervention_state(vc, variant),
         prompt_mode=variant.prompt_mode,
         system_prompt=system_prompt_mod.compose(
@@ -752,11 +752,13 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
             "transcripts but the condition's promptMode is rawCompletion — "
             "transcript items render through the chat template by "
             "definition; use chatAssistant")
-    from . import probe_measurements, probe_observation
+    from . import probe_measurements, probe_observation, policy_execution
     measurement_config = probe_measurements.validate(manifest.raw.get('probeMeasurements'))
     measurement_probes = probe_measurements.load(measurement_config, root)
     if measurement_config and measurement_config['probes'] and not wants_sampled:
         raise probe_measurements.ProbeError('Study probes observe generated responses. Select sampledText as an outcome instrument, or remove measurements from this direct-scoring-only study.')
+    if eff.variant is not None and eff.variant.intervention_policies and (not wants_sampled or wants_choice):
+        raise ValueError('Intervention policies currently execute on sampled responses. Use sampledText without direct choice scoring for this agent study; direct scoring does not yet execute policies.')
     sampling = execution_reporting.sampling_metadata(model, eff.temperature)
     # Stop-reason machinery, resolved ONCE per condition. `stop_ids` is what
     # lets a generation that emits EOS on its very last budgeted step be
@@ -946,6 +948,9 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                 run_directory=writer.run_directory, context={'promptID': prompt['id'], 'sampleIndex': sample_index, 'seed': str(seed), 'experimentHash': experiment_hash})
             if measurement is not None:
                 readout_kwargs.setdefault('observers', []).append(measurement)
+            policy = policy_execution.create(eff.variant, rendering=eff.prompt_mode,
+                run_directory=writer.run_directory, context={'condition': eff.name, 'promptID': prompt['id'], 'sampleIndex': sample_index, 'seed': str(seed), 'experimentHash': experiment_hash})
+            if policy is not None: readout_kwargs.setdefault('observers', []).append(policy)
             with sampling_module.seeded_generation(eff.temperature, seed):
                 text = generate.generate(
                     model, prompt["prompt"], model_id=manifest.model_id,
@@ -1022,6 +1027,7 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                     generated_ids=token_ids or [])
             if measurement is not None:
                 record['probeMeasurements'] = measurement.result(token_ids)
+            if policy is not None: record['interventionDecisions'] = policy.result(token_ids)
             writer.emit(record)
             tally.observe(record)
             memory_diagnostic.observe(writer, model, eff)

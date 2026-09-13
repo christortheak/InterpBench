@@ -214,6 +214,9 @@ def stamp_run(run_directory: str, *, experiment: str, conditions=(),
             entries.append(condition_entry(vc.name, unresolved=str(exc)))
             continue
         extra = {}
+        if getattr(eff.variant, 'intervention_policies', None):
+            from .policy_artifacts import summaries
+            extra['interventionPolicies'] = summaries(eff.variant.intervention_policies)
         basis_path = getattr(eff.variant, "neutral_pc_basis_path", None)
         if basis_path:
             # A SECOND direction transform, declared on the artifact rather

@@ -822,7 +822,7 @@ def _runtime_settings(agent: Agent, strip_interventions: bool):
         persona, cast, frame_key="cast")
     qwen_thinking = variant.qwen_thinking_enabled if variant else False
     injections = ([] if strip_interventions or not variant
-                  else model_variant.variant_injections(variant))
+                  else model_variant.variant_injections(variant, **({'allow_policies': True} if variant.intervention_policies else {})))
     return (variant, model_id, prompt_mode, system, qwen_thinking, injections,
             warnings, system_composition)
 
@@ -867,7 +867,7 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
     # not apply to a panel (turns are not independent records), but this is a
     # different mechanism and is sound where that one is not. Without it a run
     # that hits a Slurm walltime on turn 14 of 16 restarts at turn 1.
-    from . import probe_measurements as measurement_owner, probe_observation
+    from . import probe_measurements as measurement_owner, probe_observation, policy_execution
     measurement_config = measurement_owner.validate(probe_measurements)
     measurement_probes = measurement_owner.load(measurement_config, probe_root)
     turns_path = os.path.join(run_dir, "turns.jsonl")
@@ -973,6 +973,9 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                 condition=condition_name, agent=speaker.id, rendering=prompt_mode, run_directory=run_dir,
                 context={'turnID': turn.id, 'replicateIndex': replicate_index, 'seed': str(turn_seed), 'experimentHash': experiment_hash})
             observation_kwargs = {'observers': [measurement]} if measurement is not None else {}
+            policy = policy_execution.create(variant if not strip_interventions else None, rendering=prompt_mode,
+                run_directory=run_dir, context={'condition': condition_name, 'agent': speaker.id, 'turnID': turn.id, 'replicateIndex': replicate_index, 'seed': str(turn_seed), 'experimentHash': experiment_hash})
+            if policy is not None: observation_kwargs.setdefault('observers', []).append(policy)
             try:
                 with _seeded_generation(effective_temperature, turn_seed):
                     output = generate(active_model, prompt, model_id=active_model.model_id,
@@ -987,6 +990,7 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                 turn_token_ids, max_tokens=turn_max_tokens,
                 stop_ids=truncation_gate.stop_token_ids(active_model))
 
+        policy_fields = {'interventionDecisions': policy.result(turn_token_ids)} if policy is not None else {}
         measurement_fields = ({'probeMeasurements': measurement.result(turn_token_ids)}
             if measurement is not None else {})
         label = turn.output_label.strip() or f"turn_{index + 1}"
@@ -996,7 +1000,7 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
             context.setdefault(aid, []).append(context_entry(
                 label, turn.title, speaker.name, output,
                 own_authored=aid == speaker.id))
-        result = {**measurement_fields, "turnID": turn.id, "turnIndex": index + 1, "title": turn.title,
+        result = {**policy_fields, **measurement_fields, "turnID": turn.id, "turnIndex": index + 1, "title": turn.title,
                   "speakerAgentID": speaker.id, "speakerName": speaker.name,
                   "prompt": prompt, "output": output, "outputLabel": label,
                   # Which renderer produced `prompt` (spec §3.3). A turn record

@@ -47,10 +47,14 @@ class ModelVariant:
     # promotedBy "criterion"|"manualOverride", substrate, appVersion. Absent =
     # hand-created variant. Preserved verbatim across round-trips.
     promotion: dict | None = None
+    intervention_policies: list[dict] | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "ModelVariant":
+        from .policy_artifacts import load_attached
+        load_attached(d.get('interventionPolicies'))
         return cls(
+            intervention_policies=d.get('interventionPolicies'),
             name=d.get("name", "variant"), base_model_id=d["baseModelID"],
             base_revision=d.get("baseRevision"), adapters=d.get("adapters", []),
             injections=d.get("injections", []), band_width=int(d.get("bandWidth", 1)),
@@ -87,11 +91,12 @@ class ModelVariant:
             "temperature": self.temperature, "systemPrompt": self.system_prompt,
             **({"createdAt": self.created_at} if self.created_at else {}),
             **({"promotion": self.promotion} if self.promotion else {}),
+            **({"interventionPolicies": self.intervention_policies} if self.intervention_policies is not None else {}),
         }
 
 
 def variant_injections(variant: ModelVariant, *,
-                       root: str | None = None) -> list[CellInjection]:
+                       root: str | None = None, allow_policies: bool = False) -> list[CellInjection]:
     """Build the variant's injection cells (parallel to Swift
     ``ExperimentTasks.injections(for:)``): per injection, load the vector, apply
     the layer band, project out the neutral basis if set, and convert norm-unit
@@ -101,6 +106,8 @@ def variant_injections(variant: ModelVariant, *,
     historical caller) it resolves against the process default, exactly as
     before; a caller that was handed a root must pass it, or it silently reads
     a different workspace's vectors (external review round 2)."""
+    if variant.intervention_policies and not allow_policies:
+        raise ValueError('This execution path does not run intervention policies. Use a sampled-response agent study or Python Playground; direct scoring and battery qualification are not yet policy-aware.')
     # `resolve_artifact`, not bare `resolve`: a reference recorded on another
     # machine (an app-promoted agent's absolute Mac path) rebases onto this
     # workspace when the artifact is actually here — see paths.resolve_artifact.

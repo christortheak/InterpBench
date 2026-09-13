@@ -181,6 +181,7 @@ public struct StudyResultRepository: Sendable {
     }
 
     private struct RawGeneration: Decodable {
+        let interventionDecisions: JSONValue?
         let probeMeasurements: JSONValue?
         let sampleIndex: Int?
         let condition: String
@@ -203,6 +204,7 @@ public struct StudyResultRepository: Sendable {
             let truncated = raw.output.count > limit
             let output = truncated ? String(raw.output.prefix(limit)) : raw.output
             return StudyGenerationPreview(
+                interventionDecisions: raw.interventionDecisions,
                 probeMeasurements: raw.probeMeasurements,
                 sampleIndex: raw.sampleIndex,
                 condition: raw.condition,

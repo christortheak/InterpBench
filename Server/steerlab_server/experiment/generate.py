@@ -553,6 +553,9 @@ def _stream_rendered(model: SteeredModel, rendered: prompt_render.RenderedPrompt
             session = getattr(observer, "observe_session", None)
             if session is not None:
                 observation_sessions.enter_context(session(model, rendered))
+        for observer in (observers or []):
+            processor = getattr(observer, "logits_processor", None)
+            if processor is not None: kwargs["logits_processor"].append(processor)
         # Chunked prefill INSIDE the armed session (its passes advance the
         # offsets that gate injection and label observer captures), BEFORE
         # the generate thread: the cache it returns becomes generate()'s

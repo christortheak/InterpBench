@@ -212,6 +212,12 @@ steerlab runner resubmit <job-id> --runner <url> [--ca-bundle <path>] [--timeout
 steerlab runner reconcile --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner recovery <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner recover <job-id> --confirm-owner-exited --reason <value> --review-token <value> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
+steerlab science policy-list
+steerlab science policy-inspect <path>
+steerlab science policy-review <settings.json>
+steerlab science policy-publish <settings.json> --plan-sha256 <value>
+steerlab science policy-attach-review <settings.json>
+steerlab science policy-attach <settings.json> --plan-sha256 <value>
 steerlab science measurements-review <experiment> --settings <value>
 steerlab science measurements-save <experiment> --plan-sha256 <value> --settings <value>
 steerlab science probe-list
@@ -2908,6 +2914,12 @@ steerlab-cli authoring study <intent>
 steerlab-cli science list
 steerlab-cli science guide <method>
 steerlab-cli science operation <operation>
+steerlab-cli science policy-list
+steerlab-cli science policy-inspect <path>
+steerlab-cli science policy-review <settings.json>
+steerlab-cli science policy-publish <settings.json> --plan-sha256 <value>
+steerlab-cli science policy-attach-review <settings.json>
+steerlab-cli science policy-attach <settings.json> --plan-sha256 <value>
 steerlab-cli science measurements-review <experiment> --settings <value>
 steerlab-cli science measurements-save <experiment> --plan-sha256 <value> --settings <value>
 steerlab-cli science probe-list
@@ -2937,6 +2949,12 @@ steerlab-cli science verify-custody <receipt-sha256>
 | `science list` | List shipped methods, supported operation interfaces and engine restrictions; does not execute. |
 | `science guide` | Read the shared method guide, dataset schemas and coworker/reviewer instructions. |
 | `science operation` | Inspect exact public execution paths, outputs and restrictions for one operation. |
+| `science policy-list` | List saved intervention policies. |
+| `science policy-inspect` | Inspect a policy and its exact input bindings. |
+| `science policy-review` | Review policy settings and embed their exact input bytes. |
+| `science policy-publish` | Publish the reviewed policy as an immutable artifact. |
+| `science policy-attach-review` | Review a new agent version with the selected policies. |
+| `science policy-attach` | Create the reviewed agent version without editing its source. |
 | `science measurements-review` | Review probe measurement settings and pinned inputs for a draft study. |
 | `science measurements-save` | Save reviewed probe measurement settings to the unchanged draft. |
 | `science probe-list` | List portable and legacy probes in the local workspace without changing artifacts. |

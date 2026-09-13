@@ -396,6 +396,7 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
     public var systemPrompt: String?
     public var createdAt: String
     public var promotion: Promotion?
+    public var interventionPolicies: [JSONValue]?
 
     public init(
         name: String,
@@ -412,7 +413,8 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
         temperature: Double,
         systemPrompt: String,
         createdAt: Date = Date(),
-        promotion: Promotion? = nil
+        promotion: Promotion? = nil,
+        interventionPolicies: [JSONValue]? = nil
     ) {
         self.schemaVersion = 1
         self.name = name
@@ -434,6 +436,7 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
             : Self.sha256(systemPrompt)
         self.createdAt = ISO8601DateFormatter().string(from: createdAt)
         self.promotion = promotion
+        self.interventionPolicies = interventionPolicies
     }
 
     private static func sha256(_ text: String) -> String {
@@ -445,7 +448,7 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
         case schemaVersion, name, baseModelID, baseRevision, adapters, injections
         case bandWidth, alphaInNormUnits, neutralPCBasisPath, neutralPCBasisLabel
         case promptMode, qwenThinkingEnabled, temperature
-        case systemPromptHash, systemPrompt, createdAt, promotion
+        case systemPromptHash, systemPrompt, createdAt, promotion, interventionPolicies
     }
 
     /// Tolerant decoding for server payloads: the Python server's
@@ -482,6 +485,8 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
         systemPrompt = try container.decodeIfPresent(String.self, forKey: .systemPrompt)
         createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
         promotion = try container.decodeIfPresent(Promotion.self, forKey: .promotion)
+        interventionPolicies = try container.decodeIfPresent([JSONValue].self, forKey: .interventionPolicies)
+        try InterventionPolicyLibrary.validateAttachments(interventionPolicies)
     }
 }
 

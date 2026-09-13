@@ -2869,6 +2869,7 @@ public enum ExperimentTasks {
         let neutralBasis = try variant.neutralPCBasisPath.map { try NeutralPCStore.load(path: $0).basis }
         let width = max(1, variant.bandWidth)
         let half = width / 2
+        try InterventionPolicyLibrary.requireNativeExecution(variant)
         for injection in variant.injections {
             // Resolved, not taken literally: a server-promoted agent stores
             // this workspace-relative, and `URL(filePath:)` would join it

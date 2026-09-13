@@ -1469,6 +1469,7 @@ public final class ChatService {
     }
 
     public func applyModelVariantToSteering(_ record: ModelVariantRecord) {
+        guard (record.artifact.interventionPolicies ?? []).isEmpty else { errorMessage = InterventionPolicyLibrary.executionHint; return }
         selectedSteeringVariantID = record.id
         selectedModelID = record.artifact.baseModelID
         guard loadedModelID == record.artifact.baseModelID, state == .ready else {
@@ -1507,6 +1508,10 @@ public final class ChatService {
 
     private func applyModelVariantControls(_ record: ModelVariantRecord) {
         let artifact = record.artifact
+        guard (artifact.interventionPolicies ?? []).isEmpty else {
+            errorMessage = InterventionPolicyLibrary.executionHint
+            return
+        }
         selectedModelID = artifact.baseModelID
         layerBandWidth = artifact.bandWidth
         let unitFlipNote = Self.alphaUnitFlipAnnouncement(
@@ -1612,6 +1617,9 @@ public final class ChatService {
             // bounds instead of falling back to name-only display.
             await catalog.refreshRemoteVectors()
             let detail = try await client.variantDetail(path: path)
+            guard (detail.variant.interventionPolicies ?? []).isEmpty else {
+                selectedRemoteVariantPath = nil; errorMessage = InterventionPolicyLibrary.executionHint; return
+            }
             selectedRemoteVariantHash = detail.hash
             seedServerControls(from: detail.variant)
         } catch {
@@ -1657,6 +1665,7 @@ public final class ChatService {
     /// refs in the catalog, adapter refs resolvable) — a partial application
     /// would silently steer with less than the definition says.
     public func applyLocalDefinitionToServerSteering(_ record: ModelVariantRecord) {
+        guard (record.artifact.interventionPolicies ?? []).isEmpty else { errorMessage = InterventionPolicyLibrary.executionHint; return }
         guard isServerWorkspace else {
             applyModelVariantToSteering(record)
             return
@@ -1682,6 +1691,10 @@ public final class ChatService {
     private func seedServerControls(
         from artifact: ModelVariantArtifact, sourceLabel: String = "server variant"
     ) {
+        guard (artifact.interventionPolicies ?? []).isEmpty else {
+            errorMessage = InterventionPolicyLibrary.executionHint
+            return
+        }
         // The variant pins its base model, exactly like the local path.
         selectedRemoteModelID = artifact.baseModelID
         layerBandWidth = artifact.bandWidth

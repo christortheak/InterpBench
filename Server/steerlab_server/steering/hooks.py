@@ -445,7 +445,10 @@ class HookedModel:
                         h = kwargs.get('hidden_states', args[0] if args else None)
                         if h is None: raise ValueError('The decoder did not expose its block input.')
                         offset = self._cumulative_offset if index == 0 else self._current_offset
-                        self.runtime.apply(h, Site('residualPre', index), offset)
+                        changed = self.runtime.apply(h, Site('residualPre', index), offset)
+                        if changed is not h:
+                            if 'hidden_states' in kwargs: return args, {**kwargs, 'hidden_states': changed}
+                            return (changed, *args[1:]), kwargs
                     self._pre_handles[index] = [self.layers[index].register_forward_pre_hook(pre, with_kwargs=True), 0]
                 self._pre_handles[index][1] += 1
                 acquired.append(index)

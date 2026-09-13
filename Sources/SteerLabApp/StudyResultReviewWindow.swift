@@ -79,6 +79,14 @@ struct ResultReviewWindow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+            if let decisions = generation.interventionDecisions {
+                DisclosureGroup("Intervention decisions") {
+                    Text("These records identify the policy, the consumed token position, the probe scores, and the requested strengths. Partial or failed responses are not completed evidence.").font(.caption)
+                    ScrollView([.horizontal, .vertical]) {
+                        PolicyJSONView(value: decisions)
+                    }.frame(maxHeight: 300)
+                }
+            }
             if let readings = generation.probeMeasurements { ProbeMeasurementResultsView(value: readings) }
             Text(generation.prompt)
                 .font(.caption)

@@ -3,6 +3,12 @@ from ..cli_envelope import CLIResult, VerbSpec
 from ..experiment import science_catalog
 
 VERB_SPECS = (
+    VerbSpec('science', 'policy-list', purpose='List saved intervention policies.'),
+    VerbSpec('science', 'policy-inspect', positional="<path>", purpose='Inspect a policy and its exact input bindings.'),
+    VerbSpec('science', 'policy-review', positional="<settings.json>", purpose='Review policy settings and embed their exact input bytes.'),
+    VerbSpec('science', 'policy-publish', positional="<settings.json>", purpose='Publish the reviewed policy as an immutable artifact.', value_flags=frozenset({'--plan-sha256'}), required_flags=frozenset({'--plan-sha256'})),
+    VerbSpec('science', 'policy-attach-review', positional="<settings.json>", purpose='Review a new agent version with the selected policies.'),
+    VerbSpec('science', 'policy-attach', positional="<settings.json>", purpose='Create the reviewed agent version without editing its source.', value_flags=frozenset({'--plan-sha256'}), required_flags=frozenset({'--plan-sha256'})),
     VerbSpec('science', 'measurements-review', positional='<experiment>', purpose='Review probe measurement settings and pinned inputs for a draft study.', value_flags=frozenset({'--settings'}), required_flags=frozenset({'--settings'})),
     VerbSpec('science', 'measurements-save', positional='<experiment>', purpose='Save reviewed probe measurement settings to the unchanged draft.', value_flags=frozenset({'--settings', '--plan-sha256'}), required_flags=frozenset({'--settings', '--plan-sha256'})),
     VerbSpec('science', 'probe-list', purpose='List portable and legacy probes in the local workspace without changing artifacts.'),
@@ -32,7 +38,7 @@ VERB_SPECS = (
 def run(invocation):
     from ..client_cli import ClientRefusal
     verb, args = invocation.spec.verb, invocation.positionals
-    if verb in {'measurements-review', 'measurements-save', 'probe-list', 'probe-inspect', 'corpus-preview', 'corpus-publish', 'artifact-plan', 'artifact-import', 'sae-check', 'sae-show', 'sae-pin-plan', 'sae-pin', 'interview', 'draft', 'publish', 'input-plan', 'package', 'import', 'custody', 'verify-custody'}:
+    if verb in {'policy-list', 'policy-inspect', 'policy-review', 'policy-publish', 'policy-attach-review', 'policy-attach', 'measurements-review', 'measurements-save', 'probe-list', 'probe-inspect', 'corpus-preview', 'corpus-publish', 'artifact-plan', 'artifact-import', 'sae-check', 'sae-show', 'sae-pin-plan', 'sae-pin', 'interview', 'draft', 'publish', 'input-plan', 'package', 'import', 'custody', 'verify-custody'}:
         from .diagnostic_commands import local
         return local(invocation)
     if len(args) != (0 if verb == 'list' else 1):

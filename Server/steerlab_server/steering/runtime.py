@@ -1,4 +1,4 @@
-"""Named residual runtime. No serialized policies or hidden model execution.
+"""Named residual runtime. Policy declarations live outside the tensor dispatcher.
 
 Legacy actions retain their owner, chain order, and tensor arithmetic. Named
 readings surround that action phase, independent of torch hook registration.
@@ -19,8 +19,13 @@ class Site:
 
 
 @dataclass(frozen=True)
+class SelectionSite:
+    kind: str = 'logitsPreSelection'
+
+
+@dataclass(frozen=True)
 class Context:
-    site: Site
+    site: Site | SelectionSite
     offset: int
     token_count: int
     prompt_token_count: int | None
@@ -49,17 +54,34 @@ class Reading:
             raise ValueError('A reading needs an ID and preAction or postAction timing.')
 
 
+@dataclass(frozen=True)
+class DecisionProvider:
+    """An action-producing callback, distinct from a read-only Reading."""
+    id: str
+    site: Site
+    callback: Callable
+    provider_id: str | None = None
+    stage: str = field(default='decision', init=False)
+
+    def __post_init__(self):
+        if not self.id: raise ValueError('A decision provider needs an ID.')
+
+
 @dataclass
 class Subscription:
-    readings: tuple[Reading, ...]
+    readings: tuple[Reading | DecisionProvider, ...]
     identity: tuple[tuple[str, str], ...]
     prompt_token_count: int | None
     states: dict = field(default_factory=dict)
     closed: bool = False
+    on_close: Callable | None = None
 
     def close(self):
+        if self.closed: return
         self.closed = True
         self.states.clear()
+        if self.on_close is not None: self.on_close()
+        self.on_close = None
 
 
 def apply_legacy(h, interventions, layer, offset):
@@ -106,6 +128,19 @@ class Runtime:
 
     def apply(self, h, site, offset, interventions=()):
         self.observe(h, site, offset, 'preAction')
+        actions = []
+        for subscription in self.subscriptions:
+            for reading in subscription.readings:
+                if reading.site != site or reading.stage != 'decision': continue
+                if h.ndim != 3 or h.shape[0] != 1:
+                    raise ValueError('Policy execution requires one unpadded sequence per response.')
+                context = Context(site, offset, h.shape[1], subscription.prompt_token_count, subscription.identity)
+                state = subscription.states.setdefault(reading.provider_id or reading.id, {})
+                # A provider cannot mutate the tensor seen by another policy or the model.
+                actions.extend(reading.callback(h.detach().clone(), context, state))
         result = apply_legacy(h, interventions, site.layer, offset)
+        if actions:
+            from .policy_actions import residual
+            result = residual(result, actions)
         self.observe(result, site, offset, 'postAction')
         return result

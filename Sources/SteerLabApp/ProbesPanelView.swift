@@ -16,6 +16,7 @@ struct ProbesPanelView: View {
     @State private var inspecting = false
     @State private var refreshID = UUID()
     @State private var showingLegacy = false
+    @State private var showingPolicies = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -30,6 +31,7 @@ struct ProbesPanelView: View {
             TrainVectorButton(service: service, operation: "probe-capture", title: "1. Capture activations…", root: root)
             TrainVectorButton(service: service, operation: "probe-train", title: "2. Fit a probe…", root: root)
             TrainVectorButton(service: service, operation: "probe-evaluate", title: "3. Evaluate a probe…", root: root)
+            Button("Intervention policies…") { showingPolicies = true }
             HStack {
                 Button("Copy data and review instructions") {
                     do {
@@ -77,6 +79,7 @@ struct ProbesPanelView: View {
             }
             Spacer(minLength: 0)
         }.padding()
+        .sheet(isPresented: $showingPolicies) { InterventionPoliciesView(root: root) }
         .sheet(isPresented: $showingLegacy) {
             VStack {
                 HStack { Spacer(); Button("Done") { showingLegacy = false } }

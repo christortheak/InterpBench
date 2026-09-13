@@ -91,6 +91,7 @@ public struct StudyRunReportView: Codable, Sendable, Equatable {
 }
 
 public struct StudyGenerationPreview: Identifiable, Codable, Sendable, Equatable {
+    public var interventionDecisions: JSONValue? = nil
     public var probeMeasurements: JSONValue? = nil
     public var sampleIndex: Int? = nil
     public var id: String { "\(condition)-\(promptID)" + (sampleIndex.map { "-\($0)" } ?? "") }

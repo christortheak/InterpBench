@@ -33,16 +33,22 @@ for module in ('model_variant', 'multi_agent'):
     path = f'Server/steerlab_server/experiment/{module}.py'
     before = subprocess.check_output(['git','show',f'{BASE}:{path}'],cwd=ROOT,text=True)
     after = (ROOT/path).read_text()
-    if module == 'multi_agent':
+    if module in ('model_variant', 'multi_agent'):
         # The historical mechanical migration remains proven at its landed tip.
-        # P3 intentionally extends run_scenario; test its behavior separately,
+        # P3/P5 intentionally extend run_scenario and the agent schema; test its behavior separately,
         # while retaining the current lazy wrapper and every other body here.
         landed = subprocess.check_output(['git', 'show', f'b1190f7:{path}'], cwd=ROOT, text=True)
         audit(module, before, landed)
-        old_tree, current_tree = ast.parse(landed), ast.parse(after)
+        expected = landed
+        if module == 'model_variant':
+            expected = expected.replace('root: str | None = None) -> list[CellInjection]:', 'root: str | None = None, allow_policies: bool = False) -> list[CellInjection]:', 1)
+            expected = expected.replace('    # `resolve_artifact`, not bare', "    if variant.intervention_policies and not allow_policies:\n        raise ValueError('This execution path does not run intervention policies. Use a sampled-response agent study or Python Playground; direct scoring and battery qualification are not yet policy-aware.')\n    # `resolve_artifact`, not bare", 1)
+        else:
+            expected = expected.replace('model_variant.variant_injections(variant)', "model_variant.variant_injections(variant, **({'allow_policies': True} if variant.intervention_policies else {}))")
+        old_tree, current_tree = ast.parse(expected), ast.parse(after)
         for tree in (old_tree, current_tree):
-            tree.body = [n for n in tree.body if not (isinstance(n, ast.FunctionDef) and n.name == 'run_scenario')]
-        assert ast.dump(old_tree) == ast.dump(current_tree), 'Unreviewed changes outside the P3 scenario executor'
+            tree.body = [n for n in tree.body if not (isinstance(n, ast.FunctionDef) and n.name == 'run_scenario') and not (module == 'model_variant' and isinstance(n, ast.ClassDef) and n.name == 'ModelVariant')]
+        assert ast.dump(old_tree) == ast.dump(current_tree), 'Unreviewed changes outside the intentional agent schema, scenario executor, and explicit policy admission changes'
         after = landed
     audit(module, before, after)
     try:
@@ -51,4 +57,4 @@ for module in ('model_variant', 'multi_agent'):
         pass
     else:
         raise AssertionError('Negative control was not detected')
-print('Historical lazy-import migration proven; current bodies outside the P3 scenario executor unchanged; negative controls rejected.')
+print('Historical lazy-import migration proven; current bodies outside the intentional agent schema, scenario executor, and explicit policy admission changes unchanged; negative controls rejected.')
