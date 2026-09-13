@@ -213,6 +213,7 @@ def package_experiment(name: str, *, output_path: str | None = None,
     manifest = Manifest.load(name, root)
     base = paths.project_root() if root is None else root
     files = _experiment_files(manifest, base, root)
+    required_runtime = set()
     if output_path is None:
         out_dir = paths.make_unique_run_directory(f"bundle-{name}", root)
         output_path = os.path.join(out_dir, f"{name}.run-bundle.tar.gz")
@@ -226,11 +227,13 @@ def package_experiment(name: str, *, output_path: str | None = None,
         "experimentContentHash": manifest.content_hash(),
         "validationScopeHash": manifest.validation_scope_hash(),
         "rootRelative": True,
+        "runtimeRequirements": [],
         "verificationViolations": manifest.verify(root),
         "entries": [],
     }
     with tarfile.open(output_path, "w:gz") as tar:
-        entries = _add_files(tar, files)
+        entries = _add_files(tar, files, runtime_requirements=required_runtime)
+        meta["runtimeRequirements"] = sorted(required_runtime)
         meta["entries"] = [entry.to_dict() for entry in entries]
         _add_json(tar, "steerlab-bundle.json", meta)
     meta["bundlePath"] = output_path
@@ -1315,6 +1318,10 @@ def import_bundle(bundle_path: str, *, target_root: str | None = None,
                 # target root — which is what makes the commit a rename.
                 staging = tempfile.mkdtemp(prefix=_STAGING_PREFIX, dir=target)
                 _stage_plan(tar, plan, staging=staging, target=target)
+                from . import instrumentation_evidence
+                for member_plan in plan:
+                    if meta.get('kind') == 'evidenceBundle' and os.path.basename(member_plan.dest) in ('generations.jsonl', 'turns.jsonl'):
+                        instrumentation_evidence.validate_file(member_plan.staged)
         # ---- commit -------------------------------------------------------
         rollback_root = None
         if staging is not None:
@@ -1805,6 +1812,8 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
     evaluate_subsample.resolve_request(sample_per_condition, sample_seed,
                                        program="steerlab-server")
     meta = inspect_bundle(bundle_path)
+    from . import instrumentation_contract
+    instrumentation_contract.require(instrumentation_contract.requirements(meta), {"instrumentation": list(instrumentation_contract.SUPPORTED)})
     if meta.get("kind") != "runBundle":
         raise BundleError("bundle execute requires a runBundle")
     # The experiment name is DERIVED INTO paths below (the manifest to load,
@@ -2242,10 +2251,25 @@ def _dedupe_existing(files: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
     return out
 
 
-def _add_files(tar: tarfile.TarFile, files: Iterable[tuple[str, str]]) -> list[BundleEntry]:
+def _add_files(tar: tarfile.TarFile, files: Iterable[tuple[str, str]], *, runtime_requirements=None) -> list[BundleEntry]:
     entries: list[BundleEntry] = []
     for path, rel in files:
         rel = rel.replace(os.sep, "/")
+        if runtime_requirements is not None and rel.endswith('.json'):
+            # Hash, inspect, and archive the SAME captured JSON bytes. A mutable
+            # authoring file cannot change between requirement discovery and packing.
+            import io
+            from . import instrumentation_contract
+            info = tar.gettarinfo(path, arcname=rel)
+            if info.isreg():
+                with open(path, 'rb') as handle: raw = handle.read()
+                try: document = json.loads(raw)
+                except (ValueError, UnicodeError): document = None
+                runtime_requirements.update(instrumentation_contract.requirements(document))
+                info.size = len(raw)
+                tar.addfile(info, io.BytesIO(raw))
+                entries.append(BundleEntry(path=rel, sha256=hashlib.sha256(raw).hexdigest(), bytes=len(raw)))
+                continue
         tar.add(path, arcname=rel, recursive=False)
         entries.append(BundleEntry(path=rel, sha256=sha256_file(path),
                                    bytes=os.path.getsize(path)))

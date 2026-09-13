@@ -23,6 +23,7 @@ struct ResultReviewSheet: Identifiable {
 
 struct ResultReviewWindow: View {
     let sheet: ResultReviewSheet
+    @State private var showingInstrumentation = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -44,6 +45,7 @@ struct ResultReviewWindow: View {
                     .keyboardShortcut(.cancelAction)
             }
 
+            Button("Compare probe readings and policy actions…") { showingInstrumentation = true }
             Divider()
 
             ScrollView {
@@ -64,6 +66,9 @@ struct ResultReviewWindow: View {
         }
         .padding(18)
         .frame(minWidth: 760, minHeight: 560)
+        .sheet(isPresented: $showingInstrumentation) {
+            InstrumentationEvidenceView(root: ExperimentStore.workspaceRoot, path: sheet.detail.item.path)
+        }
     }
 
     private func generationCard(_ generation: StudyGenerationPreview) -> some View {

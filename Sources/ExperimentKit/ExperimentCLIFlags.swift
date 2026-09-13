@@ -268,6 +268,7 @@ public enum ExperimentCLIParser {
     /// reference document's flag rows from it, and a switch statement cannot
     /// be enumerated.
     public static let specs: [ExperimentCLIVerbSpec] = [
+        .init(namespace: "science", verb: "evidence-analyze", positional: "<path>", purpose: "Compare retained probe readings and requested/applied policy actions in a run."),
         .init(namespace: "science", verb: "policy-list", purpose: "List saved intervention policies."),
         .init(namespace: "science", verb: "policy-inspect", positional: "<path>", purpose: "Inspect a policy and its exact input bindings."),
         .init(namespace: "science", verb: "policy-review", positional: "<settings.json>", purpose: "Review policy settings and embed their exact input bytes."),

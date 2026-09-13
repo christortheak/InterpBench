@@ -18,6 +18,7 @@ public struct ClusterConnectionProfile: Codable, Sendable, Equatable {
 }
 
 public struct ClusterCapabilities: Codable, Sendable {
+    public var instrumentation: [String]? = nil
     public struct RemoteStudy: Codable, Sendable {
         public var bundleUpload: Bool?
         public var bundleDownload: Bool?
@@ -2827,6 +2828,7 @@ public struct ClusterClient: Sendable {
         dryRun: Bool = false,
         resumeFrom: String? = nil
     ) async throws -> RemoteStudySubmission {
+        try await requireStudyInstrumentation(experiment: experiment)
         struct Body: Encodable {
             var experiment: String
             var verb: String
@@ -2854,6 +2856,7 @@ public struct ClusterClient: Sendable {
         samplePerCondition: Int? = nil,
         sampleSeed: String? = nil
     ) async throws -> RemoteStudySubmission {
+        try await requireBundleInstrumentation(path: path)
         struct Body: Encodable {
             var bundlePath: String
             var verb: String
@@ -2928,6 +2931,8 @@ public struct ClusterClient: Sendable {
     public func resubmitJob(
         _ id: String, walltime: String? = nil
     ) async throws -> RemoteJobResubmission {
+        let previous: JSONValue = try await get("/api/jobs/\(id)")
+        try await requireInstrumentation(previous)
         struct Body: Encodable {
             var walltime: String?
         }
@@ -3920,6 +3925,7 @@ public struct ClusterClient: Sendable {
         systemPrompt: String?,
         stripInterventions: Bool
     ) async throws -> String {
+        try await requireChatInstrumentation(selection, strip: stripInterventions)
         struct Response: Decodable { var output: String }
         var body = VariantChatBody(
             messages: messages, maxTokens: maxTokens, temperature: temperature,
@@ -4056,6 +4062,7 @@ public struct ClusterClient: Sendable {
         stripInterventions: Bool,
         timeout: TimeInterval = 3600
     ) async throws -> VariantBatteryEvaluation {
+        try await requireChatInstrumentation(selection, strip: stripInterventions, battery: true)
         var body = VariantBatteryBody(
             battery: battery, batteryHash: batteryHash,
             stripInterventions: stripInterventions)
@@ -4107,6 +4114,7 @@ public struct ClusterClient: Sendable {
         onStatus: (@Sendable (String) async -> Void)? = nil,
         onChunk: @escaping @Sendable (String) async -> Void
     ) async throws {
+        try await requireChatInstrumentation(selection, strip: stripInterventions)
         var body = VariantChatBody(
             messages: messages, maxTokens: maxTokens, temperature: temperature,
             promptMode: promptMode, systemPrompt: systemPrompt,
@@ -4610,6 +4618,7 @@ public enum RunBundlePackager {
         }
 
         var entries: [[String: CodableValue]] = []
+        var runtimeRequirements = Set<String>()
         for file in dedupe(files) {
             let destination = payload.appending(path: file.relative)
             try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -4617,7 +4626,10 @@ public enum RunBundlePackager {
                 try fm.removeItem(at: destination)
             }
             try fm.copyItem(at: file.source, to: destination)
-            let data = try Data(contentsOf: file.source)
+            let data = try Data(contentsOf: destination)
+            if file.relative.hasSuffix(".json"), let document = try? JSONDecoder().decode(JSONValue.self, from: data) {
+                runtimeRequirements.formUnion(InstrumentationSupport.requirements(document))
+            }
             entries.append([
                 "path": .string(file.relative),
                 "sha256": .string(sha256(data)),
@@ -4633,6 +4645,7 @@ public enum RunBundlePackager {
             "experimentContentHash": .string(ExperimentStore.manifestHash(manifest)),
             "validationScopeHash": .string(""),
             "rootRelative": .bool(true),
+            "runtimeRequirements": .array(runtimeRequirements.sorted().map { .string($0) }),
             "verificationViolations": .array(source.verification.map { .string($0) }),
             "entries": .array(entries.map { .object($0) }),
         ]
@@ -4867,6 +4880,10 @@ public enum EvidenceBundleImporter {
                 continue
             }
             moves.append((source, target))
+        }
+        // Validate instrumentation before publishing any primary or sibling run.
+        for path in verified where ["generations.jsonl", "turns.jsonl"].contains(URL(filePath: path).lastPathComponent) {
+            try InstrumentationEvidence.validateFile(URL(filePath: path))
         }
         // The portable ledger (bundle meta): its hash pin is REQUIRED — an
         // unpinned member is unverifiable, and verification is the whole

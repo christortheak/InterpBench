@@ -191,7 +191,7 @@ def test_portable_adapter_preserves_endpoint_paths_and_posts_once():
     client.job_recovery('job')
     client.recover_job('job', 'review', 'owner exit verified')
     assert [c[:2] for c in calls] == [('POST', '/api/science/plan'), ('POST', '/api/science/submit'),
-        ('POST', '/api/jobs/job/resubmit'), ('GET', '/api/jobs/job/recovery'), ('POST', '/api/jobs/job/recover')]
+        ('GET', '/api/jobs/job'), ('POST', '/api/jobs/job/resubmit'), ('GET', '/api/jobs/job/recovery'), ('POST', '/api/jobs/job/recover')]
     assert calls[1][2] == {'request': request, 'planSHA256': 'a' * 64}
     assert calls[-1][2]['confirmOwnerExited'] is True
     def timeout(request):
@@ -344,7 +344,7 @@ def test_portable_cli_dispatches_each_remote_workflow(tmp_path, monkeypatch, cap
     assert client_cli.main(['runner', verb, *args, *extra, '--runner', 'https://runner.example.invalid', '--json']) == 0
     envelope = json.loads(capsys.readouterr().out)
     assert envelope['result']['response']['jobId'] == 'example-job'
-    assert calls == [(method, route)]
+    assert calls == ([('GET', '/api/jobs/example-job')] if verb == 'resubmit' else []) + [(method, route)]
 
 
 def test_gpu_type_is_reviewed_validated_and_bound_into_the_plan(setup, monkeypatch):

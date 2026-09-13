@@ -2263,3 +2263,21 @@ def test_resident_load_refusal_is_session_aware(proxy_controller):
     assert "no GPU session running" not in excinfo.value.detail
     assert "a GPU session IS running" in excinfo.value.detail
     assert "POST /api/studies/submit" in excinfo.value.detail
+
+
+@pytest.mark.parametrize('supported', [False, True])
+def test_policy_chat_checks_actual_worker_support_before_forwarding(proxy_controller, monkeypatch, supported):
+    worker = FastAPI(); received = []
+    @worker.get('/api/capabilities')
+    def capabilities():
+        return {'instrumentation': ['policy-v1', 'policy-evidence-v2', 'probe-readings-v1']} if supported else {}
+    @worker.post('/api/variant/generate')
+    def generate(body: dict):
+        received.append(body); return {'output': 'example'}
+    monkeypatch.setattr(gpu_session, '_TRANSPORT', httpx.ASGITransport(app=worker))
+    _install_session_records()
+    with TestClient(app) as client:
+        response = client.post('/api/variant/generate', json={'variant': {'interventionPolicies': [{}]}}, headers={'Authorization': 'Bearer tok-abc'})
+    assert response.status_code == (200 if supported else 409)
+    assert len(received) == int(supported)
+    if not supported: assert response.json()['detail']['code'] == 'unsupportedInstrumentation'

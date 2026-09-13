@@ -80,6 +80,7 @@ import Testing
         let client = ClusterClient(
             profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
             session: Self.session { request in
+                if request.url?.path.hasSuffix("/manifest") == true { return (Data("{}".utf8), 200) }
                 #expect(request.url?.path == "/api/studies/submit")
                 let body = try #require(Self.bodyData(from: request))
                 let object = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
@@ -312,6 +313,7 @@ import Testing
         let client = ClusterClient(
             profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
             session: Self.session { request in
+                if request.url?.path == "/api/bundles/inspect" { return (Data(#"{"runtimeRequirements":[]}"#.utf8), 200) }
                 #expect(request.url?.path == "/api/studies/submit-bundle")
                 let body = try #require(Self.bodyData(from: request))
                 let object = try #require(
@@ -371,6 +373,7 @@ import Testing
         let withSource = ClusterClient(
             profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
             session: Self.session { request in
+                if request.url?.path == "/api/bundles/inspect" { return (Data(#"{"runtimeRequirements":[]}"#.utf8), 200) }
                 let body = try #require(Self.bodyData(from: request))
                 let object = try #require(
                     JSONSerialization.jsonObject(with: body) as? [String: Any])
@@ -387,6 +390,7 @@ import Testing
         let withoutSource = ClusterClient(
             profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
             session: Self.session { request in
+                if request.url?.path == "/api/bundles/inspect" { return (Data(#"{"runtimeRequirements":[]}"#.utf8), 200) }
                 let body = try #require(Self.bodyData(from: request))
                 let object = try #require(
                     JSONSerialization.jsonObject(with: body) as? [String: Any])
@@ -418,6 +422,7 @@ import Testing
         let sampled = ClusterClient(
             profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
             session: Self.session { request in
+                if request.url?.path == "/api/bundles/inspect" { return (Data(#"{"runtimeRequirements":[]}"#.utf8), 200) }
                 let body = try #require(Self.bodyData(from: request))
                 let object = try #require(
                     JSONSerialization.jsonObject(with: body) as? [String: Any])
@@ -434,6 +439,7 @@ import Testing
         let unsampled = ClusterClient(
             profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
             session: Self.session { request in
+                if request.url?.path == "/api/bundles/inspect" { return (Data(#"{"runtimeRequirements":[]}"#.utf8), 200) }
                 let body = try #require(Self.bodyData(from: request))
                 let object = try #require(
                     JSONSerialization.jsonObject(with: body) as? [String: Any])
@@ -453,6 +459,7 @@ import Testing
         let client = ClusterClient(
             profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
             session: Self.session { request in
+                if request.url?.path == "/api/bundles/inspect" { return (Data(#"{"runtimeRequirements":[]}"#.utf8), 200) }
                 let body = try #require(Self.bodyData(from: request))
                 let object = try #require(
                     JSONSerialization.jsonObject(with: body) as? [String: Any])
@@ -485,6 +492,7 @@ import Testing
         let client = ClusterClient(
             profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
             session: Self.session { request in
+                if request.url?.path == "/api/bundles/inspect" { return (Data(#"{"runtimeRequirements":[]}"#.utf8), 200) }
                 let body = try #require(Self.bodyData(from: request))
                 let object = try #require(
                     JSONSerialization.jsonObject(with: body) as? [String: Any])
@@ -531,6 +539,7 @@ import Testing
             profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
             token: "secret",
             session: Self.session { request in
+                if request.httpMethod == "GET" { return (Data("{}".utf8), 200) }
                 #expect(request.url?.path == "/api/jobs/abc123/resubmit")
                 #expect(request.httpMethod == "POST")
                 #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer secret")
@@ -562,6 +571,7 @@ import Testing
         let withOverride = ClusterClient(
             profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
             session: Self.session { request in
+                if request.httpMethod == "GET" { return (Data("{}".utf8), 200) }
                 let body = try #require(Self.bodyData(from: request))
                 let object = try #require(
                     JSONSerialization.jsonObject(with: body) as? [String: Any])
@@ -584,6 +594,7 @@ import Testing
         let withoutOverride = ClusterClient(
             profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
             session: Self.session { request in
+                if request.httpMethod == "GET" { return (Data("{}".utf8), 200) }
                 let body = try #require(Self.bodyData(from: request))
                 let object = try #require(
                     JSONSerialization.jsonObject(with: body) as? [String: Any])
@@ -2134,6 +2145,7 @@ import Testing
             profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
             session: Self.session { _ in (Data(), 200) },
             streamSession: Self.session { request in
+                if request.url?.path == "/api/variant/detail" { return (Data("{}".utf8), 200) }
                 #expect(request.url?.path == "/api/variant/generate/stream")
                 let body = try #require(Self.bodyData(from: request))
                 let object = try #require(
@@ -2636,6 +2648,21 @@ import Testing
             (Data("{}".utf8), 200)
         })
         #expect(try await old.scientificGPUPlacement()?.available == nil)
+    }
+
+    @Test func policyBundleRefusesBeforeSubmissionOnAnOldEngine() async throws {
+        let calls = RecordedBodies()
+        let client = ClusterClient(profile: .init(baseURL: URL(string: "http://server.test")!), session: Self.session { request in
+            calls.append(.string(request.url!.path))
+            if request.url?.path == "/api/bundles/inspect" { return (Data(#"{"runtimeRequirements":["policy-v1","policy-evidence-v2"]}"#.utf8), 200) }
+            if request.url?.path == "/api/capabilities" { return (Data("{}".utf8), 200) }
+            Issue.record("Unsupported policy reached submission"); return (Data("{}".utf8), 500)
+        })
+        do {
+            _ = try await client.submitBundle(path: "runs/example.tar.gz", verb: "run", executor: "local", dryRun: false)
+            Issue.record("Expected unsupported-runtime refusal")
+        } catch { #expect(error.localizedDescription.contains("restart")) }
+        #expect(calls.values == [.string("/api/bundles/inspect"), .string("/api/capabilities")])
     }
 
     private static func session(

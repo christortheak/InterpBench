@@ -92,15 +92,11 @@ batches, arbitrary execution-flow changes, auxiliary model execution, gradient
 training through policies, direct choice scoring, or policy-aware capability
 battery qualification. Unsupported static-scoring paths refuse instead of
 silently omitting the policy. Use sampled-response comparisons for the current
-slice; record the missing battery qualification explicitly. P6 remains responsible
-for richer analysis and the full qualification/remote acceptance walk. Live
+slice; record the missing battery qualification explicitly. P6 adds richer analysis; P7 retains the live qualification/remote acceptance walk. Live
 GPU qualification and manual app interaction have not been established by the
 synthetic/unit tests.
 
-P6 release prerequisite: add explicit policy-runtime capability negotiation on
-all remote submission and chat paths, including panel agents. An older engine's
-agent decoder does not know this additive field and can otherwise ignore it.
-The isolated-bundle test here uses the current engine; it does not qualify mixed
-client/engine versions. Do not submit policy agents to an older deployed engine
-or deploy this feature independently of that admission work. The app is not in
-use during these implementation slices, and no live deployment occurs here.
+P6 implements remote support admission, acknowledged action evidence, structural
+collection checks, and shared offline summaries. See the
+[P1–P6 review handoff](PROBES-INTERVENTIONS-P1-P6-REVIEW-HANDOFF.md). P7 retains
+live deployment, numerical/performance qualification, and manual app acceptance.

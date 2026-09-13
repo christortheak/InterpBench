@@ -212,6 +212,7 @@ steerlab runner resubmit <job-id> --runner <url> [--ca-bundle <path>] [--timeout
 steerlab runner reconcile --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner recovery <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner recover <job-id> --confirm-owner-exited --reason <value> --review-token <value> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
+steerlab science evidence-analyze <path>
 steerlab science policy-list
 steerlab science policy-inspect <path>
 steerlab science policy-review <settings.json>
@@ -2914,6 +2915,7 @@ steerlab-cli authoring study <intent>
 steerlab-cli science list
 steerlab-cli science guide <method>
 steerlab-cli science operation <operation>
+steerlab-cli science evidence-analyze <path>
 steerlab-cli science policy-list
 steerlab-cli science policy-inspect <path>
 steerlab-cli science policy-review <settings.json>
@@ -2949,6 +2951,7 @@ steerlab-cli science verify-custody <receipt-sha256>
 | `science list` | List shipped methods, supported operation interfaces and engine restrictions; does not execute. |
 | `science guide` | Read the shared method guide, dataset schemas and coworker/reviewer instructions. |
 | `science operation` | Inspect exact public execution paths, outputs and restrictions for one operation. |
+| `science evidence-analyze` | Compare retained probe readings and requested/applied policy actions in a run. |
 | `science policy-list` | List saved intervention policies. |
 | `science policy-inspect` | Inspect a policy and its exact input bindings. |
 | `science policy-review` | Review policy settings and embed their exact input bytes. |

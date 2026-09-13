@@ -819,8 +819,16 @@ class RunnerClient:
         expected = (None if expected_sha256 is None
                     else _digest_pin(expected_sha256, what="the bundle pin",
                                      detail={"bundlePath": remote_path}))
+        staged = self.inspect_remote_bundle(remote_path)
+        from ..experiment import instrumentation_contract
+        required = instrumentation_contract.requirements(staged)
+        if "runtimeRequirements" not in staged:
+            required = list(instrumentation_contract.SUPPORTED)  # Older archives may hide additive fields; repackage for explicit empty requirements.
+        if required:
+            try: instrumentation_contract.require(required, self.capabilities())
+            except ValueError as exc:
+                raise RunnerRefusal(str(exc), code="unsupportedInstrumentation", repair_action="Update and restart the engine, then reconnect and review this unchanged bundle.") from exc
         if expected is not None:
-            staged = self.inspect_remote_bundle(remote_path)
             actual = str(staged.get("bundleSha256") or "")
             if actual != expected:
                 raise RunnerRefusal(
@@ -932,6 +940,12 @@ class RunnerClient:
         return self._json("POST", "/api/jobs/reconcile", json_body={})
 
     def resubmit_job(self, job_id: str, walltime: str | None = None) -> dict:
+        from ..experiment import instrumentation_contract
+        required = instrumentation_contract.requirements(self.job(job_id))
+        if required:
+            try: instrumentation_contract.require(required, self.capabilities())
+            except ValueError as exc:
+                raise RunnerRefusal(str(exc), code='unsupportedInstrumentation', repair_action='Update and restart the engine, then reconnect before resubmitting.') from exc
         return self._json("POST", f"/api/jobs/{quote(job_id, safe='')}/resubmit",
                           json_body={"walltime": walltime} if walltime else {})
 

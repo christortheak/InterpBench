@@ -385,6 +385,7 @@ def test_every_committed_fixture_has_a_staleness_test():
         # Hand-authored v1 inputs are validated/scored in test_probe_artifacts;
         # its legacy writer test and native ProbeLibraryTests check producers.
         "probe-artifacts.json",
+        "policy-evidence.json",  # test_instrumentation_evidence: real forward, timing normalized
         "manifest-interop.json", "run-bundle-metadata.json",
         "swift-authored-manifest.json",
     }

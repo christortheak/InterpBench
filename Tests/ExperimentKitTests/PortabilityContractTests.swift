@@ -71,7 +71,7 @@ import Testing
     /// `test_a_run_bundle_metadata_fixture_is_current`.
     static let runBundleHeaderKeys = [
         "createdAt", "entries", "experiment", "experimentContentHash", "kind",
-        "rootRelative", "schemaVersion", "validationScopeHash",
+        "rootRelative", "runtimeRequirements", "schemaVersion", "validationScopeHash",
         "verificationViolations",
     ]
 

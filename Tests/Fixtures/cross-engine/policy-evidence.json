@@ -1,0 +1,124 @@
+{
+  "condition": "modified",
+  "instrumentationRequirements": [
+    "policy-v1",
+    "policy-evidence-v2"
+  ],
+  "interventionDecisions": {
+    "agent": "first",
+    "condition": "modified",
+    "decisions": [
+      {
+        "actionOutcomes": {
+          "change": {
+            "hostSeconds": 0,
+            "status": "applied"
+          }
+        },
+        "appliedStrengths": {
+          "change": 2.0
+        },
+        "generatedTokenIndex": 0,
+        "inputTokenID": 2,
+        "inputTokenPosition": 1,
+        "policyName": "example-policy",
+        "policySHA256": "d4dcae2af44dcbdea22d1e7b51bb7a3cc60c4e7c2b7f30634893b01376917ba0",
+        "predictedTokenID": 3,
+        "predictsTokenPosition": 2,
+        "scores": {
+          "reader": 3.5
+        },
+        "site": {
+          "kind": "residualPost",
+          "layer": 0
+        },
+        "status": "applied",
+        "strengths": {
+          "change": 2.0
+        }
+      }
+    ],
+    "declarations": [
+      {
+        "actions": [
+          {
+            "bounds": [
+              0,
+              2
+            ],
+            "id": "change",
+            "kind": "add",
+            "vectorSHA256": "5aaf1e183f1faf12c327dc2fb8c223022f04684c61fc34533bff62e7e572c776"
+          }
+        ],
+        "assetSHA256": {},
+        "binding": {
+          "coordinateConvention": "hf-decoder-block-v1/model.layers",
+          "modelID": "example/model",
+          "rendering": "raw",
+          "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "tokenizerSHA256": null
+        },
+        "maxEvents": 100,
+        "onError": "stop",
+        "positions": "lastPosition",
+        "probes": [
+          {
+            "id": "reader",
+            "sha256": "76cafa6b7e14d33b47a2fa47cb9f2a684a4bd7903bf1c2603114cbdbc5bb15fa"
+          }
+        ],
+        "providerSHA256": null,
+        "rules": [
+          {
+            "action": "change",
+            "kind": "fixed",
+            "value": 2
+          }
+        ],
+        "sha256": "d4dcae2af44dcbdea22d1e7b51bb7a3cc60c4e7c2b7f30634893b01376917ba0",
+        "site": {
+          "kind": "residualPost",
+          "layer": 0
+        },
+        "stages": [
+          "prefill",
+          "decode"
+        ]
+      }
+    ],
+    "failureCount": 0,
+    "failures": [],
+    "limitations": [
+      "Requested strengths and acknowledged applied strengths are distinct. Applied means the site tensor operation succeeded; a failed response is not completed evidence.",
+      "Policy scores use float32 on the activation device; measurements retain their own scoring precision.",
+      "Expert providers are trusted Python code. Their declared RNG is response-local random.Random; they must not use global randomness or mutate model state."
+    ],
+    "omittedDecisions": 0,
+    "ordering": "preAction; decisions; legacy chain; joint ablation; ordered additions; postAction; logits before sampling warpers",
+    "outputTokenIDs": [
+      3
+    ],
+    "policies": [
+      "d4dcae2af44dcbdea22d1e7b51bb7a3cc60c4e7c2b7f30634893b01376917ba0"
+    ],
+    "promptTokenIDs": [
+      1,
+      2
+    ],
+    "rngConvention": "random.Random seeded by SHA256(policy digest + sorted response context JSON)",
+    "runtime": "policy-v1",
+    "schemaVersion": 2,
+    "stateConvention": "empty dictionary per policy per response; skipPolicy retains prior state",
+    "status": "complete",
+    "timing": {
+      "decisionCalls": 1,
+      "decisionHostSeconds": 0,
+      "interpretation": "Host elapsed time, including scoring and recording. Asynchronous GPU work is not synchronized; this is not GPU kernel latency."
+    }
+  },
+  "outputTokenIDs": [
+    3
+  ],
+  "promptID": "example"
+}

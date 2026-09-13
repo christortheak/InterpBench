@@ -3,6 +3,7 @@ from ..cli_envelope import CLIResult, VerbSpec
 from ..experiment import science_catalog
 
 VERB_SPECS = (
+    VerbSpec('science', 'evidence-analyze', positional='<path>', purpose='Compare retained probe readings and requested/applied policy actions in a run.'),
     VerbSpec('science', 'policy-list', purpose='List saved intervention policies.'),
     VerbSpec('science', 'policy-inspect', positional="<path>", purpose='Inspect a policy and its exact input bindings.'),
     VerbSpec('science', 'policy-review', positional="<settings.json>", purpose='Review policy settings and embed their exact input bytes.'),
@@ -38,7 +39,7 @@ VERB_SPECS = (
 def run(invocation):
     from ..client_cli import ClientRefusal
     verb, args = invocation.spec.verb, invocation.positionals
-    if verb in {'policy-list', 'policy-inspect', 'policy-review', 'policy-publish', 'policy-attach-review', 'policy-attach', 'measurements-review', 'measurements-save', 'probe-list', 'probe-inspect', 'corpus-preview', 'corpus-publish', 'artifact-plan', 'artifact-import', 'sae-check', 'sae-show', 'sae-pin-plan', 'sae-pin', 'interview', 'draft', 'publish', 'input-plan', 'package', 'import', 'custody', 'verify-custody'}:
+    if verb in {'evidence-analyze', 'policy-list', 'policy-inspect', 'policy-review', 'policy-publish', 'policy-attach-review', 'policy-attach', 'measurements-review', 'measurements-save', 'probe-list', 'probe-inspect', 'corpus-preview', 'corpus-publish', 'artifact-plan', 'artifact-import', 'sae-check', 'sae-show', 'sae-pin-plan', 'sae-pin', 'interview', 'draft', 'publish', 'input-plan', 'package', 'import', 'custody', 'verify-custody'}:
         from .diagnostic_commands import local
         return local(invocation)
     if len(args) != (0 if verb == 'list' else 1):

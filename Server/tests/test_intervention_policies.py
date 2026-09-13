@@ -100,6 +100,10 @@ def test_provider_state_rng_assets_failure_budget_and_reset(tmp_path):
             forward(model,[1]);forward(model,[2])
         results.append(p.result([2,3]))
         assert p.closed and not p.states and not p.providers
+    for result in results:
+        assert result.pop('timing')['decisionHostSeconds'] >= 0
+        for row in result['decisions']:
+            for outcome in row['actionOutcomes'].values(): assert outcome.pop('hostSeconds') >= 0
     assert results[0]==results[1] and results[0]['omittedDecisions']==1 and results[0]['failures']
     assert torch.equal(before,torch.random.get_rng_state())
     doc['onError']='stop';p=runtime.Execution(attached(doc,tmp_path),rendering='rawCompletion',run_directory=tmp_path)

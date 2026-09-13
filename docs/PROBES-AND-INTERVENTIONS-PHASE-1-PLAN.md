@@ -1,7 +1,7 @@
 # Probes and interventions: phase 1 implementation plan
 
 - Date: 2026-09-12
-- Status: P0–P3 implemented; P4 and P5 prepared for review on `codex/intervention-policies`. P6/P7 remain.
+- Status: P0–P6 implemented/prepared for consolidated review on `codex/probe-policy-evidence`. P7 qualification remains.
 - Repository baseline inspected: main `22f08a9` (implementation start).
 - Purpose: a shared implementation brief for coding agents and reviewers.
 
@@ -382,7 +382,7 @@ current main's fixes using the established process before starting a code branch
 | P3 — read-only study measurements ([Python implementation](PROBE-STUDY-MEASUREMENTS.md)) | Add frozen measurement settings, position/stage alignment, compact recording, optional activation retention, and Results views | A study records multiple probes across selected conditions/agents; disabled instrumentation preserves baseline behavior |
 | [P4 — general runtime with legacy adapters](PROBE-INTERVENTION-RUNTIME.md) | Implement named sites, sequencing, state isolation, and action application; route existing add/ablate through reviewed adapters | Legacy interventions preserve their actual arithmetic, scopes, and ordering; all-off and read-only modes are verified |
 | [P5 — policies and agent attachment](INTERVENTION-POLICIES.md) | Add threshold/adaptive built-ins, custom-provider interface, logits actions, authoring, and agent identity integration | No-policy, fixed-policy, and conditional-policy agents can be compared; impossible timing and action conflicts have clear outcomes |
-| P6 — evidence and remote parity | Complete decision traces, analysis, dependency closure, managed execution, collection, import, and supported multi-agent paths | Local and isolated remote journeys carry the same declared objects and alignable evidence; missing support is explicit |
+| [P6 — evidence and remote parity](PROBES-INTERVENTIONS-P1-P6-REVIEW-HANDOFF.md) | Complete decision traces, analysis, dependency closure, managed execution, collection, import, and supported multi-agent paths | Local and isolated remote journeys carry the same declared objects and alignable evidence; missing support is explicit |
 | P7 — qualification and handoff | Measure representative local/remote behavior and overhead; run full checks; document scope and remaining limitations | Independent review has a clean diff, both suites, required audits, and live acceptance evidence or explicitly pending qualifications |
 
 P3's measurement hooks and P4's intervention runtime must share the contract

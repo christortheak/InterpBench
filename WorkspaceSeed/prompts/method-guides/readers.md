@@ -424,7 +424,42 @@ call's actions and records the error; it does not roll back arbitrary changes
 an expert provider made to its own response state. Use `stop` when such a
 continuation would be scientifically ambiguous.
 
-During the phase-1 implementation slices, execute only with the current policy
-engine. An older engine can ignore the new agent field. P6 must complete explicit
-policy-runtime capability negotiation before mixed-version remote deployment;
-local implementation tests do not establish that admission contract.
+## Inspecting readings and policy evidence
+
+After collecting a run, open Results → Compare probe readings and policy actions,
+or run `science evidence-analyze runs/<run>` with `--json` and the workspace flag
+on either client. The workbench HTTP equivalent is
+`POST /api/science/workspace/evidence-analyze` with `workspaceRoot` and `path`.
+The path can name a run directory, `generations.jsonl`, or `turns.jsonl`. Analysis
+reads the complete evidence file and returns its SHA-256, so a preview limit does
+not silently become your sample size. It never changes the source run.
+
+Compare conditions and panel agents using the same probe/policy hash, residual
+site, and reading stage. The app can filter these groups by name or hash. Requested
+strengths describe decisions; applied strengths require an acknowledgement from
+a successful tensor operation. A nonzero applied strength establishes that an
+action ran, not that it improved behavior. Scores reduced by acting along the
+same probe's direction are not independent evidence of improvement. Use separate
+held-out behavioral outcomes and compare the complete agent against a baseline.
+
+Version-2 decision records preserve the consumed token, the next prediction,
+requested/applied strengths, provider and input hashes, reset/RNG conventions,
+and exceptional outcomes. They do not add a forward pass for the final emitted
+token. Version-1 records remain readable as requests only. Recording-budget
+omissions, missing readings, and partial responses are reported; descriptive
+means cover retained events and do not treat correlated tokens as independent
+experimental units. Host elapsed timing is not synchronized GPU kernel latency.
+
+Both bundle packagers declare runtime requirements outside the content-hashed
+study document. Clients check the connected engine before submission, including
+continuations; controller-proxied chat also checks its actual worker. An older
+engine may not know how to execute probes or policies. Update and restart it,
+then reconnect. For an older unmarked bundle, repackaging with the current client
+makes its requirements explicit, including an empty list for ordinary studies.
+Do not edit a frozen study to bypass an execution-support check. Collection checks
+instrumentation structure and token alignment after verifying archive hashes.
+
+P7 still needs live model and GPU qualification, overhead measurements, and the
+manual app/agent walkthrough. Successful synthetic tests do not qualify a research
+checkpoint. Native MLX policy execution and policy-aware direct scoring/batteries
+are not available; use sampled-response studies through Python Compute.

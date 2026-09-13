@@ -991,6 +991,8 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                 stop_ids=truncation_gate.stop_token_ids(active_model))
 
         policy_fields = {'interventionDecisions': policy.result(turn_token_ids)} if policy is not None else {}
+        if policy is not None or measurement is not None:
+            policy_fields['instrumentationRequirements'] = (['policy-v1', 'policy-evidence-v2'] if policy else []) + (['probe-readings-v1'] if measurement else [])
         measurement_fields = ({'probeMeasurements': measurement.result(turn_token_ids)}
             if measurement is not None else {})
         label = turn.output_label.strip() or f"turn_{index + 1}"

@@ -235,7 +235,9 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
             devices = ["cpu"]
     from .service_authority import service_role
     from . import science_placement
+    from ..experiment import instrumentation_contract
     return {
+        "instrumentation": list(instrumentation_contract.SUPPORTED),
         "sciencePlacement": science_placement.capabilities(profile),
         "serviceRole": service_role(),
         "serverVersion": __version__,

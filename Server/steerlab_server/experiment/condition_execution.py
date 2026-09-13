@@ -1028,6 +1028,8 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
             if measurement is not None:
                 record['probeMeasurements'] = measurement.result(token_ids)
             if policy is not None: record['interventionDecisions'] = policy.result(token_ids)
+            if policy is not None or measurement is not None:
+                record['instrumentationRequirements'] = (['policy-v1', 'policy-evidence-v2'] if policy else []) + (['probe-readings-v1'] if measurement else [])
             writer.emit(record)
             tally.observe(record)
             memory_diagnostic.observe(writer, model, eff)

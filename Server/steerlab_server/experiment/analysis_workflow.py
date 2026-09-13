@@ -452,6 +452,11 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
         for condition, block in sorted(margin_report.items()):
             _log(f"{condition}: {block['interpretation']}")
 
+    from . import instrumentation_evidence
+    if any('probeMeasurements' in r or 'interventionDecisions' in r for r in records):
+        with open(os.path.join(out, 'instrumentation-summary.json'), 'w', encoding='utf-8') as handle:
+            json.dump(instrumentation_evidence.summarize(records), handle, indent=2, sort_keys=True, allow_nan=False)
+
     with open(os.path.join(out, "effect-sizes.csv"), "w", newline="",
               encoding="utf-8") as handle:
         writer = csv.writer(handle)

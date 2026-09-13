@@ -5,7 +5,7 @@ import Foundation
 /// Release builds read the bundled ServerPayload; only the interpreter and
 /// client dependencies live outside the signed bundle.
 public enum DiagnosticWorkspace {
-    public static let actions = ["policy-list", "policy-inspect", "policy-review", "policy-publish", "policy-attach-review", "policy-attach", "measurements-review", "measurements-save", "probe-list", "probe-inspect", "staged-request", "corpus-preview", "corpus-publish", "artifact-plan", "artifact-import", "setup-start", "setup-inspect", "sae-check", "sae-show", "sae-pin-plan", "sae-pin", "interview", "draft", "publish", "input-plan", "package", "import", "custody", "verify-custody"]
+    public static let actions = ["evidence-analyze", "policy-list", "policy-inspect", "policy-review", "policy-publish", "policy-attach-review", "policy-attach", "measurements-review", "measurements-save", "probe-list", "probe-inspect", "staged-request", "corpus-preview", "corpus-publish", "artifact-plan", "artifact-import", "setup-start", "setup-inspect", "sae-check", "sae-show", "sae-pin-plan", "sae-pin", "interview", "draft", "publish", "input-plan", "package", "import", "custody", "verify-custody"]
 
     public static func perform(_ action: String, payload: [String: JSONValue],
                                python: URL? = nil, source: URL? = nil) async throws -> JSONValue {
@@ -107,7 +107,7 @@ enum DiagnosticWorkspaceCLI {
         let arguments = try DiagnosticArguments(invocation.args, namespace: "science", takesValue: !["custody", "probe-list", "policy-list"].contains(invocation.verb ?? ""))
         var payload: [String: JSONValue] = ["workspaceRoot": .string(ExperimentStore.workspaceRoot.path)]
         if let value = arguments.positional {
-            let key = arguments.verb == "policy-inspect" ? "path" : arguments.verb.hasPrefix("policy-") ? "settingsText" : arguments.verb.hasPrefix("measurements-") ? "experiment" : arguments.verb == "corpus-preview" ? "specText" : arguments.verb == "corpus-publish" ? "previewID" : arguments.verb.hasPrefix("artifact-") ? "descriptionFile" : (arguments.verb.hasPrefix("sae-") || arguments.verb == "probe-inspect") ? "path" : ["interview", "draft", "publish"].contains(arguments.verb) ? "operation" : (["input-plan", "package"].contains(arguments.verb) ? "requestFile" : (arguments.verb == "import" ? "archivePath" : "receiptSHA256"))
+            let key = ["policy-inspect", "evidence-analyze"].contains(arguments.verb) ? "path" : arguments.verb.hasPrefix("policy-") ? "settingsText" : arguments.verb.hasPrefix("measurements-") ? "experiment" : arguments.verb == "corpus-preview" ? "specText" : arguments.verb == "corpus-publish" ? "previewID" : arguments.verb.hasPrefix("artifact-") ? "descriptionFile" : (arguments.verb.hasPrefix("sae-") || arguments.verb == "probe-inspect") ? "path" : ["interview", "draft", "publish"].contains(arguments.verb) ? "operation" : (["input-plan", "package"].contains(arguments.verb) ? "requestFile" : (arguments.verb == "import" ? "archivePath" : "receiptSHA256"))
             payload[key] = .string((arguments.verb == "corpus-preview" || key == "settingsText") ? try String(contentsOfFile: value, encoding: .utf8) : value)
         }
         if let path = arguments.flags["--settings"] { payload["settingsText"] = .string(try String(contentsOfFile: path, encoding: .utf8)) }

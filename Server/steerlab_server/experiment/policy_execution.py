@@ -6,11 +6,13 @@ import json
 from pathlib import Path
 import random
 import uuid
+import time
+from dataclasses import replace
 
 from . import policy_artifacts, probe_artifacts, probe_capture
 from .policy_artifacts import PolicyError
 from ..steering.runtime import Reading, DecisionProvider, Site, Context, SelectionSite
-from ..steering.policy_actions import Action, Decision, logits
+from ..steering.policy_actions import Action, Decision, logits, apply_with_evidence
 
 
 class Execution:
@@ -21,6 +23,7 @@ class Execution:
         self.prompt_ids = []; self.events = []; self.omitted = 0; self.failures = []; self.failure_count = 0
         self.states = {}; self.cache = {}; self.providers = {}; self.counts = {}; self.used = False
         self.closed = True
+        self.decision_seconds = 0.0; self.decision_calls = 0
         self.probes = {}; self.parameters = {}
 
     @contextmanager
@@ -116,6 +119,7 @@ class Execution:
                    and (doc['positions'] == 'allPositions' or p >= len(self.prompt_ids)-1)]
         if not indices: return []
         scores = {}; actions = []
+        started = time.perf_counter(); self.decision_calls += 1
         try:
             for p in doc['probes']:
                 if doc['site']['kind'] == 'logitsPreSelection':
@@ -153,13 +157,24 @@ class Execution:
                 if 'vector' in spec and len(spec['vector']) != tensor.shape[-1]: raise PolicyError('The action direction width differs from this residual stream.')
                 mask = torch.zeros_like(value); mask[indices] = 1
                 actions.append(Action(spec, value * mask))
-            self.record(digest, doc, context, indices, scores, actions)
-            return actions
+            rows = self.record(digest, doc, context, indices, scores, actions)
+            def acknowledgement(action_id):
+                def completed(applied, reason, elapsed):
+                    for row in rows:
+                        row['actionOutcomes'][action_id] = {'status': 'applied' if applied else 'failed', 'hostSeconds': elapsed}
+                        if applied: row['appliedStrengths'][action_id] = row['strengths'][action_id]
+                        if reason: row['actionOutcomes'][action_id]['reason'] = reason[:2048]
+                        outcomes = list(row['actionOutcomes'].values())
+                        row['status'] = 'failed' if any(x['status'] == 'failed' for x in outcomes) else 'applied' if len(outcomes) == len(row['strengths']) else 'requested'
+                return completed
+            return [replace(a, on_result=acknowledgement(a.specification['id'])) for a in actions]
         except Exception as exc:
             self.record(digest, doc, context, indices, {}, [], error=str(exc)[:2048])
             if doc['onError'] == 'stop': raise
             # Explicit fallback discards this call's entire policy action set.
             return []
+        finally:
+            self.decision_seconds += time.perf_counter() - started
 
     def record(self, digest, doc, context, indices, scores, actions, error=None):
         available = max(0, doc['maxEvents'] - self.counts.get(digest, 0))
@@ -167,14 +182,16 @@ class Execution:
         self.counts[digest] = self.counts.get(digest, 0) + len(kept)
         values = {k: v[kept].detach().cpu().tolist() for k, v in scores.items()}
         strengths = {a.specification['id']: a.strength[kept].detach().cpu().tolist() for a in actions}
+        rows = []
         for j, i in enumerate(kept):
             row = {'policySHA256': digest, 'policyName': doc['name'], 'site': doc['site'],
                    'inputTokenPosition': context.offset+i, 'predictsTokenPosition': context.offset+i+1,
-                   'status': 'skipped' if error else 'decided', 'scores': {k: v[j] for k, v in values.items()},
+                   'status': 'skipped' if error else 'requested' if actions else 'noAction', 'appliedStrengths': {}, 'actionOutcomes': {}, 'scores': {k: v[j] for k, v in values.items()},
                    'strengths': {k: v[j] for k, v in strengths.items()}}
             if error: row['reason'] = error
-            self.events.append(row)
+            self.events.append(row); rows.append(row)
         if error: self.failure(doc['name'] + ': ' + error)
+        return rows
 
     def failure(self, reason):
         self.failure_count += 1
@@ -188,15 +205,32 @@ class Execution:
         for digest, doc in self.policies:
             if doc['site']['kind'] == 'logitsPreSelection':
                 actions.extend(self.decide(digest, doc, scores.detach().clone(), context))
-        return logits(scores, actions)
+        return apply_with_evidence(logits, scores, actions)
 
     def result(self, generated_ids):
-        return {'schemaVersion': 1, 'runtime': 'policy-v1', **self.context,
+        all_ids = self.prompt_ids + list(generated_ids)
+        for row in self.events:
+            position = row['inputTokenPosition']; predicted = row['predictsTokenPosition']
+            row['inputTokenID'] = all_ids[position] if position < len(all_ids) else None
+            row['predictedTokenID'] = all_ids[predicted] if predicted < len(all_ids) else None
+            row['generatedTokenIndex'] = predicted - len(self.prompt_ids) if predicted >= len(self.prompt_ids) else None
+        return {'schemaVersion': 2, 'runtime': 'policy-v1', **self.context,
+                'declarations': [{'sha256': h, 'binding': d['binding'], 'site': d['site'],
+                    'probes': [{'id': p['id'], 'sha256': p['sha256']} for p in d['probes']],
+                    'actions': [{**{k: v for k, v in a.items() if k != 'vector'}, **({'vectorSHA256': hashlib.sha256(json.dumps(a['vector'], separators=(',', ':')).encode()).hexdigest()} if 'vector' in a else {})} for a in d['actions']], 'rules': d['rules'], 'stages': d['stages'], 'positions': d['positions'],
+                    'providerSHA256': d.get('provider', {}).get('sourceSHA256'),
+                    'assetSHA256': {k: v['sha256'] for k, v in d.get('provider', {}).get('assets', {}).items()},
+                    'onError': d['onError'], 'maxEvents': d['maxEvents']} for h, d in self.policies],
+                'stateConvention': 'empty dictionary per policy per response; skipPolicy retains prior state',
+                'rngConvention': 'random.Random seeded by SHA256(policy digest + sorted response context JSON)',
+                'ordering': 'preAction; decisions; legacy chain; joint ablation; ordered additions; postAction; logits before sampling warpers',
+                'timing': {'decisionHostSeconds': self.decision_seconds, 'decisionCalls': self.decision_calls,
+                           'interpretation': 'Host elapsed time, including scoring and recording. Asynchronous GPU work is not synchronized; this is not GPU kernel latency.'},
                 'policies': [h for h, _ in self.policies], 'promptTokenIDs': self.prompt_ids,
                 'outputTokenIDs': list(generated_ids), 'decisions': self.events,
                 'omittedDecisions': self.omitted, 'failures': self.failures, 'failureCount': self.failure_count,
-                'status': 'partial' if self.omitted or self.failures else 'complete',
-                'limitations': ['Decision records describe requested actions. A failed response is not completed evidence.',
+                'status': 'partial' if self.omitted or self.failures or any(r['status'] in ('requested', 'failed', 'skipped') for r in self.events) else 'complete',
+                'limitations': ['Requested strengths and acknowledged applied strengths are distinct. Applied means the site tensor operation succeeded; a failed response is not completed evidence.',
                                'Policy scores use float32 on the activation device; measurements retain their own scoring precision.',
                                'Expert providers are trusted Python code. Their declared RNG is response-local random.Random; they must not use global randomness or mutate model state.']}
 

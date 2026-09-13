@@ -180,6 +180,7 @@ def _panel_records_from(sub: str, name: str, manifest, model, condition: str,
                 **({truncation_gate.RECORD_KEY: finish}
                    if isinstance(finish, str) else {}),
                 **({"interventionDecisions": turn["interventionDecisions"]} if "interventionDecisions" in turn else {}),
+                **({"instrumentationRequirements": turn["instrumentationRequirements"]} if "instrumentationRequirements" in turn else {}),
                 **({"probeMeasurements": turn["probeMeasurements"]} if "probeMeasurements" in turn else {}),
                 **({"endpoint": endpoint} if endpoint else {}),
                 **({"voiceLint": lint} if lint else {})})

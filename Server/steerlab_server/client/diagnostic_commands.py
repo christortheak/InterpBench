@@ -23,6 +23,7 @@ def workspace_action(action, payload):
         from . import setup
         return setup.inspect(payload.get('workspaceRoot'))
     required = {
+        'evidence-analyze': {'path'},
         'policy-list': set(), 'policy-inspect': {'path'},
         'policy-review': {'settingsText'}, 'policy-publish': {'settingsText', 'planSHA256'},
         'policy-attach-review': {'settingsText'}, 'policy-attach': {'settingsText', 'planSHA256'},
@@ -44,6 +45,9 @@ def workspace_action(action, payload):
     if not fields <= payload.keys() or payload.keys() - fields - optional or any(not isinstance(payload[k], str) or not payload[k] for k in fields):
         raise archives.Refusal('Supply exactly the declared action fields as nonempty strings.')
     root = str(Path(payload['workspaceRoot']).resolve())
+    if action == 'evidence-analyze':
+        from ..experiment import instrumentation_evidence
+        return instrumentation_evidence.inspect(payload['path'], root)
     if action.startswith('policy-'):
         from ..experiment import policy_authoring
         if action == 'policy-list': return policy_authoring.inventory(root)
@@ -116,7 +120,7 @@ def local(invocation):
         if verb == 'corpus-publish': payload.update(previewID=value, destination=invocation.one('--destination'), planSHA256=invocation.one('--plan-sha256'))
         if verb in ('artifact-plan', 'artifact-import'): payload['descriptionFile'] = value
         if verb == 'artifact-import': payload['planSHA256'] = invocation.one('--plan-sha256')
-        if verb.startswith('sae-') or verb == 'probe-inspect': payload['path'] = value
+        if verb.startswith('sae-') or verb in ('probe-inspect', 'evidence-analyze'): payload['path'] = value
         if verb in ('sae-pin-plan', 'sae-pin'): payload['experiment'] = invocation.one('--experiment')
         if verb == 'sae-pin': payload['planSHA256'] = invocation.one('--plan-sha256')
         if verb in ('interview', 'draft', 'publish'): payload['operation'] = value

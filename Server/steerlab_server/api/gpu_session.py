@@ -1609,10 +1609,35 @@ async def maybe_proxy(request: Request, controller_jobs=None):
         transport=_TRANSPORT,
         timeout=httpx.Timeout(5.0, read=None, write=None, pool=None))
     try:
+        if request.url.path in ('/api/variant/generate', '/api/variant/generate/stream', '/api/variant/battery'):
+            from ..experiment import instrumentation_contract
+            from .safe_paths import SafePathResolver
+            payload = json.loads(body)
+            if not payload.get('stripInterventions'):
+                document = payload.get('variant', {})
+                if payload.get('variantPath'):
+                    resolver = SafePathResolver()
+                    source = resolver.require_file(payload['variantPath'], root=resolver.roots.runs, allow_local_absolute=True)
+                    with open(source, 'rb') as handle: document = json.load(handle)
+                required = instrumentation_contract.requirements(document)
+                if required:
+                    response = await client.get(f'http://{node}:{port}/api/capabilities',
+                        headers={k: v for k, v in headers.items() if k.lower() not in ('content-length', 'content-type')}, timeout=10.0)
+                    response.raise_for_status()
+                    try: instrumentation_contract.require(required, response.json())
+                    except ValueError as exc:
+                        await client.aclose()
+                        return JSONResponse({'detail': {'code': 'unsupportedInstrumentation', 'reason': str(exc), 'repairAction': 'Restart the GPU session with the updated engine, then retry this unchanged agent.'}}, status_code=409)
         upstream = await client.send(
             client.build_request(request.method, url, headers=headers,
                                  content=body),
             stream=True)
+    except HTTPException as exc:
+        await client.aclose()
+        return JSONResponse({'detail': exc.detail}, status_code=exc.status_code)
+    except (ValueError, TypeError) as exc:
+        await client.aclose()
+        return JSONResponse({'detail': {'code': 'instrumentationAdmissionRefused', 'reason': str(exc), 'repairAction': 'Check the agent definition and the worker capability response before retrying.'}}, status_code=400)
     except Exception:  # noqa: BLE001 - any transport failure = worker gone
         await client.aclose()
         return JSONResponse({"detail": WORKER_DOWN_DETAIL}, status_code=502)

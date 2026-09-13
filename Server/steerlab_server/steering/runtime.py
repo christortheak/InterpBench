@@ -140,7 +140,7 @@ class Runtime:
                 actions.extend(reading.callback(h.detach().clone(), context, state))
         result = apply_legacy(h, interventions, site.layer, offset)
         if actions:
-            from .policy_actions import residual
-            result = residual(result, actions)
+            from .policy_actions import residual, apply_with_evidence
+            result = apply_with_evidence(residual, result, actions)
         self.observe(result, site, offset, 'postAction')
         return result

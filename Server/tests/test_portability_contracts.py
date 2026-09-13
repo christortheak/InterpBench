@@ -130,7 +130,7 @@ VOLATILE_FREEZE_KEYS = [
 #: test: ``PortabilityContractTests.theRunBundleMetadataShapeMatchesTheServerLiteral``.
 RUN_BUNDLE_HEADER_KEYS = [
     "createdAt", "entries", "experiment", "experimentContentHash", "kind",
-    "rootRelative", "schemaVersion", "validationScopeHash",
+    "rootRelative", "runtimeRequirements", "schemaVersion", "validationScopeHash",
     "verificationViolations",
 ]
 
@@ -578,6 +578,7 @@ def _swift_shaped_run_bundle(path: str, entries) -> dict:
         "experimentContentHash": "a" * 64,
         "validationScopeHash": "",
         "rootRelative": True,
+        "runtimeRequirements": [],
         "verificationViolations": [],
         "entries": [{"path": name,
                      "sha256": hashlib.sha256(payload).hexdigest(),

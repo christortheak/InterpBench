@@ -45,7 +45,7 @@ def condition_modalities(manifest: Manifest, root: str | None = None) -> dict[st
         has_system_prompt = bool(str(artifact.get("systemPrompt") or "").strip())
         components = [name for name, present in (
             ("injection", has_injection), ("adapter", has_adapter),
-            ("systemPrompt", has_system_prompt)) if present]
+            ("systemPrompt", has_system_prompt), ("policy", bool(artifact.get("interventionPolicies")))) if present]
         if len(components) > 1:
             modalities[vc.name] = "stacked"
         elif components:

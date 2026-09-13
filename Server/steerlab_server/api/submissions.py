@@ -274,7 +274,7 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
         device=device, prompts_path=prompts_path, source_path=source_path,
         package_evidence=package_evidence, record_path=record_path,
         resume_from=resume_from, resume_directory=resume_directory,
-        sample_per_condition=sample_per_condition, sample_seed=sample_seed)
+        sample_per_condition=sample_per_condition, sample_seed=sample_seed, runtime_requirements=run_bundle.get("runtimeRequirements"))
 
     # The JUDGE fan-out (a pipeline whose evaluate stage pins foreign local
     # judges) still routes through bundle submission: `--parallel` wires the
@@ -478,7 +478,7 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
         bundle_path, verb=verb, target_root=target, dtype=dtype, device=device,
         prompts_path=prompts_path, source_path=source_path,
         package_evidence=package_evidence, record_path=record_path,
-        sample_per_condition=sample_per_condition, sample_seed=sample_seed)
+        sample_per_condition=sample_per_condition, sample_seed=sample_seed, runtime_requirements=meta.get("runtimeRequirements"))
     base_result = {"runBundle": meta, "command": command,
                    "recordsDirectory": records_dir,
                    "submissionDirectory": submission_dir}
@@ -823,7 +823,7 @@ def _submit_sharded_bundle(*, bundle_path: str, meta: dict, experiment: str,
                 # Shards never package per-partial evidence: the merge packages
                 # evidence for the assembled run, exactly once.
                 package_evidence=False, record_path=record_path,
-                shard=f"{index}/{parallel}")
+                shard=f"{index}/{parallel}", runtime_requirements=meta.get("runtimeRequirements"))
             slurm_env = dict(env or {})
             slurm_env["STEERLAB_JOB_ID"] = child_id
             bundle = SlurmExecutor(profile).create_bundle(
@@ -1172,12 +1172,18 @@ def _bundle_execute_command(bundle_path: str, *, verb: str, target_root: str,
                             resume_from: str | None = None,
                             resume_directory: str | None = None,
                             sample_per_condition: int | None = None,
-                            sample_seed: str | None = None) -> list[str]:
+                            sample_seed: str | None = None,
+                            runtime_requirements=None) -> list[str]:
     python = os.environ.get("STEERLAB_PYTHON") or sys.executable or "python"
     command = [
         python, "-m", "steerlab_server.cli", "bundle", "execute", bundle_path,
         "--verb", verb, "--target", target_root, "--dtype", dtype, "--record", record_path,
     ]
+    if runtime_requirements:
+        import json
+        from ..experiment import instrumentation_contract
+        instrumentation_contract.require(runtime_requirements, {'instrumentation': list(instrumentation_contract.SUPPORTED)})
+        command[2:3] = ['steerlab_server.instrumented_bundle', json.dumps(sorted(runtime_requirements))]
     if device:
         command.extend(["--device", device])
     if prompts_path:

@@ -51,6 +51,17 @@ def main():
 
     for name in OWNER_MODULES:
         before, after = read(name, 'experiment')
+        if name == 'analysis_workflow':
+            # P6 adds one independent descriptive report. Existing endpoint/statistic
+            # bodies must remain unchanged after removing exactly this block.
+            addition = """    from . import instrumentation_evidence
+    if any('probeMeasurements' in r or 'interventionDecisions' in r for r in records):
+        with open(os.path.join(out, 'instrumentation-summary.json'), 'w', encoding='utf-8') as handle:
+            json.dump(instrumentation_evidence.summarize(records), handle, indent=2, sort_keys=True, allow_nan=False)
+
+"""
+            assert after.count(addition) == 1, 'P6 report integration missing or changed'
+            after = after.replace(addition, '')
         assert tree(before) == tree(after), name + ' changed scientific AST'
         assert tree(after + '\nAUDIT_NEGATIVE_CONTROL = True\n') != tree(before)
     print(f'{len(OWNER_MODULES)} scientific owner ASTs unchanged; negative controls passed.')

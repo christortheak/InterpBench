@@ -15,6 +15,22 @@ class Decision:
 class Action:
     specification: dict
     strength: torch.Tensor  # [tokens], already bounded and schedule-masked
+    on_result: object = None  # Response-owned evidence callback; no global state.
+
+
+def apply_with_evidence(operation, tensor, actions):
+    """Only acknowledge actions after the complete site operation succeeds."""
+    import time
+    start = time.perf_counter()
+    try:
+        result = operation(tensor, actions)
+    except Exception as exc:
+        for action in actions:
+            if action.on_result: action.on_result(False, str(exc), time.perf_counter() - start)
+        raise
+    for action in actions:
+        if action.on_result: action.on_result(True, None, time.perf_counter() - start)
+    return result
 
 
 def residual(h, actions):
