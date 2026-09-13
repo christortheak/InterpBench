@@ -79,6 +79,7 @@ struct ResultReviewWindow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
+            if let readings = generation.probeMeasurements { ProbeMeasurementResultsView(value: readings) }
             Text(generation.prompt)
                 .font(.caption)
                 .foregroundStyle(.secondary)

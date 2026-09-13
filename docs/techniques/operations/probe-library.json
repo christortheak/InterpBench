@@ -6,14 +6,14 @@
     "method": "readers",
     "title": "Inspect the probe library",
     "engineCLI": null,
-    "mac": "Probes section. Both clients: science probe-list and science probe-inspect.",
+    "mac": "Probes library and study Measurements. Both clients: science probe-list, probe-inspect, measurements-review, and measurements-save.",
     "http": "POST /api/science/workspace/{action}",
     "compute": "cpu",
     "outputs": [
       "Probe records with exact-byte identity, model binding, score meaning, and provenance limitations.",
       "Malformed matching artifacts are reported as issues."
     ],
-    "restriction": "Read-only workbench library. Original bytes are never migrated in place. Discovery does not establish backend compatibility; new training and study measurement workflows are separate implementation slices.",
+    "restriction": "Workbench-owned library and reviewed study attachment. Original probe bytes are never rewritten. Study measurements execute on Python; no native MLX portable-probe runtime is claimed. Frozen settings and exact probe bytes travel with the study bundle.",
     "actions": [
       {
         "id": "post-science-workspace",

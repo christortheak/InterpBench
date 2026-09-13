@@ -181,13 +181,15 @@ public struct StudyResultRepository: Sendable {
     }
 
     private struct RawGeneration: Decodable {
+        let probeMeasurements: JSONValue?
+        let sampleIndex: Int?
         let condition: String
         let promptID: String
         let prompt: String
         let output: String
         let wordCount: Int
         let distinct2: Float
-        let markerDensity: [String: Float]
+        let markerDensity: [String: Float]?
     }
 
     private func loadGenerations(_ url: URL) -> [StudyGenerationPreview] {
@@ -201,13 +203,15 @@ public struct StudyResultRepository: Sendable {
             let truncated = raw.output.count > limit
             let output = truncated ? String(raw.output.prefix(limit)) : raw.output
             return StudyGenerationPreview(
+                probeMeasurements: raw.probeMeasurements,
+                sampleIndex: raw.sampleIndex,
                 condition: raw.condition,
                 promptID: raw.promptID,
                 prompt: raw.prompt,
                 output: output,
                 wordCount: raw.wordCount,
                 distinct2: raw.distinct2,
-                markerDensity: raw.markerDensity,
+                markerDensity: raw.markerDensity ?? [:],
                 truncated: truncated)
         }
     }

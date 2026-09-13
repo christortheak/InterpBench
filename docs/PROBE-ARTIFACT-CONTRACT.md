@@ -4,7 +4,9 @@ P0 decisions, 2026-09-12; implementation baseline `22f08a9`.
 The additional J-lens/GPU discussion is resolved. Initial targets are binary
 classification. Multiclass and regression are later extensions.
 
-P2 capture, fitting, and evaluation are now implemented on the same branch; see
+P3 study measurements now execute on Python; see [the measurement contract](PROBE-STUDY-MEASUREMENTS.md) for surfaces, semantics, and qualification limits.
+
+P2 capture, fitting, and evaluation are implemented; see
 [the training contract](PROBE-TRAINING-AND-EVALUATION.md). The first-slice account
 below records P1; generation measurement and policies remain future work.
 

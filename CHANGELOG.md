@@ -12,6 +12,14 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Select trained probes as study measurements through the app, either client,
+  or the workbench API. Python runs record prompt/decode scores at explicit
+  residual sites, preserve seat/sample identity, and carry exact probe bytes
+  through freeze and bundle transport. Results displays the recorded readings;
+  optional activation retention is bounded. Native MLX execution and live
+  qualification remain separate work. Existing studies without measurements
+  retain their encoding and generation behavior.
+
 - Capture labeled activations, fit mean-difference, linear, or small nonlinear
   probes, and evaluate saved probes through shared managed operations. Probes
   now opens the same guided forms as both clients and the HTTP workflow;

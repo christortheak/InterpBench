@@ -24,6 +24,7 @@ def workspace_action(action, payload):
         return setup.inspect(payload.get('workspaceRoot'))
     required = {
         'staged-request': {'bundleSHA256'},
+        'measurements-review': {'experiment', 'settingsText'}, 'measurements-save': {'experiment', 'settingsText', 'planSHA256'},
         'probe-list': set(), 'probe-inspect': {'path'},
         'corpus-preview': {'specText'}, 'corpus-publish': {'previewID', 'planSHA256', 'destination'},
         'artifact-plan': {'descriptionFile'}, 'artifact-import': {'descriptionFile', 'planSHA256'},
@@ -40,6 +41,11 @@ def workspace_action(action, payload):
     if not fields <= payload.keys() or payload.keys() - fields - optional or any(not isinstance(payload[k], str) or not payload[k] for k in fields):
         raise archives.Refusal('Supply exactly the declared action fields as nonempty strings.')
     root = str(Path(payload['workspaceRoot']).resolve())
+    if action in ('measurements-review', 'measurements-save'):
+        from ..experiment import probe_measurements
+        settings = json.loads(payload['settingsText'])
+        if action == 'measurements-review': return probe_measurements.review(payload['experiment'], settings, root)
+        return probe_measurements.save(payload['experiment'], settings, root, payload['planSHA256'])
     if action in ('probe-list', 'probe-inspect'):
         from ..experiment import probe_library
         try:
@@ -87,6 +93,9 @@ def local(invocation):
         verb = invocation.spec.verb; validate(invocation, 0 if verb in ('custody', 'probe-list') else 1)
         value = invocation.positionals[0] if invocation.positionals else None
         payload = {'workspaceRoot': paths.project_root()}
+        if verb.startswith('measurements-'):
+            payload.update(experiment=value, settingsText=Path(invocation.one('--settings')).read_text())
+            if verb == 'measurements-save': payload['planSHA256'] = invocation.one('--plan-sha256')
         if verb == 'corpus-preview': payload['specText'] = Path(value).read_text()
         if verb == 'corpus-publish': payload.update(previewID=value, destination=invocation.one('--destination'), planSHA256=invocation.one('--plan-sha256'))
         if verb in ('artifact-plan', 'artifact-import'): payload['descriptionFile'] = value

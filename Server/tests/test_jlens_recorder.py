@@ -163,7 +163,10 @@ def test_observers_are_armed_after_injectors():
     import inspect
 
     src = inspect.getsource(gen._stream_rendered)
-    assert "injectors + list(observers or [])" in src
+    assert 'injectors + [observer for observer in (observers or []) if not hasattr(observer, "observe_session")]' in src
+    # Named-site observers own separate hooks; ordinary J-lens readers still
+    # follow injectors. Actual pre/post-action arithmetic is covered by the
+    # probe measurement generation and steering-order integration fixtures.
 
 
 # --- generated-token-id extraction -------------------------------------------

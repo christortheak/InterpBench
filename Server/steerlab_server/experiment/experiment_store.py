@@ -3793,6 +3793,11 @@ def _pin_external_inputs(name: str, d: dict, root: str | None) -> None:
         shutil.copyfile(src, dest)
         return os.path.relpath(dest, base)
 
+    for measurement in (d.get('probeMeasurements') or {}).get('probes', []):
+        ref = measurement['probe']
+        if _under_runs(ref['path']):
+            ref['path'] = _copy_in(ref['path'], 'probe-' + ref['sha256'] + '.probe.json')
+
     # The scenario is the PANEL's input, not a kind-neutral one — the mirror
     # of the carried-agent case, and my round-14 comment calling it
     # kind-neutral was simply wrong. A model-output study carrying a scenario
@@ -4286,6 +4291,10 @@ def pinned_input_entries(d: dict, root: str | None = None) -> list[PinnedInput]:
             return
         path = rel if os.path.isabs(rel) else os.path.join(base, rel)
         out.append(PinnedInput(path=path, label=label, required=required))
+
+    from . import probe_measurements
+    for ref in probe_measurements.references(d.get('probeMeasurements')):
+        _add(ref['path'], 'study measurement probe', required=True)
 
     # The pin surface is the OPERATIVE surface for the study kind
     # (2026-07-19, engineer finding): configuration CARRIED from another

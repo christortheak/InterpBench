@@ -722,7 +722,7 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                        name, manifest, experiment_hash, wants_choice,
                        wants_sampled, reader_scorers, should_cancel, log,
                        numeric_parser=None, adapter_active: bool = False,
-                       jlens_trace=None) -> bool:
+                       jlens_trace=None, root=None) -> bool:
     """The shared per-item executor — ONE measurement pipeline for every
     condition: prompt-metadata copy, the declared deterministic instruments,
     sampled generation, categorical parsing, reader scores, and consistent
@@ -752,6 +752,11 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
             "transcripts but the condition's promptMode is rawCompletion — "
             "transcript items render through the chat template by "
             "definition; use chatAssistant")
+    from . import probe_measurements, probe_observation
+    measurement_config = probe_measurements.validate(manifest.raw.get('probeMeasurements'))
+    measurement_probes = probe_measurements.load(measurement_config, root)
+    if measurement_config and measurement_config['probes'] and not wants_sampled:
+        raise probe_measurements.ProbeError('Study probes observe generated responses. Select sampledText as an outcome instrument, or remove measurements from this direct-scoring-only study.')
     sampling = execution_reporting.sampling_metadata(model, eff.temperature)
     # Stop-reason machinery, resolved ONCE per condition. `stop_ids` is what
     # lets a generation that emits EOS on its very last budgeted step be
@@ -936,6 +941,11 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
             if token_ids is None:
                 token_ids = []
                 readout_kwargs["token_ids_out"] = token_ids
+            measurement = probe_observation.create(measurement_config, measurement_probes,
+                condition=eff.name, agent=eff.name, rendering=eff.prompt_mode,
+                run_directory=writer.run_directory, context={'promptID': prompt['id'], 'sampleIndex': sample_index, 'seed': str(seed), 'experimentHash': experiment_hash})
+            if measurement is not None:
+                readout_kwargs.setdefault('observers', []).append(measurement)
             with sampling_module.seeded_generation(eff.temperature, seed):
                 text = generate.generate(
                     model, prompt["prompt"], model_id=manifest.model_id,
@@ -1010,6 +1020,8 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                     recorder, eff, prompt, prompt_index, sample_index,
                     model=model, manifest=manifest,
                     generated_ids=token_ids or [])
+            if measurement is not None:
+                record['probeMeasurements'] = measurement.result(token_ids)
             writer.emit(record)
             tally.observe(record)
             memory_diagnostic.observe(writer, model, eff)

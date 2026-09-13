@@ -179,6 +179,7 @@ def _panel_records_from(sub: str, name: str, manifest, model, condition: str,
                 "distinct2": scoring.distinct_bigram_ratio(output),
                 **({truncation_gate.RECORD_KEY: finish}
                    if isinstance(finish, str) else {}),
+                **({"probeMeasurements": turn["probeMeasurements"]} if "probeMeasurements" in turn else {}),
                 **({"endpoint": endpoint} if endpoint else {}),
                 **({"voiceLint": lint} if lint else {})})
     return out
@@ -363,6 +364,7 @@ def run_multi_agent_study(name, manifest, model, root, model_provider=None,
             try:
                 multi_agent.run_scenario(
                     model, scenario, run_dir=sub, condition_name=cond,
+                    probe_measurements=manifest.raw.get('probeMeasurements'), probe_root=root,
                     strip_interventions=strip, scenario_hash=shash,
                     model_provider=model_provider,
                     default_revision=manifest.model_revision,

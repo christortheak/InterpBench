@@ -45,6 +45,7 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         case markersHash
         case reasoningStyleTaxonomyPath
         case reasoningStyleTaxonomyHash
+        case probeMeasurements
         case jlensReadout
         case recordTokenIDs
         case saeCandidates
@@ -1291,6 +1292,9 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
     /// than a mirrored struct so the server can extend the block without this
     /// engine needing to learn each new key.
     public var jlensReadout: JSONValue?
+    /// Optional study-owned probe settings; authored through the shared Python
+    /// owner and executed on Python Compute. Nil preserves historical encoding.
+    public var probeMeasurements: JSONValue?
     /// Retain the exact sampled token ids on every generation record
     /// (cross-engine contract key "recordTokenIDs"; server twin
     /// `Manifest.record_token_ids`). Authored and consumed on the SERVER —
@@ -1814,7 +1818,8 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         neutralCorpusHash = try container.decodeIfPresent(String.self, forKey: .neutralCorpusHash)
         sweep = try container.decodeIfPresent(SweepSpec.self, forKey: .sweep)
         pipeline = try container.decodeIfPresent(JSONValue.self, forKey: .pipeline)
-        // Carried verbatim; this engine never authors one (see the property).
+        probeMeasurements = try container.decodeIfPresent(JSONValue.self, forKey: .probeMeasurements)
+        // Carried verbatim; this engine never authors a J-lens block (see the property).
         jlensReadout = try container.decodeIfPresent(
             JSONValue.self, forKey: .jlensReadout)
         recordTokenIDs = try container.decodeIfPresent(

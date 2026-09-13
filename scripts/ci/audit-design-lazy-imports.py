@@ -33,6 +33,17 @@ for module in ('model_variant', 'multi_agent'):
     path = f'Server/steerlab_server/experiment/{module}.py'
     before = subprocess.check_output(['git','show',f'{BASE}:{path}'],cwd=ROOT,text=True)
     after = (ROOT/path).read_text()
+    if module == 'multi_agent':
+        # The historical mechanical migration remains proven at its landed tip.
+        # P3 intentionally extends run_scenario; test its behavior separately,
+        # while retaining the current lazy wrapper and every other body here.
+        landed = subprocess.check_output(['git', 'show', f'b1190f7:{path}'], cwd=ROOT, text=True)
+        audit(module, before, landed)
+        old_tree, current_tree = ast.parse(landed), ast.parse(after)
+        for tree in (old_tree, current_tree):
+            tree.body = [n for n in tree.body if not (isinstance(n, ast.FunctionDef) and n.name == 'run_scenario')]
+        assert ast.dump(old_tree) == ast.dump(current_tree), 'Unreviewed changes outside the P3 scenario executor'
+        after = landed
     audit(module, before, after)
     try:
         audit(module, before, after + '\nUNAUTHORIZED_CHANGE = True\n')
@@ -40,4 +51,4 @@ for module in ('model_variant', 'multi_agent'):
         pass
     else:
         raise AssertionError('Negative control was not detected')
-print('Runtime and validation AST bodies unchanged; only lazy imports differ; negative controls rejected.')
+print('Historical lazy-import migration proven; current bodies outside the P3 scenario executor unchanged; negative controls rejected.')

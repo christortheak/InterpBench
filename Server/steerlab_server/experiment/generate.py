@@ -8,6 +8,8 @@ the forward hooks fire on the prefill pass and every decode step.
 
 from __future__ import annotations
 
+from contextlib import ExitStack
+
 import os
 import threading
 from dataclasses import dataclass
@@ -515,7 +517,7 @@ def _stream_rendered(model: SteeredModel, rendered: prompt_render.RenderedPrompt
     # Order is the contract: injectors first, read-only observers last, so an
     # observer at the injection layer sees the POST-intervention residual and
     # later layers see the downstream one. Locked by test.
-    session_hooks = injectors + list(observers or [])
+    session_hooks = injectors + [observer for observer in (observers or []) if not hasattr(observer, "observe_session")]
     # Observers that need the prompt length — or the prompt's token IDS — are
     # told here rather than re-rendering to find out: this is the one place
     # that already holds the rendered prompt, and a second render is a second
@@ -546,7 +548,11 @@ def _stream_rendered(model: SteeredModel, rendered: prompt_render.RenderedPrompt
     # injectors and restoring them on its way out, and this session's own
     # deferred exit, once superseded, restores nothing. Open-issues §15 hunt
     # 1's by-catch; pinned by tests/test_streaming_session_ownership.py.
-    with model.hooked.session(session_hooks, abandonable=True):
+    with model.hooked.session(session_hooks, abandonable=True), ExitStack() as observation_sessions:
+        for observer in (observers or []):
+            session = getattr(observer, "observe_session", None)
+            if session is not None:
+                observation_sessions.enter_context(session(model, rendered))
         # Chunked prefill INSIDE the armed session (its passes advance the
         # offsets that gate injection and label observer captures), BEFORE
         # the generate thread: the cache it returns becomes generate()'s

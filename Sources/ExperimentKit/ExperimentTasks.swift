@@ -3342,6 +3342,9 @@ public enum ExperimentTasks {
     ) async throws -> URL {
         MLX.Memory.cacheLimit = 2 * 1024 * 1024 * 1024
         var manifest = try loadVerified(experimentName)
+        if manifest.probeMeasurements != nil {
+            throw ExperimentError(reason: "This study records portable probes through the Python engine. Select Python Compute and submit the study there; native MLX measurement execution is not implemented.")
+        }
         let cancel = CancelPoller(shouldCancel)
         if manifest.studyKind == .multiAgent {
             return try await runMultiAgentStudy(

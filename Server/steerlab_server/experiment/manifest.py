@@ -877,6 +877,11 @@ class Manifest:
         violations: list[str] = []
         base = paths.project_root() if root is None else root
 
+        if self.raw.get('probeMeasurements') is not None:
+            from . import probe_measurements
+            try: probe_measurements.load(self.raw['probeMeasurements'], base)
+            except (ValueError, OSError) as exc: violations.append(str(exc))
+
         # Multi-agent studies pin a scenario; model-output studies pin concepts
         # or variants (must have at least one of them).
         if self.study_kind == "multiAgent":

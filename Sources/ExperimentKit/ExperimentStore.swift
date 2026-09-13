@@ -3458,7 +3458,7 @@ public enum ExperimentStore {
     }
 
     public static func verify(_ manifest: ExperimentManifest) -> [String] {
-        var violations: [String] = []
+        var violations: [String] = ProbeMeasurements.violations(manifest.probeMeasurements, root: workspaceRoot)
         // F2: pins are checked for the study kind that USES them. A panel
         // study may CARRY a readout block from before a kind switch and never
         // arms one, so validating it would refuse a legal manifest over an
@@ -6594,6 +6594,9 @@ public enum ExperimentStore {
                     label: "grand-mean corpus member '\(concept)' stories.jsonl",
                     required: true))
         }
+        for ref in ProbeMeasurements.references(manifest.probeMeasurements) {
+            add(ref.path, "study measurement probe", required: true)
+        }
         if modelOutputOperative {
             add(manifest.taskPromptsFile, "task prompts", required: true)
             add(manifest.capabilityBatteryFile, "capability battery", required: true)
@@ -8391,6 +8394,9 @@ public enum ExperimentStore {
                 source: resolveProjectPath("prompts/neutral/corpus.jsonl"),
                 destination: "neutral/corpus.jsonl")
         }
+        for ref in ProbeMeasurements.references(manifest.probeMeasurements) {
+            planFile(ref.path, role: "measurement-probe-\(ref.sha256)")
+        }
         if modelOutputOperative {
             planFile(manifest.taskPromptsFile, role: "task-prompts")
             planFile(manifest.capabilityBatteryFile, role: "capability-battery")
@@ -8474,6 +8480,15 @@ public enum ExperimentStore {
             return "experiments/\(name)/pinned/\(destinationName)"
         }
 
+        if case .object(var config) = manifest.probeMeasurements, case .array(var probes) = config["probes"] {
+            for index in probes.indices {
+                guard case .object(var item) = probes[index], case .object(var ref) = item["probe"],
+                      case .string(let path) = ref["path"], case .string(let sha) = ref["sha256"], underRuns(path) else { continue }
+                ref["path"] = .string(try copyIn(path, destinationName: "probe-" + sha + ".probe.json", name: manifest.name))
+                item["probe"] = .object(ref); probes[index] = .object(item)
+            }
+            config["probes"] = .array(probes); manifest.probeMeasurements = .object(config)
+        }
         let slugify = canonicalSlug
 
         // The scenario is the PANEL's input, not a kind-neutral one — the

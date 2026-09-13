@@ -10,6 +10,7 @@ struct StudyPreparationControlsView: View {
     @Binding var runOnServerExpanded: Bool
     private var panel: ExperimentPanel { service.experiments }
     var body: some View {
+        StudyMeasurementsView(manifest: manifest, root: ExperimentStore.workspaceRoot) { panel.refresh(); panel.reloadSelectedDraft() }
         validationControls(manifest: manifest, panel: panel)
         if !manifest.concepts.isEmpty { extractControls(manifest: manifest, panel: panel) }
     }

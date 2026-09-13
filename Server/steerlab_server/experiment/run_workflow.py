@@ -417,7 +417,7 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
         allowed_keys=(plan.allowed_keys if plan is not None else None),
         expected_generations=jlens_expected_generations,
         generates_sampled_text=wants_sampled)
-    measurement = dict(name=name, manifest=manifest,
+    measurement = dict(name=name, manifest=manifest, root=root,
                        experiment_hash=experiment_hash,
                        wants_choice=wants_choice, wants_sampled=wants_sampled,
                        reader_scorers=reader_scorers,

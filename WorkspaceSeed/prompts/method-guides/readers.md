@@ -142,8 +142,8 @@ inputs remain usable for exploration, but do not describe them as independent
 final-test evidence. Different hashes alone do not prove independence.
 
 New probes appear after evidence collection and library refresh. Existing native
-readers remain available for Playground highlighting. Portable study measurements
-and conditional interventions are later steps, not implied by successful fitting.
+readers remain available for Playground highlighting. Study measurements execute on the Python engine through the settings below.
+Conditional interventions remain a later step; successful fitting does not change behavior.
 
 ### Prompt to offer a data author
 
@@ -161,3 +161,71 @@ Inspect label correctness, duplicate text, related examples across splits, class
 balance, and confounding cues. Explain concrete problems in ordinary language,
 with row IDs and suggested repairs. Distinguish a format check from evidence
 that the labels measure the intended concept. Do not invent measurements.
+
+
+### Record probes during a study
+
+The researcher selects trained probes as **study measurements**, independently
+of the agent (base model, vectors, and adapters) whose responses are measured.
+Use Studies → Measurements in the app, or the same reviewed commands in either
+client (`--root` for `steerlab`; `--workspace` for `steerlab-cli`):
+
+```sh
+steerlab science measurements-review example --settings measurements.json --root /path/to/workspace --json
+steerlab science measurements-save example --settings measurements.json --plan-sha256 <review-hash> --root /path/to/workspace --json
+```
+
+Prepare `measurements.json` using exact paths and digests from `science probe-list`:
+
+```json
+{
+  "schemaVersion": 1,
+  "probes": [{
+    "id": "selected-reader",
+    "probe": {"path": "runs/fit/trained.probe.json", "sha256": "<exact SHA-256>"},
+    "conditions": [], "agents": [], "stages": ["prefill", "decode"],
+    "recordingStage": "postAction"
+  }],
+  "onError": "recordMissing", "maxReadings": 4096,
+  "retainActivations": false, "maxActivationBytes": 1048576
+}
+```
+
+An empty conditions list means every condition. An empty agents list means every
+agent instance; panel studies use seat IDs, and ordinary studies use condition
+names. `prefill` reads prompt positions; `decode` reads the generated prefix.
+The artifact declares block input/output, layer, and last/every prompt position.
+`preAction` and `postAction` are readings before/after existing steering at that
+site. Earlier sites may already be affected. Reading does not inject anything.
+
+Review, save, verify, and freeze normally. Freezing copies run-resident probes
+into the study's pinned inputs without changing their bytes. The study bundle
+carries them to the Python engine; collected evidence carries the scores home.
+Select Python Compute, including a local Python server, in the app. Native MLX
+cannot execute these portable PyTorch probes and gives a direct routing repair.
+Direct-logprob-only studies do not generate responses for this observer; select
+sampled text if response measurements are wanted. No hidden computation is added.
+
+Read `probeMeasurements` in each `generations.jsonl` response or panel turn.
+Results → Generations displays the probe readings, scores, positions, stages,
+and missing-status reasons. Panel records retain seat identity and replicate
+identity. The enclosing response supplies the prompt, condition, and sample.
+Each activation at input position t predicts t+1. The final sampled token is
+not read unless a subsequent forward pass naturally consumes it. Token IDs,
+rather than guessed text offsets, are authoritative alignment.
+
+Unknown qualification or population transfer is guidance, not a refusal. A probe
+trained on full examples may not predict meaningful labels at every prefix.
+Runtime model, revision, tokenizer, template, substrate, coordinates, width, and
+precision must match the artifact to compute its declared reading. Incompatible
+bindings stop before generation. Non-finite/failed score calculations use the
+selected `recordMissing` or `stop` policy. Stopped generations preserve a new
+`probe-failure-*.json` alongside partial evidence, not a completed response.
+
+Limits apply per response across its selected probes. Scores are retained up to
+`maxReadings`; later scheduled readings are counted as omitted. Activations are
+opt-in, with a separate bound on encoded activation-array bytes; this is not a
+bound on model RAM or the entire evidence file. Scores remain when activation
+retention reaches its limit. Distinguish omissions, missing readings, and genuine
+scores. Do not describe scores as calibrated probabilities or causal effects.
+Do not silently choose labels, datasets, or cooperating agents for the researcher.

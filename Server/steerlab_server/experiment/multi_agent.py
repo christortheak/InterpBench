@@ -833,7 +833,7 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                  model_provider=None, default_revision: str | None = None,
                  temperature: float | None = None, replicate_index: int = 0,
                  experiment_hash: str = "", checkpoint=None,
-                 artifact_problems: list | None = None) -> str:
+                 artifact_problems: list | None = None, probe_measurements=None, probe_root=None) -> str:
     """Play the scenario on the loaded ``model``; write artifacts to ``run_dir``.
 
     ``temperature`` overrides the scenario's own value — a STUDY manifest owns
@@ -867,6 +867,9 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
     # not apply to a panel (turns are not independent records), but this is a
     # different mechanism and is sound where that one is not. Without it a run
     # that hits a Slurm walltime on turn 14 of 16 restarts at turn 1.
+    from . import probe_measurements as measurement_owner, probe_observation
+    measurement_config = measurement_owner.validate(probe_measurements)
+    measurement_probes = measurement_owner.load(measurement_config, probe_root)
     turns_path = os.path.join(run_dir, "turns.jsonl")
     # Truncate BEFORE loading. The other order loses data: a record whose JSON
     # was written but whose trailing newline was not is COMPLETE and parses,
@@ -966,6 +969,10 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
             # is not what this generation ran under.
             turn_max_tokens = max(1, turn.max_tokens or scenario.max_tokens)
             turn_token_ids: list = []
+            measurement = probe_observation.create(measurement_config, measurement_probes,
+                condition=condition_name, agent=speaker.id, rendering=prompt_mode, run_directory=run_dir,
+                context={'turnID': turn.id, 'replicateIndex': replicate_index, 'seed': str(turn_seed), 'experimentHash': experiment_hash})
+            observation_kwargs = {'observers': [measurement]} if measurement is not None else {}
             try:
                 with _seeded_generation(effective_temperature, turn_seed):
                     output = generate(active_model, prompt, model_id=active_model.model_id,
@@ -973,13 +980,15 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
                                       temperature=effective_temperature,
                                       injections=injections, prompt_mode=prompt_mode,
                                       system_prompt=system, qwen_thinking_enabled=qwen_thinking,
-                                      token_ids_out=turn_token_ids)
+                                      token_ids_out=turn_token_ids, **observation_kwargs)
             finally:
                 model_variant.remove_adapter(active_model, adapter)
             finish = truncation_gate.finish_reason(
                 turn_token_ids, max_tokens=turn_max_tokens,
                 stop_ids=truncation_gate.stop_token_ids(active_model))
 
+        measurement_fields = ({'probeMeasurements': measurement.result(turn_token_ids)}
+            if measurement is not None else {})
         label = turn.output_label.strip() or f"turn_{index + 1}"
         outputs_by_label[label] = output
         routed = _routed_ids(turn, scenario.agents)
@@ -987,7 +996,7 @@ def run_scenario(model, scenario: Scenario, *, run_dir: str,
             context.setdefault(aid, []).append(context_entry(
                 label, turn.title, speaker.name, output,
                 own_authored=aid == speaker.id))
-        result = {"turnID": turn.id, "turnIndex": index + 1, "title": turn.title,
+        result = {**measurement_fields, "turnID": turn.id, "turnIndex": index + 1, "title": turn.title,
                   "speakerAgentID": speaker.id, "speakerName": speaker.name,
                   "prompt": prompt, "output": output, "outputLabel": label,
                   # Which renderer produced `prompt` (spec §3.3). A turn record
