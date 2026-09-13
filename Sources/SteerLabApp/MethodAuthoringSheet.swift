@@ -215,6 +215,12 @@ struct MethodAuthoringSheet: View {
                     Button("Inspect selected model") { inspectModel() }
                         .disabled(client == nil || (fields["modelID"] ?? "").isEmpty || busy)
                 }
+            } else if workflow.id == "jlens-fit-assess" && field.id == "readoutDtype" {
+                Picker(field.label, selection: fieldBinding(field)) {
+                    Text("Native readout (default)").tag("")
+                    Text("Native readout (explicit)").tag("native")
+                    Text("Compare native and float32 readout").tag("float32")
+                }.labelsHidden()
             } else if field.kind == "boolean" {
                 Picker(field.label, selection: fieldBinding(field)) {
                     Text("Unspecified").tag("")

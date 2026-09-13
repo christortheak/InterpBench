@@ -39,6 +39,16 @@ import Testing
         #expect(lines.contains { $0.contains("not peak memory") })
     }
 
+    @Test func assessmentReadoutExplainsAdditionalStorageAndBaseline() throws {
+        let value = try draft(#"{"operationReview":{"rows":4,"sourceLayers":[0],"readoutReview":{"requested":"float32","summary":"Paired native and float32; additional output-head storage."}}}"#)
+        let lines = FittingReviewSummary.lines(operation: "jlens-fit-assess", draft: value)
+        #expect(lines.contains { $0.contains("plain-residual") })
+        #expect(lines.contains { $0.contains("additional output-head storage") })
+        let field = try #require(ScienceCatalog.workflows().first { $0.id == "jlens-fit-assess" }?.fields.first { $0.id == "readoutDtype" })
+        #expect(!field.required)
+        #expect(field.help.contains("float32"))
+    }
+
     @Test func queueCapacityExplainsOtherJobsUsingOwnerSummary() throws {
         let value = try draft(#"{"capacity":{"summary":"Two jobs occupy the controller capacity.","activeJobs":[{"jobID":"first","status":"running","belongsToThisRound":true},{"jobID":"second","status":"submitted","belongsToThisRound":false}]}}"#)
         #expect(FittingReviewSummary.capacityLines(value) == [

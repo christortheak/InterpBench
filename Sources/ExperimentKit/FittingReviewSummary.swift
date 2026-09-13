@@ -35,6 +35,11 @@ public enum FittingReviewSummary {
             }
         case "jlens-fit-assess":
             result.append("Up to \(number(review["rows"])) corpus rows across \(count(review["sourceLayers"])) source layers, using the selected position cap.")
+            result.append("Includes a plain-residual (logit-lens) baseline on the same token positions as both lenses.")
+            if case .object(let readout) = review["readoutReview"],
+               case .string(let summary) = readout["summary"] {
+                result.append(summary)
+            }
             if case .object(let resources) = review["resources"],
                case .number(let staging) = resources["temporaryActivationBytesUpperBound"],
                case .number(let pair) = resources["float32LensPairBytes"], staging.isFinite, pair.isFinite {

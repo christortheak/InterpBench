@@ -22,6 +22,7 @@ class AssessmentConfig:
     topK: int = 10
     dtype: str = 'bfloat16'
     device: str = 'cuda'
+    readoutDtype: str | None = None
 
     @classmethod
     def from_dict(cls, value):
@@ -29,13 +30,19 @@ class AssessmentConfig:
         try: cfg=cls(**{**value,'corpus':file_ref(value.get('corpus'),'held-out corpus')})
         except TypeError as exc: raise FitError('Select a model version, corpus, and two registered lenses.') from exc
         cfg.model_config()
+        if cfg.readoutDtype not in (None, 'native', 'float32'):
+            raise FitError('Readout precision must be native or float32; model precision remains separate.')
         for key in ('maxPositionsPerRow','topK'):
             if type(getattr(cfg,key)) is not int or getattr(cfg,key)<1: raise FitError(key+' must be a positive integer.')
         for key in ('referenceLensID','candidateLensID'):
             name=getattr(cfg,key)
             if not isinstance(name,str) or len(archives.parts(name))!=1: raise FitError('Choose a registered lens ID, not a file path.')
         return cfg
-    def to_dict(self):return asdict(self)
+    def to_dict(self):
+        result = asdict(self)
+        if self.readoutDtype is None:
+            result.pop('readoutDtype')  # Preserve historical effective request bytes.
+        return result
     def model_config(self):
         return FitConfig.from_dict({key:getattr(self,key) for key in ('modelID','revision','corpus','sourceLayers','maxPrompts','maxSeqLen','skipFirst','dtype','device')})
 
@@ -55,8 +62,15 @@ def preflight(config, root):
     records,layers=instruments(config,root)
     rows=corpus_rows(read_pinned(config.corpus,root))
     count = min(config.maxPrompts, len(rows))
-    return {'rows':count, 'sourceLayers':layers, 'qualification':'notPerformed',
-            'resources':inputs.resource_plan(config, count, records[0].dModel, layers, records[0].targetLayer)}
+    result = {'rows':count, 'sourceLayers':layers, 'qualification':'notPerformed',
+              'resources':inputs.resource_plan(config, count, records[0].dModel, layers, records[0].targetLayer)}
+    if config.readoutDtype is not None:
+        result['readoutReview'] = {
+            'requested': config.readoutDtype,
+            'summary': ('Paired native and float32 readout on the same captured activations. Additional float32 norm/head storage is approximately 4 bytes per parameter (including vocabulary × hidden width), plus logits and workspace. This is not included in the lens-pair budget.'
+                        if config.readoutDtype == 'float32' else 'Native readout, with a matched plain-residual baseline.'),
+        }
+    return result
 
 
 def distances(left, right, top_k):
@@ -89,20 +103,25 @@ def compare_row(model, path, layer, target, devices, matrices, top_k, totals):
                 totals[name]['effectiveTopK'] = result['effectiveTopK']
 
 
-def compare_layer(model, records, root, files, layer, target, devices, top_k, totals):
+def compare_layer(model, records, root, files, layer, target, devices, top_k, totals, extra=None, readout=None):
     import torch
     from ..jlens import lens_store
     # Function scope releases this pair before the next layer is loaded. Never
     # cache a complete lens or transfer the same matrix for each token chunk.
     matrices = [lens_store.load_layer(record, layer, root=str(root)).to(
         device=devices[layer], dtype=torch.float32) for record in records]
+    if extra is not None:
+        from . import jlens_assessment_readout as enhanced
+        extra['matrixComparison'] = enhanced.matrix_comparison(*matrices)
     for path in files:
         compare_row(model, path, layer, target, devices, matrices, top_k, totals)
+        if extra is not None:
+            enhanced.compare(model, path, layer, target, devices, matrices, top_k, extra, readout, distances)
 
 
 def assess(config, *, root, log=print, on_run_created=None):
     import torch
-    from . import jlens_fit_model
+    from . import jlens_fit_model, jlens_assessment_readout as enhanced
     records,layers=instruments(config,root)
     rows=corpus_rows(read_pinned(config.corpus,root))[:config.maxPrompts]
     root=Path(root).resolve(strict=True)
@@ -114,12 +133,16 @@ def assess(config, *, root, log=print, on_run_created=None):
         if model.d_model!=records[0].dModel or model.n_layers-1!=records[0].targetLayer: raise FitError('Loaded model geometry differs from the fitted instruments.')
         target=model.n_layers-1
         totals={str(layer):{name:{'positions':0,'jsDivergenceSum':0.,'topKOverlapSum':0.} for name in ('betweenLenses','referenceToFinal','candidateToFinal')} for layer in layers}
+        extras = {str(layer): enhanced.empty(config.readoutDtype == 'float32') for layer in layers}
+        readout = None
         scratch=archives.ordinary(root,'.steerlab/jlens-assessment-state',missing=True)
         scratch.mkdir(parents=True,exist_ok=True)
         with TemporaryDirectory(prefix=run.name+'-',dir=scratch) as directory, torch.no_grad():
             row_results,files,devices,payload_bytes=inputs.capture(model,config,rows,layers,target,directory)
+            if files and config.readoutDtype == 'float32':
+                readout = enhanced.Float32Readout(model)
             for layer in layers if files else []:
-                compare_layer(model,records,root,files,layer,target,devices,config.topK,totals[str(layer)])
+                compare_layer(model,records,root,files,layer,target,devices,config.topK,totals[str(layer)],extras[str(layer)],readout)
             resources={**inputs.resource_plan(config,len(rows),model.d_model,layers,target),
                        'capturedActivationBytes':payload_bytes,'stagedRows':len(files),
                        'lensLayerReads':2*len(layers) if files else 0,
@@ -129,8 +152,10 @@ def assess(config, *, root, log=print, on_run_created=None):
                 n=value['positions']
                 value['meanJSDivergence']=value['jsDivergenceSum']/n if n else None
                 value['meanTopKOverlap']=value['topKOverlapSum']/n if n else None
+        enhanced.finish(extras)
         same_corpus=any(record.fit.corpus=='sha256:'+config.corpus['sha256'] for record in records)
         report={'schemaVersion':1,'operation':'jlens-fit-assess','config':config.to_dict(),'runtime':runtime,
+                'readoutComparison':{'schemaVersion':1, 'precision':enhanced.precision(model, config, readout), 'layers':extras},
                 'lenses':[record.to_dict() for record in records],'layers':totals,'rows':row_results,'resources':resources,
                 'heldOutStatus':'sameCorpusAsFit' if same_corpus else 'researcherDeclared; overlapNotEstablished',
                 'qualification':'notPerformed','aggregation':'Equal weight per assessed token position; first eligible positions up to the displayed cap.',

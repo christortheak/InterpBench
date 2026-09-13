@@ -10,7 +10,7 @@
     "http": "POST /api/science/plan; POST /api/science/submit",
     "compute": "gpu",
     "outputs": [
-      "Measure agreement between two lenses and with the model’s actual final residual on declared held-out token positions."
+      "Per-layer native readout, identity-transport baseline, matrix differences, and optional paired float32 readout on the same held-out positions."
     ],
     "restriction": "Uses reviewed inputs and immutable scientific outputs. No environment installation, automatic retries, or scientific qualification.",
     "actions": [
@@ -40,14 +40,14 @@
     "id": "jlens-fit-assess",
     "title": "Assess successive lenses on held-out text",
     "method": "jlens",
-    "purpose": "Measure agreement between two lenses and with the model’s actual final residual on declared held-out token positions.",
+    "purpose": "Compare two lenses with each other, with final predictions, and with the plain residual (logit-lens baseline). Optionally compare native and float32 readout without refitting.",
     "fields": [
       {
         "id": "modelID",
-        "label": "Model to fit",
+        "label": "Model to assess",
         "kind": "text",
         "required": true,
-        "help": "Choose a prepared Hugging Face checkpoint. Fitting does not download model weights or change them."
+        "help": "Choose the prepared checkpoint used by these lenses. Assessment does not download or refit it."
       },
       {
         "id": "revision",
@@ -90,7 +90,7 @@
         "label": "Maximum tokens per passage",
         "kind": "integer",
         "required": false,
-        "help": "Raw text, with the prepared tokenizer’s native special tokens.",
+        "help": "Raw text, with the prepared tokenizer\u2019s native special tokens.",
         "default": "128"
       },
       {
@@ -114,7 +114,7 @@
         "label": "Top tokens to compare",
         "kind": "integer",
         "required": false,
-        "help": "Reports top-k set overlap and Jensen–Shannon divergence, averaged equally over the recorded token positions.",
+        "help": "Reports top-k set overlap and Jensen\u2013Shannon divergence, averaged equally over the recorded token positions.",
         "default": "10"
       },
       {
@@ -124,6 +124,13 @@
         "required": false,
         "help": "Use the prepared, unquantized runtime appropriate to the intended readout.",
         "default": "bfloat16"
+      },
+      {
+        "id": "readoutDtype",
+        "label": "Readout precision (optional)",
+        "kind": "text",
+        "required": false,
+        "help": "Leave blank for the existing native readout. Enter float32 to also compare float32 normalization and output-head arithmetic on the same activations. Lens multiplication is already float32. Adds a float32 copy of output-head/norm parameters; model forward precision stays unchanged."
       },
       {
         "id": "device",

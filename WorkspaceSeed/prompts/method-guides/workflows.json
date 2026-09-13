@@ -1065,14 +1065,14 @@
       "id": "jlens-fit-assess",
       "title": "Assess successive lenses on held-out text",
       "method": "jlens",
-      "purpose": "Measure agreement between two lenses and with the model’s actual final residual on declared held-out token positions.",
+      "purpose": "Compare two lenses with each other, with final predictions, and with the plain residual (logit-lens baseline). Optionally compare native and float32 readout without refitting.",
       "fields": [
         {
           "id": "modelID",
-          "label": "Model to fit",
+          "label": "Model to assess",
           "kind": "text",
           "required": true,
-          "help": "Choose a prepared Hugging Face checkpoint. Fitting does not download model weights or change them."
+          "help": "Choose the prepared checkpoint used by these lenses. Assessment does not download or refit it."
         },
         {
           "id": "revision",
@@ -1149,6 +1149,13 @@
           "required": false,
           "help": "Use the prepared, unquantized runtime appropriate to the intended readout.",
           "default": "bfloat16"
+        },
+        {
+          "id": "readoutDtype",
+          "label": "Readout precision (optional)",
+          "kind": "text",
+          "required": false,
+          "help": "Leave blank for the existing native readout. Enter float32 to also compare float32 normalization and output-head arithmetic on the same activations. Lens multiplication is already float32. Adds a float32 copy of output-head/norm parameters; model forward precision stays unchanged."
         },
         {
           "id": "device",

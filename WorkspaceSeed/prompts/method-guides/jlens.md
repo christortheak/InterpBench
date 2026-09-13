@@ -309,7 +309,7 @@ HTTP API. A runner executes; it does not author the researcher's workspace.
 | `jlens-fit-benchmark` | A published fresh fitting request of at most eight rows, dimension batches (baseline 1), kernel policy, compilation comparison, and numerical tolerances | Per-prompt gradient and mean-lens agreement, throughput, and memory, with failures visible |
 | `jlens-fit-round` | A published fixed-budget fit, shard count, first global corpus row, partition layout, and concurrency cap | Immutable shard requests and a round plan; materializing this plan starts no GPU fitting |
 | `jlens-fit-merge` | Completed disjoint fit directories, and whether missing planned rows are acceptable | A weighted merged lens, checkpoint, and explicit coverage/lineage report |
-| `jlens-fit-assess` | Two registered lens IDs, pinned held-out text, layers, and token-position budget | Per-layer readout agreement and comparisons with the final residual; no automatic qualification |
+| `jlens-fit-assess` | Two registered lens IDs, pinned held-out text, layers, and token-position budget | Per-layer readouts, plain-residual baseline, matrix differences, and optional float32 comparison; no automatic qualification |
 
 ### Measure speed and numerical agreement together
 
@@ -496,6 +496,53 @@ and layer choices are recorded. These are distributional readout comparisons,
 not causal interventions. A matching fitting-corpus hash is flagged; a different
 hash does not establish independence. Neither metric automatically qualifies a
 lens or decides whether the research conclusions are stable.
+
+Every new assessment also reports an **identity-transport baseline** (the plain
+source residual, or logit lens), using exactly the same positions. Lower
+Jensen–Shannon divergence means closer distributions; higher top-k overlap means
+more shared top tokens. Compare the baseline with each lens, rather than assuming
+that a transported residual predicts final tokens better. These metrics do not
+measure whether transporting an intervention direction is causally useful.
+
+**Readout precision:** leave `readoutDtype` absent for the historical native path,
+or choose `float32` to add a paired comparison. The app offers a picker; both CLIs
+use that field in `science interview/draft/publish`, and API callers put it in the
+managed request's `parameters.config`. Lens multiplication already uses float32
+in either mode. Native readout calls the pinned adapter's `unembed`, which casts
+to the output-head dtype before the original final norm, head, and softcap.
+The optional path uses float32 inputs and parameters for those same modules and
+softcap. It preserves the model's original parameters and tied embeddings.
+Both modes compare against the **same native final-residual readout**. Forward
+activations are reused in their original precision; casting cannot recover lost
+information. Internal module arithmetic and runtime TF32/matmul settings still
+apply, so this is not a claim of an exact-arithmetic reference.
+
+The existing report `layers` retains its three native comparison groups and their
+arithmetic. `readoutComparison.layers[layer]` adds `native.logitLensToFinal`,
+`matrixComparison` (reference-denominated relative Frobenius, norms, maximum
+absolute difference, and cosine), and, when selected, `float32` groups. The latter
+include `betweenLenses`, `referenceToFinal`, `candidateToFinal`,
+`logitLensToFinal`, and paired `referenceToNativeReadout`,
+`candidateToNativeReadout`, `logitLensToNativeReadout`, and
+`finalToNativeReadout`. Empty populations have null means; zero matrix norms have
+null ratios. The matrix statistics compare the loaded float32 transport matrices
+with bounded float64 CPU reductions. No ratio of distribution divergence to
+matrix distance is presented as a sensitivity or qualification score.
+
+`readoutComparison.precision` identifies the requested mode, native head dtype,
+transport convention, and additional readout parameter bytes. Float32 readout can
+add approximately **4 × vocabulary size × hidden width bytes** for a separate
+output-head weight, plus norm/bias state and working logits. This is additional to
+the lens pair and activation-storage estimates, and is explained in the request
+review. It may be significant on an almost-full GPU. Additional readouts and
+matrix reductions also take time; they add no transformer forward passes.
+
+Old requests without the new key keep their effective config and existing input
+review material. An explicit new option changes request identity. The interview
+resource has changed, so an unpublished old draft must be reviewed again; its
+interview hash is intentionally not preserved. Historical saved reports, lens
+artifacts, and frozen studies are never rewritten. Enhanced reports remain
+inspectable through the existing Results JSON viewer and evidence import paths.
 
 Assessment forwards each usable row once and saves only the selected source
 and final-layer activations, preserving their dtype and token order. Temporary

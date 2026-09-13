@@ -1160,7 +1160,7 @@
       "http": "POST /api/science/plan; POST /api/science/submit",
       "compute": "gpu",
       "outputs": [
-        "Measure agreement between two lenses and with the model’s actual final residual on declared held-out token positions."
+        "Per-layer native readout, identity-transport baseline, matrix differences, and optional paired float32 readout on the same held-out positions."
       ],
       "restriction": "Uses reviewed inputs and immutable scientific outputs. No environment installation, automatic retries, or scientific qualification.",
       "actions": [
