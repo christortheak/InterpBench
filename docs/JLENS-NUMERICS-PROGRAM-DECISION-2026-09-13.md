@@ -200,3 +200,30 @@ when it lands.
    check certifies the estimator's mathematics, not every checkpoint,
    precision, or kernel, and the final-residual bf16/fp32 readout figure is
    not a bound on transported intermediate residuals.
+
+### J2 evidence (2026-09-13, later the same day)
+
+The direct controls proposed in the closure handoff ran as four bounded
+jobs (`INTERPRETATION-J2.md` and `j2-*/report.json` in the workspace
+diagnostics directory; retained matrices with content hashes stay in the
+cluster diagnostics directory). Results:
+
+- **Correction 1 closed.** Engine path versus bare reference at the same
+  batch, same tokens, layers, and components: bitwise identical
+  (`torch.equal`, relative Frobenius 0, content hashes equal) on Gemma-3-4B
+  at batches 1, 2, 4, 16 on the H100 and 1, 4 on the A100 for three rows at
+  all 33 layers, and on the Qwen3.8-27B hybrid at batches 1 and 4 for one
+  row at layers 0, 16, 31, 48, 62.
+- **Correction 2 closed for the tested pairs.** Dense 4B: batch 16 = batch 4
+  bitwise on every row; batch 2 differs from both 1 and 4 on every row; the
+  128-token row has batches 1 = 4 = 16 while batch 2 differs. Dense
+  Gemma-3-27B: batch 4 = batch 2 bitwise at layers 0, 15, 30, 45, 60, both
+  differing from batch 1 by 9.1e-2 (L0) to 1.1e-3 (L60). Batch 64 on the 4B
+  and hybrid pairs other than (1, 4) remain inferences from the benchmark
+  records.
+- Every repeat of a configuration is bitwise identical, on all three models
+  and both cards; one-coordinate mutation and component-order permutation
+  fail the identity check on every model.
+- Still open: mixed-GPU scientific equivalence (matched small fits not
+  run), full-lens hybrid agreement, and the kernel-selection mechanism
+  (dispatch not captured).

@@ -431,3 +431,30 @@ are unchanged; the text above is amended in place with pointers here.
 | 4 | Batch shapes are "draws of the same rounding process" that merging averages out | Deterministic per configuration; mechanism inferred, kernel selection not captured; mixed-GPU scientific equivalence unqualified | J2 deferred item: matched small fits across proposed configurations vs a uniform configuration on a fixed corpus budget |
 | 5 | "A 1000-prompt mean estimates the population mean Jacobian better" | Managed fit succeeds and compares favourably; cause of the margin unidentified (prompt set, batch, compile, hardware, storage precision differ) | retained-checkpoint or nested-budget fit (§6 item 5) |
 | 6 | T1/T2 "both models, both cards", hybrid "16 WikiText rows" | Hybrid: eight ladder windows, H100 only, 16 components; dense 4B: 16 WikiText rows, both cards, 32 components; T3 certifies mathematics only; the readout figure is for the final residual | none |
+
+### J2 evidence (2026-09-13, later the same day)
+
+The direct controls proposed in the closure handoff ran as four bounded
+jobs (`INTERPRETATION-J2.md` and `j2-*/report.json` in the workspace
+diagnostics directory; retained matrices with content hashes stay in the
+cluster diagnostics directory). Results:
+
+- **Correction 1 closed.** Engine path versus bare reference at the same
+  batch, same tokens, layers, and components: bitwise identical
+  (`torch.equal`, relative Frobenius 0, content hashes equal) on Gemma-3-4B
+  at batches 1, 2, 4, 16 on the H100 and 1, 4 on the A100 for three rows at
+  all 33 layers, and on the Qwen3.8-27B hybrid at batches 1 and 4 for one
+  row at layers 0, 16, 31, 48, 62.
+- **Correction 2 closed for the tested pairs.** Dense 4B: batch 16 = batch 4
+  bitwise on every row; batch 2 differs from both 1 and 4 on every row; the
+  128-token row has batches 1 = 4 = 16 while batch 2 differs. Dense
+  Gemma-3-27B: batch 4 = batch 2 bitwise at layers 0, 15, 30, 45, 60, both
+  differing from batch 1 by 9.1e-2 (L0) to 1.1e-3 (L60). Batch 64 on the 4B
+  and hybrid pairs other than (1, 4) remain inferences from the benchmark
+  records.
+- Every repeat of a configuration is bitwise identical, on all three models
+  and both cards; one-coordinate mutation and component-order permutation
+  fail the identity check on every model.
+- Still open: mixed-GPU scientific equivalence (matched small fits not
+  run), full-lens hybrid agreement, and the kernel-selection mechanism
+  (dispatch not captured).
