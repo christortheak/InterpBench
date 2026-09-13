@@ -1152,7 +1152,7 @@
         },
         {
           "id": "readoutDtype",
-          "label": "Readout precision (optional)",
+          "label": "Readout precision",
           "kind": "text",
           "required": false,
           "help": "Leave blank for the existing native readout. Enter float32 to also compare float32 normalization and output-head arithmetic on the same activations. Lens multiplication is already float32. Adds a float32 copy of output-head/norm parameters; model forward precision stays unchanged."

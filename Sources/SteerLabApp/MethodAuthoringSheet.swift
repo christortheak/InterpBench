@@ -217,8 +217,7 @@ struct MethodAuthoringSheet: View {
                 }
             } else if workflow.id == "jlens-fit-assess" && field.id == "readoutDtype" {
                 Picker(field.label, selection: fieldBinding(field)) {
-                    Text("Native readout (default)").tag("")
-                    Text("Native readout (explicit)").tag("native")
+                    Text("Native readout").tag(fields[field.id] == "native" ? "native" : "")
                     Text("Compare native and float32 readout").tag("float32")
                 }.labelsHidden()
             } else if field.kind == "boolean" {

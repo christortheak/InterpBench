@@ -154,3 +154,55 @@ def test_float32_failure_is_not_silently_downgraded_and_cleans_scratch(assessmen
     with pytest.raises(ValueError, match='norm/head adapter'):
         assessment.assess(dataclasses.replace(config, readoutDtype='float32'), root=root)
     assert not list((root/'.steerlab/jlens-assessment-state').iterdir())
+
+
+def test_http_plan_isolated_execution_and_portable_import_keep_comparison(assessment_case, monkeypatch, capsys):
+    from pathlib import Path
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from steerlab_server import client_cli
+    from steerlab_server.api import scientific_execution, diagnostic_transport
+    from steerlab_server.api.profile import ServerProfile
+    from steerlab_server.api.jobs import JobManager, DurableJobStore
+    from steerlab_server.api.scientific_execution_routes import build_scientific_execution_router
+    from steerlab_server.experiment import diagnostic_inputs
+    root, config = assessment_case
+    monkeypatch.setenv('STEERLAB_ROOT', str(root))
+    monkeypatch.setenv('STEERLAB_METADATA_ROOT', str(root/'.steerlab'))
+    monkeypatch.setenv('STEERLAB_SERVER_ROLE', 'workstation')
+    monkeypatch.setenv('STEERLAB_EXECUTOR', 'local')
+    profile = ServerProfile.from_env()
+    request = {'operation': 'jlens-fit-assess', 'parameters': {'config': dataclasses.replace(config, readoutDtype='float32').to_dict()}}
+    packaged = diagnostic_inputs.plan(request, root)
+    archive = diagnostic_inputs.package(request, root, root/'runs/inputs.tar.gz', packaged['planSHA256'])
+    staged = diagnostic_transport.stage(archive['bundlePath'], archive['bundleSha256'], profile)
+    jobs = JobManager(store=DurableJobStore(str(root/'jobs.sqlite')), sweep_orphans=False)
+    app = FastAPI()
+    app.include_router(build_scientific_execution_router(SimpleNamespace(jobs=jobs, registry=None)))
+    with TestClient(app) as client:
+        response = client.post('/api/science/plan', json=staged['request'])
+        assert response.status_code == 200, response.text
+        plan = response.json()
+        assert plan == scientific_execution.plan(staged['request'], profile)
+        assert plan['operationReview']['readoutReview']['requested'] == 'float32'
+        refused = client.post('/api/science/submit', json={'request': staged['request'], 'planSHA256': 'wrong'})
+        assert refused.status_code == 409
+    monkeypatch.setattr(jlens_fit_model, 'load', lambda *a: (instrumented_tiny(), {}))
+    packet, record = root/'packet.json', root/'child.json'
+    packet.write_text(json.dumps(plan))
+    assert scientific_execution.execute_packet(packet, 'readout-job', record) == 0
+    result = json.loads(record.read_text())['result']
+    assert result['runDirectory'].startswith(staged['executionRoot'])
+    job = jobs.record_external('science:jlens-fit-assess', status='succeeded', executor='local',
+                               job_id='readout-job', result=result)
+    exported = diagnostic_transport.export(job.id, jobs, profile)
+    local = root/'local'; local.mkdir()
+    capsys.readouterr()
+    assert client_cli.main(['science', 'import', exported['bundlePath'], '--sha256', exported['bundleSha256'],
+                            '--root', str(local), '--json']) == 0
+    imported = json.loads(capsys.readouterr().out)
+    assert imported['state'] == 'ready'
+    original = Path(result['runDirectory'])/'assessment-report.json'
+    collected = next(local.rglob('assessment-report.json'))
+    assert collected.read_bytes() == original.read_bytes()
+    assert json.loads(collected.read_text())['readoutComparison']['layers']['0']['float32']['candidateToFinal']['positions'] > 0

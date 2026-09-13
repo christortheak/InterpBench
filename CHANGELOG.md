@@ -12,6 +12,12 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Add matched plain-residual baselines and optional paired float32 readout to
+  managed J-lens assessment, with a shared app/CLI/API precision choice. Preserve
+  historical native comparison arithmetic and absent-option request encoding;
+  report matrix differences, actual readout precision, and extra parameter storage.
+  These comparisons do not automatically qualify a lens or establish causal use.
+
 - Route study probe readings and existing residual interventions through explicit
   pre/action/post dispatch. Preserve legacy addition, ablation, and SAE arithmetic
   and order; isolate measurement state across responses and agent seats. Native
