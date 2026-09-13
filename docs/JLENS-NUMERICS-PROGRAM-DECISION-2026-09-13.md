@@ -27,8 +27,8 @@ provenance (already done) so different draws stay distinguishable.
 | T1 | Does the assessment's "final prediction" equal the model's own logits, and how much does the bf16 readout cost? | Readout reproduces native logits bit for bit; bf16-vs-fp32 readout moves the distribution by mean JS 7e-5 and flips top-1 at ~2% of positions | `INTERPRETATION-T1-T2.md` |
 | T2 | Is a batch-1 fit repeatable and order-invariant? | Bitwise identical across repeats, descending and shuffled component orders, and fresh forwards, on both models and both cards | same |
 | T3 | Is the estimator mathematically correct? | In float64 on a tiny hybrid, the reference estimator equals an independent explicit Jacobian to 6e-8, batches 1/2/4 are bitwise identical, finite differences agree at their floor, and three deliberate mutations are detected | `INTERPRETATION-T3.md` |
-| T4 | Where does the batch-shape difference arise? | In the bf16 forward pass itself, from the first block, on dense and hybrid models alike; card- and sequence-length-dependent; the engine path is bit-identical to the bare reference | `INTERPRETATION-T4.md` |
-| T5 | Does our pipeline reproduce the published Gemma-3-4B lens's recipe and quality? | Yes at readout level: our 1000-prompt lens is closer to the model's final distribution than the published 546-prompt lens at every source layer on both held-out corpora; the two lenses differ 10–30% at shallow layers and converge with depth; neither beats the plain logit lens at any depth on this readout metric | `INTERPRETATION-T5.md` |
+| T4 | Where does the batch-shape difference arise? | In the bf16 forward pass itself, from the first block, on dense and hybrid models alike; card- and sequence-length-dependent; the engine path's batch-4-vs-batch-1 distances equal the bare reference's at every layer (direct matrix identity pending J2, see §8) | `INTERPRETATION-T4.md` |
+| T5 | Does our pipeline reproduce the published Gemma-3-4B lens's recipe and quality? | Yes at readout level: our 1000-prompt lens is closer to the model's final distribution than the published 546-prompt lens at every source layer on both held-out corpora; the two lenses differ 10–30% at shallow layers and converge with depth; against the plain logit lens on this readout metric both are better at layer 8, at the divergence ceiling at layer 0, equal in JS but lower in overlap at 32, and worse at 17 and 25 (five sampled layers; see §8) | `INTERPRETATION-T5.md` |
 | T6 | Is a dense 27B affordable and does the same batch pattern appear? | 26 rows/hour at batch 4 on an H100 (hybrid: 1.4 at batch 1); batch 2 and 4 identical against batch 1; same depth profile | `INTERPRETATION-T6.md` |
 
 ## 3. The batch-shape difference, resolved
@@ -37,8 +37,10 @@ The earlier handoffs treated the 5–16% early-layer matrix difference between
 batch-1 and batched fits as a property of the estimator or of the hybrid
 architecture. The program shows it is neither.
 
-- The estimator is exact (T3) and the engine's wrapping of it changes no bit
-  (T4b).
+- The estimator is exact in float64 on a tiny hybrid (T3), and the engine's
+  wrapping reproduces the bare reference's batch-4-vs-batch-1 distances at
+  every layer (T4b); the direct engine-vs-bare matrix comparison is J2 work
+  (§8).
 - The bf16 forward pass returns different residuals when the same row is
   presented alone versus replicated, starting at layer 0 (1e-5 to 1e-3
   relative) and growing with depth to about 1e-2. Dense Gemma 4B shows it as
@@ -46,9 +48,11 @@ architecture. The program shows it is neither.
 - Whether it appears depends on the card and the sequence length: on the
   H100 a 128-token row is bitwise identical across batch shapes and 115- and
   119-token rows are not; on the A100 every tested row differs. The paths
-  are discrete: on the dense 27B batch 2 and batch 4 agree with each other
-  and only batch 1 differs; on the dense 4B batches 4 through 64 agree with
-  each other while batch 2 and batch 1 each differ.
+  look discrete: on the dense 27B batches 2 and 4 have identical agreement
+  records against batch 1, and on the dense 4B batches 4 through 64 do,
+  while batch 2 has another. Identical records against batch 1 are strong
+  evidence that those tensors coincide but not a direct comparison; the
+  tensors were not retained, and J2 retains them (§8).
   This is the signature of GEMM algorithm selection by problem shape: a
   single-row matmul and a batched matmul may run different kernels with
   different reduction orders, and bf16 keeps about three significant digits
@@ -58,10 +62,13 @@ architecture. The program shows it is neither.
   source layers (6–16% at layer 0, 0.1–0.3% at the deepest source layer)
   because a layer-0 row's backward pass traverses every downstream block.
 - Consequently a batch-1 fit, a batch-4 fit, and the published fits (batch
-  128 and 64 on a B200 with compile on) are three draws of the same bf16
-  rounding process. None is the reference for the others. The float32 4B
-  benchmark, where batch shapes agree to 1e-5, is the batch-insensitive
-  reference when one is needed.
+  128 and 64 on a B200 with compile on) are outcomes of the same bf16
+  rounding process under different shapes. None is the reference for the
+  others. They are deterministic per configuration, not proven unbiased
+  random draws, so it does not follow that averaging arbitrary GPU
+  configurations cancels them (§8). The float32 4B benchmark, where batch
+  shapes agree to 1e-5, is the batch-insensitive reference when one is
+  needed.
 
 ## 4. What this means for the readout-level assessment
 
@@ -105,14 +112,19 @@ positions) and 16 ladder windows of the case text (1024 positions):
   early-layer use.
 - Against the model's own final distribution, our lens is closer than the
   published lens at all 33 source layers on both corpora, by 0.0002–0.0065
-  JS. Sixty-six cells, one sign: a 1000-prompt mean estimates the population
-  mean Jacobian better than a 546-prompt mean. The reproduction succeeds.
+  JS. Sixty-six cells, one sign. The managed fit succeeds and its lens
+  compares favourably with the published artifact under documented recipe
+  differences; because prompt set, batch, compile, hardware, and storage
+  precision all differ, the cause of the margin is not identified (§8).
 - Against the logit lens (identity transport, same positions and readout,
-  measured on the same 64 WikiText rows and 16 ladder windows): both
-  Jacobian lenses are at chance with it at layers 0–8, equal in JS but lower
-  in top-10 overlap at layer 32, and clearly worse at layers 17 and 25
-  (layer 25, WikiText: JS 0.44 and overlap 0.30 for the J-lens versus 0.30
-  and 0.48 for the plain residual; ladder: 0.44 / 0.29 versus 0.25 / 0.53).
+  measured on the same 64 WikiText rows and 16 ladder windows, at the five
+  sampled layers 0, 8, 17, 25, 32): both Jacobian lenses sit at the JS
+  ceiling (ln 2) with the logit lens at layer 0; are better than it at
+  layer 8 on both metrics (WikiText JS 0.677 vs 0.684, overlap 0.028 vs
+  0.009); are equal in JS but lower in top-10 overlap at layer 32; and are
+  clearly worse at layers 17 and 25 (layer 25, WikiText: JS 0.44 and overlap
+  0.30 for the J-lens versus 0.30 and 0.48 for the plain residual; ladder:
+  0.44 / 0.29 versus 0.25 / 0.53).
   This is a property of the method as read out (J_l · h_l, final norm,
   unembed), not of our fit. A mean-Jacobian lens is not fitted to minimise
   readout divergence and its intended use is transporting directions, but
@@ -147,3 +159,44 @@ positions) and 16 ladder windows of the case text (1024 positions):
 | Gemma-3-4B dense bf16 | H100 | 1 / 4 / 16 / 64 | 36 / 137 / 308 / 325 | 9 / 11 / 18 / 45 |
 | Gemma-3-4B dense float32 | H100 | 1 / 4 | 38 / 57 | 18 / 21 |
 | Gemma-3-4B dense, T5 fit | H100 | 64 | ~330 (10.9 s/row) | (see T5) |
+
+## 8. Corrections of 2026-09-13 (J1 of the closure handoff)
+
+The refactor agents' closure review of this document (baseline 168aee8)
+identified six overstatements. Each is corrected in place above with a
+pointer here; the underlying reports are unchanged. New evidence from J2 is
+recorded in `INTERPRETATION-J2.md` in the workspace diagnostics directory
+when it lands.
+
+1. **Engine versus reference.** The T4b script computed the
+   batch-4-vs-batch-1 distance separately inside the bare and the engine
+   paths and deleted the bare model before loading the engine one. Identical
+   distance summaries at every layer are strong evidence, not a bitwise
+   matrix comparison. Original claim "bit for bit" withdrawn; the direct
+   comparison at the same batch on the same tokens, layers, and components is
+   the first J2 control.
+2. **Batch-to-batch equality.** Identical agreement records against batch 1
+   do not establish batch 2 = batch 4 or batch 4 = batch 64. Stated as an
+   inference; J2 retains tensors and hashes and compares the claimed pairs
+   directly.
+3. **Logit lens.** At layer 8 our J-lens beats the logit lens on both metrics
+   on both corpora. "Does not beat it at any depth" withdrawn. The baseline
+   was measured at five sampled layers, not every layer, and "at chance" is
+   replaced by the measured ceiling value.
+4. **Rounding interpretation.** The forward-pass localization supports a
+   hardware and batch-shape numerical explanation; kernel selection was not
+   captured and backward arithmetic may contribute. Deterministic
+   configuration differences are not proven unbiased draws; the merge
+   recommendation is operational, and mixed-GPU scientific equivalence is
+   unqualified until matched small fits across the proposed configurations
+   are compared on a fixed corpus budget (J2, deferred item).
+5. **Reproduction.** The managed fit and comparison succeed under documented
+   recipe differences; the all-layer margin over the published lens has an
+   unidentified cause.
+6. **Coverage.** The hybrid T1 and T2 reports used eight application-text
+   windows (not sixteen WikiText rows) and the hybrid was run on the H100
+   only; "both models, both cards" holds for the dense 4B alone. Component
+   subsets (32 on the 4B, 16 on the hybrid) are subsets. The tiny-model T3
+   check certifies the estimator's mathematics, not every checkpoint,
+   precision, or kernel, and the final-residual bf16/fp32 readout figure is
+   not a bound on transported intermediate residuals.
