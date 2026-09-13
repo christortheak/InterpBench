@@ -17,18 +17,25 @@ result was registered beside the existing batch-1 eight-row lens, and the
 two lenses were compared at readout level with `jlens-fit-assess` on
 sixteen held-out windows of the study's own case text.
 
-**Result: at readout level the two lenses are indistinguishable.** The
-largest Jensen–Shannon divergence between their readouts at any of the 63
-layers is 0.003 (median 0.0001); their top-10 token sets coincide at 89%
-of positions at layer 0 and at 100% from layer 48 on; and each lens's
-agreement with the model's final residual is identical to three decimals
-at every layer. The 5% matrix gap is real and precision-sensitive, as the
-benchmark found, and it does not change what the lens says on this text.
+**Result (wording corrected after review, see §10): on sixteen passages
+from one held-out source, the two lenses showed close aggregate readout
+agreement.** The largest per-layer *mean* Jensen–Shannon divergence between
+their readouts is 0.0032 (median 0.0001); mean top-10 overlap is about 0.89
+at layer 0 (on average 8.9 of 10 tokens shared) and rounds to 1.00 from
+layer 48; and each lens's mean agreement with the model's final residual
+matches the other's to three decimals at every layer. These are means over
+assessed positions, not per-position maxima, and the assessment's final
+readout ran in the output head's bfloat16 (§10.8). The 5% matrix gap is
+real and precision-sensitive, as the benchmark found, and on this text it
+did not change the aggregate readouts.
 
-**Decision input:** fit the funded round at dimension batch 4. The
-qualification record of any lens fitted this way should carry the matrix
-sensitivity from the benchmark and this readout result, with their
-conditions.
+**Decision input:** batch 4 is a supported candidate execution setting for
+further fitting. This result does not establish convergence, research
+adequacy, or equivalence at every position, and the large disagreement of
+both lenses with the final residual is a separate diagnostic question
+(§10.3). The qualification record of any lens fitted at batch 4 should
+carry the matrix sensitivity from the benchmark and this readout result,
+with their conditions.
 
 **Also established live by this run:** the assessment-reuse landing (16
 rows, 126 lens-layer reads, 671 MB of staged activations, five minutes on
@@ -95,33 +102,45 @@ reference and candidate columns agree at every layer to the third decimal.
 ## 4. Interpretation
 
 **On batching.** The benchmark measured a 5–7% relative Frobenius
-difference between batch-1 and batch-4 matrices at early layers, decaying
-with depth, and showed it vanishes in float32. This experiment measures
-what that difference does to the readout a researcher would actually use:
-essentially nothing. Divergence between the two lenses' next-token
-distributions is two to three orders of magnitude below their divergence
-from the model's own prediction, and the top-10 sets agree at nine
-positions in ten even where the matrices differ most. On this evidence
-the batched fit is the same instrument for readout purposes. Limits: one
-model, one fitting corpus, one held-out source of sixteen rows, eight
-fitted rows. It is the measurement the benchmark review asked for, not a
-general theorem, and any lens fitted at batch 4 should cite both numbers.
+difference between batch-1 and batch-4 matrices of the 27B at early
+layers, decaying with depth, and a separate control on the 4B dense model
+showed the same kind of difference shrinking to about 1e-5 in float32
+(small, not literally zero, and on a different model). This experiment
+measures what the 27B difference does to aggregate readouts on one text
+population: mean divergence between the two lenses' next-token
+distributions is two to three orders of magnitude below their mean
+divergence from the model's own prediction, and on average 8.9 of the ten
+top tokens are shared even where the matrices differ most. On this
+evidence the batched fit gives closely agreeing aggregate readouts under
+the tested conditions. Limits: one model, one fitting corpus, one held-out
+source of sixteen windows (with context reset per window and only the
+first eligible positions assessed), eight fitted rows, and a bfloat16 final
+readout. It is the measurement the benchmark review asked for, not a
+general theorem or a per-position equivalence, and any lens fitted at
+batch 4 should cite both numbers.
 
 **On the eight-row lenses themselves.** Both lenses disagree strongly with
-the final residual until the last few layers (JS above 0.6 through layer
-48, top-10 overlap near zero until layer 40). That is what an eight-row
-fit should look like against a reference recipe that stopped near 800
-rows: the readouts are far from converged. It bears on the funded round's
-row budget, not on batching, and it is why the round is planned at
-reference scale.
+the final residual until the last few layers (mean JS above 0.6 through
+layer 48, against a natural-log ceiling of ln 2 ≈ 0.693; mean top-10
+overlap near zero until layer 40). This is a diagnostic, not a convergence
+statement: the fitter estimates an average Jacobian and does not optimize
+final-token prediction, so poor final-readout agreement may reflect the
+small sample, the text population, the approximation itself, or an
+implementation or numerical issue, and more rows need not remove it. The
+reference fits' 546–828 prompts are an observation about those fits, not a
+criterion. What this number does say is that an eight-row lens should not
+be used for readout conclusions, and that the disagreement needs its own
+investigation (§10) before a large budget is committed.
 
-**On what the readout metrics can and cannot show.** JS divergence and
-top-k overlap measure whether two readouts say the same thing about the
-next token at these positions. They do not establish causal validity of
-either lens, independence of the held-out text from the fitting text
-(the tool records that as not established), or adequacy for a particular
-research question. The comparison with the final residual is a bound on
-how much either readout can be trusted at each layer, not a score.
+**On what the readout metrics can and cannot show.** Mean JS divergence
+and mean top-k overlap measure whether two readouts say similar things
+about the next token, averaged over the assessed positions. They do not
+establish causal validity of either lens, independence of the held-out
+text from the fitting text (the tool records that as not established),
+per-position equivalence, or adequacy for a particular research question.
+The comparison with the final residual is a diagnostic; no calibrated
+bound on interpretive reliability has been established, and the report's
+`qualification: notPerformed` stands.
 
 ## 5. A transport defect found and fixed on the way
 
@@ -192,3 +211,45 @@ measured numbers (N). Two additions from this run:
 | Derived passages and README | `prompts/fitting/sources/ladder-12week-case-passages.*` |
 | Assessment run and report | `runs/jlens-assessment-f29facc3…` |
 | Requests, plans, submissions | `requests/jlens-fit-27b-8rows-dimbatch4/`, `requests/jlens-assess-27b-batch1-vs-batch4/` |
+
+## 10. Corrections after the refactor agents' numerical review (2026-09-13)
+
+The agents' review of this document and the benchmark handoff
+(`JLENS-DIMBATCH-BENCHMARK-RESULTS-AND-HANDOFF-2026-09-12.md` §5a) found the
+first version's interpretation too confident in eight places. Each is
+accepted and applied above; the run evidence is unchanged.
+
+1. "Indistinguishable" and "the same instrument" are replaced by "closely
+   agreeing aggregate readouts under the tested conditions." The reported
+   maximum JS is the maximum over layers of a per-layer *mean*, not a
+   per-position maximum, and three-decimal agreement is not an equivalence
+   test.
+2. Mean top-10 overlap 0.89 means an average of 8.9 shared tokens of ten,
+   not that complete top-10 sets coincide at 89% of positions; values that
+   round to 1.00 are not claimed exact.
+3. Poor agreement with final predictions is not evidence about convergence
+   and more rows need not remove it; the fitter does not optimize that
+   quantity.
+4. The reference fits' prompt counts are observations, not a criterion;
+   similar running-mean trajectories show similar update behaviour, not
+   accuracy.
+5. "Bound on trust" is withdrawn; the final-residual comparison is a
+   diagnostic.
+6. The float32 result came from the 4B dense-attention control, not a
+   float32 fit of the 27B, and the differences became small (about 1e-5),
+   not zero.
+7. The held-out set is sixteen windows from one source with context reset
+   per window and only the first eligible positions assessed; it is
+   study-specific coverage, not sixteen independent documents.
+8. The assessment's final readout casts to the output head's dtype, which
+   was bfloat16 here, after transporting through float32 matrices. Whether
+   agreement persists with a float32 readout is untested and is the first
+   item of the agents' proposed apparatus validation (their T1).
+
+The agents' proposed testing program (T0–T7: apparatus validation,
+repeatability and component-order invariance, independent hybrid
+derivative checks, localization of batching sensitivity, a full 4B
+reference reproduction against the published lens, a within-family 27B
+comparison, and only then the larger fitting round) is recorded in their
+review document and is the plan of record for what precedes a funded
+round.

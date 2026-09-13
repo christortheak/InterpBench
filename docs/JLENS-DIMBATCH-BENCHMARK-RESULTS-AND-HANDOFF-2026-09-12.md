@@ -239,23 +239,26 @@ corpus), 64 positions per row after skipping 16, top-10 overlap:
 | batch-1 lens vs final residual | 0.141 / 0.662 / 0.689 | 0.00 → 0.60 |
 | batch-4 lens vs final residual | 0.141 / 0.662 / 0.689 | 0.00 → 0.60 |
 
-At readout level the two lenses are the same instrument on this text: the
-largest between-lens divergence at any layer is 0.003, the two lenses'
-agreement with the final residual is identical to three decimals at every
-layer, and their top-10 token sets coincide at 89% of positions even at
-layer 0, where the matrices differ by 5%. The 5% early-layer matrix gap
-does not change what a researcher would read. This is one held-out set of
-sixteen rows from one source, so it is evidence for this model, corpus,
-and text population, not a general guarantee; but it is the measurement
-§4 said was needed, and it favours fitting at batch 4.
+On sixteen passages from one held-out source, the eight-row batch-1 and
+batch-4 lenses showed close aggregate readout agreement: the largest
+per-layer mean JS divergence was 0.0032, and mean top-10 overlap ranged
+from about 0.89 (8.9 of ten tokens shared on average) to values rounding
+to 1.00. This supports batch 4 as a candidate execution setting for
+further fitting. It does not establish convergence, research adequacy, or
+equivalence at every position, and the large disagreement of both lenses
+with final predictions remains a separate diagnostic question. (Wording
+corrected 2026-09-13 after the refactor agents' numerical review; see the
+assessment handoff §10.)
 
 Two side observations. The assessment took five minutes on an H100 for
 16 rows and 126 lens-layer reads (671 MB of staged activations), which is
 the live acceptance of the assessment-reuse landing. And both eight-row
-lenses agree poorly with the final residual at every layer (JS above 0.6
-until the last few layers), which is what an eight-row fit should look
-like against a reference recipe that used about 800 rows; it says nothing
-about batching and everything about the funded round's row budget.
+lenses agree poorly with the final residual at every layer (mean JS above
+0.6 until the last few layers, against a ceiling of ln 2). That is a
+diagnostic, not a convergence statement: the fitter does not optimize
+final-token prediction, and more rows need not remove the disagreement.
+It says nothing about batching, and it is one reason the agents' testing
+program precedes a large fitting round.
 
 Run: `runs/jlens-assessment-f29facc3…` in the workspace, with receipt.
 Requests: `requests/jlens-fit-27b-8rows-dimbatch4`,
