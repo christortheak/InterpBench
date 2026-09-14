@@ -311,6 +311,24 @@ class DurableJobStore:
             rows = [row["message"] for row in conn.execute(sql, params)]
         return list(reversed(rows)) if limit is not None else rows
 
+    def last_log_timestamp(self, job_id: str, *,
+                           before: float | None = None) -> float | None:
+        """The epoch second of the job's newest log line — optionally only
+        among lines written strictly BEFORE ``before``. The auto-resubmit
+        staleness guard reads the lines written before the current
+        controller instance started: a controller's own transition notes are
+        written by the very tick that evaluates the guard and cannot count as
+        the run's activity."""
+        sql = "SELECT MAX(timestamp) AS ts FROM job_logs WHERE job_id = ?"
+        params: tuple = (job_id,)
+        if before is not None:
+            sql += " AND timestamp < ?"
+            params = (job_id, before)
+        with self._lock, self._connect() as conn:
+            row = conn.execute(sql, params).fetchone()
+        value = row["ts"] if row is not None else None
+        return float(value) if value is not None else None
+
     def mark_cancel_requested(self, job_id: str) -> bool:
         with self._lock, self._connect() as conn:
             cur = conn.execute(
@@ -760,6 +778,25 @@ class JobManager:
         # distinguishes claims across restarts/processes so a claim is only
         # ever released by the actor that took it.
         self._claimant = uuid.uuid4().hex[:8]
+        # --- auto-resubmit provenance (live controller incident, 2026-09-13) --
+        # A controller that had just started auto-resubmitted a seven-week-old
+        # checkpointed record it merely ADOPTED from the store, after an
+        # unrelated fold resurrected its "checkpointed" status over the
+        # scheduler's own "cancelled". The automatic path now fires only for
+        # checkpoints THIS instance witnessed: ``_checkpoint_witnessed`` maps a
+        # job id to the epoch second this instance saw the record become
+        # checkpointed (a poll transition, a fold, or its own creation of a
+        # checkpointed record). Adopted checkpointed records are surfaced for
+        # a manual Resume instead. In-memory on purpose — the point is what
+        # THIS process saw.
+        self._instance_started_at = time.time()
+        self._checkpoint_witnessed: dict[str, float] = {}
+        # Child-record folds are idempotent by content: ``reconcile`` skips a
+        # record file whose bytes it already folded in this process (digest
+        # by path), so an unrelated job's terminal transition can no longer
+        # re-fold a months-old sibling record in the same directory — and a
+        # fold no longer re-appends the child's log lines every time.
+        self._folded_record_digests: dict[str, str] = {}
         if sweep_orphans:
             self._sweep_orphans()
         if reconcile_pipelines:
@@ -1200,6 +1237,11 @@ class JobManager:
         with _submitting_workspace(), self._lock:
             self._jobs[job.id] = job
             self.store.insert(job)
+        if status == "checkpointed":
+            # A record THIS instance created already checkpointed is its own
+            # lineage — the auto-resubmit provenance guard treats it like a
+            # checkpoint it witnessed.
+            self._checkpoint_witnessed[job.id] = now
         if log:
             job.log(log)
         return job
@@ -1363,16 +1405,33 @@ class JobManager:
         through the auto-resubmit gate every tick — that is what lets a resubmit
         deferred by a maintenance window fire on a later tick, and what repairs
         a missing resubmittedAs stamp after a crash/restart. Returns the number
-        of jobs whose status changed or that were resubmitted/repaired."""
+        of jobs whose status changed or that were resubmitted/repaired.
+
+        Quiescence (live controller incident, 2026-09-13): when a child-record
+        fold restores ``checkpointed`` over a terminal scheduler state, the
+        scheduler keeps answering that same state every tick. The observed
+        scheduler state is stamped on the record (``result.lastSchedulerState``,
+        preserved across folds) and the transition is handled ONCE — a later
+        tick that sees the same state again writes nothing."""
         changed = 0
         pending = [j for j in self.list()
                    if j.executor == "slurm" and j.executor_job_id and j.status not in TERMINAL]
         for job in pending:
             try:
-                state = self._slurm().poll_state(job.executor_job_id)
+                observation = self._observe_scheduler(job.executor_job_id)
             except Exception:  # noqa: BLE001 - a flaky sacct must not kill the loop
                 continue
-            if state is not None and state != job.status:
+            state = observation.get("state")
+            status_before = job.status
+            already_seen = ((job.result or {}).get("lastSchedulerState") or {})
+            if (state is not None and state != job.status
+                    and job.status == "checkpointed"
+                    and already_seen.get("state") == state):
+                # Handled on an earlier tick: the fold restored "checkpointed"
+                # over this very scheduler state. Re-logging it every ~15 s
+                # was the thrash; the record stays as it is.
+                pass
+            elif state is not None and state != job.status:
                 job.status = state
                 job.log(f"slurm {job.executor_job_id} → {state}")
                 if state == "checkpointed" or state in TERMINAL:
@@ -1389,8 +1448,10 @@ class JobManager:
                                 "/resubmit, optionally with a longer walltime) to "
                                 "continue it, or auto-resume (autoResubmit) "
                                 "re-submits it automatically when enabled")
-                    else:
-                        job.finished_at = time.time()
+                    terminal_stamp: float | None = None
+                    if state != "checkpointed":
+                        terminal_stamp = time.time()
+                        job.finished_at = terminal_stamp
                     # The child record replaces job.result on fold, so later
                     # transitions fall back to the stamped requestedResources
                     # copy of the records directory.
@@ -1404,6 +1465,19 @@ class JobManager:
                     # checkpointed original. Keep the non-terminal/finished_at
                     # invariant honest either way.
                     if job.status == "checkpointed":
+                        # WHEN the checkpoint happened — the record's activity
+                        # clock for the staleness guard: the child record's
+                        # own finishedAt (the moment it parked), else the
+                        # scheduler's recorded end, else now. Never the
+                        # terminal stamp this tick wrote a moment ago.
+                        child_finished = (job.finished_at
+                                          if job.finished_at not in (None, terminal_stamp)
+                                          else None)
+                        checkpointed_at = (child_finished
+                                           or observation.get("endedAt")
+                                           or time.time())
+                        job.result = {**(job.result or {}),
+                                      "checkpointedAt": checkpointed_at}
                         job.finished_at = None
                     elif job.status in TERMINAL and job.finished_at is None:
                         job.finished_at = time.time()
@@ -1429,11 +1503,24 @@ class JobManager:
                             job.result = {**(job.result or {}),
                                           "error": message}
                             job.log(message)
+                # Stamp the scheduler state this transition was handled for
+                # (AFTER the fold, which replaces the result). A later tick
+                # that observes the same state over a fold-restored
+                # "checkpointed" is quiescent; a DIFFERENT state is handled
+                # afresh.
+                job.result = {**(job.result or {}),
+                              "lastSchedulerState": self._scheduler_stamp(
+                                  observation)}
                 self.store.update(job)
                 changed += 1
+            if job.status == "checkpointed" and status_before != "checkpointed":
+                # THIS instance saw the record become checkpointed (a sacct
+                # 85 exit, or a fold correcting a masked one): provenance the
+                # automatic resubmit path requires.
+                self._checkpoint_witnessed[job.id] = time.time()
             if job.status == "checkpointed":
                 try:
-                    if self._maybe_auto_resubmit(job):
+                    if self._maybe_auto_resubmit(job, observation=observation):
                         changed += 1
                 except Exception as exc:  # noqa: BLE001 - one job must not kill the loop
                     self._resubmit_note(
@@ -2440,7 +2527,8 @@ class JobManager:
 
     # --- auto-resubmit on checkpoint (WS2) -----------------------------------
 
-    def _maybe_auto_resubmit(self, job: Job) -> bool:
+    def _maybe_auto_resubmit(self, job: Job, *,
+                             observation: dict | None = None) -> bool:
         """Resubmit a checkpointed Slurm job's OWN sbatch script so the resume
         pointer continues the run — at most once per checkpoint, bounded by the
         chain cap, never for cancelled jobs, and deferred (not dropped) across
@@ -2449,7 +2537,27 @@ class JobManager:
         Crash-safety ordering: sbatch FIRST, stamp second. Stamping first and
         crashing before sbatch would mark the run continued when nothing runs;
         the reverse crash (submitted, not yet stamped) is repaired here on a
-        later tick by finding the live child whose resubmitOf points at us."""
+        later tick by finding the live child whose resubmitOf points at us.
+
+        Staleness and provenance guards (live controller incident,
+        2026-09-13 — a just-started controller re-ran a seven-week-old test
+        record's sbatch script verbatim), applied to the AUTOMATIC path only;
+        the manual Resume verb is explicit consent and keeps its own gate:
+
+        1. the scheduler's recorded state for the original job is
+           ``cancelled`` (this tick's ``observation`` or the stamped
+           ``lastSchedulerState``) — cancelled beats checkpointed on the
+           OBSERVED scheduler state, not only on the record's own cancel flag;
+        2. the record's last activity is older than the bound
+           (``autoResubmitMaxAgeSeconds`` on the request, else
+           ``STEERLAB_AUTO_RESUBMIT_MAX_AGE``, else 48 hours);
+        3. this controller instance did not witness the checkpoint (it adopted
+           the record already checkpointed from the store) — adopted records
+           are surfaced for a manual Resume; only the missing-stamp repair
+           above still runs for them.
+
+        Each refusal is a deduplicated ``_resubmit_note`` and leaves the record
+        exactly as it was."""
         if job.status != "checkpointed":
             return False
         if job.cancelled:
@@ -2486,6 +2594,35 @@ class JobManager:
             # read at reconcile time.
             enabled = _env_truthy(os.environ.get("STEERLAB_AUTO_RESUBMIT"))
         if not enabled:
+            return False
+        # --- staleness / provenance guards (2026-09-13) ----------------------
+        scheduler_state = ((observation or {}).get("state")
+                           or (result.get("lastSchedulerState") or {}).get("state"))
+        if scheduler_state == "cancelled":
+            self._resubmit_note(
+                job, "schedulerCancelled",
+                f"not auto-resubmitting: the scheduler recorded Slurm job "
+                f"{job.executor_job_id} as cancelled (cancelled beats "
+                "checkpointed) — resubmit manually if it should continue")
+            return False
+        max_age = self._resubmit_max_age(rr)
+        last_activity = self._last_activity(job, observation=observation)
+        idle = time.time() - last_activity
+        if idle > max_age:
+            self._resubmit_note(
+                job, "stale",
+                f"auto-resubmit skipped: record inactive for {idle / 3600:.1f} "
+                f"hours (bound {max_age / 3600:g} hours) — resubmit manually "
+                "if it should continue")
+            return False
+        if job.id not in self._checkpoint_witnessed:
+            self._resubmit_note(
+                job, "adopted",
+                "auto-resubmit skipped: this controller adopted the record "
+                "already checkpointed (the checkpoint happened before it "
+                "started) — press Resume in the app or run the remote "
+                f"resubmit verb (POST /api/jobs/{job.id}/resubmit) to "
+                "continue it")
             return False
         limit = self._resubmit_limit(rr)
         count = int(rr.get("resubmitCount") or 0)
@@ -2755,6 +2892,84 @@ class JobManager:
             limit = _parse_resubmit_limit(
                 os.environ.get("STEERLAB_AUTO_RESUBMIT_LIMIT"))
         return int(limit)
+
+    @staticmethod
+    def _resubmit_max_age(rr: dict) -> float:
+        """The auto-resubmit staleness bound (seconds) for a job record:
+        per-request stamp first (``autoResubmitMaxAgeSeconds`` /
+        ``auto_resubmit_max_age_seconds``), env
+        (``STEERLAB_AUTO_RESUBMIT_MAX_AGE``) second, shipped 48 h default
+        last. A malformed per-request value refuses loudly like the env
+        parser — a swallowed typo would unbound the guard."""
+        from .executors import AUTO_RESUBMIT_MAX_AGE_ENV, _parse_resubmit_max_age
+        pinned = rr.get("auto_resubmit_max_age_seconds",
+                        rr.get("autoResubmitMaxAgeSeconds"))
+        if pinned is None:
+            return _parse_resubmit_max_age(os.environ.get(AUTO_RESUBMIT_MAX_AGE_ENV))
+        value = float(pinned)
+        if value <= 0:
+            raise ValueError(
+                f"autoResubmitMaxAgeSeconds {pinned!r} must be a positive "
+                "number of seconds")
+        return value
+
+    def _last_activity(self, job: Job, *, observation: dict | None = None) -> float:
+        """The epoch second of the record's most recent RUN activity, for the
+        staleness guard: the newest of its creation, start, and finish
+        stamps, the checkpoint moment (``result.checkpointedAt`` — the child
+        record's own finishedAt when it wrote one), the scheduler's recorded
+        end time (this tick's observation or the stamped
+        ``lastSchedulerState``), and the newest log line written before THIS
+        controller instance started. Lines this instance wrote are excluded
+        on purpose: the tick evaluating the guard writes its own transition
+        notes, and a controller observing a months-old record late is not
+        the record becoming active."""
+        result = job.result or {}
+        stamped = result.get("lastSchedulerState") or {}
+        candidates = [job.created_at, job.started_at, job.finished_at,
+                      result.get("checkpointedAt"), stamped.get("endedAt"),
+                      (observation or {}).get("endedAt")]
+        try:
+            candidates.append(self.store.last_log_timestamp(
+                job.id, before=self._instance_started_at))
+        except Exception:  # noqa: BLE001 - a log-table hiccup must not decide the guard
+            pass
+        times = []
+        for value in candidates:
+            try:
+                if value is not None:
+                    times.append(float(value))
+            except (TypeError, ValueError):
+                continue
+        return max(times) if times else float(job.created_at)
+
+    def _observe_scheduler(self, slurm_job_id: str) -> dict:
+        """One poll of the scheduler for ``slurm_job_id`` as a plain dict:
+        ``state`` (mapped status or None), ``endedAt`` (sacct's recorded end,
+        epoch seconds, when known), ``rawState``. Executors that only offer
+        ``poll_state`` (test doubles, older site wrappers) answer state
+        alone."""
+        executor = self._slurm()
+        observe = getattr(executor, "poll_observation", None)
+        if callable(observe):
+            found = observe(slurm_job_id)
+            return {"state": getattr(found, "state", None),
+                    "endedAt": getattr(found, "ended_at", None),
+                    "rawState": getattr(found, "raw_state", None)}
+        return {"state": executor.poll_state(slurm_job_id),
+                "endedAt": None, "rawState": None}
+
+    @staticmethod
+    def _scheduler_stamp(observation: dict) -> dict:
+        """The durable ``result.lastSchedulerState`` entry for an observation:
+        the state a transition was handled for, when it was observed, and the
+        scheduler's own end time when it reported one."""
+        stamp = {"state": observation.get("state"), "observedAt": time.time()}
+        if observation.get("endedAt") is not None:
+            stamp["endedAt"] = observation["endedAt"]
+        if observation.get("rawState"):
+            stamp["rawState"] = observation["rawState"]
+        return stamp
 
     def _perform_resubmit(self, job: Job, *, limit: int,
                           manual: bool = False,
@@ -3308,12 +3523,14 @@ class JobManager:
                     seen.setdefault(value, None)
         return list(seen)
 
-    def reconcile_all(self) -> tuple[int, list[str]]:
+    def reconcile_all(self, *, force: bool = False) -> tuple[int, list[str]]:
         """Fold child records from every known records directory.
 
         This is what an operator means by "reconcile everything": the
         single-directory verb requires knowing which submission is stuck,
-        which is precisely what a stalled daemon makes hard to see."""
+        which is precisely what a stalled daemon makes hard to see.
+        ``force`` re-folds record files this process already folded (see
+        ``reconcile``)."""
         total = 0
         visited: list[str] = []
         for directory in self.known_records_directories():
@@ -3321,18 +3538,28 @@ class JobManager:
                 continue
             visited.append(directory)
             try:
-                total += self.reconcile(directory)
+                total += self.reconcile(directory, force=force)
             except Exception as exc:  # noqa: BLE001 - one bad dir is not the set
                 self._monitor_note(
                     f"reconcile of {directory} failed: "
                     f"{type(exc).__name__}: {exc}")
         return total, visited
 
-    def reconcile(self, records_dir: str) -> int:
+    def reconcile(self, records_dir: str, *, force: bool = False) -> int:
         """Fold child-job JSON records into the single-writer store.
 
         Slurm child processes should write one JSON record per job into their
         scratch directory instead of opening ``jobs.sqlite`` directly.
+
+        Idempotent by content (live controller incident, 2026-09-13): a
+        records directory is shared by every submission of a workspace, and
+        the poll loop folds the WHOLE directory whenever any one job reaches a
+        terminal state — which re-folded a months-old sibling's record and
+        resurrected its "checkpointed" status over the scheduler's
+        "cancelled". A record file whose bytes this process already folded is
+        skipped (and its child log lines are no longer re-appended on every
+        fold); a rewritten file folds again. ``force`` (the operator's
+        explicit reconcile verbs) folds everything regardless.
         """
         count = 0
         if not os.path.isdir(records_dir):
@@ -3342,9 +3569,13 @@ class JobManager:
                 continue
             path = os.path.join(records_dir, name)
             try:
-                with open(path, encoding="utf-8") as handle:
-                    data = json.load(handle)
-            except (OSError, json.JSONDecodeError):
+                with open(path, "rb") as handle:
+                    raw = handle.read()
+                data = json.loads(raw.decode("utf-8"))
+            except (OSError, ValueError):
+                continue
+            digest = hashlib.sha256(raw).hexdigest()
+            if not force and self._folded_record_digests.get(path) == digest:
                 continue
             job_id = str(data.get("id") or data.get("jobID") or "")
             if not job_id:
@@ -3357,9 +3588,13 @@ class JobManager:
             # repair scan on every subsequent tick; losing parentJob/shard
             # would orphan a shard child from its sharded parent's display
             # grouping (the child stamps its own "shard" when it ran with
-            # --shard, but parentJob only the submitter knows).
+            # --shard, but parentJob only the submitter knows). The
+            # reconciler's own scheduler-state and checkpoint-time stamps are
+            # what keep the poll loop quiescent and the staleness guard
+            # honest across folds.
             preserved = {key: (job.result or {}).get(key)
-                         for key in ("resubmittedAs", "parentJob", "shard")}
+                         for key in ("resubmittedAs", "parentJob", "shard",
+                                     "lastSchedulerState", "checkpointedAt")}
             job.status = data.get("status", job.status)
             job.executor = data.get("executor", job.executor)
             job.executor_job_id = data.get("executorJobID", job.executor_job_id)
@@ -3381,6 +3616,13 @@ class JobManager:
             self.store.insert(job)
             for line in data.get("logs", []):
                 job.log(str(line))
+            # Deliberately NOT a checkpoint witness: the poll loop decides
+            # provenance from the status it held BEFORE its tick began, so a
+            # fold restoring "checkpointed" over a terminal scheduler state
+            # (the incident's shape) never counts as this instance seeing
+            # the run checkpoint. A record an operator's explicit reconcile
+            # verb moves into "checkpointed" is surfaced for a manual Resume.
+            self._folded_record_digests[path] = digest
             count += 1
         return count
 

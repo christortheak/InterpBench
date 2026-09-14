@@ -3607,11 +3607,11 @@ def build_router(state: ServiceState) -> APIRouter:
         if records_dir:
             directory = state.resolver.require_dir(
                 records_dir, allow_local_absolute=True)
-            reconciled = state.jobs.reconcile(directory)
+            reconciled = state.jobs.reconcile(directory, force=True)
             visited = [str(directory)]
             scope = "recordsDirectory"
         else:
-            reconciled, visited = state.jobs.reconcile_all()
+            reconciled, visited = state.jobs.reconcile_all(force=True)
             scope = "all"
         merged = state.jobs.run_merge_pass()
         return {
