@@ -82,6 +82,45 @@ compute or delete files. They capture the served workspace before background wor
   refuses symlinked custody storage or expanded evidence. A copied workspace has
   a different identity and does not inherit cleanup authority from these receipts.
 
+## Automatic import bounds
+
+The app's evidence auto-import (on by default for SSH sites; the health card's
+per-site toggle turns it off) polls the connected controller's job list and
+brings succeeded run bundles home through the verified importer above. A live
+controller on 2026-09-13 showed what an unbounded version of that does: an
+app launched for a build check connected through a live tunnel and began
+fetching every succeeded job the local ledger had never seen — hundreds of
+bundles — and the controller stopped answering when the app was killed
+mid-transfer. The service is now bounded, and every decision it makes is a
+row in its `events` feed (the Activity surfaces and the health card badge
+read the same feed):
+
+- **Settle window.** The first automatic pass transfers nothing until 60 s
+  after the service starts (`Configuration.settleDelay`). The arming and the
+  deferral are recorded once each. *Import now* and a job row's Import button
+  are a person asking and run immediately, settle window or not.
+- **Per-pass cap.** One automatic pass transfers at most five new bundles
+  (`Configuration.maxImportsPerPass`); the rest are recorded as deferred and
+  picked up by later passes, so a cold ledger against months of jobs works
+  through them visibly, a few per minute, instead of all at once.
+- **Concurrency.** At most two bundle downloads are in flight from the app at
+  once, whoever asks (`EvidenceTransferGate`, shared by auto-import, the job
+  rows, and chain import). Science exports (`POST /api/science/jobs/{id}/export`,
+  which tar and hash a job's whole output on the controller) serialize —
+  one at a time — and are only ever requested by an explicit fetch: the
+  *Fetch and verify evidence* button or `remote science-fetch`. Auto-import
+  has no path to an export; it handles study evidence bundles only.
+- **Launch check.** Under `STEERLAB_LAUNCH_CHECK=1` (the build script's
+  post-assembly launch) the service neither polls nor transfers and records
+  that decision; see the build notes in `docs/ONBOARDING.md`.
+
+The controller side is bounded too: bundle downloads stream on a dedicated
+executor (`STEERLAB_DOWNLOAD_CONCURRENCY`, default 8, refusing with `503` and
+`Retry-After` when saturated rather than queueing), stop within one chunk of a
+client disconnect, and science exports run one at a time on their own worker,
+so `/api/capabilities`, `/api/jobs`, and the science plan/submit routes keep
+answering while transfers are in flight.
+
 ## Remaining adapters and lifecycle work
 
 Chain import summaries still report run outcomes rather than receipt digests;

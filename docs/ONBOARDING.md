@@ -209,6 +209,22 @@ manifest. `scripts/build-app.sh` assembles the signed app from the same
 checkout (it needs `uv` on `PATH`); `./scripts/run-app.sh` builds and
 launches it as a plain developer binary instead.
 
+The build script ends with a launch check — it starts the assembled app for
+ten seconds to prove it initialises — and that launch is **offline**. The app
+runs with `STEERLAB_LAUNCH_CHECK=1`, under which it makes no site connection,
+opens no SSH tunnel, runs no evidence auto-import or remote polling, and skips
+the update check; it reads an isolated defaults suite and an empty site
+registry rather than your own, and `STEERLAB_WORKSPACE` points at a scratch
+workspace the bundled CLI bootstraps for the check. The app prints
+`launch-check: offline mode, no network activity` when its observation window
+closes; `scripts/app-bundle/launch-check.sh` requires that line and fails the
+build on `launch-check: offline mode VIOLATED …`, which names every refused
+attempt. (A live controller on 2026-09-13 wedged for half an hour after the
+old, fully live launch check started pulling evidence through a tunnel and was
+killed mid-transfer.) `--no-verify` skips the check as before;
+`scripts/tests/launch-check-test.sh` exercises the checker against fake app
+executables without launching anything.
+
 **The Python engine** is installed from the committed lock for your
 platform, never from the version floors alone:
 

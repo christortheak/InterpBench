@@ -12,6 +12,49 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Made the build script's launch check offline and bounded evidence transfer
+  on both sides (a live controller on 2026-09-13: `scripts/build-app.sh`'s
+  eight-second post-assembly launch ran the app for real against the saved
+  sites, defaults, and Keychain; through a live tunnel the app connected, its
+  evidence auto-import began fetching every succeeded job's bundle the local
+  ledger had never seen — hundreds of downloads — the script killed the app
+  mid-transfer, and the controller stopped answering even
+  `GET /api/capabilities` for more than half an hour).
+  - App: `STEERLAB_LAUNCH_CHECK=1` puts the app in offline mode — no site
+    connection (`ClusterConnectionStore.client` is nil and `connect()`
+    refuses), no SSH tunnel (the tunnel runs no `ssh`), no evidence
+    auto-import or remote polling, no update check, and every `ClusterClient`
+    is built on a URLSession that refuses requests; it reads an isolated
+    defaults suite and an empty site registry. Refused attempts are recorded
+    and the app prints one verdict line
+    (`launch-check: offline mode, no network activity`, or a `VIOLATED` line
+    naming the attempts). `scripts/build-app.sh` sets the switch, points
+    `STEERLAB_WORKSPACE` at a scratch workspace the bundled CLI bootstraps,
+    and fails the build unless the offline verdict is present
+    (`scripts/app-bundle/launch-check.sh`; `scripts/tests/launch-check-test.sh`
+    exercises it against fake executables). `--no-verify` is unchanged.
+  - App: `EvidenceAutoImportService` transfers nothing for the first 60 s
+    after it starts (`settleDelay`; Import now is immediate), transfers at
+    most five new bundles per automatic pass (`maxImportsPerPass`), downloads
+    through a process-wide gate of at most two concurrent bundle downloads
+    (`EvidenceTransferGate`), and records every decision as a `.deferred`
+    event in its `events` feed. Science exports serialize through the same
+    gate (one at a time) and remain explicit-only: auto-import has no path to
+    `POST /api/science/jobs/{id}/export` (confirmed from the code — the only
+    callers are the Fetch and verify evidence button and `remote
+    science-fetch`).
+  - Engine: `GET /api/bundles/download` is async and streams on a dedicated
+    bounded executor (`STEERLAB_DOWNLOAD_CONCURRENCY`, default 8) with
+    `FileResponse`-identical headers and bytes; a saturated pool answers
+    `503` with `Retry-After` instead of queueing, and a client that
+    disconnects releases its slot within one chunk (uvicorn advertises ASGI
+    spec 2.3 and returns silently from `send()` after a disconnect, so a
+    stock `FileResponse` read its whole file into the void, every chunk
+    borrowing from the same 40-token anyio limiter every sync route uses).
+    `POST /api/science/jobs/{id}/export` runs on a single-worker export
+    executor — exports serialize and never occupy the request threadpool.
+    Route paths, success bodies, refusal shapes, and the
+    `require_http_transfer` gate are unchanged.
 - Bound the Slurm controller's auto-resubmit-on-checkpoint (a live controller
   on 2026-09-13 re-ran a seven-week-old test record's sbatch script minutes
   after starting). The automatic path now refuses, with a deduplicated note on
