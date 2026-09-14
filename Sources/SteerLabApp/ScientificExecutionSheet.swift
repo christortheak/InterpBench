@@ -87,9 +87,12 @@ struct ScientificExecutionSheet: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            // A floor, so the grouped form above cannot squeeze the plan
+            // out of sight once it has been reviewed.
+            .frame(minHeight: 120)
         }
         .padding()
-        .frame(minWidth: 820, minHeight: 640)
+        .frame(minWidth: 820, minHeight: 680)
         .task {
             batteryOptions = ScientificDiagnosticInputs.batteryFiles(root: root)
             do {
@@ -171,6 +174,12 @@ struct ScientificExecutionSheet: View {
             } else if !placementMessage.isEmpty { Text(placementMessage).font(.caption) }
             DisclosureGroup("Execution parameters") { parameters }
         }
+        // Grouped, like the lifecycle sheet: a columns-style Form sizes its
+        // content column to the IDEAL width of its widest child, and the
+        // one-line agent-syntax caption made the whole sheet wider than its
+        // 820 pt minimum, clipping both edges (researcher report 2026-09-13).
+        // A grouped form is a list — it fills its container and wraps.
+        .formStyle(.grouped)
         .disabled(busy || jobID != nil)
     }
 
@@ -258,19 +267,24 @@ struct ScientificExecutionSheet: View {
                 .help("a Hugging Face model identifier the server can resolve — "
                     + "it must be installed there before the job can run")
         }
-        HStack(spacing: 8) {
-            TextField("Pinned model revision", text: $revision)
-                .font(.system(.body, design: .monospaced))
-                .help("the exact 40-character commit the reading is pinned to — "
-                    + "filled from the server's model cache when a model is "
-                    + "chosen; paste one only when the server cannot supply it")
-            if resolvingRevision {
-                ProgressView().controlSize(.small)
+        // The label is a LabeledContent title, not the field's own, so the
+        // monospaced font styles the commit and not the label beside it.
+        LabeledContent("Pinned model revision") {
+            HStack(spacing: 8) {
+                TextField("40-character commit", text: $revision)
+                    .labelsHidden()
+                    .font(.system(.body, design: .monospaced))
+                    .help("the exact 40-character commit the reading is pinned to — "
+                        + "filled from the server's model cache when a model is "
+                        + "chosen; paste one only when the server cannot supply it")
+                if resolvingRevision {
+                    ProgressView().controlSize(.small)
+                }
+                Button("Resolve from server") { resolveRevision() }
+                    .disabled(model.isEmpty || resolvingRevision || busy)
+                    .help("ask the server which commit of this model it holds — "
+                        + "reads its cache only, downloads nothing")
             }
-            Button("Resolve from server") { resolveRevision() }
-                .disabled(model.isEmpty || resolvingRevision || busy)
-                .help("ask the server which commit of this model it holds — "
-                    + "reads its cache only, downloads nothing")
         }
         Text(revisionNote ?? "The server refuses an agent without a pinned revision.")
             .font(.caption)
