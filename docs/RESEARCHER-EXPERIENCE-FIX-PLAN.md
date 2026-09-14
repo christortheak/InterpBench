@@ -696,7 +696,7 @@ evidence controls. This existing path is disconnected from the task's obvious
 home. The optimization guide also points at Agents / Optimizations, whose
 `OptimizationComposerView` is a parameter sweep over an existing vector; it must
 not be confused with OptVec's gradient training of a vector. The separately named
-“Scientific diagnostic…” sheet only offers battery/stability and is not an OptVec
+“Run scientific diagnostic…” sheet only offers battery/stability and is not an OptVec
 training route.
 
 **Required behavior:** start the tab with a plain explanation: “Train a steering

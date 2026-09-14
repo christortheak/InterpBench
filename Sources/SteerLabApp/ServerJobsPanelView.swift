@@ -8,6 +8,9 @@ struct ServerJobsPanelView: View {
         let id = UUID()
         let client: ClusterClient
         let endpoint: String
+        /// The workspace whose batteries the form lists; captured at open so
+        /// a workspace switch mid-sheet cannot retarget it.
+        let root: URL
     }
     private struct RecoveryTarget: Identifiable {
         let id = UUID()
@@ -65,28 +68,6 @@ struct ServerJobsPanelView: View {
                     .font(.headline)
                     .help(panelTitleHelp)
                 Spacer()
-                Button(isReconciling ? "Reconciling…" : "Reconcile jobs") {
-                    reconcile()
-                }
-                .disabled(!hasServerClient || isRefreshing || isReconciling)
-                .help("ask the server to re-read its child job records and "
-                    + "finish any half-done shard merge — it reads and repairs "
-                    + "bookkeeping, and never submits or cancels work")
-                Button("Inputs, evidence and cleanup…") {
-                    custodyTarget = CustodyTarget(root: ExperimentStore.workspaceRoot,
-                        client: clientForRows(origin: jobsOrigin), jobID: selectedJobID)
-                }
-                .help("review this job's inputs, bring its evidence home with a "
-                    + "custody receipt, or plan a policy-bound cleanup — every "
-                    + "step is a separate explicit action")
-                Button("Scientific diagnostic…") {
-                    if let client = service.cluster.client {
-                        diagnosticTarget = DiagnosticTarget(client: client, endpoint: client.profile.baseURL.absoluteString)
-                    }
-                }
-                .disabled(!hasServerClient)
-                .help("open the plan-then-submit form for a capability battery "
-                    + "or an extraction-stability check on this server")
                 if isRefreshing {
                     ProgressView()
                         .controlSize(.small)
@@ -116,6 +97,7 @@ struct ServerJobsPanelView: View {
                 // does after the first import (UI audit 2026-09-06).
                 .help(importDetail.map { Self.importHelp + "\n\nLast import:\n" + $0 }
                     ?? Self.importHelp)
+                actionsMenu
             }
 
             // Always-present, single-line slot: the status text changes on
@@ -161,7 +143,7 @@ struct ServerJobsPanelView: View {
             JobRecoverySheet(client: target.client, jobID: target.jobID)
         }
         .sheet(item: $diagnosticTarget) { target in
-            ScientificExecutionSheet(client: target.client, endpoint: target.endpoint)
+            ScientificExecutionSheet(client: target.client, endpoint: target.endpoint, root: target.root)
         }
         .task(id: service.cluster.computeTarget.rawValue) {
             await refreshJobs(selectFirstWhenEmpty: true)
@@ -255,6 +237,48 @@ struct ServerJobsPanelView: View {
                 + "everything inside this app"
     }
 
+    /// The three less-frequent actions behind one menu (researcher complaint
+    /// 2026-09-13): six full-width buttons in this column's 560 pt floor
+    /// truncated every label to "Reconcile…", "Inputs, evide…", so the two
+    /// everyday controls (Refresh, Import runs) stay out and the rest get
+    /// labels long enough to say what they do.
+    private var actionsMenu: some View {
+        Menu {
+            Button("Run scientific diagnostic…") {
+                if let client = service.cluster.client {
+                    diagnosticTarget = DiagnosticTarget(
+                        client: client, endpoint: client.profile.baseURL.absoluteString,
+                        root: ExperimentStore.workspaceRoot)
+                }
+            }
+            .disabled(!hasServerClient)
+            .help("open the plan-then-submit form for a capability battery "
+                + "or an extraction-stability check on this server")
+            Button("Stage inputs, collect evidence, clean up…") {
+                custodyTarget = CustodyTarget(root: ExperimentStore.workspaceRoot,
+                    client: clientForRows(origin: jobsOrigin), jobID: selectedJobID)
+            }
+            .help("stage a reviewed diagnostic request on the server, bring a "
+                + "job's evidence home with a custody receipt, or plan a "
+                + "policy-bound cleanup — every step is a separate explicit action")
+            Divider()
+            Button(isReconciling ? "Reconciling job records…" : "Reconcile job records") {
+                reconcile()
+            }
+            .disabled(!hasServerClient || isRefreshing || isReconciling)
+            .help("ask the server to fold the JSON records its Slurm child "
+                + "jobs wrote into its job store and finish any half-done "
+                + "shard merge — a bookkeeping repair for a stalled or stale "
+                + "list; it never submits or cancels work")
+        } label: {
+            Label("Actions", systemImage: "ellipsis.circle")
+        }
+        .fixedSize()
+        .help("run a diagnostic on this server, move inputs and evidence "
+            + "between this workspace and the server, or repair the server's "
+            + "job bookkeeping")
+    }
+
     private var selectedJob: RemoteJobRecord? {
         guard let selectedJobID else { return nil }
         return jobs.first { $0.id == selectedJobID }
@@ -279,7 +303,7 @@ struct ServerJobsPanelView: View {
                 _ = try await client.reconcileJobs()
                 guard service.cluster.evidenceImportOrigin == origin else { return }
                 await refreshJobs(selectFirstWhenEmpty: false)
-                status = "child records reconciled and the merge pass completed"
+                status = "job records reconciled: child records folded in and the shard-merge pass completed"
             } catch let error as ClusterClient.ClientError {
                 status = "reconcile failed: "
                     + ClusterClient.unwrappingDetail(error).description
@@ -580,15 +604,18 @@ struct ServerJobsPanelView: View {
             if isStreaming {
                 ProgressView()
                     .controlSize(.small)
-                // "Stop stream", never a bare "Stop": it sits beside the
-                // Cancel that kills the JOB (UI audit 2026-09-06).
-                Button("Stop stream") {
+                // "Stop following", never a bare "Stop": it sits beside the
+                // Cancel that kills the JOB (UI audit 2026-09-06). One
+                // control toggles the stream — selecting a job already
+                // starts it, so the resting state showed a live "Stop"
+                // beside a disabled "Stream" and read as two different things.
+                Button("Stop following") {
                     streamTask?.cancel()
                     streamTask = nil
                     isStreaming = false
                 }
                 .help("stop following this log — the job keeps running, and "
-                    + "Stream picks the tail up again")
+                    + "Follow log picks the tail up again")
             }
             // Icon-only: this header already carries four controls, and the
             // column's 560 pt floor has no room for a fifth title.
@@ -603,21 +630,25 @@ struct ServerJobsPanelView: View {
             .disabled(!hasLogText)
             .accessibilityLabel("Copy log")
             if let selectedJobID {
-                Button("Recovery review…") {
+                Button("Controller recovery…") {
                     if let client = clientForRows(origin: jobsOrigin) {
                         recoveryTarget = RecoveryTarget(client: client, jobID: selectedJobID)
                     }
                 }
-                .help("inspect who owns this job before asserting that the "
-                    + "original controller has exited")
-                Button {
-                    startStreaming(selectedJobID)
-                } label: {
-                    Label("Stream", systemImage: "waveform")
+                .help("for a job whose controller process died: read the "
+                    + "server's ownership evidence, then record that the "
+                    + "owner has exited — it records your assertion only, "
+                    + "restarts nothing, and authorizes no second submission")
+                if !isStreaming {
+                    Button {
+                        startStreaming(selectedJobID)
+                    } label: {
+                        Label("Follow log", systemImage: "waveform")
+                    }
+                    .help("follow this job's log live — selecting a job starts "
+                        + "this on its own; use it to pick the tail up again "
+                        + "after Stop following or after the stream ended")
                 }
-                .disabled(isStreaming)
-                .help("follow this job's log live — new lines append and the "
-                    + "box stays at the bottom")
                 Button(role: .destructive) {
                     cancelTarget = CancelTarget(
                         id: selectedJobID, kind: selectedJob?.kind ?? "server")

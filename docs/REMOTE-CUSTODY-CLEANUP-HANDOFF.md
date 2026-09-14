@@ -20,7 +20,7 @@ module, without a shell or network operation; an unavailable environment gives a
 setup repair. This dependency is explicit: install the Python client environment
 alongside the updated app for diagnostic transport. It does not load a model.
 
-The app's Server Jobs panel opens **Inputs, evidence and cleanup** with the selected
+The app's Server Jobs panel opens **Stage inputs, collect evidence, clean up…** (Actions menu) with the selected
 job's originating client and current local workspace captured. Scientific workflows
 also opens offline custody without a server. Input review, staging, execution review,
 submission, import, verification and cleanup are separate explicit operations.

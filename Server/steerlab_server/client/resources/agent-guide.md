@@ -1568,7 +1568,7 @@ an uncertain scheduler launch without inspecting its `schedulerSubmissionName`.
 For stranded controller-owned work, inspect `runner recovery <job-id>` (Python)
 or `remote recovery <job-id>` (Mac), against the original endpoint. Confirm the
 recorded controller exited before `recover`, using `--review-token`, `--reason`
-and `--confirm-owner-exited`. The app offers Recovery review in Server Jobs.
+and `--confirm-owner-exited`. The app offers Controller recovery… under the Server Jobs log.
 This invokes the existing ownership gate and records the operator's assertion;
 an expired review or live owner refuses. It does not restart a computation.
 Use `runner reconcile --runner <url>` or `remote reconcile --site <id>` to fold all known child records and run the existing merge pass on that endpoint. No recovery command grants cleanup permission. Keep local custody verification

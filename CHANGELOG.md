@@ -12,6 +12,20 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Make the Compute section's Server Jobs actions legible at the column's
+  minimum width: Refresh and Import runs stay on the toolbar, and Run
+  scientific diagnostic…, Stage inputs, collect evidence, clean up…, and
+  Reconcile job records move behind an Actions menu with labels that say what
+  they do. The scientific-diagnostic form lists the workspace's capability
+  batteries by name (with a Finder chooser constrained to the workspace and a
+  typed server path behind a disclosure), offers the server's installed
+  models, and fills the pinned revision from the server's model cache; blank
+  agent lines no longer reach the server. The inputs/evidence/cleanup sheet
+  becomes a grouped, wrapping form that fits inside the window, with the
+  campaign and fitting-round controls collapsed until needed. In the log
+  header, Recovery review… is Controller recovery… and Stream/Stop stream is
+  one Follow log/Stop following toggle.
+
 - Add matched plain-residual baselines and optional paired float32 readout to
   managed J-lens assessment, with a shared app/CLI/API precision choice. Preserve
   historical native comparison arithmetic and absent-option request encoding;

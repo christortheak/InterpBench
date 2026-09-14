@@ -40,8 +40,8 @@ Neither is relabelled as a study stage, qualification, or format-2 control.
 | Submit that plan | `remote science-submit <request.json> --plan-sha256 <digest> --site <id>` | `runner science-submit <request.json> --plan-sha256 <digest> --runner <url>` | Python `POST /api/science/submit`; Submit reviewed diagnostic |
 | Inspect/log/cancel | Existing `remote jobs`, `logs`, `cancel` | Existing `runner jobs [<job-id>] [--cancel]`, `runner logs` | Existing job API; Server Jobs and captured diagnostic sheet |
 | Resume eligible checkpoints | Existing `remote resubmit <job-id>` | `runner resubmit <job-id> [--walltime <hh:mm:ss>]` | Existing resubmit API and Resume button |
-| Reconcile retained child records and merges | `remote reconcile` | `runner reconcile` | Existing `POST /api/jobs/reconcile`; Reconcile jobs button |
-| Review controller ownership | `remote recovery <job-id>` | `runner recovery <job-id>` | `GET /api/jobs/{job_id}/recovery`; Recovery review sheet |
+| Reconcile retained child records and merges | `remote reconcile` | `runner reconcile` | Existing `POST /api/jobs/reconcile`; Reconcile job records (Server Jobs › Actions) |
+| Review controller ownership | `remote recovery <job-id>` | `runner recovery <job-id>` | `GET /api/jobs/{job_id}/recovery`; Controller recovery sheet |
 | Explicitly recover an orphan | `remote recover <job-id> --review-token <value> --reason <text> --confirm-owner-exited` | Same flags under `runner recover` | `POST /api/jobs/{job_id}/recover`; existing ownership gate, with operator attestation |
 
 All client commands accept `--json`. The new Mac remote commands use a saved site
