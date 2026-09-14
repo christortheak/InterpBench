@@ -14,7 +14,9 @@
 #     --derived-data DIR  xcodebuild -derivedDataPath
 #                         (default: <repo>/.dd-app.nosync)
 #     --no-build          reuse an existing products directory
-#     --no-verify         skip the post-assembly launch/codesign checks
+#     --no-verify         skip the post-assembly launch/codesign checks (the
+#                         launch check is OFFLINE — STEERLAB_LAUNCH_CHECK=1,
+#                         scratch workspace; see app-bundle/launch-check.sh)
 #     --colocate-metallib  force the belt-and-braces copy of mlx.metallib
 #                          beside the executable (see "Metal" below)
 #     --install           move the finished bundle to ~/SteerLab/SteerLab.app
@@ -702,28 +704,32 @@ if [ "$DO_VERIFY" -eq 1 ]; then
   # Launch it the way a user will: no DYLD_* environment whatsoever. The app
   # opens a window; a few seconds is enough to clear initialization, which is
   # where a missing resource or a bad install name would abort.
-  echo "  launching with no DYLD_* environment…"
+  #
+  # OFFLINE, and against a scratch workspace (a live controller on
+  # 2026-09-13): this launch used to be a real one — the researcher's saved
+  # sites, defaults, Keychain, and whatever tunnel happened to be up. Through
+  # a live tunnel the app connected, its evidence auto-import began fetching
+  # every succeeded job's bundle the local ledger had never seen, and the
+  # kill below landed mid-transfer; the controller then wedged for half an
+  # hour. `STEERLAB_LAUNCH_CHECK=1` makes the app refuse every network path
+  # and print a verdict; app-bundle/launch-check.sh FAILS the build on any
+  # refused attempt (see that script for the exact lines). The scratch
+  # workspace is bootstrapped by the bundled CLI so the app opens a real,
+  # empty workspace rather than the researcher's; an app that cannot
+  # bootstrap one still gets an empty directory, never the real one.
   LAUNCH_LOG="$OUTPUT/launch-check.log"
-  ( cd / && env -u DYLD_FRAMEWORK_PATH -u DYLD_LIBRARY_PATH -u DYLD_INSERT_LIBRARIES \
-      "$CONTENTS/MacOS/$EXECUTABLE" >"$LAUNCH_LOG" 2>&1 ) &
-  LAUNCH_PID=$!
-  sleep 8
-  if kill -0 "$LAUNCH_PID" 2>/dev/null; then
-    echo "    -> alive past initialization ✓"
-    kill "$LAUNCH_PID" 2>/dev/null
-    wait "$LAUNCH_PID" 2>/dev/null
-  else
-    wait "$LAUNCH_PID" 2>/dev/null
-    echo "    -> EXITED EARLY. Output:" >&2
-    sed 's/^/      /' "$LAUNCH_LOG" >&2
-    die "the assembled app did not stay up" 6
+  LAUNCH_WORKSPACE="${TMPDIR:-/tmp}/steerlab-launch-check.$$/workspace"
+  rm -rf "${TMPDIR:-/tmp}/steerlab-launch-check.$$"
+  mkdir -p "$LAUNCH_WORKSPACE" || die "could not create $LAUNCH_WORKSPACE"
+  if ! ( cd / && env -u DYLD_FRAMEWORK_PATH -u DYLD_LIBRARY_PATH -u DYLD_INSERT_LIBRARIES \
+        "$HELPERS/$CLI_EXECUTABLE" workspace init "$LAUNCH_WORKSPACE" >/dev/null 2>&1 ); then
+    echo "  (bundled CLI could not bootstrap the scratch workspace; launching against an empty directory)"
   fi
-  if [ -s "$LAUNCH_LOG" ]; then
-    echo "    launch output ($LAUNCH_LOG):"
-    sed 's/^/      /' "$LAUNCH_LOG"
-  else
-    echo "    no output on stdout/stderr ✓"
-  fi
+  "$SUPPORT/launch-check.sh" "$CONTENTS/MacOS/$EXECUTABLE" "$LAUNCH_LOG" \
+      --seconds 10 --workspace "$LAUNCH_WORKSPACE"
+  LAUNCH_STATUS=$?
+  rm -rf "${TMPDIR:-/tmp}/steerlab-launch-check.$$"
+  [ "$LAUNCH_STATUS" -eq 0 ] || die "the assembled app did not pass the offline launch check (see $LAUNCH_LOG)" 6
 fi
 
 # ── Install ──────────────────────────────────────────────────────────────────
