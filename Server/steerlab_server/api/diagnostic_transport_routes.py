@@ -40,10 +40,20 @@ def build_router(state):
             with submitting(): return transport.stage(body['bundlePath'], body['bundleSHA256'], ServerProfile.from_env())
         return perform(work)
     @router.post('/api/science/jobs/{job_id}/export')
-    def export(job_id: str):
+    async def export(job_id: str):
+        # An export tars and hashes a job's whole output (12 GB in the
+        # 2026-09-13 incident). It runs on the ONE-worker export executor —
+        # exports serialize, and none of them occupies a request-threadpool
+        # token — so the rest of the API keeps answering while it works.
+        # Refusal mapping and success body are `perform`'s, unchanged.
         def work():
             with submitting(): return transport.export(job_id, state.jobs, ServerProfile.from_env())
-        return perform(work)
+        from .transfer_limits import limits_for
+        try:
+            if state.jobs is None: raise archives.Refusal('Use the controller that owns durable job records.')
+            return await limits_for(state).run_export(work)
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            raise HTTPException(409, detail={'code': 'diagnosticTransportRefused', 'reason': str(exc), 'repairAction': getattr(exc, 'repair_action', archives.Refusal.repair_action)}) from exc
     @router.post('/api/science/jobs/{job_id}/cleanup-plan')
     def plan(job_id: str, body: dict):
         def work():

@@ -143,6 +143,11 @@ class ServiceState:
         # (LoRA training loads its own model via peft). Registry-managed forward
         # passes use per-slot locks instead, so multi-GPU serving is preserved.
         self.exclusive_gpu = threading.Lock()
+        # Bulk transfers (bundle downloads, science exports) run on their own
+        # bounded executors, never on the shared request threadpool
+        # (2026-09-13 incident; see transfer_limits.py).
+        from .transfer_limits import TransferLimits
+        self.transfers = TransferLimits()
         self.default_dtype = "auto"
         self.default_device: str | None = None
         # Single-writer rule (GPU-SESSION-PLAN §2.4, acceptance criterion 2):
@@ -4057,20 +4062,32 @@ def build_router(state: ServiceState) -> APIRouter:
                     pass
 
     @router.get("/api/bundles/download")
-    def download_bundle(path: str):
+    async def download_bundle(path: str):
+        # Async on purpose (2026-09-13 incident): the handler holds no
+        # request-threadpool token, the transfer runs on the bounded download
+        # executor, a saturated pool answers 503 + Retry-After instead of
+        # queueing, and a client that disconnects releases its slot within
+        # one chunk. Path, gate, and success bytes are unchanged — see
+        # transfer_limits.py.
+        from .transfer_limits import serve_download
         from .transfer_policy import require_http_transfer
         require_http_transfer()
-        safe_path = state.resolver.require_file(
-            path, root=state.resolver.roots.runs, allow_local_absolute=True)
-        name = os.path.basename(safe_path)
-        # .safetensors joined 2026-08-05: the app localizes server-side vector
-        # artifacts (sidecar + tensor pair) into the Mac workspace on picker
-        # selection — the workspace is the source of truth; the server only
-        # caches. Still read-only and contained to the runs root.
-        if not (name.endswith(".tar.gz") or name.endswith(".json")
-                or name.endswith(".jsonl") or name.endswith(".safetensors")):
-            raise HTTPException(status_code=400, detail="unsupported downloadable artifact")
-        return FileResponse(safe_path, filename=name)
+
+        def resolve() -> str:
+            safe_path = state.resolver.require_file(
+                path, root=state.resolver.roots.runs, allow_local_absolute=True)
+            name = os.path.basename(safe_path)
+            # .safetensors joined 2026-08-05: the app localizes server-side
+            # vector artifacts (sidecar + tensor pair) into the Mac workspace
+            # on picker selection — the workspace is the source of truth; the
+            # server only caches. Still read-only and contained to the runs
+            # root.
+            if not (name.endswith(".tar.gz") or name.endswith(".json")
+                    or name.endswith(".jsonl") or name.endswith(".safetensors")):
+                raise HTTPException(status_code=400, detail="unsupported downloadable artifact")
+            return safe_path
+
+        return await serve_download(state.transfers, resolve)
 
     @router.post("/api/bundles/inspect")
     def inspect_bundle(body: dict):
