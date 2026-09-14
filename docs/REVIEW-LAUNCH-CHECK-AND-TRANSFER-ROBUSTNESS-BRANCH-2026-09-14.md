@@ -108,5 +108,8 @@ test Python = main venv): TEST SUCCEEDED, 4,959 tests, 4,954 passed, 5 skipped,
 ## 5. Landing
 
 Fast-forward of main to 14bd097, this review committed on top, app rebuilt
-and installed through the new offline launch check (LAUNCH_RESULT), engine
+and installed through the new offline launch check (live acceptance passed: the check reported the armed line, the verdict
+`launch-check: offline mode, no network activity`, and the resource
+self-check `6/6 … no problems` for app build 5b831454, with no site
+connection possible because no tunnel was up), engine
 pushed when the cluster session is next available.
