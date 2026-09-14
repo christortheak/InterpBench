@@ -94,9 +94,13 @@ and `Sources/ExperimentKit/` for any helper worth a unit test.
   resolved-but-not-cached / not resolvable / error), copied from
   `ScientificExecutionSheet.resolveRevision`. Local-workspace callers pass the
   Mac cache lookup that `ExperimentStore.judgePinPrefill` already uses.
-- **0.3 Scientific sheet form style.** `ScientificExecutionSheet.swift` is now
-  the only `Form {` in the app without a `.formStyle`; give it `.grouped` so
-  its unlabeled `HStack` rows align like the rest.
+- **0.3 Columns-style Forms (done for the scientific sheet).** A
+  columns-style `Form` sizes its content column to the ideal width of its
+  widest child, so one long single-line caption makes the whole sheet wider
+  than its minimum and both edges clip. `ScientificExecutionSheet.swift` was
+  the last `Form {` without a `.formStyle` and now uses `.grouped`. Any new
+  sheet Form should too, and a caption in a columns form needs a width cap,
+  not only `fixedSize(horizontal: false, vertical: true)`.
 
 ### WP-A — Optimization and agents
 
