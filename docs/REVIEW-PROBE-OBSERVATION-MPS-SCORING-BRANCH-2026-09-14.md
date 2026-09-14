@@ -74,4 +74,13 @@ regenerated constant).
 
 Fast-forward of main to 31b39a4, this review on top, app rebuilt (Python
 client identity changed), engine pushed when the cluster session allows. Live
-acceptance: LIVE_RESULT
+acceptance passed: the same frozen five-arm study rerun on the Mac's Python
+engine (mps:0, bfloat16) after landing recorded 6,912 of 6,912 readings with
+no missing reasons (before the fix: 0 of 6,912). On the fixed-strength arm the
+post-action minus pre-action probe score averaged −0.4306 against the linear
+prediction of −0.4308 (8 × wᵀ(v/scale)), median relative error 0.4% and
+maximum 2.1% over 1,152 positions, consistent with bf16 rounding of the
+addition; on the threshold arm the 511 positions with strength 0 show a delta
+of exactly 0. The policy runtime's float32 device scores and the observer's
+float64 CPU scores agree to 9e-7 at the same positions. Outputs are identical
+to the pre-fix run, so the fix changed measurement only.
