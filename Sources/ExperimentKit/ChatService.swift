@@ -3111,6 +3111,13 @@ public final class ChatService {
     public var connectStartupRetryDelay: Duration = .seconds(15)
 
     public func connectCluster() async {
+        // A build-script launch check connects to nothing — not even the
+        // tunnel step below runs (2026-09-13 incident; see LaunchCheckMode).
+        if LaunchCheckMode.isActive {
+            LaunchCheckMode.recordBlockedAttempt("connectCluster")
+            cluster.status = ClusterConnectionStore.launchCheckStatus
+            return
+        }
         // Every app surface funnels through this method. SSH-backed sites need
         // their forward established before ClusterConnectionStore can make an
         // HTTP request; previously only the connection-dot path did that work,

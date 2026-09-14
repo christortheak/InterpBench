@@ -2226,8 +2226,17 @@ public struct ClusterClient: Sendable {
     ) {
         self.profile = profile
         self.token = token
-        self.session = session
-        self.streamSession = streamSession ?? Self.makeStreamSession()
+        if LaunchCheckMode.isActive {
+            // A build-script launch check: every request this client could
+            // make is refused and recorded, whatever session the caller
+            // passed (see LaunchCheckMode.swift).
+            let blocking = LaunchCheckMode.blockingSession()
+            self.session = blocking
+            self.streamSession = blocking
+        } else {
+            self.session = session
+            self.streamSession = streamSession ?? Self.makeStreamSession()
+        }
     }
 
     private static func makeStreamSession() -> URLSession {

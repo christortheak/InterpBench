@@ -1060,6 +1060,8 @@ struct ServerJobsPanelView: View {
                 status = "\(code): \(repair)"
             case .failed(let message):
                 status = "pipeline evidence import failed: \(message)"
+            case .deferred(let reason):
+                status = "pipeline \(row.run) evidence deferred — \(reason)"
             }
         } else {
             status = importer.lastSummary
@@ -1097,6 +1099,8 @@ struct ServerJobsPanelView: View {
                 status = "\(code): \(repair)"
             case .failed(let message):
                 status = "evidence import failed: \(message)"
+            case .deferred(let reason):
+                status = "evidence from job \(job.id) deferred — \(reason)"
             }
             return
         }

@@ -65,7 +65,14 @@ struct SteerLabApp: App {
         // microseconds.
         Self.reportResourceSelfCheck()
         let workspace = WorkspaceStore()
-        let cluster = ClusterConnectionStore()
+        // Under `STEERLAB_LAUNCH_CHECK=1` (the build script's post-assembly
+        // launch, 2026-09-13 incident) the connection store reads an EMPTY
+        // site registry and an isolated defaults suite: no saved site can
+        // become the active workspace, no preference of the researcher's is
+        // read or rewritten, and — belt and braces, see LaunchCheckMode —
+        // every client, tunnel, and poller refuses anyway.
+        let cluster = Self.makeClusterStore()
+        Self.reportLaunchCheckArmedIfActive()
         let catalog = SubstrateCatalog(store: cluster)
         _workspace = State(initialValue: workspace)
         _cluster = State(initialValue: cluster)
@@ -93,6 +100,38 @@ struct SteerLabApp: App {
         DispatchQueue.main.async {
             NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    /// The connection store for this launch. A launch check gets an isolated
+    /// defaults suite and a site registry rooted in a throwaway directory, so
+    /// the researcher's sites, active workspace, and per-site toggles are
+    /// neither read nor rewritten by a build.
+    private static func makeClusterStore() -> ClusterConnectionStore {
+        guard LaunchCheckMode.isActive else { return ClusterConnectionStore() }
+        let suite = LaunchCheckMode.isolatedDefaultsSuiteName
+        let defaults = UserDefaults(suiteName: suite) ?? .standard
+        defaults.removePersistentDomain(forName: suite)
+        let registryDirectory = FileManager.default.temporaryDirectory
+            .appending(components: "steerlab-launch-check", UUID().uuidString, "cluster-sites")
+        let registry = ClusterSiteRepository(
+            directory: registryDirectory,
+            runtimeStateURL: registryDirectory.appending(component: "runtime-state.json"),
+            legacyDocumentURL: registryDirectory.appending(component: "legacy.json"),
+            legacyRegistryData: { nil })
+        return ClusterConnectionStore(defaults: defaults, siteRegistry: registry)
+    }
+
+    /// Under a launch check: say so at once, then print the one verdict line
+    /// the build script reads once the observation window has passed. The
+    /// verdict is the whole point — a code path that reached for the network
+    /// at launch shows up here as a failed build.
+    private static func reportLaunchCheckArmedIfActive() {
+        guard LaunchCheckMode.isActive else { return }
+        FileHandle.standardError.write(Data((LaunchCheckMode.armedLine + "\n").utf8))
+        Task.detached {
+            try? await Task.sleep(for: LaunchCheckMode.verdictDelay)
+            FileHandle.standardError.write(Data((LaunchCheckMode.verdictLine + "\n").utf8))
         }
     }
 

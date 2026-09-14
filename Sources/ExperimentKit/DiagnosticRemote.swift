@@ -4,7 +4,15 @@ extension ClusterClient {
     public func stageDiagnostic(path: String, sha256: String) async throws -> JSONValue {
         try await post("/api/science/stage", body: JSONValue.object(["bundlePath": .string(path), "bundleSHA256": .string(sha256)]), timeout: 3600)
     }
+    /// An export tars and hashes the job's whole output ON the controller
+    /// (12 GB in the 2026-09-13 incident). Only explicit fetches reach this,
+    /// and they serialize through the process-wide gate: one export at a
+    /// time from this process, never from an automatic path.
     public func exportDiagnostic(_ jobID: String) async throws -> JSONValue {
+        try await EvidenceTransferGate.shared.withExportSlot { try await postExport(jobID) }
+    }
+
+    private func postExport(_ jobID: String) async throws -> JSONValue {
         do { return try await post(diagnosticPath(jobID, "export"), body: JSONValue.object([:]), timeout: 3600) }
         catch let error as URLError where error.code == .timedOut {
             throw ExperimentError.malformed("Evidence export timed out; preparation may still be running.", repair: "Restore the connection and request export for the same job again. Do not resubmit the fit. Direct transfer must use the complete exported archive and its SHA-256.")

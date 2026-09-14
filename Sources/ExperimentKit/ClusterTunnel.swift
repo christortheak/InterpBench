@@ -267,7 +267,11 @@ public final class ClusterTunnel {
         runner: any TunnelProcessRunner = SystemTunnelProcessRunner(),
         defaults: UserDefaults = .standard
     ) {
-        self.runner = runner
+        // A build-script launch check runs NO ssh: not the ControlMaster
+        // check, not a persisted-forward recovery, not a forward. The
+        // refusing runner records each attempt for the launch verdict
+        // (2026-09-13 incident; see LaunchCheckMode).
+        self.runner = LaunchCheckMode.isActive ? LaunchCheckRefusingTunnelRunner() : runner
         self.defaults = defaults
     }
 
@@ -388,6 +392,11 @@ public final class ClusterTunnel {
         guard let site else { return }
         guard case .ssh(let host, let proxyJump, let remotePort, _) = site.transport else {
             state = .idle
+            return
+        }
+        if LaunchCheckMode.isActive {
+            LaunchCheckMode.recordBlockedAttempt("ssh tunnel open")
+            state = .degraded(ClusterConnectionStore.launchCheckStatus)
             return
         }
         let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -790,5 +799,46 @@ public final class ClusterTunnel {
             candidate += 1
         }
         return nil
+    }
+}
+
+// MARK: - Launch-check runner
+
+/// The process seam `ClusterTunnel` gets during a build-script launch check:
+/// every command is refused (exit 255, a stable diagnostic) and recorded for
+/// the launch verdict, every launch throws, and no local port is ever
+/// probed. Nothing here touches ssh, sockets, or the ControlMaster.
+struct LaunchCheckRefusingTunnelRunner: TunnelProcessRunner {
+    func run(_ executablePath: String, arguments: [String]) async -> TunnelProcessResult {
+        refuse(executablePath, arguments: arguments)
+    }
+
+    func run(
+        _ executablePath: String, arguments: [String], input: Data
+    ) async -> TunnelProcessResult {
+        refuse(executablePath, arguments: arguments)
+    }
+
+    func launch(_ executablePath: String, arguments: [String]) async throws -> any TunnelProcessHandle {
+        let description = Self.describe(executablePath, arguments: arguments)
+        LaunchCheckMode.recordBlockedAttempt(description)
+        throw LaunchCheckMode.refusalError(description)
+    }
+
+    func isLocalPortFree(_ port: Int) async -> Bool { false }
+
+    private func refuse(_ executablePath: String, arguments: [String]) -> TunnelProcessResult {
+        let description = Self.describe(executablePath, arguments: arguments)
+        LaunchCheckMode.recordBlockedAttempt(description)
+        return TunnelProcessResult(
+            exitCode: 255, standardOutput: "",
+            standardError: "launch check: offline mode refused \(description)")
+    }
+
+    private static func describe(_ executablePath: String, arguments: [String]) -> String {
+        // Enough to name the command in a log line; never a secret (secrets
+        // travel on stdin, which is not described).
+        ([URL(filePath: executablePath).lastPathComponent] + arguments.prefix(3))
+            .joined(separator: " ")
     }
 }

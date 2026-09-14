@@ -125,6 +125,11 @@ public final class EvidenceAutoImportService {
         case skippedUnbundleable(note: String)
         case failed(String)
         case refused(code: String, repairAction: String)
+        /// An automatic DECISION not to transfer right now (2026-09-13
+        /// incident): the settle window after launch, the per-pass cap, or
+        /// a build-script launch check. Never a failure; the reason says
+        /// when or how the work proceeds.
+        case deferred(reason: String)
     }
 
     public struct ImportEvent: Sendable, Equatable, Identifiable {
@@ -164,6 +169,16 @@ public final class EvidenceAutoImportService {
         /// (still visible, still manually importable).
         public var maxAttempts: Int = 6
         public var maxEvents: Int = 200
+        /// The first AUTOMATIC pass runs no earlier than this after
+        /// `startPolling()` (2026-09-13 incident: a launch-check app began
+        /// importing within seconds of starting). Explicit "Import now" and
+        /// a forced `runOnce` are unaffected — a person asked.
+        public var settleDelay: Duration = .seconds(60)
+        /// How many NEW bundles one automatic pass may transfer. A cold
+        /// ledger against a controller with months of succeeded jobs works
+        /// through them a few per tick, visibly, instead of stampeding; the
+        /// rest are recorded as deferred and picked up by later passes.
+        public var maxImportsPerPass: Int = 5
 
         public init() {}
     }
@@ -177,6 +192,15 @@ public final class EvidenceAutoImportService {
     public private(set) var lastCheckedAt: Date?
     /// One-line summary of the last pass, for status rows.
     public private(set) var lastSummary: String?
+    /// When the settle window closes and automatic passes may transfer; nil
+    /// until `startPolling()` (or the first automatic tick) arms it.
+    public private(set) var settleDeadline: Date?
+    /// True while the poll loop exists (never under a launch check).
+    public var isPolling: Bool { pollTask != nil }
+    /// The gate every download from this service passes through — the
+    /// shared one in production; a test may inject its own to observe.
+    @ObservationIgnored public var transferGate: EvidenceTransferGate = .shared
+    @ObservationIgnored private var settleDeferralPublished = false
 
     // MARK: Wiring
 
@@ -359,7 +383,19 @@ public final class EvidenceAutoImportService {
     /// unless a cluster site is connected and its auto-import flag is on.
     public func startPolling() {
         guard pollTask == nil else { return }
+        if LaunchCheckMode.isActive {
+            // A build-script launch check: no poll loop at all. Recorded in
+            // the feed so the decision is observable, not a network attempt
+            // (nothing was tried).
+            publishDecision(Self.launchCheckReason)
+            return
+        }
+        armSettleWindow()
+        let settle = configuration.settleDelay
         pollTask = Task { [weak self] in
+            // Settle first: the app has just launched (or a workspace just
+            // switched). Nothing transfers until the window closes.
+            try? await Task.sleep(for: settle)
             while !Task.isCancelled {
                 // Strong only for the iteration: the loop ends when the
                 // owning store releases the service.
@@ -376,12 +412,31 @@ public final class EvidenceAutoImportService {
         pollTask = nil
     }
 
-    /// Whether an automatic tick may do work right now.
-    private var isEligibleTick: Bool {
-        guard let cluster else { return false }
-        guard case .server = cluster.activeWorkspace else { return false }
-        guard cluster.capabilities != nil else { return false }  // connected
-        return cluster.activeAutoImportEnabled
+    static let launchCheckReason =
+        "launch check: offline mode — evidence auto-import neither polls nor transfers"
+
+    /// Start the settle window (idempotent) and record the decision once.
+    private func armSettleWindow() {
+        guard settleDeadline == nil else { return }
+        let seconds = Double(configuration.settleDelay.components.seconds)
+        settleDeadline = now().addingTimeInterval(seconds)
+        publishDecision(
+            "auto-import armed — the first automatic pass transfers no earlier "
+            + "than \(Int(seconds)) s from now; Import now is immediate")
+    }
+
+    /// Why an automatic tick may not do work right now, or nil when it may.
+    private var automaticTickDeferral: String? {
+        guard let cluster else { return "no connection registry" }
+        guard case .server = cluster.activeWorkspace else { return "local workspace" }
+        guard cluster.capabilities != nil else { return "not connected" }
+        guard cluster.activeAutoImportEnabled else { return "auto-import is off for this site" }
+        if settleDeadline == nil { armSettleWindow() }
+        if let settleDeadline, now() < settleDeadline {
+            let remaining = Int(settleDeadline.timeIntervalSince(now()).rounded(.up))
+            return "settling — the first automatic pass runs in \(remaining) s"
+        }
+        return nil
     }
 
     /// One pass: fetch jobs, extract candidates, import what the ledger does
@@ -393,7 +448,20 @@ public final class EvidenceAutoImportService {
     @discardableResult
     public func runOnce(force: Bool = false) async -> [ImportEvent] {
         guard !isImporting else { return [] }
-        guard force || isEligibleTick else { return [] }
+        if LaunchCheckMode.isActive {
+            // A pass under a launch check IS a network attempt someone
+            // scheduled — refused here and counted against the verdict.
+            LaunchCheckMode.recordBlockedAttempt("evidence auto-import pass")
+            return [publishDecision(Self.launchCheckReason)]
+        }
+        if !force, let reason = automaticTickDeferral {
+            // Settling is the one deferral worth a feed entry, and once: the
+            // quiet gates (local workspace, disconnected, switched off) were
+            // never doing work and say so on their own surfaces.
+            guard reason.hasPrefix("settling"), !settleDeferralPublished else { return [] }
+            settleDeferralPublished = true
+            return [publishDecision(reason)]
+        }
         guard let origin = currentOrigin, isCurrent(origin) else { return [] }
         let client = cluster?.client
         guard fetchJobsOverride != nil || client != nil else { return [] }
@@ -510,6 +578,10 @@ public final class EvidenceAutoImportService {
         candidates: [EvidenceCandidate], bypassBackoff: Bool, client: ClusterClient?, origin: EvidenceImportOrigin
     ) async -> [ImportEvent] {
         var produced: [ImportEvent] = []
+        // Automatic passes are capped (2026-09-13 incident): a cold ledger
+        // works through a controller's backlog a few bundles per tick.
+        var attempted = 0
+        var deferredCandidates = 0
         for candidate in candidates {
             guard isCurrent(origin), client == nil || cluster?.connectionProfile == client?.profile else {
                 produced.append(publish(candidate: candidate,
@@ -523,6 +595,11 @@ public final class EvidenceAutoImportService {
             {
                 continue  // backing off (or capped out) — not silent: `failures` shows it
             }
+            if !bypassBackoff, attempted >= configuration.maxImportsPerPass {
+                deferredCandidates += 1
+                continue
+            }
+            attempted += 1
             do {
                 let imported = try await performImport(candidate, client: client, origin: origin)
                 try appendLedger(for: candidate, origin: origin, custody: imported.custody)
@@ -534,6 +611,12 @@ public final class EvidenceAutoImportService {
                 recordFailure(key: key, message: message)
                 produced.append(publish(candidate: candidate, outcome: .failed(message), origin: origin))
             }
+        }
+        if deferredCandidates > 0 {
+            produced.append(publishDecision(
+                "\(deferredCandidates) more bundle\(deferredCandidates == 1 ? "" : "s") wait for "
+                + "the next pass (at most \(configuration.maxImportsPerPass) per automatic pass; "
+                + "Import now takes them immediately)", origin: origin))
         }
         return produced
     }
@@ -549,8 +632,12 @@ public final class EvidenceAutoImportService {
         // the same archive basename or another import starts concurrently.
         let downloads = workspaceRoot.appending(
             components: ".steerlab", "downloads", UUID().uuidString)
-        let localBundle = try await client.downloadArtifact(
-            path: candidate.bundlePath, to: downloads)
+        // Bounded: at most `transferGate.maxConcurrentDownloads` bundle
+        // downloads from this process at once, whoever else is fetching.
+        let bundlePath = candidate.bundlePath
+        let localBundle = try await transferGate.withDownloadSlot {
+            try await client.downloadArtifact(path: bundlePath, to: downloads)
+        }
         let expected = candidate.sha256
         let workspaceRoot = self.workspaceRoot
         // Extraction + per-file hashing off the main actor (same rule as the
@@ -620,6 +707,17 @@ public final class EvidenceAutoImportService {
             exhausted: exhausted)
     }
 
+    /// Record an automatic decision (settle, per-pass cap, launch check) in
+    /// the feed. Without a current origin the entry carries an incomplete
+    /// one naming only this workspace — it is a decision, not an import,
+    /// and never a ledger entry.
+    @discardableResult
+    private func publishDecision(_ reason: String, origin: EvidenceImportOrigin? = nil) -> ImportEvent {
+        let recorded = origin ?? currentOrigin
+            ?? EvidenceImportOrigin(serverIdentity: "", remoteRoot: nil, workspaceRoot: workspaceRoot)
+        return publish(candidate: EvidenceCandidate(bundlePath: ""), outcome: .deferred(reason: reason), origin: recorded)
+    }
+
     private func publish(candidate: EvidenceCandidate, outcome: Outcome, origin: EvidenceImportOrigin) -> ImportEvent {
         let event = ImportEvent(
             date: now(), bundlePath: candidate.bundlePath, runId: candidate.runId,
@@ -637,16 +735,19 @@ public final class EvidenceAutoImportService {
         var unbundleable = 0
         var failed = 0
         var refused = 0
+        var deferred = 0
         for event in produced {
             switch event.outcome {
             case .imported: imported += 1
             case .skippedUnbundleable: unbundleable += 1
             case .failed: failed += 1
             case .refused: refused += 1
+            case .deferred: deferred += 1
             }
         }
         var parts: [String] = []
         if imported > 0 { parts.append("imported \(imported)") }
+        if deferred > 0 { parts.append("deferred \(deferred) (see events)") }
         if unbundleable > 0 {
             parts.append("skipped \(unbundleable) failure "
                 + "record\(unbundleable == 1 ? "" : "s") (nothing to bundle)")

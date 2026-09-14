@@ -774,6 +774,10 @@ public final class ClusterConnectionStore {
     }
 
     public var client: ClusterClient? {
+        // A build-script launch check has no client at all: nothing that
+        // reads `client` (panels, health card, auto-import, pollers) can
+        // reach a controller (2026-09-13 incident; see LaunchCheckMode).
+        if LaunchCheckMode.isActive { return nil }
         guard let profile = connectionProfile else { return nil }
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
         return ClusterClient(
@@ -1086,11 +1090,23 @@ public final class ClusterConnectionStore {
         }
     }
 
+    /// The status every connection surface shows during a build-script
+    /// launch check (see LaunchCheckMode).
+    public static let launchCheckStatus =
+        "launch check: offline mode — no site connection is attempted"
+
     /// Fetch capabilities, state, and variants from the active server; on
     /// success the just-authenticated token is remembered in the Keychain and
     /// the server's running-job count is refreshed.
     @discardableResult
     public func connect() async -> Bool {
+        if LaunchCheckMode.isActive {
+            // Refused, recorded, and visible — never a handshake.
+            LaunchCheckMode.recordBlockedAttempt("cluster connect")
+            status = Self.launchCheckStatus
+            lastConnectFailure = Self.launchCheckStatus
+            return false
+        }
         loadStoredToken()
         guard let client else {
             status = "invalid server URL"

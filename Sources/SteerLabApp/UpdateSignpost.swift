@@ -54,6 +54,12 @@ final class UpdateSignpostModel {
     /// is on. Called from a `.task`, i.e. after the window is up, and the
     /// whole check runs off the main actor — launch is untouched.
     func runAutomaticCheckIfDue() async {
+        // A build-script launch check performs no network activity at all,
+        // and the release check would otherwise be its one outbound request.
+        // Skipped quietly (not counted against the verdict): this task runs
+        // on every launch by design, so skipping it is the correct answer,
+        // not evidence of a path that should not exist.
+        guard !LaunchCheckMode.isActive else { return }
         guard preferences.shouldRunAutomaticCheck else { return }
         preferences.recordCheck()
         let availability = await service.check()
