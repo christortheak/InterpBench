@@ -12,6 +12,19 @@ from . import probe_capture, probe_measurements
 from .probe_artifacts import ProbeError
 
 
+def to_cpu_float64(tensor):
+    """Detached observed values as CPU float64, transferring before casting.
+
+    The two steps are bit-identical to one combined `.to()` on CPU and CUDA (the
+    float64 image of each value is the same either way) and are required on MPS,
+    which has no float64: the combined call either raises or, when the source has
+    storage offset zero and the host buffer is page-aligned, returns undefined
+    host memory without raising.
+    """
+    import torch
+    return tensor.to(device='cpu').to(dtype=torch.float64)
+
+
 class Observation:
     def __init__(self, config, loaded, *, condition, agent, rendering, run_directory=None, context=None):
         self.config = config
@@ -92,13 +105,18 @@ class Observation:
                     raise ProbeError('Observed activation width or precision differs from the fitted probe.')
                 # Tensor arithmetic stays separate from JSON serialization. CPU float64
                 # matches training/reference precision, including for MPS model execution.
+                # Transfer to CPU first, then cast: a combined device+dtype `.to()` asks
+                # the source device to produce float64, which MPS cannot (a live study run
+                # on an Apple Silicon Mac, 2026-09-14, lost every reading to that call).
                 with torch.inference_mode():
-                    values = h.detach()[0, [p[0] for p in positions]].to(device='cpu', dtype=torch.float64)
+                    values = to_cpu_float64(h.detach()[0, [p[0] for p in positions]])
+                    if not torch.isfinite(values).all(): raise ProbeError('The observed activation is non-finite before scoring.')
                     z = (values - center) / scale
-                    for weights, bias, activation in layers:
+                    if not torch.isfinite(z).all(): raise ProbeError('Standardization produced a non-finite score; check the fitted center and scale.')
+                    for index, (weights, bias, activation) in enumerate(layers):
                         z = z @ weights.T + bias
-                        if activation == 'relu': z = torch.relu(z)
-                    if not torch.isfinite(z).all(): raise ProbeError('The probe produced a non-finite score.')
+                        if not torch.isfinite(z).all(): raise ProbeError(f'Layer {index} arithmetic produced a non-finite score.')
+                        if activation == 'relu': z = torch.relu(z)  # finite in, finite out
                     scores = z[:, 0].tolist()
             except Exception as exc:
                 if self.config['onError'] == 'stop': raise

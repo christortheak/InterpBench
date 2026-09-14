@@ -73,11 +73,64 @@ def test_nonfinite_recorded_missing_or_stops_and_hooks_removed(tmp_path):
             with model.hooked.session([]),observer.observe_session(model,prompt_render.RenderedPrompt('',[1],1)):
                 model.model(input_ids=torch.tensor([[1]]),attention_mask=torch.ones((1,1)))
         if policy=='stop':
-            with pytest.raises(artifacts.ProbeError):run()
+            with pytest.raises(artifacts.ProbeError,match='non-finite before scoring'):run()
         else:
             run();row=observer.result([])['readings'][0]
-            assert row['status']=='missing' and 'score' not in row
+            assert row['status']=='missing' and 'score' not in row and 'non-finite before scoring' in row['reason']
         assert len(model.model.model.layers[0]._forward_hooks)==1
+
+
+@pytest.mark.parametrize('mutation,stage',[(lambda d:d['preprocessing'].__setitem__('scale',[5e-324,4]),'Standardization'),
+                                           (lambda d:d['layers'][0].__setitem__('weights',[[1.7e308,1.7e308]]),'Layer 0 arithmetic')])
+def test_nonfinite_reason_names_the_stage_that_produced_it(tmp_path,mutation,stage):
+    # Finite activations, non-finite score: the reading stays missing and says where the arithmetic failed.
+    # Scales must be strictly positive, so a denormal scale is the smallest standardization overflow.
+    config,doc,model=prepared(tmp_path);mutation(doc)
+    source=tmp_path/config['probes'][0]['probe']['path'];source.write_text(json.dumps(doc));config['probes'][0]['probe']['sha256']=archives.file_hash(source)
+    observer=runtime.create(config,owner.load(config,tmp_path),condition='baseline',agent='baseline',rendering='rawCompletion')
+    with model.hooked.session([]),observer.observe_session(model,prompt_render.RenderedPrompt('',[1],1)):
+        model.model(input_ids=torch.tensor([[1]]),attention_mask=torch.ones((1,1)))
+    row=observer.result([])['readings'][0]
+    assert row['status']=='missing' and 'score' not in row and row['reason'].startswith(stage)
+
+
+def test_cpu_float64_transfer_order_is_bit_identical_on_cpu():
+    # The combined device+dtype call and the two-step transfer-then-cast agree wherever both work.
+    torch.manual_seed(0)
+    for dtype in (torch.bfloat16,torch.float16,torch.float32):
+        h=torch.randn(1,40,64,dtype=dtype)
+        for selection in ([39],list(range(40)),[3,17]):
+            source=h.detach()[0,selection]
+            two_step=runtime.to_cpu_float64(source)
+            assert two_step.dtype==torch.float64 and two_step.device.type=='cpu'
+            assert torch.equal(two_step,source.to(device='cpu',dtype=torch.float64))
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(),reason='MPS is not available on this machine')
+def test_mps_observations_transfer_before_the_float64_cast(tmp_path):
+    # A live study run on an Apple Silicon Mac, 2026-09-14: the combined call raised for
+    # single-position selections and returned undefined host memory for whole-prompt ones.
+    device=torch.device('mps');torch.manual_seed(0)
+    h=torch.randn(1,40,2560,dtype=torch.bfloat16,device=device)
+    with torch.inference_mode():
+        for selection in ([39],list(range(40)),[3,17]):
+            source=h.detach()[0,selection]
+            values=runtime.to_cpu_float64(source)
+            assert values.dtype==torch.float64 and values.device.type=='cpu'
+            assert torch.isfinite(values).all() and torch.equal(values,source.cpu().double())
+    # The observer end to end on the toy decoder executing on MPS (float32 hidden states, as fitted).
+    config,doc,model=prepared(tmp_path,position='eachNonPadding')
+    model.model.to(device)
+    observer=runtime.create(config,owner.load(config,tmp_path),condition='baseline',agent='baseline',rendering='rawCompletion')
+    with model.hooked.session([]),observer.observe_session(model,prompt_render.RenderedPrompt('',[1,2,3],3)):
+        model.model(input_ids=torch.tensor([[1,2,3]],device=device),attention_mask=torch.ones((1,3),device=device))
+        model.model(input_ids=torch.tensor([[4]],device=device),attention_mask=torch.ones((1,1),device=device))
+    rows=observer.result([4,5])['readings']
+    assert [r['status'] for r in rows]==['recorded']*4
+    for row,token in zip(rows,[1,2,3,4]):
+        assert row['score']==artifacts.score(doc,[token*2+1,(token+1)*2+1],input_binding=doc['input'])['score']
+    # Sanity: the activations reaching the residualPost hook on MPS are what the reference scored.
+    assert rows[0]['inputTokenPosition']==0 and rows[3]['stage']=='decode'
 
 
 def test_review_save_stale_bytes_frozen_protection_and_dependency_closure(tmp_path):

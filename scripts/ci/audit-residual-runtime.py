@@ -40,17 +40,37 @@ def swift_adapter(before, name):
 
 
 def check_probe(before, after):
-    # Only the callback's offset source changes. Everything scored/serialized
-    # after that point is preserved; registration is deliberately not audited.
+    # Two modeled rewrites of the callback: the offset source (P4), and the
+    # CPU-before-float64 transfer with stage-named non-finite checks (a live
+    # study run on an Apple Silicon Mac, 2026-09-14). Standardization and
+    # layer arithmetic are preserved byte for byte; registration is
+    # deliberately not audited.
     expected = before.replace('''        offset = 0
         def observe(h):
             nonlocal offset''', '''        def observe(h, context, state):''').replace(
         '            start = offset; offset += h.shape[1]', '            start = context.offset')
+    transfer = [("values = h.detach()[0, [p[0] for p in positions]].to(device='cpu', dtype=torch.float64)",
+                 "values = to_cpu_float64(h.detach()[0, [p[0] for p in positions]])\n"
+                 "                    if not torch.isfinite(values).all(): raise ProbeError('The observed activation is non-finite before scoring.')"),
+                ('z = (values - center) / scale',
+                 "z = (values - center) / scale\n"
+                 "                    if not torch.isfinite(z).all(): raise ProbeError('Standardization produced a non-finite score; check the fitted center and scale.')"),
+                ('for weights, bias, activation in layers:\n                        z = z @ weights.T + bias\n',
+                 'for index, (weights, bias, activation) in enumerate(layers):\n                        z = z @ weights.T + bias\n'
+                 "                        if not torch.isfinite(z).all(): raise ProbeError(f'Layer {index} arithmetic produced a non-finite score.')\n"),
+                ("                    if not torch.isfinite(z).all(): raise ProbeError('The probe produced a non-finite score.')\n", '')]
+    for old, new in transfer:
+        assert expected.count(old) == 1, 'Modeled transfer rewrite no longer matches the pinned body'
+        expected = expected.replace(old, new)
     def bodies(source):
         t = ast.parse(source)
         return {node.name: ast.dump(node) for node in ast.walk(t)
                 if isinstance(node, ast.FunctionDef) and node.name in ('__init__', 'callback', 'result', 'create')}
     assert bodies(expected) == bodies(after), 'Probe score or evidence bodies changed'
+    helper = next(n for n in ast.parse(after).body if isinstance(n, ast.FunctionDef) and n.name == 'to_cpu_float64')
+    body = [n for n in helper.body if not (isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant))]
+    pinned = ast.parse("import torch\nreturn tensor.to(device='cpu').to(dtype=torch.float64)").body
+    assert [ast.dump(n) for n in body] == [ast.dump(n) for n in pinned], 'Observed-value transfer changed: MPS has no float64, so transfer before casting'
 
 
 def main():
@@ -73,11 +93,12 @@ def main():
     before, after = original(path), (ROOT / path).read_text()
     check_probe(before, after)
     for old, new in [('z = (values - center) / scale', 'z = (values + center) / scale'),
-                     ("predicted = row['predictsTokenPosition']", "predicted = row['predictsTokenPosition'] + 1")]:
+                     ("predicted = row['predictsTokenPosition']", "predicted = row['predictsTokenPosition'] + 1"),
+                     ("return tensor.to(device='cpu').to(dtype=torch.float64)", "return tensor.to(device='cpu', dtype=torch.float64)")]:
         assert after.count(old) == 1
         try: check_probe(before, after.replace(old, new))
         except AssertionError: pass
-        else: raise AssertionError('Probe arithmetic/alignment negative control accepted')
+        else: raise AssertionError('Probe arithmetic/alignment/transfer negative control accepted')
     runtime = ast.parse((ROOT / 'Server/steerlab_server/steering/runtime.py').read_text())
     helper = next(n for n in runtime.body if isinstance(n, ast.FunctionDef) and n.name == 'apply_legacy')
     expected = ast.parse('for intervention in interventions:\n    h = intervention.apply(h, layer, offset)\nreturn h')
@@ -90,7 +111,7 @@ def main():
         return result"""
     assert swift_runtime.count(expected_swift) == 1, 'Native legacy chain changed'
     assert expected_swift not in swift_runtime.replace('for intervention in interventions {', 'for intervention in interventions.reversed() {'), 'Native order negative control was ineffective'
-    print('P4: legacy math unchanged; native model changes limited to dispatch; probe scoring/evidence unchanged; arithmetic and alignment negative controls rejected.')
+    print('P4: legacy math unchanged; native model changes limited to dispatch; probe scoring/evidence unchanged beyond the modeled CPU-first transfer; arithmetic, alignment, and transfer negative controls rejected.')
 
 
 if __name__ == '__main__': main()

@@ -12,6 +12,26 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Fixed study probe measurements losing every reading on MPS (a live study run
+  on an Apple Silicon Mac, 2026-09-14: 6912 of 6912 readings `missing`).
+  `probe_observation.py` converted each observed activation with one combined
+  `.to(device='cpu', dtype=torch.float64)`, which asks the source device for
+  float64; MPS has none, so single-position selections raised (`Cannot convert
+  a MPS Tensor to float64 dtype`) and whole-prompt selections with storage
+  offset zero came back as undefined host memory without raising (`The probe
+  produced a non-finite score.`, or a silently wrong finite score). The observer
+  now transfers to CPU first and casts there (`to_cpu_float64`), bit-identical
+  on CPU and CUDA; the non-finite reason names the stage that produced it (the
+  observed activation, standardization, or `Layer k arithmetic`); the reading
+  stays `missing`. The P5 policy scoring path already computed in float32 on
+  the activation device and is unchanged. Tests cover the two transfer orders
+  on CPU, the MPS path on a bf16 `(1, 40, 2560)` tensor plus the observer end
+  to end on MPS where available, and the stage-named reasons.
+  `scripts/ci/audit-residual-runtime.py` models this rewrite exactly (the
+  standardization and layer arithmetic stay pinned to `bda6d71`), pins the
+  helper's transfer-then-cast body, and rejects the combined call as a
+  negative control; the compiled Python client identity is regenerated.
+
 - Made the build script's launch check offline and bounded evidence transfer
   on both sides (a live controller on 2026-09-13: `scripts/build-app.sh`'s
   eight-second post-assembly launch ran the app for real against the saved

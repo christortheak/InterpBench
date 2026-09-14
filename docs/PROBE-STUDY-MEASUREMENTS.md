@@ -64,7 +64,13 @@ may already have changed. P4 can use the same site and recording-stage contract;
 this slice does not implement new action providers or control flow.
 
 Observed tensors are detached and transferred to CPU float64 for the same explicit
-standardization/affine/ReLU arithmetic as fitting. JSON conversion follows scoring.
+standardization/affine/ReLU arithmetic as fitting. The transfer happens before the
+cast (`to_cpu_float64`): a combined device-and-dtype conversion asks the source
+device for float64, which MPS lacks, so it raised for most readings and returned
+undefined host memory for the rest (a live study run on an Apple Silicon Mac,
+2026-09-14). A non-finite reading's reason names the stage that produced it:
+the observed activation, standardization, or a layer's arithmetic. JSON
+conversion follows scoring.
 This incurs transfer and synchronization overhead, which remains unmeasured on
 research-scale models. Model binding and tensor width/precision are checked, not
 inferred from names. Scores retain the artifact's fixed threshold and score kind;
