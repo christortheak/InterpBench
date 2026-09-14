@@ -1385,6 +1385,19 @@ response**: an older server ignores the override silently, and the echo is
 the proof it was applied. The sharded parent needs nothing from you; it
 merges when its shards finish.
 
+**Auto-resume (`autoResubmit`) is bounded, and the bounds are deliberate.**
+When a submission carries `autoResubmit: true`, the running controller
+re-submits a checkpoint it *witnessed* itself, up to `autoResubmitLimit`
+times (default 5). It never auto-resumes a record whose Slurm job the
+scheduler recorded as `cancelled` (cancelled beats checkpointed), a record
+inactive for longer than `autoResubmitMaxAgeSeconds` (default 48 hours;
+`STEERLAB_AUTO_RESUBMIT_MAX_AGE` on the controller sets the site default),
+or a checkpointed record a freshly started controller merely *adopted* from
+its store — those three are logged once on the job (`auto-resubmit skipped:
+…`) and parked for a person. In every parked case the managed resubmit verb
+above is the way to continue; it is explicit consent and is not bounded by
+the automatic guards.
+
 The shared SSH master EXPIRES — routinely, daily. A `Permission denied
 (publickey,keyboard-interactive)` from an otherwise-working site means
 expired authentication, not a broken site or profile: run

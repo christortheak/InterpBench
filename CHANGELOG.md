@@ -12,6 +12,27 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Bound the Slurm controller's auto-resubmit-on-checkpoint (a live controller
+  on 2026-09-13 re-ran a seven-week-old test record's sbatch script minutes
+  after starting). The automatic path now refuses, with a deduplicated note on
+  the job and no other change to the record, when the scheduler recorded the
+  original Slurm job as `cancelled` (cancelled beats checkpointed on the
+  OBSERVED state, not only the record's own cancel flag), when the record's
+  last activity is older than `autoResubmitMaxAgeSeconds` (per request; env
+  `STEERLAB_AUTO_RESUBMIT_MAX_AGE`; shipped default 48 hours), or when the
+  controller merely adopted the checkpointed record at start instead of
+  witnessing the checkpoint itself (it still repairs a missing `resubmittedAs`
+  stamp). The manual Resume verb is unchanged. The poll loop stamps the
+  observed scheduler state on the record (`result.lastSchedulerState`, plus
+  `checkpointedAt`, both preserved across child-record folds) and handles a
+  fold-restored `checkpointed` over a terminal scheduler state once instead of
+  re-logging the transition every tick; child-record folds skip files whose
+  bytes this process already folded (the operator's reconcile verbs still
+  force a full fold), so an unrelated job's terminal transition no longer
+  re-folds every sibling record in a shared records directory. `sacct` polls
+  read the `End` column so the guard measures the job's real end time.
+  See `docs/AUTO-RESUBMIT-STALENESS-GUARD-2026-09-13.md`.
+
 - Make the Compute section's Server Jobs actions legible at the column's
   minimum width: Refresh and Import runs stay on the toolbar, and Run
   scientific diagnostic…, Stage inputs, collect evidence, clean up…, and
