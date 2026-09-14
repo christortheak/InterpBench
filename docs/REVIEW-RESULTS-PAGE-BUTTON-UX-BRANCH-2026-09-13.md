@@ -82,3 +82,18 @@ Fast-forward of main to 0521032, this review committed on top, app rebuilt
 and installed (Swift and a shipped Python resource changed), engine payload
 pushed (the running controller keeps its loaded resources until its next
 start; only a static guide line changed on the Python side).
+
+## 6. Addendum: follow-up commits 7d84350 and 7bab7e1 (same day)
+
+Two further commits landed on the branch after the first review and were
+merged with main (no conflicts; the merge only brings this review document
+in). `ScientificExecutionSheet` becomes a grouped form so the one-line agent
+syntax caption no longer forces the sheet past its 820 pt minimum and clips
+both edges; the plan pane gets a 120 pt floor and the sheet a 680 pt minimum
+height; the pinned-revision field is a labelled row so the monospaced font
+styles the commit and not its label. No request-body or behaviour change.
+`docs/UI-UX-FOLLOW-UP-HANDOFF-2026-09-13.md` is the agents' plan for the
+next UI pass (typed values, crowded rows, unclear buttons; five disjoint work
+packages with a shared-components package first). Gates clean on the merged
+tree; Swift TEST SUCCEEDED, 4,946 passed, 5 skipped. The live check in N1
+now also covers this layout.
