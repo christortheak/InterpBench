@@ -426,7 +426,7 @@ def test_poll_state_uses_configured_sacct_wrapper(wrapper_only_slurm):
     assert SlurmExecutor().poll_state("616") == "checkpointed"
     # Same arguments, different binary — only the name substitutes.
     calls = wrapper_only_slurm.calls("sacct")  # fakebin logs under its source name
-    assert any("-j 616 -n -o State,ExitCode -P" in line for line in calls)
+    assert any("-j 616 -n -o State,ExitCode,End -P" in line for line in calls)
 
 
 def test_poll_state_squeue_fallback_uses_configured_wrapper(wrapper_only_slurm):

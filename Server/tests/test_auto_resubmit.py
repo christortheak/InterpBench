@@ -61,11 +61,14 @@ def fake_slurm(tmp_path, monkeypatch):
     monkeypatch.delenv("STEERLAB_SLURM_SQUEUE", raising=False)
 
     class Handle:
-        def set_state(self, job_id, state, exit_code="0:0", queue=None):
+        def set_state(self, job_id, state, exit_code="0:0", queue=None, end=None):
             table = {}
             if state_file.exists():
                 table = json.loads(state_file.read_text(encoding="utf-8"))
             table[str(job_id)] = {"state": state, "exit": exit_code, "queue": queue}
+            if end:
+                # sacct's End column, ``2026-07-22T14:03:11`` scheduler-local.
+                table[str(job_id)]["end"] = end
             state_file.write_text(json.dumps(table), encoding="utf-8")
 
         def calls(self, binary):

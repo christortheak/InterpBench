@@ -1242,6 +1242,14 @@ def _resources_from_dict(data: dict, experiment: str, verb: str) -> SlurmResourc
     defaults.auto_resubmit = bool(data.get("autoResubmit", defaults.auto_resubmit))
     defaults.auto_resubmit_limit = int(
         data.get("autoResubmitLimit", defaults.auto_resubmit_limit))
+    if data.get("autoResubmitMaxAgeSeconds") is not None:
+        # The auto-resubmit staleness bound, pinned per request; absent, the
+        # reconciler's env/default applies at reconcile time.
+        max_age = float(data["autoResubmitMaxAgeSeconds"])
+        if max_age <= 0:
+            raise ValueError("autoResubmitMaxAgeSeconds must be a positive "
+                             "number of seconds")
+        defaults.auto_resubmit_max_age_seconds = max_age
     if "gpuTypes" in data:
         types = [str(t).strip() for t in (data.get("gpuTypes") or []) if str(t).strip()]
         if not types:

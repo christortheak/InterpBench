@@ -61,6 +61,14 @@ def _env_truthy(raw: str | None) -> bool:
 
 
 DEFAULT_AUTO_RESUBMIT_LIMIT = 5
+#: Auto-resubmit staleness bound (live controller incident, 2026-09-13): a
+#: checkpointed record whose last recorded activity is older than this is
+#: never resubmitted AUTOMATICALLY — a person resumes it on purpose or not
+#: at all. 48 hours covers every honest checkpoint-and-continue cadence
+#: (walltime-bounded shards checkpoint hours apart, not weeks) while a
+#: months-old test record adopted from an older store stays parked.
+DEFAULT_AUTO_RESUBMIT_MAX_AGE_SECONDS = 48 * 3600
+AUTO_RESUBMIT_MAX_AGE_ENV = "STEERLAB_AUTO_RESUBMIT_MAX_AGE"
 
 
 @dataclass(frozen=True)
@@ -168,6 +176,25 @@ def _parse_int_env(key: str, fallback: int) -> int:
         raise ValueError(f"{key} {raw!r} is not an integer")
 
 
+def _parse_resubmit_max_age(raw: str | None) -> float:
+    """``STEERLAB_AUTO_RESUBMIT_MAX_AGE``: the auto-resubmit staleness bound
+    in SECONDS (default 48 hours). Malformed or non-positive site data fails
+    loudly, matching the chain-cap parser — a swallowed typo would either
+    unbound the guard or refuse every resubmit."""
+    if raw is None or not raw.strip():
+        return float(DEFAULT_AUTO_RESUBMIT_MAX_AGE_SECONDS)
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        raise ValueError(
+            f"{AUTO_RESUBMIT_MAX_AGE_ENV} {raw!r} is not a number of seconds")
+    if value <= 0:
+        raise ValueError(
+            f"{AUTO_RESUBMIT_MAX_AGE_ENV} {raw!r} must be a positive number "
+            "of seconds")
+    return value
+
+
 def _parse_resubmit_limit(raw: str | None) -> int:
     """``STEERLAB_AUTO_RESUBMIT_LIMIT``: the auto-resubmit chain cap, counted
     from the ROOT job (default 5). Malformed site data fails loudly, matching
@@ -242,6 +269,13 @@ class SlurmResources:
     # script (contrast ``requeue``, which is Slurm's own mechanism).
     auto_resubmit: bool = False
     auto_resubmit_limit: int = DEFAULT_AUTO_RESUBMIT_LIMIT
+    # Auto-resubmit staleness bound in seconds (per-request key
+    # ``autoResubmitMaxAgeSeconds``). ``None`` means "not pinned by the
+    # request": the reconciler resolves ``STEERLAB_AUTO_RESUBMIT_MAX_AGE``
+    # (else the shipped 48 h default) at reconcile time, so an operator can
+    # tighten or widen the bound for every parked record without
+    # resubmitting anything.
+    auto_resubmit_max_age_seconds: float | None = None
     # Site data (WS1 executor generalization): the valid GPU-type vocabulary
     # and the per-type VRAM table. The DEFAULT is what this site declared —
     # never a code constant (WP5 Step 8, audit G4). Reading the env here rather
@@ -856,24 +890,47 @@ class SlurmExecutor:
         finding 1): an "ending" session may close on positive absence but
         never on a failed query — closing on silence releases the
         double-start slot without proof the billed allocation stopped."""
+        observation = self.poll_observation(slurm_job_id)
+        return observation.state, observation.query_ok
+
+    def poll_observation(self, slurm_job_id: str) -> "SchedulerObservation":
+        """Everything one poll learns about a job: the mapped state, whether
+        the queries answered (see ``poll_state_detailed``), the raw scheduler
+        state, and — from ``sacct``'s ``End`` column — WHEN the scheduler
+        recorded the job ending. The end time is what lets the reconciler's
+        auto-resubmit guard measure a checkpointed record's real age instead
+        of the moment a (possibly much later) controller happened to observe
+        it (live controller incident, 2026-09-13).
+
+        ``sacct -j`` needs no explicit ``--starttime``: the manual widens the
+        default window to epoch 0 whenever ``-j`` is given, so a job that
+        ended months ago still answers."""
         sacct, squeue = scheduler_poll_commands()
         proc = scheduler_run(
-            [sacct, "-j", slurm_job_id, "-n", "-o", "State,ExitCode", "-P"],
+            [sacct, "-j", slurm_job_id, "-n", "-o", "State,ExitCode,End", "-P"],
             text=True, capture_output=True, check=False)
         sacct_ok = proc.returncode == 0
         if sacct_ok:
             lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
             if lines:
                 fields = lines[0].split("|")
+                raw_state = fields[0].strip()
                 exit_code = fields[1].strip() if len(fields) > 1 else None
-                return map_slurm_state(fields[0], exit_code=exit_code), True
+                ended_at = (_parse_sacct_time(fields[2])
+                            if len(fields) > 2 else None)
+                return SchedulerObservation(
+                    state=map_slurm_state(raw_state, exit_code=exit_code),
+                    query_ok=True, raw_state=raw_state, exit_code=exit_code,
+                    ended_at=ended_at)
         q = scheduler_run(
             [squeue, "-j", slurm_job_id, "-h", "-o", "%T"],
             text=True, capture_output=True, check=False)
         squeue_ok = q.returncode == 0
         if squeue_ok and q.stdout.strip():
-            return map_slurm_state(q.stdout.strip().splitlines()[0]), True
-        return None, sacct_ok or squeue_ok
+            raw_state = q.stdout.strip().splitlines()[0]
+            return SchedulerObservation(state=map_slurm_state(raw_state),
+                                        query_ok=True, raw_state=raw_state)
+        return SchedulerObservation(state=None, query_ok=sacct_ok or squeue_ok)
 
     def death_detail(self, slurm_job_id: str) -> str | None:
         """One human sentence on HOW the scheduler ended a job, from sacct —
@@ -905,6 +962,36 @@ class SlurmExecutor:
         if reason and reason not in ("None", "None assigned"):
             detail += f" — scheduler reason: {reason}"
         return detail
+
+
+@dataclass(frozen=True)
+class SchedulerObservation:
+    """One ``poll_observation`` answer. ``state`` is the mapped SteerLab
+    status (None when undetermined), ``query_ok`` says whether any scheduler
+    query answered, ``raw_state``/``exit_code`` are sacct's own words, and
+    ``ended_at`` is the epoch second sacct recorded the job ending (None
+    while it runs, when sacct printed ``Unknown``, or when only squeue
+    answered)."""
+    state: str | None
+    query_ok: bool
+    raw_state: str | None = None
+    exit_code: str | None = None
+    ended_at: float | None = None
+
+
+def _parse_sacct_time(raw: str | None) -> float | None:
+    """sacct's ``End`` column (``2026-07-22T14:03:11`` in the scheduler's
+    local time; ``Unknown``/``None`` while the job lives) to an epoch
+    second, or None when it carries no time."""
+    text = (raw or "").strip()
+    if not text or text.lower() in ("unknown", "none", "n/a"):
+        return None
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"):
+        try:
+            return time.mktime(time.strptime(text, fmt))
+        except ValueError:
+            continue
+    return None
 
 
 # Slurm State -> SteerLab job status. sacct decorates some states ("CANCELLED
