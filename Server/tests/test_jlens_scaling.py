@@ -146,3 +146,30 @@ def test_merge_requires_exact_mean_values_and_names_the_source_layer(fitting):
     assert 'do not exactly match' in str(error.value)
     assert 'do not edit completed runs' in str(error.value)
     assert set((root/'runs').iterdir()) == before
+
+
+def test_merge_preflight_reads_no_tensor_bytes_but_merge_still_does(fitting,monkeypatch):
+    from steerlab_server.experiment import jlens_merge
+    root,cfg=fitting
+    fitted=run(root,cfg);directory=Path(fitted['runDirectory'])
+    relative=str(directory.relative_to(root))
+    config=jlens_merge.MergeConfig.from_dict({'fits':[relative]})
+    honest=jlens_merge.reviewed(config,root)[0][0]
+    original=jlens_merge.archives.file_hash
+    def guarded(path):
+        if str(path).endswith('.safetensors'):raise AssertionError('tensor bytes read during preflight: '+str(path))
+        return original(path)
+    monkeypatch.setattr(jlens_merge.archives,'file_hash',guarded)
+    review=jlens_merge.preflight(config,root)
+    assert review['fits']==1 and review['missingRows']==[] and review['promptsFitted']==honest['report']['promptsFitted']
+    structural=jlens_merge.reviewed(config,root,verify_tensors=False)[0][0]
+    # The structural review carries the recorded tensor hashes, which equal the honest ones.
+    assert structural['fingerprints']==honest['fingerprints'] and structural['tensorSHA256']==honest['tensorSHA256']
+    assert managed_methods.validate('jlens-fit-merge',{'fits':[relative],'allowPartial':True},root)
+    # Execution keeps hashing every tensor before combining anything.
+    with pytest.raises(AssertionError,match='tensor bytes read'):jlens_merge.merge(config,root=root)
+    # A report whose recorded lens hash does not match the bytes is still refused at execution.
+    monkeypatch.setattr(jlens_merge.archives,'file_hash',original)
+    report=directory/'fit-report.json';data=json.loads(report.read_bytes());data['tensorSHA256']='0'*64;report.write_bytes(json.dumps(data).encode())
+    assert jlens_merge.preflight(config,root)['fits']==1
+    with pytest.raises(ValueError,match='Fitted lens differs from its report'):jlens_merge.merge(config,root=root)

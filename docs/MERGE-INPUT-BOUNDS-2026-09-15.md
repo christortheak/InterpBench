@@ -115,3 +115,22 @@ The fitting-round route is a synchronous FastAPI handler, so the whole
 `merge-plan` hashing runs on the request threadpool and holds the submission
 lock for those minutes; a client timeout can abandon a plan that then
 completes unobserved. Known follow-up, not addressed here.
+
+## Second limit behind the first: validation-subprocess timeout (same day)
+
+With the pinning bound fixed, the live `merge-plan` was refused again:
+"Scientific config validation timed out; inspect the engine environment
+before retrying." `managed_validation.validate` runs the config owner in a
+subprocess with a 120-second budget, and the merge owner's `preflight` called
+`source` for every fit, which hashed both 6.6 GB tensors of each shard, about
+106 GB in all, well past the budget.
+
+`source` now takes `verify_tensors`. `preflight` reviews structure only
+(identities, coverage, overlap, counts from the JSON records) and carries the
+tensor hashes recorded in the report and checkpoint, which must be present and
+well-formed. Nothing is trusted at execution on that basis: the managed-input
+inventory pins every tensor by content before submission, the child re-verifies
+the closure, and `merge` reviews with `verify_tensors=True` and hashes every
+byte again before combining anything. A regression test in
+`Server/tests/test_jlens_scaling.py` asserts preflight reads no tensor bytes
+while `merge` still refuses a report whose recorded hash does not match.

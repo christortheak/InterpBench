@@ -1,6 +1,7 @@
 """Merge disjoint cumulative fitting sums in deterministic global-row order."""
 from dataclasses import dataclass, asdict
 import json
+import re
 from pathlib import Path
 import uuid
 from . import diagnostic_archives as archives, jlens_fit_identity
@@ -28,16 +29,24 @@ class MergeConfig:
     def to_dict(self): return asdict(self)
 
 
-def source(root, relative):
+def source(root, relative, verify_tensors=True):
+    """Review one completed fit. With ``verify_tensors`` the two multi-gigabyte
+    tensors are hashed against the report and checkpoint; the structural review
+    (``preflight``) trusts the recorded hashes instead, because config validation
+    runs under a short subprocess timeout and the managed-input pin plus the
+    merge itself hash every byte before anything is combined."""
     directory = archives.ordinary(root, relative)
     for name in ('COMPLETED','fit-report.json','checkpoint/state.json','checkpoint/sums.safetensors','jacobians.safetensors'):
         path = archives.ordinary(directory,name)
         if not path.is_file(): raise FitError('Choose completed fitting output with its final checkpoint: '+relative)
     snapshot_names=('fit-report.json','checkpoint/state.json','checkpoint/sums.safetensors','jacobians.safetensors')
-    fingerprints={name:archives.file_hash(directory/name) for name in snapshot_names}
     report = json.loads((directory/'fit-report.json').read_bytes())
     state_path = directory/'checkpoint/state.json'
     state = json.loads(state_path.read_bytes())
+    declared={'checkpoint/sums.safetensors':state.get('tensorSHA256'),'jacobians.safetensors':report.get('tensorSHA256')}
+    if any(not isinstance(v,str) or not re.fullmatch(r'[0-9a-f]{64}',v) for v in declared.values()):
+        raise FitError('The fit report and checkpoint must record their tensor hashes.')
+    fingerprints={name:(archives.file_hash(directory/name) if verify_tensors or name not in declared else declared[name]) for name in snapshot_names}
     identity = jlens_fit_identity.verified_identity(state)
     if report.get('operation') not in ('jlens-fit','jlens-fit-merge') or report.get('identity') != identity:
         raise FitError('The fit report and checkpoint identify different computations.')
@@ -51,10 +60,9 @@ def source(root, relative):
     covered = list(range(end)) if selected is None else selected[:end]
     if report.get('promptsFitted') != n or report.get('rowsConsidered') != end or report.get('skippedIndices') != skipped:
         raise FitError('Report counts differ from the checkpoint.')
-    sums = directory/'checkpoint/sums.safetensors'
-    if state.get('tensorFile') != 'sums.safetensors' or archives.file_hash(sums) != state.get('tensorSHA256'):
+    if state.get('tensorFile') != 'sums.safetensors' or fingerprints['checkpoint/sums.safetensors'] != state.get('tensorSHA256'):
         raise FitError('Checkpoint sums changed; retain the original completed snapshot.')
-    tensor_hash = archives.file_hash(directory/'jacobians.safetensors')
+    tensor_hash = fingerprints['jacobians.safetensors']
     if tensor_hash != report.get('tensorSHA256'):
         raise FitError('Fitted lens differs from its report.')
     expected_rows = report.get('expectedGlobalRows', covered)
@@ -82,8 +90,8 @@ def numerical(identity):
     return result
 
 
-def reviewed(config, root):
-    items = [source(root, p) for p in config.fits]
+def reviewed(config, root, verify_tensors=True):
+    items = [source(root, p, verify_tensors) for p in config.fits]
     items.sort(key=lambda item: (min(item['covered']),item['checkpointSHA256']))
     covered, expected, skipped = set(), set(), set()
     common = numerical(items[0]['identity'])
@@ -98,7 +106,11 @@ def reviewed(config, root):
 
 
 def preflight(config, root):
-    items,covered,expected,skipped,missing = reviewed(config,root)
+    # Structural review only: identities, coverage, overlap and counts from the
+    # JSON records. Tensor bytes are pinned by the managed-input inventory and
+    # re-hashed by `merge` at execution; hashing them here (13 GB a shard) would
+    # exceed the validation subprocess budget.
+    items,covered,expected,skipped,missing = reviewed(config,root,verify_tensors=False)
     return {'fits':len(items),'rowsConsidered':len(covered),'promptsFitted':len(covered)-len(skipped),'missingRows':missing,'partial':bool(missing)}
 
 
