@@ -67,3 +67,21 @@ Gates: `check-generated.py --audits` PASS, `public_scan.py` clean,
 The compiled client identity moved, so the app is rebuilt after this landing
 and the cluster payload pushed after the rebuild; the merge then needs a fresh
 controller running the new engine.
+
+## Addendum: preflight tensor hashing (same day, main 3053557)
+
+Deploying the bounds fix exposed the next limit in the same path: the live
+`merge-plan` was refused with "Scientific config validation timed out" because
+the merge owner's `preflight` hashed every shard's two 6.6 GB tensors inside
+the 120-second validation subprocess. My own commit 3053557 makes `preflight`
+a structural review (identities, coverage, overlap, counts, and the recorded
+tensor hashes, which must be present and well-formed) and keeps byte
+verification where bytes are combined: the managed-input pin before
+submission, the child's closure re-verification, and `merge` itself with
+`verify_tensors=True`. A regression test asserts preflight reads no tensor
+bytes while `merge` still refuses a report whose recorded hash does not match
+the file.
+
+Suites on the exact tree, run by me: Python 6624 passed, 9 skipped, 0 failed;
+Swift 4954 passed, 5 skipped, 0 failed. Gates clean. The client identity moved
+again, so the app is rebuilt and the payload pushed after this landing.
