@@ -14,6 +14,15 @@ META = 'steerlab-bundle.json'
 MAX_FILES = 20000
 MAX_BYTES = 16 * 1024**3
 MAX_METADATA = 8 * 1024**2
+# Bound on an inventory whose members are read IN PLACE and never travel: the
+# managed-input closure a controller pins by content hash before a child on the
+# same filesystem reads it (a `jlens-fit-merge` over eight completed 27B shards
+# is about 106 GB). MAX_BYTES is the transport bound for archives that are
+# packaged, staged, exported or fetched; applying it to in-place inventories
+# made every full-scale merge unmergeable. This bound is a sanity check against
+# pinning a whole workspace by accident, not a transport promise: what an
+# operation's OUTPUT can travel through is still MAX_BYTES at export time.
+MAX_PINNED_BYTES = 1024**4
 
 
 class Refusal(ValueError):
@@ -76,16 +85,42 @@ def files_in(root, relative):
     return sorted(result)
 
 
-def snapshot(root, paths):
-    entries = []
+def _inventory(root, paths, limit, reason):
+    members = []
     for relative in sorted(set(paths)):
         path = ordinary(root, relative)
         if not path.is_file():
             raise Refusal('A declared member is not an ordinary file: ' + relative)
-        entries.append({'path': relative, 'sha256': file_hash(path), 'bytes': path.stat().st_size})
-    if not entries or len(entries) > MAX_FILES or sum(e['bytes'] for e in entries) > MAX_BYTES:
-        raise Refusal('The diagnostic archive is empty or exceeds transport bounds.')
+        members.append((relative, path))
+    # Refuse on declared sizes before hashing, so an over-bound inventory does
+    # not spend minutes reading bytes it will never accept; the hashed entries
+    # are still bounded below, so a member that grows during review refuses.
+    if not members or len(members) > MAX_FILES or sum(path.stat().st_size for _, path in members) > limit:
+        raise Refusal(reason)
+    entries = [{'path': relative, 'sha256': file_hash(path), 'bytes': path.stat().st_size} for relative, path in members]
+    if sum(e['bytes'] for e in entries) > limit:
+        raise Refusal(reason)
     return entries
+
+
+def snapshot(root, paths):
+    """Hash members that travel, or travelled, in a diagnostic archive.
+
+    Bounded by MAX_BYTES: packaging, staging, export, custody and cleanup all
+    compare against these entries, and the archive they describe must fit the
+    transport.
+    """
+    return _inventory(root, paths, MAX_BYTES, 'The diagnostic archive is empty or exceeds transport bounds.')
+
+
+def pin(root, paths):
+    """Hash members an operation reads in place; nothing here is transported.
+
+    Same entry shape as `snapshot`, so a pinned inventory can be compared with
+    one, but bounded by MAX_PINNED_BYTES (see its note). Packaging a pinned
+    inventory for transport goes through `package`, which applies `snapshot`.
+    """
+    return _inventory(root, paths, MAX_PINNED_BYTES, 'The in-place input inventory is empty or exceeds the pinning bound.')
 
 
 def publish_file(source, target):

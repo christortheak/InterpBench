@@ -90,7 +90,10 @@ def inventory(operation, config, root):
     if operation == 'sae-family-report' and config.get('discoverPromotions', True):
         if (root / 'runs/model-variants').exists(): add('runs/model-variants')
     if not files: raise archives.Refusal('This operation has no resolvable scientific inputs.')
-    return archives.snapshot(root, files)
+    # These inputs are pinned where they lie and read by a child on the same
+    # filesystem; they are not an archive. When they must travel,
+    # `diagnostic_inputs.package` applies the transport bound to this closure.
+    return archives.pin(root, files)
 
 
 @input_hashes.operation

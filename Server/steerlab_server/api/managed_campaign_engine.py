@@ -18,6 +18,9 @@ def materialize(config, root):
     packet = directory / 'managed-campaign.json'
     files = [str((directory / owner.CAMPAIGN_FILENAME).relative_to(root))]
     files += [str((directory / owner.CELLS_DIRNAME / cell.cell_id / owner.CELL_CONFIG_FILENAME).relative_to(root)) for cell in cells]
+    # Static campaign files (cell configs, scheduler scripts) are small and are
+    # exported later inside the campaign directory, so the transport bound is
+    # the right one here; the scientific inputs above are pinned by `source`.
     document = {'root': str(root), 'source': source, 'files': archives.snapshot(root, files)}
     packet.write_bytes(archives.encoded(document)); packet_hash = archives.file_hash(packet)
     for cell in cells:

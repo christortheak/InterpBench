@@ -52,6 +52,8 @@ def plan(request, root):
             add(multiconcept.stories_path(ref.designated_reference['name'], str(root)))
         else:
             add(paths.concept_directory(ref.name, str(root)))
+    # Battery and stability closures are only ever planned to travel (package,
+    # stage, verify a staged copy), so the transport bound applies at review.
     result = {'schemaVersion': 1, 'request': request, 'sourceRoot': str(root), 'files': archives.snapshot(root, files)}
     return {**result, 'planSHA256': archives.digest(result)}
 
