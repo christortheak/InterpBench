@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import shutil
 import tempfile
 import uuid
@@ -66,7 +67,7 @@ def tensor_keys(spec):
 
 def lens_details(spec, tensors):
     block = spec.get('lens')
-    if not isinstance(block, dict) or block.keys() - {'targetLayer', 'layers', 'promptsFitted', 'corpus', 'maxSeqLen', 'tier', 'fitDtype'}:
+    if not isinstance(block, dict) or block.keys() - {'targetLayer', 'layers', 'promptsFitted', 'corpus', 'corpora', 'maxSeqLen', 'tier', 'fitDtype'}:
         raise ImportRefusal('Supply lens targetLayer and layers (source layer → tensor key), with optional fitting metadata.')
     if 'sae' in spec or 'calibrationArtifact' in spec:
         raise ImportRefusal('A lens import does not select an SAE feature or use vector calibration.')
@@ -107,9 +108,29 @@ def lens_details(spec, tensors):
         artifact_sources.integer(block['maxSeqLen'], 'maxSeqLen', 1)
     if 'corpus' in block:
         artifact_sources.text(block['corpus'], 'the fitting corpus')
-    return {'sourceLayers': sorted(layers), 'targetLayer': target, 'hiddenSize': spec['hiddenSize'],
-            'promptsFitted': prompts, 'tier': tier, 'fitDtype': block.get('fitDtype'),
-            'conversion': 'J_l @ h; preserve stored dtype and explicit layer mapping'}
+    details = {'sourceLayers': sorted(layers), 'targetLayer': target, 'hiddenSize': spec['hiddenSize'],
+               'promptsFitted': prompts, 'tier': tier, 'fitDtype': block.get('fitDtype'),
+               'conversion': 'J_l @ h; preserve stored dtype and explicit layer mapping'}
+    if 'corpora' in block:
+        details['corpora'] = mixed_corpora(block['corpora'], prompts)
+    return details
+
+
+def mixed_corpora(value, prompts):
+    """A lens merged across corpora declares each contribution; the record keeps
+    the list so a reader can tell the composite corpus digest from a corpus file."""
+    if (not isinstance(value, list) or len(value) < 2
+            or any(not isinstance(entry, dict) or set(entry) != {'corpusSHA256', 'promptsFitted', 'rowsConsidered'} for entry in value)):
+        raise ImportRefusal('lens.corpora lists at least two fitting corpora, each with corpusSHA256, promptsFitted, and rowsConsidered.')
+    digests = [entry['corpusSHA256'] for entry in value]
+    if any(not isinstance(digest, str) or not re.fullmatch('[0-9a-f]{64}', digest) for digest in digests) or digests != sorted(set(digests)):
+        raise ImportRefusal('lens.corpora must name distinct corpus SHA-256 digests in ascending order.')
+    for entry in value:
+        if artifact_sources.integer(entry['promptsFitted'], 'corpora promptsFitted', 1) > artifact_sources.integer(entry['rowsConsidered'], 'corpora rowsConsidered', 1):
+            raise ImportRefusal('A corpus cannot fit more prompts than the rows it considered.')
+    if prompts is not None and sum(entry['promptsFitted'] for entry in value) != prompts:
+        raise ImportRefusal('lens.corpora prompt counts must sum to promptsFitted.')
+    return value
 
 
 def sae_details(spec, tensors, root, files):
@@ -214,7 +235,7 @@ def publish_lens(spec, plan, tensors, captured, staged, target, root, artifact_i
     record = JLensRecord(lensID=artifact_id, source=source,
         fit=FitProvenance(modelID=spec['modelID'], revision=spec.get('modelRevision'), dtype=details['fitDtype'],
             revisionKnown=spec.get('modelRevision') is not None, corpus=spec['lens'].get('corpus'),
-            promptsFitted=details['promptsFitted'], maxSeqLen=spec['lens'].get('maxSeqLen')),
+            promptsFitted=details['promptsFitted'], maxSeqLen=spec['lens'].get('maxSeqLen'), corpora=details.get('corpora')),
         sourceLayers=details['sourceLayers'], dModel=spec['hiddenSize'], targetLayer=details['targetLayer'],
         nPrompts=details['promptsFitted'] or 0,
         converted=ConvertedRef(path=(target / tensor_path.name).relative_to(root).as_posix(),

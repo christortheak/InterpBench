@@ -58,6 +58,14 @@
         "default": "true"
       },
       {
+        "id": "allowMixedCorpora",
+        "label": "Allow inputs fitted on different corpora",
+        "kind": "boolean",
+        "required": false,
+        "help": "Off, fits on different pinned corpora are refused. On, rows from every corpus are summed at equal row weight into one mixed-corpus lens; model, revision, estimator, layers, and numerical runtime must still match exactly, and the merged report records each corpus contribution.",
+        "default": "false"
+      },
+      {
         "id": "tier",
         "label": "Intended use",
         "kind": "text",

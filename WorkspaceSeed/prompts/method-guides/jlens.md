@@ -453,6 +453,17 @@ Never include both a shard and its continuation or an earlier merge covering
 the same rows. The owner checks global coverage under the same pinned corpus
 and numerical identity and refuses overlaps, including ancestor contributions.
 
+Fits on different pinned corpora are refused by default. `allowMixedCorpora`
+opts into summing them at equal row weight into one mixed-corpus lens, for
+example an existing general-text fit together with a new domain-text fit
+without refitting the general rows. Model, revision, estimator, layers, and
+numerical runtime must still match exactly, and rows are identified per corpus,
+so equal row indices in two corpora do not overlap while overlap within one
+corpus is still refused. The merged identity records one contribution per
+corpus and a composite corpus digest over them; the report and the artifact
+description carry `corpora` and `mixedCorpora`, so the lens is never mistaken
+for a fit on one corpus, and a further merge of it needs the same opt-in.
+
 Merge uses raw float32 sums weighted by fitted-row counts, excluding skipped
 rows. It records accumulation order (ascending first global row, then checkpoint
 hash), missing rows, and source hashes. Grouped float32 addition can differ

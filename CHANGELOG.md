@@ -12,6 +12,22 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Added `allowMixedCorpora` to `jlens-fit-merge` (default `false`; also an
+  interview field). Fits on different pinned corpora are still refused by
+  default; opted in, their raw per-layer sums are added at equal row weight
+  into one mixed-corpus lens, so an existing general-text fit can be reused
+  with a new domain-text fit without refitting. Model, revision, estimator,
+  layers, position policy, and numerical runtime must still match; rows are
+  identified per corpus, so overlap within a corpus is still refused while
+  equal indices in different corpora are not. The merged identity records one
+  contribution per corpus and a composite `corpusSHA256` (SHA-256 of the
+  canonical JSON of the sorted contribution list) with no unioned
+  `rowIndices`; the report and `artifact-description.json` carry `corpora` and
+  `mixedCorpora`, the lens record gains `fit.corpora`, and a mixed lens can be
+  merged again only with the same opt-in. Single-corpus merges produce the same
+  identity and bytes as before; their reports additionally list their one
+  corpus. Fitting rounds stay single-corpus. Additive schema change; no schema
+  number moves. See `docs/JLENS-MIXED-CORPUS-MERGE-2026-09-17.md`.
 - Fixed study probe measurements losing every reading on MPS (a live study run
   on an Apple Silicon Mac, 2026-09-14: 6912 of 6912 readings `missing`).
   `probe_observation.py` converted each observed activation with one combined

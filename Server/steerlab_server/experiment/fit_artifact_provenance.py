@@ -29,6 +29,14 @@ def read(spec, files, tensor_hash):
     if (report.get('tensorSHA256') != tensor_hash or any(identity.get(k) != v for k, v in expected.items())
             or report.get('promptsFitted') != spec['lens'].get('promptsFitted')):
         raise ImportRefusal('The fitting report describes different tensors, geometry, or fitting counts. Choose the matching report.')
+    # A merge across corpora is declared by both the report and the description,
+    # entry for entry, or by neither; a description cannot hide the mixture.
+    reported = report.get('corpora') if report.get('mixedCorpora') else None
+    declared = spec['lens'].get('corpora')
+    if (reported is None) != (declared is None) or (reported is not None and (not isinstance(reported, list) or len(reported) != len(declared)
+            or any(not isinstance(entry, dict) or {key: entry.get(key) for key in ('corpusSHA256', 'promptsFitted', 'rowsConsidered')} != item
+                   for entry, item in zip(reported, declared)))):
+        raise ImportRefusal('The fitting report describes different corpus contributions. Choose the matching report.')
     runtime = identity['runtime']
     result = {'fitReportSHA256': digest(path)}
     for key, length in (('referenceCommit', 40), ('kernelSHA256', 64), ('driverSHA256', 64)):

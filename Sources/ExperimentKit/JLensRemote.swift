@@ -65,6 +65,15 @@ public struct JLensFitProvenance: Codable, Sendable, Equatable {
     public var corpus: String?
     public var promptsFitted: Int?
     public var maxSeqLen: Int?
+    /// Present only for a lens merged across several fitting corpora; `corpus`
+    /// is then the composite digest over these contributions, not a corpus file.
+    public var corpora: [JLensCorpusContribution]?
+}
+
+public struct JLensCorpusContribution: Codable, Sendable, Equatable {
+    public var corpusSHA256: String?
+    public var promptsFitted: Int?
+    public var rowsConsidered: Int?
 }
 
 public struct JLensConverted: Codable, Sendable, Equatable {

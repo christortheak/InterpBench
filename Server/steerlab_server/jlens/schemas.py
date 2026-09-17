@@ -120,6 +120,11 @@ class FitProvenance:
     corpus: str | None = None
     promptsFitted: int | None = None
     maxSeqLen: int | None = None
+    #: Present only for a lens merged across several fitting corpora: one
+    #: ``{corpusSHA256, promptsFitted, rowsConsidered}`` per corpus, ascending
+    #: by digest. ``corpus`` is then the composite digest over the
+    #: contributions (``jlens_merge.composite_corpus``), not a corpus file.
+    corpora: list | None = None
 
 
 @dataclass

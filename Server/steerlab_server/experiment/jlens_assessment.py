@@ -153,7 +153,10 @@ def assess(config, *, root, log=print, on_run_created=None):
                 value['meanJSDivergence']=value['jsDivergenceSum']/n if n else None
                 value['meanTopKOverlap']=value['topKOverlapSum']/n if n else None
         enhanced.finish(extras)
-        same_corpus=any(record.fit.corpus=='sha256:'+config.corpus['sha256'] for record in records)
+        # A mixed-corpus lens fitted on this corpus among others is not held out either.
+        same_corpus=any(record.fit.corpus=='sha256:'+config.corpus['sha256']
+                        or any(isinstance(entry,dict) and entry.get('corpusSHA256')==config.corpus['sha256'] for entry in record.fit.corpora or [])
+                        for record in records)
         report={'schemaVersion':1,'operation':'jlens-fit-assess','config':config.to_dict(),'runtime':runtime,
                 'readoutComparison':{'schemaVersion':1, 'precision':enhanced.precision(model, config, readout), 'layers':extras},
                 'lenses':[record.to_dict() for record in records],'layers':totals,'rows':row_results,'resources':resources,
