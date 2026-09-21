@@ -176,7 +176,9 @@ each with a regression test and a dated note, and do not widen scope.
    pair and corpus, activations captured once per corpus), or let a request
    reference a lens the runner already holds by its converted-tensor hash so
    a lens uploads once per runner. Keep content pinning: the plan still binds
-   every lens by hash.
+   every lens by hash. *Status:* the first option is implemented; see
+   `docs/JLENS-MULTI-CANDIDATE-ASSESSMENT-2026-09-21.md`. Cross-request lens
+   reuse remains open.
 8. **Cold-ledger import policy** (carried from the results handoff): decide
    and document how imported evidence from a controller that no longer exists
    is adopted without a live reconcile.

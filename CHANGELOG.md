@@ -12,6 +12,26 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- `jlens-fit-assess` takes several candidate lenses and several held-out
+  corpora in one request: `candidateLensIDs` (list of registered lens IDs)
+  and `corpora` (list of `{path, sha256}`) beside the unchanged single
+  `candidateLensID` and `corpus`; one form per axis, never both, with
+  distinct candidates, distinct corpus paths, and the reference excluded from
+  the candidates. Each distinct lens is inventoried and uploaded once,
+  activations are captured once per corpus and shared by every candidate,
+  and candidates are compared one after another with one lens layer pair
+  resident, so the reviewed budget is the maximum over corpora, not a sum.
+  Every report gains a `comparisons` list, one identified entry per
+  candidate and corpus with its own `comparisonSHA256`, also written alone
+  under `comparisons/<candidate>--<corpus-sha8>.json`; a list-form report is
+  `schemaVersion` 2 and holds the shared config, runtime, and lens records
+  without the single-pair top-level mirror, while the single form keeps its
+  `schemaVersion` 1 shape byte-for-byte apart from the added list. A single
+  pair through the list form produces the same comparison content as the
+  single form. The interview exposes both list fields (new `texts` and
+  `fileRefs` field kinds); managed inputs gain the `lenses` role. Lenses are
+  not reused across requests. See
+  `docs/JLENS-MULTI-CANDIDATE-ASSESSMENT-2026-09-21.md`.
 - Added `allowMixedCorpora` to `jlens-fit-merge` (default `false`; also an
   interview field). Fits on different pinned corpora are still refused by
   default; opted in, their raw per-layer sums are added at equal row weight
