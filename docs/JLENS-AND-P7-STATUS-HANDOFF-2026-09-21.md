@@ -1,7 +1,7 @@
 # J-lens qualification and P7 status handoff
 
 Date: 2026-09-21
-Review baseline: main `cfe1d2a`
+Review baseline: main `cfe1d2a`; updated the same evening at main `492b87e` (results of the corpus-composition assessments, three landings, and the J4 supplement)
 Audience: coding agents (fixes and follow-ups), running agents (remaining
 acceptance), independent reviewers
 Status: status report and work list. It updates the
@@ -17,9 +17,9 @@ workspace-relative); repository documents are linked.
 | J1 corrections | Done | Dated correction sections in the numerics decision and results documents |
 | J2 direct controls | Done | Engine equals bare kernel bitwise; batch-pair identity measured directly; corpus content hashes |
 | J3 managed readout assessment | Landed and live-accepted | [review](REVIEW-JLENS-ASSESSMENT-READOUT-BRANCH-2026-09-13.md); float32 readout and logit-lens baseline used in every assessment since |
-| J4 decision | Recorded; independent review pending | [decision](JLENS-QUALIFICATION-DECISION-J4-2026-09-13.md) |
+| J4 decision | Recorded; supplement written; independent review of both pending | [decision](JLENS-QUALIFICATION-DECISION-J4-2026-09-13.md), [supplement](JLENS-QUALIFICATION-DECISION-J4-SUPPLEMENT-2026-09-21.md) |
 | Full hybrid 27B lens (828 rows) | Fitted, merged, registered, assessed on two held-outs | §2 |
-| Mixed-corpus lens (case prose added) | Case fit merged on the cluster; mixed merge and assessment in progress today | §2, [design note](JLENS-MIXED-CORPUS-MERGE-2026-09-17.md) |
+| Mixed-corpus lens (case prose added) | Done: six assessments fetched with custody; mixed lens is the 27B instrument of record | §2, [design note](JLENS-MIXED-CORPUS-MERGE-2026-09-17.md), [J4 supplement](JLENS-QUALIFICATION-DECISION-J4-SUPPLEMENT-2026-09-21.md) |
 | P7-A exact builds and probe journey | Done | workspace `diagnostics/probes-p7-2026-09-13/P7-A.md` |
 | P7-B readings, policies, outcomes | Local MPS and remote CUDA legs done; panel seats and behavioural dose open | workspace `diagnostics/probes-p7-2026-09-13/P7-B.md` |
 | P7-C remote cancel, continue, custody | Not started | |
@@ -27,8 +27,8 @@ workspace-relative); repository documents are linked.
 | P7-E cost | Two data points only; no targets by the researcher's decision | P7-B.md cost lines |
 | P7-F regression, review, release statement | Not started | |
 
-Engine and app are both at `cfe1d2a`; the cluster payload is stamped the same.
-Suite counts on that tree: Python 6635 passed, 9 skipped; Swift 4954 passed,
+Engine, app, and cluster payload are at `7110200` (three landings today, §4).
+Suite counts on that tree: Python 6684 passed, 9 skipped; Swift 4956 passed,
 5 skipped.
 
 ## 2. J-lens results since the closure handoff
@@ -78,12 +78,36 @@ onward, opinion bodies only, stimulus line excluded) were drawn from the
 public Caselaw Access Project with a documented, seeded, stratified script
 and published as `prompts/fitting/jlens-cap-appellate-300`, with a 64-opinion
 held-out from a different shard and seed. The 300-row fit ran as three H100
-shards and merged on the cluster (300 of 300 rows). The mixed merge with the
-828 WikiText rows uses the new `allowMixedCorpora` opt-in and runs on the
-authoring machine over the two merged runs; assessment follows on all three
-held-outs (WikiText validation, case passages, case held-out). The result to
-read: whether the case-text crossover moves back toward layer 21 without the
-WikiText crossover moving later.
+shards and merged on the cluster; the mixed lens is the cross-corpus merge
+with the 828 WikiText rows (`allowMixedCorpora`, run on the authoring
+machine, no refit). Six assessments (mixed and domain-only, each against the
+general lens, on WikiText validation, the ladder windows, and the case
+held-out; J3 float32 readout with the plain-residual baseline) are fetched
+with custody and read in the workspace note
+`diagnostics/jlens-full-27b-2026-09-15/INTERPRETATION-MIXED-LENS.md`:
+
+| held-out (mean JSD to the final prediction) | general 828 | mixed 1128 | case-only 300 | plain residual |
+|---|---|---|---|---|
+| case opinions (64 rows) | 0.603 | 0.596 | 0.591 | 0.607 |
+| ladder windows (16) | 0.594 | 0.589 | 0.589 | 0.596 |
+| WikiText validation (64) | 0.597 | 0.597 | 0.598 | 0.620 |
+
+- The mixed lens (73.4% general rows, 26.6% case rows at equal row weight)
+  recovers most of the legal gain and is within 0.004 of the general lens at
+  every layer on general text; it is now the 27B instrument of record
+  (`custom-lens-3673a7b4d240486ba982145534fd7964`).
+- The case-only lens is the best readout on legal prose at layers 20 to 55
+  and costs 0.01 to 0.02 JSD on general text in those layers: register
+  matters more than row count for a linearization. Kept as a specialist
+  (`custom-lens-70296dfb5fea4adda2e240490561fd01`).
+- Consistent lead over the plain residual on case prose starts at layer 19
+  for both new lenses, at 43 for the general lens; on general text all three
+  start at layers 16 to 21.
+- Nothing became readable that was not: every readout is above 0.6 JSD
+  through layer 45 on every corpus, first under 0.5 at layers 51 to 54.
+- Exploratory by design (composition and budget move together); each
+  held-out used once per candidate; readout agreement is not subspace
+  identity or causal transport. The J4 supplement records the scope.
 
 **J-lens numerics in one line.** Estimator exact; the batch-shape gap is
 forward-pass bf16 kernel selection (dense paths too); engine equals bare
@@ -134,12 +158,11 @@ build's launch check with a tunnel open triggered a bulk auto-import
 Ordered by what unblocks the remaining acceptance. Each item is small; land
 each with a regression test and a dated note, and do not widen scope.
 
-1. **Fitting-round actions as one hashing session.** `merge-submit` plans
-   inside the round action and then `scientific_execution.submit` re-plans in
-   its own `input_hashes` session, so a large round hashes its closure twice
-   in one request (about five minutes each for 106 GB). Wrap
-   `jlens_rounds.action` in `input_hashes.session()`; fingerprints are still
-   rechecked at use and at scope exit, so pinning is not weakened.
+1. **Fitting-round actions as one hashing session.** *Landed* (main
+   `a5d7aeb`, [review](REVIEW-ROUND-HASH-AND-MULTI-ASSESS-BRANCHES-2026-09-21.md),
+   [note](FITTING-ROUND-HASH-SESSION-2026-09-21.md)): one `input_hashes`
+   scope per action, a stat-only recheck before each state write, the
+   child's own scope untouched.
 2. **Long science requests off the request threadpool.** The fitting-round
    route and `science-stage` run synchronously; a multi-minute plan holds the
    submitting lock and a client timeout abandons a plan that completes
@@ -176,9 +199,12 @@ each with a regression test and a dated note, and do not widen scope.
    pair and corpus, activations captured once per corpus), or let a request
    reference a lens the runner already holds by its converted-tensor hash so
    a lens uploads once per runner. Keep content pinning: the plan still binds
-   every lens by hash. *Status:* the first option is implemented; see
-   `docs/JLENS-MULTI-CANDIDATE-ASSESSMENT-2026-09-21.md`. Cross-request lens
-   reuse remains open.
+   every lens by hash. *Landed* (main `919049e`,
+   [review](REVIEW-ROUND-HASH-AND-MULTI-ASSESS-BRANCHES-2026-09-21.md),
+   [note](JLENS-MULTI-CANDIDATE-ASSESSMENT-2026-09-21.md)): `candidateLensIDs`
+   and `corpora` lists, one upload per lens, activations once per corpus,
+   one digested comparison per pair. Cross-request lens reuse remains open
+   and needs the storage-ownership decisions the memo names.
 8. **Walltime for managed science jobs.** Every science job requests the
    site's default walltime (24 hours from the cluster environment), so a
    19-minute assessment queues behind multi-day jobs instead of backfilling
@@ -187,14 +213,30 @@ each with a regression test and a dated note, and do not widen scope.
    type already is: reviewed, bound into the plan hash, refused above the
    site cap) and a per-operation default sized from the plan's own estimate
    with margin, so short assessments, benchmarks, and CPU merges backfill.
-   The fitting shards keep the long default. *Status:* implemented; see
-   `docs/SCIENCE-WALLTIME-2026-09-21.md`. The estimated default covers
+   The fitting shards keep the long default. *Landed* (main `4ed6b98`,
+   [review](REVIEW-SCIENCE-WALLTIME-BRANCH-2026-09-21.md),
+   [note](SCIENCE-WALLTIME-2026-09-21.md)); live-verified the same afternoon:
+   the last five assessments ran within minutes of submission at one-hour
+   limits where the first two had waited hours. The estimated default covers
    `jlens-fit-assess`; benchmarks take an explicit `--walltime` (no
    calibrated estimate precedes the measurement itself), and CPU merges run
    on the controller's local executor, where no walltime applies.
 9. **Cold-ledger import policy** (carried from the results handoff): decide
    and document how imported evidence from a controller that no longer exists
    is adopted without a live reconcile.
+10. **Client-runtime identity across a controller restart.** Rebuilding the
+    app moves the compiled client identity, and the client then refuses to
+    stage against a controller still running the previous engine ("The Mac
+    and Python sources differ"); the guard is correct, but two staged
+    assessments were refused mid-chain today and had to be re-staged after
+    the restart. Make the refusal name the running engine version and the
+    client's, and say that a controller restart on the pushed payload is the
+    repair; consider letting `cluster push` report when a running controller
+    is behind the payload.
+11. **Cross-request lens reuse** (the second half of item 7): a request that
+    references a lens the runner already holds by converted-tensor hash.
+    Needs an owner for runner-side lens storage, verification on reference,
+    and cleanup; a separate slice, not part of P7.
 
 Constraints that still apply: public repository hygiene (no site, host,
 person, or username words; no home-directory paths); frozen artifacts and
@@ -203,11 +245,17 @@ tree; the reviewer reads the whole diff before landing.
 
 ## 5. Work for running agents and the researcher
 
-- Today: mixed merge on the authoring machine, import, three assessments,
-  interpretation note beside the full-lens note.
+- Done today: mixed merge, imports, six assessments, interpretation note,
+  J4 supplement.
+- Research follow-ups the results suggest (not gates): a weight study to
+  separate composition from budget (a 600-row case fit merged 50/50; a case
+  fit merged with a matched subset of general rows); a matrix or subspace
+  comparison of the case-only and general transports; a direction-transport
+  test before any lens is used for interventions on the ladder stimuli.
 - P7-B remainder: panel seats; one behavioural-dose leg.
 - P7-C, P7-D (app journey with the researcher), P7-E (report only), P7-F.
-- Independent review of the J4 decision, then the support statement.
+- Independent review of the J4 decision together with its supplement, then
+  the support statement.
 
 ## 6. Evidence index (workspace)
 
@@ -219,3 +267,11 @@ tree; the reviewer reads the whole diff before landing.
   selection reports)
 - `runs/jlens-lenses/custom-lens-d163093927494fa2862225f21a7a48c1` (full lens)
 - `runs/jlens-assessment-4e68bacb…` (WikiText), `…b570c5b4…` (case passages)
+- `diagnostics/jlens-full-27b-2026-09-15/INTERPRETATION-MIXED-LENS.md` with
+  six per-layer tables (`mixed-vs-general-*`, `domain-vs-general-*`)
+- `runs/jlens-lenses/custom-lens-3673a7b4…` (mixed, instrument of record),
+  `…70296dfb…` (case-only), `runs/jlens-merge-7dbb6e75…` (mixed merge),
+  `runs/jlens-merge-86b16918…` (case merge)
+- `runs/jlens-assessment-{008046a1,e0dc39b1,acb2ab95}…` (mixed vs general:
+  case, ladder, WikiText); `…{6a8645e3,26233635,89ff8cbe}…` (case-only vs
+  general: case, ladder, WikiText)
