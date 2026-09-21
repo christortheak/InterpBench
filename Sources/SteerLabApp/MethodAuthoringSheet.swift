@@ -179,7 +179,7 @@ struct MethodAuthoringSheet: View {
         step = availableSteps[index + delta]
     }
     private func isData(_ field: ScienceCatalog.WorkflowField) -> Bool {
-        ["file", "fileRef", "documentFile", "files"].contains(field.kind)
+        ["file", "fileRef", "fileRefs", "documentFile", "files"].contains(field.kind)
     }
     private func note(_ title: String, text: Binding<String>, example: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {

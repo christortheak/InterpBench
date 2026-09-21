@@ -20,7 +20,7 @@ INPUT_ROLES = {
     'jlens-fit-benchmark': {**INPUT_ROLE_PROFILES['managed-v1'], **{}},
     'jlens-fit-round': {**INPUT_ROLE_PROFILES['managed-v1'], **{}},
     'jlens-fit-merge': {**INPUT_ROLE_PROFILES['managed-v1'], **{'fits': 'trees'}},
-    'jlens-fit-assess': {**INPUT_ROLE_PROFILES['managed-v1'], **{'referenceLensID': 'lens', 'candidateLensID': 'lens'}},
+    'jlens-fit-assess': {**INPUT_ROLE_PROFILES['managed-v1'], **{'referenceLensID': 'lens', 'candidateLensID': 'lens', 'candidateLensIDs': 'lenses'}},
     'probe-capture': {**INPUT_ROLE_PROFILES['managed-v1'], **{}},
     'probe-train': {**INPUT_ROLE_PROFILES['managed-v1'], **{}},
     'probe-evaluate': {**INPUT_ROLE_PROFILES['managed-v1'], **{}},

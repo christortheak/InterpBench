@@ -59,7 +59,7 @@ for operation in workflows['operations']:
     assert operation['method'] == next(o['method'] for o in catalog['operations'] if o['id'] == operation['id'])
     assert operation['claimBoundary'] and operation['questions']
     assert len({f['id'] for f in operation['fields']}) == len(operation['fields'])
-    assert all(f['kind'] in {'text','integer','number','boolean','integers','numbers','artifact','artifacts','file','files','fileRef','documentFile'} for f in operation['fields'])
+    assert all(f['kind'] in {'text','integer','number','boolean','integers','numbers','artifact','artifacts','file','files','fileRef','fileRefs','texts','documentFile'} for f in operation['fields'])
 print('Shared interviews cover every managed method with distinct catalog categories.')
 
 # The documented substrate table covers this same operation census. It informs

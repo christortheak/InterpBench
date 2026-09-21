@@ -1160,7 +1160,7 @@
       "http": "POST /api/science/plan; POST /api/science/submit",
       "compute": "gpu",
       "outputs": [
-        "Per-layer native readout, identity-transport baseline, matrix differences, and optional paired float32 readout on the same held-out positions."
+        "Per-layer native readout, identity-transport baseline, matrix differences, and optional paired float32 readout on the same held-out positions; one identified comparison per candidate lens and corpus when several are named."
       ],
       "restriction": "Uses reviewed inputs and immutable scientific outputs. No environment installation, automatic retries, or scientific qualification.",
       "actions": [

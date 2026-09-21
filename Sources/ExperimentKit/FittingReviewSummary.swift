@@ -35,6 +35,9 @@ public enum FittingReviewSummary {
             }
         case "jlens-fit-assess":
             result.append("Up to \(number(review["rows"])) corpus rows across \(count(review["sourceLayers"])) source layers, using the selected position cap.")
+            if case .number(let comparisons) = review["comparisons"], comparisons.isFinite {
+                result.append("\(count(review["candidateLensIDs"])) candidate lenses on \(count(review["corpora"])) held-out corpora: \(number(.number(comparisons))) comparisons in one job. Each lens travels once, activations are captured once per corpus, and candidates are compared one after another, so the budget below is the largest single corpus, not a sum.")
+            }
             result.append("Includes a plain-residual (logit-lens) baseline on the same token positions as both lenses.")
             if case .object(let readout) = review["readoutReview"],
                case .string(let summary) = readout["summary"] {

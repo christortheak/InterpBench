@@ -32,6 +32,18 @@ import Testing
         #expect(lines.last?.contains("does not prove") == true)
     }
 
+    @Test func assessmentListFormNamesComparisonsAndMaximumBudget() throws {
+        let value = try draft(#"{"operationReview":{"rows":4,"sourceLayers":[0,1],"comparisons":6,"candidateLensIDs":["a","b"],"corpora":[{"path":"x","sha256":"0","rows":4},{"path":"y","sha256":"1","rows":2},{"path":"z","sha256":"2","rows":3}]}}"#)
+        let lines = FittingReviewSummary.lines(operation: "jlens-fit-assess", draft: value)
+        #expect(lines.contains { $0.contains("2 candidate lenses on 3 held-out corpora: 6 comparisons") && $0.contains("not a sum") })
+        let single = try draft(#"{"operationReview":{"rows":4,"sourceLayers":[0,1]}}"#)
+        #expect(!FittingReviewSummary.lines(operation: "jlens-fit-assess", draft: single).contains { $0.contains("comparisons in one job") })
+        let workflow = try #require(ScienceCatalog.workflows().first { $0.id == "jlens-fit-assess" })
+        for id in ["candidateLensIDs", "corpora", "candidateLensID", "corpus"] {
+            #expect(workflow.fields.first { $0.id == id }?.required == false)
+        }
+    }
+
     @Test func assessmentStorageIsSeparateFromPeakMemory() throws {
         let value = try draft(#"{"operationReview":{"rows":16,"sourceLayers":[0,1],"resources":{"temporaryActivationBytesUpperBound":1073741824,"float32LensPairBytes":536870912}}}"#)
         let lines = FittingReviewSummary.lines(operation: "jlens-fit-assess", draft: value)

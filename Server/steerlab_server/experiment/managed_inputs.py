@@ -14,29 +14,34 @@ def inventory(operation, config, root):
         archives.parts(reference)
         candidates = [reference + '.json', reference + '.safetensors'] if artifact else [reference]
         for candidate in candidates: files.update(archives.files_in(root, candidate))
+    def add_lens(value):
+        if not isinstance(value, str): raise archives.Refusal('Lens IDs must be single components.')
+        archives.parts(value)
+        if '/' in value: raise archives.Refusal('Lens IDs must be single components.')
+        directory = Path(paths.jlens_lens_directory(value, str(root)))
+        # Ship the record, its import receipt, and the converted tensor the
+        # engine reads; not the `source/` provenance copy of the original
+        # bytes, which doubles a multi-gigabyte lens and is never read at
+        # execution. The receipt still names the source hashes.
+        lens_dir = directory.relative_to(root).as_posix()
+        add(lens_dir + '/lens.json')
+        if archives.ordinary(root, lens_dir + '/import-receipt.json', missing=True).is_file():
+            add(lens_dir + '/import-receipt.json')
+        record = json.loads((directory / 'lens.json').read_bytes())
+        from ..jlens import artifact_paths
+        converted = record.get('converted') or {}
+        selected = Path(artifact_paths.converted_file(value, converted['path'], str(root)))
+        if not selected.is_relative_to(root): raise archives.Refusal('Managed lenses require converted tensors in the workspace lens library.')
+        relative = selected.relative_to(root).as_posix()
+        add(relative)
+        if archives.file_hash(archives.ordinary(root, relative)) != converted.get('sha256'):
+            raise archives.Refusal('Converted lens bytes differ from the imported hash; re-import or restore the lens.')
     def walk(value, key=''):
         if value is None: return
-        if roles.get(key) == 'lens':
-            archives.parts(value)
-            if '/' in value: raise archives.Refusal('Lens IDs must be single components.')
-            directory = Path(paths.jlens_lens_directory(value, str(root)))
-            # Ship the record, its import receipt, and the converted tensor the
-            # engine reads; not the `source/` provenance copy of the original
-            # bytes, which doubles a multi-gigabyte lens and is never read at
-            # execution. The receipt still names the source hashes.
-            lens_dir = directory.relative_to(root).as_posix()
-            add(lens_dir + '/lens.json')
-            if archives.ordinary(root, lens_dir + '/import-receipt.json', missing=True).is_file():
-                add(lens_dir + '/import-receipt.json')
-            record = json.loads((directory / 'lens.json').read_bytes())
-            from ..jlens import artifact_paths
-            converted = record.get('converted') or {}
-            selected = Path(artifact_paths.converted_file(value, converted['path'], str(root)))
-            if not selected.is_relative_to(root): raise archives.Refusal('Managed lenses require converted tensors in the workspace lens library.')
-            relative = selected.relative_to(root).as_posix()
-            add(relative)
-            if archives.file_hash(archives.ordinary(root, relative)) != converted.get('sha256'):
-                raise archives.Refusal('Converted lens bytes differ from the imported hash; re-import or restore the lens.')
+        if roles.get(key) == 'lens': add_lens(value)
+        elif roles.get(key) == 'lenses' and isinstance(value, list):
+            # Each distinct lens is inventoried once; `files` is a set.
+            for item in value: add_lens(item)
         elif roles.get(key) == 'artifact' and isinstance(value, str): add(value, artifact=True)
         elif roles.get(key) == 'file' and isinstance(value, str):
             add(value)

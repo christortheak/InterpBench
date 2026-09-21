@@ -36,6 +36,14 @@ def value(field, text, root, evidence):
         if not result: raise archives.Refusal('Choose at least one input.')
         for item in result: archives.parts(item)
         return result
+    if kind == 'texts':
+        result = [item.strip() for item in text.replace('\n', ',').split(',') if item.strip()]
+        if not result: raise archives.Refusal('Supply at least one entry, one per line or comma-separated.')
+        return result
+    if kind == 'fileRefs':
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not lines: raise archives.Refusal('Choose at least one input file, one per line.')
+        return [value({**field, 'kind': 'fileRef'}, line, root, evidence) for line in lines]
     if kind in ('artifact', 'file', 'fileRef', 'documentFile'):
         archives.parts(text)
         if kind == 'artifact':

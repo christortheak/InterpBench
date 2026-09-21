@@ -38,7 +38,7 @@ def artifacts():
             assert all(isinstance(v, str) and v for v in binding.values())
             bindings[name] = binding
         roles[name] = {**metadata['inputRoleProfiles'][spec['inputRoleProfile']], **spec['inputRoles']}
-        assert all(v in {'artifact', 'artifacts', 'file', 'trees', 'lens'} for v in roles[name].values())
+        assert all(v in {'artifact', 'artifacts', 'file', 'trees', 'lens', 'lenses'} for v in roles[name].values())
     interviews = sorted((s for s in specs if 'interview' in s), key=lambda s: s['interviewOrder'])
     assert len({s['interviewOrder'] for s in interviews}) == len(interviews)
     catalog = {**metadata['catalog'], 'operations': [s['catalog'] for s in sorted(specs, key=lambda s: s['order'])]}

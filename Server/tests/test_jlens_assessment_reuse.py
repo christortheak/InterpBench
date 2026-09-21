@@ -77,7 +77,7 @@ def test_matches_landed_numerics_with_one_read_and_placement_per_lens_layer(asse
     monkeypatch.setattr(lens_store, 'load_layer', load)
     monkeypatch.setattr(jlens_fit_model, 'load', model)
     after = read_report(assessment.assess(config, root=root))
-    assert {key: value for key, value in after.items() if key not in ('resources', 'readoutComparison')} == before
+    assert {key: value for key, value in after.items() if key not in ('resources', 'readoutComparison', 'comparisons')} == before
     assert after['layers']['0']['betweenLenses']['meanJSDivergence'] > 0
     assert len(loads) == len(placements) == 4  # independent of three rows × three chunks
     assert forwards == [24, 30, 25]
@@ -117,7 +117,7 @@ def test_all_short_rows_require_no_lens_reads(assessment_case, monkeypatch):
     def unexpected(*args, **kwargs): pytest.fail('no lens should be read without eligible positions')
     monkeypatch.setattr(lens_store, 'load_layer', unexpected)
     after = read_report(assessment.assess(config, root=root))
-    assert {k: v for k, v in after.items() if k not in ('resources', 'readoutComparison')} == before
+    assert {k: v for k, v in after.items() if k not in ('resources', 'readoutComparison', 'comparisons')} == before
     assert after['resources']['capturedActivationBytes'] == after['resources']['lensLayerReads'] == 0
 
 

@@ -497,9 +497,10 @@ whether stability or the row budget ended the fit. Fixed-budget shards refuse
 per-shard stopping: independent stopping changes the sample and does not
 reconstruct the serial convergence series.
 
-For `jlens-fit-assess`, choose two registered versions and held-out text. On the
-same captured source activations, the owner applies each J matrix, then the
-model's actual final normalization and unembedding. It reports Jensen–Shannon
+For `jlens-fit-assess`, choose a reference lens, one or more candidate lenses,
+and one or more held-out texts. On the same captured source activations, the
+owner applies each J matrix, then the model's actual final normalization and
+unembedding. It reports Jensen–Shannon
 divergence in nats and top-k token-set overlap, both between lenses and against
 the actual final residual. Aggregation weights assessed token positions equally;
 only the first eligible positions up to the declared cap are assessed. Position
@@ -514,6 +515,20 @@ Jensen–Shannon divergence means closer distributions; higher top-k overlap mea
 more shared top tokens. Compare the baseline with each lens, rather than assuming
 that a transported residual predicts final tokens better. These metrics do not
 measure whether transporting an intervention direction is causally useful.
+
+**Several candidates and corpora in one job:** `candidateLensIDs` (a list of
+registered lens IDs) and `corpora` (a list of pinned files) replace the single
+`candidateLensID` and `corpus`; a request names one form per axis, never both.
+Each distinct lens is inventoried and uploaded once, activations are captured
+once per corpus and shared by every candidate, and candidates are compared one
+after another with one lens layer pair resident, so the budget is the largest
+single corpus rather than a sum. The report (`schemaVersion` 2) carries a
+`comparisons` list with one identified, digested entry per candidate and corpus,
+and the same entry is written alone under `comparisons/`. A single pair through
+the list form yields the same comparison content as the single form, whose
+report (`schemaVersion` 1) is unchanged apart from its own one-entry
+`comparisons` list. A lens the runner already holds is not reused across
+requests; every request still carries its lenses.
 
 **Readout precision:** leave `readoutDtype` absent for the historical native path,
 or choose `float32` to add a paired comparison. The app offers a picker; both CLIs

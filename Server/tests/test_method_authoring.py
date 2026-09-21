@@ -90,7 +90,8 @@ def test_every_interview_field_is_a_key_its_owner_accepts():
     source = json.loads(science_catalog.resource('workflows.json'))
     placeholders = {'text': 'x', 'integer': 1, 'number': 1.0, 'boolean': True, 'integers': [1], 'numbers': [1.0],
                     'artifact': 'runs/a/v', 'artifacts': ['runs/a/v', 'runs/a/w'], 'file': 'runs/a', 'files': ['runs/a', 'runs/b'],
-                    'fileRef': {'path': 'items.jsonl', 'sha256': '0' * 64}, 'documentFile': {}}
+                    'fileRef': {'path': 'items.jsonl', 'sha256': '0' * 64}, 'documentFile': {},
+                    'texts': ['x', 'y'], 'fileRefs': [{'path': 'items.jsonl', 'sha256': '0' * 64}]}
     for item in source['operations']:
         if item['id'] not in managed_methods.METHODS and item['id'] != 'optvec-campaign':
             continue

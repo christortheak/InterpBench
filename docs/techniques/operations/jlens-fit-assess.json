@@ -10,7 +10,7 @@
     "http": "POST /api/science/plan; POST /api/science/submit",
     "compute": "gpu",
     "outputs": [
-      "Per-layer native readout, identity-transport baseline, matrix differences, and optional paired float32 readout on the same held-out positions."
+      "Per-layer native readout, identity-transport baseline, matrix differences, and optional paired float32 readout on the same held-out positions; one identified comparison per candidate lens and corpus when several are named."
     ],
     "restriction": "Uses reviewed inputs and immutable scientific outputs. No environment installation, automatic retries, or scientific qualification.",
     "actions": [
@@ -40,7 +40,7 @@
     "id": "jlens-fit-assess",
     "title": "Assess successive lenses on held-out text",
     "method": "jlens",
-    "purpose": "Compare two lenses with each other, with final predictions, and with the plain residual (logit-lens baseline). Optionally compare native and float32 readout without refitting.",
+    "purpose": "Compare lenses with each other, with final predictions, and with the plain residual (logit-lens baseline). One request may name several candidate lenses and several held-out corpora: each lens uploads once, activations are captured once per corpus, and every candidate–corpus pair gets its own identified comparison. Optionally compare native and float32 readout without refitting.",
     "fields": [
       {
         "id": "modelID",
@@ -60,8 +60,15 @@
         "id": "corpus",
         "label": "Held-out text corpus",
         "kind": "fileRef",
-        "required": true,
-        "help": "Unique id and text per JSONL row. Choose text not used for fitting or method selection; a different file hash alone does not prove independence."
+        "required": false,
+        "help": "Unique id and text per JSONL row. Choose text not used for fitting or method selection; a different file hash alone does not prove independence. Leave blank when listing several corpora below."
+      },
+      {
+        "id": "corpora",
+        "label": "Held-out text corpora (several)",
+        "kind": "fileRefs",
+        "required": false,
+        "help": "One workspace-relative JSONL file per line; use this instead of the single corpus when the same lenses should be assessed on several held-out texts in one job. Activations are captured once per corpus."
       },
       {
         "id": "referenceLensID",
@@ -74,8 +81,15 @@
         "id": "candidateLensID",
         "label": "Candidate registered lens",
         "kind": "text",
-        "required": true,
-        "help": "Choose the later fit or merged round from the same model and known model revision."
+        "required": false,
+        "help": "Choose the later fit or merged round from the same model and known model revision. Leave blank when listing several candidates below."
+      },
+      {
+        "id": "candidateLensIDs",
+        "label": "Candidate registered lenses (several)",
+        "kind": "texts",
+        "required": false,
+        "help": "One registered lens ID per line (or comma-separated); use this instead of the single candidate to compare several lenses with the same reference in one upload. Each lens travels once; candidates are compared one after another, so memory stays at one lens layer pair."
       },
       {
         "id": "maxPrompts",
@@ -151,7 +165,8 @@
   "inputRoleProfile": "managed-v1",
   "inputRoles": {
     "referenceLensID": "lens",
-    "candidateLensID": "lens"
+    "candidateLensID": "lens",
+    "candidateLensIDs": "lenses"
   },
   "binding": {
     "module": "jlens_assessment",
