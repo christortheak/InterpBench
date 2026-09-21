@@ -179,7 +179,16 @@ each with a regression test and a dated note, and do not widen scope.
    every lens by hash. *Status:* the first option is implemented; see
    `docs/JLENS-MULTI-CANDIDATE-ASSESSMENT-2026-09-21.md`. Cross-request lens
    reuse remains open.
-8. **Cold-ledger import policy** (carried from the results handoff): decide
+8. **Walltime for managed science jobs.** Every science job requests the
+   site's default walltime (24 hours from the cluster environment), so a
+   19-minute assessment queues behind multi-day jobs instead of backfilling
+   into gaps; on a busy day the scheduler estimated a five-hour wait for a
+   job that runs in twenty minutes. Add a per-request walltime (as the GPU
+   type already is: reviewed, bound into the plan hash, refused above the
+   site cap) and a per-operation default sized from the plan's own estimate
+   with margin, so short assessments, benchmarks, and CPU merges backfill.
+   The fitting shards keep the long default.
+9. **Cold-ledger import policy** (carried from the results handoff): decide
    and document how imported evidence from a controller that no longer exists
    is adopted without a live reconcile.
 
