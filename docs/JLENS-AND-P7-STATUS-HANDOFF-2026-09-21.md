@@ -166,7 +166,18 @@ each with a regression test and a dated note, and do not widen scope.
    evidence bytes with warm-up, repeats, and dispersion, for the six
    configurations named in the closure handoff. No targets; the researcher
    reads the numbers.
-7. **Cold-ledger import policy** (carried from the results handoff): decide
+7. **Assess several lenses from one upload.** Every `jlens-fit-assess`
+   request carries both lenses it compares (about 12 GB for a pair of 27B
+   lenses), so comparing two candidates against one reference on three
+   held-outs meant six uploads of the same two pairs, six stagings that each
+   hash 12 GB and hold the submission lock, and several hours of transfer
+   for a few minutes of GPU work. Either let one assessment take several
+   candidate lenses and several corpora (one upload, one job, a report per
+   pair and corpus, activations captured once per corpus), or let a request
+   reference a lens the runner already holds by its converted-tensor hash so
+   a lens uploads once per runner. Keep content pinning: the plan still binds
+   every lens by hash.
+8. **Cold-ledger import policy** (carried from the results handoff): decide
    and document how imported evidence from a controller that no longer exists
    is adopted without a live reconcile.
 
