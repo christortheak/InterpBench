@@ -429,6 +429,24 @@ when submitting (or cancelling against that same review). Changed placement
 needs a fresh review. CPU merge and status actions take no placement fields.
 These bodies use the existing `science-call` commands above on both clients.
 
+The scheduler walltime is chosen the same way: `--walltime <hh:mm:ss>` (or
+`D-HH:MM:SS`) on `science-plan`/`science-submit`, or `walltime` beside the
+request on the HTTP routes, at most the site cap (the configured default
+walltime). It is bound into the plan hash, so a plan reviewed with one walltime
+cannot be submitted with another, and the plan's `walltimeBasis` says which rule
+chose it: `requested`, `estimated`, or `siteDefault`. Omitted, a
+`jlens-fit-assess` plan sizes its own default from the reviewed rows, source
+layers, and comparisons with a generous margin (three times an already
+conservative allowance, plus thirty minutes for model load, rounded up to
+fifteen minutes, at least one hour, never above the cap) so a short assessment
+backfills instead of queueing as a day-long job; the review records the
+estimate and its calibration. Every other operation, and every `jlens-fit`
+shard, keeps the site default; request a shorter walltime explicitly for a job
+you know is short, and remember that the scheduler kills a job at its limit.
+For a round top-up, `walltime` and the per-shard `shardWalltimes` map follow the
+placement fields exactly (pending shards in `submitIndices` only, repeated on
+submit, recorded per shard in the round status).
+
 Already attempted shards cannot be redirected, including uncertain submissions.
 Their placement stays in durable job records and round bookkeeping; changing
 the top-up default affects only newly submitted shards. No automatic retry,

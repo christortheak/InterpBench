@@ -12,6 +12,23 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- Managed science jobs take a per-request scheduler walltime, shaped like the
+  per-request GPU type: `walltime` (`HH:MM:SS` or `D-HH:MM:SS`) beside the
+  request on `/api/science/plan` and `/api/science/submit`, `--walltime` on
+  `steerlab-cli remote science-plan`/`science-submit` and `steerlab runner
+  science-plan`/`science-submit`, and `walltime` plus a per-shard
+  `shardWalltimes` map on fitting-round `plan`/`submit`/`cancel`. It is
+  validated, refused above the site cap (the configured default walltime),
+  rendered as `--time`, bound into `planSHA256`, and recorded in the plan's
+  `resources`, the job's `scientificPlan`, and the round state. Without one,
+  a `jlens-fit-assess` plan gets a backfill-sized default from its own
+  reviewed workload (three times a conservative allowance plus thirty
+  minutes, rounded up to fifteen minutes, at least one hour, capped at the
+  site cap); every other operation, including every `jlens-fit` shard, keeps
+  the site default. `walltimeBasis` (`requested`, `estimated`, `siteDefault`)
+  and `walltimeReview` say which rule applied. Slurm plans reviewed before
+  this change hash differently; review again before submitting. See
+  `docs/SCIENCE-WALLTIME-2026-09-21.md`.
 - `jlens-fit-assess` takes several candidate lenses and several held-out
   corpora in one request: `candidateLensIDs` (list of registered lens IDs)
   and `corpora` (list of `{path, sha256}`) beside the unchanged single

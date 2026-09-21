@@ -2636,6 +2636,29 @@ import Testing
         if case .object(let typed) = bodies[3] { #expect(typed["gpuType"] == .string("H100") && typed["planSHA256"] == .string(String(repeating: "b", count: 64))) } else { Issue.record("typed submit body") }
     }
 
+    @Test func scientificPlanAndSubmitCarryAWalltimeBesideTheGPUType() async throws {
+        let staged = JSONValue.object(["inputBundleSHA256": .string(String(repeating: "a", count: 64))])
+        let recorded = RecordedBodies()
+        let client = ClusterClient(profile: .init(baseURL: URL(string: "http://server.test")!), session: Self.session { request in
+            if let data = Self.bodyData(from: request), let value = try? JSONDecoder().decode(JSONValue.self, from: data) { recorded.append(value) }
+            return (Data("{\"jobId\":\"fixture-job\",\"status\":\"submitted\"}".utf8), 200)
+        })
+        _ = try await client.scientificPlan(staged, walltime: "02:30:00")
+        _ = try await client.scientificPlan(staged, gpuType: "H100", walltime: "02:30:00")
+        _ = try await client.scientificSubmit(staged, planSHA256: String(repeating: "b", count: 64), walltime: "02:30:00")
+        let bodies = recorded.values
+        #expect(bodies.count == 3)
+        #expect(bodies[0] == .object(["request": staged, "walltime": .string("02:30:00")]))
+        #expect(bodies[1] == .object(["request": staged, "gpuType": .string("H100"), "walltime": .string("02:30:00")]))
+        if case .object(let timed) = bodies[2] {
+            #expect(timed["walltime"] == .string("02:30:00") && timed["gpuType"] == nil && timed["planSHA256"] == .string(String(repeating: "b", count: 64)))
+        } else { Issue.record("timed submit body") }
+        for verb in ["science-plan", "science-submit"] {
+            let spec = try #require(ExperimentCLIParser.spec(namespace: "remote", verb: verb))
+            #expect(spec.valueFlags.isSuperset(of: ["--gpu-type", "--walltime"]))
+        }
+    }
+
     @Test func scientificGPUChoicesComeFromCapturedController() async throws {
         let client = ClusterClient(profile: .init(baseURL: URL(string: "http://server.test")!), session: Self.session { request in
             #expect(request.url?.path == "/api/capabilities")

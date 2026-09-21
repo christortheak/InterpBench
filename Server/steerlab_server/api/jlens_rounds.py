@@ -73,10 +73,12 @@ def capacity_review(limit, active, rows, parent):
     }
 
 
-def action(job_id,action,expected,confirmed,jobs,profile, *, gpu_type=None, shard_gpu_types=None):
+def action(job_id,action,expected,confirmed,jobs,profile, *, gpu_type=None, shard_gpu_types=None, walltime=None, shard_walltimes=None):
     if action not in ('status','plan','submit','cancel','merge-plan','merge-submit'):raise archives.Refusal('Unknown fitting-round action.')
     if (gpu_type is not None or shard_gpu_types is not None) and action not in ('plan', 'submit', 'cancel'):
         raise archives.Refusal('GPU placement applies to shard plan and submit actions, not status or CPU merge.')
+    if (walltime is not None or shard_walltimes is not None) and action not in ('plan', 'submit', 'cancel'):
+        raise archives.Refusal('A walltime applies to shard plan and submit actions, not status or CPU merge.')
     mutation=action in ('submit','cancel','merge-submit')
     if mutation and confirmed is not True:raise archives.Refusal('Confirm the reviewed fitting-round action.')
     # One hash scope for the whole action: the capsule verification in
@@ -107,6 +109,27 @@ def action(job_id,action,expected,confirmed,jobs,profile, *, gpu_type=None, shar
         placements = state.get('placements', {})
         if not isinstance(placements, dict):
             raise archives.Refusal('Round placement bookkeeping is malformed; inspect durable jobs.')
+        # A walltime follows the GPU type's shape exactly: one default for this
+        # top-up, per-shard overrides on pending shards in submitIndices, both
+        # bound into the review hash through the child plans, and remembered
+        # per shard so an uncertain submission keeps what it asked for.
+        from . import science_walltime
+        if walltime is not None: science_walltime.validate(walltime, resources)
+        walltime_overrides = {} if shard_walltimes is None else shard_walltimes
+        if not isinstance(walltime_overrides, dict):
+            raise archives.Refusal('shardWalltimes must map zero-based shard indices to walltimes (HH:MM:SS).')
+        for key, value in walltime_overrides.items():
+            if not isinstance(key, str) or key not in {str(i) for i in range(len(round_plan['shards']))}:
+                raise archives.Refusal('Use a canonical zero-based shard index in shardWalltimes.')
+            science_walltime.validate(value, resources)
+        walltimes = state.get('walltimes', {})
+        if not isinstance(walltimes, dict):
+            raise archives.Refusal('Round walltime bookkeeping is malformed; inspect durable jobs.')
+        def shape(index):
+            chosen_type = overrides.get(str(index), gpu_type)
+            chosen_walltime = walltime_overrides.get(str(index), walltime)
+            return {**({'gpu_type': chosen_type} if chosen_type is not None else {}),
+                    **({'walltime': chosen_walltime} if chosen_walltime is not None else {})}
         rows=[]
         for index,request in enumerate(round_plan['shards']):
             matches=matching_jobs(jobs,job_id,index)
@@ -118,10 +141,15 @@ def action(job_id,action,expected,confirmed,jobs,profile, *, gpu_type=None, shar
         if gpu_type is not None or overrides:
             if profile.executor != 'slurm':
                 raise archives.Refusal('GPU placement requires a Slurm controller.')
+        if walltime is not None or walltime_overrides:
+            if profile.executor != 'slurm':
+                raise archives.Refusal('A walltime requires a Slurm controller.')
         for row in rows:
             key = str(row['index'])
             if key in overrides and row['status'] != 'pending':
                 raise archives.Refusal('Shard ' + key + ' has already been attempted; its placement cannot be changed or retried here.')
+            if key in walltime_overrides and row['status'] != 'pending':
+                raise archives.Refusal('Shard ' + key + ' has already been attempted; its walltime cannot be changed or retried here.')
             job = jobs.get(row['jobID']) if row['jobID'] else None
             submitted_plan = (job.result or {}).get('scientificPlan', {}) if job else {}
             if submitted_plan.get('resources', {}).get('gres'):
@@ -130,27 +158,35 @@ def action(job_id,action,expected,confirmed,jobs,profile, *, gpu_type=None, shar
                 row['gpuType'] = placements[key]
             else:
                 row['gpuType'] = None
+            submitted_walltime = science_walltime.walltime_of(submitted_plan.get('resources'))
+            row['walltime'] = submitted_walltime if submitted_walltime else walltimes.get(key)
         active=[j for j in jobs.list() if j.status not in TERMINAL and j.kind.startswith('science:') and j.id!=job_id]
         uncertain=sum(row['status']=='uncertain' for row in rows)
         slots=max(0,round_plan['config']['maxConcurrent']-len(active)-uncertain)
         pending=[row['index'] for row in rows if row['status']=='pending'][:slots]
         if any(int(key) not in pending for key in overrides):
             raise archives.Refusal('Per-shard GPU overrides must name shards in this top-up’s submitIndices; review capacity first.')
+        if any(int(key) not in pending for key in walltime_overrides):
+            raise archives.Refusal('Per-shard walltime overrides must name shards in this top-up’s submitIndices; review capacity first.')
         selected={}
         for index in pending:
             selected[str(index)]=scientific_execution.plan(round_plan['shards'][index],profile,
-                execution_capsule=capsule,round_submission={'parentJobID':job_id,'shardIndex':index},
-                **({'gpu_type': overrides.get(str(index), gpu_type)} if overrides.get(str(index), gpu_type) is not None else {}))
+                execution_capsule=capsule,round_submission={'parentJobID':job_id,'shardIndex':index},**shape(index))
         plan={'jobID':job_id,'roundPlanSHA256':round_plan['planSHA256'],'state':state,'shards':rows,
               'capacity':capacity_review(round_plan['config']['maxConcurrent'],active,rows,job_id),
               'availableSlots':slots,'submitIndices':pending,'childPlans':selected,'changed':False,
               'scope':'Concurrency counts active scientific jobs on this controller. Set the declared cap within site policy; scheduler policy remains authoritative. Uncertain submissions reserve capacity until reconciled; top-ups never retry them.'}
         if gpu_type is not None or overrides:
             plan['placement'] = {'gpuType': gpu_type, 'shardGPUTypes': overrides}
+        if walltime is not None or walltime_overrides:
+            plan['walltimeRequest'] = {'walltime': walltime, 'shardWalltimes': walltime_overrides}
         for row in rows:
             child = selected.get(str(row['index']))
             if child and child['resources'].get('gres'):
                 row['gpuType'] = science_placement.gpu_type(SlurmResources(**child['resources']))
+            if child and science_walltime.walltime_of(child['resources']):
+                row['walltime'] = science_walltime.walltime_of(child['resources'])
+                row['walltimeBasis'] = child.get('walltimeBasis')
         if action in ('merge-plan','merge-submit'):
             fits=[]
             for row in rows:
@@ -182,10 +218,11 @@ def action(job_id,action,expected,confirmed,jobs,profile, *, gpu_type=None, shar
             child_resources = selected[str(index)]['resources']
             if child_resources.get('gres'):
                 state.setdefault('placements', {})[str(index)] = science_placement.gpu_type(SlurmResources(**child_resources))
+            if science_walltime.walltime_of(child_resources):
+                state.setdefault('walltimes', {})[str(index)] = science_walltime.walltime_of(child_resources)
             write_state(path,state)
             result=scientific_execution.submit(round_plan['shards'][index],selected[str(index)]['planSHA256'],
-                profile=profile,jobs=jobs,execution_capsule=capsule,round_submission={'parentJobID':job_id,'shardIndex':index},
-                **({'gpu_type': overrides.get(str(index), gpu_type)} if overrides.get(str(index), gpu_type) is not None else {}))
+                profile=profile,jobs=jobs,execution_capsule=capsule,round_submission={'parentJobID':job_id,'shardIndex':index},**shape(index))
             submitted.append(result)
             if result['status']=='parked':break
         return {'changed':bool(submitted),'submissions':submitted,'nextAction':'Inspect durable shard jobs, then review another top-up when slots become free. Continue a stopped shard from its own checkpoint in a new reviewed run.'}

@@ -187,7 +187,11 @@ each with a regression test and a dated note, and do not widen scope.
    type already is: reviewed, bound into the plan hash, refused above the
    site cap) and a per-operation default sized from the plan's own estimate
    with margin, so short assessments, benchmarks, and CPU merges backfill.
-   The fitting shards keep the long default.
+   The fitting shards keep the long default. *Status:* implemented; see
+   `docs/SCIENCE-WALLTIME-2026-09-21.md`. The estimated default covers
+   `jlens-fit-assess`; benchmarks take an explicit `--walltime` (no
+   calibrated estimate precedes the measurement itself), and CPU merges run
+   on the controller's local executor, where no walltime applies.
 9. **Cold-ledger import policy** (carried from the results handoff): decide
    and document how imported evidence from a controller that no longer exists
    is adopted without a live reconcile.

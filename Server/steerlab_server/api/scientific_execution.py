@@ -146,7 +146,7 @@ def input_plan(request, root):
 
 
 @input_hashes.operation
-def plan(request, profile, *, execution_capsule=None, round_submission=None, gpu_type=None):
+def plan(request, profile, *, execution_capsule=None, round_submission=None, gpu_type=None, walltime=None):
     with submitting():
         if server_role(profile) == 'gpu-session':
             raise ScientificRefusal('Submit through the controller; session workers own no durable job queue.')
@@ -196,6 +196,22 @@ def plan(request, profile, *, execution_capsule=None, round_submission=None, gpu
             resources.gres = 'gpu:' + gpu_type + ':' + str(resources.gpus)
             result['requestedGPUType'] = gpu_type
             result['gpuReview'] = science_placement.review(resources, result.get('fittingReview', result.get('operationReview')))
+        # A walltime is execution shape like the GPU type: reviewed here, bound
+        # into planSHA256 through the resources block, never in the request.
+        # Without one, an operation with a calibrated workload estimate gets a
+        # default sized to backfill; everything else keeps the site default.
+        from . import science_walltime
+        if selected_executor == 'slurm':
+            result['walltimeReview'] = science_walltime.review(result, resources, walltime)
+        elif walltime is not None:
+            # The local executor enforces no limit; the request is validated and
+            # recorded so the reviewed plan says what was asked.
+            result['walltimeReview'] = {'walltime': science_walltime.render(science_walltime.parse(walltime)), 'basis': 'requested',
+                                        'summary': 'Recorded only: the local executor enforces no walltime.'}
+        if 'walltimeReview' in result:
+            result['walltimeBasis'] = result['walltimeReview']['basis']
+            if walltime is not None:
+                result['requestedWalltime'] = result['walltimeReview']['walltime']
         result['resources'] = asdict(resources) if selected_executor == 'slurm' else {'executor': 'local'}
         if selected_executor == 'slurm':
             # Render without writing to apply the same required-header and GRES
@@ -216,9 +232,9 @@ def write_json(path, document):
     os.replace(temporary, path)
 
 
-def submit(request, expected, *, profile, jobs, registry=None, execution_capsule=None, round_submission=None, gpu_type=None):
+def submit(request, expected, *, profile, jobs, registry=None, execution_capsule=None, round_submission=None, gpu_type=None, walltime=None):
     with submitting():
-        reviewed = plan(request, profile, execution_capsule=execution_capsule, round_submission=round_submission, gpu_type=gpu_type)
+        reviewed = plan(request, profile, execution_capsule=execution_capsule, round_submission=round_submission, gpu_type=gpu_type, walltime=walltime)
         if reviewed['planSHA256'] != expected:
             raise ScientificRefusal('The request, inputs, root or resource plan changed after review; nothing was submitted.')
         from ..experiment import paths

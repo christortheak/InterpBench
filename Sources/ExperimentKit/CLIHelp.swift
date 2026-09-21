@@ -355,7 +355,11 @@ public enum CLIFlagVocabulary {
             "Scheduler wall-time request. On `remote resubmit` it OVERRIDES "
             + "the rendered script's own limit for the continuation — on the "
             + "scheduler's command line (flag beats header), so the script "
-            + "itself is still re-submitted byte-for-byte.",
+            + "itself is still re-submitted byte-for-byte. On `remote "
+            + "science-plan`/`science-submit` it is the managed job's own "
+            + "limit (HH:MM:SS, at most the site cap), bound into planSHA256; "
+            + "omitted, an operation with a calibrated estimate gets a "
+            + "backfill-sized default and everything else the site default.",
         "--write": "Rewrite this engine's marked regions in place.",
     ]
 

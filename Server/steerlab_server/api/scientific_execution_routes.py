@@ -19,28 +19,30 @@ def build_scientific_execution_router(state):
 
     def placement(body):
         # A request document never has a top-level `request` key, so the wrapped
-        # form {request, gpuType} is unambiguous; a bare document keeps today's shape.
-        if isinstance(body, dict) and 'request' in body and set(body) <= {'request', 'gpuType'}:
-            return body['request'], body.get('gpuType')
-        return body, None
+        # form {request, gpuType?, walltime?} is unambiguous; a bare document
+        # keeps today's shape.
+        if isinstance(body, dict) and 'request' in body and set(body) <= {'request', 'gpuType', 'walltime'}:
+            return body['request'], body.get('gpuType'), body.get('walltime')
+        return body, None, None
 
     @router.post('/api/science/plan')
     def plan(body: dict):
         try:
-            request, gpu_type = placement(body)
-            return scientific_execution.plan(request, ServerProfile.from_env(), gpu_type=gpu_type)
+            request, gpu_type, walltime = placement(body)
+            return scientific_execution.plan(request, ServerProfile.from_env(), gpu_type=gpu_type, walltime=walltime)
         except (ValueError, OSError) as exc:
             raise refuse(exc) from exc
 
     @router.post('/api/science/submit')
     def submit(body: dict):
         try:
-            if not {'request', 'planSHA256'} <= set(body) <= {'request', 'planSHA256', 'gpuType'} or not isinstance(body['planSHA256'], str):
-                raise ValueError('Supply exactly request and planSHA256 from the reviewed plan, with the same gpuType if one was reviewed.')
+            if not {'request', 'planSHA256'} <= set(body) <= {'request', 'planSHA256', 'gpuType', 'walltime'} or not isinstance(body['planSHA256'], str):
+                raise ValueError('Supply exactly request and planSHA256 from the reviewed plan, with the same gpuType and walltime if either was reviewed.')
             if state.jobs is None:
                 raise ValueError('Submit on the controller or workstation that owns the job queue.')
             return scientific_execution.submit(body['request'], body['planSHA256'],
-                profile=ServerProfile.from_env(), jobs=state.jobs, registry=state.registry, gpu_type=body.get('gpuType'))
+                profile=ServerProfile.from_env(), jobs=state.jobs, registry=state.registry,
+                gpu_type=body.get('gpuType'), walltime=body.get('walltime'))
         except (ValueError, OSError) as exc:
             raise refuse(exc) from exc
 
