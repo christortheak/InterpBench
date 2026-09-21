@@ -3,6 +3,13 @@
 There is no persistent receipt cache. Every operation starts from bytes again;
 identity, size, timestamps, and regular-file status are rechecked on every use
 and at scope exit. The queued worker starts its own scope.
+
+A caller that performs several operations over the same inputs inside one
+request (a fitting-round action plans, then submits, which plans again) may open
+one `session()` around them so each input is read once; the inner operations
+then join that scope instead of opening their own. Such a caller must call
+`recheck()` before it records or publishes anything, because the shared scope's
+exit check runs only after the caller returns.
 """
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -45,18 +52,32 @@ def file_hash(path):
     return digest
 
 
+def recheck():
+    """Confirm every input reviewed in the active scope still matches its stamp.
+
+    Reads no bytes: identity, size, timestamps, and regular-file status are
+    compared against the fingerprint taken when the digest was computed. Call
+    it before recording or publishing a decision that rests on the reviewed
+    digests. Outside a scope there is nothing to recheck and it returns 0.
+    """
+    cache = _active.get()
+    if cache is None:
+        return 0
+    for path, (stamp, _) in cache.items():
+        if fingerprint(path) != stamp:
+            raise ValueError('An input changed before review finished: ' + path)
+    return len(cache)
+
+
 @contextmanager
 def session():
     if _active.get() is not None:
         yield
         return
-    cache = {}
-    token = _active.set(cache)
+    token = _active.set({})
     try:
         yield
-        for path, (stamp, _) in cache.items():
-            if fingerprint(path) != stamp:
-                raise ValueError('An input changed before review finished: ' + path)
+        recheck()
     finally:
         _active.reset(token)
 
