@@ -32,6 +32,18 @@ migration that rewrites frozen bytes.
   `fileRefs` field kinds); managed inputs gain the `lenses` role. Lenses are
   not reused across requests. See
   `docs/JLENS-MULTI-CANDIDATE-ASSESSMENT-2026-09-21.md`.
+- Fitting-round actions (`status`, `plan`, `submit`, `merge-plan`,
+  `merge-submit`) now run inside one `input_hashes` scope, so a request reads
+  each input once: the capsule verification in `context()`, the round plan,
+  and the re-plan inside `scientific_execution.submit` share digests within
+  that request, and every reuse still compares the file's fingerprint. One
+  `merge-submit` over an eight-shard 27B round hashed its roughly 106 GB
+  closure twice (about five minutes each); it now hashes it once. New
+  `input_hashes.recheck()` (stat-only) runs before every state write, so an
+  input that changes after review refuses before `mergeAttempts` or
+  `attempted` is recorded and before anything is submitted; the queued child
+  verifies in its own scope as before, and nothing is cached across requests
+  or processes. See `docs/FITTING-ROUND-HASH-SESSION-2026-09-21.md`.
 - Added `allowMixedCorpora` to `jlens-fit-merge` (default `false`; also an
   interview field). Fits on different pinned corpora are still refused by
   default; opted in, their raw per-layer sums are added at equal row weight

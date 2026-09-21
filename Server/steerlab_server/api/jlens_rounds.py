@@ -1,7 +1,7 @@
 """Reviewed queue top-ups for fitting rounds, using ordinary durable science jobs."""
 import json
 from pathlib import Path
-from ..experiment import diagnostic_archives as archives
+from ..experiment import diagnostic_archives as archives, input_hashes
 from . import diagnostic_transport, scientific_execution, workspace_lock
 
 TERMINAL={'succeeded','failed','cancelled'}
@@ -35,6 +35,20 @@ def write_state(path,state):
     scientific_execution.write_json(path,state)
 
 
+def reviewed_inputs_unchanged():
+    """Refuse before an attempt is recorded if any input reviewed in this action moved.
+
+    The action shares one hash scope across its plan and the submit re-plan, so
+    the scope's own exit check would run only after the state write and the
+    submission. This stat-only recheck sits before each state write; the
+    submit re-plan rechecks every input again at use, before anything queues.
+    """
+    try:
+        input_hashes.recheck()
+    except (ValueError, OSError) as exc:  # changed, replaced, no longer ordinary, or gone
+        raise archives.Refusal(str(exc)+' Nothing was recorded or submitted; review a fresh plan.') from exc
+
+
 def matching_jobs(jobs,parent,index):
     return [j for j in jobs.list() if (j.result or {}).get('scientificPlan',{}).get('roundSubmission')=={'parentJobID':parent,'shardIndex':index}]
 
@@ -65,7 +79,11 @@ def action(job_id,action,expected,confirmed,jobs,profile, *, gpu_type=None, shar
         raise archives.Refusal('GPU placement applies to shard plan and submit actions, not status or CPU merge.')
     mutation=action in ('submit','cancel','merge-submit')
     if mutation and confirmed is not True:raise archives.Refusal('Confirm the reviewed fitting-round action.')
-    with workspace_lock.submitting():
+    # One hash scope for the whole action: the capsule verification in
+    # context(), the round plan, and the re-plan inside scientific_execution.submit
+    # read each input once; every reuse rechecks the file's fingerprint. The
+    # scope ends with this request; the queued child verifies in its own.
+    with workspace_lock.submitting(), input_hashes.session():
         root,capsule,round_plan=context(job_id,jobs,profile)
         path=state_file(job_id,profile)
         state=json.loads(path.read_bytes()) if path.exists() else {'attempted':[]}
@@ -153,11 +171,13 @@ def action(job_id,action,expected,confirmed,jobs,profile, *, gpu_type=None, shar
         if action=='merge-submit':
             merge_hash=archives.digest(plan['mergeRequest'])
             if merge_hash in state.get('mergeAttempts',[]):raise archives.Refusal('This round already attempted a merge; inspect its jobs before authoring another explicit merge request.')
+            reviewed_inputs_unchanged()
             state.setdefault('mergeAttempts',[]).append(merge_hash);write_state(path,state)
             result=scientific_execution.submit(plan['mergeRequest'],plan['mergePlan']['planSHA256'],profile=profile,jobs=jobs,execution_capsule=capsule)
             return {'changed':True,'merge':result}
         submitted=[]
         for index in pending:
+            reviewed_inputs_unchanged()
             state['attempted'].append(index)
             child_resources = selected[str(index)]['resources']
             if child_resources.get('gres'):
