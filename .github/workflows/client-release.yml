@@ -1,3 +1,16 @@
+# Client release qualification: build the app-free client release from this
+# tree, install it into scratch from the release directory alone, and drive
+# it — on both platforms the installer supports.
+#
+# When it runs:
+#   * a pull request, or a push to main, that touches the paths below — most
+#     changes land by direct push, so a pull-request-only trigger never fired;
+#   * a version tag (`v*`) — the release candidate itself, whatever it touched
+#     (path filters are not evaluated for tag pushes);
+#   * by hand.
+#
+# The two path lists must stay the same.
+
 name: Client release qualification
 on:
   workflow_dispatch:
@@ -5,8 +18,27 @@ on:
     paths:
       - 'Server/**'
       - 'WorkspaceSeed/**'
+      - 'LICENSE'
+      - 'NOTICE'
       - 'scripts/build-client-release.py'
       - 'scripts/ci/qualify-client-release.py'
+      - 'scripts/ci/artifact_scan.py'
+      - 'scripts/ci/private_names.py'
+      - '.github/workflows/client-release.yml'
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+    paths:
+      - 'Server/**'
+      - 'WorkspaceSeed/**'
+      - 'LICENSE'
+      - 'NOTICE'
+      - 'scripts/build-client-release.py'
+      - 'scripts/ci/qualify-client-release.py'
+      - 'scripts/ci/artifact_scan.py'
+      - 'scripts/ci/private_names.py'
       - '.github/workflows/client-release.yml'
 jobs:
   linux-client:
@@ -18,6 +50,13 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - name: Private-name list (from a repository secret, when one is set)
+        # The build below scans the release it produced for names that must
+        # not ship. With the secret the scan is required to check them; a
+        # fork has no secret and checks home-folder paths only.
+        env:
+          STEERLAB_PRIVATE_NAMES: ${{ secrets.STEERLAB_PRIVATE_NAMES }}
+        run: python scripts/ci/private_names.py --from-ci-secret
       - name: Build lightweight release
         run: |
           python -m pip install uv==0.12.5
@@ -28,3 +67,28 @@ jobs:
         with:
           name: steerlab-client
           path: /tmp/steerlab-client-release/
+
+  macos-client:
+    # Apple Silicon: the other platform the installer supports. `macos-latest`
+    # is an arm64 image; the first step fails loudly if that ever changes,
+    # rather than qualifying a platform the installer refuses.
+    if: github.event.repository.name == 'InterpBench'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Confirm an Apple Silicon runner
+        run: test "$(uname -s)/$(uname -m)" = "Darwin/arm64"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Private-name list (from a repository secret, when one is set)
+        env:
+          STEERLAB_PRIVATE_NAMES: ${{ secrets.STEERLAB_PRIVATE_NAMES }}
+        run: python scripts/ci/private_names.py --from-ci-secret
+      - name: Build lightweight release
+        run: |
+          python -m pip install uv==0.12.5
+          python scripts/build-client-release.py --output /tmp/steerlab-client-release
+      - name: Qualify isolated install and repair
+        run: python scripts/ci/qualify-client-release.py /tmp/steerlab-client-release --repair
