@@ -22,6 +22,10 @@ struct SteerLabApp: App {
     /// the Compute substrate switcher. Created before the catalogs so their
     /// first scans already resolve against the persisted workspace choice.
     @State private var workspace: WorkspaceStore
+    /// Create/open a workspace, shared by the toolbar's Workspace menu,
+    /// Research Setup, and the "no workspace yet" prompt every section shows
+    /// on a first launch.
+    @State private var workspaceActions: WorkspaceActions
     /// One-click local Python server lifecycle (venv setup + loopback serve
     /// of the current workspace) — owned here so a running server survives
     /// toolbar view churn; the connection dot renders and drives it.
@@ -78,7 +82,11 @@ struct SteerLabApp: App {
         _cluster = State(initialValue: cluster)
         _tunnel = State(initialValue: ClusterTunnel())
         _catalog = State(initialValue: catalog)
-        _service = State(initialValue: ChatService(cluster: cluster, catalog: catalog))
+        let service = ChatService(cluster: cluster, catalog: catalog)
+        _service = State(initialValue: service)
+        _workspaceActions = State(
+            initialValue: WorkspaceActions(
+                workspace: workspace, service: service, catalog: catalog))
         cluster.attachTunnel(_tunnel.wrappedValue)  // WS3: the client + health card read tunnel state through the store
         // F4: same-machine server auto-switch is policy on the cluster store,
         // triggered from the ONE workspace-root-change seam — picker New/Open,
@@ -162,7 +170,9 @@ struct SteerLabApp: App {
         WindowGroup("SteerLab") {
             VStack(spacing: 0) {
                 UpdateBanner(model: updates)
-                ChatView(service: service, workspace: workspace)
+                ChatView(
+                    service: service, workspace: workspace,
+                    actions: workspaceActions)
             }
             // Floor: sidebar + section controls (≥560 for the dense panels)
             // + viewer (≥420). Below this the sidebar collapses and section
@@ -196,7 +206,8 @@ struct SteerLabApp: App {
             .toolbar {
                 ToolbarItemGroup {
                     WorkspaceSelector(
-                        workspace: workspace, service: service, catalog: catalog)
+                        workspace: workspace, service: service,
+                        actions: workspaceActions)
                     SubstrateSelector(cluster: cluster, service: service)
                     // Item 1 (cluster-testing): GPU session start/stop at
                     // a glance, beside the connection dot — visible only

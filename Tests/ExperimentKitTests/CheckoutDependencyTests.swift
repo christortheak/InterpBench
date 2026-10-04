@@ -80,6 +80,9 @@ extension CheckoutDependency {
         // conflation WP2 exists to prevent.
         "localEngineSource",
         "defaultEngineRoot",
+        // W1-D — the one checkout a WORKSPACE may stand on. Anything that
+        // reads it is deciding whether a source tree may act as study data.
+        "workspaceFallbackCheckout",
     ]
 
     /// THE CENSUS. Every (file, token) pair in `Sources/` must be here.
@@ -140,6 +143,16 @@ extension CheckoutDependency {
             resolves: "the override that forces release mode regardless of what is on disk",
             bucket: .developerOnly,
             withoutACheckout: "n/a — it is the switch, not a consumer"),
+        .init(
+            file: "Sources/ExperimentKit/CodeResources.swift",
+            token: "workspaceFallbackCheckout",
+            resolves:
+                "the developer checkout a workspace may fall back to — a "
+                + "developer build only, never a distributed one",
+            bucket: .developerOnly,
+            withoutACheckout:
+                "nil (also for a remapped compiled path), so the workspace "
+                + "resolves to the explicit \"no workspace yet\" state"),
         .init(
             file: "Sources/SteerLabApp/SteerLabApp.swift",
             token: "releaseModeAsserted",
@@ -336,10 +349,19 @@ extension CheckoutDependency {
         .init(
             file: "Sources/ExperimentKit/WorkspaceStore.swift",
             token: "bundledSeedRoot",
-            resolves: "the legacy workspace-root fallback + the isLegacyRepoRoot guard",
+            resolves: "the isLegacyRepoRoot guard, and the doc comment naming the fallback",
             bucket: .developerOnly,
             withoutACheckout:
-                "the fallback path simply does not exist, so no workspace resolves to it"),
+                "the comparison cannot match, so no workspace is labelled the dev fallback"),
+        .init(
+            file: "Sources/ExperimentKit/WorkspaceStore.swift",
+            token: "workspaceFallbackCheckout",
+            resolves: "the dev/test workspace-root fallback (rule 4 of WorkspaceRoot)",
+            bucket: .developerOnly,
+            withoutACheckout:
+                "the workspace is `WorkspaceRoot.Source.none`: the app offers "
+                + "create/open, the command line refuses with a repair, and "
+                + "the root is a placeholder nothing can be written beneath"),
         .init(
             file: "Sources/ExperimentKit/WorkspaceStore.swift",
             token: "compiledCheckoutPath",

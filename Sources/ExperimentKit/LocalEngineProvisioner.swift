@@ -995,6 +995,15 @@ public final class LocalEngineProvisioner {
     /// optional. This is what `run(host:)` calls, and what a test drives — so
     /// the tested path and the button's path are one body, not two.
     public func runAwaitingCompletion(host: ChatService? = nil) async {
+        // The engine's last steps serve and check the current workspace.
+        // With none chosen, stop before anything is installed or started.
+        guard WorkspaceRoot.hasWorkspace else {
+            let reason = "create or open a workspace first — the engine on "
+                + "this Mac works inside one"
+            phase = .failed(reason)
+            statusLine = reason
+            return
+        }
         cancelRequested = false
         let first = "checking what is already set up…"
         logHost = host

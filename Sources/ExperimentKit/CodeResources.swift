@@ -158,9 +158,34 @@ public enum CodeResources {
     /// refuse freeze auto-commit even when the checkout has lost its
     /// `Package.swift` marker, so this deliberately does NOT gate on
     /// existence; `developerCheckoutRoot` layers that check on top.
+    ///
+    /// A release build may REMAP compiled source paths, so the compiled-in
+    /// path can be relative or meaningless. A relative one must never be
+    /// resolved against the working directory — that would make whatever
+    /// folder the process was started in "the checkout" — so it answers a
+    /// fixed placeholder that no workspace can equal and nothing can write
+    /// beneath (see `checkoutRoot(compiledFilePath:)`).
     public static var compiledCheckoutPath: URL {
+        checkoutRoot(compiledFilePath: #filePath) ?? unresolvedCheckoutPlaceholder
+    }
+
+    /// Stands in for the compiled checkout when the compiled-in path was
+    /// remapped. Beneath `/dev/null`, so it can never exist, never be
+    /// created, and never compare equal to a real workspace root.
+    static let unresolvedCheckoutPlaceholder =
+        URL(filePath: "/dev/null/steerlab-no-compiled-checkout")
+
+    /// The checkout root a compiled-in source path implies, or nil when the
+    /// path cannot name one. Pure, so the remapped-path case is testable on a
+    /// machine whose own compiled path is real.
+    ///
+    /// Only an ABSOLUTE path is trusted. A release build that remaps source
+    /// prefixes leaves `./Sources/…` or a bare file name here, and
+    /// `URL(filePath:)` would resolve either against the current directory.
+    static func checkoutRoot(compiledFilePath path: String) -> URL? {
+        guard path.hasPrefix("/") else { return nil }
         // …/Sources/ExperimentKit/CodeResources.swift → repo root.
-        URL(filePath: #filePath)
+        return URL(filePath: path)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -169,10 +194,41 @@ public enum CodeResources {
     /// The compiled-in checkout root when it still exists on disk and
     /// carries the `Package.swift` marker; nil otherwise.
     public static var developerCheckoutRoot: URL? {
-        let root = compiledCheckoutPath
+        developerCheckoutRoot(compiledFilePath: #filePath)
+    }
+
+    /// `developerCheckoutRoot` with its two inputs injected: the compiled-in
+    /// path and the existence check. A remapped (relative) path, a path that
+    /// no longer exists, and a folder without the package marker all answer
+    /// nil — "no developer checkout".
+    static func developerCheckoutRoot(
+        compiledFilePath: String,
+        fileExists: (String) -> Bool = {
+            FileManager.default.fileExists(atPath: $0)
+        }
+    ) -> URL? {
+        guard let root = checkoutRoot(compiledFilePath: compiledFilePath) else {
+            return nil
+        }
         let marker = root.appending(component: "Package.swift")
-        guard FileManager.default.fileExists(atPath: marker.path) else { return nil }
+        guard fileExists(marker.path) else { return nil }
         return root.standardizedFileURL
+    }
+
+    /// The checkout a WORKSPACE may fall back to when nothing else is chosen:
+    /// the developer checkout, and only in a developer build.
+    ///
+    /// Nil in a distributed build (`releaseModeAsserted` — a packaged app or
+    /// its bundled command line), and nil whenever the compiled-in path is
+    /// remapped, gone, or lacks the package marker. `WorkspaceRoot` then
+    /// reports "no workspace yet" instead of a source path.
+    ///
+    /// Deliberately NOT `developerCheckoutAvailable`: that also honors
+    /// `modeOverrideForTesting`, a seam for simulating release-mode RESOURCE
+    /// resolution inside one test. The workspace root is read by every suite
+    /// in the process, so it follows only what a real build can assert.
+    public static var workspaceFallbackCheckout: URL? {
+        releaseModeAsserted ? nil : developerCheckoutRoot
     }
 
     /// The one place resolution mode is decided.

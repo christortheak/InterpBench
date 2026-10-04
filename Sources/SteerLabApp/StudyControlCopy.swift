@@ -31,7 +31,9 @@ enum StudyControlCopy {
         + "studies pin each agent (variant artifact) by artifact hash; concept-vector "
         + "studies also require a matching validate run. Settings must be "
         + "frozen before behavior is measured — iterate afterwards by duplicating. "
-        + "steerlab-cli freeze --force skips validation gates"
+        + "Each check that still needs something is listed under this button, "
+        + "and Freeze Study waits until they all pass; the app does not skip "
+        + "a check"
 
     static let remoteFreezeHelp =
         "ONE-WAY, executed by the ACTIVE SERVER: the server verifies every "
@@ -51,8 +53,18 @@ enum StudyControlCopy {
         + "task prompt, and writes generations, metrics.csv, report.json, "
         + "and the manifest snapshot into a new immutable runs/ directory. "
         + "Legacy concept-vector studies re-derive their vectors before running. "
-        + "Currently requires Temperature = 0 because mlx-swift-lm does not "
-        + "expose a per-run seed for reproducible sampling"
+        + "A temperature above 0 samples with a separate seeded stream for "
+        + "each record; how closely a repeat matches depends on the backend "
+        + "and the model configuration"
+
+    /// Playground, with a model loaded and no vector for it yet. Points at
+    /// the place in the app where one is made — it used to name a command
+    /// against a file that no workspace contains.
+    static let playgroundNoVectors =
+        "No vectors for this model yet. To make one, open Data, choose "
+        + "Concepts & Vectors, pick a concept and this model in Concept "
+        + "Vector Builder, and build the vector. Then return here and choose "
+        + "Refresh artifacts."
 
     static let validateHelp =
         "creates the validation evidence required by Freeze Study: verifies "

@@ -23,10 +23,16 @@ public enum ClientSetup {
         let release = try explicit ?? override ?? CodeResources.serverPayload().appending(component: "client-release")
         guard let stamp = try? String(contentsOf: release.appending(component: "source.sha256"), encoding: .utf8),
               stamp.trimmingCharacters(in: .whitespacesAndNewlines) == PythonClientIdentity.sourceSHA256 else {
-            throw ExperimentError.malformed("The client installer is missing or belongs to another Mac build.", repair: "Reinstall the complete matching app. Developers: build scripts/build-client-release.py from the matching checkout and set STEERLAB_CLIENT_RELEASE to its output directory before launching.")
+            throw ExperimentError.malformed(installerMissingReason, repair: installerMissingRepair)
         }
         return release
     }
+
+    /// Named so Research Setup can recognize this failure and say it in the
+    /// app's own words (`ResearchSetupCopy.failure`); the command line prints
+    /// these as they are.
+    public static let installerMissingReason = "The client installer is missing or belongs to another Mac build."
+    public static let installerMissingRepair = "Reinstall the complete matching app. Developers: build scripts/build-client-release.py from the matching checkout and set STEERLAB_CLIENT_RELEASE to its output directory before launching."
 
     public static func provision(_ operation: String, release: URL? = nil,
                                  runtime: URL = ScientificPythonRuntime.defaultEnvironment,

@@ -123,13 +123,67 @@ public struct ExperimentCLIRunner: Sendable {
     /// same shape as `ClusterCLIRunner`'s `now`, which its tests pin to
     /// `Date(timeIntervalSince1970: 1_000)`.
     private let now: @Sendable () -> Date
+    /// Whether a workspace is resolved. Injected so the "no workspace"
+    /// refusal is testable on a machine that always has a developer checkout.
+    private let workspaceIsResolved: @Sendable () -> Bool
 
     public init(
         sink: ExperimentCLISink = .standard,
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = Date.init,
+        workspaceIsResolved: @escaping @Sendable () -> Bool = {
+            ExperimentCLIRunner.liveWorkspaceIsResolved
+        }
     ) {
         self.sink = sink
         self.now = now
+        self.workspaceIsResolved = workspaceIsResolved
+    }
+
+    // MARK: The "no workspace" refusal
+
+    /// The live answer: the test root override, or any rule of
+    /// `WorkspaceRoot` short of "no workspace yet".
+    public static var liveWorkspaceIsResolved: Bool {
+        ExperimentStore.rootOverride != nil || WorkspaceRoot.hasWorkspace
+    }
+
+    /// Stable machine code for the refusal below.
+    public static let noWorkspaceCode = "noWorkspace"
+
+    /// Why, in plain words. Shared with the app's own sentence so the two
+    /// surfaces describe one state the same way.
+    public static let noWorkspaceReason = WorkspaceRoot.noWorkspaceReason
+
+    /// The repair, as commands this client can run.
+    public static let noWorkspaceRepair =
+        "steerlab-cli workspace init <dir>  (creates a workspace), then run "
+        + "this command again with --workspace <dir>, or set "
+        + "\(WorkspaceRoot.environmentKey)=<dir>"
+
+    /// Verbs that neither read nor write a workspace, so they answer with
+    /// none resolved: the ones that create a workspace or set this machine
+    /// up, the ones that only describe the installed program, and the ones
+    /// that only talk to a server. Everything else needs a workspace — and
+    /// before this gate, a build with none resolved quietly used the source
+    /// path of the machine that compiled it.
+    static func needsWorkspace(namespace: String, verb: String?) -> Bool {
+        switch namespace {
+        case "init", "setup", "install", "docs", "authoring":
+            return false
+        case "workspace":
+            return verb != "init"
+        case "science":
+            return !["list", "guide"].contains(verb ?? "")
+        case "model":
+            return !["plan", "install"].contains(verb ?? "")
+        case "remote":
+            return ![
+                "capabilities", "jobs", "logs", "cancel", "chat", "variants",
+                "model-plan", "model-install", "model-status", "model-cancel",
+            ].contains(verb ?? "")
+        default:
+            return true
+        }
     }
 
     // MARK: Entry point
@@ -165,6 +219,24 @@ public struct ExperimentCLIRunner: Sendable {
         // this step the strict parser answered it with 64 — the one refusal a
         // caller cannot repair by reading it.
         if invocation.help { return helpOutcome(invocation) }
+
+        // No workspace resolved, and the verb needs one: a typed refusal with
+        // a repair, before anything reads or writes. A sub-verb the parser
+        // did not recognise is left to the dispatch, which answers it as the
+        // usage error it is.
+        if ExperimentCLIParser.spec(namespace: namespace, verb: invocation.verb) != nil,
+            Self.needsWorkspace(namespace: namespace, verb: invocation.verb),
+            !workspaceIsResolved()
+        {
+            return outcome(
+                namespace: namespace, verb: verb, state: .refused,
+                exitCode: SteerLabCLIState.refused.exitCode,
+                failure: .init(
+                    reason: Self.noWorkspaceReason,
+                    repairAction: Self.noWorkspaceRepair),
+                code: Self.noWorkspaceCode,
+                repairAction: Self.noWorkspaceRepair)
+        }
 
         // Workspace resolution is complete by here and this function runs
         // EXACTLY ONCE per process (`main.swift` dispatches one invocation and
@@ -458,7 +530,12 @@ public struct ExperimentCLIRunner: Sendable {
 
     /// Which data root answered — so an agent can tell a wrong-workspace
     /// answer from a wrong answer.
-    private var workspacePath: String { ExperimentStore.workspaceRoot.path }
+    ///
+    /// Absent when no workspace is resolved: the placeholder root is not a
+    /// place, and an agent must not be handed it as one.
+    private var workspacePath: String? {
+        workspaceIsResolved() ? ExperimentStore.workspaceRoot.path : nil
+    }
 
     /// Workspace-contract upkeep for ONE invocation: classify this
     /// workspace's `AGENTS.md`, do the one thing the classification permits,

@@ -1345,6 +1345,9 @@ public final class ClusterConnectionStore {
     /// a switch to it lands `.paired`). Nil when the server is remote.
     public var localWorkspaceRootForServerSwitch: String? {
         guard activeServerSharesLocalFilesystem else { return nil }
+        // No workspace yet: there is no root to offer, and the placeholder
+        // that stands in for one must never be sent to a server.
+        guard WorkspaceRoot.hasWorkspace else { return nil }
         return VectorCatalog.projectRoot.resolvingSymlinksInPath().path
     }
 

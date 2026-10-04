@@ -824,6 +824,20 @@ public struct ClusterCLIRunner: Sendable {
             if let workspaceImportEngine {
                 engine = try workspaceImportEngine(site, emit)
             } else {
+                // Import WRITES runs into the workspace. With none resolved
+                // there is nowhere to bring them home to, and the old
+                // fallback was the source path of the machine that built
+                // this binary.
+                guard ExperimentCLIRunner.liveWorkspaceIsResolved else {
+                    var envelope = ClusterCLIEnvelope.failure(
+                        verb: invocation.verb.displayName,
+                        code: ExperimentCLIRunner.noWorkspaceCode,
+                        reason: ExperimentCLIRunner.noWorkspaceReason,
+                        repairAction: ExperimentCLIRunner.noWorkspaceRepair,
+                        state: .blocked, siteID: site.id)
+                    envelope.message = ExperimentCLIRunner.noWorkspaceReason
+                    return envelope
+                }
                 engine = try await WorkspaceRunImport.liveEngine(
                     site: site.profile, siteID: site.id,
                     workspaceRoot: ExperimentStore.workspaceRoot,

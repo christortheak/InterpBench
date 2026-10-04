@@ -5,18 +5,14 @@ import SwiftUI
 /// Window-toolbar switcher for the DATA workspace — the folder holding
 /// prompts/, experiments/, runs/ (the Compute menu next to it picks the
 /// engine). Shows the current workspace's folder name; New/Open create or
-/// adopt a folder through `WorkspaceStore` and then reset the in-memory
-/// catalogs so every panel re-scans the new root.
+/// adopt a folder through `WorkspaceActions` (shared with Home's welcome and
+/// Research Setup), which then resets the in-memory catalogs so every panel
+/// re-scans the new root.
 struct WorkspaceSelector: View {
     @Bindable var workspace: WorkspaceStore
     let service: ChatService
-    let catalog: SubstrateCatalog
-    /// A failure title names what failed; "Workspace" alone is a noun, not a
-    /// report (2026-09-06 audit).
-    @State private var errorTitle = "Workspace"
-    @State private var errorMessage: String?
+    @Bindable var actions: WorkspaceActions
     @State private var researchSetup = ResearchSetupModel()
-    @State private var showingResearchSetup = false
     @AppStorage("SteerLab.researchSetupPresented") private var researchSetupPresented = false
 
     var body: some View {
@@ -25,31 +21,34 @@ struct WorkspaceSelector: View {
             // to be the header and widened the whole menu. The full path is
             // one hover away (this menu's help) and on Home.
             Section(workspace.displayName) {
-                Button("Research Setup…") { showingResearchSetup = true }
-                    .help("check that this Mac can author studies, install the "
-                        + "lightweight client after reviewing its plan, and copy "
-                        + "the agent handoff")
-                Button("New Workspace…") { newWorkspace() }
+                Button("Research Setup…") { actions.showingResearchSetup = true }
+                    .help("check that this Mac can design studies, set up the "
+                        + "study-design helper after reviewing its plan, and "
+                        + "copy the instructions for your coding assistant")
+                Button("New Workspace…") { actions.newWorkspace() }
                     .disabled(workspace.isEnvironmentPinned)
                     .help(
                         "create a new workspace folder (prompts/, experiments/, "
                             + "runs/) and switch every panel to it")
-                Button("Open Workspace…") { openWorkspace() }
+                Button("Open Workspace…") { actions.openWorkspace() }
                     .disabled(workspace.isEnvironmentPinned)
                     .help(
                         "switch to an existing workspace folder — panels re-scan "
                             + "in place; jobs already running keep writing to the "
                             + "previous one")
             }
-            Divider()
-            computeBindingSection
-            Divider()
-            Button("Reveal in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([workspace.rootURL])
-            }
-            .help("show this workspace's folder in Finder")
-            if workspace.isEnvironmentPinned {
-                Text("pinned by STEERLAB_WORKSPACE — switch by relaunching without it")
+            // Everything below describes or acts on a workspace that exists.
+            if workspace.hasWorkspace {
+                Divider()
+                computeBindingSection
+                Divider()
+                Button("Reveal in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([workspace.rootURL])
+                }
+                .help("show this workspace's folder in Finder")
+                if workspace.isEnvironmentPinned {
+                    Text("pinned by STEERLAB_WORKSPACE — switch by relaunching without it")
+                }
             }
         } label: {
             // Substrate-prominence (live-testing finding): the selector
@@ -59,41 +58,53 @@ struct WorkspaceSelector: View {
             // folder glyph says WHICH of the toolbar's menus this is at a
             // glance (fresh-Mac finding: unlabelled toolbar controls read as
             // decoration, not as the data/compute/connection triple).
-            Label(
-                "\(workspace.displayName) — \(substrateSuffix)",
-                systemImage: "folder")
+            Label(menuTitle, systemImage: "folder")
         }
-        .sheet(isPresented: $showingResearchSetup) {
+        .sheet(isPresented: $actions.showingResearchSetup) {
             ResearchSetupSheet(model: researchSetup, workspace: workspace,
-                createWorkspace: { newWorkspace(deferCompute: true) }, openWorkspace: { openWorkspace() })
+                createWorkspace: { actions.newWorkspace(deferCompute: true) },
+                openWorkspace: { actions.openWorkspace() })
         }
         .task {
-            guard !researchSetupPresented else { return }
-            await researchSetup.refresh(workspace: workspace.isLegacyRepoRoot ? nil : workspace.rootURL)
-            if !researchSetup.authoringReady {
-                researchSetupPresented = true
-                showingResearchSetup = true
+            // With no workspace yet, Research Setup opens at EVERY launch.
+            // The "already shown" flag used to be set before the sheet first
+            // appeared, so a newcomer who dismissed it once never saw it
+            // again and was left on a Home that had nothing to offer. The
+            // flag now starts counting only once a workspace exists.
+            let hasWorkspace = workspace.hasWorkspace
+            if hasWorkspace, researchSetupPresented { return }
+            if hasWorkspace {
+                await researchSetup.refresh(workspace: workspace.chosenRootURL)
             }
+            guard
+                ResearchSetupModel.opensAtLaunch(
+                    hasWorkspace: hasWorkspace,
+                    alreadyPresented: researchSetupPresented,
+                    authoringReady: researchSetup.authoringReady)
+            else { return }
+            if hasWorkspace { researchSetupPresented = true }
+            actions.showingResearchSetup = true
         }
         .labelStyle(.titleAndIcon)
         .help(helpText)
         .alert(
-            errorTitle, isPresented: showingError,
-            actions: { Button("OK", role: .cancel) { errorMessage = nil } },
-            message: { Text(errorMessage ?? "") })
-    }
-
-    /// One place to raise a failure, so every path names what failed and
-    /// renders the error's own message (`localizedDescription`, which every
-    /// ExperimentKit error type answers through `ErrorMessages`) instead of
-    /// its raw Swift description.
-    private func report(_ title: String, _ error: Error) {
-        errorTitle = title
-        errorMessage = error.localizedDescription
+            actions.errorTitle, isPresented: showingError,
+            actions: { Button("OK", role: .cancel) { actions.errorMessage = nil } },
+            message: { Text(actions.errorMessage ?? "") })
     }
 
     private var showingError: Binding<Bool> {
-        Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })
+        Binding(
+            get: { actions.errorMessage != nil },
+            set: { if !$0 { actions.errorMessage = nil } })
+    }
+
+    /// "<folder> — <compute>" while a workspace is open; with none, just the
+    /// plain words for that state. Never a placeholder path.
+    private var menuTitle: String {
+        workspace.hasWorkspace
+            ? "\(workspace.displayName) — \(substrateSuffix)"
+            : WorkspaceStore.noWorkspaceDisplayName
     }
 
     // MARK: What this workspace computes on
@@ -152,7 +163,7 @@ struct WorkspaceSelector: View {
             get: { workspace.compute },
             set: { choice in
                 do { try workspace.declareCompute(choice) } catch {
-                    report("Could not declare this workspace's compute", error)
+                    actions.report("Could not declare this workspace's compute", error)
                 }
             })
     }
@@ -187,6 +198,9 @@ struct WorkspaceSelector: View {
     }
 
     private var helpText: String {
+        // No workspace: say what one is and how to get one. There is no path
+        // to show, and the placeholder that stands in for one is never shown.
+        guard workspace.hasWorkspace else { return FirstLaunchCopy.menuHelp }
         var text =
             "the data workspace: the folder holding prompts/, experiments/, and "
             + "runs/ (Compute picks the engine; Workspace picks the data). "
@@ -203,74 +217,6 @@ struct WorkspaceSelector: View {
             + "previous workspace until restarted."
         return text
     }
-
-    private func newWorkspace(deferCompute: Bool = false) {
-        let panel = NSSavePanel()
-        panel.title = "New SteerLab Workspace"
-        panel.prompt = "Create"
-        panel.nameFieldStringValue = "SteerLab Workspace"
-        panel.canCreateDirectories = true
-        panel.showsTagField = false
-        // Creation is the one moment the answer is never ambiguous, so ask
-        // here rather than leaving a new workspace to be inferred later.
-        // Defaults to Cluster: real studies compute there and MLX is for toy
-        // runs and shakedowns.
-        let chooser = ComputeChoiceAccessory(selected: .cluster)
-        if !deferCompute { panel.accessoryView = chooser.view }
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            try workspace.createAndSwitch(to: url, computing: deferCompute ? nil : chooser.selected)
-            resetCatalogs()
-        } catch {
-            report("Could not create the workspace", error)
-        }
-    }
-
-    private func openWorkspace() {
-        let panel = NSOpenPanel()
-        panel.title = "Open SteerLab Workspace"
-        panel.prompt = "Open"
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            try workspace.switchTo(url)
-            resetCatalogs()
-        } catch {
-            report("Could not open that workspace", error)
-        }
-    }
-
-    /// The existing refresh entry points, called once after a switch so
-    /// panels drop state scanned from the previous root. Anything a panel
-    /// caches outside these paths refreshes on its next interaction.
-    private func resetCatalogs() {
-        // Section-specific DISPLAY state first: the catalog refreshes below
-        // re-scan lists, but none of them retired the viewer's selection, so
-        // after a switch the Results viewer still showed the previous
-        // workspace's run (Finder button and all) and Analysis still showed
-        // its cosine tables. Each viewer has an empty state; it just needed
-        // its selection dropped. The workspace-wide Activity log is kept.
-        service.resetSectionViewers()
-        service.experiments.refresh()
-        service.datasetInventory.refresh()
-        service.concepts.refreshConceptList()
-        service.concepts.refreshStaleness()
-        service.concepts.refreshReaderTemplates()
-        service.concepts.refreshReaderArtifacts()
-        service.fineTuning.refresh()
-        service.refreshVectors()
-        service.refreshNeutralCorpora()
-        service.refreshNeutralPCBases()
-        catalog.refreshLocalVectors()
-    }
-
-    // Same-machine server auto-switching is NOT a view concern: it lives on
-    // `ClusterConnectionStore.synchronizeServerToLocalWorkspace()`, triggered
-    // once at the workspace-root-change seam (`WorkspaceStore.onRootChange`,
-    // wired in `SteerLabApp`), so every root-change path — including ones
-    // this view never sees — gets the same serialized, surfaced behavior.
 }
 
 /// "Install model…" affordance shown next to any picker that lists a server

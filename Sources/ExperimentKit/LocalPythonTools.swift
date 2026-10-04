@@ -548,6 +548,14 @@ public final class LocalServerController {
     /// Launches the server; progress streams into `host`'s Activity pane.
     public func start(host: ChatService) {
         guard phase == .idle else { return }
+        // The server serves the current workspace. With none chosen there is
+        // nothing to serve — and the root that stands in for "no workspace"
+        // must never be handed to a server as a place.
+        guard WorkspaceRoot.hasWorkspace else {
+            statusLine = "cannot start yet — create or open a workspace "
+                + "first; the engine on this Mac works inside one"
+            return
+        }
         guard let script = LocalPythonRuntime.startServerScript,
             let repoRoot = LocalPythonRuntime.repoRoot
         else {
