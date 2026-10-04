@@ -40,7 +40,18 @@ final class WorkspaceActions {
         errorMessage = error.localizedDescription
     }
 
-    func newWorkspace(deferCompute: Bool = false) {
+    /// What to do once a workspace has been created with a compute choice:
+    /// switch the app to it, and — for the engine on this Mac — open its
+    /// setup. Wired by the App to `ComputeChoiceCoordinator`, which owns
+    /// that; this type only creates and opens folders.
+    var onWorkspaceCreated: ((ComputeChoice) -> Void)?
+
+    /// The same panel from every entry point — the toolbar's Workspace menu,
+    /// Research Setup, and the first-launch welcome — offering the same
+    /// three choices and starting on the same one. (The toolbar used to
+    /// default to "Cluster", and Research Setup's button with the same name
+    /// left the workspace undeclared.)
+    func newWorkspace() {
         let panel = NSSavePanel()
         panel.title = "New SteerLab Workspace"
         panel.prompt = "Create"
@@ -49,17 +60,19 @@ final class WorkspaceActions {
         panel.showsTagField = false
         // Creation is the one moment the answer is never ambiguous, so ask
         // here rather than leaving a new workspace to be inferred later.
-        // Defaults to Cluster: real studies compute there and MLX is for toy
-        // runs and shakedowns.
-        let chooser = ComputeChoiceAccessory(selected: .cluster)
-        if !deferCompute { panel.accessoryView = chooser.view }
+        // Starts on the quick start: it needs nothing installed beyond a
+        // model, and the other two are one click away in the same panel.
+        let chooser = ComputeChoiceAccessory(selected: .newWorkspaceDefault)
+        panel.accessoryView = chooser.view
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            try workspace.createAndSwitch(to: url, computing: deferCompute ? nil : chooser.selected)
+            try workspace.createAndSwitch(to: url, choosing: chooser.selected)
             resetCatalogs()
         } catch {
             report("Could not create the workspace", error)
+            return
         }
+        onWorkspaceCreated?(chooser.selected)
     }
 
     func openWorkspace() {

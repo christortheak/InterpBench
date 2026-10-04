@@ -18,6 +18,9 @@ struct HomeDashboardView: View {
     var openAdapterTraining: () -> Void = {}
     /// Opens ONE agent: selects it, then lands on Agents → Library.
     var openAgent: (ModelVariantRecord.ID) -> Void = { _ in }
+    /// The three compute choices, from the environment the main window sets.
+    @Environment(ComputeChoiceCoordinator.self) private var compute:
+        ComputeChoiceCoordinator?
 
     var body: some View {
         Form {
@@ -81,20 +84,40 @@ struct HomeDashboardView: View {
 
     private var computeSection: some View {
         Section("Compute") {
-            LabeledContent("Target", value: service.cluster.substrateLabel)
+            // One name for each place everywhere: the three compute choices,
+            // as the Compute and Workspace menus say them.
+            LabeledContent("Running on", value: service.cluster.activeComputeTitle)
+            Text(service.cluster.activeComputeChoice.summary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if isServerWorkspace {
                 LabeledContent(
                     "Connection", value: service.cluster.status ?? "not connected")
             } else {
-                // One spelling for the substrate everywhere ("Local (MLX)",
-                // as `substrateLabel` and `WorkspaceCompute.label` say it).
-                LabeledContent("Connection", value: "in this app — no server")
+                LabeledContent("Connection", value: "in this app — nothing to connect")
             }
-            Button("Open Compute") { navigate(.compute) }
-                .controlSize(.small)
-                .help(
-                    "the Compute section: server connections, jobs, logs, and "
-                        + "model installs")
+            // The workspace is set to one engine and the app is using the
+            // other: the full sentence, where there is room to read it.
+            if let mismatch = compute?.mismatchNote {
+                Label(mismatch, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 8) {
+                Button("Open Compute") { navigate(.compute) }
+                    .help(
+                        "the Compute section: connections, jobs, logs, and "
+                            + "model installs")
+                if let compute {
+                    Button(ComputeGuide.guideButton) { compute.showingGuide = true }
+                        .help(
+                            "what each of the three places can run, and what "
+                                + "switching between them costs")
+                }
+            }
+            .controlSize(.small)
         }
     }
 

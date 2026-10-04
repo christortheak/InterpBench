@@ -98,11 +98,14 @@ struct JSpacePanelSection: View {
     private var noServerNotice: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 6) {
-                Label("Choose a Python engine", systemImage: "bolt.horizontal.circle")
+                Label("Choose the Python engine", systemImage: "bolt.horizontal.circle")
                     .font(.callout.bold())
-                Text("Select a Python engine in Compute, then reopen this library. It can run on this Mac using MPS or on a remote machine. The model, imported lens, and derived vectors stay with that engine’s workspace. Choosing Local (MLX) uses a different implementation and cannot apply these Python lens artifacts.")
+                Text("A Jacobian lens runs on the Python engine: on this Mac, or on another machine. The model, the imported lens, and the vectors derived from it stay with that engine. \(ComputeChoice.macQuickStart.title) uses a different engine and cannot apply these lens files.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                // The switch, offered here rather than left as an errand in
+                // another menu.
+                PythonEngineOffer(subject: "The Jacobian lens", plural: false)
             }
             .padding(6)
         }

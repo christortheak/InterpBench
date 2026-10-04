@@ -90,7 +90,9 @@ struct LocalEngineSetupSheet: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Local Python Engine")
+            // Named the way the compute choices name it, so a researcher who
+            // picked "This Mac, full capabilities" recognises where they are.
+            Text("\(ComputeChoice.macFullCapabilities.title): the Python engine on this Mac")
                 .font(.headline)
             Text(engine.statusLine)
                 .font(.subheadline)
@@ -98,10 +100,11 @@ struct LocalEngineSetupSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             Text(
-                "The app provisions its own Python engine the same way a "
-                    + "cluster bootstrap provisions a remote one: every step "
-                    + "checks what is already there before it does anything, so "
-                    + "stopping and re-running continues rather than restarting.")
+                "This sets up the Python engine on this Mac, which runs every "
+                    + "method. Each step checks what is already there before "
+                    + "it does anything, so stopping and running it again "
+                    + "continues rather than starting over. Nothing is "
+                    + "downloaded until you press Set Up.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

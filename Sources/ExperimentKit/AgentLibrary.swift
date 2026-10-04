@@ -293,8 +293,8 @@ public enum AgentLibrary {
             chips.append(
                 Chip(
                     label: "Runnable locally", tone: .positive,
-                    help: "base model, vectors, and adapters all resolve in the "
-                        + "Local (MLX) workspace"))
+                    help: "base model, vectors, and adapters all resolve on "
+                        + ComputeChoice.macQuickStart.title))
         }
         if availability.serverApplicability == true {
             chips.append(

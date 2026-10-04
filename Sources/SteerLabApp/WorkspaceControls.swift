@@ -12,6 +12,11 @@ struct WorkspaceSelector: View {
     @Bindable var workspace: WorkspaceStore
     let service: ChatService
     @Bindable var actions: WorkspaceActions
+    /// The three compute choices: what this workspace is set to, and the
+    /// actions behind picking one.
+    @Bindable var compute: ComputeChoiceCoordinator
+    /// The local engine's server, for the setup sheet Research Setup can open.
+    let localServer: LocalServerController
     @State private var researchSetup = ResearchSetupModel()
     @AppStorage("SteerLab.researchSetupPresented") private var researchSetupPresented = false
 
@@ -40,7 +45,7 @@ struct WorkspaceSelector: View {
             // Everything below describes or acts on a workspace that exists.
             if workspace.hasWorkspace {
                 Divider()
-                computeBindingSection
+                computeChoiceSection
                 Divider()
                 Button("Reveal in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([workspace.rootURL])
@@ -51,18 +56,20 @@ struct WorkspaceSelector: View {
                 }
             }
         } label: {
-            // Substrate-prominence (live-testing finding): the selector
-            // itself names the active substrate — "<workspace> — MLX" or
-            // "<workspace> — Server: <label>" — so the researcher never has
-            // to open a menu to know where builds and runs execute. The
-            // folder glyph says WHICH of the toolbar's menus this is at a
-            // glance (fresh-Mac finding: unlabelled toolbar controls read as
-            // decoration, not as the data/compute/connection triple).
+            // The selector itself names where studies run — "<workspace> —
+            // This Mac, quick start" or "<workspace> — <machine>" — so the
+            // researcher never has to open a menu to know where builds and
+            // runs execute. The folder glyph says WHICH of the toolbar's
+            // menus this is at a glance (fresh-Mac finding: unlabelled
+            // toolbar controls read as decoration, not as the
+            // data/compute/connection triple).
             Label(menuTitle, systemImage: "folder")
         }
         .sheet(isPresented: $actions.showingResearchSetup) {
-            ResearchSetupSheet(model: researchSetup, workspace: workspace,
-                createWorkspace: { actions.newWorkspace(deferCompute: true) },
+            ResearchSetupSheet(
+                model: researchSetup, workspace: workspace, compute: compute,
+                service: service, localServer: localServer,
+                createWorkspace: { actions.newWorkspace() },
                 openWorkspace: { actions.openWorkspace() })
         }
         .task {
@@ -99,102 +106,83 @@ struct WorkspaceSelector: View {
             set: { if !$0 { actions.errorMessage = nil } })
     }
 
-    /// "<folder> — <compute>" while a workspace is open; with none, just the
-    /// plain words for that state. Never a placeholder path.
+    /// "<folder> — <where it runs>" while a workspace is open; with none,
+    /// just the plain words for that state. Never a placeholder path.
     private var menuTitle: String {
         workspace.hasWorkspace
-            ? "\(workspace.displayName) — \(substrateSuffix)"
+            ? "\(workspace.displayName) — \(service.cluster.activeComputeTitle)"
             : WorkspaceStore.noWorkspaceDisplayName
     }
 
-    // MARK: What this workspace computes on
+    // MARK: Where this workspace's studies run
 
-    /// The workspace's DECLARED compute engine — the fact the lifecycle reads
-    /// to decide whose artifacts and evidence are native here.
+    /// The workspace's DECLARED compute choice — the fact the lifecycle
+    /// reads to decide whose artifacts and evidence are native here.
     ///
     /// Until this control existed the answer was inferred from the live
     /// server pairing, separately, by each verb — and they disagreed, so a
     /// cluster workspace treated its own vectors as foreign and refused
     /// promotions that were entirely legitimate. Declaring it is the point:
     /// it survives the server being offline, unpaired, or moved.
+    ///
+    /// The three choices are `ComputeChoice`. The second and third both
+    /// write today's `cluster` binding; picking one here also switches the
+    /// app to it, which for the engine on this Mac opens its setup.
     /// Hoisted out of the `Section` body: as a `+`-chain inside a
     /// `ViewBuilder` this defeated the type-checker ("unable to type-check
     /// this expression in reasonable time"). A named `String` costs nothing.
-    private static let computeBindingHelp: String =
-        "what this workspace's data is FOR — the engine whose "
-        + "artifacts and evidence are native here. A declaration "
-        + "about the folder, not about today's connection: it "
-        + "survives the server being offline or moved, and the "
-        + "lifecycle reads it when deciding whether a vector or a "
-        + "run belongs to this study"
+    private static let computeChoiceHelp: String =
+        "where this workspace's studies run. This is a setting of the "
+        + "workspace itself, kept with it: vectors and results count for its "
+        + "studies only when they were made on the engine chosen here. "
+        + "Choosing one also switches the app to it. What Runs Where… "
+        + "compares the three"
 
     @ViewBuilder
-    private var computeBindingSection: some View {
-        Section("Computes on") {
-            computeBindingPicker
-            computeBindingNotes
+    private var computeChoiceSection: some View {
+        Section("This workspace runs on") {
+            computeChoicePicker
+            computeChoiceNotes
+            Button(ComputeGuide.guideButton) { compute.showingGuide = true }
+                .help("what each of the three choices can run, and what "
+                    + "switching between them costs")
         }
     }
 
-    private var computeBindingPicker: some View {
-        Picker("Computes on", selection: computeBinding) {
-            ForEach(WorkspaceCompute.allCases, id: \.self) { option in
-                Text(option.label).tag(option)
+    /// One checkable row per choice, rather than a picker: a workspace that
+    /// has declared nothing shows NO checkmark, and choosing the row the app
+    /// had been assuming is how the researcher confirms it. (A picker would
+    /// show the assumption as selected, and re-selecting it would do
+    /// nothing.)
+    @ViewBuilder
+    private var computeChoicePicker: some View {
+        ForEach(ComputeChoice.allCases) { choice in
+            Toggle(isOn: declared(choice)) {
+                Text(choice.title)
+                Text(choice.menuCaption)
             }
+            .help(Self.computeChoiceHelp)
         }
-        .pickerStyle(.inline)
-        .labelsHidden()
-        .help(Self.computeBindingHelp)
     }
 
     @ViewBuilder
-    private var computeBindingNotes: some View {
+    private var computeChoiceNotes: some View {
         if !workspace.isComputeDeclared {
             // An inference must not masquerade as a decision.
-            Text("inferred from this workspace's runs — choose to confirm")
+            Text(ComputeChoice.undeclaredNote(treatingAs: compute.workspaceChoice))
         }
-        if let mismatch = computeMismatchNote {
+        if let mismatch = compute.mismatchNote {
             Text(mismatch)
         }
     }
 
-    private var computeBinding: Binding<WorkspaceCompute> {
+    /// Checked only for a choice the workspace has actually declared. Either
+    /// direction of the click chooses it: re-choosing the current one is how
+    /// the app is switched back to it.
+    private func declared(_ choice: ComputeChoice) -> Binding<Bool> {
         Binding(
-            get: { workspace.compute },
-            set: { choice in
-                do { try workspace.declareCompute(choice) } catch {
-                    actions.report("Could not declare this workspace's compute", error)
-                }
-            })
-    }
-
-    /// The Compute selector and the workspace binding disagreeing is worth
-    /// saying out loud: it is the state in which a cluster study is about to
-    /// be run, extracted, or swept on MLX.
-    private var computeMismatchNote: String? {
-        let target = service.cluster.activeWorkspace
-        switch (workspace.compute, target) {
-        case (.cluster, .local):
-            return "Compute is set to Local (MLX), but this workspace's data "
-                + "is cluster data — switch Compute to the server before running"
-        case (.localMLX, .server):
-            return "Compute is set to \(service.cluster.substrateLabel), but "
-                + "this workspace is declared local — its artifacts are MLX"
-        default:
-            return nil
-        }
-    }
-
-    /// "Local (MLX)" locally, "Server: <name>" on a server workspace —
-    /// appended to the selector label so the active substrate is always
-    /// visible. One spelling for the local engine everywhere: the same one
-    /// `ClusterConnectionStore.substrateLabel` and `WorkspaceCompute.label`
-    /// use (2026-09-06 audit, headline 18).
-    private var substrateSuffix: String {
-        switch service.cluster.activeWorkspace {
-        case .local: return "Local (MLX)"
-        case .server: return "Server: \(service.cluster.substrateLabel)"
-        }
+            get: { workspace.isComputeDeclared && compute.workspaceChoice == choice },
+            set: { _ in compute.choose(choice) })
     }
 
     private var helpText: String {

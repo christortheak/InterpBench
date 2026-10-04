@@ -108,9 +108,20 @@ public enum ResearchSetupCopy {
         "The app and your coding assistant can both open the same workspace. "
         + "Your study files stay in this folder."
 
-    // MARK: Step 2 — the helper
+    // MARK: Step 2 — where studies run
 
-    public static let helperStepTitle = "2. Set up the study-design helper"
+    public static let computeStepTitle = "2. Choose where studies run"
+
+    public static let computeNeedsWorkspace =
+        "Choose a workspace first. This setting is kept with the workspace."
+
+    public static let computeCaption =
+        "You can change this later from the Workspace menu. Choosing a "
+        + "place to run installs nothing by itself."
+
+    // MARK: Step 3 — the helper
+
+    public static let helperStepTitle = "3. Set up the study-design helper"
 
     public static let helperExplanation =
         "SteerLab uses a small helper to guide study design, bring results "
@@ -147,9 +158,9 @@ public enum ResearchSetupCopy {
         + "Check Again. If this message stays, reinstall SteerLab and open "
         + "Research Setup once more."
 
-    // MARK: Step 3 — begin
+    // MARK: Step 4 — begin
 
-    public static let beginStepTitle = "3. Begin with your question"
+    public static let beginStepTitle = "4. Begin with your question"
 
     public static let beginExplanation =
         "Give your coding assistant the workspace instructions, and describe "
@@ -161,8 +172,8 @@ public enum ResearchSetupCopy {
 
     public static let workInTheApp =
         "To work in the app instead, close this screen and open Studies or "
-        + "Templates. When you are ready to run a study, open Compute to "
-        + "choose where it runs, then prepare your model."
+        + "Templates. When you are ready to run a study, prepare your model "
+        + "in the Playground or in Compute."
 
     public static let readyFooter = "Ready to design studies"
     public static let returnFooter =

@@ -1374,7 +1374,7 @@ struct ConceptsPanelView: View {
                 vectorNorm: middle,
                 stimulusHash: sidecar.stimulusSetHash,
                 extractionDate: sidecar.extractionDate,
-                sourceLabel: "Local (MLX)",
+                sourceLabel: ComputeChoice.macQuickStart.title,
                 localArtifact: artifact)
         }
     }

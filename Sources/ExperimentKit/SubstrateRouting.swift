@@ -146,8 +146,9 @@ public enum SubstrateRouting {
                 // Substrate is a scope: a local run needs the Local scope so
                 // its artifacts land where the rest of the app is looking.
                 decision.localHint =
-                    "switch Compute to Local (MLX) to run on this Mac — the "
-                    + "substrate selector scopes where runs land"
+                    "switch Compute to \(ComputeChoice.macQuickStart.title) to "
+                    + "run with the engine built into this app — the Compute "
+                    + "menu scopes where runs land"
                 decision.runBlockedReason = decision.localHint
             }
         }

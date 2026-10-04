@@ -4,20 +4,39 @@ import SwiftUI
 struct SAEFeatureImportButton: View {
     let service: ChatService
     @State private var presented = false
+    /// On the quick start the button shows the offer in place, instead of a
+    /// sheet that could only say "not here" and offer Done.
+    @State private var showingOffer = false
+
+    private var client: ClusterClient? {
+        service.cluster.computeTarget == .server ? service.cluster.client : nil
+    }
+
     var body: some View {
-        Button("Import an SAE feature…") { presented = true }
-            .sheet(isPresented: $presented) {
-                if service.cluster.computeTarget == .server, let client = service.cluster.client {
-                    SAEFeatureImportSheet(service: service, client: client,
-                        modelID: service.workspaceSelectedModelID ?? "")
+        VStack(alignment: .leading, spacing: 6) {
+            Button("Import an SAE feature…") {
+                if client != nil { presented = true } else { showingOffer.toggle() }
+            }
+            if client == nil, showingOffer {
+                if service.cluster.computeTarget == .server {
+                    // On the Python engine already, and not connected yet.
+                    Text("Connect to the Python engine first: open the connection menu in the toolbar and choose Connect. Then return here to import your feature.")
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Import an SAE feature").font(.title2)
-                        Text("Direct feature import currently uses the Python engine. Connect one in Compute; it can run on this Mac using MPS. Select the matching model there, then return to import your feature. Existing local Gemma Scope reports also offer their own feature-import action.")
-                        Button("Done") { presented = false }
-                    }.padding().frame(width: 540)
+                    PythonEngineOffer(subject: "Importing an SAE feature", plural: false)
+                    Text("Existing Gemma Scope reports made on this Mac also offer their own feature-import action.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
+        }
+        .sheet(isPresented: $presented) {
+            if let client {
+                SAEFeatureImportSheet(service: service, client: client,
+                    modelID: service.workspaceSelectedModelID ?? "")
+            }
+        }
     }
 }
 

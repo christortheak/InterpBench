@@ -9,6 +9,10 @@ import SwiftUI
 struct ResearchSetupSheet: View {
     @Bindable var model: ResearchSetupModel
     @Bindable var workspace: WorkspaceStore
+    /// The three compute choices and the actions behind picking one.
+    let compute: ComputeChoiceCoordinator
+    let service: ChatService
+    let localServer: LocalServerController
     let createWorkspace: () -> Void
     let openWorkspace: () -> Void
     @Environment(\.dismiss) private var dismiss
@@ -37,6 +41,7 @@ struct ResearchSetupSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     workspaceStep
+                    computeStep
                     helperStep
                     beginStep
                 }
@@ -67,6 +72,49 @@ struct ResearchSetupSheet: View {
         .padding(24).frame(width: 660, height: 700)
         .interactiveDismissDisabled(model.busy)
         .task(id: selectedRoot) { copied = false; await model.refresh(workspace: selectedRoot) }
+        // This sheet is itself a sheet, so the engine setup and the "what
+        // runs where" view it can ask for are presented ON it.
+        .modifier(
+            ComputeSheets(
+                compute: compute, service: service, localServer: localServer,
+                isActive: true))
+    }
+
+    /// The three plainly named choices. Picking one records it for the
+    /// workspace and switches the app to it; for the engine on this Mac that
+    /// opens its setup, where nothing is installed until it is approved.
+    private var computeStep: some View {
+        GroupBox(ResearchSetupCopy.computeStepTitle) {
+            VStack(alignment: .leading, spacing: 8) {
+                // Offered for the folder the researcher chose — not for a
+                // developer build standing on its own checkout.
+                if selectedRoot != nil {
+                    ComputeChoiceList(
+                        selection: workspace.isComputeDeclared
+                            ? compute.workspaceChoice : nil,
+                        choose: { compute.choose($0) })
+                    if !workspace.isComputeDeclared {
+                        Text(ComputeChoice.undeclaredNote(treatingAs: compute.workspaceChoice))
+                            .font(.caption)
+                    } else if compute.workspaceChoice == .macFullCapabilities {
+                        Text(ComputeChoice.fullCapabilitiesSetup).font(.caption)
+                    } else if compute.workspaceChoice == .anotherMachine,
+                        compute.cluster.otherMachines.isEmpty
+                    {
+                        Text(ComputeChoice.connectAnotherMachine).font(.caption)
+                    }
+                    Button(ComputeGuide.guideButton) { compute.showingGuide = true }
+                        .controlSize(.small)
+                    Text(ResearchSetupCopy.computeCaption)
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text(ResearchSetupCopy.computeNeedsWorkspace)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .disabled(model.busy)
+        }
     }
 
     private var workspaceStep: some View {

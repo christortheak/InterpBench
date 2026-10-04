@@ -1,14 +1,21 @@
 import AppKit
 import ExperimentKit
 
-/// The Cluster-vs-Local choice, as an `NSSavePanel` accessory.
+/// The three compute choices, as an `NSSavePanel` accessory.
 ///
-/// A workspace's compute engine is asked at creation because that is the one
-/// moment the answer is unambiguous — the researcher is deciding what the
+/// Where a workspace's studies run is asked at creation because that is the
+/// one moment the answer is unambiguous — the researcher is deciding what the
 /// folder is FOR. Leaving it to be inferred later is what produced the
-/// disagreement this binding replaces: each verb guessed separately from the
-/// live server pairing, and a cluster workspace ended up treating its own
-/// artifacts as foreign.
+/// disagreement the binding replaced: each verb guessed separately from the
+/// live server pairing, and a workspace ended up treating its own artifacts
+/// as foreign.
+///
+/// It used to offer two engine names, "Cluster (Python/PyTorch)" and "Local
+/// (MLX)", defaulted to the first, and captioned the second "toy models and
+/// pipeline checks" — which told a researcher with only a laptop that the
+/// real path was not for them. It now offers `ComputeChoice`'s three plainly
+/// named choices, each with its own sentence, and starts on the one that
+/// needs nothing installed beyond a model.
 ///
 /// AppKit rather than a SwiftUI sheet because the choice belongs *in* the
 /// same dialog as the folder name; a second modal after the save panel is a
@@ -21,44 +28,67 @@ import ExperimentKit
 /// accessory and the `Relay` that receives the action already live there.
 @MainActor
 final class ComputeChoiceAccessory {
-    private(set) var selected: WorkspaceCompute
+    private(set) var selected: ComputeChoice
     let view: NSView
+    private let buttons: [NSButton]
 
-    init(selected: WorkspaceCompute) {
+    init(selected: ComputeChoice = .newWorkspaceDefault) {
         self.selected = selected
 
-        let label = NSTextField(labelWithString: "Computes on:")
-        let control = NSSegmentedControl(
-            labels: WorkspaceCompute.allCases.map(\.label),
-            trackingMode: .selectOne, target: nil, action: nil)
-        control.selectedSegment =
-            WorkspaceCompute.allCases.firstIndex(of: selected) ?? 0
-        // AppKit does not adopt the sibling NSTextField as this control's
-        // name, so VoiceOver announced an unnamed segmented control and the
-        // pointer got no tooltip (UI audit 2026-09-06).
-        control.toolTip =
-            "which engine this new workspace's studies run on — changeable "
-            + "later from the Workspace menu"
-        control.setAccessibilityLabel("Computes on")
-        control.setAccessibilityTitleUIElement(label)
+        let heading = NSTextField(
+            labelWithString: "Where studies in this workspace run:")
+        heading.font = .preferredFont(forTextStyle: .headline)
 
-        let caption = NSTextField(
+        let relay = Relay()
+        var buttons: [NSButton] = []
+        var rows: [NSView] = [heading]
+        for (index, choice) in ComputeChoice.allCases.enumerated() {
+            let button = NSButton(
+                radioButtonWithTitle: choice.title, target: relay,
+                action: #selector(Relay.changed(_:)))
+            button.tag = index
+            button.state = choice == selected ? .on : .off
+            // The sentence is also the tooltip and the accessibility help, so
+            // VoiceOver reads what the choice means, not just its name.
+            button.toolTip = choice.summary
+            button.setAccessibilityHelp(choice.summary)
+            buttons.append(button)
+
+            let caption = NSTextField(wrappingLabelWithString: choice.summary)
+            caption.font = .preferredFont(forTextStyle: .caption1)
+            caption.textColor = .secondaryLabelColor
+            caption.widthAnchor.constraint(lessThanOrEqualToConstant: 420).isActive = true
+
+            // Indent the sentence under its radio button's title.
+            let indent = NSView()
+            indent.widthAnchor.constraint(equalToConstant: 16).isActive = true
+            let captionRow = NSStackView(views: [indent, caption])
+            captionRow.orientation = .horizontal
+            captionRow.alignment = .top
+            captionRow.spacing = 4
+
+            let row = NSStackView(views: [button, captionRow])
+            row.orientation = .vertical
+            row.alignment = .leading
+            row.spacing = 2
+            rows.append(row)
+        }
+
+        let footer = NSTextField(
             wrappingLabelWithString:
-                "Cluster: studies run on the Python/PyTorch engine and this "
-                + "Mac manages the data. Local: this Mac's MLX engine runs "
-                + "everything — toy models and pipeline checks. Changeable "
-                + "later from the Workspace menu.")
-        caption.font = .preferredFont(forTextStyle: .caption1)
-        caption.textColor = .secondaryLabelColor
+                "You can change this later from the Workspace menu. Nothing "
+                + "is installed when the workspace is created; "
+                + "\(ComputeChoice.macFullCapabilities.title) opens its "
+                + "one-time setup afterwards, and you approve it there.")
+        footer.font = .preferredFont(forTextStyle: .caption1)
+        footer.textColor = .secondaryLabelColor
+        footer.widthAnchor.constraint(lessThanOrEqualToConstant: 440).isActive = true
+        rows.append(footer)
 
-        let row = NSStackView(views: [label, control])
-        row.orientation = .horizontal
-        row.spacing = 8
-
-        let stack = NSStackView(views: [row, caption])
+        let stack = NSStackView(views: rows)
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 6
+        stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 10, left: 16, bottom: 10, right: 16)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
@@ -69,33 +99,36 @@ final class ComputeChoiceAccessory {
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            caption.widthAnchor.constraint(lessThanOrEqualToConstant: 420),
         ])
         self.view = container
+        self.buttons = buttons
 
-        // Retained by the control's target chain for the panel's lifetime,
-        // which is the accessory's lifetime.
-        let relay = Relay { [weak self] index in
-            guard let self, WorkspaceCompute.allCases.indices.contains(index)
+        // Each radio button sits in its own row, so AppKit's automatic
+        // grouping (same superview, same action) does not apply: the relay
+        // keeps exactly one of them on.
+        relay.onChange = { [weak self] index in
+            guard let self, ComputeChoice.allCases.indices.contains(index)
             else { return }
-            self.selected = WorkspaceCompute.allCases[index]
+            self.selected = ComputeChoice.allCases[index]
+            for button in self.buttons {
+                button.state = button.tag == index ? .on : .off
+            }
         }
-        control.target = relay
-        control.action = #selector(Relay.changed(_:))
+        // Retained by the accessory's own view for the panel's lifetime,
+        // which is the accessory's lifetime.
         objc_setAssociatedObject(
-            control, Unmanaged.passUnretained(self).toOpaque(), relay,
+            container, Unmanaged.passUnretained(self).toOpaque(), relay,
             .OBJC_ASSOCIATION_RETAIN)
     }
 
-    /// The segmented control's target. `changed(_:)` is reached only through
-    /// the action chain, which AppKit runs on the main thread, so the callback
+    /// The radio buttons' target. `changed(_:)` is reached only through the
+    /// action chain, which AppKit runs on the main thread, so the callback
     /// can read the accessory's state without a hop.
     @MainActor
     private final class Relay: NSObject {
-        private let onChange: (Int) -> Void
-        init(_ onChange: @escaping (Int) -> Void) { self.onChange = onChange }
-        @objc func changed(_ sender: NSSegmentedControl) {
-            onChange(sender.selectedSegment)
+        var onChange: ((Int) -> Void)?
+        @objc func changed(_ sender: NSButton) {
+            onChange?(sender.tag)
         }
     }
 }

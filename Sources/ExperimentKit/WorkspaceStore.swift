@@ -753,6 +753,16 @@ public final class WorkspaceStore {
         try switchTo(url)
     }
 
+    /// The same, declaring one of the three plainly named choices — what the
+    /// app's own entry points use. The binding written is the choice's
+    /// `binding`; the two choices that share `cluster` also record which of
+    /// them it was.
+    public func createAndSwitch(to url: URL, choosing choice: ComputeChoice) throws {
+        _ = try Self.create(at: url)
+        try WorkspaceCompute.declare(choice, root: url)
+        try switchTo(url)
+    }
+
     // MARK: Compute binding
 
     /// What this workspace computes on — declared, or inferred from its own
@@ -778,6 +788,27 @@ public final class WorkspaceStore {
         try WorkspaceCompute.declare(compute, root: rootURL)
         // Republish: `compute`/`isComputeDeclared` are derived from disk, so
         // Observation has nothing to notice without a stored-property touch.
+        rootURL = rootURL
+    }
+
+    // MARK: The three named choices
+
+    /// Which of the three choices this workspace is set to. A `cluster`
+    /// binding that recorded no location is settled by what the caller can
+    /// see: whether the engine in use right now is this Mac's own.
+    public func computeChoice(activeEngineIsThisMac: Bool) -> ComputeChoice {
+        WorkspaceCompute.resolvedChoice(
+            root: rootURL, activeEngineIsThisMac: activeEngineIsThisMac)
+    }
+
+    /// Declare one of the three choices for this workspace.
+    public func declareComputeChoice(_ choice: ComputeChoice) throws {
+        guard hasWorkspace else {
+            throw ExperimentError(
+                reason: WorkspaceRoot.noWorkspaceReason
+                    + " Create or open a workspace first.")
+        }
+        try WorkspaceCompute.declare(choice, root: rootURL)
         rootURL = rootURL
     }
 }

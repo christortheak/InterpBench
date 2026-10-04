@@ -357,7 +357,7 @@ struct ChatView: View {
     private var subtitle: String {
         switch service.cluster.computeTarget {
         case .local:
-            return "Local (MLX) — " + localSubtitleDetail
+            return ComputeChoice.macQuickStart.title + " — " + localSubtitleDetail
         case .server:
             // Connection line ONLY: activity is a full sentence and lives
             // in the transcript status card + the Model section, where it
@@ -2005,7 +2005,8 @@ struct ChatView: View {
                 case .loading(let percent): "loading… \(percent)%"
                 case .ready: service.loadedModelID ?? "ready"
                 }
-            return "Compute: Local (MLX) — \(state) · change in toolbar"
+            return "Compute: \(ComputeChoice.macQuickStart.title) — \(state) · "
+                + "change in toolbar"
         case .server:
             return "Compute: Server (\(service.cluster.serverHostLabel)) — "
                 + "\(service.cluster.status ?? "not connected") · change in toolbar"

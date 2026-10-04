@@ -172,7 +172,9 @@ struct WorkspaceScopingTests {
                 Issue.record("expected localOnly route for \(builder)")
                 continue
             }
-            #expect(caption.contains("Local"))
+            // The caption names the Compute menu item to switch to, by the
+            // name that menu gives it.
+            #expect(caption.contains(ComputeChoice.macQuickStart.title))
         }
     }
 

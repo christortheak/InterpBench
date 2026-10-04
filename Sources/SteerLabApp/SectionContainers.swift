@@ -218,8 +218,9 @@ struct ComputeSectionView: View {
         switch service.cluster.computeTarget {
         case .local:
             return "switch where this workspace computes with the Compute "
-                + "selector in the window toolbar — on Local (MLX) everything "
-                + "runs inside this app, so the jobs list below stays empty"
+                + "selector in the window toolbar — on "
+                + "\(ComputeChoice.macQuickStart.title) everything runs "
+                + "inside this app, so the jobs list below stays empty"
         case .server:
             return "switch where this workspace computes with the Compute "
                 + "selector in the window toolbar — the list below shows the "
@@ -277,7 +278,7 @@ struct ComputeSectionView: View {
         case .local:
             // One spelling for the local engine everywhere, the same one
             // `substrateLabel` answers (2026-09-06 audit, headline 18).
-            return "Local (MLX) · \(modelText)"
+            return "\(ComputeChoice.macQuickStart.title) · \(modelText)"
         case .server:
             return "\(service.cluster.status ?? "not connected") · \(modelText)"
         }
