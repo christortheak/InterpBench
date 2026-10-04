@@ -17,7 +17,13 @@ The following files are VENDORED — copied into this repository and modified,
 rather than fetched as a dependency — and remain under their upstream license.
 Each file carries a header naming its upstream origin and the exact diff
 applied. Dependencies resolved at build time by SwiftPM or pip are NOT
-vendored and are not listed here; their licenses travel with them.
+vendored and are not listed here; in a source checkout their licenses travel
+with them.
+
+A built SteerLab.app is different: it links its Swift package dependencies
+statically and embeds a JavaScript bundle. The license texts of those
+packages are collected when the app is built and ship inside it, in
+THIRD-PARTY-NOTICES.txt beside this file (Contents/Resources).
 
 1. mlx-swift-lm  (https://github.com/ml-explore/mlx-swift-lm)
 

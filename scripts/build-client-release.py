@@ -30,6 +30,13 @@ with tempfile.TemporaryDirectory(prefix='steerlab-client-build-', dir=args.outpu
     shutil.copytree(ROOT / 'Server', source, ignore=shutil.ignore_patterns('.venv*', '__pycache__', '*.egg-info', '.pytest_cache', 'build', 'dist'))
     release = stage / 'release'
     release.mkdir()
+    # The terms travel with the artifact, twice over: beside the installer in the
+    # release directory, and inside the wheel (setuptools packs a LICENSE and a
+    # NOTICE it finds at the project root into <dist-info>/licenses/). The two
+    # files live once, at the repository root; the copies are made here.
+    for name in ('LICENSE', 'NOTICE'):
+        shutil.copyfile(ROOT / name, source / name)
+        shutil.copyfile(ROOT / name, release / name)
     subprocess.run([args.uv, 'build', '--wheel', '--out-dir', str(release), str(source)], check=True)
     (release / '.gitignore').unlink(missing_ok=True)  # uv marks its out-dir; the release is not a checkout
     resources = source / 'steerlab_server/client/resources'

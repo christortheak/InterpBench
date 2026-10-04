@@ -85,6 +85,14 @@ printf '\xcf\xfa\xed\xfe a stand-in app executable\0%s\0' "${APP_BINARY_TEXT:-}"
 printf '\xcf\xfa\xed\xfe a stand-in CLI executable\0' > "$products/steerlab-cli"
 chmod +x "$products/SteerLabApp" "$products/steerlab-cli"
 printf 'MTLB stand-in shaders' > "$products/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib"
+# What a real build leaves behind: one checkout per pinned package, each with
+# its license. (The working directory is the staged package.)
+python3 -c 'import json, pathlib, sys
+for pin in json.load(open("Package.resolved"))["pins"]:
+    checkout = pathlib.Path(sys.argv[1]) / pin["identity"]
+    checkout.mkdir(parents=True, exist_ok=True)
+    (checkout / "LICENSE").write_text("stand-in license of " + pin["identity"] + "\n")' \
+  "$derived/SourcePackages/checkouts"
 ''',
     "uv": r'''
 out=""
@@ -106,6 +114,7 @@ case "$*" in
     mkdir -p "$STEERLAB_EMBED_OUT_DIR/assets"
     printf '<!doctype html><title>built from source by this build</title>\n' > "$STEERLAB_EMBED_OUT_DIR/index.html"
     printf 'console.log("stand-in")\n' > "$STEERLAB_EMBED_OUT_DIR/assets/index.js"
+    printf '[]\n' > "$STEERLAB_EMBED_OUT_DIR/bundled-packages.json"   # bundles no npm package
     ;;
 esac
 ''',
@@ -284,6 +293,43 @@ def test_the_results_explorer_is_built_from_source_into_the_bundle(tmp_path):
     assert (web / "results-explorer/assets/index.js").is_file()
     # The hand-written page beside it is tracked source and is copied as is.
     assert (web / "index.html").read_bytes() == (ROOT / "web/index.html").read_bytes()
+
+
+def test_the_bundle_carries_its_license_its_notice_and_third_party_notices(tmp_path):
+    """The app is distributed as a binary, so its terms have to be inside it:
+    SteerLab's own, and those of every package the build linked in."""
+    import json
+    result, _, app = _assemble(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    resources = app / "Contents/Resources"
+    assert (resources / "LICENSE").read_bytes() == (ROOT / "LICENSE").read_bytes()
+    assert (resources / "NOTICE").read_bytes() == (ROOT / "NOTICE").read_bytes()
+    notices = (resources / "THIRD-PARTY-NOTICES.txt").read_text()
+    pins = json.loads((ROOT / "Package.resolved").read_text())["pins"]
+    assert len(pins) >= 10
+    for pin in pins:                       # every pinned package, none omitted
+        assert f"\n{pin['identity']} " in notices
+        assert f"stand-in license of {pin['identity']}" in notices
+    # …and all three are in the resource manifest, so a tampered copy is caught.
+    manifest = json.loads((resources / "resource-manifest.json").read_text())["files"]
+    assert {"LICENSE", "NOTICE", "THIRD-PARTY-NOTICES.txt"} <= set(manifest)
+
+
+def test_a_package_with_no_license_stops_the_build(tmp_path):
+    """Refuse rather than omit: a notices file that silently left a linked
+    package out would be worse than none."""
+    stand_ins = dict(ASSEMBLING_STAND_INS)
+    stand_ins["xcodebuild"] += (
+        'rm -f "$derived/SourcePackages/checkouts/mlx-swift/LICENSE"\n')
+    result, calls = _run(
+        tmp_path, "--build-root", tmp_path / "neutral", "--output", tmp_path / "out",
+        "--no-verify", stand_ins=stand_ins,
+        env={"STEERLAB_PRIVATE_NAMES_FILE": str(tmp_path / "no-list.txt")})
+    assert result.returncode == 5
+    assert "the package 'mlx-swift' has no license file" in result.stdout
+    assert "could not collect the third-party license notices" in result.stderr
+    assert not any(line.startswith("codesign ") for line in calls)
+    assert not (tmp_path / "out" / "SteerLab.app").exists()
 
 
 def test_without_npm_the_build_stops_and_says_what_is_needed(tmp_path):

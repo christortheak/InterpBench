@@ -1,6 +1,6 @@
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 
 // The EMBEDDED build (`npm run build:embed`): a plain static SPA — no
 // worker, no RSC, no server — written to the repo root's
@@ -17,10 +17,39 @@ const outDir =
   process.env.STEERLAB_EMBED_OUT_DIR ||
   fileURLToPath(new URL("../web/results-explorer", import.meta.url));
 
+// Writes `bundled-packages.json` into the bundle: the npm packages whose
+// modules this build actually included, read from the bundler's own module
+// list rather than from package.json (which also names packages only the
+// standalone build uses). The app build turns that list into license notices
+// (`scripts/generate-third-party-notices.py`), so a newly bundled dependency
+// is covered without anyone remembering to add it.
+function bundledPackages(): Plugin {
+  return {
+    name: "steerlab-bundled-packages",
+    generateBundle(_options, bundle) {
+      const names = new Set<string>();
+      for (const output of Object.values(bundle)) {
+        if (output.type !== "chunk") continue;
+        for (const id of output.moduleIds) {
+          const parts = id.split("\\").join("/").split("/node_modules/");
+          if (parts.length < 2) continue;
+          const [scopeOrName, name] = parts[parts.length - 1].split("/");
+          names.add(scopeOrName.startsWith("@") ? `${scopeOrName}/${name}` : scopeOrName);
+        }
+      }
+      this.emitFile({
+        type: "asset",
+        fileName: "bundled-packages.json",
+        source: JSON.stringify([...names].sort(), null, 2) + "\n",
+      });
+    },
+  };
+}
+
 export default defineConfig({
   root: fileURLToPath(new URL("./embed", import.meta.url)),
   base: "./",
-  plugins: [react()],
+  plugins: [react(), bundledPackages()],
   build: {
     outDir,
     emptyOutDir: true,

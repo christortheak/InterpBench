@@ -20,18 +20,23 @@ HOME_ROOT = "/" + "Users"                # never spelled whole in this file
 
 
 def _stand_in_uv(tmp_path: pathlib.Path) -> pathlib.Path:
-    """`uv build --wheel --out-dir <dir> <source>` → a one-member wheel whose
-    member holds `$WHEEL_MEMBER_TEXT`."""
+    """`uv build --wheel --out-dir <dir> <source>` → a small wheel: one module
+    holding `$WHEEL_MEMBER_TEXT`, plus — as setuptools does — whatever LICENSE
+    and NOTICE sit at the top of the source directory it was handed."""
     path = tmp_path / "uv"
     path.write_text(f'''#!/bin/bash
-out=""
+out=""; source=""
 while [ $# -gt 0 ]; do
-  case "$1" in --out-dir) out="$2"; shift 2 ;; *) shift ;; esac
+  case "$1" in --out-dir) out="$2"; shift 2 ;; *) source="$1"; shift ;; esac
 done
-"{sys.executable}" -c 'import os, sys, zipfile
+"{sys.executable}" -c 'import os, pathlib, sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as wheel:
-    wheel.writestr("steerlab_server/__init__.py", os.environ.get("WHEEL_MEMBER_TEXT", "VALUE = 1"))' \\
-  "$out/steerlab_server-0.0.0-py3-none-any.whl"
+    wheel.writestr("steerlab_server/__init__.py", os.environ.get("WHEEL_MEMBER_TEXT", "VALUE = 1"))
+    for name in ("LICENSE", "NOTICE"):
+        found = pathlib.Path(sys.argv[2]) / name
+        if found.is_file():
+            wheel.write(found, "steerlab_server-0.0.0.dist-info/licenses/" + name)' \\
+  "$out/steerlab_server-0.0.0-py3-none-any.whl" "$source"
 ''')
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
     return path
@@ -60,6 +65,29 @@ def test_a_clean_release_is_scanned_and_written(tmp_path):
     assert "artifact scan: clean" in result.stdout
     assert (output / "install-client.sh").is_file()
     assert (output / "steerlab_server-0.0.0-py3-none-any.whl").is_file()
+
+
+def test_the_release_and_its_wheel_carry_the_license_and_the_notice(tmp_path):
+    """A release directory is downloaded on its own, and its wheel is
+    installed far from the repository: both must carry the terms."""
+    import zipfile
+    result, output = _build(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    sums = (output / "SHA256SUMS").read_text()
+    for name in ("LICENSE", "NOTICE"):
+        assert (output / name).read_bytes() == (ROOT / name).read_bytes()
+        assert f"  {name}\n" in sums                  # covered by the checksum list
+    # The builder put both at the top of the source it handed the wheel build,
+    # which is where setuptools looks for license files.
+    with zipfile.ZipFile(output / "steerlab_server-0.0.0-py3-none-any.whl") as wheel:
+        names = wheel.namelist()
+        assert "steerlab_server-0.0.0.dist-info/licenses/LICENSE" in names
+        assert "steerlab_server-0.0.0.dist-info/licenses/NOTICE" in names
+        assert wheel.read("steerlab_server-0.0.0.dist-info/licenses/LICENSE") == (
+            ROOT / "LICENSE").read_bytes()
+    # …and the checkout itself was not given copies.
+    assert not (ROOT / "Server" / "LICENSE").exists()
+    assert not (ROOT / "Server" / "NOTICE").exists()
 
 
 def test_a_release_whose_wheel_carries_a_home_folder_path_is_not_written(tmp_path):

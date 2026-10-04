@@ -615,6 +615,24 @@ step "Building the embedded results explorer from source"
   || die "the results explorer build failed (see the lines above). It is built from results-explorer/ with npm, which needs Node.js 22.13 or later."
 cp "$SUPPORT/SteerLab.icns" "$RES/SteerLab.icns" || die "could not stage the app icon"
 
+# ── Licenses ─────────────────────────────────────────────────────────────────
+# The app is distributed as a binary, so the terms it is offered under have
+# to travel INSIDE it: SteerLab's own LICENSE and NOTICE, and the license
+# texts of what the build linked in or embedded. Those are collected from
+# what this build actually used — every package pinned in Package.resolved,
+# read from its checkout in the derived data, and the npm packages the web
+# bundle just reported it contains — and the step refuses rather than omits.
+step "Staging the license, the notice, and third-party notices"
+cp "$REPO/LICENSE" "$RES/LICENSE" || die "LICENSE is missing from the checkout"
+cp "$REPO/NOTICE" "$RES/NOTICE" || die "NOTICE is missing from the checkout"
+python3 "$SCRIPT_DIR/generate-third-party-notices.py" \
+  --output "$RES/THIRD-PARTY-NOTICES.txt" \
+  --package-resolved "$REPO/Package.resolved" \
+  --checkouts "$DERIVED/SourcePackages/checkouts" \
+  --web-bundle "$RES/web/results-explorer" \
+  --web-node-modules "$REPO/results-explorer/node_modules" 2>&1 | sed 's/^/  /' \
+  || die "could not collect the third-party license notices (see the line above)"
+
 # AnalysisTools = the checkout's scripts/, minus generated caches.
 rsync -a --exclude "__pycache__" --exclude "*.pyc" --exclude ".DS_Store" \
   "$REPO/scripts/" "$RES/AnalysisTools/" || die "could not stage AnalysisTools"
