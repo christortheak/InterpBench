@@ -21,6 +21,9 @@ public enum PanelTranscript {
         public let promptID: String
         public let condition: String
         public let replicate: Int
+        /// The seat that spoke, by ID. Nil means the run predates the field
+        /// being recorded — `speaker` (a display name) is then all there is.
+        public let speakerAgentID: String?
         public let speaker: String
         public let title: String
         public let prompt: String
@@ -101,6 +104,7 @@ public enum PanelTranscript {
                         promptID: entry.record.promptID,
                         condition: condition,
                         replicate: replicate,
+                        speakerAgentID: entry.record.speakerAgentID,
                         speaker: entry.record.speakerName ?? "—",
                         title: entry.record.turnTitle ?? entry.record.promptID,
                         prompt: entry.record.prompt ?? "",

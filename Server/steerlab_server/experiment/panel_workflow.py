@@ -152,6 +152,14 @@ def _panel_records_from(sub: str, name: str, manifest, model, condition: str,
             # maxTokens would classify against a cap the generation never ran
             # under. Absent on turns written before the field existed.
             finish = turn.get(truncation_gate.RECORD_KEY)
+            # The SEAT that spoke, by ID, carried verbatim from the turn
+            # record. `speakerName` is a display name: two seats may share
+            # one, and a rename changes it, so a flattened record that carries
+            # only the name can be attributed to its seat only by joining
+            # turns.jsonl. Additive: a turn record with no ID of its own
+            # flattens without the key, exactly as it did before the key
+            # existed — absent is a different claim from "no seat".
+            speaker_id = turn.get("speakerAgentID")
             out.append({
                 "experiment": name, "experimentHash": manifest.content_hash(),
                 "modelID": turn.get("modelID", manifest.model_id),
@@ -171,6 +179,8 @@ def _panel_records_from(sub: str, name: str, manifest, model, condition: str,
                 "sampleIndex": replicate,
                 "temperature": turn.get("temperature", manifest.temperature),
                 "prompt": turn.get("prompt", ""), "output": output,
+                **({"speakerAgentID": speaker_id}
+                   if isinstance(speaker_id, str) else {}),
                 "speakerName": turn.get("speakerName"),
                 "turnTitle": turn.get("title"),
                 "routedAgentIDs": turn.get("routedAgentIDs"),

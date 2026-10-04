@@ -75,6 +75,11 @@ public enum RunResults {
         /// Multi-agent turn identity (nil on every other study kind). These
         /// are what let the transcript be rebuilt from generations.jsonl,
         /// so `transcript.md` never has to be a measurement input.
+        ///
+        /// `speakerAgentID` is the seat, by ID — nil on a run written before
+        /// the flattened record carried it, which still reads: the name is
+        /// then the only attribution the record offers, exactly as before.
+        public var speakerAgentID: String?
         public var speakerName: String?
         public var turnTitle: String?
         public var routedAgentIDs: [String]?
@@ -116,6 +121,7 @@ public enum RunResults {
         record.wordCount = intValue(dictionary["wordCount"])
         record.distinct2 = doubleValue(dictionary["distinct2"])
         record.instrument = dictionary["instrument"] as? String
+        record.speakerAgentID = dictionary["speakerAgentID"] as? String
         record.speakerName = dictionary["speakerName"] as? String
         record.turnTitle = dictionary["turnTitle"] as? String
         record.routedAgentIDs = (dictionary["routedAgentIDs"] as? [Any])?

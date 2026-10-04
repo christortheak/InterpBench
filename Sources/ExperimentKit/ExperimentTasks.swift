@@ -3972,6 +3972,68 @@ public enum ExperimentTasks {
         return (scenario, scenarioPath, scenarioURL, scenarioHash, runDirectory)
     }
 
+    /// One panel turn, flattened into the study's generation record — the
+    /// row `generations.jsonl` carries for it. Server twin:
+    /// `panel_workflow._panel_records_from`.
+    ///
+    /// A named seam, like `sampledGenerationRecord`: exactly the expression
+    /// the run loop writes, testable without a model. `row` supplies the
+    /// values the loop has already derived for metrics.csv (seed, indices,
+    /// word count), so the record and the metrics row cannot disagree.
+    static func panelGenerationRecord(
+        turn: MultiAgentTurnResult, row: MetricRow,
+        manifest: ExperimentManifest, experimentHash: String,
+        scenario: MultiAgentScenario, scenarioPath: String,
+        scenarioHash: String, replicate: Int
+    ) -> GenerationRecord {
+        GenerationRecord(
+            experiment: manifest.name,
+            experimentHash: experimentHash,
+            modelID: scenario.baseModelID,
+            // The revision that actually generated this turn.
+            modelRevision: turn.modelRevision
+                ?? manifest.modelRevision
+                ?? SteeredContainerLoader.cachedRevision(
+                    for: scenario.baseModelID),
+            taskPromptsFile: scenarioPath,
+            taskPromptsHash: scenarioHash,
+            promptMode: "multi-agent",
+            systemPrompt: nil,
+            qwenThinkingEnabled: false,
+            condition: row.condition,
+            seed: row.seed,
+            seedInert: manifest.temperature == 0,
+            seedPolicy: manifest.temperature > 0 ? "derivedSHA256" : "greedy",
+            sampleIndex: replicate,
+            promptTokenCount: turn.promptTokenCount,
+            promptIndex: row.promptIndex,
+            promptID: row.promptID,
+            prompt: turn.prompt,
+            output: turn.output,
+            wordCount: row.wordCount,
+            distinct2: row.distinct2,
+            finishReason: turn.finishReason,
+            markerDensity: row.markerDensity,
+            variantArtifactPath: nil,
+            variantArtifactHash: nil,
+            // The seat, by ID, carried verbatim from the turn record — the
+            // name beside it is a label, not an identity.
+            speakerAgentID: turn.speakerAgentID,
+            speakerName: turn.speakerName,
+            turnTitle: turn.title,
+            routedAgentIDs: turn.routedAgentIDs,
+            replicateIndex: replicate,
+            target: nil,
+            anchorMonths: nil,
+            severity: nil,
+            arm: nil,
+            caseID: nil,
+            parsedMonths: nil,
+            parsedChoice: nil,
+            endpoint: turn.endpoint,
+            voiceLint: turn.voiceLint)
+    }
+
     private static func runMultiAgentStudy(
         manifest: ExperimentManifest,
         cancel: CancelPoller = CancelPoller(nil),
@@ -4094,49 +4156,11 @@ public enum ExperimentTasks {
                     reasoningStyle: style.map { $0.taxonomy.score(turn.output) } ?? [:],
                     replicate: replicate)
                 rows.append(row)
-                let record = GenerationRecord(
-                    experiment: manifest.name,
-                    experimentHash: experimentHash,
-                    modelID: scenario.baseModelID,
-                    // The revision that actually generated this turn.
-                    modelRevision: turn.modelRevision
-                        ?? manifest.modelRevision
-                        ?? SteeredContainerLoader.cachedRevision(
-                            for: scenario.baseModelID),
-                    taskPromptsFile: scenarioPath,
-                    taskPromptsHash: scenarioHash,
-                    promptMode: "multi-agent",
-                    systemPrompt: nil,
-                    qwenThinkingEnabled: false,
-                    condition: condition.name,
-                    seed: row.seed,
-                    seedInert: manifest.temperature == 0,
-                    seedPolicy: manifest.temperature > 0 ? "derivedSHA256" : "greedy",
-                    sampleIndex: replicate,
-                    promptTokenCount: turn.promptTokenCount,
-                    promptIndex: row.promptIndex,
-                    promptID: row.promptID,
-                    prompt: turn.prompt,
-                    output: turn.output,
-                    wordCount: row.wordCount,
-                    distinct2: row.distinct2,
-                    finishReason: turn.finishReason,
-                    markerDensity: row.markerDensity,
-                    variantArtifactPath: nil,
-                    variantArtifactHash: nil,
-                    speakerName: turn.speakerName,
-                    turnTitle: turn.title,
-                    routedAgentIDs: turn.routedAgentIDs,
-                    replicateIndex: replicate,
-                    target: nil,
-                    anchorMonths: nil,
-                    severity: nil,
-                    arm: nil,
-                    caseID: nil,
-                    parsedMonths: nil,
-                    parsedChoice: nil,
-                    endpoint: turn.endpoint,
-                    voiceLint: turn.voiceLint)
+                let record = panelGenerationRecord(
+                    turn: turn, row: row, manifest: manifest,
+                    experimentHash: experimentHash, scenario: scenario,
+                    scenarioPath: scenarioPath, scenarioHash: scenarioHash,
+                    replicate: replicate)
                 try generationsHandle.write(contentsOf: encoder.encode(record))
                 try generationsHandle.write(contentsOf: Data("\n".utf8))
                 await progress?(.generationCompleted(generationPreview(from: record)))
