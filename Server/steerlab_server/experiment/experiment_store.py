@@ -3523,6 +3523,20 @@ def freeze(name: str, *, force: bool = False, cached_revision=None,
         violations = manifest.verify(root)
         if violations:
             raise ExperimentStoreError("cannot freeze:\n  - " + "\n  - ".join(violations))
+        # Panel identity: a pinned panel in which two agents, or two turns,
+        # share an ID REFUSES the freeze, force included. Record identity is
+        # the never-skippable class, like the pins above — a turn ID keys
+        # resume and the per-turn seed, and an agent ID is what a record names
+        # its seat by, so a study frozen over a repeated ID produces records
+        # nobody can attribute and no `forcedGatesSkipped` stamp can repair.
+        # Asked HERE and not in verify(): verify also admits reads of runs
+        # that already exist, and those must keep opening.
+        from . import multi_agent as _panels
+        panel_identity = _panels.pinned_panel_identity_problem(d, root)
+        if panel_identity is not None:
+            raise ExperimentStoreError(
+                f"cannot freeze '{name}': in its pinned panel, {panel_identity}",
+                gate=panel_identity.gate, repair=panel_identity.repair_action)
         # Non-blocking advisories, printed BEFORE the gates so a refusal (e.g.
         # "no validate run matches") still explains why foreign-looking evidence
         # was not counted. Loud, never a refusal (parallel to Swift's

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 
@@ -10,17 +11,18 @@ import Testing
 /// seed. A repeat fails SILENTLY — a resumed transcript replays the first
 /// turn's recorded output in place of the second and never generates it — so
 /// it is refused, with the ID named and a repair, wherever a panel is authored,
-/// checked, cast, or about to run.
+/// checked, cast, frozen into a study, or about to run.
 ///
-/// It is never refused on DECODE, so a run directory that already exists still
-/// reads.
+/// It is never refused on DECODE, and never by `verify`, so a run directory
+/// that already exists still reads and a study frozen before the rule existed
+/// still answers for its runs.
 ///
 /// The two refusal strings are a cross-engine contract. Python twin:
 /// `Server/tests/test_panel_identifier_uniqueness.py` asserts the same
 /// literals.
 ///
-/// Serialized: the CLI tests move the process-global workspace root, under
-/// the shared `ExperimentRootOverrideLock`.
+/// Serialized: the freeze and CLI tests move the process-global workspace
+/// root, under the shared `ExperimentRootOverrideLock`.
 @Suite(.serialized) struct PanelIdentifierUniquenessTests {
 
     // The two refusals, spelled out in full. Identical on the Python engine.
@@ -223,6 +225,156 @@ import Testing
         try StudyPanelAuthoring.validate(PanelComposition.semanticForm(scenario()))
     }
 
+    // MARK: - Freeze
+
+    private func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Writes `scenario` as a workspace panel and returns a multi-agent draft
+    /// that pins it by hash.
+    @discardableResult
+    private func pinnedDraft(
+        named name: String, scenario: MultiAgentScenario, in root: URL
+    ) throws -> ExperimentManifest {
+        let relativePath = "prompts/panels/\(name).json"
+        let url = root.appending(path: relativePath)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(scenario)
+        try data.write(to: url)
+        var manifest = try ExperimentStore.create(
+            name: name, description: "", modelID: "test/model",
+            modelRevision: "abc123")
+        manifest.studyKind = .multiAgent
+        manifest.multiAgentScenarioPath = relativePath
+        manifest.multiAgentScenarioHash = sha256Hex(data)
+        try ExperimentStore.save(manifest)
+        return manifest
+    }
+
+    @Test("freeze refuses a pinned panel with a repeated turn ID, force included")
+    func freezeRefusesARepeatedTurnID() async throws {
+        try await withTempWorkspace { root in
+            try pinnedDraft(
+                named: "mas", scenario: scenario(turnIDs: ["t1", "t2", "t1"]),
+                in: root)
+
+            // Force included: record identity is the never-skippable class,
+            // like the pins — no `forcedGatesSkipped` stamp can make the
+            // records attributable.
+            for force in [false, true] {
+                let error = try #require(
+                    refusal { _ = try ExperimentStore.freeze(name: "mas", force: force) })
+                #expect(
+                    error.reason
+                        == "cannot freeze 'mas': in its pinned panel, " + Self.duplicateTurn)
+                let typed = try #require(error.lifecycleRefusal)
+                #expect(typed.gate == .missingPrerequisite)
+                #expect(typed.repairAction.contains("steerlab-cli panel check "))
+                #expect(typed.repairAction.contains("steerlab-cli experiment freeze mas"))
+            }
+            #expect(try ExperimentStore.load(name: "mas").status == .draft)
+        }
+    }
+
+    @Test("freeze refuses a pinned panel with a repeated seat ID")
+    func freezeRefusesARepeatedSeatID() async throws {
+        try await withTempWorkspace { root in
+            try pinnedDraft(
+                named: "mas", scenario: scenario(agentIDs: ["a", "b", "a"]), in: root)
+
+            let error = try #require(
+                refusal { _ = try ExperimentStore.freeze(name: "mas") })
+
+            #expect(
+                error.reason
+                    == "cannot freeze 'mas': in its pinned panel, " + Self.duplicateSeat)
+        }
+    }
+
+    @Test("the freeze verb answers the refusal with a runnable repair")
+    func theFreezeVerbRefusesWithARepair() async throws {
+        try await withTempWorkspace { root in
+            try pinnedDraft(
+                named: "mas", scenario: scenario(turnIDs: ["t1", "t2", "t1"]),
+                in: root)
+
+            let outcome = await ExperimentCLIRunner(sink: .discarding).run(
+                namespace: "experiment", ["freeze", "mas"])
+
+            #expect(outcome.envelope.state == .refused)
+            #expect(outcome.envelope.exitCode == 65)
+            #expect(outcome.envelope.error?.code == "missingPrerequisite")
+            let repair = try #require(outcome.envelope.error?.repairAction)
+            #expect(repair.contains("steerlab-cli experiment freeze mas"))
+            #expect(try ExperimentStore.load(name: "mas").status == .draft)
+        }
+    }
+
+    @Test("readiness says what freeze is about to refuse")
+    func readinessReportsTheRepeat() async throws {
+        try await withTempWorkspace { root in
+            let manifest = try pinnedDraft(
+                named: "mas", scenario: scenario(turnIDs: ["t1", "t2", "t1"]),
+                in: root)
+
+            let readiness = ExperimentStore.freezeReadiness(for: manifest)
+
+            #expect(
+                readiness.unmetGates.contains(
+                    "in its pinned panel, " + Self.duplicateTurn))
+        }
+    }
+
+    @Test("a study over a repeated ID still verifies, and a clean one freezes")
+    func verifyStaysOpenAndCleanPanelsFreeze() async throws {
+        try await withTempWorkspace { root in
+            // The rule is asked at freeze, not in `verify`: verify also admits
+            // reads of runs that already exist, and a study frozen before the
+            // rule existed must keep answering them.
+            let repeated = try pinnedDraft(
+                named: "old", scenario: scenario(turnIDs: ["t1", "t2", "t1"]),
+                in: root)
+            #expect(ExperimentStore.verify(repeated).isEmpty)
+            #expect(MultiAgentRunner.pinnedPanelIdentityRefusal(for: repeated) != nil)
+
+            let clean = try pinnedDraft(named: "new", scenario: scenario(), in: root)
+            #expect(MultiAgentRunner.pinnedPanelIdentityRefusal(for: clean) == nil)
+            #expect(
+                !ExperimentStore.freezeReadiness(for: clean).unmetGates.contains {
+                    $0.contains("share the ID")
+                })
+            let frozen = try ExperimentStore.freeze(name: "new")
+            #expect(frozen.status == .frozen)
+        }
+    }
+
+    @Test("the freeze question is silent about everything else")
+    func theFreezeQuestionIsNarrow() async throws {
+        try await withTempWorkspace { root in
+            // Not a panel study; a panel study that pins nothing; a path that
+            // is not there; a file that is not a panel. `verify` and the run
+            // report those in their own words.
+            var manifest = ExperimentManifest(
+                name: "narrow", description: "", modelID: "test/model")
+            #expect(MultiAgentRunner.pinnedPanelIdentityRefusal(for: manifest) == nil)
+            manifest.studyKind = .multiAgent
+            #expect(MultiAgentRunner.pinnedPanelIdentityRefusal(for: manifest) == nil)
+            manifest.multiAgentScenarioPath = "prompts/panels/absent.json"
+            #expect(MultiAgentRunner.pinnedPanelIdentityRefusal(for: manifest) == nil)
+            let broken = root.appending(path: "prompts/panels/broken.json")
+            try FileManager.default.createDirectory(
+                at: broken.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            try Data("[1, 2".utf8).write(to: broken)
+            manifest.multiAgentScenarioPath = "prompts/panels/broken.json"
+            #expect(MultiAgentRunner.pinnedPanelIdentityRefusal(for: manifest) == nil)
+        }
+    }
+
     // MARK: - The CLI
 
     @Test("panel check answers a refusal with a runnable repair")
@@ -268,6 +420,8 @@ import Testing
     func theRegistryNamesTheSite() throws {
         let site = try #require(RefusalSiteRegistry.site(for: .missingPrerequisite))
         #expect(site.verbs.contains("panel check"))
+        #expect(site.verbs.contains("experiment freeze"))
         #expect(site.origin.contains("MultiAgentRunner.duplicateIdentifierRefusal"))
+        #expect(site.origin.contains("ExperimentStore.freeze"))
     }
 }

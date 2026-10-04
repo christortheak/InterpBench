@@ -462,8 +462,8 @@ public enum RefusalSiteRegistry {
                 // the verb needs and does not have is an identity for every
                 // seat and every turn; the repair is to author one and check
                 // again. Refused wherever a panel is validated (`panel check`,
-                // `panel compile`, a run).
-                "panel check",
+                // `panel compile`, a run) and, for a pinned panel, at freeze.
+                "panel check", "experiment freeze",
             ],
             origin: "ExperimentTasks.loadTaskPrompts (frozen, unpinned); "
                 + "newestCompletedRun; ConfirmationStudy.attach; "
@@ -473,7 +473,8 @@ public enum RefusalSiteRegistry {
                 + "file that is not on disk); ExperimentCLIRunner's "
                 + "StimulusSetError.missingFile(s) classification; "
                 + "MultiAgentRunner.duplicateIdentifierRefusal (a panel that "
-                + "repeats an agent or turn ID — MultiAgentRunner.validate)",
+                + "repeats an agent or turn ID — MultiAgentRunner.validate, "
+                + "and ExperimentStore.freeze for the pinned panel)",
             repairAction: "steerlab-cli experiment duplicate <name> <name>-v2 "
                 + "&& steerlab-cli experiment pin-prompts <name>-v2 "
                 + "prompts/…/file.jsonl && steerlab-cli experiment freeze <name>-v2"),

@@ -384,6 +384,8 @@ def duplicate_identifier_problem(scenario: Scenario) -> ScenarioError | None:
     the cross-engine contract, like every other refusal here, and so is the
     wording (Swift twin: ``MultiAgentRunner.duplicateIdentifierRefusal``).
 
+    A named seam rather than a few lines inside ``validate``: freeze asks the
+    same question of a pinned panel without running the rest of validation.
     It is deliberately NOT part of decoding (``Scenario.from_dict``), so a
     panel that already ran — a run directory's ``scenario.json`` snapshot —
     still reads.
@@ -392,6 +394,29 @@ def duplicate_identifier_problem(scenario: Scenario) -> ScenarioError | None:
     if problem is None:
         problem = duplicate_turn_id_problem(scenario)
     return problem
+
+
+def pinned_panel_identity_problem(d: dict,
+                                  root: str | None = None) -> ScenarioError | None:
+    """``duplicate_identifier_problem`` for the panel a multi-agent study pins,
+    read from the raw manifest dict ``d`` — the question freeze asks.
+
+    Answers ONLY the identity question. A study that pins no panel, or whose
+    panel cannot be read or decoded, returns None here: ``verify()`` and the
+    run report those in their own words, and a second, vaguer refusal from
+    this function would only hide them.
+    """
+    spath = d.get("multiAgentScenarioPath")
+    if d.get("studyKind") != "multiAgent" or not isinstance(spath, str) or not spath:
+        return None
+    if not os.path.isabs(spath):
+        spath = os.path.join(paths.project_root() if root is None else root, spath)
+    try:
+        scenario, _ = load_scenario(spath)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError,
+            ScenarioError):
+        return None
+    return duplicate_identifier_problem(scenario)
 
 
 def validate(scenario: Scenario) -> None:

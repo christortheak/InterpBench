@@ -5,10 +5,11 @@ and records name it by. A turn's ID keys turn-level resume and the per-turn
 seed. A repeat fails SILENTLY — the later seat wins the runtime slot; a resumed
 transcript replays the first turn's recorded output in place of the second and
 never generates it — so it is refused, with the ID named and a repair, wherever
-a panel is authored, checked, cast, or about to run.
+a panel is authored, checked, cast, frozen into a study, or about to run.
 
-It is never refused on DECODE, so a run directory that already exists still
-reads.
+It is never refused on DECODE, and never by ``verify()``, so a run directory
+that already exists still reads and a study frozen before the rule existed
+still answers for its runs.
 
 The two refusal strings are a cross-engine contract. Swift twin:
 ``Tests/ExperimentKitTests/PanelIdentifierUniquenessTests.swift`` asserts the
@@ -24,8 +25,9 @@ import pytest
 
 from steerlab_server import client_cli
 from steerlab_server.client import design_files, design_panels, study_panels
-from steerlab_server.experiment import (lifecycle_gates, multi_agent,
-                                        panel_workflow)
+from steerlab_server.experiment import (experiment_store as es, lifecycle_gates,
+                                        multi_agent, panel_workflow)
+from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.experiment.manifest_errors import ExperimentStoreError
 
 
@@ -182,6 +184,132 @@ def test_old_turn_records_under_a_repeated_id_still_flatten(tmp_path):
 
     assert [(r["promptID"], r["promptIndex"], r["output"]) for r in records] == [
         ("t1", 0, "first"), ("t1", 1, "second")]
+
+
+# --- freeze -------------------------------------------------------------------
+
+def _panel_draft(root, panel, name="mas"):
+    """A multi-agent draft that pins ``panel`` by hash, in workspace ``root``."""
+    path = os.path.join(root, "prompts", "panels", "panel.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    data = json.dumps(panel, indent=1).encode("utf-8")
+    with open(path, "wb") as handle:
+        handle.write(data)
+    es.create(name, model_id="org/m", revision="abc", root=root)
+    d = es.load_raw(name, root)
+    d["studyKind"] = "multiAgent"
+    d["multiAgentScenarioPath"] = "prompts/panels/panel.json"
+    d["multiAgentScenarioHash"] = hashlib.sha256(data).hexdigest()
+    es.save_raw(d, root)
+    return name
+
+
+def _panel_document():
+    return {"name": "panel", "baseModelID": "org/m",
+            "agents": [{"id": "j1", "name": "Judge One", "baseModelID": "org/m"},
+                       {"id": "j2", "name": "Judge Two", "baseModelID": "org/m"}],
+            "turns": [{"id": "t1", "title": "Vote", "speakerAgentID": "j1",
+                       "promptTemplate": "Vote."},
+                      {"id": "t2", "title": "Reply", "speakerAgentID": "j2",
+                       "promptTemplate": "Reply."}]}
+
+
+def test_freeze_accepts_a_panel_whose_ids_are_all_distinct(tmp_path):
+    root = str(tmp_path)
+    name = _panel_draft(root, _panel_document())
+    assert es.freeze(name, force=False, root=root)["status"] == "frozen"
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_freeze_refuses_a_pinned_panel_with_a_repeated_turn_id(tmp_path, force):
+    """Force included: record identity is the never-skippable class, like the
+    pins — no ``forcedGatesSkipped`` stamp can make the records attributable."""
+    root = str(tmp_path)
+    panel = _panel_document()
+    panel["turns"][1]["id"] = "t1"
+    name = _panel_draft(root, panel)
+
+    with pytest.raises(ExperimentStoreError) as refusal:
+        es.freeze(name, force=force, root=root)
+
+    assert str(refusal.value) == (
+        "cannot freeze 'mas': in its pinned panel, turns 1 and 2 ('Vote' and "
+        "'Reply') share the ID 't1' — each turn needs its own ID, because a "
+        "run uses the turn ID to pick up where it stopped and to set each "
+        "turn's random seed; give one of them a different ID")
+    assert lifecycle_gates.gate_of(refusal.value) == lifecycle_gates.MISSING_PREREQUISITE
+    assert lifecycle_gates.repair_of(refusal.value) == multi_agent.DUPLICATE_ID_REPAIR
+    assert es.load_raw(name, root)["status"] == "draft"
+
+
+def test_freeze_refuses_a_pinned_panel_with_a_repeated_seat_id(tmp_path):
+    root = str(tmp_path)
+    panel = _panel_document()
+    panel["agents"][1]["id"] = "j1"
+    panel["turns"][1]["speakerAgentID"] = "j1"
+    name = _panel_draft(root, panel)
+
+    with pytest.raises(ExperimentStoreError, match=(
+            r"cannot freeze 'mas': in its pinned panel, seats 1 and 2 "
+            r"\('Judge One' and 'Judge Two'\) share the ID 'j1'")):
+        es.freeze(name, root=root)
+
+
+def test_the_clients_freeze_verb_answers_the_refusal_with_its_repair(
+        tmp_path, capsys, monkeypatch):
+    """End to end through ``steerlab experiment freeze``: ``refused`` / 65 with
+    the gate as the code — a rule declined, the instrument did not break."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    # Set first so monkeypatch restores the environment the CLI exports into.
+    monkeypatch.setenv("STEERLAB_ROOT", str(workspace))
+    panel = _panel_document()
+    panel["turns"][1]["id"] = "t1"
+    name = _panel_draft(str(workspace), panel)
+
+    exit_code = client_cli.main(
+        ["experiment", "freeze", name, "--root", str(workspace), "--json"])
+    envelope = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 65
+    assert envelope["state"] == "refused"
+    assert envelope["error"]["code"] == "missingPrerequisite"
+    assert envelope["error"]["reason"].startswith(
+        "cannot freeze 'mas': in its pinned panel, turns 1 and 2")
+    assert envelope["error"]["repairAction"] == multi_agent.DUPLICATE_ID_REPAIR
+    assert es.load_raw(name, str(workspace))["status"] == "draft"
+
+
+def test_a_study_over_a_repeated_id_still_verifies(tmp_path):
+    """The rule is asked at freeze, not in ``verify()``: verify also admits
+    reads of runs that already exist (evaluate, analyze, bundle import), and a
+    study frozen before the rule existed must keep answering them."""
+    root = str(tmp_path)
+    panel = _panel_document()
+    panel["turns"][1]["id"] = "t1"
+    name = _panel_draft(root, panel)
+
+    assert Manifest.load(name, root=root).verify(root) == []
+    assert multi_agent.pinned_panel_identity_problem(
+        es.load_raw(name, root), root) is not None
+
+
+def test_the_freeze_question_is_silent_about_everything_else(tmp_path):
+    root = str(tmp_path)
+    ask = multi_agent.pinned_panel_identity_problem
+    # Not a panel study; a panel study that pins nothing; a path that is not
+    # there; a file that is not a panel. verify() and the run report those.
+    assert ask({"studyKind": "modelOutput"}, root) is None
+    assert ask({"studyKind": "multiAgent"}, root) is None
+    assert ask({"studyKind": "multiAgent",
+                "multiAgentScenarioPath": "prompts/panels/absent.json"}, root) is None
+    os.makedirs(tmp_path / "prompts" / "panels")
+    (tmp_path / "prompts/panels/broken.json").write_text("[1, 2")
+    assert ask({"studyKind": "multiAgent",
+                "multiAgentScenarioPath": "prompts/panels/broken.json"}, root) is None
+    (tmp_path / "prompts/panels/list.json").write_text("[]")
+    assert ask({"studyKind": "multiAgent",
+                "multiAgentScenarioPath": "prompts/panels/list.json"}, root) is None
 
 
 # --- the Python client's authoring verbs --------------------------------------

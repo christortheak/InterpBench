@@ -705,12 +705,41 @@ public enum MultiAgentRunner {
     /// of the cross-engine contract, like every other refusal here, and so is
     /// the wording (server twin: `multi_agent.duplicate_identifier_problem`).
     ///
+    /// A named seam rather than a few lines inside `validate`: freeze asks the
+    /// same question of a pinned panel without running the rest of validation.
     /// It is deliberately NOT part of decoding, so a panel that already ran —
     /// a run directory's `scenario.json` snapshot — still reads.
     public static func duplicateIdentifierRefusal(
         _ scenario: MultiAgentScenario
     ) -> ExperimentError? {
         duplicateAgentIDRefusal(scenario) ?? duplicateTurnIDRefusal(scenario)
+    }
+
+    /// `duplicateIdentifierRefusal` for the panel a multi-agent study pins —
+    /// the question freeze asks, phrased for the study being frozen.
+    ///
+    /// Answers ONLY the identity question. A study that pins no panel, or
+    /// whose panel cannot be read or decoded, answers nil here: `verify` and
+    /// the run report those in their own words, and a second, vaguer refusal
+    /// from this function would only hide them.
+    static func pinnedPanelIdentityRefusal(
+        for manifest: ExperimentManifest
+    ) -> ExperimentError? {
+        guard manifest.studyKind == .multiAgent,
+            let path = manifest.multiAgentScenarioPath, !path.isEmpty,
+            let data = try? Data(contentsOf: ExperimentStore.resolveProjectPath(path)),
+            let scenario = try? JSONDecoder().decode(MultiAgentScenario.self, from: data),
+            let refusal = duplicateIdentifierRefusal(scenario)?.lifecycleRefusal
+        else { return nil }
+        return .refusing(
+            refusal.gate,
+            "cannot freeze '\(manifest.name)': in its pinned panel, \(refusal.reason)",
+            repair: "give one of the two a different ID in the panel file ; then "
+                + "steerlab-cli panel check <path-or-name> ; then pin the "
+                + "corrected panel in '\(manifest.name)' (for a semantic panel: "
+                + "steerlab-cli panel compile <path-or-name> --experiment "
+                + "\(manifest.name)) && steerlab-cli experiment freeze "
+                + "\(manifest.name)")
     }
 
     public static func validate(_ scenario: MultiAgentScenario) throws {

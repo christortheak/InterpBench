@@ -6104,6 +6104,12 @@ public enum ExperimentStore {
                 "model revision is not pinned and \(probe.modelID) is not in the "
                     + "local HF cache — load the model once or run Validate Study")
         }
+        // Panel identity — the same question `freeze` asks after `verify`,
+        // through the same function, so readiness cannot say "ready" about a
+        // panel whose repeated agent or turn ID freeze is about to refuse.
+        if let panelIdentity = MultiAgentRunner.pinnedPanelIdentityRefusal(for: probe) {
+            gates.append(plainGateReason(panelIdentity.reason, experimentName: probe.name))
+        }
         let usesLegacyConceptVectors = !probe.concepts.isEmpty || !probe.conditions.isEmpty
         // Readiness answers "would freeze succeed right now?", so it must
         // scope exactly as freeze does — otherwise a panel reads as unready
@@ -7280,6 +7286,18 @@ public enum ExperimentStore {
                 throw ExperimentError(
                     reason: "cannot freeze '\(name)':\n  - "
                         + violations.joined(separator: "\n  - "))
+            }
+            // Panel identity: a pinned panel in which two agents, or two
+            // turns, share an ID REFUSES the freeze, force included. Record
+            // identity is the never-skippable class, like the pins above — a
+            // turn ID keys resume and the per-turn seed, and an agent ID is
+            // what a record names its seat by, so a study frozen over a
+            // repeated ID produces records nobody can attribute and no
+            // `forcedGatesSkipped` stamp can repair. Asked HERE and not in
+            // `verify`: verify also admits reads of runs that already exist,
+            // and those must keep opening.
+            if let refusal = MultiAgentRunner.pinnedPanelIdentityRefusal(for: manifest) {
+                throw refusal
             }
             let autoCommit = freezeAutoCommitIsEnabled()
             // The nested-workspace safety-skip is LOUD: silently not committing
