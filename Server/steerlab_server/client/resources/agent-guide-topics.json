@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "topics": [
+    {
+      "name": "workspace",
+      "summary": "The folder layout, where each file lives and its shape, and how the client finds the workspace."
+    },
+    {
+      "name": "lifecycle",
+      "summary": "The study lifecycle step by step, from a new draft to a measured run."
+    },
+    {
+      "name": "settings",
+      "summary": "Generation settings, exclusions, the system prompt, parsers, and other declarations on a draft."
+    },
+    {
+      "name": "evaluation",
+      "summary": "Rubrics and judges, evaluation, subsamples, effect sizes, and re-measuring a run."
+    },
+    {
+      "name": "sweep",
+      "summary": "Sweeps, choosing a layer and strength, promotion, and the missing-data rule."
+    },
+    {
+      "name": "freeze",
+      "summary": "What freezing checks, the seven gates and their repairs, and what stays immutable."
+    },
+    {
+      "name": "assembly",
+      "summary": "Study packs, agents, vector artifacts, and prompt imports, each written from reviewed bytes."
+    },
+    {
+      "name": "templates",
+      "summary": "Reusable study settings: listing, saving, instantiating, and batch casting."
+    },
+    {
+      "name": "panels",
+      "summary": "Multi-agent studies: panels, seats, casting, and pipelines."
+    },
+    {
+      "name": "methods",
+      "summary": "The method catalog, and reviewed submission of managed scientific operations."
+    },
+    {
+      "name": "models",
+      "summary": "Preparing a model, locally or on other hardware, and its chat-template capabilities."
+    },
+    {
+      "name": "remote",
+      "summary": "Running on other hardware: submission, sharding, resuming, and recovering jobs."
+    },
+    {
+      "name": "custody",
+      "summary": "Verifying imported evidence, and what a custody receipt proves."
+    },
+    {
+      "name": "engines",
+      "summary": "Which engine runs what, seeded sampling, and why vectors do not transfer between engines."
+    },
+    {
+      "name": "contract",
+      "summary": "The full machine contract: the envelope, states, exit codes, advisories, and refusals."
+    }
+  ]
+}

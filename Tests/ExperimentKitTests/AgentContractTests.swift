@@ -7,12 +7,13 @@ import Testing
 /// different pair of things together:
 ///
 /// - `agentContractMatchesTheDraftDocument` — the shipped constant against
-///   `docs/AGENTS-WORKSPACE-DRAFT.md`, the human source of truth. Edit one
+///   `WorkspaceGuide/core.md`, the human source of truth. Edit one
 ///   without the other and this fails instead of the two silently diverging.
-/// - `agentContractNamesEveryAgentPathVerb` — the contract against
+/// - `agentContractNamesEveryAgentPathVerb` — the guide (the core contract
+///   plus the topics `workspace guide` serves) against
 ///   `ExperimentCLIParser.specs`, the declarative surface itself. A verb added
-///   to the CLI that the contract does not name is a lie by omission to every
-///   agent that reads only the contract.
+///   to the CLI that the guide does not name is a lie by omission to every
+///   agent that reads only the guide.
 /// - `agentContractIsNeutral` / `shippedSeedTreesAreNeutral` /
 ///   `seededWorkspaceContentIsNeutral` — the contract, the two shipped data
 ///   trees (`WorkspaceSeed/`, `SampleWorkspace/`), and a freshly created
@@ -58,6 +59,13 @@ import Testing
     @Test func agentContractIsNeutral() {
         let hits = Self.denylistHits(in: AgentContract.contents())
         #expect(hits.isEmpty, "AGENTS.md names: \(hits.joined(separator: ", "))")
+        // The topics are the same guide, served on demand: the same rule.
+        for topic in WorkspaceGuide.topics {
+            let hits = Self.denylistHits(in: topic.name + topic.summary + topic.text)
+            #expect(
+                hits.isEmpty,
+                "guide topic \(topic.name) names: \(hits.joined(separator: ", "))")
+        }
     }
 
     /// Every regular file under a tree, workspace-relative, with `.git`
@@ -226,8 +234,11 @@ import Testing
     // MARK: - Drift: the contract against the CLI surface
 
     /// Every verb the parser declares on the authoring/lifecycle surface must
-    /// be named in the contract, inside a code span or a fenced block — the
-    /// contract's own convention for naming a command. `remote` and `vectors`
+    /// be named in the guide, inside a code span or a fenced block — the
+    /// guide's own convention for naming a command. Since the guide was split
+    /// into a short core and on-demand topics, "the guide" is the core plus
+    /// every topic this client serves: the reference text moved, and this
+    /// assertion moved with it. `remote` and `vectors`
     /// are out of scope here: they are the connection and parity families,
     /// documented in `CLI-REFERENCE`, and audit §4.2's table is scoped to the
     /// lifecycle an agent drives.
@@ -243,7 +254,9 @@ import Testing
         let namespaces: Set<String> = [
             "workspace", "data", "experiment", "panel", "authoring", "design", "agent",
         ]
-        let code = Self.codeText(in: AgentContract.body)
+        let code = Self.codeText(
+            in: ([AgentContract.body] + WorkspaceGuide.topics.map(\.text))
+                .joined(separator: "\n"))
         var missing: [String] = []
         for spec in ExperimentCLIParser.specs where namespaces.contains(spec.namespace) {
             if Self.mentions(verb: spec.verb, in: code) { continue }
@@ -251,7 +264,7 @@ import Testing
         }
         #expect(
             missing.isEmpty,
-            "AGENTS.md does not name: \(missing.joined(separator: ", "))")
+            "the agent guide does not name: \(missing.joined(separator: ", "))")
 
         // The gate has teeth: a verb that is not there is reported.
         #expect(!Self.mentions(verb: "teleport", in: code))
@@ -259,27 +272,13 @@ import Testing
         #expect(!Self.mentions(verb: "manipulation", in: code))
     }
 
-    /// Text inside ``` fences and `inline spans`, which is where the contract
+    /// Text inside ``` fences and `inline spans`, which is where the guide
     /// writes commands. Prose mentions do not count: "run" and "list" are
-    /// ordinary English, and a gate they satisfy is not a gate.
+    /// ordinary English, and a gate they satisfy is not a gate. Inline spans
+    /// are read per paragraph (`WorkspaceGuideTests.codeSpans`), so a command
+    /// wrapped across two lines is still one command.
     static func codeText(in markdown: String) -> String {
-        var out = ""
-        var inFence = false
-        for line in markdown.split(separator: "\n", omittingEmptySubsequences: false) {
-            if line.hasPrefix("```") {
-                inFence.toggle()
-                continue
-            }
-            if inFence {
-                out += line + "\n"
-                continue
-            }
-            let parts = line.split(separator: "`", omittingEmptySubsequences: false)
-            for (index, part) in parts.enumerated() where index % 2 == 1 {
-                out += part + "\n"
-            }
-        }
-        return out
+        WorkspaceGuideTests.codeSpans(in: markdown).map { $0 + "\n" }.joined()
     }
 
     static func mentions(verb: String, in code: String) -> Bool {
@@ -290,20 +289,20 @@ import Testing
 
     // MARK: - Drift: the contract against the human document
 
-    /// `docs/AGENTS-WORKSPACE-DRAFT.md` stays the document a person reads and
+    /// `WorkspaceGuide/core.md` stays the document a person reads and
     /// reviews; `AgentContract.body` is the copy that ships. This holds them
     /// byte-identical, modulo the generated header (which is not in the
-    /// draft) and the draft's own `<!-- … -->` planning markers (which do not
+    /// source) and the source's own `<!-- … -->` markers (which do not
     /// ship).
     @Test(
         .enabled(
             if: ResearchTreeFixtures.hasAgentContractDraft,
             """
-            docs/AGENTS-WORKSPACE-DRAFT.md is not in this checkout — it is \
-            allowlisted to ship, so a skip here means the export dropped it
+            WorkspaceGuide/core.md is not in this checkout — it is the guide's \
+            source, so a skip here means the checkout is incomplete
             """))
     func agentContractMatchesTheDraftDocument() throws {
-        let draftURL = Self.repoRoot.appending(path: "docs/AGENTS-WORKSPACE-DRAFT.md")
+        let draftURL = Self.repoRoot.appending(path: "WorkspaceGuide/core.md")
         let draft = try String(contentsOf: draftURL, encoding: .utf8)
 
         let stripped =
@@ -318,8 +317,8 @@ import Testing
         #expect(
             AgentContract.body == stripped,
             """
-            AgentContract.body has drifted from docs/AGENTS-WORKSPACE-DRAFT.md \
-            — edit the draft first, then mirror it into AgentContract.swift
+            AgentContract.body has drifted from WorkspaceGuide/core.md — edit \
+            the source, then run scripts/ci/check-workspace-bootstrap.py --write
             """)
 
         // The draft's markers are the only difference, and they are real:

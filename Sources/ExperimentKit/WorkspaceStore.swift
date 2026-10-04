@@ -464,7 +464,7 @@ public final class WorkspaceStore {
 
     /// The workspace-facing agent contract (`AGENTS.md`). Generated in code,
     /// deliberately — see the header of `AgentContract.swift` and audit §4.3.
-    /// **Edits go to `docs/AGENTS-WORKSPACE-DRAFT.md` first** and are mirrored
+    /// **Edits go to `WorkspaceGuide/core.md` first** and are mirrored
     /// into `AgentContract.body`; a drift gate holds the two together.
     private nonisolated static func agentContractContents() -> String {
         AgentContract.contents()

@@ -200,6 +200,7 @@ steerlab setup repair --expect <value> --yes [--release <value>] [--runtime <val
 steerlab workspace init <directory> [--no-git]
 steerlab workspace inspect
 steerlab workspace handoff
+steerlab workspace guide [<topic>]
 steerlab runner science-call <operation> --action <value> --request <value> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner science-stage <server-archive-path> --runner <url> --sha256 <digest> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner science-export <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
@@ -940,6 +941,7 @@ steerlab-cli init [--home <dir>]
 steerlab-cli workspace init <path>
 steerlab-cli workspace inspect
 steerlab-cli workspace handoff
+steerlab-cli workspace guide [<topic>]
 steerlab-cli setup inspect
 steerlab-cli setup plan [--release <value>] [--runtime <value>]
 steerlab-cli setup apply --expect <value> [--release <value>] [--runtime <value>] --yes
@@ -953,6 +955,7 @@ steerlab-cli setup start <directory> [--create]
 | `workspace init` | Create and seed a data workspace, and git-init it. |
 | `workspace inspect` | Inspect an existing workspace without modifying it. |
 | `workspace handoff` | Return installed-client instructions for a research agent. |
+| `workspace guide` | List the agent guide topics, or print one topic with this client's commands. |
 | `setup inspect` | Inspect client and workspace readiness; execution is assessed separately. |
 | `setup plan` | Review client setup without downloading anything. |
 | `setup apply` | Install the lightweight client from an approved current plan. |

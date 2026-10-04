@@ -764,6 +764,45 @@ public struct ExperimentCLIRunner: Sendable {
             let root = URL(filePath: ExperimentStore.workspaceRoot.path)
             let payload = try args.first == "handoff" ? WorkspaceBootstrap.handoff(root) : WorkspaceBootstrap.inspect(root)
             return ExperimentCLIResult(message: "Workspace information ready.", changed: false, payload: payload)
+        case "guide":
+            // Reads text compiled into this client. It needs no workspace and
+            // changes nothing, so it is always safe to ask.
+            guard args.count <= 2 else {
+                throw ExperimentError.malformed(
+                    "Name one guide topic at a time.",
+                    repair: "\(WorkspaceGuide.client) workspace guide <topic> --json")
+            }
+            guard args.count == 2 else {
+                for topic in WorkspaceGuide.topics {
+                    sink.out("\(topic.name) — \(topic.summary)")
+                }
+                sink.out("Read one with: \(WorkspaceGuide.client) workspace guide <topic>")
+                return ExperimentCLIResult(
+                    message: "Guide topics listed. Read one with workspace guide <topic>.",
+                    changed: false,
+                    payload: [
+                        "client": .string(WorkspaceGuide.client),
+                        "topics": WorkspaceGuide.index,
+                    ])
+            }
+            guard let topic = WorkspaceGuide.topic(named: args[1]) else {
+                throw ExperimentError.malformed(
+                    "There is no guide topic named '\(args[1])'.",
+                    repair: "Choose one of: "
+                        + WorkspaceGuide.topics.map(\.name).joined(separator: ", ")
+                        + ". `\(WorkspaceGuide.client) workspace guide` lists them "
+                        + "with a line about each.")
+            }
+            sink.out(String(topic.text.dropLast()))
+            return ExperimentCLIResult(
+                message: "Guide topic '\(topic.name)' read. Nothing was changed.",
+                changed: false,
+                payload: [
+                    "client": .string(WorkspaceGuide.client),
+                    "topic": .string(topic.name),
+                    "text": .string(topic.text),
+                    "topics": WorkspaceGuide.index,
+                ])
         default:
             throw ExperimentError(reason: "usage: workspace init <path>")
         }

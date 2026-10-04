@@ -26,6 +26,23 @@ def agent_contents():
     return HEADER + hashlib.sha256(body.encode()).hexdigest() + ' -->\n\n' + body
 
 
+#: The executable whose commands the packaged guide topics show.
+GUIDE_CLIENT = 'steerlab'
+
+
+def guide_topics():
+    """The packaged topic index: names and one-line summaries, in guide order."""
+    index = json.loads((RESOURCES / 'agent-guide-topics.json').read_bytes())
+    return [{'name': topic['name'], 'summary': topic['summary']} for topic in index['topics']]
+
+
+def guide_topic(name):
+    """One topic's text as this client renders it. The caller checks the name."""
+    if name not in {topic['name'] for topic in guide_topics()}:
+        raise KeyError(name)
+    return (RESOURCES / f'agent-guide-topic-{name}.md').read_text(encoding='utf-8')
+
+
 def refuse(reason):
     raise ExperimentStoreError(reason, gate='workspaceBootstrap', repair='Choose a new or empty workspace directory; keep existing studies and outputs in their current workspace.')
 

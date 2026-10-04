@@ -4427,7 +4427,11 @@ def main(argv: list | None = None) -> int:
                 resolve_workspace(explicit_root)
                 resolved = True
         except ClientRefusal as workspace_exc:
-            if not (family in WORKSPACE_OPTIONAL_FAMILIES
+            # `workspace guide` joins the workspace-optional families for one
+            # verb: it prints text shipped inside this client, so asking for it
+            # before a workspace exists is a question, not a mistake.
+            if not ((family in WORKSPACE_OPTIONAL_FAMILIES
+                     or (family, invocation.spec.verb) == ("workspace", "guide"))
                     and workspace_exc.code == WORKSPACE_UNSET_CODE):
                 raise
         invocation.document_stream = document_stream

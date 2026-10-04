@@ -33,13 +33,12 @@ enum ResearchTreeFixtures {
 
     // MARK: - Research-only fixtures
 
-    /// `docs/AGENTS-WORKSPACE-DRAFT.md` — the human source of truth the
-    /// shipped `AgentContract` constant is held byte-equal to. It SHIPS
-    /// (the contract text is neutral and a released reader benefits from
-    /// reviewing it), so this should be true in both trees; the predicate
-    /// stays so the drift gate reports honestly if the allowlist entry is
-    /// ever removed.
-    static var hasAgentContractDraft: Bool { exists("docs/AGENTS-WORKSPACE-DRAFT.md") }
+    /// `WorkspaceGuide/core.md` — the human source of truth the shipped
+    /// `AgentContract` constant is held byte-equal to. It ships with the
+    /// repository (the guide text is neutral and a reader benefits from
+    /// reviewing it), so this should be true in every tree; the predicate
+    /// stays so the drift gate reports honestly if the source is ever absent.
+    static var hasAgentContractDraft: Bool { exists("WorkspaceGuide/core.md") }
 
     /// `scripts/export-denylist.txt` — the private-name list. It must NEVER
     /// ship (it carries the very identifiers the release must not contain),

@@ -4,13 +4,17 @@ import Foundation
 // =============================================================================
 // AGENTS.md — the contract every workspace carries (WP0 step 10)
 //
-// EDITS GO TO `docs/AGENTS-WORKSPACE-DRAFT.md` FIRST, then get mirrored here.
+// EDITS GO TO `WorkspaceGuide/core.md` FIRST, then get mirrored here.
 // scripts/ci/check-workspace-bootstrap.py generates both clients from it.
-// That document is the human source of truth; this binding is the shipping
+// That file is the human source of truth; this binding is the shipping
 // copy, and `AgentContractTests.agentContractMatchesTheDraftDocument` asserts
 // the two are byte-identical (modulo the generated header line below and the
-// draft's own `<!-- … -->` markers, which are stripped). Editing only one of
+// source's own `<!-- … -->` markers, which are stripped). Editing only one of
 // them fails that gate rather than drifting silently.
+//
+// The file is the CORE guide: short, client-neutral, and byte-identical from
+// both clients. The depth is in topics (`WorkspaceGuide`), served on demand by
+// `workspace guide [<topic>]` and never written into a workspace.
 //
 // The maintained guide is packaged as a resource for Python and compiled into
 // WorkspaceBootstrapText for the Mac. Both use the same generated-file hash.
@@ -96,8 +100,8 @@ public enum AgentContract {
             .joined()
     }
 
-    /// The contract text, byte-identical to `docs/AGENTS-WORKSPACE-DRAFT.md`
-    /// with its draft-only comment markers removed. Ends with exactly one
+    /// The contract text, byte-identical to `WorkspaceGuide/core.md`
+    /// with its source-only comment markers removed. Ends with exactly one
     /// newline.
     public static let body: String = literal + "\n"
 

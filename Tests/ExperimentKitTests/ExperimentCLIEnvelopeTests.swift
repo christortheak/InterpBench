@@ -685,6 +685,10 @@ import Testing
             "design list", "design inspect", "design describe", "design instantiate", "design batch", "design save", "design update",
             "agent list", "agent inspect", "experiment attach-agent",
             "workspace init", "workspace inspect", "workspace handoff",
+            // The agent guide's topics, served on demand: a read of text
+            // compiled into this client. New rather than changed — nothing
+            // else in the family moved.
+            "workspace guide",
             "setup start", "setup inspect", "setup plan", "setup apply", "setup repair", "data check", "data custody", "data verify-custody",
             // POLE MIRRORING: the opposite pole of a contrastive direction as
             // its own artifact. A new verb in an existing family, not a
