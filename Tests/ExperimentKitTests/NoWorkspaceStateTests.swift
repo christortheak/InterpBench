@@ -487,6 +487,38 @@ struct FirstLaunchWordingTests {
         #expect(!source.contains("readiness[\"reason\"]"))
     }
 
+    private func appSource(_ name: String) throws -> String {
+        let url = URL(filePath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "Sources/SteerLabApp/\(name)")
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    /// Stale text on the basic path (release review A5). The app target has
+    /// no unit tests of its own, so the three corrections are held here by
+    /// reading the sources.
+    @Test func staleTextOnTheBasicPathStaysGone() throws {
+        // Playground, no vectors yet: it named a command against a file that
+        // no workspace contains. It now points at the place in the app.
+        let chat = try appSource("ChatView.swift")
+        #expect(!chat.contains("toy-french.json"))
+        #expect(!chat.contains("steerlab-cli --config"))
+        #expect(chat.contains("StudyControlCopy.playgroundNoVectors"))
+
+        let copy = try appSource("StudyControlCopy.swift")
+        #expect(copy.contains("Concepts & Vectors"))
+        // Run help said sampling needs temperature 0. Local runs sample with
+        // a seeded stream per record.
+        #expect(!copy.contains("requires Temperature = 0"))
+        #expect(!copy.contains("mlx-swift-lm does not"))
+        // Freeze help cited a command-line flag.
+        #expect(!copy.contains("freeze --force"))
+
+        let temperature = try appSource("TemperatureRow.swift")
+        #expect(!temperature.contains("currently require 0"))
+    }
+
     /// The command line keeps its own hint, unchanged: it is the right text
     /// for a terminal and the wrong text for the sheet.
     @Test func theCommandLineHintIsKeptForTheCommandLine() {

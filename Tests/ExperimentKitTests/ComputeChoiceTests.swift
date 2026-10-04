@@ -378,6 +378,60 @@ struct ComputeChoiceTests {
         #expect(ComputeChoice.macFullCapabilities.engineNote.contains("Python"))
     }
 
+    // MARK: - The old names, in the sources
+
+    /// Files that still say "Local (MLX)" to a researcher, and why they were
+    /// left: each belongs to another wave-1 stream. Shrink this list as they
+    /// are reworded; it must never grow.
+    private static let oldNameAllowlist: Set<String> = [
+        // The freeze route's "switch Compute to …" messages (freeze gates).
+        "Sources/ExperimentKit/StudyFreezeController.swift",
+        "Sources/ExperimentKit/SubstrateRouting.swift",
+        // The server-jobs empty state (jobs and the Resume controls).
+        "Sources/SteerLabApp/ServerJobsPanelView.swift",
+    ]
+
+    /// The app target has no unit tests of its own, so the renaming is held
+    /// by reading the sources: outside comments, the retired engine names
+    /// appear only where another stream owns the sentence.
+    @Test func theRetiredEngineNamesAreGoneFromWhatAResearcherReads() throws {
+        let repoRoot = URL(filePath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().standardizedFileURL
+        let enumerator = try #require(
+            FileManager.default.enumerator(
+                at: repoRoot.appending(component: "Sources"),
+                includingPropertiesForKeys: nil))
+        var offenders: Set<String> = []
+        for case let url as URL in enumerator where url.pathExtension == "swift" {
+            guard let source = try? String(contentsOf: url, encoding: .utf8) else {
+                continue
+            }
+            let relative = String(
+                url.standardizedFileURL.path.dropFirst(repoRoot.path.count + 1))
+            for line in source.split(separator: "\n") {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.hasPrefix("//") else { continue }
+                if trimmed.contains("Local (MLX)") || trimmed.contains("Cluster (Python")
+                    || trimmed.contains("toy models and pipeline checks")
+                {
+                    offenders.insert(relative)
+                }
+            }
+        }
+        let unexpected = offenders.subtracting(Self.oldNameAllowlist).sorted()
+        #expect(
+            unexpected.isEmpty,
+            """
+            A retired engine name is shown to a researcher in: \
+            \(unexpected.joined(separator: ", ")). The three compute choices \
+            are named by ComputeChoice ("This Mac, quick start", "This Mac, \
+            full capabilities", "Another machine"); use \
+            ComputeChoice.macQuickStart.title where a sentence names the \
+            Compute menu's item.
+            """)
+    }
+
     // MARK: - What runs where
 
     @Test func theGuideSaysWhatRunsWhereAndTheLimitsHonestly() throws {
