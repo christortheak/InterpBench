@@ -141,13 +141,12 @@ struct ClusterSiteProfileTests {
     /// (`sites import`), and this test is what keeps it out: a preset is a
     /// neutral template or a fictional example, never an institution.
     @Test func noPresetNamesAnInstitution() throws {
+        // The generic half, which needs no private term: no preset carries an
+        // academic hostname at all. The site that used to ship is checked by
+        // name in `noPresetNamesAPrivateSite` below.
         for preset in ClusterSiteProfile.presets {
             let text = String(decoding: try preset.encoded(), as: UTF8.self).lowercased()
-            for identifier in ["sapelo", "gacrc", "uga.edu", ".edu"] {
-                #expect(
-                    !text.contains(identifier),
-                    "preset “\(preset.name)” carries “\(identifier)”")
-            }
+            #expect(!text.contains(".edu"), "preset “\(preset.name)” carries “.edu”")
         }
         // …and the SSH templates ship with no host at all, so nobody
         // accidentally provisions against someone else's cluster. Hostless
@@ -160,6 +159,21 @@ struct ClusterSiteProfileTests {
             #expect(host.isEmpty)
         }
         #expect(Set(sshPresets.compactMap(\.registryIdentity)).count == sshPresets.count)
+    }
+
+    /// The named half of the rule above: the production cluster this list
+    /// once carried must stay out of it. Its identifiers are private, so they
+    /// are read from the private-name list rather than written here — see
+    /// `PrivateNames`.
+    @Test(.needsPrivateNames) func noPresetNamesAPrivateSite() throws {
+        let names = try PrivateNames.required()
+        for preset in ClusterSiteProfile.presets {
+            let text = String(decoding: try preset.encoded(), as: UTF8.self)
+            let hits = names.hits(in: text)
+            #expect(
+                hits.isEmpty,
+                "preset “\(preset.name)” carries: \(hits.joined(separator: ", "))")
+        }
     }
 
     /// WP5 §6.6 — "do not let the generic preset become conda-shaped" — as a

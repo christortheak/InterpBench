@@ -41,12 +41,9 @@ enum ResearchTreeFixtures {
     /// ever removed.
     static var hasAgentContractDraft: Bool { exists("docs/AGENTS-WORKSPACE-DRAFT.md") }
 
-    /// `scripts/export-denylist.txt` — the private-name list. It must NEVER
-    /// ship (it carries the very identifiers the release must not contain),
-    /// so the help-text neutrality gate is research-tree-only by design.
-    /// The release tree's neutrality is proved instead by the public-tier
-    /// scan in CI and by `AgentContractTests`' literal denylist.
-    static var hasExportDenylist: Bool { exists("scripts/export-denylist.txt") }
+    // The private-name list is deliberately NOT one of these fixtures: it
+    // never lives in a checkout at all. The neutrality gates read it through
+    // `PrivateNames`, from a file outside the repository.
 
     /// `docs/examples/starter-study-pack.json` — the paste-ready worked
     /// example pack. `SampleWorkspace/` ships; the pack and its walkthrough

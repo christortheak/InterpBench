@@ -151,44 +151,25 @@ struct CLIReferenceGenerationTests {
     }
 
     /// Contract text, not prose: the pages must not name an institution, a
-    /// study, or an incident. The denylist is the same one the release scanner
-    /// applies to the shipped tree.
-    @Test(
-        .enabled(
-            if: ResearchTreeFixtures.hasExportDenylist,
-            """
-            scripts/export-denylist.txt must never ship (it carries the very \
-            names the release must not contain), so this gate is \
-            research-tree-only — the released tree's neutrality is proved by \
-            CI's public-tier scan and AgentContractTests' literal denylist
-            """))
-    func helpTextIsNeutral() throws {
-        let denylistURL = CodeResources.compiledCheckoutPath
-            .appending(path: "scripts/export-denylist.txt")
-        // Same rule the release scanner applies: one case-insensitive regex
-        // per line, word-boundary anchored unless the line opens with `raw:`.
-        let patterns = try String(contentsOf: denylistURL, encoding: .utf8)
-            .split(separator: "\n")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && !$0.hasPrefix("#") }
-            .map { line -> String in
-                line.hasPrefix("raw:")
-                    ? String(line.dropFirst(4)) : "\\b\(line)\\b"
-            }
+    /// study, or a person. The names come from the private-name list, which
+    /// lives outside the repository (see `PrivateNames`); this gate used to
+    /// read a file the tree no longer carries, and so never ran.
+    @Test(.needsPrivateNames) func helpTextIsNeutral() throws {
+        let names = try PrivateNames.required()
         var pages = ExperimentCLIParser.specs.map(ExperimentCLIHelp.text(for:))
         pages += ExperimentCLIHelp.families.map(ExperimentCLIHelp.familyText(for:))
         pages += ClusterCLIVerb.allCases.map(\.helpText)
         pages.append(ClusterCLIVerb.usageText)
         pages.append(ExperimentCLIHelp.topLevelText)
+        #expect(!pages.isEmpty)
         for page in pages {
-            for pattern in patterns {
-                let regex = try NSRegularExpression(
-                    pattern: pattern, options: [.caseInsensitive])
-                let range = NSRange(page.startIndex ..< page.endIndex, in: page)
-                #expect(
-                    regex.firstMatch(in: page, range: range) == nil,
-                    "a help page matches the denylist pattern '\(pattern)'")
-            }
+            let hits = names.hits(in: page)
+            #expect(
+                hits.isEmpty,
+                """
+                a help page carries: \(hits.joined(separator: ", ")) — it begins \
+                “\(page.prefix(60))”
+                """)
         }
     }
 

@@ -20,15 +20,12 @@ import re
 
 import pytest
 
+from private_name_guard import assert_names_nothing_private, private_names
 from steerlab_server import cli, cli_envelope, cli_help, cli_reference
 
 DOC = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     "docs", "CLI-REFERENCE.md")
-
-DENYLIST = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "scripts", "export-denylist.txt")
 
 
 def _document() -> str:
@@ -120,33 +117,23 @@ def test_every_verb_has_a_purpose_and_a_synopsis():
 
 
 def test_help_text_is_neutral():
-    """Contract text, not prose: no institution, study, or person names. Same
-    rule the release scanner applies — one case-insensitive regex per line,
-    word-boundary anchored unless the line opens with ``raw:``.
+    """Contract text, not prose: no institution, study, or person names.
 
-    Research-tree-only BY DESIGN: the name-bearing denylist must never ship
-    (WP-P split), so in the release tree this gate has no input and skips —
-    there, neutrality was already enforced at export time by the scanner,
-    and the shipped public-tier scan carries the rest."""
-    if not os.path.isfile(DENYLIST):
-        pytest.skip("no export denylist here (release tree) — neutrality is "
-                    "the export-time scanner's job")
-    patterns = []
-    with open(DENYLIST, encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            patterns.append(line[4:] if line.startswith("raw:")
-                            else rf"\b{line}\b")
+    The names are private, so they are read from the private-name list —
+    a file outside the repository (``private_name_guard``) — and matched
+    case-insensitively as substrings. With no list on the machine this gate
+    is skipped and says so; with ``STEERLAB_REQUIRE_PRIVATE_NAMES=1`` a
+    missing list fails it. (It used to read a file this tree no longer
+    carries, and so never ran.)"""
+    names = private_names()
     pages = [cli_help.verb_text(spec) for spec in cli_envelope.VERB_SPECS]
     pages += [cli_help.family_text(family)
               for family in sorted({s.family for s in cli_envelope.VERB_SPECS})]
     pages += [cli_reference.body(region) for region in cli_reference.REGIONS]
+    assert pages
     for page in pages:
-        for pattern in patterns:
-            assert not re.search(pattern, page, re.IGNORECASE), (
-                f"a generated page matches the denylist pattern {pattern!r}")
+        assert_names_nothing_private(
+            page, names, f"the generated page beginning {page[:60]!r}")
 
 
 def test_help_runs_nothing_and_exits_zero(tmp_path, monkeypatch, capsys):
