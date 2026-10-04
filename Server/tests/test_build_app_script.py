@@ -354,3 +354,119 @@ def test_a_build_signed_for_distribution_requires_the_private_name_list(tmp_path
     assert "private names cannot be checked" in result.stdout
     assert not any(line.startswith("codesign ") for line in calls)
     assert not app.exists()
+
+
+# -- packaging: the bundle that was built, from a clean tagged commit ----------
+
+#: Stand-ins for `--package`. `codesign -dv` reports the flags in
+#: `$SIGNATURE_FLAGS`; `git` answers the three questions the script asks from
+#: `$GIT_HEAD`, `$GIT_STATUS`, and `$GIT_TAGS`; `xcrun stapler` says "not
+#: stapled". plutil, ditto, and shasum are the real tools.
+PACKAGING_STAND_INS = {
+    "codesign": r'''
+case "$*" in
+  *--verify*) exit 0 ;;
+  *-dv*) printf 'Executable=%s\nCodeDirectory v=20500 flags=%s\n' "$2" "$SIGNATURE_FLAGS" >&2 ;;
+esac
+''',
+    "git": r'''
+case "$*" in
+  *"rev-parse --short=8 HEAD"*) [ -n "${GIT_HEAD:-}" ] && printf '%s\n' "$GIT_HEAD" ;;
+  *"status --porcelain"*) printf '%s' "${GIT_STATUS:-}" ;;
+  *"tag --points-at HEAD"*) printf '%s' "${GIT_TAGS:-}" ;;
+esac
+''',
+    "xcrun": "exit 1\n",
+}
+
+DEVELOPER_ID = "0x10000(runtime)"
+AD_HOC = "0x10002(adhoc,runtime)"
+
+
+def _bundle(directory: pathlib.Path, version: str, revision: str, marker: str) -> pathlib.Path:
+    app = directory / "SteerLab.app"
+    (app / "Contents").mkdir(parents=True)
+    (app / "Contents" / "Info.plist").write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>SLFullVersionString</key><string>{version}</string>
+<key>SLSourceRevision</key><string>{revision}</string>
+</dict></plist>
+""")
+    (app / "Contents" / "marker.txt").write_text(marker)
+    return app
+
+
+def _package(tmp_path, *arguments, flags=DEVELOPER_ID, head="abcd1234", status="",
+             tags="v9.9.9\n"):
+    output = tmp_path / "out"
+    result, _ = _run(
+        tmp_path, "--package", "--output", output, *arguments,
+        stand_ins=PACKAGING_STAND_INS,
+        env={"SIGNATURE_FLAGS": flags, "GIT_HEAD": head, "GIT_STATUS": status,
+             "GIT_TAGS": tags})
+    return result, output / "SteerLab-9.9.9+abcd1234.zip"
+
+
+def test_package_zips_the_build_output_not_the_installed_copy(tmp_path):
+    """It used to prefer ~/SteerLab/SteerLab.app whenever one existed, so the
+    zip could hold a different bundle from the one just built and stapled."""
+    import hashlib
+    import zipfile
+    _bundle(tmp_path / "home" / "SteerLab", "0.0.1", "00000000", "the INSTALLED copy")
+    _bundle(tmp_path / "out", "9.9.9", "abcd1234", "the bundle this build wrote")
+    result, archive = _package(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    with zipfile.ZipFile(archive) as packed:
+        assert packed.read("SteerLab.app/Contents/marker.txt") == b"the bundle this build wrote"
+    # The checksum file sits beside the zip, in the form `shasum -c` reads.
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    assert (archive.parent / (archive.name + ".sha256")).read_text() == (
+        f"{digest}  {archive.name}\n")
+    assert f"{archive}.sha256" in result.stdout
+
+
+def test_package_never_falls_back_to_the_installed_copy(tmp_path):
+    _bundle(tmp_path / "home" / "SteerLab", "9.9.9", "abcd1234", "the INSTALLED copy")
+    result, archive = _package(tmp_path)
+    assert result.returncode == 5
+    assert "The installed copy is never packaged" in result.stderr
+    assert not archive.exists()
+
+
+def test_package_refuses_an_ad_hoc_signature_unless_allowed(tmp_path):
+    _bundle(tmp_path / "out", "9.9.9", "abcd1234", "built")
+    refused, archive = _package(tmp_path, flags=AD_HOC)
+    assert refused.returncode == 6
+    assert "ad-hoc signed" in refused.stderr
+    assert "--allow-adhoc" in refused.stderr          # the way through, in the refusal
+    assert not archive.exists()
+    allowed, archive = _package(tmp_path, "--allow-adhoc", flags=AD_HOC)
+    assert allowed.returncode == 0, allowed.stdout + allowed.stderr
+    assert archive.is_file()
+    assert "not a release asset" in allowed.stderr
+
+
+@pytest.mark.parametrize("state, reason", [
+    ({"status": " M scripts/build-app.sh\n"}, "uncommitted or untracked changes"),
+    ({"status": "?? notes.txt\n"}, "uncommitted or untracked changes"),
+    ({"tags": ""}, "is not tagged v9.9.9 (tags on it: none)"),
+    ({"tags": "v9.9.8\n"}, "is not tagged v9.9.9 (tags on it: v9.9.8"),
+    ({"head": "ffff0000"}, "the bundle was built from abcd1234, but the checkout is at ffff0000"),
+    ({"head": ""}, "no git history"),
+])
+def test_package_refuses_a_checkout_that_is_not_the_release(tmp_path, state, reason):
+    """A release asset has to be traceable to one clean commit, tagged with
+    the version the bundle reports, that the bundle was built from."""
+    _bundle(tmp_path / "out", "9.9.9", "abcd1234", "built")
+    refused, archive = _package(tmp_path, **state)
+    assert refused.returncode == 8, refused.stdout + refused.stderr
+    assert reason in refused.stderr
+    assert "--allow-unreleased" in refused.stderr
+    assert not archive.exists()
+    assert not (archive.parent / (archive.name + ".sha256")).exists()
+
+    allowed, archive = _package(tmp_path, "--allow-unreleased", **state)
+    assert allowed.returncode == 0, allowed.stdout + allowed.stderr
+    assert archive.is_file()
+    assert reason in allowed.stderr                   # still said, as a note

@@ -27,18 +27,31 @@
 #                          beside the executable (see "Metal" below)
 #     --install           move the finished bundle to ~/SteerLab/SteerLab.app
 #     --force             replace an existing output or install target
-#     --package           zip an already-built SteerLab.app (installed copy
-#                         first, then the build dir) into a signature-
-#                         preserving, version-named release artifact and exit.
-#                         Run it AFTER stapling for the artifact you attach to
-#                         a GitHub Release — stapling modifies the bundle, so
-#                         a pre-staple zip is not the one to ship.
+#     --package           zip the SteerLab.app in --output — the bundle a build
+#                         wrote there, and the one you stapled — into a
+#                         signature-preserving, version-named release artifact,
+#                         write its checksum beside it (<zip>.sha256), and
+#                         exit. Never the installed copy. Run it AFTER
+#                         stapling for the artifact you attach to a GitHub
+#                         Release — stapling modifies the bundle, so a
+#                         pre-staple zip is not the one to ship. It refuses:
+#                           * an ad-hoc signature (the zip would not open on
+#                             another Mac) unless --allow-adhoc;
+#                           * a checkout that is not the release — uncommitted
+#                             or untracked changes, no `v<version>` tag on
+#                             HEAD, or a bundle built from another commit —
+#                             unless --allow-unreleased.
+#     --allow-adhoc       with --package: zip an ad-hoc-signed bundle anyway
+#                         (an archive, not a release asset)
+#     --allow-unreleased  with --package: zip from a dirty, untagged, or
+#                         moved-on checkout anyway (not a release asset)
 #     --notarize          print the notarization commands and exit (a STUB:
 #                         it runs nothing and needs no credentials)
 #
 # Exit codes: 0 ok · 2 usage · 3 build failed · 4 products incomplete ·
 #             5 assembly failed · 6 signing or verification failed ·
-#             7 the assembled bundle carries identifying strings
+#             7 the assembled bundle carries identifying strings ·
+#             8 --package refused: the checkout is not a clean, tagged release
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # WHY A SCRIPT AND NOT AN .xcodeproj
@@ -241,6 +254,8 @@ DO_INSTALL=0
 FORCE=0
 NOTARIZE_ONLY=0
 PACKAGE_ONLY=0
+ALLOW_ADHOC=0
+ALLOW_UNRELEASED=0
 
 SCHEME="SteerLabApp"
 EXECUTABLE="SteerLabApp"
@@ -270,6 +285,8 @@ while [ $# -gt 0 ]; do
     --force)         FORCE=1; shift ;;
     --notarize)      NOTARIZE_ONLY=1; shift ;;
     --package)       PACKAGE_ONLY=1; shift ;;
+    --allow-adhoc)   ALLOW_ADHOC=1; shift ;;
+    --allow-unreleased) ALLOW_UNRELEASED=1; shift ;;
     -h|--help)       usage; exit 0 ;;
     *) echo "build-app.sh: unknown flag: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -301,24 +318,59 @@ trap cleanup EXIT
 # Run it after `stapler staple` for the shippable zip — the ticket is stapled
 # INTO the bundle, so only a post-staple zip opens promptless on a fresh Mac.
 if [ "$PACKAGE_ONLY" -eq 1 ]; then
-  PKG_APP=""
-  for candidate in "$INSTALL_DIR/$APP_NAME" "$OUTPUT/$APP_NAME"; do
-    if [ -d "$candidate" ]; then PKG_APP="$candidate"; break; fi
-  done
-  [ -n "$PKG_APP" ] || die "no $APP_NAME found in $INSTALL_DIR or $OUTPUT — build one first"
+  # THE BUILD OUTPUT, and only that. This used to prefer the installed copy
+  # (~/SteerLab/SteerLab.app) whenever one existed, so the zip could hold a
+  # different bundle from the one that was just built, notarized, and
+  # stapled — an older install, or one signed some other way.
+  PKG_APP="$OUTPUT/$APP_NAME"
+  [ -d "$PKG_APP" ] || die "no $APP_NAME in $OUTPUT. Build one first (scripts/build-app.sh --identity …), or pass --output <the directory it was built into>. The installed copy is never packaged: the release is the bundle a build wrote and you stapled."
   # A broken signature must fail HERE, not on a stranger's Mac.
   codesign --verify --deep --strict "$PKG_APP" \
-    || die "$PKG_APP fails signature verification — rebuild/re-sign before packaging"
-  if codesign -dv "$PKG_APP" 2>&1 | grep -q "flags=.*adhoc"; then
-    echo "build-app.sh: WARNING — $PKG_APP is ad-hoc signed; this zip will" >&2
-    echo "  not open on other Macs. Fine for archiving, wrong for a release." >&2
-  fi
+    || die "$PKG_APP fails signature verification — rebuild/re-sign before packaging" 6
+  # Captured, not piped into grep: under pipefail a reader that stops early
+  # can turn a match into a failed pipeline, and "ad-hoc" would read as "not".
+  SIGN_INFO="$(codesign -dv "$PKG_APP" 2>&1 || true)"
+  case "$SIGN_INFO" in
+    *flags=*adhoc*)
+      [ "$ALLOW_ADHOC" -eq 1 ] || die "$PKG_APP is ad-hoc signed, so this zip would not open on another Mac. Rebuild with --identity \"Developer ID Application: … (TEAMID)\" for a release, or pass --allow-adhoc to archive this bundle anyway." 6
+      echo "build-app.sh: NOTE — packaging an ad-hoc-signed bundle (--allow-adhoc). An archive, not a release asset." >&2
+      ;;
+  esac
   PKG_VERSION="$(plutil -extract SLFullVersionString raw "$PKG_APP/Contents/Info.plist" 2>/dev/null || echo unknown)"
   PKG_REV="$(plutil -extract SLSourceRevision raw "$PKG_APP/Contents/Info.plist" 2>/dev/null || echo unknown)"
+
+  # A release asset has to be traceable to one clean, tagged commit: the
+  # checkout it is packaged from is that commit, unmodified, tagged with the
+  # version the bundle reports, and the bundle was built from it.
+  UNRELEASED=""
+  HEAD_REV="$(git -C "$REPO" rev-parse --short=8 HEAD 2>/dev/null || true)"
+  if [ -z "$HEAD_REV" ]; then
+    UNRELEASED="this checkout has no git history to tie the bundle to"
+  else
+    if [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]; then
+      UNRELEASED="the checkout has uncommitted or untracked changes"
+    fi
+    HEAD_TAGS="$(git -C "$REPO" tag --points-at HEAD 2>/dev/null | tr '\n' ' ')"
+    case " $HEAD_TAGS" in
+      *" v$PKG_VERSION "*) ;;
+      *) UNRELEASED="${UNRELEASED:+$UNRELEASED; }the commit $HEAD_REV is not tagged v$PKG_VERSION (tags on it: ${HEAD_TAGS:-none})" ;;
+    esac
+    if [ "$PKG_REV" != "$HEAD_REV" ]; then
+      UNRELEASED="${UNRELEASED:+$UNRELEASED; }the bundle was built from $PKG_REV, but the checkout is at $HEAD_REV"
+    fi
+  fi
+  if [ -n "$UNRELEASED" ]; then
+    [ "$ALLOW_UNRELEASED" -eq 1 ] || die "not packaging: $UNRELEASED. A release asset comes from one clean commit tagged v$PKG_VERSION: commit your changes, tag that commit, build from it, then package. To zip this bundle anyway — as an archive, not a release asset — pass --allow-unreleased." 8
+    echo "build-app.sh: NOTE — $UNRELEASED (--allow-unreleased). An archive, not a release asset." >&2
+  fi
+
   PKG_ZIP="$OUTPUT/SteerLab-$PKG_VERSION+$PKG_REV.zip"
-  mkdir -p "$OUTPUT" || die "could not create $OUTPUT"
-  rm -f "$PKG_ZIP"
+  rm -f "$PKG_ZIP" "$PKG_ZIP.sha256"
   ditto -c -k --keepParent "$PKG_APP" "$PKG_ZIP" || die "ditto failed"
+  # The checksum file, in the form `shasum -a 256 -c` reads, naming the zip by
+  # its file name so the pair can be moved or downloaded together.
+  ( cd "$OUTPUT" && shasum -a 256 "$(basename "$PKG_ZIP")" > "$(basename "$PKG_ZIP").sha256" ) \
+    || die "could not write $PKG_ZIP.sha256"
   if xcrun stapler validate "$PKG_APP" >/dev/null 2>&1; then
     STAPLE_NOTE="stapled — ships promptless"
   else
@@ -326,8 +378,9 @@ if [ "$PACKAGE_ONLY" -eq 1 ]; then
   fi
   echo "packaged: $PKG_ZIP"
   echo "  from:   $PKG_APP ($STAPLE_NOTE)"
-  echo "  $(du -sh "$PKG_ZIP" | cut -f1), sha256 $(shasum -a 256 "$PKG_ZIP" | cut -d' ' -f1)"
-  echo "  release: gh release upload <tag> \"$PKG_ZIP\""
+  echo "  $(du -sh "$PKG_ZIP" | cut -f1), sha256 $(cut -d' ' -f1 "$PKG_ZIP.sha256")"
+  echo "  checksum file: $PKG_ZIP.sha256"
+  echo "  release: gh release upload <tag> \"$PKG_ZIP\" \"$PKG_ZIP.sha256\""
   exit 0
 fi
 
@@ -358,7 +411,11 @@ Prerequisites
 Submit, staple, confirm
        scripts/build-app.sh --package
        # prints the versioned zip path — the SAME artifact shape notarytool
-       # takes (ditto -c -k --keepParent under the hood):
+       # takes (ditto -c -k --keepParent under the hood). It zips the bundle
+       # in --output, never the installed copy, and it refuses a checkout
+       # that is not one clean commit tagged v<version>: tag the release
+       # commit before this step (or pass --allow-unreleased for a
+       # submission you do not intend to publish).
 
        xcrun notarytool submit "<the printed .zip>" \\
          --keychain-profile "steerlab-notary" --wait
@@ -376,8 +433,9 @@ Submit, staple, confirm
 
 Distribute the STAPLED .app: re-run  scripts/build-app.sh --package  AFTER
 stapling — the ticket lives in the bundle, so only the post-staple zip opens
-promptless on a fresh Mac. That zip (version+revision in its name, sha256
-printed) is the GitHub Release asset:  gh release upload <tag> <zip>.
+promptless on a fresh Mac. That zip (version+revision in its name) and the
+<zip>.sha256 written beside it are the GitHub Release assets:
+gh release upload <tag> <zip> <zip>.sha256.
 NOTARIZE
   exit 0
 fi
