@@ -320,6 +320,14 @@ extension ExperimentTasks {
         /// (D1). Nil means "this row IS its own unit", which is every other
         /// study kind and leaves their arithmetic untouched.
         var replicate: Int? = nil
+        /// Which sample of its (condition, item) cell this row is — the
+        /// record's `sampleIndex`. Only the within-item diagnostic rows of
+        /// the stratified analysis read it, to pair sample k with baseline
+        /// sample k; item-level effects average a cell over its samples and
+        /// never look at it. nil on rows built from records that predate the
+        /// stamp, which fall back to the seed (shared across conditions on
+        /// every such run).
+        var sampleIndex: Int? = nil
     }
 
     /// Minimal categorical readout retained while assembling report.json.

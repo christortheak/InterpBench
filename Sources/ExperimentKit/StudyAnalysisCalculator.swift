@@ -154,7 +154,8 @@ enum StudyAnalysisCalculator {
                     wordCount: wordCount,
                     distinct2: record.distinct2 ?? 0,
                     markerDensity: markerDensity,
-                    reasoningStyle: reasoningStyle))
+                    reasoningStyle: reasoningStyle,
+                    sampleIndex: record.sampleIndex))
         }
         // Choice readouts count as analyzable material alongside sampled
         // generations and ordinal readouts: a study whose whole instrument is
