@@ -34,5 +34,10 @@ def run(client, invocation, common):
             message='Scheduler reply was uncertain; the durable submission record is retained.',
             repair_action='Inspect this endpoint and schedulerSubmissionName before any retry; reconcile child records when available.',
             payload={**common, 'response': document})
-    return CLIResult(message='Remote workflow request completed; retain this endpoint and job ID for subsequent observation.',
+    message = 'Remote workflow request completed; retain this endpoint and job ID for subsequent observation.'
+    if verb == 'resubmit' and isinstance(document, dict) and document.get('resumedAfterCancel') and document.get('message'):
+        # A cancelled run that a person resumed: the engine's own sentence says
+        # what was kept and which job now carries the run.
+        message = str(document['message'])
+    return CLIResult(message=message,
                      changed=verb not in {'science-plan', 'recovery'}, payload={**common, 'response': document})

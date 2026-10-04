@@ -3169,12 +3169,28 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
                 f"{record.get('kind')}"
                 + (" — cancel requested" if cancelling else ""))
         print(line)
+        # What the engine says about the cancel (a study run keeps the
+        # responses it completed) and, when the run can be resumed, the
+        # exact command that does it on this client.
+        cancel_note = (cancelled or {}).get("message") if cancelling else None
+        resume_command = None
+        if cancelling and ((cancelled or {}).get("cancelResume") or {}).get(
+                "offered"):
+            resume_command = (f"{PROGRAM} runner resubmit {job_id} "
+                              f"--runner {client.base_url}")
+        if cancel_note:
+            print(cancel_note)
+        if resume_command:
+            print(f"To resume it later: {resume_command}")
         return CLIResult(
             message=line, changed=bool(cancelling),
             payload={**common, "job": record,
                      "cancelRequested": bool(cancelling),
                      "cancelAccepted": bool((cancelled or {}).get("ok"))
-                     if cancelling else None})
+                     if cancelling else None,
+                     **({"cancelNote": cancel_note} if cancel_note else {}),
+                     **({"resumeCommand": resume_command}
+                        if resume_command else {})})
 
     if verb == "logs":
         _require(args, 1, spec)
