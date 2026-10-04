@@ -1315,8 +1315,156 @@ def model_capabilities() -> None:
     })
 
 
+#: The sampled-effect-pairing fixture's design, shared by its staleness test
+#: (`Server/tests/test_sampled_effect_pairing.py` re-derives the rows from the
+#: committed records, so only the layout lives here).
+SAMPLED_PAIRING_EXPERIMENT_HASH = "0123456789abcdef" * 4
+SAMPLED_PAIRING_MANIFEST_SEEDS = [11, 22, 33]
+#: promptID → (arm, baseline wordCount per sample, steered wordCount per
+#: sample, baseline distinct2 per sample, steered distinct2 per sample).
+#: Word-count sums divide by three and the distinct2 values are dyadic, so
+#: every per-item mean is exact in binary floating point on both engines
+#: (the Mac engine reads distinct2 as a 32-bit float).
+SAMPLED_PAIRING_ITEMS = [
+    ("item-1", "x", [10, 12, 14], [15, 18, 21],
+     [0.5, 0.5, 0.5], [0.75, 0.75, 0.75]),
+    ("item-2", "y", [20, 20, 23], [22, 25, 25],
+     [0.5, 0.25, 0.75], [0.5, 0.5, 0.5]),
+    ("item-3", "x", [30, 33, 36], [31, 32, 33],
+     [0.25, 0.25, 0.25], [0.5, 0.5, 0.5]),
+    ("item-4", "y", [40, 41, 45], [50, 52, 54],
+     [0.75, 0.75, 0.75], [0.25, 0.25, 0.25]),
+]
+#: The effect-sizes.csv columns both engines compute the same way. The
+#: bootstrap interval is left out on purpose: the two engines draw their
+#: resamples from different generators, so its bounds agree only loosely.
+SAMPLED_PAIRING_COLUMNS = (
+    "condition", "endpoint", "n", "deltaMean", "wilcoxonW", "wilcoxonP",
+    "adjustedP", "correction", "stratifyBy", "stratum", "unit", "estimand",
+    "inference")
+
+
+def sampled_pairing_records(seed_policy: str) -> list[dict]:
+    """One run's sampled records: a baseline and one condition, four items,
+    three samples each, in the order a run writes them (condition, sample,
+    item). ``derivedSHA256`` seeds include the condition name, so the two
+    arms of a pair never share a seed; ``manifestSeeds`` shares three."""
+    from steerlab_server.experiment import sampling
+
+    records = []
+    for condition in ("baseline", "steered"):
+        for sample in range(3):
+            for index, (prompt_id, arm, base_words, steered_words,
+                        base_distinct, steered_distinct) in enumerate(
+                            SAMPLED_PAIRING_ITEMS):
+                if seed_policy == "derivedSHA256":
+                    seed = sampling.derive_seed(
+                        SAMPLED_PAIRING_EXPERIMENT_HASH, condition, prompt_id,
+                        sample)
+                else:
+                    seed = SAMPLED_PAIRING_MANIFEST_SEEDS[sample]
+                baseline = condition == "baseline"
+                records.append({
+                    "condition": condition,
+                    "seed": seed,
+                    "seedPolicy": seed_policy,
+                    "sampleIndex": sample,
+                    "promptIndex": index + 1,
+                    "promptID": prompt_id,
+                    "arm": arm,
+                    "wordCount": (base_words if baseline
+                                  else steered_words)[sample],
+                    "distinct2": (base_distinct if baseline
+                                  else steered_distinct)[sample],
+                })
+    return records
+
+
+def sampled_pairing_effect_rows(records: list[dict]) -> list[dict]:
+    """The rows the Python engine's ``analyze`` writes for ``records``,
+    through the real entry point and read back from its effect-sizes.csv
+    (so the values carry the file's six significant digits)."""
+    import csv
+
+    from steerlab_server.experiment import tasks
+    from steerlab_server.experiment.manifest import Manifest
+
+    manifest = {
+        "name": "pairing", "modelID": "test/model", "concepts": [],
+        "taskPromptsFile": None,
+        "conditions": [{"name": "steered",
+                        "slots": [{"concept": "c", "layer": 1,
+                                   "alpha": 2.0}]}],
+    }
+    workspace = tempfile.mkdtemp(prefix="steerlab-pairing-fixture-")
+    try:
+        experiment_dir = os.path.join(workspace, "experiments", "pairing")
+        os.makedirs(experiment_dir)
+        with open(os.path.join(experiment_dir, "experiment.json"), "w",
+                  encoding="utf-8") as handle:
+            json.dump(manifest, handle)
+        run_dir = os.path.join(
+            workspace, "runs", "20261004T000000000-exp-pairing-run")
+        os.makedirs(run_dir)
+        with open(os.path.join(run_dir, "experiment-hash.txt"), "w",
+                  encoding="utf-8") as handle:
+            handle.write(Manifest.from_dict(manifest).content_hash() + "\n")
+        with open(os.path.join(run_dir, "generations.jsonl"), "w",
+                  encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(record) + "\n")
+        out = tasks.analyze("pairing", root=workspace, log=lambda _: None)
+        with open(os.path.join(out, "effect-sizes.csv"),
+                  encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+    def cell(column: str, value: str):
+        if column == "n":
+            return int(value)
+        if column in ("deltaMean", "wilcoxonW", "wilcoxonP", "adjustedP"):
+            return float(value) if value else None
+        return value
+
+    return [{column: cell(column, row[column])
+             for column in SAMPLED_PAIRING_COLUMNS} for row in rows]
+
+
+def sampled_effect_pairing() -> None:
+    """Paired effects when a study samples several responses per item.
+
+    The pairing unit is the ITEM: each (condition, item) cell is averaged
+    over its samples, and the treatment mean is paired to the same item's
+    baseline mean. The seed is never the pairing key — a derived seed
+    includes the condition name, so a baseline record and a treatment record
+    for the same item and sample index carry different seeds by design. The
+    two cases hold the same measurements under the two seed policies, and
+    must therefore analyze to the same rows."""
+    cases = []
+    for seed_policy in ("derivedSHA256", "manifestSeeds"):
+        records = sampled_pairing_records(seed_policy)
+        cases.append({
+            "label": seed_policy,
+            "seedPolicy": seed_policy,
+            "samplesPerItem": 3,
+            "manifestSeeds": SAMPLED_PAIRING_MANIFEST_SEEDS,
+            "records": records,
+            "effectRows": sampled_pairing_effect_rows(records),
+        })
+    _write(os.path.join(FIXTURES, "sampled-effect-pairing.json"), {
+        "note": "the same measurements under both seed policies analyze to "
+                "the same paired effects: samples are averaged within each "
+                "(condition, item) cell and cells pair by item, never by "
+                "seed",
+        "experimentHash": SAMPLED_PAIRING_EXPERIMENT_HASH,
+        "cases": cases,
+    })
+
+
 def main() -> int:
     os.makedirs(FIXTURES, exist_ok=True)
+    sampled_effect_pairing()
     promotion_keys()
     paired_difference_pca()
     concept_stats_splits()
