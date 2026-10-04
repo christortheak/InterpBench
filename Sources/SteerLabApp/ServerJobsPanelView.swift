@@ -134,10 +134,8 @@ struct ServerJobsPanelView: View {
             }
             Button("Keep running", role: .cancel) {}
         } message: { _ in
-            Text("The allocation on \(service.cluster.substrateLabel) is "
-                + "cancelled and its queue slot is lost. Whatever the run "
-                + "already wrote stays on the server, and a checkpointed job "
-                + "can be resumed from its last checkpoint.")
+            Text(RemoteJobStatusClass.cancelConsequence(
+                substrate: service.cluster.substrateLabel))
         }
         .sheet(item: $recoveryTarget) { target in
             JobRecoverySheet(client: target.client, jobID: target.jobID)
@@ -407,36 +405,7 @@ struct ServerJobsPanelView: View {
                             }
                             retryEvaluateButton(for: job)
                         }
-                        // A checkpointed job is RESUMABLE — offer the resume
-                        // right where the state is shown (2026-07-22
-                        // incident: the state rendered with no way to act).
-                        if RemoteJobStatusClass.offersResume(
-                            status: job.status, resubmittedAs: job.resubmittedAs)
-                        {
-                            Button("Resume") {
-                                let origin = jobsOrigin
-                                Task { await resubmit(job.id, origin: origin) }
-                            }
-                            .buttonStyle(.borderless)
-                            .controlSize(.small)
-                            .help(
-                                "re-submit this job's own sbatch script — "
-                                    + "the run continues from its checkpoint; "
-                                    + "the status line reports the new Slurm "
-                                    + "job id")
-                        } else if let continuation = job.resubmittedAs,
-                            RemoteJobStatusClass.classify(status: job.status)
-                                == .resumable
-                        {
-                            Text("resumed → \(continuation)")
-                                .font(.caption2.monospaced())
-                                .foregroundStyle(.secondary)
-                                .help(
-                                    "this checkpointed job was already "
-                                        + "resubmitted — the named "
-                                        + "continuation record is carrying "
-                                        + "the run")
-                        }
+                        resumeControl(for: job)
                         Text(RemoteJobStatusClass.displayText(for: job.status))
                             .font(.caption)
                             .foregroundStyle(statusColor(for: job))
@@ -460,6 +429,7 @@ struct ServerJobsPanelView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     parkedRecoveryLine(for: job)
+                    cancelResumeLine(for: job)
                     shardChips(for: job)
                     if let error = job.error, !error.isEmpty {
                         // Two caption lines rarely hold a server failure
@@ -485,16 +455,7 @@ struct ServerJobsPanelView: View {
                         .help("put this job's whole failure reason on the "
                             + "clipboard — the row shows only its first lines")
                     }
-                    if RemoteJobStatusClass.offersResume(
-                        status: job.status, resubmittedAs: job.resubmittedAs)
-                    {
-                        Button("Resume from Checkpoint") {
-                            let origin = jobsOrigin
-                            Task { await resubmit(job.id, origin: origin) }
-                        }
-                        .help("re-submit this job's own sbatch script — the "
-                            + "run continues from its checkpoint")
-                    }
+                    resumeMenuItem(for: job)
                     if job.finishedAt == nil {
                         Button("Cancel Job", role: .destructive) {
                             cancelTarget = CancelTarget(id: job.id, kind: job.kind)
@@ -543,6 +504,100 @@ struct ServerJobsPanelView: View {
                 .foregroundStyle(.orange)
                 .lineLimit(3)
                 .help(guidance)
+        }
+    }
+
+    /// The Resume control on a job row. A checkpointed job is RESUMABLE, so
+    /// the resume sits right where the state is shown (2026-07-22 incident:
+    /// the state rendered with no way to act). A cancelled study job offers
+    /// it too when the server says the run can continue from the responses
+    /// it kept (2026-10-04); the server makes the deciding checks when the
+    /// button is pressed, and its refusal shows in the status line.
+    ///
+    /// A separate `@ViewBuilder` for the same reason as the parked line
+    /// below: the row body is at the type-checker's budget.
+    @ViewBuilder
+    private func resumeControl(for job: RemoteJobRecord) -> some View {
+        switch RemoteJobStatusClass.resumeOffer(
+            status: job.status, resubmittedAs: job.resubmittedAs,
+            cancelResume: job.cancelResume)
+        {
+        case .checkpoint:
+            Button("Resume") {
+                let origin = jobsOrigin
+                Task { await resubmit(job.id, origin: origin) }
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .help(
+                "re-submit this job's own sbatch script — the run continues "
+                    + "from its checkpoint; the status line reports the new "
+                    + "Slurm job id")
+        case .afterCancel:
+            Button("Resume") {
+                let origin = jobsOrigin
+                Task { await resubmit(job.id, origin: origin) }
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .help(RemoteJobStatusClass.resumeAfterCancelHelp)
+        case .notOffered:
+            // A cancelled job that was resumed says so in the line under
+            // the row (`cancelResumeLine`); this chip is the checkpointed
+            // job's, as before.
+            if let continuation = job.resubmittedAs,
+                RemoteJobStatusClass.classify(status: job.status) == .resumable
+            {
+                Text("resumed → \(continuation)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .help(
+                        "this checkpointed job was already resubmitted — "
+                            + "the named continuation record is carrying "
+                            + "the run")
+            }
+        }
+    }
+
+    /// The context-menu twin of `resumeControl`.
+    @ViewBuilder
+    private func resumeMenuItem(for job: RemoteJobRecord) -> some View {
+        switch RemoteJobStatusClass.resumeOffer(
+            status: job.status, resubmittedAs: job.resubmittedAs,
+            cancelResume: job.cancelResume)
+        {
+        case .checkpoint:
+            Button("Resume from Checkpoint") {
+                let origin = jobsOrigin
+                Task { await resubmit(job.id, origin: origin) }
+            }
+            .help("re-submit this job's own sbatch script — the run "
+                + "continues from its checkpoint")
+        case .afterCancel:
+            Button("Resume Cancelled Run") {
+                let origin = jobsOrigin
+                Task { await resubmit(job.id, origin: origin) }
+            }
+            .help(RemoteJobStatusClass.resumeAfterCancelHelp)
+        case .notOffered:
+            EmptyView()
+        }
+    }
+
+    /// Under a cancelled study job that CANNOT be resumed (or already was):
+    /// the server's plain sentence saying why, so the missing Resume button
+    /// is explained rather than merely absent.
+    @ViewBuilder
+    private func cancelResumeLine(for job: RemoteJobRecord) -> some View {
+        if case .notOffered(let note?) = RemoteJobStatusClass.resumeOffer(
+            status: job.status, resubmittedAs: job.resubmittedAs,
+            cancelResume: job.cancelResume)
+        {
+            Text(note)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+                .help(note)
         }
     }
 
@@ -1109,18 +1164,19 @@ struct ServerJobsPanelView: View {
         status = importer.lastSummary ?? "This job has no packaged evidence. Refresh its originating server's job list or package the run before importing."
     }
 
-    /// Manual resume of a checkpointed job: the server re-sbatches the
-    /// job's own run.sbatch (the same implementation auto-resume uses) and
-    /// the run continues from its checkpoint. Refusal details (already
-    /// resubmitted / still running / cancelled) surface verbatim.
+    /// Manual resume of a checkpointed or cancelled job: the server
+    /// re-sbatches the job's own run.sbatch (the same implementation
+    /// auto-resume uses) and the run continues from where it parked. For a
+    /// cancelled job the server first confirms the cancelled job has ended.
+    /// Refusal details (already resubmitted / still running / not yet
+    /// confirmed stopped / nothing kept) surface verbatim.
     private func resubmit(_ jobID: String, origin: EvidenceImportOrigin?) async {
         guard let client = clientForRows(origin: origin) else { return }
         do {
             let result = try await client.resubmitJob(jobID)
             guard service.cluster.evidenceImportOrigin == origin else { return }
             status = RemoteJobStatusClass.resumedStatusLine(
-                jobID: jobID, slurmJobID: result.slurmJobID,
-                continuationJobID: result.jobId)
+                jobID: jobID, result: result)
             await refreshJobs(selectFirstWhenEmpty: false)
         } catch let error as ClusterClient.ClientError {
             status = "resume failed: \(ClusterClient.unwrappingDetail(error).description)"
@@ -1132,9 +1188,12 @@ struct ServerJobsPanelView: View {
     private func cancel(_ jobID: String, origin: EvidenceImportOrigin?) async {
         guard let client = clientForRows(origin: origin) else { return }
         do {
-            try await client.cancelJob(jobID)
+            let cancellation = try await client.cancelJob(jobID)
             guard service.cluster.evidenceImportOrigin == origin else { return }
-            status = "cancel requested for \(jobID)"
+            // For a study run: completed responses are kept, and how to
+            // resume from here.
+            status = RemoteJobStatusClass.cancelRequestedLine(
+                jobID: jobID, cancellation: cancellation, surface: .app)
             await refreshJobs(selectFirstWhenEmpty: false)
         } catch let error as ClusterClient.ClientError {
             // A 502 here means scancel itself failed — the allocation may

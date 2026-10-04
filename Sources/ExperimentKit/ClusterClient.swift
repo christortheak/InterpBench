@@ -582,6 +582,56 @@ public struct RemoteJobResubmission: Codable, Sendable {
     /// Sharded parent only: one entry per checkpointed shard that was
     /// resubmitted (`jobId` is nil on the parent answer itself).
     public var resumedShards: [RemoteJobResubmission]?
+    /// True when the job had been CANCELLED and a person resumed it: the
+    /// continuation is a new job, and the cancelled record stays cancelled.
+    /// Older servers omit it (they refuse a cancelled job outright).
+    public var resumedAfterCancel: Bool? = nil
+    /// How many completed response records the cancelled run kept, when the
+    /// server could count them. They are not generated again.
+    public var completedRecords: Int? = nil
+    /// The server's own sentence for a resume after a cancel: what was kept
+    /// and which job now carries the run. Shown as it is.
+    public var message: String? = nil
+    /// Sharded parent, resume after a cancel: the parts that could not be
+    /// resubmitted this time (pressing Resume again retries them).
+    public var notResumed: [String]? = nil
+}
+
+/// What the server says about resuming a CANCELLED study job, decided from
+/// the job record alone (`cancelResume` on the job, and in the answer to a
+/// cancel). `offered` means the Resume control belongs on the row; the
+/// deciding checks (the scheduler confirms the cancelled job has ended, the
+/// run kept a state to continue from) run when the person asks.
+public struct RemoteJobCancelResume: Codable, Sendable, Equatable {
+    public var offered: Bool
+    /// One plain sentence: what Resume will do, or why it is not offered.
+    public var explanation: String?
+    /// The job that is carrying the run, once this one has been resumed.
+    public var continuation: String?
+
+    public init(offered: Bool, explanation: String? = nil, continuation: String? = nil) {
+        self.offered = offered
+        self.explanation = explanation
+        self.continuation = continuation
+    }
+}
+
+/// `POST /api/jobs/{id}/cancel` — the server's answer to an accepted cancel.
+/// For a study run it says that completed responses are kept and whether
+/// the run can be resumed; older servers answer `{"ok": true}` alone.
+public struct RemoteJobCancellation: Codable, Sendable {
+    public var ok: Bool?
+    public var message: String?
+    public var cancelResume: RemoteJobCancelResume?
+
+    public init(
+        ok: Bool? = nil, message: String? = nil,
+        cancelResume: RemoteJobCancelResume? = nil
+    ) {
+        self.ok = ok
+        self.message = message
+        self.cancelResume = cancelResume
+    }
 }
 
 public struct RemoteJobRecord: Codable, Sendable, Identifiable {
@@ -602,6 +652,10 @@ public struct RemoteJobRecord: Codable, Sendable, Identifiable {
     /// decodes fine.
     public var elapsedSeconds: Double? = nil
     public var recordCount: Int? = nil
+    /// Present only on a cancelled study job: whether Resume should be
+    /// offered, and the sentence that says why or why not. Older servers
+    /// omit it, and a cancelled job then offers no Resume, as before.
+    public var cancelResume: RemoteJobCancelResume? = nil
 
     /// The landed server folds the WS2 child-record stamps into `result`
     /// (`jobs.reconcile`), so read both spots: a top-level field wins, the
@@ -777,6 +831,107 @@ public enum RemoteJobStatusClass: Sendable, Equatable {
     /// carrying the run.
     public static func offersResume(status: String, resubmittedAs: String? = nil) -> Bool {
         resubmittedAs == nil && classify(status: status) == .resumable
+    }
+
+    /// What a job row offers for Resume. A cancelled job is not resumable by
+    /// its status alone (`offersResume` stays false for it): the server says
+    /// whether it can be continued, in `cancelResume` on the job record.
+    public enum ResumeOffer: Sendable, Equatable {
+        /// A checkpointed job, or an in-process run that parked on cancel.
+        case checkpoint
+        /// A cancelled scheduler job the server says can be continued from
+        /// the responses it kept.
+        case afterCancel
+        /// No Resume. `note` is the server's plain sentence when the job is
+        /// a cancelled study job that cannot be resumed, or already was.
+        case notOffered(note: String?)
+    }
+
+    /// The one rule every job row renders its Resume control from. An older
+    /// server sends no `cancelResume`, and a cancelled job then offers
+    /// nothing and explains nothing, exactly as before.
+    public static func resumeOffer(
+        status: String, resubmittedAs: String? = nil,
+        cancelResume: RemoteJobCancelResume? = nil
+    ) -> ResumeOffer {
+        if offersResume(status: status, resubmittedAs: resubmittedAs) {
+            return .checkpoint
+        }
+        guard let cancelResume else { return .notOffered(note: nil) }
+        if cancelResume.offered {
+            // A continuation already exists: one resume per cancelled job,
+            // whatever a stale hint says.
+            return resubmittedAs == nil ? .afterCancel : .notOffered(note: nil)
+        }
+        return .notOffered(note: cancelResume.explanation)
+    }
+
+    /// The Resume control's help text for a cancelled job that can continue.
+    public static let resumeAfterCancelHelp =
+        "continue this cancelled run from the responses it already "
+        + "completed — the server first checks that the cancelled job has "
+        + "fully stopped, then starts a new job from the same script. "
+        + "Nothing is generated twice, and this job's record stays cancelled"
+
+    /// The Resume action's success report, whichever kind of resume it was.
+    /// A resume after a cancel shows the server's own sentence (what was
+    /// kept, which job now carries the run); a checkpoint resume keeps the
+    /// line it has always had.
+    public static func resumedStatusLine(
+        jobID: String, result: RemoteJobResubmission
+    ) -> String {
+        guard result.resumedAfterCancel == true else {
+            return resumedStatusLine(
+                jobID: jobID, slurmJobID: result.slurmJobID,
+                continuationJobID: result.jobId)
+        }
+        if let message = result.message, !message.isEmpty { return message }
+        let continuation = result.jobId.map { " as job \($0)" } ?? ""
+        return "job \(jobID) was cancelled; it now continues\(continuation) "
+            + "from the responses it had already completed"
+    }
+
+    /// Where a cancel was asked from, so the "how to resume" names a
+    /// control the reader actually has.
+    public enum CancelSurface: Sendable, Equatable {
+        case app
+        case commandLine
+    }
+
+    /// What to tell a researcher after an accepted cancel. For a study run
+    /// the server says completed responses are kept; this adds how to
+    /// resume on the surface in use. An older server's bare acknowledgement
+    /// reads as it always did.
+    public static func cancelRequestedLine(
+        jobID: String, cancellation: RemoteJobCancellation?,
+        surface: CancelSurface
+    ) -> String {
+        let base = "cancel requested for \(jobID)"
+        guard let hint = cancellation?.cancelResume else { return base }
+        guard hint.offered else {
+            guard let explanation = hint.explanation, !explanation.isEmpty
+            else { return base }
+            return "\(base) — \(explanation)"
+        }
+        let how: String
+        switch surface {
+        case .app:
+            how = "press Resume on its row in Server Jobs"
+        case .commandLine:
+            how = "run `steerlab-cli remote resubmit \(jobID)`"
+        }
+        return "\(base) — the responses it has already completed are kept. "
+            + "When the job has stopped, \(how) to continue it; nothing "
+            + "resumes it automatically"
+    }
+
+    /// The confirmation shown before a job is cancelled from the app.
+    public static func cancelConsequence(substrate: String) -> String {
+        "The job on \(substrate) is stopped and its place in the queue is "
+            + "lost. Responses a study run has already completed are kept on "
+            + "the server, and you can continue the run later with Resume, "
+            + "which does not generate them again. Nothing resumes a "
+            + "cancelled job automatically."
     }
 
     /// The Resume action's success report: names the continuation and says
@@ -2433,9 +2588,27 @@ public struct ClusterClient: Sendable {
         try await get("/api/jobs/\(id)")
     }
 
-    public func cancelJob(_ id: String) async throws {
+    /// `POST /api/jobs/{id}/cancel`. The answer says, for a study run, that
+    /// completed responses are kept and whether the run can be resumed;
+    /// callers that only need the cancel may ignore it.
+    @discardableResult
+    public func cancelJob(_ id: String) async throws -> RemoteJobCancellation {
         struct Empty: Encodable {}
-        let _: JSONValue = try await post("/api/jobs/\(id)/cancel", body: Empty())
+        // Decoded leniently: the cancel was accepted the moment the server
+        // answered 2xx, whatever shape its body has. A body this client
+        // cannot read as the answer is an acknowledgement and nothing more.
+        let raw: JSONValue = try await post("/api/jobs/\(id)/cancel", body: Empty())
+        return Self.cancellation(from: raw)
+    }
+
+    /// The cancel answer in a 2xx body, or the bare acknowledgement when the
+    /// body is not one (an older server, or a proxy's own reply).
+    static func cancellation(from body: JSONValue) -> RemoteJobCancellation {
+        guard let data = try? JSONEncoder().encode(body),
+            let answer = try? JSONDecoder().decode(
+                RemoteJobCancellation.self, from: data)
+        else { return RemoteJobCancellation() }
+        return answer
     }
 
     /// Run an experiment verb directly on the ACTIVE server as a durable job

@@ -608,9 +608,11 @@ struct StudyRunControlsView: View {
 
     private static let cancelJobConsequence =
         "The job stops on the server. A queued job loses its place in the "
-        + "queue; a running job keeps only what it already wrote to its run "
-        + "directory, and no report is produced. This cannot be undone — "
-        + "resubmitting starts a new job."
+        + "queue; a running job keeps the responses it has already "
+        + "completed, and no report is produced. You can continue a "
+        + "cancelled run later with Resume in Compute › Server Jobs, which "
+        + "does not generate those responses again. Nothing resumes it "
+        + "automatically."
 
     private static let gresHelp =
         "the Slurm generic resource this job asks for (sent as "

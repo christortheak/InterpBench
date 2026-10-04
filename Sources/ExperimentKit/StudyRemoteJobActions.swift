@@ -17,8 +17,7 @@ extension StudyRemoteJobController {
             let client = try clientForJob(id, connected: client)
             let result = try await client.resubmitJob(id)
             let line = RemoteJobStatusClass.resumedStatusLine(
-                jobID: id, slurmJobID: result.slurmJobID,
-                continuationJobID: result.jobId)
+                jobID: id, result: result)
             remoteStatus = line
             actionNote(line, severity: .success)
             await refreshRecentServerJobs(client: client)
@@ -57,8 +56,11 @@ extension StudyRemoteJobController {
         guard let client, let remoteJobID else { return }
         do {
             let client = try clientForJob(remoteJobID, connected: client)
-            try await client.cancelJob(remoteJobID)
-            remoteStatus = "cancel requested for \(remoteJobID)"
+            let cancellation = try await client.cancelJob(remoteJobID)
+            // For a study run: completed responses are kept, and where the
+            // Resume control is.
+            remoteStatus = RemoteJobStatusClass.cancelRequestedLine(
+                jobID: remoteJobID, cancellation: cancellation, surface: .app)
         } catch {
             remoteStatus = "remote cancel failed: \(error)"
         }
