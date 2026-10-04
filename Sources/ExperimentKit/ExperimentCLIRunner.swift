@@ -830,12 +830,14 @@ public struct ExperimentCLIRunner: Sendable {
                 case .invalid: "✗"
                 case .missing: "✗"
                 case .optional: "·"
+                case .notApplicable: "–"
                 }
             }
             // Blockers first (files the run refuses, then absent files), then
             // partial, present, optional.
             let order: [DataRequirement.Status] = [
                 .invalid, .missing, .partial, .present, .optional,
+                .notApplicable,
             ]
             for status in order {
                 for requirement in requirements where requirement.status == status {
@@ -902,17 +904,23 @@ public struct ExperimentCLIRunner: Sendable {
         let ordered = order.flatMap { status in
             requirements.filter { $0.status == status }
         }
+        var counts: [String: JSONValue] = [
+            "present": .number(Double(summary.presentCount)),
+            "partial": .number(Double(summary.partialCount)),
+            "invalid": .number(Double(summary.invalidCount)),
+            "missing": .number(Double(summary.missingCount)),
+            "optional": .number(Double(summary.optionalCount)),
+        ]
+        // Only when such a row exists, so every other study's payload is
+        // unchanged.
+        if summary.notApplicableCount > 0 {
+            counts["notApplicable"] = .number(Double(summary.notApplicableCount))
+        }
         return [
             "experiment": .string(experiment),
             "ready": .bool(summary.isReady),
             "summary": .string(summary.line),
-            "counts": .object([
-                "present": .number(Double(summary.presentCount)),
-                "partial": .number(Double(summary.partialCount)),
-                "invalid": .number(Double(summary.invalidCount)),
-                "missing": .number(Double(summary.missingCount)),
-                "optional": .number(Double(summary.optionalCount)),
-            ]),
+            "counts": .object(counts),
             "items": .array(ordered.map(item)),
             "blockers": .array(summary.blockers.map(item)),
         ]
@@ -3523,6 +3531,28 @@ public struct ExperimentCLIRunner: Sendable {
                             detail: "gate '\(gate)' would have failed and was "
                                 + "skipped by --force; this freeze is stamped "
                                 + "freezeForced and is not citable"))
+                }
+            }
+            // A condition the capability battery could not be applied to
+            // (its agent uses an intervention policy): the freeze is clean
+            // and NOT forced, and the result says in plain words what the
+            // frozen study therefore lacks. Non-blocking, like every
+            // advisory.
+            if let notApplied = manifest.capabilityBatteryNotApplied,
+                !notApplied.isEmpty
+            {
+                payload["capabilityBatteryNotApplied"] = .array(
+                    notApplied.map {
+                        .object([
+                            "condition": .string($0.condition),
+                            "reason": .string($0.reason),
+                        ])
+                    })
+                for entry in notApplied {
+                    let sentence = FreezePolicy.batteryNotAppliedSentence(entry)
+                    sink.out("note: \(sentence)")
+                    advisories.append(
+                        .init(CLIAdvisory.capabilityControlNotApplied, sentence))
                 }
             }
             return ExperimentCLIResult(

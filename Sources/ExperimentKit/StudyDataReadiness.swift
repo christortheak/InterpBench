@@ -45,6 +45,11 @@ public struct DataRequirement: Identifiable, Sendable, Equatable {
         /// Not required by this manifest's declarations; listed so the
         /// researcher sees what claims it would unlock.
         case optional
+        /// The requirement cannot apply to this part of the study, and the
+        /// row says why — never a blocker, and not something the researcher
+        /// can supply. Today's one source: the capability battery, for a
+        /// condition whose agent uses an intervention policy.
+        case notApplicable
     }
 
     public var id: String
@@ -83,6 +88,10 @@ public struct ReadinessSummary: Sendable, Equatable {
     public var missingCount: Int
     public var optionalCount: Int
     public var blockers: [DataRequirement]
+    /// Rows that cannot apply to part of the study (`.notApplicable`).
+    /// Defaulted, and named in `line` only when non-zero, so every study
+    /// without such a row reads exactly as it did.
+    public var notApplicableCount: Int = 0
 
     public var isReady: Bool { blockers.isEmpty }
 
@@ -90,6 +99,8 @@ public struct ReadinessSummary: Sendable, Equatable {
         "\(presentCount) present · \(partialCount) partial · "
             + (invalidCount > 0 ? "\(invalidCount) invalid · " : "")
             + "\(missingCount) missing · \(optionalCount) optional"
+            + (notApplicableCount > 0
+                ? " · \(notApplicableCount) not applicable" : "")
     }
 }
 
@@ -606,7 +617,22 @@ public enum StudyDataReadiness {
 
         // Capability battery: pinned → checked; declared via the sweep →
         // checked at the sweep's path; otherwise optional evidence.
-        rows.append(batteryRequirement(manifest: manifest, resolve: resolve))
+        let battery = batteryRequirement(manifest: manifest, resolve: resolve)
+        rows.append(battery)
+        // The battery cannot run an agent that uses an intervention policy.
+        // One explicit not-applicable row per such condition, with the
+        // reason, so the checklist says what the frozen study will lack
+        // instead of leaving the condition unmentioned.
+        for entry in FreezePolicy.batteryNotApplied(manifest) {
+            rows.append(
+                DataRequirement(
+                    id: "capabilityBattery:notApplicable:\(entry.condition)",
+                    title: "capability battery — \(entry.condition)",
+                    kind: .capabilityBattery,
+                    status: .notApplicable,
+                    path: battery.path,
+                    detail: FreezePolicy.batteryNotAppliedSentence(entry)))
+        }
 
         // Neutral corpus: the α denominator (norm-unit steering strengths).
         let corpusPath = "prompts/neutral/corpus.jsonl"
@@ -647,7 +673,8 @@ public enum StudyDataReadiness {
             optionalCount: requirements.count { $0.status == .optional },
             blockers: requirements.filter {
                 $0.status == .missing || $0.status == .invalid
-            })
+            },
+            notApplicableCount: requirements.count { $0.status == .notApplicable })
     }
 
     // MARK: - Scaffolding

@@ -276,6 +276,21 @@ def write_report(name: str, manifest: Manifest, records: list[dict],
     # runs' report bytes are unchanged.
     if numeric_parser is not None:
         report["numericParser"] = numeric_parser.provenance()
+    # The conditions the run's capability battery did NOT score, and why
+    # (cross-engine key "capabilityBatteryNotApplied": [{"condition",
+    # "reason"}] — the manifest freeze stamp's shape). Written only when a
+    # battery ran and a condition's agent carries an intervention policy,
+    # which the battery cannot run; before this the arm was skipped with a
+    # log line and the report said nothing. A separate key rather than a
+    # scoreless "capabilityBattery" block, so no reader of that block meets a
+    # row without an accuracy. Derived from the manifest here, not carried in
+    # the battery summary, so a merged sharded run — whose summary is
+    # recomputed from battery.jsonl — records it too.
+    if battery is not None:
+        from . import freeze_policy
+        not_applied = freeze_policy.battery_not_applied(manifest.raw)
+        if not_applied:
+            report[freeze_policy.BATTERY_NOT_APPLIED_KEY] = not_applied
     # Shard provenance of a MERGED run ({"shardCount", "shardRuns",
     # "shardJobIDs"?}, deterministic — no timestamps). Only the merge passes
     # it; single-job runs and shard partials never carry the key, and it

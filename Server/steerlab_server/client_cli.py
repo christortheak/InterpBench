@@ -1903,6 +1903,20 @@ def _experiment(invocation: Invocation) -> CLIResult:
                     f"gate '{gate}' would have failed and was skipped by "
                     "--force; this freeze is stamped freezeForced and is not "
                     "citable"))
+        # A condition the capability battery could not be applied to (its
+        # agent carries an intervention policy): the freeze is clean and NOT
+        # forced, and the envelope says in plain words what the frozen study
+        # therefore lacks. Non-blocking, like every advisory.
+        from .experiment import freeze_policy
+        not_applied = list(
+            frozen.get(freeze_policy.BATTERY_NOT_APPLIED_KEY) or [])
+        if not_applied:
+            payload[freeze_policy.BATTERY_NOT_APPLIED_KEY] = not_applied
+            for entry in not_applied:
+                advisories.append(advisory(
+                    "capabilityControlNotApplied",
+                    freeze_policy.battery_not_applied_sentence(
+                        str(entry.get("condition")), str(entry.get("reason")))))
         # The store's non-blocking freeze advisories (cross-substrate validate
         # evidence, legacy attaches, the non-citable marker). Loud on stderr
         # AND in the payload; they never move the state or the exit code.

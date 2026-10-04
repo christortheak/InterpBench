@@ -43,7 +43,7 @@ struct DataReadinessSection: View {
     /// Blockers first: invalid (red — the run refuses the file), missing
     /// (red), partial (amber), present (green), optional (grey).
     private static let displayOrder: [DataRequirement.Status] = [
-        .invalid, .missing, .partial, .present, .optional,
+        .invalid, .missing, .partial, .present, .optional, .notApplicable,
     ]
 
     var body: some View {
@@ -180,6 +180,7 @@ struct DataReadinessSection: View {
         case .invalid: .red
         case .missing: .red
         case .optional: .secondary
+        case .notApplicable: .secondary
         }
     }
 
@@ -210,7 +211,10 @@ struct DataReadinessSection: View {
                     .foregroundStyle(color(requirement.status))
                 Text(requirement.title)
                     .font(.caption)
-                Text(requirement.status.rawValue)
+                Text(
+                    requirement.status == .notApplicable
+                        ? "not applicable" : requirement.status.rawValue
+                )
                     .font(.caption2)
                     .foregroundStyle(color(requirement.status))
                 Spacer()

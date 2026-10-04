@@ -12,7 +12,8 @@ import struct
 
 ALGORITHM = "portable-v1"
 LIFECYCLE = ("frozenAt", "freezeHash", "frozenBy", "gitCommit", "appVersion",
-             "freezeForced", "forcedGatesSkipped", "preregistrationHash", "preregistrationGeneratedHash")
+             "freezeForced", "forcedGatesSkipped", "preregistrationHash", "preregistrationGeneratedHash",
+             "capabilityBatteryNotApplied")
 REMOVED = LIFECYCLE + ("multiAgentScenarioPath", "multiAgentScenarioHash",
                       "multiAgentSemanticScenarioPath", "multiAgentSemanticScenarioHash", "templateProvenance")
 DEFAULTS = {"studyKind": "modelOutput", "multiAgentIncludeBaseline": True,

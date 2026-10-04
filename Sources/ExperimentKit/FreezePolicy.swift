@@ -130,6 +130,59 @@ enum FreezePolicy {
             forced: vacuous, repairAction: repair)
     }
 
+    // MARK: - The capability battery's one exemption
+
+    /// Why the capability battery cannot be applied to one variant
+    /// condition, or nil when it applies.
+    ///
+    /// Read from the condition's INLINE agent artifact — the bytes the
+    /// manifest pins and the content hash covers — so the answer needs no
+    /// file read and cannot differ between the freeze that stamps it and a
+    /// later reader. A forward-referenced condition has no agent yet and
+    /// keeps its own, older exemption. Server twin:
+    /// `freeze_policy.battery_exemption_reason`.
+    static func batteryExemptionReason(
+        _ variant: ExperimentManifest.VariantCondition
+    ) -> String? {
+        guard variant.fromPromotion == nil,
+            !(variant.artifact.interventionPolicies ?? []).isEmpty
+        else { return nil }
+        return ExperimentManifest.BatteryNotApplied.interventionPolicyReason
+    }
+
+    /// The `capabilityBatteryNotApplied` entries for a manifest, in manifest
+    /// order; empty when the battery applies to every condition or the
+    /// battery gate is not asked of this study kind at all. Server twin:
+    /// `freeze_policy.battery_not_applied`.
+    static func batteryNotApplied(
+        _ manifest: ExperimentManifest
+    ) -> [ExperimentManifest.BatteryNotApplied] {
+        guard ManifestDeclarationPolicy.modelOutputSurfacesOperative(manifest) else {
+            return []
+        }
+        return manifest.variantConditions.compactMap { variant in
+            batteryExemptionReason(variant).map {
+                .init(condition: variant.name, reason: $0)
+            }
+        }
+    }
+
+    /// The researcher-facing sentence for one entry. Both engines emit it
+    /// verbatim (server twin: `freeze_policy.battery_not_applied_sentence`).
+    static func batteryNotAppliedSentence(
+        _ entry: ExperimentManifest.BatteryNotApplied
+    ) -> String {
+        if entry.reason == ExperimentManifest.BatteryNotApplied.interventionPolicyReason {
+            return "The capability battery was not applied to \(entry.condition), "
+                + "because its agent uses an intervention policy, which the "
+                + "battery cannot run. This study has no capability control "
+                + "for that agent."
+        }
+        return "The capability battery was not applied to \(entry.condition) "
+            + "(recorded reason: \(entry.reason)). This study has no capability "
+            + "control for that agent."
+    }
+
     static func checkVariantBatteryEvidence(
         _ manifest: ExperimentManifest, facts: BatteryFacts
     ) throws {
@@ -152,12 +205,27 @@ enum FreezePolicy {
         // does not exist at validate time — their battery evidence is the
         // RUN's per-condition battery, produced after server-side
         // resolution.
+        // A condition whose agent carries intervention policies is exempt
+        // too (maintainer ruling 2026-10-04): the battery cannot run a
+        // policy, so the evidence could never exist and only --force could
+        // freeze the study. The exemption is this narrow on purpose —
+        // baseline and every other condition are required exactly as before
+        // — and freeze records it in the `capabilityBatteryNotApplied` stamp
+        // instead of marking the study forced.
         let required =
             ["baseline"]
             + manifest.variantConditions
-            .filter { $0.fromPromotion == nil }
+            .filter { $0.fromPromotion == nil && batteryExemptionReason($0) == nil }
             .map(\.name)
-        let missing = required.filter { results[$0] == nil }
+        // A not-applicable row is a record, never a score: it cannot stand in
+        // for evidence a REQUIRED condition owes (evidence is matched by
+        // scope, which does not cover conditions — a row written while a
+        // condition's agent carried a policy must not satisfy the gate after
+        // that agent is swapped for one the battery can run). Server twin:
+        // the `accuracy is None` test in `check_battery_evidence`.
+        let missing = required.filter {
+            results[$0] == nil || results[$0]?.notApplicable != nil
+        }
         guard missing.isEmpty else {
             throw ExperimentError(
                 reason: "cannot freeze '\(name)': matching validate evidence has no "

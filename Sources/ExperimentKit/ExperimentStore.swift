@@ -4894,6 +4894,7 @@ public enum ExperimentStore {
     private static let volatileFreezeKeys = [
         "status", "frozenAt", "freezeHash", "gitCommit", "frozenBy", "createdAt",
         "appVersion", "freezeForced", "forcedGatesSkipped",
+        "capabilityBatteryNotApplied",
         "preregistrationHash", "preregistrationGeneratedHash",
     ]
 
@@ -5151,6 +5152,7 @@ public enum ExperimentStore {
         canonical.appVersion = nil
         canonical.freezeForced = nil
         canonical.forcedGatesSkipped = nil
+        canonical.capabilityBatteryNotApplied = nil
         canonical.preregistrationHash = nil
         canonical.preregistrationGeneratedHash = nil
         let encoder = JSONEncoder()
@@ -6014,11 +6016,21 @@ public enum ExperimentStore {
         /// sweep-selection provenance: fine for exploration, distinguishable
         /// from promoted agents in evidence-grade studies).
         public let advisories: [String]
+        /// Gates that do NOT apply to part of this study, each as one plain
+        /// sentence carrying the reason — never a blocker, and kept apart
+        /// from `advisories` so a gate list can show "not applicable" as its
+        /// own state. Today's one source: the capability battery, for a
+        /// condition whose agent uses an intervention policy.
+        public let notApplicable: [String]
         public var ready: Bool { unmetGates.isEmpty }
 
-        public init(unmetGates: [String], advisories: [String] = []) {
+        public init(
+            unmetGates: [String], advisories: [String] = [],
+            notApplicable: [String] = []
+        ) {
             self.unmetGates = unmetGates
             self.advisories = advisories
+            self.notApplicable = notApplicable
         }
 
         /// Compact one-liner for UI captions: "ready to freeze", or the
@@ -6146,9 +6158,29 @@ public enum ExperimentStore {
         if !freezeAutoCommitIsEnabled() {
             gate(checkGitPinCleanliness)
         }
+        // The battery's not-applicable conditions are shown as their own
+        // gate-list rows, so they are lifted out of the advisory list here
+        // rather than rendered twice.
+        let notApplicable = batteryNotAppliedSentences(manifest)
         return FreezeReadiness(
             unmetGates: gates,
-            advisories: freezeAdvisories(for: manifest, runSubstrate: runSubstrate))
+            advisories: freezeAdvisories(for: manifest, runSubstrate: runSubstrate)
+                .filter { !notApplicable.contains($0) },
+            notApplicable: notApplicable)
+    }
+
+    /// One researcher-facing sentence per variant condition the capability
+    /// battery cannot be applied to (its agent uses an intervention policy),
+    /// in manifest order; empty for every other study. The same sentences
+    /// the freeze advisories, the freeze result, the generated settings
+    /// summary, and the readiness checklist carry. Server twin:
+    /// `freeze_policy.battery_not_applied_sentence` over
+    /// `freeze_policy.battery_not_applied`.
+    public static func batteryNotAppliedSentences(
+        _ manifest: ExperimentManifest
+    ) -> [String] {
+        FreezePolicy.batteryNotApplied(manifest)
+            .map(FreezePolicy.batteryNotAppliedSentence)
     }
 
     /// Non-blocking freeze advisories. Hand-created variant conditions (no
@@ -6484,6 +6516,12 @@ public enum ExperimentStore {
                     + "bundled for this study kind; switch the study type "
                     + "(and duplicate) to use it")
         }
+        // The capability battery cannot run an agent that carries an
+        // intervention policy, so the battery gate does not ask for evidence
+        // about that condition. Said here in plain words, on a draft and on
+        // the frozen study alike: the freeze is clean, and the missing
+        // capability control is a fact a reader must be able to see.
+        advisories += batteryNotAppliedSentences(manifest)
         // A forced freeze skipped evidence gates — the manifest says so
         // durably, and every readiness/report surface repeats it.
         if manifest.freezeForced == true {
@@ -7361,6 +7399,15 @@ public enum ExperimentStore {
                 manifest.forcedGatesSkipped =
                     FreezeGate.vocabulary.filter(forcedGateFailures.contains)
             }
+            // The battery-not-applied stamp (a lifecycle stamp like the two
+            // above, excluded from the content hash): which conditions the
+            // battery gate did not ask about, and why. Written on a clean
+            // freeze and a forced one alike — it describes the study, not
+            // how it was frozen — and nil when the battery applied to every
+            // condition, so no other study's frozen bytes change.
+            let batteryNotApplied = FreezePolicy.batteryNotApplied(manifest)
+            manifest.capabilityBatteryNotApplied =
+                batteryNotApplied.isEmpty ? nil : batteryNotApplied
             manifest.status = .frozen
             manifest.frozenAt = ISO8601DateFormatter().string(from: Date())
             manifest.frozenBy = "swift"
@@ -7630,6 +7677,11 @@ public enum ExperimentStore {
             lines.append(
                 "- **\(condition.name)**\(suffix): "
                     + (slots.isEmpty ? "none (baseline)" : slots))
+        }
+        let batteryNotApplied = batteryNotAppliedSentences(manifest)
+        if !batteryNotApplied.isEmpty {
+            lines += ["", "## Capability battery", ""]
+            lines += batteryNotApplied.map { "- " + $0 }
         }
         if let rule = manifest.promotionRule {
             lines += [
@@ -8540,6 +8592,7 @@ public enum ExperimentStore {
         copy.appVersion = nil
         copy.freezeForced = nil
         copy.forcedGatesSkipped = nil
+        copy.capabilityBatteryNotApplied = nil
         // The preregistration stamps name bytes in the SOURCE experiment's
         // directory; the duplicate is a fresh directory holding only a
         // manifest, so carrying them over would make verify demand a file

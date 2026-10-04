@@ -574,6 +574,14 @@ def _battery_results(manifest: manifest_module.Manifest, model, root, _log) -> l
     ``{condition, batteryHash, total, correct, accuracy}`` (an unloadable
     variant contributes an ``error`` row — the gate then names it missing).
 
+    A condition whose agent carries intervention policies contributes an
+    explicit NOT-APPLICABLE row instead — ``{condition, batteryHash,
+    notApplicable: "interventionPolicy"}``, with no score keys — because the
+    battery cannot run a policy. That is a statement about the instrument,
+    not a failure of the agent, so it is neither an ``error`` row nor a
+    refusal; freeze's battery gate exempts exactly those conditions and
+    stamps the frozen study (``freeze_policy.battery_exemption_reason``).
+
     Arming follows the battery's FORMAT (2026-08-13 repair): a format-2
     battery declares its own rendering context and every condition — baseline
     included — is scored under it; a legacy battery keeps the historical
@@ -588,7 +596,7 @@ def _battery_results(manifest: manifest_module.Manifest, model, root, _log) -> l
     validate-time battery evidence for one — its capability control is the
     RUN's battery (``_run_capability_battery``, which does score it). Adding a
     latent branch here would be dead code guarding nothing."""
-    from . import battery as battery_mod, model_variant
+    from . import battery as battery_mod, freeze_policy, model_variant
     battery_file = battery_mod.battery_file(manifest)
     spec = battery_mod.load_spec(battery_file, root)
     items, digest = spec.items, spec.digest
@@ -644,6 +652,17 @@ def _battery_results(manifest: manifest_module.Manifest, model, root, _log) -> l
             variant = (model_variant.ModelVariant.from_dict(vc.artifact)
                        if vc.artifact else model_variant.ModelVariant.from_file(
                            paths.resolve(vc.artifact_path, root)))
+            if variant.intervention_policies:
+                # Not applicable, said as such: the battery cannot run an
+                # intervention policy, so there is nothing to score and
+                # nothing went wrong. An ``error`` row here would read as a
+                # broken agent.
+                reason = freeze_policy.BATTERY_REASON_INTERVENTION_POLICY
+                _log("battery: " + freeze_policy.battery_not_applied_sentence(
+                    vc.name, reason))
+                results.append({"condition": vc.name, "batteryHash": digest,
+                                "notApplicable": reason})
+                continue
             injections = model_variant.variant_injections(variant)
             adapter = model_variant.apply_adapter(model, variant, root=root)
         except (OSError, KeyError, ValueError, RuntimeError) as exc:

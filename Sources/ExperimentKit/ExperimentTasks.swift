@@ -1539,6 +1539,16 @@ public enum ExperimentTasks {
             }
             batteryEvidence = results
             report["capabilityBattery"] = results.map { result in
+                // A not-applicable row carries its reason and NO score keys
+                // (the evidence file's shape): a zero accuracy here would be
+                // read as a measured failure.
+                if let reason = result.notApplicable {
+                    return [
+                        "condition": result.condition,
+                        "batteryHash": result.batteryHash,
+                        "notApplicable": reason,
+                    ] as [String: Any]
+                }
                 var row: [String: Any] = [
                     "condition": result.condition,
                     "batteryHash": result.batteryHash,
@@ -1607,13 +1617,37 @@ public enum ExperimentTasks {
         struct Runtime {
             let name: String
             let variant: ModelVariantArtifact?
+            /// Why the battery cannot be applied to this condition, when it
+            /// cannot (`FreezePolicy.batteryExemptionReason`); nil otherwise.
+            var notApplicable: String? = nil
         }
         let runtimes =
             [Runtime(name: "baseline", variant: nil)]
-            + manifest.variantConditions.map { Runtime(name: $0.name, variant: $0.artifact) }
+            + manifest.variantConditions.map {
+                Runtime(
+                    name: $0.name, variant: $0.artifact,
+                    notApplicable: FreezePolicy.batteryExemptionReason($0))
+            }
 
         var results: [CapabilityBatteryConditionResult] = []
         for runtime in runtimes {
+            // An agent that carries an intervention policy cannot be run by
+            // the battery (or by this engine at all). That is a fact about
+            // the instrument, not a failure of the agent: record an explicit
+            // not-applicable row and move on, where this loop used to throw
+            // and take the whole validation with it. Freeze's battery gate
+            // exempts exactly these conditions and stamps the frozen study.
+            if let reason = runtime.notApplicable {
+                results.append(
+                    CapabilityBatteryConditionResult(
+                        condition: runtime.name, batteryHash: batteryHash,
+                        notApplicable: reason))
+                print(
+                    "capability battery \(runtime.name): not applicable — "
+                        + FreezePolicy.batteryNotAppliedSentence(
+                            .init(condition: runtime.name, reason: reason)))
+                continue
+            }
             let activeAdapter: LoRAContainer?
             if let variant = runtime.variant {
                 activeAdapter = try await loadAdapter(variant, into: container)

@@ -151,6 +151,16 @@ ADVISORY_CODES: tuple[str, ...] = (
     # cares about is that the template, not the declaration, decides what
     # the model rendered.
     "modelCapabilities",
+    # A capability control was NOT applied to one of the study's conditions,
+    # and the study froze cleanly anyway because the control could not have
+    # been applied. Today's one instance: a variant condition whose agent
+    # carries an intervention policy, which the capability battery cannot run
+    # — freeze exempts that condition from the batteryEvidence gate and stamps
+    # ``capabilityBatteryNotApplied`` instead of marking the study forced.
+    # Named for the MECHANISM (a control that did not apply), not for
+    # policies: what an agent's switch cares about is that the frozen study
+    # has an arm with no capability control behind it.
+    "capabilityControlNotApplied",
 )
 
 

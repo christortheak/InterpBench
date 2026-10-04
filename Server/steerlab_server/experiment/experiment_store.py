@@ -2543,6 +2543,7 @@ def duplicate(name: str, new_name: str, root: str | None = None) -> dict:
     copy["createdAt"] = _now()
     for key in ("frozenAt", "freezeHash", "gitCommit", "frozenBy", "appVersion",
                 "freezeForced", "forcedGatesSkipped",
+                freeze_policy.BATTERY_NOT_APPLIED_KEY,
                 # The preregistration stamps name bytes in the SOURCE
                 # experiment's directory; the duplicate is a fresh directory
                 # holding only a manifest, so carrying them over would make
@@ -3116,6 +3117,14 @@ def freeze_advisories(d: dict, root: str | None = None) -> list[str]:
         advisories.append(custody)
     advisories.extend(
         _adapter_config_pin_advisories(d.get("variantConditions"), root))
+    # The capability battery cannot run an agent that carries an intervention
+    # policy, so the battery gate does not ask for evidence about that
+    # condition. Said here, in plain words, on a draft and on the frozen
+    # study alike: the freeze is clean, and the missing capability control is
+    # a fact about the study a reader must be able to see.
+    for entry in freeze_policy.battery_not_applied(d):
+        advisories.append(freeze_policy.battery_not_applied_sentence(
+            entry["condition"], entry["reason"]))
     if d.get("freezeForced"):
         skipped = ", ".join(d.get("forcedGatesSkipped") or []) or "none"
         advisories.append(
@@ -3574,6 +3583,16 @@ def freeze(name: str, *, force: bool = False, cached_revision=None,
             # but every gate would have passed anyway.
             d["freezeForced"] = True
             d["forcedGatesSkipped"] = [gate_id for gate_id, _ in gate_failures]
+        # The battery-not-applied stamp (a freeze stamp like the two above,
+        # excluded from the canonical payload): which conditions the battery
+        # gate did not ask about, and why. Written on a clean freeze and a
+        # forced one alike — it describes the study, not how it was frozen —
+        # and never left behind from an earlier state of the draft.
+        not_applied = freeze_policy.battery_not_applied(d)
+        if not_applied:
+            d[freeze_policy.BATTERY_NOT_APPLIED_KEY] = not_applied
+        else:
+            d.pop(freeze_policy.BATTERY_NOT_APPLIED_KEY, None)
         # BEFORE the manifest is written: the preregistration export stamps its
         # own freeze stamps into ``d`` (the preserved authored file's hash and
         # the generated summary's), and a stamp that lands after the write is a
@@ -3601,6 +3620,7 @@ def _write_freeze_canonical(name: str, d: dict, root: str | None) -> None:
                if k not in ("status", "frozenAt", "freezeHash", "gitCommit",
                             "frozenBy", "appVersion", "createdAt",
                             "freezeForced", "forcedGatesSkipped",
+                            freeze_policy.BATTERY_NOT_APPLIED_KEY,
                             PREREG_AUTHORED_HASH_KEY,
                             PREREG_GENERATED_HASH_KEY)}
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
@@ -4094,6 +4114,11 @@ def _write_preregistration(d: dict, root: str | None) -> None:
         control = condition.get("controlType")
         suffix = f" [{control}]" if control else ""
         lines.append(f"- **{condition.get('name')}**{suffix}: {slots}")
+    not_applied = freeze_policy.battery_not_applied(d)
+    if not_applied:
+        lines += ["", "## Capability battery", ""]
+        lines += ["- " + freeze_policy.battery_not_applied_sentence(
+            entry["condition"], entry["reason"]) for entry in not_applied]
     if d.get("promotionRule"):
         pr = d["promotionRule"]
         lines += [
