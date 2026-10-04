@@ -5,6 +5,21 @@ from pathlib import Path
 
 from . import authoring_files as files, design_files, panel_documents
 from ..experiment import manifest_files
+from ..experiment.manifest_errors import ExperimentStoreError
+
+
+def refuse_invalid(prefix: str, exc: Exception):
+    """Refuse a panel the engine's validator declined.
+
+    A rule that knows its own repair — a seat ID or a turn ID used twice —
+    keeps it, so the refusal says what to change instead of the shared
+    "inspect and correct" text. Every other rule refuses exactly as before.
+    """
+    repair = getattr(exc, "repair_action", "")
+    if not isinstance(repair, str) or not repair:
+        files.refuse(f"{prefix}{exc}")
+    raise ExperimentStoreError(f"{prefix}{exc}", gate="missingPrerequisite",
+                               repair=repair)
 
 
 def load(ref: dict, root: Path) -> dict:
@@ -14,16 +29,21 @@ def load(ref: dict, root: Path) -> dict:
     if manifest_files.digest_bytes(data) != ref["hash"]:
         files.refuse("The pinned panel changed; restore its bytes or deliberately revise the source draft.", gate="artifactPin")
     panel = panel_documents.normalized(design_files.decode(data))
-    from ..experiment.multi_agent import Scenario, ScenarioError
+    from ..experiment.multi_agent import Scenario, ScenarioError, duplicate_agent_id_problem
     try:
-        Scenario.from_dict(panel)
+        scenario = Scenario.from_dict(panel)
     except (ScenarioError, KeyError, TypeError, ValueError) as exc:
         files.refuse(f"The panel document did not decode: {exc}")
     seats = panel.get("agents")
     if not isinstance(seats, list) or not seats or not all(isinstance(a, dict) and isinstance(a.get("id"), str) and a["id"] for a in seats):
         files.refuse("A panel needs named seats.")
-    if len({a["id"] for a in seats}) != len(seats):
-        files.refuse("A panel cannot repeat a seat ID.")
+    # A seat is its ID here: casting, routing and records all key on it. Only
+    # the SEAT half is asked at load. A turn ID used twice is refused where a
+    # panel is checked, imported or cast (the engine validator), so a panel
+    # that carries one can still be inspected and listed.
+    repeated = duplicate_agent_id_problem(scenario)
+    if repeated is not None:
+        refuse_invalid("A panel cannot repeat a seat ID: ", repeated)
     return panel
 
 
@@ -151,5 +171,5 @@ def cast(template: dict, casting: dict, study: dict, root: Path) -> dict | None:
     try:
         validate(Scenario.from_dict(bound))
     except (ScenarioError, KeyError, TypeError, ValueError) as exc:
-        files.refuse(f"The casting cannot compile: {exc}")
+        refuse_invalid("The casting cannot compile: ", exc)
     return bound

@@ -94,12 +94,14 @@ public enum SeatCasting {
         /// baseline: the pickers default there, and an all-baseline panel is
         /// the control composition rather than an absence.
         public var assignment: SeatAssignment {
+            // Built key by key, not with `uniqueKeysWithValues`: a panel
+            // whose seats repeat an ID must reach `compile`, which refuses it
+            // by name, rather than trap here on the way.
             SeatAssignment(
                 seatIDs: seatIDs,
-                occupants: Dictionary(
-                    uniqueKeysWithValues: seats.map {
-                        ($0.id, occupants[$0.id] ?? .baseline)
-                    }))
+                occupants: seats.reduce(into: [:]) { map, seat in
+                    map[seat.id] = occupants[seat.id] ?? .baseline
+                })
         }
 
         /// True when the seats may be edited and saved.

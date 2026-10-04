@@ -458,6 +458,12 @@ public enum RefusalSiteRegistry {
                 // an agent artifact that is not on disk, or a file that does
                 // not decode as one (open-issues §18).
                 "panel compile",
+                // A panel in which two agents, or two turns, share an ID. What
+                // the verb needs and does not have is an identity for every
+                // seat and every turn; the repair is to author one and check
+                // again. Refused wherever a panel is validated (`panel check`,
+                // `panel compile`, a run).
+                "panel check",
             ],
             origin: "ExperimentTasks.loadTaskPrompts (frozen, unpinned); "
                 + "newestCompletedRun; ConfirmationStudy.attach; "
@@ -465,7 +471,9 @@ public enum RefusalSiteRegistry {
                 + "ExperimentStore.pinTaskPrompts / JudgeRubricStore.load / "
                 + "ExperimentStore.pinReasoningStyleTaxonomy (a named input "
                 + "file that is not on disk); ExperimentCLIRunner's "
-                + "StimulusSetError.missingFile(s) classification",
+                + "StimulusSetError.missingFile(s) classification; "
+                + "MultiAgentRunner.duplicateIdentifierRefusal (a panel that "
+                + "repeats an agent or turn ID — MultiAgentRunner.validate)",
             repairAction: "steerlab-cli experiment duplicate <name> <name>-v2 "
                 + "&& steerlab-cli experiment pin-prompts <name>-v2 "
                 + "prompts/…/file.jsonl && steerlab-cli experiment freeze <name>-v2"),
