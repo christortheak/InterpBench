@@ -326,7 +326,7 @@ public enum ExperimentCLIParser {
             purpose: "Create and seed a data workspace, and git-init it."),
 
         .init(namespace: "workspace", verb: "inspect", purpose: "Inspect an existing workspace without modifying it."),
-        .init(namespace: "workspace", verb: "handoff", purpose: "Return installed-client instructions for a research agent."),
+        .init(namespace: "workspace", verb: "handoff", purpose: "Return the first steps for a coding assistant: the study interview, the short method index, and how to work with the researcher."),
 
         // data
         .init(
@@ -349,7 +349,7 @@ public enum ExperimentCLIParser {
             valueFlags: ["--artifact", "--artifact-sha256", "--manifest-sha256"],
             requiredFlags: ["--artifact", "--artifact-sha256", "--manifest-sha256"]),
 
-        .init(namespace: "authoring", verb: "study", positional: "<intent>", purpose: "Emit the same conceptual study interview and pack instructions used by SwiftUI."),
+        .init(namespace: "authoring", verb: "study", positional: "<intent>", purpose: "Emit the study interview for one intent (conceptStudy, agentComparison, or multiAgent): what to ask the researcher, and how the answers become a reviewed study pack. The app uses the same interview."),
         .init(namespace: "experiment", verb: "inspect-artifact", positional: "<path>", purpose: "Inspect a vector pair's exact digests and scientific sidecar before attaching."),
         .init(namespace: "experiment", verb: "attach-artifact", positional: "<study> <concept>", purpose: "Attach reviewed vector bytes through scientific admission, preserving their provenance.",
             valueFlags: ["--artifact", "--artifact-sha256", "--sidecar-sha256", "--manifest-sha256", "--source-concept", "--eval-run"],

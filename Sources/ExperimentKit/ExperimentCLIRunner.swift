@@ -757,10 +757,8 @@ public struct ExperimentCLIRunner: Sendable {
             return ExperimentCLIResult(
                 message: "created workspace at \(root.path)", changed: true,
                 payload: payload,
-                nextAction: .init(
-                    verb: "experiment create <name> --model <id>",
-                    detail: "run with --workspace \(root.path), or export "
-                        + "STEERLAB_WORKSPACE=\(root.path)"),
+                // The interview first, not `experiment create`.
+                nextAction: WorkspaceBootstrap.initNextAction(rootPath: root.path),
                 // The root this verb answered ABOUT is the one it just made,
                 // not the one the invocation resolved to (which is still the
                 // old/fallback root — this verb takes its target as a

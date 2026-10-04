@@ -4,7 +4,7 @@ from ..cli_envelope import CLIResult, VerbSpec
 
 VERB_SPECS = (
     VerbSpec("design", "expand", positional="<name>", purpose="Preview distinct panel castings as batch rows without creating studies.", value_flags=frozenset({"--file-sha256", "--casting", "--mode"}), required_flags=frozenset({"--file-sha256", "--casting", "--mode"})),
-    VerbSpec("authoring", "study", positional="<intent>", purpose="Emit the shared researcher interview and reviewed study-pack workflow."),
+    VerbSpec("authoring", "study", positional="<intent>", purpose="Emit the study interview for one intent (conceptStudy, agentComparison, or multiAgent): what to ask the researcher, and how the answers become a reviewed study pack. The app uses the same interview."),
     VerbSpec("design", "list", purpose="List reusable local designs and report unreadable entries."),
     VerbSpec("design", "inspect", positional="<name>", purpose="Inspect a design, its byte review and portable lineage identity."),
     VerbSpec("design", "describe", positional="<name>", purpose="Update only a reviewed design's description.",

@@ -633,9 +633,14 @@ public enum ExperimentCLIHelp {
                 purpose: "Create the home layout's Workspaces/ and Sites/."),
             .init(
                 synopsis: "workspace init | inspect | handoff …",
-                purpose: "Create a workspace or obtain agent instructions."),
+                purpose: "Create a workspace, or get the first steps for a coding assistant."),
             .init(synopsis: "setup start | inspect | plan | apply | repair …",
                 purpose: "First-run readiness and reviewed client setup."),
+            // Third, because it is where a new study starts: the interview
+            // comes before any `experiment` verb.
+            .init(
+                synopsis: "authoring study <intent> | prompt <kind> …",
+                purpose: "The study interview (start here), and generation prompts for missing study data."),
             .init(
                 synopsis: "experiment <verb> <name> …",
                 purpose: "The study lifecycle."),
@@ -656,11 +661,8 @@ public enum ExperimentCLIHelp {
                 purpose: "This build's identity and the integrity of its "
                     + "install."),
             .init(
-                synopsis: "science list | guide <method> | operation <operation>",
+                synopsis: "science list [--brief] | guide <method> | operation <operation>",
                 purpose: "Shared method guidance and supported execution interfaces."),
-            .init(
-                synopsis: "authoring study <intent> | prompt <kind> …",
-                purpose: "Generation prompts for missing study data."),
             .init(
                 synopsis: "docs cli-reference [--check | --write]",
                 purpose: "Regenerate the reference document."),

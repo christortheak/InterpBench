@@ -168,6 +168,14 @@ import Testing
             let outcome = await invoke("workspace", ["init", target.path])
             #expect(outcome.envelope.state == .ready)
             #expect(outcome.envelope.changed)
+            // A new workspace points at the study interview, not at
+            // `experiment create <name> --model <id>`.
+            #expect(outcome.envelope.nextAction?.verb == "authoring study <intent>")
+            #expect(
+                outcome.envelope.nextAction
+                    == WorkspaceBootstrap.initNextAction(
+                        rootPath: try #require(
+                            outcome.envelope.workspace)))
             try check(outcome, fixture: "workspace-init", root: root)
         }
     }
