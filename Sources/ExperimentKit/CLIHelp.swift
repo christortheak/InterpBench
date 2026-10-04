@@ -188,6 +188,10 @@ public enum CLIFlagVocabulary {
         "--battery": "The capability battery every swept cell is scored on.",
         "--baseline": "Declare the explicit no-intervention arm.",
         "--bootstrap-partition": "Scheduler partition the bootstrap job runs in.",
+        "--brief":
+            "Return a short index instead of the full catalog: method and "
+            + "operation ids, titles, one line of purpose each, and the "
+            + "catalog hash.",
         "--bundle": "The bundle path, as an alternative to the positional.",
         "--capability-tolerance": "Allowed capability drop against baseline.",
         "--cell": "Override the sweep-selected cell, loudly.",

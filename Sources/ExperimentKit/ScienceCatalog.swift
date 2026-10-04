@@ -101,6 +101,56 @@ public enum ScienceCatalog {
         result.catalogSHA256 = digest(data)
         return result
     }
+    /// The catalog as a short index, for a caller choosing where to read next.
+    public struct Brief: Codable, Sendable {
+        public struct Method: Codable, Sendable {
+            public let id: String
+            public let title: String
+            public let purpose: String
+        }
+        public struct Operation: Codable, Sendable {
+            public let id: String
+            public let method: String
+            public let title: String
+            public let purpose: String
+        }
+        public let schemaVersion: Int
+        public let brief: Bool
+        public let catalogSHA256: String
+        public let methods: [Method]
+        public let operations: [Operation]
+    }
+    /// The text up to its first sentence break, as one line. Python twin:
+    /// `science_catalog.first_sentence` — the same literal ". " split, so the
+    /// two brief catalogs stay equal.
+    static func firstSentence(_ text: String) -> String {
+        let head = (text.range(of: ". ").map { String(text[..<$0.lowerBound]) } ?? text)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return head.hasSuffix(".") ? head : head + "."
+    }
+    /// Method and operation ids, titles, and one line of purpose each, plus
+    /// the hash of the FULL catalog this was read from. Nothing here is new
+    /// text: an operation's line is the first sentence of its guided
+    /// workflow's purpose when it has one, and its method's purpose when it
+    /// does not. `catalog()` is unchanged. Python twin: `science_catalog.brief`.
+    public static func brief() throws -> Brief {
+        let full = try catalog()
+        let guided = Dictionary(try workflows().map { ($0.id, $0.purpose) }, uniquingKeysWith: { first, _ in first })
+        let methods = Dictionary(full.methods.map { ($0.id, $0.purpose) }, uniquingKeysWith: { first, _ in first })
+        return Brief(
+            schemaVersion: full.schemaVersion, brief: true, catalogSHA256: full.catalogSHA256 ?? "",
+            methods: full.methods.map { .init(id: $0.id, title: $0.title, purpose: $0.purpose) },
+            operations: full.operations.map {
+                .init(id: $0.id, method: $0.method, title: $0.title,
+                      purpose: firstSentence(guided[$0.id] ?? methods[$0.method] ?? $0.title))
+            })
+    }
+    /// Where a caller goes after the short index. Python twins:
+    /// `science_commands.BRIEF_NEXT_VERB` and `BRIEF_NEXT_DETAIL`.
+    static let briefNextVerb = "science guide <method>"
+    static let briefNextDetail =
+        "Read one method with science guide <method>, or one operation with science operation <operation>. "
+        + "science list without --brief is the full catalog."
     public static func guide(_ id: String) throws -> Guide {
         guard let method = try catalog().methods.first(where: { $0.id == id }) else { throw malformed("Unknown scientific method.") }
         let data = try resource(method.guide)
@@ -114,20 +164,39 @@ public enum ScienceCatalog {
         try JSONDecoder().decode([String: JSONValue].self, from: JSONEncoder().encode(value))
     }
     static func run(_ invocation: ExperimentCLIInvocation, sink: ExperimentCLISink) throws -> ExperimentCLIResult {
-        let args = invocation.args
+        // `--brief` is declared on `list` alone, so the strict parser has
+        // already refused it anywhere else.
+        let brief = invocation.args.contains("--brief")
+        let args = invocation.args.filter { $0 != "--brief" }
         guard args.count == (args.first == "list" ? 1 : 2) else { throw malformed("Supply exactly the declared arguments.") }
+        // Under --json the sink's stdout is stderr, and the document on stdout
+        // already carries the whole result. Echoing the body again doubled what
+        // a caller reading both streams paid for the catalog, so one line says
+        // what was read and where it is. Python twin: `science_commands.summary`.
         let result: [String: JSONValue]
+        let summary: String
         switch args[0] {
-        case "list": result = try payload(catalog())
+        case "list":
+            let full = try catalog()
+            result = try brief ? payload(self.brief()) : payload(full)
+            summary = "science list: \(full.methods.count) methods and \(full.operations.count) operations "
+                + "(catalog \((full.catalogSHA256 ?? "").prefix(12))…); the document is on stdout"
         case "guide":
             let guide = try guide(args[1])
-            sink.out(guide.text)
+            sink.out(invocation.json
+                ? "science guide \(guide.method.id): \(guide.text.unicodeScalars.count) characters "
+                    + "(guide \(guide.guideSHA256.prefix(12))…); the document is on stdout"
+                : guide.text)
             return .init(message: "Scientific method guide read; no execution performed.", payload: try payload(guide))
-        case "operation": result = try payload(operation(args[1]))
+        case "operation":
+            let operation = try operation(args[1])
+            result = try payload(operation)
+            summary = "science operation \(operation.id): the document is on stdout"
         default: throw malformed("Unknown scientific reference verb.")
         }
-        sink.out(String(decoding: try JSONEncoder().encode(result), as: UTF8.self))
-        return .init(message: "Scientific workflow reference read; no execution performed.", payload: result)
+        sink.out(invocation.json ? summary : String(decoding: try JSONEncoder().encode(result), as: UTF8.self))
+        return .init(message: "Scientific workflow reference read; no execution performed.", payload: result,
+                     nextAction: brief ? .init(verb: briefNextVerb, detail: briefNextDetail) : nil)
     }
     static func http(kind: String, id: String?) -> StudyAuthoringHTTP.Response {
         do {
