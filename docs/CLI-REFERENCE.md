@@ -239,7 +239,7 @@ steerlab science package <request.json> --archive <value> --plan-sha256 <value>
 steerlab science import <archive.tar.gz> --sha256 <digest>
 steerlab science custody
 steerlab science verify-custody <receipt-sha256>
-steerlab science list
+steerlab science list [--brief]
 steerlab science guide <method>
 steerlab science operation <operation>
 steerlab pack preview <file>
@@ -888,8 +888,9 @@ accept only `1`/`true`/`yes` — **no `on`**. Use `1`.
 usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
 
   init [--home <dir>]                           Create the home layout's Workspaces/ and Sites/.
-  workspace init | inspect | handoff …          Create a workspace or obtain agent instructions.
+  workspace init | inspect | handoff …          Create a workspace, or get the first steps for a coding assistant.
   setup start | inspect | plan | apply | repair …  First-run readiness and reviewed client setup.
+  authoring study <intent> | prompt <kind> …    The study interview (start here), and generation prompts for missing study data.
   experiment <verb> <name> …                    The study lifecycle.
   pack preview | apply | export …               Review and import study packs, or export text inputs and dependency names.
   agent list | inspect <path>                   Inspect local agents for reviewed attachment.
@@ -899,8 +900,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   remote <verb> (--site <id> | --url <server>)  Cluster client.
   cluster <verb> …                              Cluster lifecycle.
   install version | stamp | verify              This build's identity and the integrity of its install.
-  science list | guide <method> | operation <operation>  Shared method guidance and supported execution interfaces.
-  authoring study <intent> | prompt <kind> …    Generation prompts for missing study data.
+  science list [--brief] | guide <method> | operation <operation>  Shared method guidance and supported execution interfaces.
   docs cli-reference [--check | --write]        Regenerate the reference document.
   panel <verb> …                                Panel scenarios and seat casting.
   model plan | install | capabilities | set-capability …  Local model preparation and chat-template capabilities.
@@ -952,7 +952,7 @@ steerlab-cli setup start <directory> [--create]
 | `init` | Create the SteerLab home layout's Workspaces/ and Sites/ directories (default home ~/SteerLab). |
 | `workspace init` | Create and seed a data workspace, and git-init it. |
 | `workspace inspect` | Inspect an existing workspace without modifying it. |
-| `workspace handoff` | Return installed-client instructions for a research agent. |
+| `workspace handoff` | Return the first steps for a coding assistant: the study interview, the short method index, and how to work with the researcher. |
 | `setup inspect` | Inspect client and workspace readiness; execution is assessed separately. |
 | `setup plan` | Review client setup without downloading anything. |
 | `setup apply` | Install the lightweight client from an approved current plan. |
@@ -2912,7 +2912,7 @@ every pass, steered ≠ baseline, and α=0 reproduces baseline exactly.
 ```
 steerlab-cli authoring prompt <kind> [--concept <name>] [--count <n>] [--decision <text>] [--held-out <n>] [--name <name>] [--negative <text>] [--positive <text>] [--shape <contentPair|singleStimulus>] [--template-id <id>] [--validation-count <n>]
 steerlab-cli authoring study <intent>
-steerlab-cli science list
+steerlab-cli science list [--brief]
 steerlab-cli science guide <method>
 steerlab-cli science operation <operation>
 steerlab-cli science evidence-analyze <path>
@@ -2947,8 +2947,8 @@ steerlab-cli science verify-custody <receipt-sha256>
 | Verb | Purpose |
 |---|---|
 | `authoring prompt` | Emit the generation prompt for one kind of missing study data, with its audit battery as numbers. |
-| `authoring study` | Emit the same conceptual study interview and pack instructions used by SwiftUI. |
-| `science list` | List shipped methods, supported operation interfaces and engine restrictions; does not execute. |
+| `authoring study` | Emit the study interview for one intent (conceptStudy, agentComparison, or multiAgent): what to ask the researcher, and how the answers become a reviewed study pack. The app uses the same interview. |
+| `science list` | List shipped methods, supported operation interfaces and engine restrictions; does not execute. With --brief, return a short index instead: ids, titles, and one line of purpose each. |
 | `science guide` | Read the shared method guide, dataset schemas and coworker/reviewer instructions. |
 | `science operation` | Inspect exact public execution paths, outputs and restrictions for one operation. |
 | `science evidence-analyze` | Compare retained probe readings and requested/applied policy actions in a run. |
