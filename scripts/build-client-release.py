@@ -92,6 +92,14 @@ Models, servers and cluster access are separate choices the person makes
 later; do not download models or start servers on your own initiative.
 ''')
     (release / 'SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\n' for p in sorted(release.iterdir()) if p.is_file()))
+    # Read what was BUILT, the wheel's members included, for a home-folder path
+    # or a private name before it becomes the release (scripts/ci/artifact_scan.py).
+    # A machine with no private-name list has nothing to leak and checks paths
+    # only; STEERLAB_REQUIRE_PRIVATE_NAMES=1 (a release gate, the main
+    # repository's CI) makes a missing list a failure.
+    scan = subprocess.run([sys.executable, str(ROOT / 'scripts/ci/artifact_scan.py'), '--allow-missing-list', str(release)])
+    if scan.returncode != 0:
+        sys.exit('The client release was not written: it carries identifying strings, or could not be scanned (see above).')
     os.rename(release, args.output)
 print(args.output)
 if args.archive:

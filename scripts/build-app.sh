@@ -37,7 +37,8 @@
 #                         it runs nothing and needs no credentials)
 #
 # Exit codes: 0 ok · 2 usage · 3 build failed · 4 products incomplete ·
-#             5 assembly failed · 6 signing or verification failed
+#             5 assembly failed · 6 signing or verification failed ·
+#             7 the assembled bundle carries identifying strings
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # WHY A SCRIPT AND NOT AN .xcodeproj
@@ -103,6 +104,15 @@
 # `CodeResources.compiledCheckoutPath` is `<build-root>/src`, not the
 # developer's checkout. A bundled build asserts release mode and never
 # resolves resources through it.
+#
+# None of that is taken on trust. After assembly `ci/artifact_scan.py` reads
+# every byte of the bundle — both executables, every bundled resource, and
+# the wheel inside the client release — for a home-folder path or a term
+# from the private-name list (`~/.steerlab/private-names.txt`, or the file
+# `$STEERLAB_PRIVATE_NAMES_FILE` names), and the build stops, before anything
+# is signed, on a finding. An ad-hoc build runs the same scan but tolerates a
+# machine that has no list (it has nothing to leak); a build signed for
+# distribution requires one.
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # iCloud
@@ -705,6 +715,20 @@ with open(out, "w", encoding="utf-8") as handle:
     json.dump(manifest, handle, sort_keys=True, indent=2)
 print(f"  {len(files)} file(s) hashed")
 PY
+
+# ── Scan what was assembled ──────────────────────────────────────────────────
+# The source scan reads tracked source; this reads the BUILT thing, which is
+# what a stranger downloads — see "IDENTIFYING STRINGS" in the header. Before
+# signing, so a bundle with a finding is never sealed, placed, or packaged.
+step "Scanning the assembled bundle for identifying strings"
+SCAN_ARGS=()
+if [ "$IDENTITY" = "-" ]; then
+  # An ad-hoc build cannot be distributed. On a machine with no private-name
+  # list it still checks home-folder paths; with a list it checks both.
+  SCAN_ARGS+=(--allow-missing-list)
+fi
+python3 "$SCRIPT_DIR/ci/artifact_scan.py" ${SCAN_ARGS[@]+"${SCAN_ARGS[@]}"} "$APP" 2>&1 | sed 's/^/  /' \
+  || die "the assembled bundle carries identifying strings, or could not be scanned (see the lines above) — nothing was signed or placed. A home-folder path means a binary was not built at the neutral build root: drop --derived-data and --build-root, or point them outside your home folder." 7
 
 # ── Sign ─────────────────────────────────────────────────────────────────────
 # Staging in TMPDIR is what actually keeps the iCloud fileprovider's
