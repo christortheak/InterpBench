@@ -1866,17 +1866,26 @@ def _experiment(invocation: Invocation) -> CLIResult:
                          "experimentHash": manifest.content_hash()})
         for violation in violations:
             print(f"VIOLATION: {violation}")
-        from .experiment import lifecycle_gates
+        # `pinDrift` only when a pinned file's bytes changed, went missing, or
+        # appeared. A draft with nothing attached, and a declaration that
+        # contradicts itself, used to arrive under the same code with a repair
+        # about restoring files that never changed.
+        from .experiment import lifecycle_gates, verification_refusal
+        gate = verification_refusal.gate(violations)
+        if gate == lifecycle_gates.PIN_DRIFT:
+            message = (f"{len(violations)} pinned input(s) of "
+                       f"{manifest.name!r} no longer match their hashes")
+        elif gate == lifecycle_gates.EMPTY_STUDY:
+            message = verification_refusal.empty_reason(manifest.name,
+                                                        violations)
+        else:
+            message = (f"{len(violations)} problem(s) in the declared "
+                       f"settings of {manifest.name!r} (each is listed in "
+                       "result.violations)")
         return CLIResult(
-            state="refused",
-            code=lifecycle_gates.PIN_DRIFT, gate=lifecycle_gates.PIN_DRIFT,
-            message=(f"{len(violations)} pinned input(s) of "
-                     f"{manifest.name!r} no longer match their hashes"),
-            repair_action=(
-                f"{PROGRAM} experiment verify {manifest.name}  (names every "
-                "drifted pin); then restore the named files, or duplicate the "
-                f"study and re-pin: {PROGRAM} experiment duplicate "
-                f"{manifest.name} {manifest.name}-v2"),
+            state="refused", code=gate, gate=gate, message=message,
+            repair_action=verification_refusal.repair(
+                manifest.name, violations, program=PROGRAM),
             payload={"experiment": manifest.name, "status": manifest.status,
                      "verified": False, "violations": list(violations)})
 
@@ -3662,16 +3671,21 @@ def _run(invocation: Invocation) -> CLIResult:
     if violations:
         for violation in violations:
             print(f"VIOLATION: {violation}")
+        # The same naming `experiment verify` uses: `pinDrift` when bytes
+        # changed, and the declaration's own code when they did not.
+        from .experiment import verification_refusal
+        load_gate = verification_refusal.gate(violations)
         raise _die(
-            stages, "load", code=lifecycle_gates.PIN_DRIFT,
-            gate=lifecycle_gates.PIN_DRIFT,
-            reason=(f"{len(violations)} pinned input(s) of {name!r} no longer "
-                    "match their hashes — the bundle would carry a study that "
-                    "is not the one on disk"),
-            repair=(f"{PROGRAM} experiment verify {name}  (names every drifted "
-                    "pin); then restore the named files, or duplicate the "
-                    f"study and re-pin: {PROGRAM} experiment duplicate {name} "
-                    f"{name}-v2"),
+            stages, "load", code=load_gate, gate=load_gate,
+            reason=((f"{len(violations)} pinned input(s) of {name!r} no longer "
+                     "match their hashes — the bundle would carry a study that "
+                     "is not the one on disk")
+                    if load_gate == lifecycle_gates.PIN_DRIFT else
+                    (f"{name!r} did not verify, so it cannot be handed to a "
+                     f"runner: {len(violations)} problem(s) in its declared "
+                     "settings (each is listed in result.violations)")),
+            repair=verification_refusal.repair(name, violations,
+                                               program=PROGRAM),
             common=common, facts={"violations": list(violations)},
             stage_facts={"status": status})
 

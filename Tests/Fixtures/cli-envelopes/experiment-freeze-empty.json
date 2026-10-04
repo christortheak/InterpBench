@@ -1,0 +1,19 @@
+{
+  "changed" : false,
+  "engine" : "swift-mlx",
+  "error" : {
+    "code" : "emptyStudy",
+    "gate" : "emptyStudy",
+    "gates" : [
+      "emptyStudy"
+    ],
+    "reason" : "'demo' is empty: nothing is attached yet (no concept, agent, or panel scenario), so there is nothing to measure",
+    "repairAction" : "Attach what this study measures, then run the command again. A concept: steerlab-cli experiment attach demo <concept>. An agent: steerlab-cli agent list, then steerlab-cli experiment attach-agent demo (its --help names the reviewed-file flags). Or start from a template (the design commands work on templates): steerlab-cli design list. If the study is not planned yet, begin with the interview: steerlab-cli authoring study conceptStudy --json."
+  },
+  "message" : "'demo' is empty: nothing is attached yet (no concept, agent, or panel scenario), so there is nothing to measure",
+  "observedAt" : "1970-01-01T00:16:40Z",
+  "schemaVersion" : 1,
+  "state" : "refused",
+  "verb" : "experiment freeze",
+  "workspace" : "<workspace>"
+}

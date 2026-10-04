@@ -584,6 +584,22 @@ import Testing
         }
     }
 
+    /// The first refusal a new author meets: freezing a draft with nothing
+    /// attached. It used to be `failed` / 70 / `verbFailed` with the untyped
+    /// repair; it is a typed refusal that says what to attach.
+    @Test func experimentFreezeEmptyDraftEnvelope() async throws {
+        try await withTempRoot { root in
+            await invoke(
+                "experiment",
+                ["create", "demo", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            let outcome = await invoke("experiment", ["freeze", "demo"])
+            #expect(outcome.envelope.state == .refused)
+            #expect(outcome.envelope.exitCode == 65)
+            #expect(outcome.envelope.error?.code == LifecycleGate.emptyStudy.rawValue)
+            try check(outcome, fixture: "experiment-freeze-empty", root: root)
+        }
+    }
+
     @Test func dataCheckRefusalEnvelope() async throws {
         try await withTempRoot { root in
             await invoke(
