@@ -932,6 +932,64 @@ class SlurmExecutor:
                                         query_ok=True, raw_state=raw_state)
         return SchedulerObservation(state=None, query_ok=sacct_ok or squeue_ok)
 
+    def job_end_evidence(self, slurm_job_id: str) -> "JobEndEvidence":
+        """Whether the scheduler confirms that a job has ENDED: no process of
+        it can still be running or writing. Asked before a cancelled run is
+        resumed, because two processes must never write to one run directory.
+
+        ``poll_observation`` cannot answer this. It asks ``sacct`` first, and
+        accounting records a cancelled job as CANCELLED the moment the cancel
+        is accepted, while the job's processes are still winding down (the
+        scheduler shows that interval as COMPLETING, in ``squeue`` only). So
+        the queue is asked first here, and it is authoritative for "still
+        with the scheduler":
+
+        - ``squeue`` lists the job in a state that is not an end state
+          (pending, running, completing, and so on): NOT ended;
+        - ``squeue`` lists it in an end state, or no longer knows the id
+          (an empty answer, or its "Invalid job id" error for a job it has
+          already forgotten), and ``sacct`` records an end state: ENDED;
+        - anything else (the queue could not be read, accounting did not
+          answer or has no record): UNKNOWN. The caller treats unknown as
+          "wait, then try again", never as permission.
+        """
+        sacct, squeue = scheduler_poll_commands()
+        q = scheduler_run(
+            [squeue, "-j", slurm_job_id, "-h", "-o", "%T"],
+            text=True, capture_output=True, check=False)
+        if q.returncode == 0 and q.stdout.strip():
+            raw_state = q.stdout.strip().splitlines()[0].strip()
+            if _slurm_state_token(raw_state) in _SLURM_END_STATES:
+                return JobEndEvidence(
+                    True, f"the scheduler's queue reports it as {raw_state}")
+            return JobEndEvidence(
+                False, f"the scheduler still lists it as {raw_state}")
+        if q.returncode != 0 and "invalid job id" not in (
+                (q.stderr or "") + (q.stdout or "")).lower():
+            return JobEndEvidence(
+                None, "the scheduler's queue could not be read ("
+                + ((q.stderr or q.stdout).strip()[:200] or
+                   f"exit {q.returncode}") + ")")
+        s = scheduler_run(
+            [sacct, "-j", slurm_job_id, "-n", "-X", "-P", "-o", "State,End"],
+            text=True, capture_output=True, check=False)
+        if s.returncode != 0:
+            return JobEndEvidence(
+                None, "the scheduler's accounting did not answer ("
+                + ((s.stderr or s.stdout).strip()[:200] or
+                   f"exit {s.returncode}") + ")")
+        lines = [ln.strip() for ln in s.stdout.splitlines() if ln.strip()]
+        if not lines:
+            return JobEndEvidence(
+                None, "the scheduler's accounting has no record of it yet")
+        raw_state = lines[0].split("|")[0].strip()
+        if _slurm_state_token(raw_state) in _SLURM_END_STATES:
+            return JobEndEvidence(
+                True, f"the scheduler's accounting records it as {raw_state}")
+        return JobEndEvidence(
+            False, "the scheduler's accounting still records it as "
+            f"{raw_state or 'unknown'}")
+
     def death_detail(self, slurm_job_id: str) -> str | None:
         """One human sentence on HOW the scheduler ended a job, from sacct —
         for terminal jobs whose child wrote no record (a walltime kill, a
@@ -979,6 +1037,17 @@ class SchedulerObservation:
     ended_at: float | None = None
 
 
+@dataclass(frozen=True)
+class JobEndEvidence:
+    """One ``job_end_evidence`` answer. ``ended`` is True when the scheduler
+    confirms the job has ended, False when it is still with the scheduler
+    (queued, running, or winding down), and None when that could not be
+    established. ``detail`` is the scheduler's word, for the message a
+    person reads."""
+    ended: bool | None
+    detail: str
+
+
 def _parse_sacct_time(raw: str | None) -> float | None:
     """sacct's ``End`` column (``2026-07-22T14:03:11`` in the scheduler's
     local time; ``Unknown``/``None`` while the job lives) to an epoch
@@ -1009,6 +1078,23 @@ _SLURM_STATE_MAP = {
     "FAILED": "failed", "TIMEOUT": "failed", "NODE_FAIL": "failed",
     "OUT_OF_MEMORY": "failed", "BOOT_FAIL": "failed", "DEADLINE": "failed",
 }
+
+
+#: Scheduler states in which a job has ENDED. Twin of the Mac client's
+#: ``WorkspaceImportPolicy.terminalSlurmStates``. COMPLETING is deliberately
+#: absent: a cancelled job reads COMPLETING in the queue while its processes
+#: are still being stopped.
+_SLURM_END_STATES = frozenset({
+    "COMPLETED", "CANCELLED", "FAILED", "TIMEOUT", "NODE_FAIL",
+    "OUT_OF_MEMORY", "BOOT_FAIL", "DEADLINE",
+})
+
+
+def _slurm_state_token(raw: str | None) -> str:
+    """The first token of a scheduler state, upper-cased (sacct decorates
+    some states: "CANCELLED by 1234")."""
+    text = (raw or "").strip()
+    return text.split()[0].upper() if text else ""
 
 
 def map_slurm_state(raw: str, exit_code: str | None = None) -> str | None:
