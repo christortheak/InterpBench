@@ -3406,7 +3406,9 @@ def build_router(state: ServiceState) -> APIRouter:
                         f"the cancel, or run `scancel {job.executor_job_id}` "
                         f"on the cluster and check "
                         f"`sacct -j {job.executor_job_id}`"))
-        return {"ok": True}
+        # ``ok`` as before, plus (for a study run) the sentence that says
+        # completed responses are kept and whether the run can be resumed.
+        return state.jobs.cancel_answer(job_id)
 
     def _resume_cancelled_in_process(job) -> dict:
         """Resume a ``cancelledResumable`` IN-PROCESS job (review 2026-08-03
@@ -3525,13 +3527,16 @@ def build_router(state: ServiceState) -> APIRouter:
 
     @router.post("/api/jobs/{job_id}/resubmit")
     def resubmit_job(job_id: str, body: dict | None = None):
-        """Manual resume of a checkpointed job (the app's Resume button and
-        the CLI's resubmit verb). Valid in the ``checkpointed`` state
-        (re-sbatches the job's OWN ``run.sbatch`` through the same
-        implementation auto-resubmit uses) and the ``cancelledResumable``
-        state (re-dispatches the in-process verb against the parked
-        directory). Privileged (app._PRIVILEGED_PREFIXES clause): this
-        route runs sbatch.
+        """Manual resume of a checkpointed or cancelled job (the app's
+        Resume button and the CLI's resubmit verb). Valid in the
+        ``checkpointed`` state (re-sbatches the job's OWN ``run.sbatch``
+        through the same implementation auto-resubmit uses), for a
+        ``cancelled`` scheduler job once the scheduler confirms it ended and
+        its run kept a state to continue from (same script, a new
+        continuation job; the cancelled record stays cancelled), and in the
+        ``cancelledResumable`` state (re-dispatches the in-process verb
+        against the parked directory). Privileged
+        (app._PRIVILEGED_PREFIXES clause): this route runs sbatch.
 
         Optional body ``{"walltime": "hh:mm:ss"}`` (field incident
         2026-08-29): raise the scheduler limit for the continuation — on
@@ -3568,7 +3573,7 @@ def build_router(state: ServiceState) -> APIRouter:
             raise HTTPException(
                 status_code=502,
                 detail=(f"resubmit did not go through: {exc} — the "
-                        "checkpointed run is unchanged; retry, or sbatch the "
+                        "parked run is unchanged; retry, or sbatch the "
                         "job's own run.sbatch on the cluster by hand"))
 
     @router.post("/api/jobs/reconcile")

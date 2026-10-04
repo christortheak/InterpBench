@@ -11,8 +11,8 @@ This file pins the manual half of the remedy:
   consent stamp, the original gains result.resubmittedAs, and the new Slurm
   id comes back to the caller;
 - refusals are plain-language 409s for every non-resumable state (running,
-  terminal, cancelled, already-resubmitted, missing script) and 404 for an
-  unknown id;
+  terminal, already-resubmitted, missing script) and 404 for an unknown id;
+  a cancelled job goes through its own gate (test_resume_after_cancel.py);
 - a human click may EXCEED the auto-resubmit chain cap (explicit consent,
   logged) — the reconciler's own limit gate is unchanged;
 - the route is privileged exactly like its mutating siblings (token on Slurm
@@ -183,10 +183,15 @@ def test_manual_resubmit_refuses_cancelled_and_already_resubmitted(
         tmp_path, fake_slurm):
     script = _dummy_script(tmp_path)
     mgr = _manager(tmp_path)
+    # A cancellation on record no longer refuses outright (2026-10-04): a
+    # person may resume a cancelled job, through its own gate. This one has
+    # no proof that the cancelled job ended, so it is refused with the
+    # wait-and-retry reason (test_resume_after_cancel.py covers the gate).
     cancelled = _checkpointed(mgr, "7301", script=script)
     cancelled._cancel.set()
     mgr.store.mark_cancel_requested(cancelled.id)
-    with pytest.raises(ResubmitRefused, match="cancelled beats checkpointed"):
+    with pytest.raises(ResubmitRefused,
+                       match="has not yet confirmed that it stopped"):
         mgr.resubmit(cancelled.id)
 
     stamped = _checkpointed(mgr, "7302", script=script)
@@ -410,7 +415,8 @@ def test_resubmit_route_maps_refusals_to_409_and_unknown_to_404(
 
     r = client.post(f"/api/jobs/{running.id}/resubmit")
     assert r.status_code == 409
-    assert "resume applies only to a checkpointed job" in r.json()["detail"]
+    assert ("resume applies only to a checkpointed or cancelled job"
+            in r.json()["detail"])
     r = client.post(f"/api/jobs/{done.id}/resubmit")
     assert r.status_code == 409
     assert "already finished" in r.json()["detail"]
@@ -476,7 +482,7 @@ def test_resubmit_route_surfaces_sbatch_failure_as_502(tmp_path, fake_slurm,
     monkeypatch.setenv("FAKE_SBATCH_FAIL", "1")
     resp = client.post(f"/api/jobs/{job.id}/resubmit")
     assert resp.status_code == 502
-    assert "checkpointed run is unchanged" in resp.json()["detail"]
+    assert "parked run is unchanged" in resp.json()["detail"]
     # The parked job is untouched — still resumable once sbatch works again.
     assert state.jobs.get(job.id).status == "checkpointed"
     assert not (state.jobs.get(job.id).result or {}).get("resubmittedAs")
