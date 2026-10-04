@@ -363,7 +363,8 @@ public final class WorkspaceStore {
     ///   so the file provably holds no human text: the contract is
     ///   documentation, it alters no run, and keeping it current is what the
     ///   researcher would have done by hand.
-    /// - everything else → **nothing**. `current` needs no work;
+    /// - everything else → **nothing**. `current` needs no work; `newerProven`
+    ///   is a newer build's guide, and a refresh only ever upgrades;
     ///   `staleUnedited` is a pre-hash file whose header is a heuristic rather
     ///   than a proof, so it gets the advisory and keeps its bytes; `edited`
     ///   is the researcher's file and is never touched on any path.
@@ -399,7 +400,7 @@ public final class WorkspaceStore {
                     from: previous, to: AgentContract.body))
         case .staleUnedited(let linesBehind):
             return .legacyStale(linesBehind: linesBehind)
-        case .current, .edited:
+        case .current, .edited, .newerProven:
             return .unchanged
         }
     }

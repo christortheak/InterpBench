@@ -8,8 +8,11 @@ What these hold together:
 * every topic resolves, both clients offer the same topic names, and the core's
   own topic list is exactly that set;
 * no topic names a verb this client does not have, none shows the Mac command
-  line's commands, and every verb this client has is named somewhere.
+  line's commands, and every verb this client has is named somewhere;
+* an unedited, older guide is refreshed, and nothing else ever is: not an
+  edited file, not a newer guide, not a missing one.
 """
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -50,7 +53,7 @@ def test_the_core_guide_stays_within_its_budget():
                     '## The study lifecycle', '## The machine contract, in brief',
                     '## Immutability', '## What not to do', '## Topics on demand'):
         assert heading in CORE, heading
-    assert re.search(r'^Guide version: \d+$', CORE, re.M)
+    assert owner.guide_version(CORE) >= 2
     assert owner.agent_contents().endswith(CORE)
 
 
@@ -254,3 +257,74 @@ def test_the_guide_names_every_verb_this_client_has():
     for expected in ('runner serve', 'bundle package', 'run <experiment> --runner', 'set-protocol'):
         assert expected in code, expected
     assert not re.search(r'\bteleport\b', code)
+
+
+# --- refresh: an unedited, older guide is upgraded; nothing else is touched ----
+
+
+def _machine_written(body):
+    return owner.HEADER + hashlib.sha256(body.encode()).hexdigest() + ' -->\n\n' + body
+
+
+OLDER_BODY = '# AGENTS.md\n\nYou are working inside a **SteerLab data workspace**.\n\n## 1. What this folder is\n'
+
+
+def test_an_unedited_older_guide_is_refreshed_in_place(tmp_path):
+    guide = tmp_path / 'AGENTS.md'
+    guide.write_text(_machine_written(OLDER_BODY), encoding='utf-8')
+    assert owner.guide_version(OLDER_BODY) == 1
+    notice = owner.refresh_agent_guide(tmp_path)
+    assert notice and str(guide) in notice and 'nobody had edited it' in notice
+    assert guide.read_text(encoding='utf-8') == owner.agent_contents()
+    assert sorted(path.name for path in tmp_path.iterdir()) == ['AGENTS.md']    # no staging debris
+    assert owner.refresh_agent_guide(tmp_path) is None                         # idempotent
+    # A copy that lost the blank line after the header still verifies.
+    guide.write_text(_machine_written(OLDER_BODY).replace(' -->\n\n', ' -->\n', 1), encoding='utf-8')
+    assert owner.refresh_agent_guide(tmp_path)
+    assert guide.read_text(encoding='utf-8') == owner.agent_contents()
+
+
+def test_refresh_never_touches_what_it_cannot_prove_or_would_downgrade(tmp_path):
+    guide = tmp_path / 'AGENTS.md'
+    # Missing: never created here.
+    assert owner.refresh_agent_guide(tmp_path) is None and not guide.exists()
+    newer_version = owner.guide_version(CORE) + 1
+    newer = CORE.replace(f'Guide version: {owner.guide_version(CORE)}\n', f'Guide version: {newer_version}\n') + '\n## A section this client has never heard of\n'
+    assert owner.guide_version(newer) == newer_version
+    untouched = {
+        'the researcher\'s own file': 'Researcher instructions\n',
+        'edited under our header': owner.agent_contents() + '\nMy own note.\n',
+        'an older body, edited': _machine_written(OLDER_BODY) + 'and my note\n',
+        'a tampered header': _machine_written(OLDER_BODY).replace('sha256:', 'sha256:0', 1),
+        'the pre-hash header': '<!-- Written by SteerLab workspace seeding; safe to regenerate — delete this file and reopen the workspace to get it back. SteerLab never overwrites an existing AGENTS.md, so local edits survive. -->\n\n' + OLDER_BODY,
+        'a newer guide, unedited': _machine_written(newer),
+        'already current': owner.agent_contents(),
+        'no newline at all': 'x',
+    }
+    for label, contents in untouched.items():
+        guide.write_text(contents, encoding='utf-8')
+        assert owner.refresh_agent_guide(tmp_path) is None, label
+        assert guide.read_text(encoding='utf-8') == contents, label
+
+
+def test_any_verb_refreshes_an_older_guide_once_and_says_so(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv('STEERLAB_ROOT', raising=False)
+    monkeypatch.delenv(client_cli.WORKSPACE_ENV, raising=False)
+    root = tmp_path / 'workspace'
+    owner.initialize(root, use_git=False)
+    guide = root / 'AGENTS.md'
+    guide.write_text(_machine_written(OLDER_BODY), encoding='utf-8')
+    assert client_cli.main(['experiment', 'list', '--root', str(root), '--json']) == 0
+    document, stderr = _document(capsys)
+    assert document['state'] == 'ready' and 'advisories' not in document
+    notices = [line for line in stderr.splitlines() if line.startswith('notice: refreshed ')]
+    assert len(notices) == 1 and 'AGENTS.md' in notices[0]
+    assert guide.read_text(encoding='utf-8') == owner.agent_contents()
+    # The work is done: the next invocation has nothing to say.
+    assert client_cli.main(['experiment', 'list', '--root', str(root), '--json']) == 0
+    assert 'notice:' not in _document(capsys)[1]
+    # A guide the researcher owns is silent on this path too, and survives.
+    guide.write_text('# AGENTS.md\n\nmy own notes\n', encoding='utf-8')
+    assert client_cli.main(['experiment', 'list', '--root', str(root), '--json']) == 0
+    assert 'notice:' not in _document(capsys)[1]
+    assert guide.read_text(encoding='utf-8') == '# AGENTS.md\n\nmy own notes\n'
