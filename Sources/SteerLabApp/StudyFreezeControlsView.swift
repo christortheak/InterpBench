@@ -149,6 +149,17 @@ struct StudyFreezeControlsView: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // A gate that does not apply to part of the study (the
+            // capability battery, for a condition whose agent uses an
+            // intervention policy) is its own state in the gate list: not
+            // unmet, not hidden, and shown with its reason.
+            ForEach(readiness.notApplicable, id: \.self) { sentence in
+                Label("Not applicable — \(sentence)", systemImage: "minus.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             // Non-blocking advisories (e.g. hand-created variants without
             // sweep-selection provenance): visible next to the gates, never
             // a refusal. Cross-substrate validate-evidence advisories are
