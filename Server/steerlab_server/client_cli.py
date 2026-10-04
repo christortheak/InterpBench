@@ -531,9 +531,20 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
 
 _SPECS_BY_LABEL = {spec.label: spec for spec in CLIENT_VERB_SPECS}
 
-#: Families this binary dispatches, in the order ``--help`` prints them.
-FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "pack", "design", "agent", "model",
-                             "authoring", "runner", "run", "science")
+#: Families this binary dispatches, in the order ``--help`` prints them: the
+#: first-run families lead (``setup``, ``workspace``, then ``authoring``, which
+#: holds the study interview), because the top of this page is the first thing
+#: a new caller reads.
+#:
+#: This tuple is what ``--help``, ``<family> --help``, and the unknown-family
+#: repair all print, and :data:`HANDLERS` is what :func:`main` dispatches. The
+#: two once disagreed — ``workspace``, ``setup``, and ``panel`` ran but were
+#: listed nowhere, and ``steerlab workspace --help`` printed no verbs — so
+#: ``test_client_cli.py::test_help_lists_every_dispatched_family`` now holds
+#: this tuple, the handler table, and the verb table to the same set.
+FAMILIES: tuple[str, ...] = ("setup", "workspace", "authoring", "experiment",
+                             "concept", "bundle", "pack", "design", "agent",
+                             "panel", "model", "science", "runner", "run")
 
 #: Families whose ENTIRE surface is one verb, spelled as the family name and
 #: nothing after it: ``steerlab run <experiment>``. Maps family → the verb its
@@ -4375,7 +4386,12 @@ def main(argv: list | None = None) -> int:
 
     family = args[0]
     if family not in HANDLERS:
-        sys.stderr.write(help_text())
+        # The whole page is for a person at a terminal. Under --json the
+        # refusal below already names every family and `--help`, and writing
+        # some twenty kilobytes beside it charges a machine caller for a
+        # manual it did not ask for.
+        if not json_mode:
+            sys.stderr.write(help_text())
         exc = ClientRefusal(
             code=UNKNOWN_VERB_CODE,
             reason=f"{family!r} is not a family of this client",

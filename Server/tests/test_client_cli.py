@@ -506,6 +506,64 @@ def test_help_runs_nothing_and_travels_as_data_under_json(workspace, capsys):
     assert "--force" in verbs[0]["flags"]
 
 
+def test_help_lists_every_dispatched_family(capsys):
+    """``FAMILIES`` is what help prints and ``HANDLERS`` is what ``main``
+    dispatches. They once disagreed: ``workspace``, ``setup``, and ``panel``
+    ran and were listed nowhere, so the first verbs a new caller needs were
+    the ones ``--help`` did not show. Three tables, one set."""
+    families = client_cli.FAMILIES
+    assert len(set(families)) == len(families), "a family is listed twice"
+    assert set(families) == set(client_cli.HANDLERS)
+    assert set(families) == {s.family for s in client_cli.CLIENT_VERB_SPECS}
+
+    assert _run(["--help"]) == 0
+    page = capsys.readouterr().out
+    for family in client_cli.HANDLERS:
+        assert f"\n{family}:\n" in page, f"--help omits the {family} family"
+    for spec in client_cli.CLIENT_VERB_SPECS:
+        assert client_cli.synopsis(spec) in page, \
+            f"--help omits {client_cli.verb_label(spec)}"
+
+
+def test_every_family_help_page_prints_that_familys_verbs(capsys):
+    """``steerlab workspace --help`` printed the preamble and no verbs, because
+    the family page is drawn from the same list the top page is."""
+    for family in client_cli.HANDLERS:
+        own = [s for s in client_cli.CLIENT_VERB_SPECS if s.family == family]
+        others = [s for s in client_cli.CLIENT_VERB_SPECS
+                  if s.family != family]
+
+        assert _run([family, "--help"]) == 0
+        page = capsys.readouterr().out
+        for spec in own:
+            assert client_cli.synopsis(spec) in page, \
+                f"{family} --help omits {client_cli.verb_label(spec)}"
+        for spec in others:
+            assert f"{client_cli.synopsis(spec)}\n" not in page
+
+        assert _run([family, "--help", "--json"]) == 0
+        listed = {v["label"] for v in _document(capsys)["result"]["verbs"]}
+        assert listed == {client_cli.verb_label(s) for s in own}
+
+
+def test_an_unknown_family_is_answered_with_every_family(capsys):
+    """The repair is the roster, so it has to be the whole roster."""
+    code, out, err = _run(["nonsense", "--json"], capsys)
+    assert code == 64
+    document = json.loads(out)
+    assert document["error"]["code"] == client_cli.UNKNOWN_VERB_CODE
+    named = document["error"]["repairAction"]
+    for family in client_cli.HANDLERS:
+        assert family in named, f"the repair omits the {family} family"
+    # Under --json the refusal is the answer; the whole help page stays out of
+    # a machine caller's stderr.
+    assert named in err and len(err) < 1_000, len(err)
+
+    # A person at a terminal still gets the page.
+    code, out, err = _run(["nonsense"], capsys)
+    assert code == 64 and client_cli.help_text() in err
+
+
 def test_version_reports_the_package_version_and_the_client_role(capsys,
                                                                  monkeypatch):
     """One distribution, two console scripts: a caller that got the wrong one
