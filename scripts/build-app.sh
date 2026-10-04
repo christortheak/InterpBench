@@ -11,8 +11,14 @@
 #                         For a shippable build pass the Developer ID, e.g.
 #                           --identity "Developer ID Application: … (TEAMID)"
 #     --bundle-id ID      CFBundleIdentifier (default: org.steerlab.SteerLab)
+#     --build-root DIR    the NEUTRAL directory the Release build runs in. The
+#                         package sources are staged to DIR/src and compiled
+#                         there, so no binary embeds this checkout's path —
+#                         see "IDENTIFYING STRINGS" below. Must not sit under
+#                         a home folder and must not contain whitespace
+#                         (default: /private/var/tmp/steerlab-build)
 #     --derived-data DIR  xcodebuild -derivedDataPath
-#                         (default: <repo>/.dd-app.nosync)
+#                         (default: <build-root>/dd)
 #     --no-build          reuse an existing products directory
 #     --no-verify         skip the post-assembly launch/codesign checks (the
 #                         launch check is OFFLINE — STEERLAB_LAUNCH_CHECK=1,
@@ -63,6 +69,40 @@
 # entitlements file to codesign ONLY when that file declares at least one
 # key. While it stays empty, the signature carries no entitlement blob at
 # all — the strongest posture, and the one that notarizes most cleanly.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# IDENTIFYING STRINGS: WHY THE BUILD DOES NOT RUN IN THE CHECKOUT
+#
+# A compiler writes source-file paths into the binary it produces. Built in
+# place, both shipped executables carried the build machine's home folder —
+# and so the account name — dozens of times: C and C++ `__FILE__` in the
+# package checkouts under the derived-data directory, Swift `#file` in the
+# dependencies still in Swift 5 mode, and this project's own `#filePath`
+# (`CodeResources.compiledCheckoutPath`, which is deliberate).
+#
+# What was measured with Xcode 27 on a Swift package scheme, and what this
+# script therefore does:
+#
+#   * clang's `-ffile-prefix-map=<old>=<new>` DOES rewrite `__FILE__`, and it
+#     reaches package targets from the xcodebuild command line when the value
+#     starts with `$(inherited)`. Passed below for C, C++ and Objective-C.
+#   * Swift's `-file-prefix-map` rewrites debug, coverage and index paths
+#     ONLY. A `#filePath` or Swift-5 `#file` literal is compiled in exactly as
+#     the path was handed to the compiler, and xcodebuild hands over absolute
+#     paths. No build setting changes that (a symlinked working directory is
+#     resolved before the compiler sees it). It is still passed, so that the
+#     debug information is location-independent too.
+#   * So the build itself runs from a NEUTRAL location: `--build-root`.
+#     `Package.swift`, `Package.resolved`, `Sources/` and `Tests/` are staged
+#     to `<build-root>/src` (rsync, so an unchanged file keeps its identity
+#     and incremental builds stay incremental), xcodebuild runs there, and
+#     derived data defaults to `<build-root>/dd`. Every compiled-in path then
+#     begins with the build root, which names nobody.
+#
+# Consequence, stated because it is observable: in a build made this way
+# `CodeResources.compiledCheckoutPath` is `<build-root>/src`, not the
+# developer's checkout. A bundled build asserts release mode and never
+# resolves resources through it.
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # iCloud
@@ -179,7 +219,11 @@ python3 "$SCRIPT_DIR/ci/check-python-client-identity.py" || exit 1
 OUTPUT="$HOME/SteerLab/build"
 IDENTITY="-"
 BUNDLE_ID="org.steerlab.SteerLab"
-DERIVED="$REPO/.dd-app.nosync"
+# The neutral build location — see "IDENTIFYING STRINGS" in the header. /var/tmp
+# rather than /tmp so the derived data survives a restart; neither names a
+# person. DERIVED is resolved after flag parsing (it defaults under this).
+BUILD_ROOT="/private/var/tmp/steerlab-build"
+DERIVED=""
 DO_BUILD=1
 DO_VERIFY=1
 COLOCATE=0
@@ -207,6 +251,7 @@ while [ $# -gt 0 ]; do
     --output)        OUTPUT="$2"; shift 2 ;;
     --identity)      IDENTITY="$2"; shift 2 ;;
     --bundle-id)     BUNDLE_ID="$2"; shift 2 ;;
+    --build-root)    BUILD_ROOT="$2"; shift 2 ;;
     --derived-data)  DERIVED="$2"; shift 2 ;;
     --no-build)      DO_BUILD=0; shift ;;
     --no-verify)     DO_VERIFY=0; shift ;;
@@ -220,10 +265,23 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+[ -n "$DERIVED" ] || DERIVED="$BUILD_ROOT/dd"
+
 APP_FINAL="$OUTPUT/$APP_NAME"
 # Everything is assembled and signed in APP (a staging path) and only then
 # moved to APP_FINAL — see the staging note below.
 APP="$APP_FINAL"
+
+# One exit handler for the whole script: the assembly staging directory and
+# the build-root lock are both released however the script ends.
+STAGE=""
+BUILD_LOCK=""
+cleanup() {
+  [ -n "$STAGE" ] && rm -rf "$STAGE"
+  [ -n "$BUILD_LOCK" ] && rmdir "$BUILD_LOCK" 2>/dev/null
+  return 0
+}
+trap cleanup EXIT
 
 # ── --package: zip an existing bundle for release, and exit ──────────────────
 # The artifact is the SAME shape notarytool submits (ditto -c -k --keepParent,
@@ -339,6 +397,81 @@ fi
 
 # ── Build ────────────────────────────────────────────────────────────────────
 if [ "$DO_BUILD" -eq 1 ]; then
+  # ── Stage the package at the neutral build root ────────────────────────────
+  # See "IDENTIFYING STRINGS" in the header for why the compiler must not see
+  # this checkout's own path.
+  step "Staging the package sources at the neutral build root ($BUILD_ROOT)"
+  case "$BUILD_ROOT" in
+    /*) ;;
+    *) die "--build-root must be an absolute path (got '$BUILD_ROOT')" 2 ;;
+  esac
+  # A build setting's value is split on whitespace, so a path carrying any
+  # could not be written into the prefix maps below.
+  case "$BUILD_ROOT$DERIVED" in
+    *[[:space:]]*) die "--build-root and --derived-data must not contain whitespace" 2 ;;
+  esac
+  # (`[U]sers` so this script never spells a home-folder prefix itself.)
+  case "$BUILD_ROOT/" in
+    "$HOME"/*|/[U]sers/*|/home/*)
+      echo "build-app.sh: WARNING — the build root $BUILD_ROOT is under a home folder," >&2
+      echo "  so the binaries will embed it and the artifact scan will stop the build." >&2
+      echo "  Drop --build-root to use the neutral default." >&2
+      ;;
+  esac
+  mkdir -p "$BUILD_ROOT" "$DERIVED" || die "could not create $BUILD_ROOT or $DERIVED" 3
+  # One build at a time per build root: two checkouts staging into the same
+  # directory would compile a mixture of both.
+  BUILD_LOCK="$BUILD_ROOT/.build-app.lock"
+  if ! mkdir "$BUILD_LOCK" 2>/dev/null; then
+    held="$BUILD_LOCK"
+    BUILD_LOCK=""          # not ours — the exit handler must leave it alone
+    die "another build-app.sh is using $BUILD_ROOT, or an earlier one was interrupted. If no build is running, remove $held and retry. To build two checkouts at once, give each its own --build-root outside your home folder." 3
+  fi
+  SRC_STAGE="$BUILD_ROOT/src"
+  mkdir -p "$SRC_STAGE" || die "could not create $SRC_STAGE" 3
+  # rsync, not a fresh copy: an unchanged file keeps its inode and
+  # modification time, which is what lets the next build stay incremental.
+  # `Tests/` travels because the package manifest declares test targets and
+  # the package does not load without their directories.
+  rsync -a --delete --exclude ".DS_Store" \
+    "$REPO/Sources" "$REPO/Tests" "$SRC_STAGE/" \
+    || die "could not stage Sources/ and Tests/ at $SRC_STAGE" 3
+  rsync -a "$REPO/Package.swift" "$REPO/Package.resolved" "$SRC_STAGE/" \
+    || die "could not stage the package manifest at $SRC_STAGE" 3
+
+  # Every spelling of a directory a compiler may be handed: as given, with
+  # symlinks resolved, and that physical path without its /private prefix
+  # (Xcode standardizes /private/var and /private/tmp away for Swift inputs,
+  # while clang is handed the physical path — both were observed).
+  path_spellings() {
+    local given="$1" physical
+    physical="$(cd "$given" 2>/dev/null && pwd -P)" || physical="$given"
+    printf '%s\n' "$given"
+    [ "$physical" = "$given" ] || printf '%s\n' "$physical"
+    case "$physical" in
+      /private/*) [ "${physical#/private}" = "$given" ] || printf '%s\n' "${physical#/private}" ;;
+    esac
+  }
+  # Derived data first: when it sits inside the build root's own tree a later
+  # map must not shadow it.
+  REMAP_CLANG=""
+  REMAP_SWIFT=""
+  for spelling in $(path_spellings "$DERIVED"); do
+    REMAP_CLANG="$REMAP_CLANG -ffile-prefix-map=$spelling=/steerlab/build"
+    REMAP_SWIFT="$REMAP_SWIFT -file-prefix-map $spelling=/steerlab/build"
+  done
+  for spelling in $(path_spellings "$SRC_STAGE"); do
+    REMAP_CLANG="$REMAP_CLANG -ffile-prefix-map=$spelling=/steerlab/src"
+    REMAP_SWIFT="$REMAP_SWIFT -file-prefix-map $spelling=/steerlab/src"
+  done
+  # `$(inherited)` keeps each package target's own flags: a command-line
+  # setting replaces a target's value outright without it.
+  REMAP_SETTINGS=(
+    "OTHER_CFLAGS=\$(inherited)$REMAP_CLANG"
+    "OTHER_CPLUSPLUSFLAGS=\$(inherited)$REMAP_CLANG"
+    "OTHER_SWIFT_FLAGS=\$(inherited)$REMAP_SWIFT"
+  )
+
   step "Building $SCHEME (Release) — only Xcode can build the Metal shaders"
   # CLANG_COVERAGE_MAPPING=NO: the package has test targets, so Xcode's
   # auto-generated scheme turns on gather-coverage, and that instruments even
@@ -346,20 +479,20 @@ if [ "$DO_BUILD" -eq 1 ]; then
   # sections (megabytes of them) and write default.profraw into whatever cwd
   # they run from. A command-line setting outranks the scheme; the test lane
   # (`xcodebuild test`) is a different invocation and keeps its coverage.
-  xcodebuild build -skipMacroValidation -scheme "$SCHEME" \
-    -destination 'platform=macOS' -configuration Release \
-    CLANG_COVERAGE_MAPPING=NO \
-    -derivedDataPath "$DERIVED" >/dev/null \
-    || die "the build failed — rerun the xcodebuild line without >/dev/null to see why" 3
+  ( cd "$SRC_STAGE" && xcodebuild build -skipMacroValidation -scheme "$SCHEME" \
+      -destination 'platform=macOS' -configuration Release \
+      CLANG_COVERAGE_MAPPING=NO "${REMAP_SETTINGS[@]}" \
+      -derivedDataPath "$DERIVED" >/dev/null ) \
+    || die "the build failed — rerun the xcodebuild line from $SRC_STAGE without >/dev/null to see why" 3
 
   # The same derived-data directory, so the CLI links the module graph the app
   # build already produced — this is a link step, not a second full build.
   step "Building $CLI_SCHEME (Release) — the CLI the bundle carries"
-  xcodebuild build -skipMacroValidation -scheme "$CLI_SCHEME" \
-    -destination 'platform=macOS' -configuration Release \
-    CLANG_COVERAGE_MAPPING=NO \
-    -derivedDataPath "$DERIVED" >/dev/null \
-    || die "the $CLI_SCHEME build failed — rerun the xcodebuild line without >/dev/null to see why" 3
+  ( cd "$SRC_STAGE" && xcodebuild build -skipMacroValidation -scheme "$CLI_SCHEME" \
+      -destination 'platform=macOS' -configuration Release \
+      CLANG_COVERAGE_MAPPING=NO "${REMAP_SETTINGS[@]}" \
+      -derivedDataPath "$DERIVED" >/dev/null ) \
+    || die "the $CLI_SCHEME build failed — rerun the xcodebuild line from $SRC_STAGE without >/dev/null to see why" 3
 fi
 
 PRODUCTS="$DERIVED/Build/Products/Release"
@@ -409,9 +542,7 @@ fi
 # entirely, and only the finished, signed bundle is moved to the output path.
 # That also buys the atomicity install-cli.sh has: nothing live is touched
 # until the whole thing is built, signed, and sealed.
-STAGE="${TMPDIR:-/tmp}/steerlab-app-build.$$"
-cleanup() { rm -rf "$STAGE"; }
-trap cleanup EXIT
+STAGE="${TMPDIR:-/tmp}/steerlab-app-build.$$"   # removed by `cleanup` on exit
 rm -rf "$STAGE"
 mkdir -p "$STAGE" || die "could not create the staging directory $STAGE"
 APP="$STAGE/$APP_NAME"
