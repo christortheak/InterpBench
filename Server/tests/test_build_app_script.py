@@ -96,6 +96,19 @@ with zipfile.ZipFile(sys.argv[1], "w") as wheel:
     wheel.writestr("steerlab_server/__init__.py", "VALUE = 1\n")' "$out/steerlab_server-0.0.0-py3-none-any.whl"
 ''',
     "codesign": 'printf "codesign %s\\n" "$*" >> "$CALLS"\n',
+    # `npm ci`, then `npm run build:embed`: the second writes a bundle to the
+    # directory the build asked for, marked so a test can tell it from any
+    # copy that happens to sit in the checkout.
+    "npm": r'''
+printf "npm %s\n" "$*" >> "$CALLS"
+case "$*" in
+  *build:embed*)
+    mkdir -p "$STEERLAB_EMBED_OUT_DIR/assets"
+    printf '<!doctype html><title>built from source by this build</title>\n' > "$STEERLAB_EMBED_OUT_DIR/index.html"
+    printf 'console.log("stand-in")\n' > "$STEERLAB_EMBED_OUT_DIR/assets/index.js"
+    ;;
+esac
+''',
 }
 
 
@@ -254,6 +267,35 @@ def test_a_bundle_with_a_private_name_is_never_signed_or_placed(tmp_path):
     assert "quuxcluster" not in (result.stdout + result.stderr).lower()
     assert not any(line.startswith("codesign ") for line in calls)
     assert not app.exists()
+
+
+def test_the_results_explorer_is_built_from_source_into_the_bundle(tmp_path):
+    """The app once shipped a results explorer three days older than its
+    source, because the build copied `web/results-explorer` whenever that
+    directory existed. The bundle's copy now comes from a build this run
+    made — locked dependencies first — whatever the checkout holds."""
+    result, calls, app = _assemble(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    npm = [line for line in calls if line.startswith("npm ")]
+    assert npm[0].startswith("npm ci")                     # from the lockfile
+    assert any("build:embed" in line for line in npm[1:])
+    web = app / "Contents/Resources/web"
+    assert "built from source by this build" in (web / "results-explorer/index.html").read_text()
+    assert (web / "results-explorer/assets/index.js").is_file()
+    # The hand-written page beside it is tracked source and is copied as is.
+    assert (web / "index.html").read_bytes() == (ROOT / "web/index.html").read_bytes()
+
+
+def test_without_npm_the_build_stops_and_says_what_is_needed(tmp_path):
+    stand_ins = {name: body for name, body in ASSEMBLING_STAND_INS.items() if name != "npm"}
+    result, calls = _run(
+        tmp_path, "--build-root", tmp_path / "neutral", "--output", tmp_path / "out",
+        "--no-verify", stand_ins=stand_ins,
+        env={"STEERLAB_PRIVATE_NAMES_FILE": str(tmp_path / "no-list.txt")})
+    assert result.returncode == 5
+    assert "npm is not installed" in result.stdout
+    assert "Node.js 22.13 or later" in result.stderr
+    assert not (tmp_path / "out" / "SteerLab.app").exists()
 
 
 def test_a_build_signed_for_distribution_requires_the_private_name_list(tmp_path):

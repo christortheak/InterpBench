@@ -38,6 +38,13 @@ Workspaces/
 workspaces/
 .steerlab-downloads/
 
+# The embedded Results Explorer bundle — BUILD OUTPUT of results-explorer/
+# (scripts/build-results-explorer.sh). It was committed once and shipped
+# stale; the app build now produces it from source every time, and a
+# development run builds it here on demand. web/index.html beside it is
+# source and stays tracked.
+/web/results-explorer/
+
 # Bytecode from local architecture-audit imports in the test suite.
 scripts/ci/__pycache__/
 scripts/qualification/__pycache__/

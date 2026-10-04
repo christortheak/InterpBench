@@ -7,7 +7,11 @@ builds:
   repo root's `web/results-explorer/`, which the macOS app ships as a code
   resource and serves to its WKWebView over a custom URL scheme. This is the
   build that matters for the instrument; it is what "open the Results
-  Explorer" in the app renders.
+  Explorer" in the app renders. That directory is build output and is not
+  tracked: `scripts/build-app.sh` builds it from this source into every app
+  it assembles, and `scripts/run-app.sh` builds it for a development run
+  when it is missing or older than the source (both through
+  `scripts/build-results-explorer.sh`).
 - **Standalone** (`npm run dev` / `npm run build`) — the same UI as a
   [vinext](https://github.com/cloudflare/vinext) app with a worker, useful for
   iterating on the explorer in a browser without launching the Mac app.

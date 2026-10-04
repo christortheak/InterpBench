@@ -601,19 +601,18 @@ printf '  %-16s %s\n' "$HELPERS_DIR_NAME" "$(du -sh "$HELPERS" | cut -f1)"
 step "Staging CodeResources families"
 cp -R "$REPO/WorkspaceSeed" "$RES/WorkspaceSeed" || die "could not stage WorkspaceSeed"
 # web/ splits by nature: index.html is hand-written SOURCE and ships in
-# the repo; results-explorer/ is BUILD OUTPUT the repo deliberately does
-# not carry (the CI lane's rule — a cold clone must produce it), so the
-# app build produces it here when absent. First caught building from a
-# fresh clone (2026-08-20): every earlier build ran from a tree that
-# happened to carry both.
+# the repo; results-explorer/ is BUILD OUTPUT, which the repo does not
+# carry. It is produced HERE, from source, on every build, and written
+# straight into the bundle — never copied from the checkout's own
+# web/results-explorer. That copy is a development convenience
+# (run-app.sh makes it), and copying it is how the app came to ship a
+# bundle that was three days older than its source: the build used
+# whatever directory happened to exist.
 mkdir -p "$RES/web"
 cp "$REPO/web/index.html" "$RES/web/index.html" || die "web/index.html missing — it is checked-in source"
-if [ ! -d "$REPO/web/results-explorer" ]; then
-  step "Building the embedded results explorer (web/results-explorer is not checked in)"
-  command -v npm >/dev/null 2>&1 || die "npm is required to build the results explorer (web/results-explorer is build output, produced from results-explorer/)"
-  ( cd "$REPO/results-explorer" && npm ci --silent && npm run --silent build:embed ) || die "results-explorer build failed"
-fi
-cp -R "$REPO/web/results-explorer" "$RES/web/results-explorer" || die "could not stage the results explorer build"
+step "Building the embedded results explorer from source"
+"$SCRIPT_DIR/build-results-explorer.sh" --locked --output "$RES/web/results-explorer" 2>&1 | sed 's/^/  /' \
+  || die "the results explorer build failed (see the lines above). It is built from results-explorer/ with npm, which needs Node.js 22.13 or later."
 cp "$SUPPORT/SteerLab.icns" "$RES/SteerLab.icns" || die "could not stage the app icon"
 
 # AnalysisTools = the checkout's scripts/, minus generated caches.

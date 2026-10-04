@@ -61,13 +61,9 @@ enum ResearchTreeFixtures {
         exists("prompts/panels/templates/deliberative-appellate-panel-v1.json")
     }
 
-    // MARK: - Build-output fixtures
-
-    /// `web/results-explorer/` — the embedded Results Explorer bundle. It is
-    /// a committed BUILD OUTPUT in the research tree and is built from
-    /// source (`results-explorer/`, `npm run build:embed`) in the release
-    /// tree, so a cold clone has `web/` only after that build runs. Tests
-    /// that assert the developer-checkout resource layout skip until it is
-    /// there.
-    static var hasBuiltWebAssets: Bool { exists("web/results-explorer/index.html") }
+    // `web/results-explorer/` — the embedded Results Explorer bundle — is
+    // deliberately NOT a fixture either. It is untracked build output
+    // (`scripts/build-results-explorer.sh`), and no test may depend on
+    // whether someone has built it: `web/` itself always resolves, because
+    // `web/index.html` beside the bundle is tracked source.
 }
