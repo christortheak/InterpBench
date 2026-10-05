@@ -166,7 +166,8 @@ struct ChatView: View {
         switch section {
         case .home:
             HomeDashboardView(
-                service: service, workspace: workspace, navigate: navigate,
+                service: service, workspace: workspace, actions: actions,
+                navigate: navigate,
                 openOptimizations: openOptimizations,
                 openAdapterTraining: openAdapterTraining,
                 openAgent: openAgent)

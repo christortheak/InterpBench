@@ -196,7 +196,7 @@ public enum FirstStudyChecklist {
                         + "results together in one folder."
                     : "A workspace is a folder that keeps your studies, their inputs, "
                         + "and their results together. Create one, open one you have, "
-                        + "or open the Demo Workspace below.",
+                        + "or open a copy of the Demo Workspace.",
                 isDone: facts.hasWorkspace,
                 actions: [.newWorkspace, .openWorkspace])
 
