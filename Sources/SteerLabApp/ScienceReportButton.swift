@@ -59,6 +59,9 @@ struct ScienceReportButton: View {
 /// needs: a browser (to print or save as PDF) and Finder (to send the file).
 struct ScienceReportSheet: View {
     let page: ScienceReport.Page
+    /// Says where the page came from, before its path. Nil keeps the wording
+    /// for a stored scientific report.
+    var origin: String? = nil
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -66,9 +69,9 @@ struct ScienceReportSheet: View {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Report").font(.headline)
-                    Text(page.inRunDirectory
-                        ? "Stored with the run: " + page.url.path
-                        : "Drawn from the run’s stored report, outside the run folder: " + page.url.path)
+                    Text((origin.map { $0 + ": " } ?? (page.inRunDirectory
+                        ? "Stored with the run: "
+                        : "Drawn from the run’s stored report, outside the run folder: ")) + page.url.path)
                         .font(.caption).foregroundStyle(.secondary)
                         .lineLimit(1).truncationMode(.middle)
                         .textSelection(.enabled).help(page.url.path)
