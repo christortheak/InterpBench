@@ -10,6 +10,9 @@ public final class StudyManagementController {
     public let draft: StudyDraftState
     public let designs = StudyDesignLibrary()
     public private(set) var experiments: [ExperimentManifest] = []
+    /// Studies whose `experiment.json` is present but cannot be read, with
+    /// the reason. Listed beside the studies, never written to.
+    public private(set) var unreadableStudies: [UnreadableManifest] = []
     public private(set) var displayLabels: [String: String] = [:]
     public var renameInvitation: String?
     public var selectedName: String? {
@@ -26,11 +29,18 @@ public final class StudyManagementController {
 
     public init(draft: StudyDraftState) { self.draft = draft }
 
+    /// Re-read the study and template lists from disk. Safe to call at any
+    /// time — on activation, on Refresh, after a command line wrote a study:
+    /// an editor keeps its own retained review, so a study that changed on
+    /// disk shows "Discard edits and reload" rather than losing unsaved edits.
     public func refresh() {
         let root = ExperimentStore.workspaceRoot
         let storage = ExperimentRepository(workspaceRoot: root)
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: storage.directory.path)) ?? []
-        let snapshots = names.compactMap { try? DraftAuthoringSnapshot(workspaceRoot: root, name: $0) }
+        let scanned = UnreadableManifest.scan(directory: storage.directory, fileName: "experiment.json") {
+            try DraftAuthoringSnapshot(workspaceRoot: root, name: $0)
+        }
+        let snapshots = scanned.loaded
+        unreadableStudies = scanned.unreadable
         reviewedDrafts = Dictionary(uniqueKeysWithValues: snapshots.map { ($0.manifest.name, $0) })
         experiments = snapshots.map(\.manifest).sorted { $0.createdAt > $1.createdAt }
         displayLabels = ExperimentStore.displayLabels(experiments)

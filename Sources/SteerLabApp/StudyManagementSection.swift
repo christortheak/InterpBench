@@ -6,6 +6,10 @@ import SwiftUI
 struct StudyManagementSection: View {
     @Bindable var panel: ExperimentPanel
     var openTemplates: () -> Void
+    /// The workspace-wide reload behind the Refresh button
+    /// (`ChatService.reloadWorkspaceListsFromDisk`); the study list alone
+    /// when no host supplies one.
+    var reloadFromDisk: (() -> Void)? = nil
     /// A12: delete-draft confirmation (move-to-trash, never destructive).
     @State private var confirmDeleteDraft = false
     @State private var deleteReview: DraftAuthoringSnapshot?
@@ -93,6 +97,12 @@ struct StudyManagementSection: View {
                 "studies are versioned manifests in experiments/<name>/ — "
                     + "'optimization' marks a declared sweep (authored in "
                     + "Agents → Optimizations)")
+
+            // A study whose file cannot be read used to vanish from the
+            // picker without a word; it is listed here, with the reason.
+            UnreadableManifestsView(
+                items: panel.management.unreadableStudies, noun: "study",
+                workspaceRoot: ExperimentStore.workspaceRoot)
 
             VStack(alignment: .leading, spacing: 6) {
                 // The new-study flow starts from a DESIGN choice
@@ -249,6 +259,14 @@ struct StudyManagementSection: View {
             HStack {
                 Text("Study")
                 Spacer()
+                LibraryRefreshButton(
+                    help: "re-read the studies, templates, agents, and runs in this "
+                        + "workspace — for work a coding assistant or a command line "
+                        + "did while the app was open. Unsaved edits are kept; the "
+                        + "app also does this whenever you switch back to it"
+                ) {
+                    if let reloadFromDisk { reloadFromDisk() } else { panel.refresh() }
+                }
                 NoticesBellButton()
             }
         }
