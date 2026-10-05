@@ -37,9 +37,9 @@ VERB_SPECS = (
     VerbSpec('science', 'verify-custody', positional='<receipt-sha256>', purpose='Re-read the retained archive and every expanded local output before reporting custody.'),
     # `--out` is this verb's own argument (the page), so the envelope has no file spelling here.
     VerbSpec('science', 'report', positional='<run-folder-or-report.json>', purpose=REPORT_PURPOSE, value_flags=frozenset({'--out'})),
-    VerbSpec('science', 'list', purpose='List shipped methods, public operation paths and engine restrictions; does not execute. With --brief, return a short index instead: ids, titles, and one line of purpose each.', boolean_flags=frozenset({'--brief'})),
+    VerbSpec('science', 'list', purpose='List shipped methods, public operation paths and engine restrictions; does not execute. With --brief, return a short index instead: ids, titles, one line of purpose each, and where each operation runs.', boolean_flags=frozenset({'--brief'})),
     VerbSpec('science', 'guide', positional='<method>', purpose='Read the shared method guide, dataset schemas and coworker/reviewer instructions.'),
-    VerbSpec('science', 'operation', positional='<operation>', purpose='Inspect exact public execution paths, outputs and restrictions for one operation.'),
+    VerbSpec('science', 'operation', positional='<operation>', purpose='Inspect exact public execution paths, outputs, restrictions, and where it runs on each backend for one operation.'),
 )
 
 
