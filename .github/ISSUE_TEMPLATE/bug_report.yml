@@ -1,0 +1,84 @@
+name: Report a problem
+description: Something in SteerLab did not work as you expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting this. **Issues are public.** Never paste:
+
+        - a token, a password, an API key, or the contents of a token file;
+        - a log or command output that shows folder paths, user names, or machine names, unless you have replaced them with `<folder>`, `<user>`, and `<machine>`;
+        - study data: prompts, concept texts, generated responses, transcripts, judge outputs, or results tables;
+        - a cluster site profile, a server address, or a scheduler job number.
+
+        To report a security vulnerability, do not use this form. Follow SECURITY.md instead.
+  - type: dropdown
+    id: part
+    attributes:
+      label: Which part were you using?
+      options:
+        - The Mac app
+        - The Mac command line (steerlab-cli)
+        - The app-free client (steerlab)
+        - The Python engine on another machine
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: >-
+        The Mac app: About SteerLab in the SteerLab menu. steerlab-cli: only the
+        first line of `steerlab-cli --version`, which begins "steerlab-cli —"
+        (leave out the lines below it, which show folders on your computer).
+        The client: `steerlab --version`. The engine: the "Version:" line of
+        `pip show steerlab-server`.
+      placeholder: "for example: steerlab <version> (client)"
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Your system
+      description: The operating system and its version, and the Mac's chip or the Linux distribution.
+      placeholder: "for example: macOS 26.4 on an Apple M3"
+    validations:
+      required: true
+  - type: dropdown
+    id: compute
+    attributes:
+      label: Where were studies running?
+      options:
+        - This Mac, quick start
+        - This Mac, full capabilities
+        - Another machine
+        - Nothing was running
+        - Not sure
+    validations:
+      required: false
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: >-
+        What you did, what you expected, and what you saw instead, in your own
+        words. If a command refused, its `error.code` and `repairAction` help
+        most. Replace any folder path with `<folder>`.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to see it again
+      description: The smallest set of steps that shows the problem, if you know them. Describe your study in general terms rather than pasting its files.
+    validations:
+      required: false
+  - type: checkboxes
+    id: nothing-sensitive
+    attributes:
+      label: Before you submit
+      options:
+        - label: This report contains no token, password, folder path, user or machine name, or study data.
+          required: true
