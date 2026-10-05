@@ -32,12 +32,36 @@ extension ClusterClient {
 }
 
 public enum DiagnosticRemote {
-    public static func stage(path: String, sha256: String, client: ClusterClient, root: URL) async throws -> JSONValue {
+    /// Stages on the server, then records the staged request locally.
+    ///
+    /// The local half needs the Python client to match this build, and the
+    /// server half can take half an hour on a large archive. So the match is
+    /// confirmed FIRST: a mismatch then costs nothing on the server. Before,
+    /// the check came only after the server answered, and it failed whenever
+    /// the app had been reinstalled while the stage was waiting — the files
+    /// on disk were the new build's, the process still the old one.
+    ///
+    /// `confirm` and `record` are the two local steps, injectable so the
+    /// order is testable without a Python environment or a server.
+    public static func stage(path: String, sha256: String, client: ClusterClient, root: URL,
+                             confirm: () async throws -> Void = { try await DiagnosticWorkspace.confirmClientIdentity() },
+                             record: ([String: JSONValue]) async throws -> JSONValue = { try await DiagnosticWorkspace.perform("staged-request", payload: $0) }
+    ) async throws -> JSONValue {
+        try await confirm()
         let result = try await client.stageDiagnostic(path: path, sha256: sha256)
         guard case .object(var object) = result, object["request"] == .object(["inputBundleSHA256": .string(sha256)]) else {
             throw ExperimentError(reason: "The stage response differs from the supplied archive digest.")
         }
-        let saved = try await DiagnosticWorkspace.perform("staged-request", payload: ["workspaceRoot": .string(root.path), "bundleSHA256": .string(sha256)])
+        let saved: JSONValue
+        do {
+            saved = try await record(["workspaceRoot": .string(root.path), "bundleSHA256": .string(sha256)])
+        } catch let error as ExperimentError {
+            // The server did its part. Say so, and that running the same
+            // stage again is the whole repair.
+            guard var failure = error.clientIdentityFailure else { throw error }
+            failure.afterRemoteStage = true
+            throw ExperimentError.clientIdentity(failure)
+        }
         if case .object(let fields) = saved { object.merge(fields) { _, new in new } }
         return .object(object)
     }

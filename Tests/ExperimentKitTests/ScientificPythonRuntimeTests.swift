@@ -85,8 +85,18 @@ import Testing
         do {
             _ = try await DiagnosticWorkspace.perform("interview", payload: fields, python: python, source: source)
             Issue.record("Mismatched client sources were accepted")
-        } catch {
-            #expect(String(describing: error).contains("sources differ"))
+        } catch let error as ExperimentError {
+            // Both sides named, from the real child process: the build's
+            // identity, the files' identity, and where the files are.
+            let failure = try #require(error.clientIdentityFailure)
+            #expect(failure.cause == .sourcesDiffer)
+            #expect(failure.expected == PythonClientIdentity.sourceSHA256)
+            #expect(failure.actual != nil && failure.actual != failure.expected)
+            #expect(failure.payloadPath.hasSuffix("ServerPayload/steerlab_server"))
+            #expect(error.reason.contains(String(PythonClientIdentity.sourceSHA256.prefix(12))))
+            #expect(error.reason.contains("are different versions"))
+            #expect(failure.layout == .other)
+            #expect(error.malformedInvocation?.repairAction != ScientificPythonRuntime.setupHint)
         }
         #expect(try fm.contentsOfDirectory(atPath: workspace.path).isEmpty)
     }

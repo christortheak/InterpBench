@@ -1983,6 +1983,14 @@ public struct ExperimentError: Error, CustomStringConvertible {
     /// carries no new state or gate vocabulary — `blocked`/64 and the `usage`
     /// code both predate it; only the CLASSIFICATION of this throw moves.
     public let malformedInvocation: MalformedInvocation?
+    /// Why the local Python client could not be confirmed to match this
+    /// build, when that is what this error is (`ClientIdentityFailure`).
+    /// Additive on the same terms as the three above: `reason` and the
+    /// malformed-invocation repair carry the command-line wording, so every
+    /// catch site, exit code, and envelope is unchanged; the app reads this
+    /// to say the same thing in a researcher's words. nil for every other
+    /// error.
+    public let clientIdentityFailure: ClientIdentityFailure?
     public var description: String { reason }
 
     /// The repair for a malformed invocation: the legal values, as text a
@@ -1997,6 +2005,7 @@ public struct ExperimentError: Error, CustomStringConvertible {
         self.freezeRefusal = nil
         self.lifecycleRefusal = nil
         self.malformedInvocation = nil
+        self.clientIdentityFailure = nil
     }
 
     public init(refusal: FreezeRefusal) {
@@ -2004,6 +2013,7 @@ public struct ExperimentError: Error, CustomStringConvertible {
         self.freezeRefusal = refusal
         self.lifecycleRefusal = nil
         self.malformedInvocation = nil
+        self.clientIdentityFailure = nil
     }
 
     public init(refusal: LifecycleRefusal) {
@@ -2011,6 +2021,16 @@ public struct ExperimentError: Error, CustomStringConvertible {
         self.freezeRefusal = nil
         self.lifecycleRefusal = refusal
         self.malformedInvocation = nil
+        self.clientIdentityFailure = nil
+    }
+
+    /// See `ExperimentError.clientIdentity(_:)`.
+    init(clientIdentityFailure failure: ClientIdentityFailure) {
+        self.reason = failure.reason
+        self.freezeRefusal = nil
+        self.lifecycleRefusal = nil
+        self.malformedInvocation = .init(repairAction: failure.repair)
+        self.clientIdentityFailure = failure
     }
 
     /// A value the verb's own vocabulary does not contain. `reason` is the
@@ -2024,6 +2044,7 @@ public struct ExperimentError: Error, CustomStringConvertible {
         self.freezeRefusal = nil
         self.lifecycleRefusal = nil
         self.malformedInvocation = malformed
+        self.clientIdentityFailure = nil
     }
 }
 

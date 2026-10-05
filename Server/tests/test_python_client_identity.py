@@ -35,6 +35,17 @@ def test_copied_release_payload_runs_without_checkout_and_refuses_source_drift(t
     response = json.loads(result.stdout)
     assert response['ok'] is False and 'sources differ' in response['reason']
     assert 'same reviewed source' in response['repairAction']
+    # Both sides, named: what the Mac build expects, what these files are,
+    # and where they are. The repair leads with a fresh start, never with
+    # installing dependencies, and says no server takes part.
+    changed = source_sha256(copied)
+    assert expected[:12] in response['reason'] and changed[:12] in response['reason']
+    assert response['clientSHA256'] == changed
+    assert response['clientRoot'] == str(copied.resolve())
+    assert str(copied.resolve()) in response['reason']
+    assert response['repairAction'].startswith('Run the command again from a fresh start')
+    assert 'No server takes part' in response['repairAction']
+    assert 'dependencies' not in response['repairAction']
     assert 'changed owner must not run' not in response['reason']
     assert not (tmp_path / '.steerlab').exists()
 
@@ -54,3 +65,32 @@ def test_missing_client_identity_refuses_before_dispatch(tmp_path):
 def test_compiled_client_identity_matches_current_source():
     root = Path(__file__).resolve().parents[2]
     subprocess.run([sys.executable, str(root / 'scripts/ci/check-python-client-identity.py')], check=True)
+
+
+def test_identity_check_confirms_without_importing_any_owner(tmp_path):
+    """The bridge's `client-identity` action answers the identity and does
+    nothing else: no owner is imported and no workspace is read, so the Mac
+    can ask it before a long remote step."""
+    package = Path(__file__).resolve().parents[1] / 'steerlab_server'
+    payload = tmp_path / 'ServerPayload'
+    copied = payload / 'steerlab_server'
+    shutil.copytree(package, copied, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+    # An owner that would fail loudly if the check imported it.
+    (copied / 'experiment/diagnostic_archives.py').write_text('raise RuntimeError("owner imported")\n')
+    identity = source_sha256(copied)
+
+    def ask(document):
+        result = subprocess.run([sys.executable, '-B', '-s', '-m', 'steerlab_server.client.diagnostic_workspace'],
+                                input=json.dumps(document), text=True, capture_output=True, cwd=tmp_path,
+                                env={**os.environ, 'PYTHONPATH': str(payload)})
+        return result.returncode, json.loads(result.stdout)
+
+    code, response = ask(dict(action='client-identity', payload={}, clientSHA256=identity))
+    assert code == 0, response
+    assert response == {'ok': True, 'clientSHA256': identity, 'clientRoot': str(copied.resolve()),
+                        'result': {'changed': False}}
+    code, response = ask(dict(action='client-identity', payload={}, clientSHA256='0' * 64))
+    assert code == 65 and response['ok'] is False
+    assert response['clientSHA256'] == identity and 'sources differ' in response['reason']
+    code, response = ask(dict(action='client-identity', payload={'x': 1}, clientSHA256=identity))
+    assert code == 65 and 'empty payload' in response['reason']

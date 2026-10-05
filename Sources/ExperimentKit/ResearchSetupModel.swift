@@ -200,6 +200,14 @@ public enum ResearchSetupCopy {
         guard let typed = error as? ExperimentError else {
             return (error.localizedDescription, nil)
         }
+        // The helper's files and this build are different versions, or the
+        // helper could not be asked: the app's own words, not the command
+        // line's. Only the helper failing to start is a setup problem, and it
+        // keeps this sheet's setup sentence.
+        if let identity = typed.clientIdentityFailure {
+            return (identity.appSummary,
+                    identity.cause == .noAnswer ? helperRepair : identity.appNextStep)
+        }
         guard let repair = typed.malformedInvocation?.repairAction else {
             return (typed.reason, nil)
         }
