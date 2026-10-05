@@ -3,14 +3,23 @@
 This folder is a SteerLab **data workspace** you can use immediately: copy it
 anywhere you like (or open it in place) and point SteerLab at it.
 
+It lives in a source checkout of the repository. The app and the client
+releases do not include it; there, open a Demo Workspace instead (**Open Demo
+Workspace…** in the app's Research Setup, or `workspace init <folder> --demo
+<backend>` on either command line).
+
+The commands on this page are the Mac command line, `steerlab-cli`. The
+cross-platform client, `steerlab`, is a different product with its own verbs;
+with it, follow `steerlab workspace guide lifecycle` instead.
+
 ```bash
-steerlab --workspace /abs/path/to/SampleWorkspace experiment create demo \
+steerlab-cli --workspace /abs/path/to/SampleWorkspace experiment create demo \
   --model <model-id>
 # or
 export STEERLAB_WORKSPACE=/abs/path/to/SampleWorkspace
 ```
 
-The app's **Workspace ▸ Open…** does the same thing.
+In the app, **Open Workspace…** in the Workspace menu does the same thing.
 
 ## What is here, and what is deliberately not
 
@@ -43,18 +52,19 @@ this folder.
 
 ## The five-minute path
 
-1. Point SteerLab at this folder (above).
-2. `experiment create <name> --model <model-id>` — pins the model; add
-   `--revision <commit>` or let freeze resolve it.
-3. `experiment attach <name> formality` — pins the stimulus hashes.
-4. `experiment extract <name>` then `experiment validate <name>` — derive the
-   direction and probe it on the never-named validation scenarios. Freeze
-   requires that evidence.
-5. `data check <name>` — the manifest-driven readiness checklist tells you
-   what is still missing (task prompts, battery, rubric, judges, …) and where
-   each file goes.
-6. `experiment freeze <name>` — one-way. Iterate by `duplicate`, never by
-   editing a frozen manifest.
+1. Point `steerlab-cli` at this folder (above).
+2. `steerlab-cli experiment create <name> --model <model-id>` — pins the
+   model; add `--revision <commit>` or let freeze resolve it.
+3. `steerlab-cli experiment attach <name> formality` — pins the stimulus
+   hashes.
+4. `steerlab-cli experiment extract <name>` then `steerlab-cli experiment
+   validate <name>` — derive the direction and probe it on the never-named
+   validation scenarios. Freeze requires that evidence.
+5. `steerlab-cli data check <name>` — the manifest-driven readiness checklist
+   tells you what is still missing (task prompts, battery, rubric, judges, …)
+   and where each file goes.
+6. `steerlab-cli experiment freeze <name>` — one-way. Iterate by
+   `steerlab-cli experiment duplicate`, never by editing a frozen manifest.
 
 Every verb takes `--json`. `docs/CLI-REFERENCE.md` is the full surface, and
 the `AGENTS.md` written into every workspace is the agent-facing contract.
