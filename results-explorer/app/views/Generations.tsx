@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { DerivedBadge } from "../components/provenance";
-import { Badge, CopyLinkButton, NoRunSelected } from "../components/ui";
+import { Badge, CopyLinkButton, NoRunSelected, SaveStatus, useSave } from "../components/ui";
 import { responseRecordKey, splitRecordKey, takePendingRecord, updateDeepLink } from "../lib/deeplink";
 import { demoPreviewEnabled, generations } from "../lib/demo";
+import { exportFilename } from "../lib/export";
+import { saveRunFile } from "../lib/save";
 import {
   instrumentRecordFor,
   loadInstrumentRecords,
@@ -111,6 +113,7 @@ export function GenerationsView({ run }: { run: WorkspaceRun | null }) {
   // Keyed by run so a pending read can never paint the previous run's
   // readouts onto this one.
   const [instrument, setInstrument] = useState<{ key: string; records: InstrumentRecord[] }>({ key: "", records: [] });
+  const save = useSave();
   const records = run ? run.generationRows : generations;
   const [selected, setSelectedRecord] = useState(records[0] ?? generations[0]);
   const setSelected = (row: Generation) => { setSelectedRecord(row); setCompare(false); };
@@ -183,21 +186,15 @@ export function GenerationsView({ run }: { run: WorkspaceRun | null }) {
   const pairedRecord = pool.find((record) => record.condition.toLowerCase() === "baseline") ?? pool[0] ?? null;
   const recordFor = (row: Generation) => row.isInstrument ? instrumentRecordFor(instrumentRecords, promptIDFromGenerationID(row.id), row.condition) : null;
   const selectedInstrument = recordFor(selected);
-  const downloadGenerations = async () => {
-    if (!run?.generationFile) return;
-    const file = await run.generationFile.getFile();
-    const url = URL.createObjectURL(file);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "generations.jsonl";
-    anchor.click();
-    URL.revokeObjectURL(url);
-  };
+  // The WHOLE file, byte for byte — not the bounded preview loaded above.
+  // In the app the native host copies it to the place the reader picks, so
+  // even a very large file is never pulled into this page (lib/save.ts).
+  const downloadGenerations = () => save.run(() => saveRunFile(exportFilename("jsonl", run?.name, "generations"), run?.generationFile));
   return (
     <div className="view-enter inner-view generation-view">
       <header className="page-title compact-title">
         <div><span className="section-number">{run ? `${records.length} LOADED RECORDS${run.previewTruncated ? " · BOUNDED PREVIEW" : ""}${instrumentRecords.length ? ` · ${instrumentRecords.length} INSTRUMENT READOUTS` : ""}` : "384 RECORDS · 0 DECODE ERRORS"}</span><h1>Generation reader</h1><p>Inspect outputs, paired conditions, parser results, and record-level provenance without leaving the study.</p></div>
-        <button className="primary" onClick={downloadGenerations} disabled={!run?.generationFile}>{run ? "Download JSONL" : "Preview only"} <span>↓</span></button>
+        <div className="title-actions"><SaveStatus status={save.status} /><button className="primary" onClick={downloadGenerations} disabled={!run?.generationFile}>{run ? "Download JSONL" : "Preview only"} <span>↓</span></button></div>
       </header>
       <div className="reader-shell">
         <aside className="record-list">

@@ -15,6 +15,8 @@
 // widened to the unfiltered table would be a different claim than the one on
 // screen.
 
+import { saveText, type SaveOutcome } from "./save";
+
 export type ColumnKind = "stored" | "derived" | "heuristic";
 
 /// What a cell may hold before formatting. `null`/`undefined` are ABSENT and
@@ -58,33 +60,27 @@ export const buildCSV = <Row,>(columns: ExportColumn<Row>[], rows: Row[]): strin
   return `${lines.join("\n")}\n`;
 };
 
-/// A filesystem-safe name built from the run and table names, e.g.
-/// `20260805T004016927-exp-test-compare-2-2-evaluate-judge-tallies.csv`.
-export const csvFilename = (...parts: (string | null | undefined)[]) => {
+/// A filesystem-safe name built from the run and table names, ending in the
+/// given extension.
+export const exportFilename = (extension: string, ...parts: (string | null | undefined)[]) => {
   const slug = parts
     .filter((part): part is string => Boolean(part && part.trim()))
     .map((part) => part.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, ""))
     .filter(Boolean)
     .join("-");
-  return `${slug || "export"}.csv`;
+  return `${slug || "export"}.${extension}`;
 };
 
-/// Write the text to the user's downloads through an object URL. Browser
-/// only — a no-op where there is no document (the unit suite).
-export const downloadCSV = (filename: string, text: string) => {
-  if (typeof document === "undefined") return;
-  const url = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
-};
+/// The CSV form, e.g.
+/// `20260805T004016927-exp-test-compare-2-2-evaluate-judge-tallies.csv`.
+export const csvFilename = (...parts: (string | null | undefined)[]) => exportFilename("csv", ...parts);
 
 /// The one call a view makes: build the stamped CSV for the rows it is
-/// showing and hand it to the browser.
+/// showing and hand it to the reader — through the browser's downloads in
+/// the standalone build, through the app's save panel when embedded
+/// (lib/save.ts). Resolves with what happened, so the control can say so.
 export const exportCSV = <Row,>(
   filename: string,
   columns: ExportColumn<Row>[],
   rows: Row[],
-) => downloadCSV(filename, buildCSV(columns, rows));
+): Promise<SaveOutcome> => saveText(filename, buildCSV(columns, rows));

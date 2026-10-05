@@ -22,6 +22,10 @@ export type EmbeddedFileHandle = {
   kind: "file";
   name: string;
   getFile: () => Promise<File>;
+  /// Where the native host listed this file, relative to the workspace's
+  /// runs folder. Saving a copy (lib/save.ts) sends this path back so the
+  /// host copies the bytes itself.
+  embeddedPath: string;
 };
 
 export type EmbeddedDirectoryHandle = {
@@ -80,6 +84,11 @@ const listTree = async (path: string): Promise<TreeEntry[]> => {
 // fetched once, on first read, and cached for the object's lifetime. The
 // cast is safe because readers only use the surface implemented here
 // (text / slice().text / arrayBuffer / size / lastModified / name).
+//
+// It is NOT a real File or Blob, so it must never reach
+// `URL.createObjectURL` — that call throws on it, which is how the download
+// controls used to fail inside the app. Saving goes through lib/save.ts,
+// which sends the file's path to the native host instead.
 const lazyFile = (path: string, entry: TreeEntry): File => {
   let blob: Promise<Blob> | null = null;
   const load = () =>
@@ -120,6 +129,7 @@ const fileHandle = (path: string, entry: TreeEntry): EmbeddedFileHandle => ({
   kind: "file",
   name: entry.name,
   getFile: async () => lazyFile(path, entry),
+  embeddedPath: path,
 });
 
 const directoryHandle = (

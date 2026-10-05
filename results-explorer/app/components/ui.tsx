@@ -9,6 +9,7 @@ import { splitCSV } from "../lib/csv";
 import { pairedCountLabel } from "../lib/effects";
 import { exportCSV, type ExportColumn } from "../lib/export";
 import { fmt } from "../lib/format";
+import { saveRunFile, saveStatusText, type SaveOutcome } from "../lib/save";
 import type { Effect, FilePreview, View } from "../lib/types";
 
 export function Mark() {
@@ -50,6 +51,35 @@ export function ForestRow({ effect, compact = false }: { effect: Effect; compact
   );
 }
 
+/// What a save control is doing or last did: nothing yet, in progress, or
+/// one of lib/save.ts's outcomes.
+export type SaveState = SaveOutcome | { state: "saving" } | null;
+
+/// The state every export and download control shares. `run` starts a save
+/// and records how it ended, so the control can say "Saved as …" or why
+/// nothing was saved. It never throws: a failure is an outcome to show.
+export function useSave() {
+  const [status, setStatus] = useState<SaveState>(null);
+  const run = async (action: () => Promise<SaveOutcome>) => {
+    setStatus({ state: "saving" });
+    try {
+      setStatus(await action());
+    } catch (error) {
+      setStatus({ state: "failed", message: error instanceof Error && error.message ? error.message : "The file could not be saved." });
+    }
+  };
+  return { status, run };
+}
+
+/// The line beside a save control. A cancelled save shows nothing; a
+/// failure stays until the next attempt, because the reader needs time to
+/// read why.
+export function SaveStatus({ status }: { status: SaveState }) {
+  const text = saveStatusText(status);
+  if (!text || !status) return null;
+  return <span className={`save-status save-${status.state}`} role="status">{text}</span>;
+}
+
 /// Export the rows a table is CURRENTLY showing, with each column's
 /// provenance kind stamped in the file's first line (lib/export.ts). Given
 /// no rows it is disabled rather than writing a header-only file that would
@@ -62,15 +92,19 @@ export function ExportButton<Row>({ filename, columns, rows, label = "Export CSV
   label?: string;
   className?: string;
 }) {
+  const save = useSave();
   return (
-    <button
-      className={className}
-      disabled={!rows.length}
-      title={rows.length
-        ? `Download these ${rows.length} row${rows.length === 1 ? "" : "s"} as CSV. The first line stamps each column as stored, derived, or heuristic.`
-        : "Nothing to export in the current filter."}
-      onClick={() => exportCSV(filename, columns, rows)}
-    >{label} <span>↓</span></button>
+    <span className="export-group">
+      <button
+        className={className}
+        disabled={!rows.length}
+        title={rows.length
+          ? `Save these ${rows.length} row${rows.length === 1 ? "" : "s"} as CSV. The first line stamps each column as stored, derived, or heuristic.`
+          : "Nothing to export in the current filter."}
+        onClick={() => save.run(() => exportCSV(filename, columns, rows))}
+      >{label} <span>↓</span></button>
+      <SaveStatus status={save.status} />
+    </span>
   );
 }
 
@@ -108,18 +142,14 @@ export function FilePreviewModal({ preview, onClose }: { preview: FilePreview; o
   const extension = preview.file.name.split(".").pop()?.toLowerCase() ?? "";
   const isCSV = extension === "csv";
   const csvRows = isCSV && preview.text ? preview.text.split(/\r?\n/).filter(Boolean).slice(0, 250).map(splitCSV) : [];
-  const download = async () => {
-    const file = await preview.file.handle.getFile();
-    const url = URL.createObjectURL(file);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = preview.file.name;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  };
+  const save = useSave();
+  // A copy of the file itself, byte for byte. In the app the native host
+  // copies it to the place the reader picks; the bytes never pass through
+  // this page (lib/save.ts).
+  const download = () => save.run(() => saveRunFile(preview.file.name, preview.file.handle));
   return <div className="modal-backdrop file-modal-backdrop" role="presentation" onMouseDown={onClose}>
     <section className="file-preview-modal" role="dialog" aria-modal="true" aria-labelledby="file-preview-title" onMouseDown={(event) => event.stopPropagation()}>
-      <header><div><span className="section-number">RUN FILE · READ ONLY</span><h2 id="file-preview-title">{preview.file.name}</h2><p>{preview.file.path} · {preview.file.size < 1024 * 1024 ? `${(preview.file.size / 1024).toFixed(1)} KB` : `${(preview.file.size / 1024 / 1024).toFixed(1)} MB`}</p></div><div><button className="secondary" onClick={download}>Download</button><button className="close-file" onClick={onClose} aria-label="Close file preview">×</button></div></header>
+      <header><div><span className="section-number">RUN FILE · READ ONLY</span><h2 id="file-preview-title">{preview.file.name}</h2><p>{preview.file.path} · {preview.file.size < 1024 * 1024 ? `${(preview.file.size / 1024).toFixed(1)} KB` : `${(preview.file.size / 1024 / 1024).toFixed(1)} MB`}</p></div><div><SaveStatus status={save.status} /><button className="secondary" onClick={download}>Download</button><button className="close-file" onClick={onClose} aria-label="Close file preview">×</button></div></header>
       {preview.truncated && <div className="preview-warning">Showing the first 1 MB. Download the file to inspect every byte.</div>}
       <div className="file-preview-body">
         {preview.loading ? <div className="empty-state">Reading local file…</div> : preview.error ? <div className="empty-state">{preview.error}</div> : isCSV && csvRows.length ? <div className="raw-table-scroll"><table className="raw-table"><thead><tr>{csvRows[0].map((cell, index) => <th key={index}>{cell}</th>)}</tr></thead><tbody>{csvRows.slice(1).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table></div> : <pre>{preview.text || "This file is binary or has no text preview. Use Download to open it in its native application."}</pre>}

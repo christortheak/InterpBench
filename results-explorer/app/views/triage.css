@@ -125,4 +125,7 @@
   color: var(--muted); font: 9px var(--mono);
   border: 1px solid var(--line-dark); padding: 1px 5px;
 }
-.triage-summary .triage-export { margin-left: auto; padding: 7px 11px; font-size: 10px; }
+/* The export control is a group (button + save status); the group takes the
+   right-hand place the bare button used to. */
+.triage-summary .export-group { margin-left: auto; }
+.triage-summary .triage-export { padding: 7px 11px; font-size: 10px; }

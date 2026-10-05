@@ -674,6 +674,13 @@ main { grid-column: 2; min-width: 0; }
 .section-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
 .section-actions .secondary { padding: 9px 12px; font-size: 10px; }
 
+/* One export control: the button, and the line that says what happened to
+   the save. A single flex child wherever a bare button used to sit. */
+.export-group { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.save-status { align-self: center; font-size: 9px; line-height: 1.4; color: var(--muted); max-width: 320px; }
+.save-status.save-saved { color: #1e5d45; }
+.save-status.save-failed { color: #9a3b2e; }
+
 /* "Copy link to this record" — a quiet text affordance under a record's
    title, present only in the embedded app (see lib/deeplink.ts). */
 .copy-link-button {

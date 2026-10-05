@@ -145,6 +145,11 @@ export type LocalFileHandle = {
   kind: "file";
   name: string;
   getFile: () => Promise<File>;
+  /// Present only in the embedded app: the file's path under the
+  /// workspace's runs folder, as the native host listed it. Saving a copy
+  /// sends this path to the host (lib/save.ts). A browser's own file handle
+  /// has no such field.
+  embeddedPath?: string;
 };
 
 export type LocalDirectoryHandle = {
