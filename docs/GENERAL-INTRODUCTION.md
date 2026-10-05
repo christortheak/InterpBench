@@ -244,10 +244,10 @@ sweep by hand, chatting under steering, and iterating fast — and a **Python
 engine** (PyTorch / Hugging Face), which runs every method, on CUDA hardware or
 on a Mac's own graphics processor, with an HTTP API and browser workbench,
 built for unattended batch campaigns: scheduler submission, durable jobs,
-evidence bundles. In the app these are three plainly named choices: "This Mac,
-quick start" (the built-in engine), "This Mac, full capabilities" (the Python
-engine on the Mac), and "Another machine" (the Python engine on a workstation
-or cluster).
+evidence bundles. In the app, where a workspace's studies run is one of three
+plainly named choices: "This Mac, quick start" (the built-in engine), "This
+Mac, full capabilities" (the Python engine on the Mac), and "Another machine"
+(the Python engine on a workstation or cluster).
 
 They are not wrappers around each other. They share one *artifact model* — the
 same stimulus files, manifests, vector formats, and run directories, pinned by
