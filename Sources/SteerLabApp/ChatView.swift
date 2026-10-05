@@ -65,15 +65,27 @@ struct ChatView: View {
     }
 
     private var sidebar: some View {
+        // Two headed groups, the basics and Advanced (2026-10 release
+        // review, A6). Both are always listed: Advanced is one click away,
+        // never behind a setting. The rows are static — no row appears or
+        // disappears with state — so the column's size never moves.
         List(selection: sidebarSelection) {
-            ForEach(WorkbenchSection.allCases) { item in
-                Label(item.rawValue, systemImage: item.systemImage)
-                    .tag(item)
-                    .help(item.help)
-                    // No type-select: typing a section's first letter while
-                    // keyboard focus is NOT in a Playground field yanked the
-                    // user to another tab mid-thought (live 2026-07-18).
-                    .typeSelectEquivalent("")
+            ForEach(WorkbenchSection.sidebarGroups) { entry in
+                Section {
+                    ForEach(entry.sections) { item in
+                        Label(item.rawValue, systemImage: item.systemImage)
+                            .tag(item)
+                            .help(item.help)
+                            // No type-select: typing a section's first letter
+                            // while keyboard focus is NOT in a Playground
+                            // field yanked the user to another tab
+                            // mid-thought (live 2026-07-18).
+                            .typeSelectEquivalent("")
+                    }
+                } header: {
+                    Text(entry.group.rawValue)
+                        .help(entry.group.help)
+                }
             }
         }
         // ideal ≥ the widest label ("Multi-Agent" + icon) so section names
@@ -154,7 +166,8 @@ struct ChatView: View {
         switch section {
         case .home:
             HomeDashboardView(
-                service: service, workspace: workspace, navigate: navigate,
+                service: service, workspace: workspace, actions: actions,
+                navigate: navigate,
                 openOptimizations: openOptimizations,
                 openAdapterTraining: openAdapterTraining,
                 openAgent: openAgent)

@@ -6,9 +6,17 @@ import SwiftUI
 /// marketing) — where am I, what compute, what models, what agents, what's
 /// running, what exists, and what to do next. Every empty state carries its
 /// next action (design brief › Empty States).
+///
+/// It opens with the first-study checklist (2026-10 release review, A6): the
+/// seven steps from a workspace to exported results, each judged from what
+/// the workspace holds. The cards below follow the same order — workspace,
+/// compute, models, studies — with the advanced ways to make an agent last.
 struct HomeDashboardView: View {
     @Bindable var service: ChatService
     let workspace: WorkspaceStore
+    /// New, Open, and the Demo Workspace: the same actions the toolbar and
+    /// Research Setup use.
+    let actions: WorkspaceActions
     let navigate: (WorkbenchSection) -> Void
     /// Lands on Agents → Optimizations (declared sweep runs).
     var openOptimizations: () -> Void = {}
@@ -21,9 +29,17 @@ struct HomeDashboardView: View {
     /// The three compute choices, from the environment the main window sets.
     @Environment(ComputeChoiceCoordinator.self) private var compute:
         ComputeChoiceCoordinator?
+    /// What the checklist read from the workspace folder, or nil before the
+    /// first read lands.
+    @State private var scannedFacts: FirstStudyChecklist.Facts?
+    /// The researcher's own Show/Hide choice for this visit; nil follows the
+    /// rule (shown while steps remain, hidden once all are done).
+    @State private var checklistShownOverride: Bool?
+    @State private var showingDemos = false
 
     var body: some View {
         Form {
+            firstStudySection
             workspaceSection
             computeSection
             // WS3: the cluster-chores card, shown only when a cluster site is
@@ -34,9 +50,10 @@ struct HomeDashboardView: View {
                 ClusterHealthCard(service: service)
             }
             modelsSection
-            agentsSection
-            jobsSection
             studiesSection
+            jobsSection
+            agentsSection
+            advancedSection
         }
         .formStyle(.grouped)
         // Both scans are IO that nothing on the appearance path needs before
@@ -48,6 +65,125 @@ struct HomeDashboardView: View {
         .task {
             service.experiments.refresh()
             service.fineTuning.refreshAgentLibraryAsync()
+        }
+        // The checklist's own read, again whenever the workspace changes (a
+        // Demo Workspace opened from here switches it) and whenever work
+        // that was running finishes, since a run may just have completed.
+        .task(id: workspace.rootURL) {
+            // Another workspace: its own steps, shown by the rule again.
+            checklistShownOverride = nil
+            await rescanChecklist()
+        }
+        .onChange(of: runningItems.map(\.id)) { _, now in
+            if now.isEmpty { Task { await rescanChecklist() } }
+        }
+        .sheet(isPresented: $showingDemos, onDismiss: { actions.demoSheetClosed() }) {
+            DemoWorkspaceSheet(
+                demos: DemoWorkspace.available(), open: { try actions.openDemoWorkspace($0) })
+        }
+    }
+
+    // MARK: First study
+
+    /// The checklist's facts: the folder's, read off the main actor, with
+    /// the two the app knows live — the model inventory of the engine in use,
+    /// and where the workspace is set to run (re-read on every draw, so
+    /// choosing a place here shows at once).
+    private var checklistFacts: FirstStudyChecklist.Facts {
+        var facts = scannedFacts ?? FirstStudyChecklist.Facts(hasWorkspace: true)
+        // A developer build standing on its own checkout has no workspace of
+        // the researcher's: the first step stays open, as the warning in the
+        // Workspace card says.
+        facts.hasWorkspace = workspace.chosenRootURL != nil
+        facts.modelCount = service.workspaceModelOptions.count
+        facts.computeChoice =
+            workspace.isComputeDeclared ? (compute?.workspaceChoice ?? facts.computeChoice) : nil
+        return facts
+    }
+
+    private func rescanChecklist() async {
+        let root = workspace.rootURL
+        let facts = await Task.detached(priority: .utility) {
+            FirstStudyChecklist.scan(root: root, carriedDemos: DemoWorkspace.carriedRoot())
+        }.value
+        // A switch while the read ran: the newer read owns the state.
+        guard root == workspace.rootURL else { return }
+        scannedFacts = facts
+    }
+
+    /// Whether the checklist's steps are showing: while steps remain, unless
+    /// the researcher hid them for this visit; once all are done, only when
+    /// asked for.
+    private func checklistShown(_ items: [FirstStudyChecklist.Item]) -> Bool {
+        checklistShownOverride ?? (FirstStudyChecklist.nextStep(items) != nil)
+    }
+
+    private var firstStudySection: some View {
+        let items = FirstStudyChecklist.items(checklistFacts)
+        let allDone = FirstStudyChecklist.nextStep(items) == nil
+        let shown = checklistShown(items)
+        // Home is rebuilt on every visit, so until this visit's read lands
+        // the section says it is checking rather than flashing steps as
+        // not done that are done.
+        let checked = scannedFacts != nil
+        return Section {
+            if !checked {
+                Text("Checking this workspace…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if shown {
+                Text(FirstStudyChecklist.introduction)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                FirstStudyChecklistRows(
+                    items: items, hasWorkspace: workspace.hasWorkspace,
+                    workspacePinned: workspace.isEnvironmentPinned,
+                    perform: perform,
+                    chooseCompute: compute.map { coordinator -> (ComputeChoice) -> Void in
+                        { choice in coordinator.choose(choice) }
+                    })
+            } else {
+                Text(allDone ? FirstStudyChecklist.finished : FirstStudyChecklist.progress(items) + ".")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } header: {
+            HStack(spacing: 8) {
+                Text(FirstStudyChecklist.title)
+                if checked {
+                    Text(FirstStudyChecklist.progress(items))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button(shown ? "Hide Steps" : "Show Steps") {
+                        checklistShownOverride = !shown
+                    }
+                    .buttonStyle(.link)
+                    .controlSize(.small)
+                    .help(
+                        shown
+                            ? "fold the checklist away for this visit; it opens again "
+                                + "while steps remain"
+                            : "show the seven steps again")
+                }
+            }
+        }
+    }
+
+    /// One checklist button, performed with the same actions the rest of the
+    /// app uses for it.
+    private func perform(_ action: FirstStudyChecklist.Action) {
+        switch action {
+        case .newWorkspace: actions.newWorkspace()
+        case .openWorkspace: actions.openWorkspace()
+        case .chooseCompute: actions.showingResearchSetup = true
+        case .openPlayground: navigate(.playground)
+        case .openDemoWorkspace: showingDemos = true
+        case .openStudies(let name):
+            if let name { service.experiments.management.selectedName = name }
+            navigate(.studies)
+        case .openResults: navigate(.results)
         }
     }
 
@@ -72,6 +208,19 @@ struct HomeDashboardView: View {
                     systemImage: "exclamationmark.triangle")
                     .font(.caption)
                     .foregroundStyle(.orange)
+            }
+            // The Demo Workspace has one button on Home at a time: the
+            // checklist's fourth step offers it while the steps show, and
+            // this card offers it once they are hidden.
+            if scannedFacts != nil, !checklistShown(FirstStudyChecklist.items(checklistFacts)) {
+                Button(DemoWorkspaceCopy.button) { showingDemos = true }
+                    .controlSize(.small)
+                    .disabled(workspace.isEnvironmentPinned)
+                    .help(
+                        workspace.isEnvironmentPinned
+                            ? DemoWorkspaceCopy.unavailableWhilePinned
+                            : "open a copy of a finished study, with a draft to run, "
+                                + "in a folder you choose")
             }
         }
     }
@@ -175,14 +324,9 @@ struct HomeDashboardView: View {
                         + "hand, or by optimizing a concept vector.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                // Three routes at Home's 420 pt floor: `ViewThatFits` keeps
-                // them on one line where there is room and stacks them into
-                // two rows where there is not, instead of clipping.
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { agentEmptyStateButtons }
-                    VStack(alignment: .leading, spacing: 6) { agentEmptyStateButtons }
-                }
-                .controlSize(.small)
+                Button("Open Agents") { navigate(.agents) }
+                    .controlSize(.small)
+                    .help("the Agents section — library, New Agent, and optimization runs")
             } else {
                 ForEach(recentAgents) { record in
                     agentRow(record)
@@ -194,10 +338,34 @@ struct HomeDashboardView: View {
         }
     }
 
+    // MARK: Advanced
+
+    /// The two expert ways to make an agent, which used to sit beside "Open
+    /// Agents" as if a first study needed them (2026-10 release review, A6).
+    /// They keep one home each, here, below the basics; the sidebar's
+    /// Advanced group holds the advanced sections themselves.
+    private var advancedSection: some View {
+        Section("Advanced") {
+            Text(
+                "Beyond a first study: search layers and strengths for the best "
+                    + "steering point, or train an adapter from a dataset. Probes, "
+                    + "Multi-Agent, and Analysis are under Advanced in the sidebar.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            // Two routes at Home's 420 pt floor: `ViewThatFits` keeps them on
+            // one line where there is room and stacks them where there is
+            // not, instead of clipping.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { advancedButtons }
+                VStack(alignment: .leading, spacing: 6) { advancedButtons }
+            }
+            .controlSize(.small)
+        }
+    }
+
     @ViewBuilder
-    private var agentEmptyStateButtons: some View {
-        Button("Open Agents") { navigate(.agents) }
-            .help("the Agents section — library, New Agent, and optimization runs")
+    private var advancedButtons: some View {
         Button("Optimize") { openOptimizations() }
             .help(
                 "Agents → Optimizations: declare a run that searches layers "

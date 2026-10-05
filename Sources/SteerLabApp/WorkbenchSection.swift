@@ -5,6 +5,9 @@ import SwiftUI
 /// workbench design brief), not implementation history. Existing panel TYPES
 /// keep their names — only user-facing labels change (Steering→Playground,
 /// Variants→Agents, Concept Lab→Data, Geometry→Analysis).
+///
+/// The sidebar lists them under two headings, the basics and Advanced, in
+/// the order `sidebarGroups` gives (from `WorkbenchNavigation`, ExperimentKit).
 enum WorkbenchSection: String, CaseIterable, Identifiable {
     case home = "Home"
     // Playground above Data (researcher request 2026-07-18): interactive
@@ -67,6 +70,35 @@ enum WorkbenchSection: String, CaseIterable, Identifiable {
         case .home: 420
         default: 560
         }
+    }
+}
+
+/// One group of the sidebar: its heading and its sections, in order.
+struct WorkbenchSidebarGroup: Identifiable {
+    let group: WorkbenchNavigation.Group
+    let sections: [WorkbenchSection]
+    var id: String { group.rawValue }
+}
+
+extension WorkbenchSection {
+    /// The sidebar's groups — the basics a first study uses, then Advanced —
+    /// as `WorkbenchNavigation` (ExperimentKit, unit-tested) lists them. The
+    /// sections keep their identities; only the headings are new. A section
+    /// the list does not place is shown at the end of the basics, so a new
+    /// one can never vanish from the sidebar.
+    static var sidebarGroups: [WorkbenchSidebarGroup] {
+        var placed = Set<WorkbenchSection>()
+        var groups = WorkbenchNavigation.sections.map { entry in
+            let sections = entry.names.compactMap(WorkbenchSection.init(rawValue:))
+            placed.formUnion(sections)
+            return WorkbenchSidebarGroup(group: entry.group, sections: sections)
+        }
+        let unplaced = allCases.filter { !placed.contains($0) }
+        if !unplaced.isEmpty, let basics = groups.firstIndex(where: { $0.group == .basics }) {
+            groups[basics] = WorkbenchSidebarGroup(
+                group: .basics, sections: groups[basics].sections + unplaced)
+        }
+        return groups
     }
 }
 
