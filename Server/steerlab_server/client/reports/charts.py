@@ -12,7 +12,7 @@ ink, and on paper (or with forced colours) every coloured line also takes its
 own dash pattern.
 """
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 import math
 
 from .page import el, join
@@ -184,4 +184,136 @@ ul.legend svg{vertical-align:middle;margin-right:6px}
 .ser-c0{stroke-dasharray:10 5}.ser-c1{stroke-dasharray:4 5}.ser-c2{stroke-dasharray:10 5 2 5}
 .ser-c3{stroke-dasharray:14 4}.ser-c4{stroke-dasharray:6 4 6 8}.ser-c5{stroke-dasharray:2 6}
 .ser-c6{stroke-dasharray:14 4 2 4 2 4}.ser-c7{stroke-dasharray:6 3 1 3}}
+"""
+
+
+# --- forest charts: stored estimates with their stored intervals ---------------
+
+
+@dataclass(frozen=True)
+class Estimate:
+    """One row of a forest chart: a stored estimate and, where it is drawn, its stored interval."""
+    label: str
+    value: object = None
+    lower: object = None
+    upper: object = None
+    #: Said beside the label when the stored interval is not drawn, and why ("too few pairs", say).
+    note: object = None
+
+    @property
+    def drawn_interval(self):
+        return self.note is None and _finite(self.lower) and _finite(self.upper)
+
+
+def _finite(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def ticks_between(low, high):
+    """Round ticks from at or below ``low`` to at or above ``high``.
+
+    At most six steps of 1, 2, 2.5, or 5 times a power of ten, in Decimal
+    arithmetic, so the same input gives the same ticks on every machine. A
+    scale with no width is widened to one step either side of its value.
+    """
+    if not (_finite(low) and _finite(high)) or low > high:
+        return [Decimal(-1), Decimal(0), Decimal(1)]
+    lo, hi = Decimal(repr(float(low))), Decimal(repr(float(high)))
+    if lo == hi:
+        width = abs(lo) or Decimal(1)
+        lo, hi = lo - width, hi + width
+    span = hi - lo
+    for power in (span.adjusted() - 1, span.adjusted(), span.adjusted() + 1):
+        for mantissa in ('1', '2', '2.5', '5'):
+            step = Decimal(mantissa).scaleb(power)
+            first = int((lo / step).to_integral_value(rounding=ROUND_FLOOR))
+            last = int((hi / step).to_integral_value(rounding=ROUND_CEILING))
+            if last - first <= 6:
+                return [step * index for index in range(first, last + 1)]
+    raise AssertionError('unreachable: a step of ten times the span always fits')
+
+
+FOREST_WIDTH, FOREST_ROW = 720, 40
+FOREST_LEFT, FOREST_RIGHT, FOREST_TOP = 24, 696, 8
+
+
+def forest_chart(*, key, title, rows, value_text, axis_name, estimate_text=None, summary=None):
+    """One figure: each row's stored estimate as a dot and its stored interval as a line.
+
+    Rows are drawn in the order given, each with its label on its own line
+    above the mark, so a long label never runs into the scale. The scale
+    always includes zero, which is marked with a dashed line. A row whose
+    ``note`` is set draws no interval and says why beside its label; a row
+    with no stored estimate says so. ``value_text`` formats a stored value as
+    the page's tables do, and ``estimate_text`` (by default the same) formats
+    the estimate itself.
+    """
+    estimate_text = estimate_text or value_text
+    drawn = [value for row in rows for value in
+             ([row.value] + ([row.lower, row.upper] if row.drawn_interval else [])) if _finite(value)]
+    if not drawn:
+        return el('figure', el('figcaption', title), el('p', 'No value is stored for this chart, so nothing is drawn.'),
+                  class_='chart forest', id=key)
+    ticks = ticks_between(min(drawn + [0.0]), max(drawn + [0.0]))
+    low, high = float(ticks[0]), float(ticks[-1])
+    bottom = FOREST_TOP + len(rows) * FOREST_ROW
+    height = bottom + 46
+
+    def px(x):
+        return FOREST_LEFT + (x - low) / (high - low) * (FOREST_RIGHT - FOREST_LEFT)
+
+    parts = []
+    for tick in ticks:
+        x = _n(px(float(tick)))
+        parts.append(el('line', x1=x, y1=FOREST_TOP, x2=x, y2=bottom, class_='zero' if not tick else 'grid'))
+        parts.append(el('line', x1=x, y1=bottom, x2=x, y2=bottom + 5, class_='axis'))
+        parts.append(el('text', _plain(tick), x=x, y=bottom + 19, text_anchor='middle'))
+    parts.append(el('line', x1=FOREST_LEFT, y1=bottom, x2=FOREST_RIGHT, y2=bottom, class_='axis'))
+    parts.append(el('text', axis_name, x=_n((FOREST_LEFT + FOREST_RIGHT) / 2), y=height - 6, text_anchor='middle',
+                    class_='axis-name'))
+    marks, targets, spoken = [], [], []
+    for index, row in enumerate(rows):
+        top = FOREST_TOP + index * FOREST_ROW
+        middle = _n(top + 28)
+        if not _finite(row.value):
+            aside, said = ' (no estimate stored)', f'{row.label}: no estimate stored.'
+        elif row.note is not None:
+            aside = f' ({row.note})'
+            said = f'{row.label}: {estimate_text(row.value)}; {row.note}.'
+        elif row.drawn_interval:
+            aside = None
+            said = f'{row.label}: {estimate_text(row.value)}, interval {value_text(row.lower)} to {value_text(row.upper)}.'
+        else:
+            aside = ' (no interval stored)'
+            said = f'{row.label}: {estimate_text(row.value)}; no interval stored.'
+        spoken.append(said)
+        marks.append(el('text', el('tspan', row.label), el('tspan', aside, class_='aside') if aside else None,
+                        x=FOREST_LEFT, y=_n(top + 14), class_='row-label'))
+        if row.drawn_interval:
+            left, right = _n(px(row.lower)), _n(px(row.upper))
+            marks.append(el('line', x1=left, y1=middle, x2=right, y2=middle, class_='ci'))
+            for end in (left, right):
+                marks.append(el('line', x1=end, y1=_n(top + 23), x2=end, y2=_n(top + 33), class_='ci'))
+        if _finite(row.value):
+            marks.append(el('circle', cx=_n(px(row.value)), cy=middle, r=4.5, class_='est'))
+            targets.append(el('circle', el('title', said), cx=_n(px(row.value)), cy=middle, r=9, class_='hit'))
+    description = ' '.join([f'One row for each of {len(rows)} readings: the stored estimate as a dot and its stored '
+                            f'interval as a line, on a scale from {_plain(ticks[0])} to {_plain(ticks[-1])}. '
+                            'The dashed line marks zero.', *spoken, *([summary] if summary else [])])
+    picture = el('svg', el('title', title, id=key + '-t'), el('desc', description, id=key + '-d'),
+                 *parts, *marks, *targets,
+                 viewBox=f'0 0 {FOREST_WIDTH} {height}', role='img', aria_labelledby=f'{key}-t {key}-d')
+    return el('figure', el('figcaption', title), picture,
+              el('p', 'Dot: the estimate. Line: its interval. Dashed line: zero.', class_='chart-key'),
+              class_='chart forest', id=key)
+
+
+FOREST_STYLE = """
+figure.forest text.row-label{fill:var(--ink);font-size:12.5px;paint-order:stroke;stroke:var(--surface);
+stroke-width:4px;stroke-linejoin:round}
+figure.forest text.row-label tspan.aside{fill:var(--ink-2)}
+.zero{stroke:var(--ink-2);stroke-width:1.25;stroke-dasharray:4 4}
+.ci{stroke:var(--s0);stroke-width:2;stroke-linecap:round}
+.est{fill:var(--s0);stroke:var(--surface);stroke-width:2}
+p.chart-key{color:var(--ink-2);font-size:13px;margin:6px 0 0}
 """

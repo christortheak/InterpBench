@@ -309,6 +309,10 @@ public enum ExperimentCLIParser {
                 + "transcripts for coding by hand, a methods summary, and a "
                 + "codebook. Runs no model, and recalculates nothing.",
             valueFlags: ["--run", "--out"], ownsOutFlag: true),
+        // The same results as one readable page; `--out` is the page's file.
+        .init(
+            namespace: "results", verb: "report", positional: "<study>",
+            purpose: ResultsReport.purpose, valueFlags: ["--run", "--out"], ownsOutFlag: true),
         // init — the home layout (GENERAL-DISTRIBUTION-WORK-PLAN decision 8,
         // work item (a)). The one BARE verb: a git repository cannot ship its
         // own parent directory, so the home folder that holds `Workspaces/`,

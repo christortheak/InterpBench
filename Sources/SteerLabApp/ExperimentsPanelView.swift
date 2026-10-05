@@ -311,6 +311,10 @@ struct ExperimentsPanelView: View {
                         studyName: panel.management.selectedName,
                         workspaceRoot: ExperimentStore.workspaceRoot,
                         results: panel.results)
+                    StudyReportButton(
+                        studyName: panel.management.selectedName,
+                        workspaceRoot: ExperimentStore.workspaceRoot,
+                        results: panel.results)
                     StudyResultsView(service: service, results: panel.results,
                         refresh: { panel.refreshResults() }) {
                         pairedJudgeControls(panel: panel)

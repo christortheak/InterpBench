@@ -428,6 +428,12 @@ public enum CLIFlagVocabulary {
         "results export --run":
             "The run directory to export; absent, the newest completed run, "
             + "with its newest analysis and evaluation.",
+        "results report --out":
+            "Write the page to this file (default: reports/<study>/<run>/report.html "
+            + "in the workspace). A file inside runs/ is refused.",
+        "results report --run":
+            "The run directory to show; absent, the newest completed run, with its "
+            + "newest analysis and evaluation.",
         "docs cli-reference --path": "The document to read or rewrite.",
         "cluster controller start --allow-controller-start":
             "Accepted and ignored: typing this verb IS the authorization.",
@@ -659,6 +665,9 @@ public enum ExperimentCLIHelp {
             .init(
                 synopsis: "results export <study> [--run <run-dir>] [--out <dir>]",
                 purpose: "Export a run's results as tables, transcripts, a methods summary, and a codebook."),
+            .init(
+                synopsis: "results report <study> [--run <run-dir>] [--out <file>]",
+                purpose: "Write a run's results as one readable page to open in a browser or send."),
             .init(synopsis: "pack preview | apply | export …", purpose: "Review and import study packs, or export text inputs and dependency names."),
             .init(synopsis: "agent list | inspect <path>", purpose: "Inspect local agents for reviewed attachment."),
             .init(synopsis: "design list | inspect | describe | instantiate | batch | save | update …", purpose: "Inspect, save and revise designs, or create studies from reviewed castings."),

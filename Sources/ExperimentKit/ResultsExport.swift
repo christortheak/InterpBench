@@ -219,10 +219,14 @@ enum ResultsExportCLI {
         _ invocation: ExperimentCLIInvocation, sink: ExperimentCLISink,
         workspaceRoot: URL, python: URL? = nil, source: URL? = nil
     ) async throws -> ExperimentCLIResult {
+        if invocation.verb == "report" {
+            return try await ResultsReportCLI.run(
+                invocation, sink: sink, workspaceRoot: workspaceRoot, python: python, source: source)
+        }
         guard invocation.verb == "export" else {
             // "verbs:" is how every family names its roster, and what the
             // runner classifies as an unknown verb rather than a failure.
-            throw ExperimentError(reason: "verbs: export  (\(usage))")
+            throw ExperimentError(reason: "verbs: export | report  (\(usage))")
         }
         var positionals: [String] = []
         var flags: [String: String] = [:]
