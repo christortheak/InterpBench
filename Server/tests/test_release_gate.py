@@ -182,7 +182,10 @@ def test_every_stage_runs_offline_with_names_required_and_no_real_workspace(tmp_
     assert test.argv[test.argv.index("-parallel-testing-enabled") + 1] == "NO"
     assert tmp_path in pathlib.Path(test.argv[test.argv.index("-derivedDataPath") + 1]).parents
     # xcodebuild hands the test runner only TEST_RUNNER_-prefixed variables.
-    assert test.env["TEST_RUNNER_STEERLAB_WORKSPACE"] == str(stand_in)
+    # The workspace variable is removed for the Swift suite, never passed: it
+    # outranks the workspace each test sets for itself.
+    assert "TEST_RUNNER_STEERLAB_WORKSPACE" not in test.env
+    assert set(test.unset) == {"STEERLAB_WORKSPACE", "TEST_RUNNER_STEERLAB_WORKSPACE"}
     assert test.env["TEST_RUNNER_STEERLAB_TEST_PYTHON"] == sys.executable
     assert test.env["TEST_RUNNER_HF_HUB_OFFLINE"] == "1"
     assert test.env["TEST_RUNNER_STEERLAB_REQUIRE_PRIVATE_NAMES"] == "1"
@@ -216,3 +219,46 @@ def test_preflight_installs_nothing_and_names_the_command_to_run(tmp_path, monke
     problems = gate.preflight(context)
     assert any("Run `npm ci` in results-explorer/ yourself" in problem for problem in problems)
     assert not (checkout / "results-explorer" / "node_modules").exists()
+
+
+def test_the_swift_suite_runs_without_the_workspace_variable(tmp_path):
+    """The runner removes what a command unsets, and the plan shows it."""
+    gate = _gate()
+    seen = tmp_path / "seen.json"
+    command = gate.Command(
+        [sys.executable, "-c",
+         "import json, os, sys; json.dump({k: os.environ.get(k) for k in "
+         "('STEERLAB_WORKSPACE', 'TEST_RUNNER_STEERLAB_WORKSPACE', 'HF_HUB_OFFLINE')}, "
+         "open(sys.argv[1], 'w'))", str(seen)],
+        env={"TEST_RUNNER_STEERLAB_WORKSPACE": "/should/not/arrive"},
+        unset=("STEERLAB_WORKSPACE", "TEST_RUNNER_STEERLAB_WORKSPACE"))
+    stage = gate.Stage("swift-suite", "stand-in", "repair", commands=lambda context: [command])
+    context = _context(gate, tmp_path, base_env={
+        "PATH": os.environ["PATH"], "STEERLAB_WORKSPACE": "/a/real/workspace"})
+    [outcome] = gate.run([stage], context, out=io.StringIO())
+    assert outcome.status == "passed"
+    assert json.loads(seen.read_text()) == {
+        "STEERLAB_WORKSPACE": None, "TEST_RUNNER_STEERLAB_WORKSPACE": None, "HF_HUB_OFFLINE": "1"}
+    assert gate._shown(command).startswith(
+        "env -u STEERLAB_WORKSPACE env -u TEST_RUNNER_STEERLAB_WORKSPACE ")
+
+
+def test_preflight_refuses_the_swift_suite_while_a_saved_workspace_could_be_reached(
+        tmp_path, monkeypatch):
+    gate = _gate()
+    names = tmp_path / "private-names.txt"
+    names.write_text("quuxcluster\n")                      # made up
+    real = gate._run_quietly
+
+    def fake(argv, cwd=gate.ROOT, env=None):
+        if argv[:2] == ["defaults", "read"]:
+            code = 0 if argv[2] == "steerlab-cli" else 1
+            return subprocess.CompletedProcess(argv, code, "/a/saved/workspace\n" if code == 0 else "", "")
+        return real(argv, cwd=cwd, env=env)
+
+    monkeypatch.setattr(gate, "_run_quietly", fake)
+    context = _context(gate, tmp_path, selected=["preflight", "swift-suite"], base_env={
+        "PATH": os.environ["PATH"], "STEERLAB_PRIVATE_NAMES_FILE": str(names)})
+    problems = gate.preflight(context)
+    assert any("defaults delete steerlab-cli SteerLabWorkspaceRoot" in problem for problem in problems)
+    assert not any("com.apple.dt.xctest.tool settings" in problem for problem in problems)

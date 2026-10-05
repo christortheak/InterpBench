@@ -30,7 +30,11 @@ RELEASING.md says when to run it. The stages, in order:
 Every stage runs with HF_HUB_OFFLINE=1 (no model downloads),
 STEERLAB_REQUIRE_PRIVATE_NAMES=1 (the private-name guards must run, not
 skip), and STEERLAB_WORKSPACE set to an empty directory in the scratch area,
-so nothing reaches a real workspace through that variable. No stage talks to
+so nothing reaches a real workspace through that variable. The Swift suite is
+the exception: the variable outranks the workspace each test sets for itself,
+so its tests run with the variable removed, and preflight refuses to start
+them while the test runner or the developer command line has a saved
+workspace they could fall back to. No stage talks to
 a cluster, a runner, or any other machine, and none signs, notarizes,
 installs, or uploads anything.
 
@@ -56,7 +60,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Callable, Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 CI = ROOT / "scripts" / "ci"
@@ -71,6 +75,8 @@ class Command:
     argv: List[str]
     cwd: Path = ROOT
     env: Dict[str, str] = field(default_factory=dict)
+    #: Variables removed from the stage environment for this command.
+    unset: Tuple[str, ...] = ()
 
 
 @dataclass
@@ -184,6 +190,15 @@ def preflight(context: Context) -> List[str]:
                                 "from this checkout's Server/; use an environment installed "
                                 "from this checkout, or run the gate from that checkout")
 
+    if "swift-suite" in needs:
+        for domain in SAVED_WORKSPACE_DOMAINS:
+            saved = _run_quietly(["defaults", "read", domain, "SteerLabWorkspaceRoot"])
+            if saved.returncode == 0:
+                problems.append(
+                    f"the {domain} settings name a saved workspace. The Swift suite runs "
+                    "without STEERLAB_WORKSPACE, so a test that sets no workspace of its own "
+                    f"would reach it. Remove it: defaults delete {domain} SteerLabWorkspaceRoot")
+
     if needs & {"build-cli", "audits", "swift-suite"}:
         xcode = _run_quietly(["xcodebuild", "-version"], env=environment)
         if xcode.returncode != 0:
@@ -253,13 +268,21 @@ def _stdlib(script: str, *arguments: str) -> Command:
     return Command([sys.executable, str(CI / script), *arguments])
 
 
+#: Settings domains the Swift suite's processes read a saved workspace from:
+#: the test runner's, and the developer build of the command line's. (The app's
+#: own domain is not read by either.)
+SAVED_WORKSPACE_DOMAINS = ("com.apple.dt.xctest.tool", "steerlab-cli")
+
+
 def _xcodebuild_test(context: Context) -> List[Command]:
     # The test runner only sees variables with the TEST_RUNNER_ prefix.
+    # STEERLAB_WORKSPACE is removed, not pointed at the stand-in: it outranks
+    # the workspace each test sets for itself, and with it set hundreds of
+    # tests resolved their files under the stand-in instead of their own roots.
     passed = {
         "STEERLAB_TEST_PYTHON": str(context.python),
         "HF_HUB_OFFLINE": "1",
         "STEERLAB_REQUIRE_PRIVATE_NAMES": "1",
-        "STEERLAB_WORKSPACE": stage_environment(context)["STEERLAB_WORKSPACE"],
     }
     if context.base_env.get("STEERLAB_PRIVATE_NAMES_FILE"):
         passed["STEERLAB_PRIVATE_NAMES_FILE"] = context.base_env["STEERLAB_PRIVATE_NAMES_FILE"]
@@ -267,7 +290,8 @@ def _xcodebuild_test(context: Context) -> List[Command]:
         ["xcodebuild", "test", "-skipMacroValidation", "-scheme", "SteerLab-Package",
          "-destination", "platform=macOS", "-parallel-testing-enabled", "NO",
          "-derivedDataPath", str(context.scratch / "dd"), "CLANG_COVERAGE_MAPPING=NO"],
-        env={f"TEST_RUNNER_{key}": value for key, value in passed.items()})]
+        env={f"TEST_RUNNER_{key}": value for key, value in passed.items()},
+        unset=("STEERLAB_WORKSPACE", "TEST_RUNNER_STEERLAB_WORKSPACE"))]
 
 
 def _results_explorer(context: Context) -> List[Command]:
@@ -346,7 +370,8 @@ def _shown(command: Command) -> str:
                     for part in command.argv)
     if command.cwd != ROOT:
         text = f"(in {os.path.relpath(command.cwd, ROOT)}) {text}"
-    prefix = " ".join(f"{key}={shlex.quote(value)}" for key, value in command.env.items())
+    prefix = " ".join([f"env -u {key}" for key in command.unset]
+                      + [f"{key}={shlex.quote(value)}" for key, value in command.env.items()])
     return f"{prefix} {text}" if prefix else text
 
 
@@ -383,8 +408,10 @@ def run(plan: List[Stage], context: Context, out=sys.stdout) -> List[Outcome]:
             for command in stage.commands(context):
                 print(f"$ {_shown(command)}", file=out, flush=True)
                 try:
-                    finished = subprocess.run(command.argv, cwd=command.cwd,
-                                              env=stage_environment(context, command.env))
+                    environment = stage_environment(context, command.env)
+                    for key in command.unset:
+                        environment.pop(key, None)
+                    finished = subprocess.run(command.argv, cwd=command.cwd, env=environment)
                     code = finished.returncode
                 except OSError as error:
                     print(f"   could not start it: {error}", file=out, flush=True)
