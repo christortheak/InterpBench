@@ -1,11 +1,12 @@
 "use client";
 
-import { FreezeNotice } from "../components/stamps";
+import { FreezeNotice, TruncationCard } from "../components/stamps";
 import { Badge, ForestRow, NoRunSelected } from "../components/ui";
 import { demoPreviewEnabled, effects } from "../lib/demo";
 import { runKindOf, runStatusOf } from "../lib/discovery";
 import { fmt } from "../lib/format";
 import { freezeLabel, freezeOf } from "../lib/freeze";
+import { conditionErrors } from "../lib/runReport";
 import { runKindLabel } from "../lib/runKind";
 import { statusLabel, statusTone } from "../lib/status";
 import type { View, WorkspaceRun } from "../lib/types";
@@ -32,18 +33,29 @@ type ConditionRow = {
   agreement: number | null;
   agreementN: number | null;
   batteryAccuracy: number | null;
+  /// The condition's `error`, when the engine recorded one in place of its
+  /// numbers; "" otherwise.
+  error: string;
 };
+
+type NumericColumn = Exclude<keyof ConditionRow, "name" | "error">;
 
 function ConditionsTable({ run }: { run: WorkspaceRun }) {
   const conditions = record(run.report.conditions);
   const names = Object.keys(conditions).sort();
   if (!names.length) return null;
+  // A condition that FAILED carries an `error` and no generations. It used
+  // to show as a row of dashes beside the conditions that ran, which reads
+  // as "measured, nothing found" rather than "this arm never ran".
+  const errors = conditionErrors(run.report);
+  const errorFor = (name: string) => errors.find((entry) => entry.condition === name)?.error ?? "";
   const rows: ConditionRow[] = names.map((name) => {
     const row = record(conditions[name]);
     const agreement = record(row.agreementWithBaseline);
     const battery = record(row.capabilityBattery);
     return {
       name,
+      error: errorFor(name),
       generations: numberOf(row.generations),
       meanWordCount: numberOf(row.meanWordCount),
       meanDistinct2: numberOf(row.meanDistinct2),
@@ -54,8 +66,8 @@ function ConditionsTable({ run }: { run: WorkspaceRun }) {
       batteryAccuracy: numberOf(battery.accuracy) ?? numberOf(row.capabilityAccuracy),
     };
   });
-  const present = (key: keyof ConditionRow) => rows.some((row) => row[key] !== null);
-  const allColumns: Array<{ key: keyof ConditionRow; label: string; render: (row: ConditionRow) => string }> = [
+  const present = (key: NumericColumn) => rows.some((row) => row[key] !== null);
+  const allColumns: Array<{ key: NumericColumn; label: string; render: (row: ConditionRow) => string }> = [
     { key: "generations", label: "Generations", render: (row) => row.generations === null ? "—" : String(row.generations) },
     { key: "meanWordCount", label: "Mean words", render: (row) => row.meanWordCount === null ? "—" : row.meanWordCount.toFixed(1) },
     { key: "meanDistinct2", label: "Mean distinct-2", render: (row) => row.meanDistinct2 === null ? "—" : row.meanDistinct2.toFixed(3) },
@@ -69,14 +81,24 @@ function ConditionsTable({ run }: { run: WorkspaceRun }) {
     <section className="card" aria-label="Per-condition summary">
       <header className="section-header">
         <div><span className="section-number">PER-CONDITION SUMMARY</span><h2>{names.length} condition{names.length === 1 ? "" : "s"} as reported</h2></div>
+        {errors.length > 0 && <Badge tone="warn">{errors.length} failed</Badge>}
       </header>
+      {errors.length > 0 && (
+        <div className="notice condition-errors" role="alert">
+          <span className="notice-icon">!</span>
+          <div>
+            <p><strong>{errors.length === 1 ? "1 condition failed" : `${errors.length} conditions failed`} and produced no generations.</strong> There is nothing to compare with the baseline for {errors.length === 1 ? "it" : "them"}, so no effect is reported for {errors.length === 1 ? "it" : "them"}. The engine recorded:</p>
+            <ul>{errors.map((entry) => <li key={entry.condition}><strong>{entry.condition}</strong>: <code>{entry.error}</code></li>)}</ul>
+          </div>
+        </div>
+      )}
       <div className="raw-table-scroll">
         <table className="raw-table">
           <thead><tr><th>Condition</th>{columns.map((column) => <th key={String(column.key)}>{column.label}</th>)}</tr></thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.name}>
-                <td>{row.name}</td>
+              <tr key={row.name} className={row.error ? "condition-failed" : ""}>
+                <td>{row.name}{row.error ? " · failed" : ""}</td>
                 {columns.map((column) => <td key={String(column.key)}>{column.render(row)}</td>)}
               </tr>
             ))}
@@ -165,6 +187,8 @@ export function LocalOverview({ run, onNavigate }: { run: WorkspaceRun; onNaviga
       </section>
 
       <ConditionsTable run={run} />
+
+      <TruncationCard run={run} />
 
       <section className="section-grid main-evidence">
         <div className="card evidence-card">

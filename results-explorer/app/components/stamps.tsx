@@ -6,6 +6,7 @@
 
 import { adjudicationSentence, analysisStampsOf, exclusionsSentence, rescueSentence, unitSentence } from "../lib/analysisStamps";
 import { freezeDetails, freezeLabel, freezeOf, freezeTone, runsBeforeFreeze } from "../lib/freeze";
+import { cellsOverThreshold, cutOffCells, parseTruncation, percentText, thresholdSentence, truncationSentence } from "../lib/runReport";
 import type { RunFile, WorkspaceRun } from "../lib/types";
 import { Badge } from "./ui";
 
@@ -43,7 +44,58 @@ export function FreezeNotice({ run }: { run: WorkspaceRun }) {
   );
 }
 
-export type NoncompliantItem = { judge: string; condition: string; promptID: string; sampleIndex: number; reason: string };
+/// How many generations were cut off at the length limit, from report.json's
+/// `truncation` block. A cut-off generation is not a short answer: its text
+/// stops before the model finished, so anything read from it (a choice, a
+/// number, a judge's verdict) may be read from half an answer. The engines
+/// write this block for every run, whether or not the study set a limit;
+/// the explorer used to show none of it.
+///
+/// Renders nothing for a run whose report has no such block.
+export function TruncationCard({ run }: { run: WorkspaceRun }) {
+  const block = parseTruncation(run.report);
+  if (!block) return null;
+  const cells = cutOffCells(block);
+  const over = new Set(cellsOverThreshold(block).map((cell) => `${cell.condition}\u001f${cell.promptID}`));
+  const shown = cells.slice(0, 12);
+  const anyCut = (block.lengthStopped ?? 0) > 0;
+  return (
+    <section className="card truncation-card" aria-label="Generations cut off at the length limit">
+      <header className="section-header">
+        <div><span className="section-number">CUT-OFF GENERATIONS</span><h2>{anyCut ? "Some generations stop early" : "No generation was cut off"}</h2></div>
+        {over.size > 0 ? <Badge tone="warn">{over.size} over the study&rsquo;s limit</Badge> : anyCut ? <Badge tone="warn">Read with care</Badge> : <Badge tone="good">None</Badge>}
+      </header>
+      <p className="truncation-summary">{truncationSentence(block)} {thresholdSentence(block)}</p>
+      {shown.length > 0 && (
+        <div className="raw-table-scroll">
+          <table className="raw-table">
+            <thead><tr><th>Condition</th><th>Item</th><th>Cut off</th><th>Of</th><th>Share</th><th>Cut off while reasoning</th>{block.threshold !== null && <th>Against the limit</th>}</tr></thead>
+            <tbody>
+              {shown.map((cell) => (
+                <tr key={`${cell.condition}-${cell.promptID}`}>
+                  <td>{cell.condition}</td>
+                  <td>{cell.promptID}</td>
+                  <td>{cell.lengthStopped ?? "—"}</td>
+                  <td>{cell.classified ?? "—"}</td>
+                  <td>{percentText(cell.lengthStoppedFraction)}</td>
+                  <td>{cell.lengthStoppedInReasoning ?? "—"}</td>
+                  {block.threshold !== null && <td>{over.has(`${cell.condition}\u001f${cell.promptID}`) ? "Over" : "Within"}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="table-note">
+        Stored values, read from <code>report.json</code>.
+        {cells.length > shown.length ? ` Showing the ${shown.length} most affected of ${cells.length} condition-and-item pairs with a cut-off generation; the rest are in the report.` : ""}
+        {anyCut ? " Each generation's own ending is in generations.jsonl, under finishReason." : ""}
+      </p>
+    </section>
+  );
+}
+
+export type NoncompliantItem ={ judge: string; condition: string; promptID: string; sampleIndex: number; reason: string };
 
 /// Rows where a judge (or coder) ANSWERED but gave nothing the engine could
 /// use. The engines keep each one as a row, with the judge's words, and
