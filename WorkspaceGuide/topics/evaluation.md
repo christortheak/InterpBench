@@ -357,6 +357,7 @@ what was written:
 - `methods.md`, a plain-language account of how the results were produced;
   `codebook.md`, which describes every column; and `manifest.json`, which
   names every file the export was built from, with its hash.
+- `report.html`, the results page described below.
 
 The tables are UTF-8 with one header row, and open in R, Stata, SPSS, and
 spreadsheet programs. An empty cell means the run did not record the value. A
@@ -369,3 +370,29 @@ run, then export again. `methods.md` states plainly when a study was frozen
 with force, was not frozen, or carries a capability-battery exemption. Repeat
 that to the researcher. Do not edit it out of text they will adapt for a
 paper.
+
+## The results page
+
+`results report` writes the same stored results as one readable page: a
+single HTML file that opens in any web browser and can be sent to a colleague
+as it is. It needs no model, no network, and no app, so it is how a
+researcher without the Mac app sees a study's results.
+
+```bash
+{{cli}} results report <study> [--run <run-dir>] [--out <file>] --json
+```
+
+It chooses the run exactly as `results export` does, and writes the page to
+`reports/<study>/<run>/report.html` in the workspace, or to the file `--out`
+names. A file inside `runs/`, or inside any completed run folder, is refused,
+and it replaces only an earlier page of its own. `result.htmlPath` is the page,
+and `result.headline` names the outcome it leads with and the rule that chose
+it. The page shows, in order: anything the researcher must not miss (a forced
+freeze, a study that was not frozen, a battery exemption, or a declared
+primary outcome the run lacks); the headline outcome with its interval; what
+was asked and compared; every stored effect, with a chart; each condition;
+controls; the judges and their agreement; exclusions; the freeze state with
+the hash of every file it was drawn from; and a list of what the run did not
+store. Nothing on it is recalculated, and a row with fewer than three pairs
+draws no interval. The page holds no response text; `results export` has
+that. In the app, Open Report on a study's results shows the same file.
