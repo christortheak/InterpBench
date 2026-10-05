@@ -157,6 +157,10 @@ rubrics that could guess the condition.
 
 ## Glossary
 
+**Activation, residual stream.** The internal numbers a model carries from
+layer to layer while it reads and writes. The residual stream is that flow as a
+whole. It is where SteerLab reads directions and adds them.
+
 **Adapter.** A small set of trained weights that changes a model's behavior,
 also called fine-tuning. SteerLab can compare an adapter with steering on the
 same footing.
@@ -164,6 +168,12 @@ same footing.
 **Advisory.** Something you should know that did not stop a command, such as a
 skipped check or a one-judge design. Advisories are not failures, and they are
 not to be ignored.
+
+**CAA (contrastive activation addition).** The basic extraction recipe: the
+average internal state over texts that express the concept, minus the average
+over matched texts that do not, at each layer. SteerLab has five recipes,
+including paired-difference PCA and the RepE reader; [METHODS.md](METHODS.md)
+defines each.
 
 **Capability battery.** Short unrelated tasks run under every condition, to
 show the model still works. If accuracy drops, an apparent effect may be plain
@@ -212,6 +222,13 @@ unreadable result. Every refusal says what is wrong and how to repair it; see
 [reporting and troubleshooting](REPORTING-AND-TROUBLESHOOTING.md).
 
 **Rubric.** The instructions a judge follows, kept as a file and pinned.
+
+**Sidecar.** The small file saved beside each direction, recording how it was
+made: the model and its revision, the layer, the recipe, and the reading
+position.
+
+**Stimulus set.** The example texts a concept is extracted from. Their hash is
+the concept's identity wherever a study pins it.
 
 **Sweep.** Trying a planned range of layers and strengths on development
 prompts, then choosing one by a rule you declared first.
