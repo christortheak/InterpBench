@@ -1,0 +1,703 @@
+<!doctype html>
+<!-- SteerLab report page -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<meta name="generator" content="SteerLab report page, format 1">
+<title>J-lens assessment: example/tiny-model</title>
+<style>
+:root{color-scheme:light dark;--page:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink-2:#52514e;--muted:#898781;
+--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--wash:#f0efec}
+@media (prefers-color-scheme:dark){:root{--page:#0d0d0d;--surface:#1a1a19;--ink:#ffffff;--ink-2:#c3c2b7;
+--muted:#898781;--grid:#2c2c2a;--axis:#383835;--border:rgba(255,255,255,.10);--wash:#242422}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+header.masthead,main,footer{max-width:1040px;margin:0 auto;padding:0 20px}
+header.masthead{padding-top:28px}
+h1{font-size:26px;line-height:1.25;margin:0 0 6px}
+h2{font-size:19px;margin:0 0 12px}
+h3{font-size:16px;margin:22px 0 8px}
+h4{font-size:14px;margin:18px 0 6px}
+p{margin:0 0 10px}
+.lead{color:var(--ink-2);margin:0}
+section{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px 24px;margin:20px 0}
+.sub{border-top:1px solid var(--grid);margin-top:20px}
+a{color:inherit;text-decoration:underline;text-decoration-color:var(--axis);text-underline-offset:2px}
+code{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap}
+code.long{white-space:normal;overflow-wrap:anywhere}
+ul,ol{margin:0 0 10px;padding-left:22px}
+li{margin:2px 0}
+nav.contents ol{columns:2;column-gap:32px;margin:14px 0 0}
+dl.facts{display:grid;grid-template-columns:minmax(150px,230px) 1fr;gap:4px 18px;margin:0 0 12px}
+dl.facts dt{color:var(--ink-2)}
+dl.facts dd{margin:0;min-width:0}
+.note{background:var(--wash);border-left:3px solid var(--axis);padding:8px 12px;margin:12px 0}
+.note p{margin:0}
+.table-wrap{overflow-x:auto;margin:10px 0 4px}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+caption{text-align:left;font-weight:600;padding:0 0 6px}
+th,td{padding:4px 10px;text-align:left;vertical-align:top;border-bottom:1px solid var(--grid);font-weight:400}
+thead th{color:var(--ink-2);border-bottom:1px solid var(--axis);vertical-align:bottom}
+thead th.group{text-align:center;border-bottom:1px solid var(--grid)}
+.num{text-align:right;white-space:nowrap}
+thead th.num{white-space:normal}
+td strong{font-weight:700}
+.none{color:var(--muted)}
+.table-note{color:var(--ink-2);font-size:13px;margin:4px 0 12px}
+footer{color:var(--ink-2);font-size:13px;padding-top:8px;padding-bottom:48px}
+@media (max-width:640px){dl.facts{grid-template-columns:1fr;gap:0 0}dl.facts dd{margin-bottom:8px}
+nav.contents ol{columns:1}section{padding:16px}}
+@media print{:root{--page:#fff;--surface:#fff;--ink:#000;--ink-2:#222;--muted:#555;--grid:#ccc;--axis:#888;
+--border:#999;--wash:#f3f3f3}
+body{font-size:11pt}header.masthead,main,footer{max-width:none;padding:0}
+section{border:0;border-radius:0;padding:0;margin:18pt 0}
+h2,h3,h4,caption{break-after:avoid}tr,figure,.note{break-inside:avoid}thead{display:table-header-group}
+.table-wrap{overflow:visible}table{font-size:9pt}a{text-decoration:none}}
+
+:root{--s0:#2a78d6;--s1:#eb6834;--s2:#1baf7a;--s3:#eda100;--s4:#e87ba4;--s5:#008300;--s6:#4a3aa7;--s7:#e34948}
+@media (prefers-color-scheme:dark){:root{--s0:#3987e5;--s1:#d95926;--s2:#199e70;--s3:#c98500;--s4:#d55181;
+--s5:#008300;--s6:#9085e9;--s7:#e66767}}
+figure.chart{margin:14px 0 6px}
+figure.chart figcaption{font-weight:600;margin-bottom:6px}
+figure.chart>svg{display:block;width:100%;max-width:760px;height:auto;background:var(--surface)}
+figure.chart text{fill:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+figure.chart text.axis-name{fill:var(--ink-2);font-size:12px}
+.grid{stroke:var(--grid);stroke-width:1}
+.axis{stroke:var(--axis);stroke-width:1}
+.ser{fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.ser-base{stroke:var(--muted);stroke-dasharray:1 5}
+.ser-ref{stroke:var(--ink)}
+.ser-c0{stroke:var(--s0)}.ser-c1{stroke:var(--s1)}.ser-c2{stroke:var(--s2)}.ser-c3{stroke:var(--s3)}
+.ser-c4{stroke:var(--s4)}.ser-c5{stroke:var(--s5)}.ser-c6{stroke:var(--s6)}.ser-c7{stroke:var(--s7)}
+.dot{stroke:var(--surface);stroke-width:2}
+.dot-base{fill:var(--muted)}.dot-ref{fill:var(--ink)}
+.dot-c0{fill:var(--s0)}.dot-c1{fill:var(--s1)}.dot-c2{fill:var(--s2)}.dot-c3{fill:var(--s3)}
+.dot-c4{fill:var(--s4)}.dot-c5{fill:var(--s5)}.dot-c6{fill:var(--s6)}.dot-c7{fill:var(--s7)}
+.hit{fill:transparent;stroke:none}
+ul.legend{list-style:none;display:flex;flex-wrap:wrap;gap:4px 22px;padding:0;margin:8px 0 0;font-size:13px;
+color:var(--ink-2)}
+ul.legend li{margin:0}
+ul.legend svg{vertical-align:middle;margin-right:6px}
+@media print,(forced-colors:active){
+:root{--s0:#2a78d6;--s1:#eb6834;--s2:#1baf7a;--s3:#eda100;--s4:#e87ba4;--s5:#008300;--s6:#4a3aa7;--s7:#e34948}
+.ser-c0{stroke-dasharray:10 5}.ser-c1{stroke-dasharray:4 5}.ser-c2{stroke-dasharray:10 5 2 5}
+.ser-c3{stroke-dasharray:14 4}.ser-c4{stroke-dasharray:6 4 6 8}.ser-c5{stroke-dasharray:2 6}
+.ser-c6{stroke-dasharray:14 4 2 4 2 4}.ser-c7{stroke-dasharray:6 3 1 3}}
+</style>
+</head>
+<body>
+<header class="masthead">
+<h1>J-lens assessment: example/tiny-model</h1>
+<p class="lead">1 candidate lens compared with a reference lens and a plain baseline, on 1 text, in 1 comparison.</p>
+</header>
+<main>
+<nav aria-label="Contents" class="contents">
+<ol>
+<li><a href="#summary">Summary</a></li>
+<li><a href="#identity">Identity</a></li>
+<li><a href="#t1">Text 1: <code>heldout/essays.jsonl</code></a></li>
+<li><a href="#lenses">Lenses</a></li>
+<li><a href="#limits">Limits</a></li>
+</ol>
+</nav>
+<section id="summary" aria-labelledby="summary-h">
+<h2 id="summary-h">Summary</h2>
+<p>A J-lens translates a model’s internal state at one layer into the tokens (word pieces) the model is leaning toward. This report asks how well each candidate lens reads the model’s own final prediction, layer by layer, next to a reference lens and next to reading the layer with no lens at all.</p>
+<h3>What was compared</h3>
+<ul>
+<li>Model <code>example/tiny-model</code> at revision <code class="long">abababababababababababababababababababab</code>.</li>
+<li>Reference lens: <code>lens-round-1</code>.</li>
+<li>Candidate lens (1): <code>lens-round-2</code>.</li>
+<li>Text (1): <code>heldout/essays.jsonl</code> (2 of 2 rows assessed).</li>
+<li>Plain baseline: each layer read directly, with no lens, at the same token positions.</li>
+</ul>
+<h3>Result, text by text</h3>
+<p>“More closely” below means a higher top-k overlap with the model’s final prediction, the main measure here. Both measures are explained at the end of this summary.</p>
+<h4>On <code>heldout/essays.jsonl</code></h4>
+<ul>
+<li>Candidate <code>lens-round-2</code> matched the model’s final prediction more closely than the reference at 2 of 3 layers (0, 2), less closely at no layer, and equally at 1 of 3 layers (1). It matched more closely than the plain baseline at all 3 layers.</li>
+</ul>
+<p>Closest reading at each layer, by top-k overlap: candidate <code>lens-round-2</code> at 2 layers (0, 2); two or more readings share the closest value at 1 layer (1).</p>
+<div class="table-wrap" role="region" aria-labelledby="summary-table-caption" tabindex="0"><table id="summary-table">
+<caption id="summary-table-caption">Layers where each candidate is the closer reading</caption>
+<thead>
+<tr>
+<th scope="col" rowspan="2">Text</th>
+<th scope="col" rowspan="2">Candidate lens</th>
+<th scope="colgroup" colspan="2" class="group">Closer than the reference</th>
+<th scope="colgroup" colspan="2" class="group">Closer than the plain baseline</th>
+</tr>
+<tr>
+<th scope="col" class="num">Top-k overlap</th>
+<th scope="col" class="num">Jensen–Shannon divergence</th>
+<th scope="col" class="num">Top-k overlap</th>
+<th scope="col" class="num">Jensen–Shannon divergence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="#c1"><code>heldout/essays.jsonl</code></a></td>
+<td><code>lens-round-2</code></td>
+<td class="num">2 of 3</td>
+<td class="num">2 of 3</td>
+<td class="num">3 of 3</td>
+<td class="num">3 of 3</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="table-note">Each count is the number of layers where the candidate’s stored value is the closer one, out of the layers where both values are stored.</p>
+<div class="note"><p><strong>Read with care: </strong>These are layer-by-layer comparisons of stored values. The engine computed no average across layers, no interval, and no significance test, so this page shows none. A small difference at one layer may not be a meaningful one.</p>
+</div>
+<p>This assessment does not qualify a lens. Whether a lens is good enough for a study remains the researcher’s decision.</p>
+<h3>How to read the numbers</h3>
+<p><strong>Top-k overlap</strong> is the main measure. Take the k tokens the model finally ranks highest at a position, and the k tokens a reading ranks highest at the same position. The overlap is the share they have in common, from 0 (none) to 1 (the same k tokens). Higher means the reading is closer to the final prediction. k is 5.</p>
+<p><strong>Jensen–Shannon divergence</strong> compares the two full sets of token probabilities, in nats. 0 means identical, and lower means closer. The engine averaged both measures over the assessed token positions of a text.</p>
+</section>
+<section id="identity" aria-labelledby="identity-h">
+<h2 id="identity-h">Identity</h2>
+<dl class="facts">
+<dt>Report file SHA-256</dt>
+<dd><code class="long">009f6ba0d36660e7b23f7015c20b39fc8231614bfaed10c421ff59bdf486fd66</code></dd>
+<dt>Report schema version</dt>
+<dd>1</dd>
+<dt>Operation</dt>
+<dd><code>jlens-fit-assess</code></dd>
+<dt>Model</dt>
+<dd><code>example/tiny-model</code></dd>
+<dt>Model revision</dt>
+<dd><code class="long">abababababababababababababababababababab</code></dd>
+</dl>
+<div class="table-wrap" role="region" aria-labelledby="identity-lenses-caption" tabindex="0"><table id="identity-lenses">
+<caption id="identity-lenses-caption">Lenses</caption>
+<thead>
+<tr>
+<th scope="col">Lens ID</th>
+<th scope="col">Role</th>
+<th scope="col">Converted tensor SHA-256</th>
+<th scope="col">Source tensor SHA-256</th>
+<th scope="col">Fit report SHA-256</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row"><a href="#lens-1"><code>lens-round-1</code></a></th>
+<td>Reference</td>
+<td><code class="long">1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a</code></td>
+<td><code class="long">a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1</code></td>
+<td><code class="long">f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0</code></td>
+</tr>
+<tr>
+<th scope="row"><a href="#lens-2"><code>lens-round-2</code></a></th>
+<td>Candidate</td>
+<td><code class="long">2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a</code></td>
+<td><code class="long">a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2</code></td>
+<td><code class="long">f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="table-note">The converted tensor is the file the assessment read. The fitting text and row counts of each lens are under Lenses, further down.</p>
+<div class="table-wrap" role="region" aria-labelledby="identity-comparisons-caption" tabindex="0"><table id="identity-comparisons">
+<caption id="identity-comparisons-caption">Comparisons</caption>
+<thead>
+<tr>
+<th scope="col" class="num">No.</th>
+<th scope="col">Text</th>
+<th scope="col">Text SHA-256</th>
+<th scope="col">Candidate lens</th>
+<th scope="col">Comparison SHA-256</th>
+<th scope="col">Digest check</th>
+<th scope="col" class="num">Rows assessed</th>
+<th scope="col" class="num">Rows skipped</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row" class="num"><a href="#c1">1</a></th>
+<td><code>heldout/essays.jsonl</code></td>
+<td><code class="long">c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1</code></td>
+<td><code>lens-round-2</code></td>
+<td><code class="long">928e6de055bc45e8ea706147a746c101a5fe93900bb7a759f34ad9b15ce4a179</code></td>
+<td>matches the stored entry</td>
+<td class="num">2</td>
+<td class="num">0</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="table-note">Every comparison uses the one reference lens named above. The comparison SHA-256 is the engine’s digest of that entry. This page recomputes it only to check that the entry is unchanged.</p>
+<h3>Baseline</h3>
+<p>The plain baseline, also called the logit lens: the layer’s own state is read through the model’s final normalization and output layer with no lens applied, at the same token positions as the lenses. It is stored for every layer of every comparison.</p>
+<h3>Readout precision</h3>
+<dl class="facts">
+<dt>Readout precision requested</dt>
+<dd><code>native</code></dd>
+<dt>Output head precision</dt>
+<dd><code>bfloat16</code></dd>
+<dt>Final normalization precision</dt>
+<dd><code>bfloat16</code></dd>
+<dt>Precision of the lens step</dt>
+<dd><code>float32</code></dd>
+<dt>Float32 readout</dt>
+<dd>not used</dd>
+<dt>Extra readout parameter bytes</dt>
+<dd>0</dd>
+<dt>What every reading is compared with</dt>
+<dd>Native model.unembed of the same captured final residual; unchanged for both readout modes.</dd>
+<dt>Recorded limits of this precision</dt>
+<dd>Captured activations retain their forward dtype; casting does not recover lost precision.</dd>
+</dl>
+<h3>Settings</h3>
+<dl class="facts">
+<dt>Rows read per text, at most</dt>
+<dd>2</dd>
+<dt>Tokens read per row, at most</dt>
+<dd>32</dd>
+<dt>Leading tokens skipped in each row</dt>
+<dd>2</dd>
+<dt>Token positions assessed per row, at most</dt>
+<dd>20</dd>
+<dt>k for top-k overlap</dt>
+<dd>5</dd>
+<dt>Layers requested</dt>
+<dd>every layer the lenses share</dd>
+<dt>Model precision</dt>
+<dd><code>bfloat16</code></dd>
+<dt>Device</dt>
+<dd><code>cuda</code></dd>
+</dl>
+<h3>Runtime recorded by the engine</h3>
+<div class="table-wrap" role="region" aria-labelledby="identity-runtime-caption" tabindex="0"><table id="identity-runtime">
+<caption id="identity-runtime-caption">Runtime</caption>
+<thead>
+<tr>
+<th scope="col">Field</th>
+<th scope="col">Recorded value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row"><code>attention</code></th>
+<td><code>eager</code></td>
+</tr>
+<tr>
+<th scope="row"><code>cudaTF32</code></th>
+<td><code>false</code></td>
+</tr>
+<tr>
+<th scope="row"><code>device</code></th>
+<td><code>cuda</code></td>
+</tr>
+<tr>
+<th scope="row"><code>dtype</code></th>
+<td><code>bfloat16</code></td>
+</tr>
+<tr>
+<th scope="row"><code>kernelSHA256</code></th>
+<td><code class="long">b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7</code></td>
+</tr>
+<tr>
+<th scope="row"><code>modelClass</code></th>
+<td><code>TinyForCausalLM</code></td>
+</tr>
+<tr>
+<th scope="row"><code>optionalKernels</code></th>
+<td><code>{}</code></td>
+</tr>
+<tr>
+<th scope="row"><code>torch</code></th>
+<td><code>2.5.0</code></td>
+</tr>
+<tr>
+<th scope="row"><code>transformers</code></th>
+<td><code>5.6.0</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="t1" aria-labelledby="t1-h">
+<h2 id="t1-h">Text 1: <code>heldout/essays.jsonl</code></h2>
+<dl class="facts">
+<dt>File</dt>
+<dd><code>heldout/essays.jsonl</code></dd>
+<dt>SHA-256</dt>
+<dd><code class="long">c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1</code></dd>
+<dt>Rows</dt>
+<dd>2 of 2 rows assessed.</dd>
+<dt>Comparisons</dt>
+<dd><a href="#c1">candidate <code>lens-round-2</code></a></dd>
+</dl>
+<figure class="chart" id="t1-overlap-chart">
+<figcaption>Top-k overlap with the final prediction, by layer (higher is closer)</figcaption>
+<svg viewBox="0 0 720 312" role="img" aria-labelledby="t1-overlap-chart-t t1-overlap-chart-d">
+<title id="t1-overlap-chart-t">Top-k overlap with the final prediction, by layer (higher is closer)</title>
+<desc id="t1-overlap-chart-d">A line for each of 3 readings, by layer from 0 to 2. Plain baseline: 0.1000 at layer 0, 0.7500 at layer 2. Reference lens-round-1: 0.2500 at layer 0, 0.7500 at layer 2. Candidate lens-round-2: 0.3000 at layer 0, 0.8500 at layer 2. Every value is in the table that follows.</desc>
+<line x1="52" y1="262.00" x2="706" y2="262.00" class="axis"/>
+<text x="44" y="266.00" text-anchor="end">0</text>
+<line x1="52" y1="212.40" x2="706" y2="212.40" class="grid"/>
+<text x="44" y="216.40" text-anchor="end">0.2</text>
+<line x1="52" y1="162.80" x2="706" y2="162.80" class="grid"/>
+<text x="44" y="166.80" text-anchor="end">0.4</text>
+<line x1="52" y1="113.20" x2="706" y2="113.20" class="grid"/>
+<text x="44" y="117.20" text-anchor="end">0.6</text>
+<line x1="52" y1="63.60" x2="706" y2="63.60" class="grid"/>
+<text x="44" y="67.60" text-anchor="end">0.8</text>
+<line x1="52" y1="14.00" x2="706" y2="14.00" class="grid"/>
+<text x="44" y="18.00" text-anchor="end">1</text>
+<line x1="52.00" y1="262" x2="52.00" y2="267" class="axis"/>
+<text x="52.00" y="281" text-anchor="middle">0</text>
+<line x1="379.00" y1="262" x2="379.00" y2="267" class="axis"/>
+<text x="379.00" y="281" text-anchor="middle">1</text>
+<line x1="706.00" y1="262" x2="706.00" y2="267" class="axis"/>
+<text x="706.00" y="281" text-anchor="middle">2</text>
+<text x="379.00" y="304" text-anchor="middle" class="axis-name">Layer</text>
+<path d="M52.00 237.20 L379.00 187.60 L706.00 76.00" class="ser ser-base"/>
+<circle cx="52.00" cy="237.20" r="4" class="dot dot-base"/>
+<circle cx="379.00" cy="187.60" r="4" class="dot dot-base"/>
+<circle cx="706.00" cy="76.00" r="4" class="dot dot-base"/>
+<path d="M52.00 200.00 L379.00 138.00 L706.00 76.00" class="ser ser-ref"/>
+<circle cx="52.00" cy="200.00" r="4" class="dot dot-ref"/>
+<circle cx="379.00" cy="138.00" r="4" class="dot dot-ref"/>
+<circle cx="706.00" cy="76.00" r="4" class="dot dot-ref"/>
+<path d="M52.00 187.60 L379.00 138.00 L706.00 51.20" class="ser ser-c0"/>
+<circle cx="52.00" cy="187.60" r="4" class="dot dot-c0"/>
+<circle cx="379.00" cy="138.00" r="4" class="dot dot-c0"/>
+<circle cx="706.00" cy="51.20" r="4" class="dot dot-c0"/>
+<circle cx="52.00" cy="237.20" r="7" class="hit"><title>Plain baseline, layer 0: 0.1000</title>
+</circle>
+<circle cx="379.00" cy="187.60" r="7" class="hit"><title>Plain baseline, layer 1: 0.3000</title>
+</circle>
+<circle cx="706.00" cy="76.00" r="7" class="hit"><title>Plain baseline, layer 2: 0.7500</title>
+</circle>
+<circle cx="52.00" cy="200.00" r="7" class="hit"><title>Reference lens-round-1, layer 0: 0.2500</title>
+</circle>
+<circle cx="379.00" cy="138.00" r="7" class="hit"><title>Reference lens-round-1, layer 1: 0.5000</title>
+</circle>
+<circle cx="706.00" cy="76.00" r="7" class="hit"><title>Reference lens-round-1, layer 2: 0.7500</title>
+</circle>
+<circle cx="52.00" cy="187.60" r="7" class="hit"><title>Candidate lens-round-2, layer 0: 0.3000</title>
+</circle>
+<circle cx="379.00" cy="138.00" r="7" class="hit"><title>Candidate lens-round-2, layer 1: 0.5000</title>
+</circle>
+<circle cx="706.00" cy="51.20" r="7" class="hit"><title>Candidate lens-round-2, layer 2: 0.8500</title>
+</circle>
+</svg>
+<ul class="legend">
+<li><svg viewBox="0 0 28 10" width="28" height="10" aria-hidden="true" focusable="false">
+<line x1="2" y1="5" x2="26" y2="5" class="ser ser-base"/>
+</svg>
+Plain baseline</li>
+<li><svg viewBox="0 0 28 10" width="28" height="10" aria-hidden="true" focusable="false">
+<line x1="2" y1="5" x2="26" y2="5" class="ser ser-ref"/>
+</svg>
+Reference lens-round-1</li>
+<li><svg viewBox="0 0 28 10" width="28" height="10" aria-hidden="true" focusable="false">
+<line x1="2" y1="5" x2="26" y2="5" class="ser ser-c0"/>
+</svg>
+Candidate lens-round-2</li>
+</ul>
+</figure>
+<div class="table-wrap" role="region" aria-labelledby="t1-overlap-caption" tabindex="0"><table id="t1-overlap">
+<caption id="t1-overlap-caption">Top-k overlap with the final prediction, by layer, on <code>heldout/essays.jsonl</code></caption>
+<thead>
+<tr>
+<th scope="col" class="num">Layer</th>
+<th scope="col" class="num">Token positions</th>
+<th scope="col" class="num">Plain baseline</th>
+<th scope="col" class="num">Reference <code>lens-round-1</code></th>
+<th scope="col" class="num">Candidate <code>lens-round-2</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row" class="num">0</th>
+<td class="num">40</td>
+<td class="num">0.1000</td>
+<td class="num">0.2500</td>
+<td class="num"><strong>0.3000</strong></td>
+</tr>
+<tr>
+<th scope="row" class="num">1</th>
+<td class="num">40</td>
+<td class="num">0.3000</td>
+<td class="num"><strong>0.5000</strong></td>
+<td class="num"><strong>0.5000</strong></td>
+</tr>
+<tr>
+<th scope="row" class="num">2</th>
+<td class="num">40</td>
+<td class="num">0.7500</td>
+<td class="num">0.7500</td>
+<td class="num"><strong>0.8500</strong></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="table-note">The closest value in each row is in bold (higher is closer). The reference and baseline columns are the copies stored with comparison <a href="#c1">1</a>. Values are rounded to four decimal places; the JSON holds them in full.</p>
+<figure class="chart" id="t1-divergence-chart">
+<figcaption>Jensen–Shannon divergence with the final prediction, by layer (lower is closer)</figcaption>
+<svg viewBox="0 0 720 312" role="img" aria-labelledby="t1-divergence-chart-t t1-divergence-chart-d">
+<title id="t1-divergence-chart-t">Jensen–Shannon divergence with the final prediction, by layer (lower is closer)</title>
+<desc id="t1-divergence-chart-d">A line for each of 3 readings, by layer from 0 to 2. Plain baseline: 0.6000 at layer 0, 0.0500 at layer 2. Reference lens-round-1: 0.4000 at layer 0, 0.0500 at layer 2. Candidate lens-round-2: 0.3500 at layer 0, 0.0250 at layer 2. Every value is in the table that follows.</desc>
+<line x1="52" y1="262.00" x2="706" y2="262.00" class="axis"/>
+<text x="44" y="266.00" text-anchor="end">0</text>
+<line x1="52" y1="179.33" x2="706" y2="179.33" class="grid"/>
+<text x="44" y="183.33" text-anchor="end">0.2</text>
+<line x1="52" y1="96.67" x2="706" y2="96.67" class="grid"/>
+<text x="44" y="100.67" text-anchor="end">0.4</text>
+<line x1="52" y1="14.00" x2="706" y2="14.00" class="grid"/>
+<text x="44" y="18.00" text-anchor="end">0.6</text>
+<line x1="52.00" y1="262" x2="52.00" y2="267" class="axis"/>
+<text x="52.00" y="281" text-anchor="middle">0</text>
+<line x1="379.00" y1="262" x2="379.00" y2="267" class="axis"/>
+<text x="379.00" y="281" text-anchor="middle">1</text>
+<line x1="706.00" y1="262" x2="706.00" y2="267" class="axis"/>
+<text x="706.00" y="281" text-anchor="middle">2</text>
+<text x="379.00" y="304" text-anchor="middle" class="axis-name">Layer</text>
+<path d="M52.00 14.00 L379.00 96.67 L706.00 241.33" class="ser ser-base"/>
+<circle cx="52.00" cy="14.00" r="4" class="dot dot-base"/>
+<circle cx="379.00" cy="96.67" r="4" class="dot dot-base"/>
+<circle cx="706.00" cy="241.33" r="4" class="dot dot-base"/>
+<path d="M52.00 96.67 L379.00 179.33 L706.00 241.33" class="ser ser-ref"/>
+<circle cx="52.00" cy="96.67" r="4" class="dot dot-ref"/>
+<circle cx="379.00" cy="179.33" r="4" class="dot dot-ref"/>
+<circle cx="706.00" cy="241.33" r="4" class="dot dot-ref"/>
+<path d="M52.00 117.33 L379.00 179.33 L706.00 251.67" class="ser ser-c0"/>
+<circle cx="52.00" cy="117.33" r="4" class="dot dot-c0"/>
+<circle cx="379.00" cy="179.33" r="4" class="dot dot-c0"/>
+<circle cx="706.00" cy="251.67" r="4" class="dot dot-c0"/>
+<circle cx="52.00" cy="14.00" r="7" class="hit"><title>Plain baseline, layer 0: 0.6000</title>
+</circle>
+<circle cx="379.00" cy="96.67" r="7" class="hit"><title>Plain baseline, layer 1: 0.4000</title>
+</circle>
+<circle cx="706.00" cy="241.33" r="7" class="hit"><title>Plain baseline, layer 2: 0.0500</title>
+</circle>
+<circle cx="52.00" cy="96.67" r="7" class="hit"><title>Reference lens-round-1, layer 0: 0.4000</title>
+</circle>
+<circle cx="379.00" cy="179.33" r="7" class="hit"><title>Reference lens-round-1, layer 1: 0.2000</title>
+</circle>
+<circle cx="706.00" cy="241.33" r="7" class="hit"><title>Reference lens-round-1, layer 2: 0.0500</title>
+</circle>
+<circle cx="52.00" cy="117.33" r="7" class="hit"><title>Candidate lens-round-2, layer 0: 0.3500</title>
+</circle>
+<circle cx="379.00" cy="179.33" r="7" class="hit"><title>Candidate lens-round-2, layer 1: 0.2000</title>
+</circle>
+<circle cx="706.00" cy="251.67" r="7" class="hit"><title>Candidate lens-round-2, layer 2: 0.0250</title>
+</circle>
+</svg>
+<ul class="legend">
+<li><svg viewBox="0 0 28 10" width="28" height="10" aria-hidden="true" focusable="false">
+<line x1="2" y1="5" x2="26" y2="5" class="ser ser-base"/>
+</svg>
+Plain baseline</li>
+<li><svg viewBox="0 0 28 10" width="28" height="10" aria-hidden="true" focusable="false">
+<line x1="2" y1="5" x2="26" y2="5" class="ser ser-ref"/>
+</svg>
+Reference lens-round-1</li>
+<li><svg viewBox="0 0 28 10" width="28" height="10" aria-hidden="true" focusable="false">
+<line x1="2" y1="5" x2="26" y2="5" class="ser ser-c0"/>
+</svg>
+Candidate lens-round-2</li>
+</ul>
+</figure>
+<div class="table-wrap" role="region" aria-labelledby="t1-divergence-caption" tabindex="0"><table id="t1-divergence">
+<caption id="t1-divergence-caption">Jensen–Shannon divergence with the final prediction, by layer, on <code>heldout/essays.jsonl</code></caption>
+<thead>
+<tr>
+<th scope="col" class="num">Layer</th>
+<th scope="col" class="num">Token positions</th>
+<th scope="col" class="num">Plain baseline</th>
+<th scope="col" class="num">Reference <code>lens-round-1</code></th>
+<th scope="col" class="num">Candidate <code>lens-round-2</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row" class="num">0</th>
+<td class="num">40</td>
+<td class="num">0.6000</td>
+<td class="num">0.4000</td>
+<td class="num"><strong>0.3500</strong></td>
+</tr>
+<tr>
+<th scope="row" class="num">1</th>
+<td class="num">40</td>
+<td class="num">0.4000</td>
+<td class="num"><strong>0.2000</strong></td>
+<td class="num"><strong>0.2000</strong></td>
+</tr>
+<tr>
+<th scope="row" class="num">2</th>
+<td class="num">40</td>
+<td class="num">0.0500</td>
+<td class="num">0.0500</td>
+<td class="num"><strong>0.0250</strong></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="table-note">The closest value in each row is in bold (lower is closer). The reference and baseline columns are the copies stored with comparison <a href="#c1">1</a>. Values are rounded to four decimal places; the JSON holds them in full.</p>
+<div id="c1" class="sub"><h3 id="c1-h">Comparison 1: candidate <code>lens-round-2</code></h3>
+<dl class="facts">
+<dt>Candidate lens</dt>
+<dd><code>lens-round-2</code></dd>
+<dt>Reference lens</dt>
+<dd><code>lens-round-1</code></dd>
+<dt>Text</dt>
+<dd><code>heldout/essays.jsonl</code>, SHA-256 <code class="long">c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1</code></dd>
+<dt>Comparison SHA-256</dt>
+<dd><code class="long">928e6de055bc45e8ea706147a746c101a5fe93900bb7a759f34ad9b15ce4a179</code> (matches the stored entry)</dd>
+<dt>Held out?</dt>
+<dd>Declared held out by the researcher. The engine checked only that this file is not the lenses’ fitting text. It did not look for passages the two share. Recorded as <code class="long">researcherDeclared; overlapNotEstablished</code>.</dd>
+<dt>Rows</dt>
+<dd>2 of 2 rows assessed.</dd>
+<dt>Readout precision</dt>
+<dd><code>native</code> requested; float32 readout not recorded</dd>
+</dl>
+<div class="table-wrap" role="region" aria-labelledby="c1-direct-caption" tabindex="0"><table id="c1-direct">
+<caption id="c1-direct-caption">Candidate <code>lens-round-2</code> and the reference, compared directly, on <code>heldout/essays.jsonl</code></caption>
+<thead>
+<tr>
+<th scope="col" rowspan="2" class="num">Layer</th>
+<th scope="col" rowspan="2" class="num">Token positions</th>
+<th scope="colgroup" colspan="2" class="group">The two lenses, read against each other</th>
+<th scope="colgroup" colspan="6" class="group">The two lens matrices</th>
+</tr>
+<tr>
+<th scope="col" class="num">Top-k overlap</th>
+<th scope="col" class="num">Jensen–Shannon divergence</th>
+<th scope="col" class="num">Relative difference</th>
+<th scope="col" class="num">Cosine</th>
+<th scope="col" class="num">Largest single difference</th>
+<th scope="col" class="num">Reference size</th>
+<th scope="col" class="num">Candidate size</th>
+<th scope="col" class="num">Difference size</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row" class="num">0</th>
+<td class="num">40</td>
+<td class="num">0.9000</td>
+<td class="num">0.0250</td>
+<td class="num">0.125</td>
+<td class="num">0.992</td>
+<td class="num">0.25</td>
+<td class="num">12</td>
+<td class="num">12.5</td>
+<td class="num">1.5</td>
+</tr>
+<tr>
+<th scope="row" class="num">1</th>
+<td class="num">40</td>
+<td class="num">0.9500</td>
+<td class="num">0.0125</td>
+<td class="num">0.115385</td>
+<td class="num">0.992</td>
+<td class="num">0.25</td>
+<td class="num">13</td>
+<td class="num">13.5</td>
+<td class="num">1.5</td>
+</tr>
+<tr>
+<th scope="row" class="num">2</th>
+<td class="num">40</td>
+<td class="num">0.9750</td>
+<td class="num">0.0063</td>
+<td class="num">0.107143</td>
+<td class="num">0.992</td>
+<td class="num">0.25</td>
+<td class="num">14</td>
+<td class="num">14.5</td>
+<td class="num">1.5</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="table-note">Overlap and divergence here compare the two lenses’ readings with each other, not with the final prediction. The matrix columns compare the two lenses’ own numbers at a layer: sizes are Frobenius norms, and the relative difference is the difference size divided by the reference size, as the engine stored it.</p>
+</div>
+</section>
+<section id="lenses" aria-labelledby="lenses-h">
+<h2 id="lenses-h">Lenses</h2>
+<p>What each lens was fitted on. A lens fitted on several texts is a mixed lens. Each of its texts is listed with its row counts, so it cannot be mistaken for a lens fitted on one.</p>
+<div id="lens-1" class="sub"><h3 id="lens-1-h">Reference lens <code>lens-round-1</code></h3>
+<dl class="facts">
+<dt>Role in this report</dt>
+<dd>Reference</dd>
+<dt>Fitted on model</dt>
+<dd><code>example/tiny-model</code> at revision <code class="long">abababababababababababababababababababab</code></dd>
+<dt>Fitting text</dt>
+<dd>One text, <code class="long">sha256:f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1</code>.</dd>
+<dt>Rows fitted</dt>
+<dd>100</dd>
+<dt>Tokens read per row, at most</dt>
+<dd>128</dd>
+<dt>Layers</dt>
+<dd>3 (0–2)</dd>
+<dt>Converted tensor SHA-256</dt>
+<dd><code class="long">1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a</code></dd>
+<dt>Source tensor SHA-256</dt>
+<dd><code class="long">a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1</code></dd>
+<dt>Fit report SHA-256</dt>
+<dd><code class="long">f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0</code></dd>
+<dt>Evidence tier</dt>
+<dd><code>exploratory</code> (custom-artifact)</dd>
+<dt>Qualifications on record</dt>
+<dd>none</dd>
+</dl>
+</div>
+<div id="lens-2" class="sub"><h3 id="lens-2-h">Candidate lens <code>lens-round-2</code></h3>
+<dl class="facts">
+<dt>Role in this report</dt>
+<dd>Candidate</dd>
+<dt>Fitted on model</dt>
+<dd><code>example/tiny-model</code> at revision <code class="long">abababababababababababababababababababab</code></dd>
+<dt>Fitting text</dt>
+<dd>One text, <code class="long">sha256:f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2</code>.</dd>
+<dt>Rows fitted</dt>
+<dd>400</dd>
+<dt>Tokens read per row, at most</dt>
+<dd>128</dd>
+<dt>Layers</dt>
+<dd>3 (0–2)</dd>
+<dt>Converted tensor SHA-256</dt>
+<dd><code class="long">2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a</code></dd>
+<dt>Source tensor SHA-256</dt>
+<dd><code class="long">a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2</code></dd>
+<dt>Fit report SHA-256</dt>
+<dd><code class="long">f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0</code></dd>
+<dt>Evidence tier</dt>
+<dd><code>exploratory</code> (custom-artifact)</dd>
+<dt>Qualifications on record</dt>
+<dd>none</dd>
+</dl>
+</div>
+</section>
+<section id="limits" aria-labelledby="limits-h">
+<h2 id="limits-h">Limits</h2>
+<h3>What these measures show</h3>
+<p>Top-k overlap and Jensen–Shannon divergence say how closely a reading at one layer matches the model’s own final prediction, on the token positions that were assessed. They do not show that a lens is causally faithful, that it will read other kinds of text as well, or that a difference between two lenses is larger than chance. A close match on these texts is a reason to look further, not a qualification.</p>
+<dl class="facts">
+<dt>Recorded by the engine: how values were averaged</dt>
+<dd>Equal weight per assessed token position; first eligible positions up to the displayed cap.</dd>
+<dt>Recorded by the engine: limitations</dt>
+<dd>Distributional agreement measures readout stability and agreement with the final residual at these positions. It does not prove causal validity, dataset independence, or adequacy for every research question.</dd>
+<dt>Recorded by the engine: qualification</dt>
+<dd><code>notPerformed</code></dd>
+</dl>
+<h3>Omissions and failed comparisons</h3>
+<p>None found. Every requested comparison is present, every listed row was assessed, and every layer has a stored value.</p>
+<p>The request read at most 2 rows from each text and assessed at most 20 token positions in each row. The report does not record how many rows each text holds, so it cannot say whether rows beyond that cap were left unread.</p>
+<h3>In the report file but not on this page</h3>
+<p>The JSON also holds the token positions assessed in each row, the sums behind each stored mean, memory and storage budgets, the tensor precisions observed at each layer, and lens record fields other than those under Lenses. Nothing else was left out, and no list on this page is shortened.</p>
+</section>
+</main>
+<footer>
+<p>Made by SteerLab from the stored report with SHA-256 <code class="long">009f6ba0d36660e7b23f7015c20b39fc8231614bfaed10c421ff59bdf486fd66</code>. The page is a single file. It loads nothing from the network, and it shows only what that report stores.</p>
+</footer>
+</body>
+</html>

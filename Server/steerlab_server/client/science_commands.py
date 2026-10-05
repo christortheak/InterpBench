@@ -2,6 +2,11 @@
 from ..cli_envelope import CLIResult, VerbSpec
 from ..experiment import science_catalog
 
+#: Swift twin: the `science report` entry in ``ExperimentCLIParser.specs``.
+REPORT_PURPOSE = ('Turn a stored J-lens assessment report into one self-contained HTML page a person can read. '
+                  'Give the run folder or its assessment-report.json. A run folder is never written to: the page '
+                  'goes to reports/ in the workspace, or to --out (read from the workspace unless absolute).')
+
 VERB_SPECS = (
     VerbSpec('science', 'evidence-analyze', positional='<path>', purpose='Compare retained probe readings and requested/applied policy actions in a run.'),
     VerbSpec('science', 'policy-list', purpose='List saved intervention policies.'),
@@ -30,6 +35,8 @@ VERB_SPECS = (
     VerbSpec('science', 'import', positional='<archive.tar.gz>', purpose='Verify and import diagnostic evidence into the captured local workspace without replacing outputs.', value_flags=frozenset({'--sha256'}), required_flags=frozenset({'--sha256'})),
     VerbSpec('science', 'custody', purpose='Reverify and list retained diagnostic evidence receipts for offline inspection.'),
     VerbSpec('science', 'verify-custody', positional='<receipt-sha256>', purpose='Re-read the retained archive and every expanded local output before reporting custody.'),
+    # `--out` is this verb's own argument (the page), so the envelope has no file spelling here.
+    VerbSpec('science', 'report', positional='<run-folder-or-report.json>', purpose=REPORT_PURPOSE, value_flags=frozenset({'--out'})),
     VerbSpec('science', 'list', purpose='List shipped methods, public operation paths and engine restrictions; does not execute. With --brief, return a short index instead: ids, titles, and one line of purpose each.', boolean_flags=frozenset({'--brief'})),
     VerbSpec('science', 'guide', positional='<method>', purpose='Read the shared method guide, dataset schemas and coworker/reviewer instructions.'),
     VerbSpec('science', 'operation', positional='<operation>', purpose='Inspect exact public execution paths, outputs and restrictions for one operation.'),
@@ -39,7 +46,7 @@ VERB_SPECS = (
 def run(invocation):
     from ..client_cli import ClientRefusal
     verb, args = invocation.spec.verb, invocation.positionals
-    if verb in {'evidence-analyze', 'policy-list', 'policy-inspect', 'policy-review', 'policy-publish', 'policy-attach-review', 'policy-attach', 'measurements-review', 'measurements-save', 'probe-list', 'probe-inspect', 'corpus-preview', 'corpus-publish', 'artifact-plan', 'artifact-import', 'sae-check', 'sae-show', 'sae-pin-plan', 'sae-pin', 'interview', 'draft', 'publish', 'input-plan', 'package', 'import', 'custody', 'verify-custody'}:
+    if verb in {'evidence-analyze', 'policy-list', 'policy-inspect', 'policy-review', 'policy-publish', 'policy-attach-review', 'policy-attach', 'measurements-review', 'measurements-save', 'probe-list', 'probe-inspect', 'corpus-preview', 'corpus-publish', 'artifact-plan', 'artifact-import', 'sae-check', 'sae-show', 'sae-pin-plan', 'sae-pin', 'interview', 'draft', 'publish', 'input-plan', 'package', 'import', 'custody', 'verify-custody', 'report'}:
         from .diagnostic_commands import local
         return local(invocation)
     if len(args) != (0 if verb == 'list' else 1):
