@@ -75,6 +75,45 @@ struct RunClassificationHeaderView: View {
     }
 }
 
+// MARK: - Headline (what the study is about, first)
+
+/// The status header's headline block: which outcome leads this run's
+/// summary, which rule chose it ("declared by the researcher" or "chosen by
+/// default order"), and the plain sentence for each condition. All text is
+/// prepared in ExperimentKit (`EffectNarrative.headline`); this view only
+/// lays it out. Renders nothing for a run with no outcome to lead with.
+struct RunHeadlineView: View {
+    let model: RunResults.Model
+
+    var body: some View {
+        if let headline = EffectNarrative.headline(
+            model.headline, rows: model.effectSizes ?? [],
+            interventions: model.conditionInterventions)
+        {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(headline.title)
+                    .font(.callout.weight(.semibold))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(headline.sentences, id: \.self) { sentence in
+                    Text(sentence)
+                        .font(.caption)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let note = headline.note {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+        }
+    }
+}
+
 // MARK: - Semantic sections orchestrator
 
 /// The ONE semantic-section stack shared by all three Results surfaces —
@@ -103,6 +142,10 @@ struct RunSemanticSectionsContent<AnalyzeRow: View>: View {
             if model.hasManifestSnapshot {
                 RunClassificationHeaderView(classification: model.classification)
             }
+            // What the study is about leads, before any table: the headline
+            // outcome, which rule chose it, and its plain sentence per
+            // condition. The full effect table follows in the engine's order.
+            RunHeadlineView(model: model)
             analyzeRow()
             recordCoverageCaptions
             // F2: the per-condition summary renders for EVERY study run —
@@ -123,7 +166,8 @@ struct RunSemanticSectionsContent<AnalyzeRow: View>: View {
                 // the charts render ABOVE the numeric table, never instead.
                 EffectChartsSection(
                     rows: effectSizes,
-                    interventions: model.conditionInterventions)
+                    interventions: model.conditionInterventions,
+                    headline: model.headline)
                 EffectSizesTableView(
                     rows: effectSizes,
                     interventions: model.conditionInterventions)
@@ -1088,7 +1132,8 @@ struct EffectSizesTableView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     ForEach(rows) { row in
                         Text(EffectNarrative.sentence(
-                            for: row, intervention: interventions[row.condition]))
+                            for: row, in: rows,
+                            intervention: interventions[row.condition]))
                             .font(.caption)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
@@ -1130,11 +1175,18 @@ struct EffectSizesTableView: View {
             Text(row.condition)
             Text(row.metric)
             Text("\(row.n)")
-            Text(
-                String(
-                    format: "%+.4g  [%.4g, %.4g]", row.meanDiff, row.ciLower,
-                    row.ciUpper))
-            EffectCIBar(row: row)
+            // One or two paired items cannot carry an interval, so the cell
+            // says so instead of printing a range (and draws no bar).
+            if EffectNarrative.hasTooFewPairs(row) {
+                Text(String(format: "%+.4g  [too few pairs]", row.meanDiff))
+                Text("—").foregroundStyle(.secondary)
+            } else {
+                Text(
+                    String(
+                        format: "%+.4g  [%.4g, %.4g]", row.meanDiff, row.ciLower,
+                        row.ciUpper))
+                EffectCIBar(row: row)
+            }
             Text(pText(row.wilcoxonP))
             Text(correctedText(row))
             significanceMark(row)

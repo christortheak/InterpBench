@@ -747,6 +747,20 @@ public enum ExperimentCLIParser {
                 + "lands in every run's snapshot. evaluate then needs no "
                 + "flags, and a flag that disagrees with the declaration "
                 + "refuses. \"\" clears the declaration."),
+        // The study's PRIMARY OUTCOME: which outcome leads every results
+        // summary. The legal values depend on the study's own settings (its
+        // instruments, concepts, judges, and so on), so the purpose says
+        // what the verb does and the refusal, which can read the study,
+        // lists the outcomes it can produce.
+        .init(
+            namespace: "experiment", verb: "set-primary-outcome",
+            positional: "<name> <outcome>",
+            purpose: "Declare the outcome this study is about, so every "
+                + "results summary leads with it and says it was declared "
+                + "by the researcher. An outcome the study's settings "
+                + "cannot produce is refused, with the list of the ones "
+                + "they can. \"\" clears the declaration; summaries then "
+                + "lead by the default order."),
         .init(
             namespace: "experiment", verb: "set-style-taxonomy",
             positional: "<name> <prompts/taxonomies/file.json>",

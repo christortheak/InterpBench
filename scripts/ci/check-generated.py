@@ -17,6 +17,7 @@ GENERATORS = (
     'check-workspace-bootstrap.py',
     'check-client-assembly-reference.py',
     'check-sampling-dependencies.py',
+    'check-headline-outcomes.py',
     'check-python-client-identity.py',  # last: hashes the generated payload
 )
 AUDITS = (

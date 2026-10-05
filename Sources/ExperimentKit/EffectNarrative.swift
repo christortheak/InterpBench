@@ -13,6 +13,12 @@ public enum EffectNarrative {
 
     // MARK: - A sentence per effect
 
+    /// Fewer paired items than this cannot carry an interval. One or two
+    /// pairs still give a bootstrap "interval", but it is two or three
+    /// possible values dressed as a range, so the sentence, the table, and
+    /// the chart say there are too few pairs instead of printing it.
+    public static let minimumPairsForInterval = 3
+
     /// One plain-language line for an effect row, e.g.:
     ///
     ///   "Steering 'fear' at layer 12 (strength 0.8) shifted 'fear' marker
@@ -25,16 +31,66 @@ public enum EffectNarrative {
     /// survive multiple-comparison correction", and a missing CI or missing
     /// test says so instead of implying certainty.
     ///
+    /// `familySize` is how many comparisons the row's correction covered
+    /// (`correctionFamilySize`). A correction over ONE comparison changes
+    /// nothing — the adjusted p equals the raw one — so the sentence says
+    /// an effect "survives correction" only when the family has more than
+    /// one member; otherwise it says what was tested. It is a required
+    /// argument on purpose: a caller that does not know the family cannot
+    /// claim a correction.
+    ///
+    /// A row with one or two paired items prints no interval and no test:
+    /// it says there are too few pairs.
+    ///
     /// `intervention` is the run's intervention summary for the row's
     /// condition (`RunResults.interventionSummaries`); when it names a single
     /// steering slot the sentence leads with the concept/layer/strength,
     /// otherwise with the condition name.
     public static func sentence(
-        for row: RunResults.EffectSizeRow, intervention: String? = nil
+        for row: RunResults.EffectSizeRow, intervention: String? = nil,
+        familySize: Int
     ) -> String {
         "\(subject(condition: row.condition, intervention: intervention)) "
             + "shifted \(metricPhrase(row.metric)) by \(signed(row.meanDiff))"
-            + sampleClause(row.n) + ciClause(row) + " — " + verdict(row) + "."
+            + sampleClause(row.n) + ciClause(row) + " — "
+            + verdict(row, familySize: familySize) + "."
+    }
+
+    /// The sentence for a row of `table`, with the row's correction family
+    /// counted from the table it came from.
+    public static func sentence(
+        for row: RunResults.EffectSizeRow, in table: [RunResults.EffectSizeRow],
+        intervention: String? = nil
+    ) -> String {
+        sentence(
+            for: row, intervention: intervention,
+            familySize: correctionFamilySize(of: row, in: table))
+    }
+
+    /// How many comparisons the row's multiple-comparison correction
+    /// covered. Both engines correct one outcome at a time, across the
+    /// conditions that have a defined test for it, so the family is the
+    /// table's rows for the same outcome that carry an adjusted p. `table`
+    /// is the pooled table the row came from.
+    public static func correctionFamilySize(
+        of row: RunResults.EffectSizeRow, in table: [RunResults.EffectSizeRow]
+    ) -> Int {
+        table.filter { $0.metric == row.metric && $0.adjustedP != nil }.count
+    }
+
+    /// True when the row has one or two paired items — too few for an
+    /// interval or a test. A row whose `n` is 0 did not report its count
+    /// (the column was absent), which is a different fact and is left alone.
+    public static func hasTooFewPairs(_ row: RunResults.EffectSizeRow) -> Bool {
+        (1..<minimumPairsForInterval).contains(row.n)
+    }
+
+    /// Whether the row's interval should be shown at all: it exists, and
+    /// the row has enough pairs to carry one.
+    public static func hasReportableInterval(
+        _ row: RunResults.EffectSizeRow
+    ) -> Bool {
+        hasCI(row) && !hasTooFewPairs(row)
     }
 
     private static func subject(condition: String, intervention: String?) -> String {
@@ -63,6 +119,10 @@ public enum EffectNarrative {
     }
 
     private static func ciClause(_ row: RunResults.EffectSizeRow) -> String {
+        if hasTooFewPairs(row) {
+            return " (too few pairs for a confidence interval; at least "
+                + "\(minimumPairsForInterval) are needed)"
+        }
         guard hasCI(row) else { return " (no confidence interval available)" }
         return " (95% CI \(plain(row.ciLower)) to \(plain(row.ciUpper)))"
     }
@@ -72,22 +132,42 @@ public enum EffectNarrative {
     }
 
     /// The verdict clause after the dash. Ordered by what the reader must
-    /// not misread: no CI → say so; CI crossing zero → "consistent with no
-    /// effect" (with the corrected p noted when it disagrees); CI excluding
-    /// zero → the correction verdict, or the honest "uncorrected" caveat.
-    private static func verdict(_ row: RunResults.EffectSizeRow) -> String {
-        guard hasCI(row) else { return noCIVerdict(row) }
+    /// not misread: too few pairs → say so and stop; no CI → say so; CI
+    /// crossing zero → "consistent with no effect" (with the p noted when
+    /// it disagrees); CI excluding zero → the correction verdict when a
+    /// correction really covered several comparisons, what was tested when
+    /// it covered one, or the honest "uncorrected" caveat.
+    private static func verdict(
+        _ row: RunResults.EffectSizeRow, familySize: Int
+    ) -> String {
+        if hasTooFewPairs(row) {
+            return "with so few pairs this describes these items only, and "
+                + "is not a test"
+        }
+        let corrected = familySize > 1
+        guard hasCI(row) else { return noCIVerdict(row, corrected: corrected) }
         if !row.ciExcludesZero {
             var text = "the interval crosses zero, so this is consistent "
                 + "with no effect"
             if let adjusted = row.adjustedP {
-                text += row.significantAfterCorrection == true
-                    ? " (though the corrected p = \(pValue(adjusted)) is below 0.05)"
-                    : " and does not survive multiple-comparison correction"
+                if corrected {
+                    text += row.significantAfterCorrection == true
+                        ? " (though the corrected p = \(pValue(adjusted)) is below 0.05)"
+                        : " and does not survive multiple-comparison correction"
+                } else {
+                    text += adjusted < 0.05
+                        ? " (though \(singleTest(adjusted)) is below 0.05)"
+                        : " (\(singleTest(adjusted)))"
+                }
             }
             return text
         }
         if let adjusted = row.adjustedP {
+            guard corrected else {
+                return singleTest(adjusted)
+                    + (adjusted < 0.05
+                        ? "" : " — not significant; treat as suggestive only")
+            }
             return row.significantAfterCorrection == true
                 ? "survives multiple-comparison correction "
                     + "(corrected p = \(pValue(adjusted))\(correctionSuffix(row)))"
@@ -104,8 +184,14 @@ public enum EffectNarrative {
         return "no test statistic available"
     }
 
-    private static func noCIVerdict(_ row: RunResults.EffectSizeRow) -> String {
+    private static func noCIVerdict(
+        _ row: RunResults.EffectSizeRow, corrected: Bool
+    ) -> String {
         if let adjusted = row.adjustedP {
+            guard corrected else {
+                return singleTest(adjusted)
+                    + (adjusted < 0.05 ? "" : " — not significant")
+            }
             return row.significantAfterCorrection == true
                 ? "corrected p = \(pValue(adjusted))\(correctionSuffix(row)) — "
                     + "significant after multiple-comparison correction"
@@ -119,6 +205,14 @@ public enum EffectNarrative {
         return "no test statistic available"
     }
 
+    /// What was tested when the correction family has one member: the one
+    /// Wilcoxon signed-rank test of this outcome. Nothing was corrected, so
+    /// nothing "survives" anything.
+    private static func singleTest(_ p: Double) -> String {
+        "p = \(pValue(p)) from the one Wilcoxon signed-rank test of this "
+            + "outcome (a single comparison, so no correction applies)"
+    }
+
     private static func correctionSuffix(_ row: RunResults.EffectSizeRow) -> String {
         row.correction.map { ", \($0)" } ?? ""
     }
@@ -126,43 +220,68 @@ public enum EffectNarrative {
     /// Plain words first, the technical term second (the usability plan's
     /// language rule): known engine metric names get a readable phrase with
     /// the engine term in parentheses; unknown names pass through quoted.
+    ///
+    /// The phrases have one home, the shared headline-outcome mapping
+    /// (`HeadlineOutcome.plainPhrase`), so the app, both command lines, and
+    /// the results explorer use the same words for the same outcome. (One
+    /// of them, `meanMonths`, is a deprecated alias: any declared registry
+    /// parser writes the same record key, so on other parsers the honest
+    /// twin is `parsedValueMean`.)
     public static func metricPhrase(_ metric: String) -> String {
-        switch metric {
-        case "wordCount":
-            return "response length in words (wordCount)"
-        case "distinct2":
-            return "lexical variety (distinct2)"
-        case "choiceRate":
-            return "the target-choice rate (choiceRate)"
-        case "targetLogOdds":
-            return "the target option's log odds (targetLogOdds)"
-        case "ordinalPosition":
-            return "scale position (1–K) (ordinalPosition)"
-        case "choiceLogOdds":
-            return "the target option's log odds (choiceLogOdds)"
-        case "meanMonths":
-            // Deprecated alias: any declared registry parser writes the
-            // parsedMonths record key, so on non-months parsers this label
-            // is misleading — the honest twin is parsedValueMean.
-            return "mean parsed months (meanMonths)"
-        case "monthsSpread":
-            return "within-item spread of parsed months (monthsSpread)"
-        case "parsedValueMean":
-            return "mean parsed numeric value (parsedValueMean)"
-        case "parsedValueSpread":
-            return "within-item spread of the parsed numeric value "
-                + "(parsedValueSpread)"
-        default:
-            break
+        guard let plain = HeadlineOutcome.plainPhrase(metric) else {
+            return "'\(metric)'"
         }
-        if metric.hasSuffix("MarkerDensity"), metric.count > "MarkerDensity".count {
-            let concept = String(metric.dropLast("MarkerDensity".count))
-            return "'\(concept)' marker density (\(metric))"
+        return "\(plain) (\(metric))"
+    }
+
+    // MARK: - The headline (what a results summary leads with)
+
+    /// What a results header shows first: which outcome leads and which
+    /// rule chose it, then the plain sentence for each condition's row of
+    /// that outcome.
+    public struct Headline: Sendable, Equatable {
+        /// "Headline outcome: the target-choice rate (choiceRate), chosen
+        /// by default order."
+        public var title: String
+        /// One sentence per condition for the headline outcome, in the
+        /// table's own order. Empty when the headline is a judged outcome
+        /// (`note` then says where it is) or the run has no rows.
+        public var sentences: [String]
+        /// Where to look when the headline is not in the effect rows.
+        public var note: String?
+    }
+
+    /// The header for a run whose headline is `selection`, or nil when the
+    /// run has nothing to lead with and nothing was declared. `rows` is the
+    /// pooled effect table, untouched: this picks which rows LEAD, and the
+    /// full table still follows in the engine's order.
+    public static func headline(
+        _ selection: HeadlineOutcome.Selection,
+        rows: [RunResults.EffectSizeRow],
+        interventions: [String: String] = [:]
+    ) -> Headline? {
+        guard let outcome = selection.outcome else {
+            guard selection.declaredAbsent else { return nil }
+            return Headline(
+                title: "Headline outcome: " + selection.chosenBy + ".",
+                sentences: [], note: nil)
         }
-        if metric.hasPrefix("rs_"), metric.count > 3 {
-            return "reasoning-style feature '\(metric.dropFirst(3))' (\(metric))"
+        let title = "Headline outcome: \(selection.summaryLine)."
+        if selection.source == .evaluationReport {
+            return Headline(
+                title: title, sentences: [],
+                note: "The judged outcome is in this run's evaluation "
+                    + "report (judge-report.json or coding-report.json). "
+                    + "The effect sizes below are the study's other "
+                    + "measures.")
         }
-        return "'\(metric)'"
+        return Headline(
+            title: title,
+            sentences: rows.filter { $0.metric == outcome }.map {
+                sentence(
+                    for: $0, in: rows, intervention: interventions[$0.condition])
+            },
+            note: nil)
     }
 
     // MARK: - Dose–response verdict (the promote decision's plain line)

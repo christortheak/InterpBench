@@ -219,9 +219,20 @@ struct RunResultsTests {
         #expect(row.adjustedP == 0.04)
         #expect(row.correction == "bh")
         #expect(row.significantAfterCorrection == true)
-        let sentence = EffectNarrative.sentence(for: row)
-        #expect(sentence.contains("survives multiple-comparison correction"))
-        #expect(sentence.contains("corrected p = 0.04, bh"))
+        // This report has ONE condition, so the correction covered one
+        // comparison of word count: the sentence says what was tested and
+        // does not claim the effect "survives" a correction.
+        let sentence = EffectNarrative.sentence(for: row, in: report.effectSizes)
+        #expect(!sentence.contains("survive"))
+        #expect(sentence.contains(
+            "p = 0.04 from the one Wilcoxon signed-rank test of this outcome"))
+        // The same row among two conditions' rows is a real correction.
+        var second = row
+        second.condition = "fear-1.6"
+        let corrected = EffectNarrative.sentence(
+            for: row, in: report.effectSizes + [second])
+        #expect(corrected.contains("survives multiple-comparison correction"))
+        #expect(corrected.contains("corrected p = 0.04, bh"))
         // A family-stamped row with an undefined p keeps the honest absence:
         // correction present, no adjusted p, no invented significance.
         let undefinedP = try #require(

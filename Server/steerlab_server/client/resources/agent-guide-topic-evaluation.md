@@ -53,6 +53,28 @@ Guarded by the **epoch guard**: the run's stamped experiment hash must equal
 the manifest's content hash, or the verb refuses. The guard is per-engine —
 analyze a run on the runner that produced it.
 
+**Which outcome leads.** When you summarize an analysis from the files that
+came home, lead with the outcome the study is about, by the order below, and
+say which rule chose it: "declared by the researcher" or "chosen by default
+order". The declared outcome is `primaryOutcome` in the analysis run's
+`experiment.json`. The engine's own analysis envelope states the same answer
+as `result.headline`, for a caller who has it.
+
+Do not lead with word count because it is the first row of the table. The
+order: the outcome the study declared (`steerlab experiment
+set-primary-outcome`, `workspace guide settings`), when the run has it; else a
+judged outcome, which lives in the evaluation report; else a choice or numeric
+outcome; else a reader or probe score; else reasoning style; else marker
+density; else surface measures. When the study declared an outcome the run
+does not have, lead by that order and say the declared outcome is missing.
+Every row is still in `effect-sizes.csv`, in the engine's own order.
+
+Say an effect "survives correction" only when the outcome was compared across
+more than one condition. With one treatment condition the adjusted p equals
+the raw one, so report it as the one test it is. A row with fewer than three
+paired items is too few pairs for an interval: describe it, and do not report
+its interval or its p-value as a finding.
+
 Zero effect-size entries is reported as an `emptyAnalysis` advisory, not a
 failure. It means the source run had no non-baseline condition. Check for it.
 

@@ -686,6 +686,11 @@ MAC_AUTHORITY_VERBS: dict = {
         "set-evaluation-sampling": "steerlab-cli experiment "
                                    "set-evaluation-sampling <name> <n> "
                                    "<seed>",
+        # The study's declared PRIMARY OUTCOME — which outcome leads every
+        # results summary. Authoring like its siblings: the engine reads the
+        # declaration off the manifest it is handed and never writes one.
+        "set-primary-outcome": "steerlab-cli experiment set-primary-outcome "
+                               "<name> <outcome>",
         "set-sweep-selection": "steerlab-cli experiment set-sweep-selection "
                                "<name> --objective <metric>",
         "set-sweep-grid": "steerlab-cli experiment set-sweep-grid <name> "

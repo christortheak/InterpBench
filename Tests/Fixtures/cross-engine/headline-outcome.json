@@ -1,0 +1,346 @@
+{
+  "about": "Hand-authored contract for the headline outcome: which outcome leads a results summary, which rule chose it, and which outcomes a study's settings can produce. It states the INTENDED answers; it is not regenerated from any engine. Three suites read it: Server/tests/test_headline_outcome.py, Tests/ExperimentKitTests/HeadlineOutcomeTests.swift, and results-explorer/test/headline.test.ts (the explorer reads the selection, tiers, and phrases sections).",
+  "selection": [
+    {
+      "label": "declared by the researcher",
+      "declared": "distinct2",
+      "analysisOutcomes": ["wordCount", "distinct2", "choiceLogOdds"],
+      "evaluationOutcomes": [],
+      "expected": {
+        "outcome": "distinct2", "tier": "surface", "rule": "declared",
+        "source": "analysisRows", "declaredAbsent": false,
+        "chosenBy": "declared by the researcher"
+      }
+    },
+    {
+      "label": "declared judged outcome, read from the evaluation report",
+      "declared": "judged",
+      "analysisOutcomes": ["wordCount", "choiceRate"],
+      "evaluationOutcomes": ["judged"],
+      "expected": {
+        "outcome": "judged", "tier": "judged", "rule": "declared",
+        "source": "evaluationReport", "declaredAbsent": false,
+        "chosenBy": "declared by the researcher"
+      }
+    },
+    {
+      "label": "declared outcome is trimmed before it is matched",
+      "declared": "  choiceRate ",
+      "analysisOutcomes": ["wordCount", "choiceRate", "choiceLogOdds"],
+      "evaluationOutcomes": [],
+      "expected": {
+        "outcome": "choiceRate", "tier": "choiceOrNumeric", "rule": "declared",
+        "source": "analysisRows", "declaredAbsent": false,
+        "chosenBy": "declared by the researcher"
+      }
+    },
+    {
+      "label": "judged present",
+      "declared": null,
+      "analysisOutcomes": ["wordCount", "distinct2", "choiceLogOdds"],
+      "evaluationOutcomes": ["judged"],
+      "expected": {
+        "outcome": "judged", "tier": "judged", "rule": "defaultOrder",
+        "source": "evaluationReport", "declaredAbsent": false,
+        "chosenBy": "chosen by default order"
+      }
+    },
+    {
+      "label": "choice outcome present",
+      "declared": null,
+      "analysisOutcomes": ["wordCount", "distinct2", "warmthMarkerDensity", "rs_hedging", "choiceRate", "choiceLogOdds"],
+      "evaluationOutcomes": [],
+      "expected": {
+        "outcome": "choiceLogOdds", "tier": "choiceOrNumeric", "rule": "defaultOrder",
+        "source": "analysisRows", "declaredAbsent": false,
+        "chosenBy": "chosen by default order"
+      }
+    },
+    {
+      "label": "numeric outcome present",
+      "declared": null,
+      "analysisOutcomes": ["wordCount", "distinct2", "meanMonths", "monthsSpread", "parsedValueMean", "parsedValueSpread"],
+      "evaluationOutcomes": [],
+      "expected": {
+        "outcome": "parsedValueMean", "tier": "choiceOrNumeric", "rule": "defaultOrder",
+        "source": "analysisRows", "declaredAbsent": false,
+        "chosenBy": "chosen by default order"
+      }
+    },
+    {
+      "label": "ordinal scale outcome present",
+      "declared": null,
+      "analysisOutcomes": ["wordCount", "distinct2", "rs_hedging", "ordinalPosition"],
+      "evaluationOutcomes": [],
+      "expected": {
+        "outcome": "ordinalPosition", "tier": "choiceOrNumeric", "rule": "defaultOrder",
+        "source": "analysisRows", "declaredAbsent": false,
+        "chosenBy": "chosen by default order"
+      }
+    },
+    {
+      "label": "reader score present; ties break by name",
+      "declared": null,
+      "analysisOutcomes": ["wordCount", "distinct2", "rs_hedging", "readerScore:warmth", "readerScore:candor"],
+      "evaluationOutcomes": [],
+      "expected": {
+        "outcome": "readerScore:candor", "tier": "readerOrProbe", "rule": "defaultOrder",
+        "source": "analysisRows", "declaredAbsent": false,
+        "chosenBy": "chosen by default order"
+      }
+    },
+    {
+      "label": "reasoning-style features present",
+      "declared": null,
+      "analysisOutcomes": ["wordCount", "distinct2", "warmthMarkerDensity", "rs_hedging", "rs_appeal"],
+      "evaluationOutcomes": [],
+      "expected": {
+        "outcome": "rs_appeal", "tier": "reasoningStyle", "rule": "defaultOrder",
+        "source": "analysisRows", "declaredAbsent": false,
+        "chosenBy": "chosen by default order"
+      }
+    },
+    {
+      "label": "only marker density",
+      "declared": null,
+      "analysisOutcomes": ["wordCount", "distinct2", "warmthMarkerDensity", "candorMarkerDensity"],
+      "evaluationOutcomes": [],
+      "expected": {
+        "outcome": "candorMarkerDensity", "tier": "markerDensity", "rule": "defaultOrder",
+        "source": "analysisRows", "declaredAbsent": false,
+        "chosenBy": "chosen by default order"
+      }
+    },
+    {
+      "label": "only surface measures",
+      "declared": null,
+      "analysisOutcomes": ["wordCount", "distinct2"],
+      "evaluationOutcomes": [],
+      "expected": {
+        "outcome": "wordCount", "tier": "surface", "rule": "defaultOrder",
+        "source": "analysisRows", "declaredAbsent": false,
+        "chosenBy": "chosen by default order"
+      }
+    },
+    {
+      "label": "the order rows arrive in does not matter",
+      "declared": null,
+      "analysisOutcomes": ["distinct2", "wordCount", "distinct2"],
+      "evaluationOutcomes": [],
+      "expected": {
+        "outcome": "wordCount", "tier": "surface", "rule": "defaultOrder",
+        "source": "analysisRows", "declaredAbsent": false,
+        "chosenBy": "chosen by default order"
+      }
+    },
+    {
+      "label": "declared outcome absent from the run",
+      "declared": "choiceLogOdds",
+      "analysisOutcomes": ["wordCount", "distinct2", "warmthMarkerDensity"],
+      "evaluationOutcomes": [],
+      "expected": {
+        "outcome": "warmthMarkerDensity", "tier": "markerDensity", "rule": "defaultOrder",
+        "source": "analysisRows", "declaredAbsent": true,
+        "chosenBy": "chosen by default order; the declared primary outcome 'choiceLogOdds' is not in this run"
+      }
+    },
+    {
+      "label": "declared judged outcome, no evaluation report yet",
+      "declared": "judged",
+      "analysisOutcomes": ["wordCount"],
+      "evaluationOutcomes": [],
+      "expected": {
+        "outcome": "wordCount", "tier": "surface", "rule": "defaultOrder",
+        "source": "analysisRows", "declaredAbsent": true,
+        "chosenBy": "chosen by default order; the declared primary outcome 'judged' is not in this run"
+      }
+    },
+    {
+      "label": "a name the order does not list comes after the surface measures",
+      "declared": null,
+      "analysisOutcomes": ["aNewOutcome", "distinct2"],
+      "evaluationOutcomes": [],
+      "expected": {
+        "outcome": "distinct2", "tier": "surface", "rule": "defaultOrder",
+        "source": "analysisRows", "declaredAbsent": false,
+        "chosenBy": "chosen by default order"
+      }
+    },
+    {
+      "label": "only names the order does not list",
+      "declared": null,
+      "analysisOutcomes": ["zeta", "alpha", "rs_", "MarkerDensity"],
+      "evaluationOutcomes": [],
+      "expected": {
+        "outcome": "MarkerDensity", "tier": "unlisted", "rule": "defaultOrder",
+        "source": "analysisRows", "declaredAbsent": false,
+        "chosenBy": "chosen by default order"
+      }
+    },
+    {
+      "label": "nothing to lead with",
+      "declared": null,
+      "analysisOutcomes": [],
+      "evaluationOutcomes": [],
+      "expected": {
+        "outcome": null, "tier": null, "rule": null,
+        "source": null, "declaredAbsent": false,
+        "chosenBy": "no outcome to lead with"
+      }
+    },
+    {
+      "label": "nothing to lead with, and a declared outcome",
+      "declared": "choiceRate",
+      "analysisOutcomes": [],
+      "evaluationOutcomes": [],
+      "expected": {
+        "outcome": null, "tier": null, "rule": null,
+        "source": null, "declaredAbsent": true,
+        "chosenBy": "no outcome to lead with; the declared primary outcome 'choiceRate' is not in this run"
+      }
+    }
+  ],
+  "tiers": [
+    {"name": "judged", "tier": "judged"},
+    {"name": "choiceLogOdds", "tier": "choiceOrNumeric"},
+    {"name": "ordinalPosition", "tier": "choiceOrNumeric"},
+    {"name": "parsedValueMean", "tier": "choiceOrNumeric"},
+    {"name": "meanMonths", "tier": "choiceOrNumeric"},
+    {"name": "choiceRate", "tier": "choiceOrNumeric"},
+    {"name": "targetLogOdds", "tier": "choiceOrNumeric"},
+    {"name": "parsedValueSpread", "tier": "choiceOrNumeric"},
+    {"name": "monthsSpread", "tier": "choiceOrNumeric"},
+    {"name": "readerScore:warmth", "tier": "readerOrProbe"},
+    {"name": "probeScore:refusal", "tier": "readerOrProbe"},
+    {"name": "rs_hedging", "tier": "reasoningStyle"},
+    {"name": "warmthMarkerDensity", "tier": "markerDensity"},
+    {"name": "wordCount", "tier": "surface"},
+    {"name": "distinct2", "tier": "surface"},
+    {"name": "aNewOutcome", "tier": "unlisted"},
+    {"name": "rs_", "tier": "unlisted"},
+    {"name": "MarkerDensity", "tier": "unlisted"},
+    {"name": "readerScore:", "tier": "unlisted"}
+  ],
+  "phrases": [
+    {"name": "judged", "plain": "the judged outcome"},
+    {"name": "choiceLogOdds", "plain": "the target option's log odds"},
+    {"name": "ordinalPosition", "plain": "scale position (1–K)"},
+    {"name": "parsedValueMean", "plain": "mean parsed numeric value"},
+    {"name": "meanMonths", "plain": "mean parsed months"},
+    {"name": "choiceRate", "plain": "the target-choice rate"},
+    {"name": "readerScore:warmth", "plain": "reader score for 'warmth'"},
+    {"name": "rs_hedging", "plain": "reasoning-style feature 'hedging'"},
+    {"name": "warmthMarkerDensity", "plain": "'warmth' marker density"},
+    {"name": "wordCount", "plain": "response length in words"},
+    {"name": "distinct2", "plain": "lexical variety"},
+    {"name": "aNewOutcome", "plain": null}
+  ],
+  "producible": [
+    {
+      "label": "a study that declares nothing extra",
+      "study": {},
+      "expected": {"names": ["choiceRate", "wordCount", "distinct2"], "patterns": []},
+      "accepts": ["wordCount", "distinct2", "choiceRate"],
+      "refuses": ["judged", "choiceLogOdds", "ordinalPosition", "meanMonths", "parsedValueMean", "readerScore:warmth", "rs_hedging", "warmthMarkerDensity", "probeScore:refusal", "targetLogOdds", "aNewOutcome"]
+    },
+    {
+      "label": "a choice study with two concepts",
+      "study": {
+        "outcomeInstruments": ["answerTokenLogprob", "sampledText"],
+        "concepts": ["warmth", "candor"]
+      },
+      "expected": {
+        "names": ["choiceLogOdds", "choiceRate", "warmthMarkerDensity", "candorMarkerDensity", "wordCount", "distinct2"],
+        "patterns": []
+      },
+      "accepts": ["choiceLogOdds", "candorMarkerDensity"],
+      "refuses": ["judged", "ordinalPosition", "otherMarkerDensity", "MarkerDensity"]
+    },
+    {
+      "label": "judges and a rubric pinned, an ordinal scale, and a taxonomy",
+      "study": {
+        "judging": "pinnedRubric",
+        "outcomeInstruments": ["ordinalScale"],
+        "reasoningStyleTaxonomy": true
+      },
+      "expected": {
+        "names": ["judged", "ordinalPosition", "choiceRate", "wordCount", "distinct2"],
+        "patterns": ["rs_<name>"]
+      },
+      "accepts": ["judged", "ordinalPosition", "rs_hedging", "rs_appeal"],
+      "refuses": ["choiceLogOdds", "rs_"]
+    },
+    {
+      "label": "an evaluation block that declares paired judging",
+      "study": {"judging": "evaluationBlock"},
+      "expected": {"names": ["judged", "choiceRate", "wordCount", "distinct2"], "patterns": []},
+      "accepts": ["judged"],
+      "refuses": ["choiceLogOdds"]
+    },
+    {
+      "label": "an evaluation block that says none wins over pinned judges",
+      "study": {"judging": "explicitNone"},
+      "expected": {"names": ["choiceRate", "wordCount", "distinct2"], "patterns": []},
+      "accepts": ["wordCount"],
+      "refuses": ["judged"]
+    },
+    {
+      "label": "a declared numeric parser and a pinned reader",
+      "study": {
+        "numericParser": "scale-1-7",
+        "outcomeInstruments": ["sampledText", "repeReaderScore"],
+        "readerConcepts": ["warmth"]
+      },
+      "expected": {
+        "names": ["parsedValueMean", "meanMonths", "choiceRate", "parsedValueSpread", "monthsSpread", "readerScore:warmth", "wordCount", "distinct2"],
+        "patterns": []
+      },
+      "accepts": ["parsedValueMean", "readerScore:warmth"],
+      "refuses": ["readerScore:candor", "readerScore:"]
+    },
+    {
+      "label": "the deprecated implicit numeric endpoint",
+      "study": {"implicitNumericEndpoint": true},
+      "expected": {
+        "names": ["meanMonths", "choiceRate", "monthsSpread", "wordCount", "distinct2"],
+        "patterns": []
+      },
+      "accepts": ["meanMonths"],
+      "refuses": ["parsedValueMean"]
+    },
+    {
+      "label": "a reader pinned without the reader instrument",
+      "study": {"readerConcepts": ["warmth"]},
+      "expected": {"names": ["choiceRate", "wordCount", "distinct2"], "patterns": []},
+      "accepts": ["choiceRate"],
+      "refuses": ["readerScore:warmth"]
+    }
+  ],
+  "cannotProduceReasons": [
+    {"outcome": "judged", "reason": "it needs judges and a rubric"},
+    {"outcome": "choiceLogOdds", "reason": "it needs the answerTokenLogprob outcome instrument"},
+    {"outcome": "ordinalPosition", "reason": "it needs the ordinalScale outcome instrument"},
+    {"outcome": "parsedValueMean", "reason": "it needs a declared numeric parser"},
+    {"outcome": "meanMonths", "reason": "it needs a declared numeric parser"},
+    {"outcome": "readerScore:warmth", "reason": "it needs a pinned reader for that concept and the repeReaderScore outcome instrument"},
+    {"outcome": "rs_hedging", "reason": "it needs a pinned reasoning-style taxonomy"},
+    {"outcome": "warmthMarkerDensity", "reason": "it needs that concept attached to the study"},
+    {"outcome": "probeScore:refusal", "reason": "no engine reports it as a paired effect"},
+    {"outcome": "targetLogOdds", "reason": "no engine reports it as a paired effect"},
+    {"outcome": "aNewOutcome", "reason": "it is not an outcome SteerLab reports"}
+  ],
+  "settingsSummary": [
+    {
+      "declared": null,
+      "line": "- **Primary outcome:** not declared; summaries lead with the default order"
+    },
+    {
+      "declared": "choiceLogOdds",
+      "line": "- **Primary outcome:** choiceLogOdds (the target option's log odds), declared by the researcher"
+    },
+    {
+      "declared": "rs_hedging",
+      "line": "- **Primary outcome:** rs_hedging (reasoning-style feature 'hedging'), declared by the researcher"
+    }
+  ]
+}

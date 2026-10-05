@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from . import lifecycle_gates, paths, prompt_render, manifest_files
-from . import manifest_mutation_policy, freeze_policy
+from . import manifest_mutation_policy, freeze_policy, headline_outcome
 from ..build_identity import engine_version
 from .manifest import KNOWN_ORDINAL_AGGREGATIONS as KNOWN_ORDINAL_AGGREGATIONS  # noqa: F401
 from .manifest import Manifest
@@ -1997,6 +1997,52 @@ def declare_evaluation_sampling(name: str, sample_per_condition,
         raise MeasurementDeclarationError(
             refusal.reason, repair=refusal.repair_action)
     d[evaluate_subsample.DECLARATION_KEY] = block
+    save_raw(d, root)
+    return d
+
+
+def primary_outcome_repair(name: str, d: dict,
+                           program: str = CLIENT_PROGRAM) -> str:
+    """The retype for a refused primary-outcome declaration: the verb, this
+    study, and the outcomes its settings can produce. Swift twin:
+    ``ExperimentStore.primaryOutcomeRepair`` (same words)."""
+    from . import headline_outcome
+    choices = headline_outcome.producible_choices(d)
+    return (f"{program} experiment set-primary-outcome {name} <{choices}>"
+            '  ("" clears the declaration)')
+
+
+def set_primary_outcome(name: str, outcome: str | None,
+                        root: str | None = None,
+                        *, program: str = CLIENT_PROGRAM) -> dict:
+    """Declare (or clear) the outcome this study is about.
+
+    The declared outcome leads every results summary of the study, and the
+    summary says it was "declared by the researcher". It is written to the
+    manifest key ``primaryOutcome``, so it is frozen with the study and
+    travels in every run's manifest snapshot. Declaring nothing is fine: the
+    summary then leads by the default order and says so.
+
+    An outcome the study's settings cannot produce is refused here, with the
+    list of the ones they can — a declaration nobody could ever read back is
+    a mistake worth catching while the study is still a draft. Nothing is
+    written when it refuses. Swift twin: ``ExperimentStore.setPrimaryOutcome``.
+    """
+    from . import headline_outcome
+    d = load_raw(name, root)
+    trimmed = (outcome or "").strip()
+    if not trimmed:
+        d.pop(headline_outcome.MANIFEST_KEY, None)
+        save_raw(d, root)
+        return d
+    if not headline_outcome.can_produce(d, trimmed):
+        choices = headline_outcome.producible_choices(d)
+        raise MeasurementDeclarationError(
+            f"this study's settings cannot produce the outcome '{trimmed}': "
+            f"{headline_outcome.cannot_produce_reason(trimmed)}. "
+            f"The outcomes they can produce: {choices}",
+            repair=primary_outcome_repair(name, d, program))
+    d[headline_outcome.MANIFEST_KEY] = trimmed
     save_raw(d, root)
     return d
 
@@ -4111,6 +4157,9 @@ def _write_preregistration(d: dict, root: str | None) -> None:
         f"- **Case family:** {d.get('caseFamily') or 'unspecified'}",
         f"- **Outcome instruments:** "
         f"{', '.join(d.get('outcomeInstruments') or []) or 'sampledText'}",
+        # Which outcome every results summary of this study leads with.
+        # Swift twin: the same line in `preregistrationMarkdown`.
+        headline_outcome.settings_summary_line(d),
         f"- **Sampling:** temperature {d.get('temperature', 0)}, "
         f"samplesPerItem {d.get('samplesPerItem', 1)}, "
         f"seedPolicy {d.get('seedPolicy') or 'manifestSeeds'}, "

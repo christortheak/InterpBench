@@ -102,9 +102,16 @@ public enum RunEpoch {
     /// judged re-measurement runs on a never-frozen DUPLICATE, and a
     /// duplicate that declares the coding design differs from the original
     /// run's snapshot by exactly this key.
+    ///
+    /// `primaryOutcome` joined with the headline rule: it names which
+    /// outcome LEADS a summary of the results, so it cannot have moved a
+    /// byte of any run. A researcher who declares it on a draft after a
+    /// pilot run can still analyze that run; the analysis says, as always,
+    /// which field differed.
     public static let measurementFields = [
         "judges", "evaluation", "pipeline", "judgeRubricFile",
         "judgeRubricHash", "humanValidation", "evaluationSampling",
+        "primaryOutcome",
     ]
 
     /// The manifest reduced to its generation-side surface — the comparison
@@ -133,6 +140,7 @@ public enum RunEpoch {
         copy.judgeRubricHash = nil
         copy.humanValidation = nil
         copy.evaluationSampling = nil
+        copy.primaryOutcome = nil
         return copy
     }
 

@@ -7678,6 +7678,9 @@ public enum ExperimentStore {
                 + ((manifest.outcomeInstruments ?? []).isEmpty
                     ? "sampledText"
                     : (manifest.outcomeInstruments ?? []).joined(separator: ", ")),
+            // Which outcome every results summary of this study leads with.
+            // Server twin: the same line in `_write_preregistration`.
+            HeadlineOutcome.settingsSummaryLine(manifest),
             "- **Sampling:** temperature \(formatNumber(manifest.temperature)), "
                 + "samplesPerItem \(manifest.samplesPerItem ?? 1), "
                 + "seedPolicy \(manifest.seedPolicy ?? "manifestSeeds"), "

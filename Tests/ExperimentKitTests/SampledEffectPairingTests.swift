@@ -285,7 +285,7 @@ struct SampledEffectPairingTests {
         let sentenceRow = try #require(rows.first { $0.metric == "wordCount" })
         #expect(sentenceRow.n == 4)
         #expect(
-            EffectNarrative.sentence(for: sentenceRow)
+            EffectNarrative.sentence(for: sentenceRow, in: rows)
                 .contains("by +4.5 across 4 paired items"))
     }
 
@@ -500,9 +500,11 @@ struct SampledEffectPairingTests {
         #expect(within.unit == "sample" && within.inference == "diagnostic")
         #expect(within.adjustedP == nil)
 
-        let row = try #require(
-            RunResults.effectSizes(fromCSV: analysis.csv)?.first { $0.metric == "wordCount" })
-        #expect(EffectNarrative.sentence(for: row).contains("by +6 across 1 paired item ("))
+        let table = try #require(RunResults.effectSizes(fromCSV: analysis.csv))
+        let row = try #require(table.first { $0.metric == "wordCount" })
+        #expect(
+            EffectNarrative.sentence(for: row, in: table)
+                .contains("by +6 across 1 paired item ("))
     }
 
     // MARK: - Cells of unequal size

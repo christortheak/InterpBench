@@ -1037,6 +1037,7 @@ steerlab-cli experiment set-system-prompt <name> <text>
 steerlab-cli experiment set-parser <name> <parser>
 steerlab-cli experiment set-instrument-scope <name> <responseFormat>[,…]
 steerlab-cli experiment set-evaluation-sampling <name> <n> <seed>
+steerlab-cli experiment set-primary-outcome <name> <outcome>
 steerlab-cli experiment set-style-taxonomy <name> <prompts/taxonomies/file.json>
 steerlab-cli experiment verify <name>
 steerlab-cli experiment freeze <name> [--force] [--run-substrate <local|server>]
@@ -1067,6 +1068,7 @@ steerlab-cli experiment duplicate <name> <new-name>
 | `experiment set-parser` | Declare the numeric-endpoint parser from prompts/parsers/parser-registry.json and pin that registry's hash ("" clears both). |
 | `experiment set-instrument-scope` | Declare which response formats the option-consuming outcome instruments apply to (label, json, freeText), pinning the row set they select; "" clears the declaration. |
 | `experiment set-evaluation-sampling` | Declare the evaluate subsample this study preregistered — n records per condition and the seed that draws them — so the design travels in the manifest and lands in every run's snapshot. evaluate then needs no flags, and a flag that disagrees with the declaration refuses. "" clears the declaration. |
+| `experiment set-primary-outcome` | Declare the outcome this study is about, so every results summary leads with it and says it was declared by the researcher. An outcome the study's settings cannot produce is refused, with the list of the ones they can. "" clears the declaration; summaries then lead by the default order. |
 | `experiment set-style-taxonomy` | Pin the reasoning-style taxonomy and its hash. |
 | `experiment verify` | Re-check every pinned input against the file bytes on disk. |
 | `experiment freeze` | Freeze the manifest one-way, after the evidence gates pass. |

@@ -105,6 +105,10 @@ struct RunEpochMeasurementDriftTests {
             live.evaluationSampling = .init(
                 rule: EvaluateSubsample.rule, samplePerCondition: 2400,
                 sampleSeed: "0x000000000000002a")
+        case "primaryOutcome":
+            // Which outcome LEADS a summary of the results: declaring it on
+            // a draft after a pilot run cannot have moved a byte of that run.
+            live.primaryOutcome = "wordCount"
         default:
             Issue.record("unhandled measurement field '\(field)'")
             return

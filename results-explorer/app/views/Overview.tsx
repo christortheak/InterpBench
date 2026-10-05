@@ -1,12 +1,17 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Badge, ForestRow, NoRunSelected } from "../components/ui";
 import { demoPreviewEnabled, effects } from "../lib/demo";
-import { runKindOf, runStatusOf } from "../lib/discovery";
+import { findFile, runKindOf, runStatusOf } from "../lib/discovery";
 import { fmt } from "../lib/format";
+import {
+  EVALUATION_REPORT_FILES, JUDGED, PRIMARY_OUTCOME_KEY, headlineRows, intervalLine, outcomeTitle, pLine, selectHeadline,
+} from "../lib/headline";
+import { readJSONArtifact } from "../lib/judged";
 import { runKindLabel } from "../lib/runKind";
 import { statusLabel, statusTone } from "../lib/status";
-import type { View, WorkspaceRun } from "../lib/types";
+import type { Effect, View, WorkspaceRun } from "../lib/types";
 
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -86,6 +91,59 @@ function ConditionsTable({ run }: { run: WorkspaceRun }) {
   );
 }
 
+/// The headline card: the outcome this study is about, and which rule chose
+/// it. The outcome the researcher declared (`primaryOutcome` in the run's own
+/// manifest snapshot) leads when the run has it; otherwise the first outcome
+/// the run has by the default order — a judged outcome, then a choice or
+/// numeric outcome, then a reader or probe score, then reasoning style, then
+/// marker density, then surface measures (lib/headline.ts). It used to show
+/// the first row of the table, which is word count.
+///
+/// Every number is STORED: read from the run's effect-size table. A judged
+/// outcome lives in the evaluation report, so the card points there instead
+/// of restating it. Nothing is reordered — the table keeps the engine's
+/// order, and the surface measures are still in it.
+function HeadlineCard({ run, pooled, onNavigate }: { run: WorkspaceRun; pooled: Effect[]; onNavigate: (view: View) => void }) {
+  // The declared outcome is read from this run's manifest snapshot. Until
+  // that read settles the card shows the default-order headline without
+  // claiming anything about a declaration it has not seen.
+  const [declared, setDeclared] = useState<{ run: string; value: unknown } | null>(null);
+  useEffect(() => {
+    let live = true;
+    readJSONArtifact(run, "experiment.json").then((snapshot) => {
+      if (live) setDeclared({ run: run.key, value: snapshot.raw[PRIMARY_OUTCOME_KEY] });
+    });
+    return () => { live = false; };
+  }, [run]);
+  const report = EVALUATION_REPORT_FILES.find((name) => findFile(run.files, name));
+  const headline = selectHeadline(
+    declared?.run === run.key ? declared.value : null,
+    pooled.map((row) => row.endpoint),
+    report ? [JUDGED] : [],
+  );
+  const rows = headlineRows(headline, pooled);
+  const row = rows[0];
+  return (
+    <div className="card local-primary-card">
+      <span className="section-number">HEADLINE OUTCOME</span>
+      {headline.outcome === null ? <>
+        <h2>Not available</h2>
+        <p>{headline.declaredAbsent ? `${headline.chosenBy}. ` : ""}Select Generations or Provenance to inspect the artifacts this run does contain.</p>
+      </> : <>
+        <h2>{outcomeTitle(headline.outcome)}</h2>
+        {row ? <>
+          <strong>{fmt(row.estimate, row.unit === "months" ? 1 : 2)} <small>{row.unit}</small></strong>
+          <p>
+            {row.condition ? `${row.condition} · ` : ""}{intervalLine(row, fmt)}{pLine(row, pooled) ? ` · ${pLine(row, pooled)}` : ""}
+            {rows.length > 1 ? ` · ${rows.length - 1} more condition${rows.length === 2 ? "" : "s"} in the full table` : ""}
+          </p>
+        </> : <p>Read from this run&apos;s evaluation report (<code>{report}</code>). <button className="quiet-link" onClick={() => onNavigate(report === "coding-report.json" ? "coding" : "judged")}>Open the judged evaluation →</button></p>}
+        <p>Headline {headline.chosenBy}. Every other measure is in the full table.</p>
+      </>}
+    </div>
+  );
+}
+
 export function LocalOverview({ run, onNavigate }: { run: WorkspaceRun; onNavigate: (view: View) => void }) {
   // The overview headline is the POOLED rows only. The stratified companion
   // rows (2026-08-06) belong under their parent in the Effects view, where
@@ -94,7 +152,6 @@ export function LocalOverview({ run, onNavigate }: { run: WorkspaceRun; onNaviga
   // read as five comparable findings.
   const pooledEffects = run.effectRows.filter((effect) => effect.stratifyBy === "pooled");
   const shownEffects = pooledEffects.slice(0, 5);
-  const primary = shownEffects[0];
   const hasConceptEvidence = run.validationConcepts.length > 0 || run.cosineMatrices.length > 0;
   const hasOptimization = run.sweepRows.length > 0;
   const hasPanel = run.panelEffects.length > 0 || run.generationRows.some((record) => record.speakerName || record.turnTitle);
@@ -190,7 +247,7 @@ export function LocalOverview({ run, onNavigate }: { run: WorkspaceRun; onNaviga
 
       <section className="section-grid local-lower">
         <div className="card local-path-card"><span className="section-number">READ BOUNDARY</span><h2>Explicit folder permission only</h2><p>The app can see this workspace because you chose it through the browser. It does not retain access after the local session ends and never writes to the run.</p></div>
-        <div className="card local-primary-card"><span className="section-number">PRIMARY REPORTED ROW</span>{primary ? <><h2>{primary.short}</h2><strong>{fmt(primary.estimate, primary.unit === "months" ? 1 : 2)} <small>{primary.unit}</small></strong><p>95% CI {fmt(primary.low)} to {fmt(primary.high)} · n = {primary.n} · adjusted p {primary.q == null ? "not reported" : primary.q.toPrecision(2)}</p></> : <><h2>Not available</h2><p>Select Generations or Provenance to inspect the artifacts this run does contain.</p></>}</div>
+        <HeadlineCard run={run} pooled={pooledEffects} onNavigate={onNavigate} />
       </section>
     </div>
   );
