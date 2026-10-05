@@ -133,9 +133,11 @@ struct StudyAnalysisRepository {
         let style = try ExperimentStore.loadPinnedReasoningStyle(manifest, root: workspaceRoot)
 
         // Declared exclusion rules join HERE — records drop from the paired
-        // statistics only (pairwise deletion falls out of the (seed,
-        // promptID) baseline join), never from generations.jsonl, and the
-        // stamp lands in analysis.json + exclusions.json. Scope is
+        // statistics only (pairwise deletion falls out of the per-item
+        // baseline join: a cell keeps its surviving samples, and an item
+        // pairs only while both arms still have one), never from
+        // generations.jsonl, and the stamp lands in analysis.json +
+        // exclusions.json. Scope is
         // allRecordTypes (the engine default): instrument readouts are
         // considered too — endpoint rules read endpoints the record itself
         // carries (e.g. ordinalPosition), and a cell whose every sampled

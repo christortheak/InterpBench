@@ -50,8 +50,16 @@ public enum EffectNarrative {
         return "Condition '\(condition)'"
     }
 
+    /// `n` counts ITEMS. An item sampled several times contributes one
+    /// difference — its responses are averaged within each condition before
+    /// the item is paired with its own baseline — so a study of four items
+    /// with three responses each reads "across 4 paired items", never 12.
     private static func sampleClause(_ n: Int) -> String {
-        n > 0 ? " across \(n) paired items" : ""
+        switch n {
+        case ..<1: ""
+        case 1: " across 1 paired item"
+        default: " across \(n) paired items"
+        }
     }
 
     private static func ciClause(_ row: RunResults.EffectSizeRow) -> String {

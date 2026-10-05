@@ -370,6 +370,9 @@ def test_every_committed_fixture_has_a_staleness_test():
         # Checked inline in test_model_capabilities.py (the records against
         # the schema, the probe verdicts, hashes, gates and sentences).
         "model-capabilities.json", "model-capabilities.schema.json",
+        # Checked inline in test_sampled_effect_pairing.py (analyze re-run
+        # over the committed records, and the derived seeds re-derived).
+        "sampled-effect-pairing.json",
         # Hand-authored contract (not regenerated from either engine — it
         # states the INTENDED verdicts, SCI-04, 2026-09-05), checked inline on
         # both sides: test_study_stats.py

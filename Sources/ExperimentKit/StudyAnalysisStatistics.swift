@@ -53,20 +53,53 @@ enum StudyAnalysisStatistics {
         return result
     }
 
+    /// The run's canonical row order, (seed, promptIndex, promptID): it fixes
+    /// the order the paired differences enter the bootstrap, so a given run
+    /// always reproduces the same interval.
+    private static func inRunOrder(_ rows: [MetricRow]) -> [MetricRow] {
+        rows.sorted {
+            ($0.seed, $0.promptIndex, $0.promptID)
+                < ($1.seed, $1.promptIndex, $1.promptID)
+        }
+    }
+
+    /// What identifies one sample WITHIN an item, for pairing sample k of a
+    /// condition with sample k of the baseline: the record's `sampleIndex`.
+    /// Never the seed where an index exists — a derived seed includes the
+    /// condition name, so the two sides of a pair carry different seeds by
+    /// design (`StudySampling.deriveSeed`). Rows from records that predate
+    /// the stamp fall back to the seed, which every such run shared across
+    /// conditions.
+    private static func sampleKey(_ row: MetricRow) -> String {
+        row.sampleIndex.map { "index:\($0)" } ?? "seed:\(row.seed)"
+    }
+
+    /// The paired unit is the ITEM. Each (condition, item) cell is averaged
+    /// over its samples, and the condition's mean is paired with the same
+    /// item's baseline mean by promptID — so `n` counts items, however many
+    /// responses were sampled per item, and a study with one response per
+    /// item gets exactly the per-item differences it always did. Server
+    /// twin: `analysis_endpoints.endpoint_values` and the pooled loop in
+    /// `analysis_workflow.analyze`; both engines are pinned to the same
+    /// records by `Tests/Fixtures/cross-engine/sampled-effect-pairing.json`.
+    ///
     /// When `stratum` is set the rows have already been restricted to one
     /// stratum's items; every produced entry carries the stratification
-    /// provenance, and `unit` says what one paired difference is: "item"
-    /// when each joined item contributes exactly one pair, "sample" when
-    /// the pairs resolve within items (multiple seeds of the same item).
+    /// provenance, and `unit` says what one paired difference is. A stratum
+    /// in which several items pair is item-level, like the pooled row. A
+    /// stratum in which exactly ONE item pairs drops to that item's sample
+    /// axis when at least two of its samples pair (sample k with baseline
+    /// sample k): `unit` is then "sample", and the row is a within-item
+    /// diagnostic rather than an item-level effect. Server twin:
+    /// `analysis_endpoints.stratified_effect_rows`.
     private static func sampledEffectSizes(
         rows: [MetricRow], concepts: [String], styleFeatureIDs: [String],
         replicates: Int, stratum: (family: String, label: String)? = nil
     ) -> [EffectSizeEntry] {
-        var baselineByKey: [String: MetricRow] = [:]
-        for row in rows where row.condition == "baseline" {
-            baselineByKey["\(row.seed)::\(row.promptID)"] = row
-        }
-        guard !baselineByKey.isEmpty else { return [] }
+        let baselineByItem = Dictionary(
+            grouping: inRunOrder(rows.filter { $0.condition == "baseline" }),
+            by: \.promptID)
+        guard !baselineByItem.isEmpty else { return [] }
 
         var metrics: [(name: String, value: (MetricRow) -> Double)] = [
             ("wordCount", { Double($0.wordCount) }),
@@ -82,9 +115,16 @@ enum StudyAnalysisStatistics {
             metrics.append(("rs_\(id)", { $0.reasoningStyle[id] ?? 0 }))
         }
 
-        // Conditions in first-appearance order; items in a deterministic
-        // (seed, promptIndex, promptID) order so the bootstrap draws are
-        // reproducible for a given run.
+        func cellMean(
+            _ cell: [MetricRow], _ value: (MetricRow) -> Double
+        ) -> Double {
+            cell.reduce(0) { $0 + value($1) } / Double(cell.count)
+        }
+
+        // Conditions in first-appearance order; items in the order they
+        // first appear among the condition's rows in run order, so the
+        // bootstrap draws are reproducible for a given run (and, with one
+        // response per item, are the draws this analysis has always made).
         var conditionOrder: [String] = []
         var seen = Set<String>()
         for row in rows where row.condition != "baseline" {
@@ -92,24 +132,37 @@ enum StudyAnalysisStatistics {
         }
         var entries: [EffectSizeEntry] = []
         for condition in conditionOrder {
-            let conditionRows =
-                rows
-                .filter { $0.condition == condition }
-                .sorted {
-                    ($0.seed, $0.promptIndex, $0.promptID)
-                        < ($1.seed, $1.promptIndex, $1.promptID)
-                }
+            let conditionRows = inRunOrder(rows.filter { $0.condition == condition })
+            var itemOrder: [String] = []
+            var rowsByItem: [String: [MetricRow]] = [:]
+            for row in conditionRows {
+                if rowsByItem[row.promptID] == nil { itemOrder.append(row.promptID) }
+                rowsByItem[row.promptID, default: []].append(row)
+            }
+            // An item pairs when both arms measured it at least once.
+            let pairedItems = itemOrder.filter { baselineByItem[$0] != nil }
+            guard !pairedItems.isEmpty else { continue }
             for metric in metrics {
-                var diffs: [Double] = []
-                var pairedItems = Set<String>()
-                for row in conditionRows {
-                    guard let base = baselineByKey["\(row.seed)::\(row.promptID)"] else {
-                        continue
-                    }
-                    diffs.append(metric.value(row) - metric.value(base))
-                    pairedItems.insert(row.promptID)
+                var diffs = pairedItems.map { item in
+                    cellMean(rowsByItem[item] ?? [], metric.value)
+                        - cellMean(baselineByItem[item] ?? [], metric.value)
                 }
-                guard !diffs.isEmpty else { continue }
+                var withinItem = false
+                if stratum != nil, pairedItems.count == 1, let item = pairedItems.first {
+                    var baselineBySample: [String: MetricRow] = [:]
+                    for row in baselineByItem[item] ?? [] {
+                        baselineBySample[sampleKey(row)] = row
+                    }
+                    let sampleDiffs = (rowsByItem[item] ?? []).compactMap { row in
+                        baselineBySample[sampleKey(row)].map {
+                            metric.value(row) - metric.value($0)
+                        }
+                    }
+                    if sampleDiffs.count >= 2 {
+                        diffs = sampleDiffs
+                        withinItem = true
+                    }
+                }
                 let ci = StudyStatistics.pairedBootstrapCI(
                     diffs, replicates: replicates, seed: 0)
                 let wilcoxon = StudyStatistics.wilcoxonSignedRank(diffs)
@@ -125,27 +178,21 @@ enum StudyAnalysisStatistics {
                         wilcoxonP: wilcoxon.p.isNaN ? nil : wilcoxon.p,
                         stratifyBy: stratum?.family,
                         stratum: stratum?.label,
-                        unit: stratum.map {
-                            _ in
-                            diffs.count == pairedItems.count
-                                ? "item" : "sample"
+                        unit: stratum.map { _ in withinItem ? "sample" : "item" },
+                        // The unit IS the estimand: one difference per item
+                        // is the pooled estimand restricted to this stratum
+                        // and belongs in the correction family; several
+                        // draws of one item are a within-item variability
+                        // read and are reported as a diagnostic instead.
+                        estimand: stratum.map { _ in
+                            withinItem
+                                ? EffectSizeEstimand.withinItemSamples
+                                : EffectSizeEstimand.itemLevel
                         },
-                        // The unit IS the estimand: one pair per item is the
-                        // pooled estimand restricted to this stratum and
-                        // belongs in the correction family; several draws of
-                        // the same item are a within-item variability read
-                        // and are reported as a diagnostic instead.
-                        estimand: stratum.map {
-                            _ in
-                            diffs.count == pairedItems.count
-                                ? EffectSizeEstimand.itemLevel
-                                : EffectSizeEstimand.withinItemSamples
-                        },
-                        inference: stratum.map {
-                            _ in
-                            diffs.count == pairedItems.count
-                                ? EffectSizeInference.corrected
-                                : EffectSizeInference.diagnostic
+                        inference: stratum.map { _ in
+                            withinItem
+                                ? EffectSizeInference.diagnostic
+                                : EffectSizeInference.corrected
                         }))
             }
         }

@@ -140,6 +140,14 @@ import Testing
         #expect(!sentence.contains("paired items"))
     }
 
+    /// A study of one item sampled many times pairs ONE item, and the
+    /// sentence says so in the singular.
+    @Test func oneItemIsSingular() {
+        let sentence = EffectNarrative.sentence(for: row(n: 1))
+        #expect(sentence.contains("by +0.31 across 1 paired item (95% CI"))
+        #expect(!sentence.contains("paired items"))
+    }
+
     // MARK: - Metric phrases (plain words first, engine term second)
 
     @Test func metricPhrases() {
