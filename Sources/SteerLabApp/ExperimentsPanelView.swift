@@ -307,6 +307,10 @@ struct ExperimentsPanelView: View {
                     Text("Run reports — this workspace")
                         .font(.caption.bold())
                         .padding(.top, 4)
+                    ResultsExportButton(
+                        studyName: panel.management.selectedName,
+                        workspaceRoot: ExperimentStore.workspaceRoot,
+                        results: panel.results)
                     StudyResultsView(service: service, results: panel.results,
                         refresh: { panel.refreshResults() }) {
                         pairedJudgeControls(panel: panel)
