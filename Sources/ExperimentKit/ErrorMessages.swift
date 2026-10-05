@@ -38,6 +38,12 @@ extension DemoWorkspace.Refusal: LocalizedError {
     public var errorDescription: String? { "\(reason) \(repair)" }
 }
 
+extension DiagnosticWorkspace.Refusal: LocalizedError {
+    /// The reason alone, as the app showed it before the refusal had its own
+    /// type: the carried repair names command-line verbs.
+    public var errorDescription: String? { description }
+}
+
 extension ExperimentError: LocalizedError {
     /// What the app shows (its sheets read `localizedDescription`). A client
     /// identity failure is said in a researcher's words there; the command

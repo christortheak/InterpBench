@@ -52,14 +52,14 @@ def bridge(payload):
     repair, and state) rather than as a failed call, so the Mac command line
     can answer with the same typed refusal this client gives.
     """
-    from ..experiment.diagnostic_archives import Refusal
+    from ..experiment.diagnostic_archives import MalformedRequest
     from . import results_export
     allowed = {'workspaceRoot', 'study', 'run', 'out', 'client'}
     if (not isinstance(payload, dict) or payload.keys() - allowed
             or not {'workspaceRoot', 'study'} <= payload.keys()
             or any(not isinstance(payload[key], str) or not payload[key] for key in payload)):
-        raise Refusal('Results export takes workspaceRoot and study, with optional run, out, and client, '
-                      'each a nonempty string.')
+        raise MalformedRequest('Results export takes workspaceRoot and study, with optional run, out, and client, '
+                               'each a nonempty string.')
     try:
         result = results_export.export_results(
             payload['workspaceRoot'], payload['study'], run=payload.get('run'), out=payload.get('out'),

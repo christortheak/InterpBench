@@ -57,9 +57,23 @@ def main():
         return 0
     except Exception as exc:
         repair = getattr(exc, 'repair_action', None) or getattr(exc, 'repair', None) or repair
+        # `code` and `state` (additive): whether the action was REFUSED (65) or
+        # asked for in the wrong shape (`blocked`, 64), classified in the one
+        # place both clients share. A source mismatch or a client that cannot
+        # import is neither — nothing about the request was judged — and keeps
+        # the `blocked` it has always had.
+        fields = {'code': 'usage', 'state': 'blocked'}
         if isinstance(exc, ImportError):
             repair = RUNTIME_REPAIR
-        print(json.dumps({'ok': False, 'clientSHA256': identity, 'clientRoot': root, 'reason': str(exc), 'repairAction': repair}))
+        elif not isinstance(exc, ClientRuntimeMismatch):
+            try:
+                from .diagnostic_commands import refusal_fields
+                fields = refusal_fields(exc)
+            except ImportError:
+                repair = RUNTIME_REPAIR
+        print(json.dumps({'ok': False, 'clientSHA256': identity, 'clientRoot': root, 'reason': str(exc),
+                          'repairAction': repair, **fields}))
+        # This adapter's own exit status is unchanged; the callers read `state`.
         return 65
 
 

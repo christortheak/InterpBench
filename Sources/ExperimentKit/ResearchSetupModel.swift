@@ -202,6 +202,10 @@ public enum ResearchSetupCopy {
     /// repair it carried — in the app's words where the carried repair was
     /// written for the command line.
     public static func failure(_ error: any Error) -> (reason: String, repair: String?) {
+        // A setup step the Python client declined keeps its reason and repair.
+        if let refusal = error as? DiagnosticWorkspace.Refusal {
+            return (refusal.reason, refusal.repairAction)
+        }
         guard let typed = error as? ExperimentError else {
             return (error.localizedDescription, nil)
         }
