@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "backend": "mlx",
+  "title": "Placeholder demo",
+  "summary": "A synthetic stand-in for SteerLab's tests. Nothing in it was measured.",
+  "model": {
+    "id": "example/placeholder-model",
+    "approximateDownloadGB": 0.5
+  },
+  "studies": [
+    {
+      "name": "placeholder-study",
+      "summary": "A frozen study with one invented run."
+    },
+    {
+      "name": "placeholder-study-draft",
+      "summary": "A draft copy of the same study."
+    }
+  ]
+}

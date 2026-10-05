@@ -48,7 +48,6 @@
     "prompts/parsers/parser-registry.json",
     "prompts/rubrics/README.md",
     "prompts/rubrics/default-paired-v1.md",
-    "prompts/tasks/example-task-prompts.jsonl",
     "prompts/templates/amount-in-scenario-v1.json",
     "prompts/templates/unnamed-scenario-v1.json",
     "prompts/templates/instructed-stance-pair-v1.json",

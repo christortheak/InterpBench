@@ -138,12 +138,12 @@ library. Run it in place by its full path, or give it a name on your `PATH`:
 mkdir -p ~/.local/bin
 ln -s "<path-to>/SteerLab.app/Contents/Helpers/steerlab-cli" ~/.local/bin/steerlab-cli
 export PATH="$HOME/.local/bin:$PATH"
-steerlab-cli --version      # reports 6/6 resource families resolved
+steerlab-cli --version      # reports 7/7 resource families resolved
 ```
 
 A symlink is enough: the binary resolves its shaders and bundled resources
 against its real location inside the bundle, not the link's. `--version`
-prints where each shipped resource family resolved, and **6/6 resolved** is
+prints where each shipped resource family resolved, and **7/7 resolved** is
 the quick answer to "is this install intact"; the app's code signature is the
 integrity guarantee. Do not also link it as `steerlab`: that name belongs to
 the Python client below, a different product with a different verb surface,
@@ -873,7 +873,7 @@ regeneration graduates them.
 
 Tell it which command line it has. On a Mac that is `steerlab-cli`, the
 instrument this document types throughout, verified by `steerlab-cli --version`
-reporting **6/6 resource families resolved**. Elsewhere it is the `steerlab`
+reporting **7/7 resource families resolved**. Elsewhere it is the `steerlab`
 client (§4), verified by `steerlab --version` printing `steerlab <version>
 (client)` — a smaller verb surface reached the same way, since everything below
 about `--json`, refusals, and exit codes holds identically on it. An agent that

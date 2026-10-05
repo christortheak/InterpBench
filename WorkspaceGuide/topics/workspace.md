@@ -83,6 +83,20 @@ directory, and it never replaces existing files.
 
 <!-- client: all -->
 
+### A Demo Workspace, for a first look
+
+When the researcher wants to see a finished study before designing their
+own, `{{cli}} workspace init <new-folder> --demo <backend>` opens a copy of a
+Demo Workspace this install carries: `mlx` (this Mac, quick start), `mps`
+(this Mac, full capabilities), or `cuda` (another machine). It copies the
+demo, checks every copied file against the original and every study as
+`experiment verify` would, sets the workspace to that backend, and commits
+once. The original is never opened. Read the copy's `README.md` first; the
+result's `nextAction` points there. A build may carry none, and then the verb
+says so and changes nothing. A demo is a starting point to read and run, not
+the researcher's study: their own work goes in a new workspace, or in a
+`duplicate` of the demo's draft.
+
 ## Where things live
 
 | Path | What goes there | Shape |

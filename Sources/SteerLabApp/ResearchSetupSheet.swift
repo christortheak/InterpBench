@@ -15,8 +15,13 @@ struct ResearchSetupSheet: View {
     let localServer: LocalServerController
     let createWorkspace: () -> Void
     let openWorkspace: () -> Void
+    /// Asks where a Demo Workspace's copy goes, copies it, and opens the copy.
+    let openDemo: (DemoWorkspace.Entry) throws -> WorkspaceStore.DemoOpening?
+    /// Called when the demo sheet closes.
+    let demoSheetClosed: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var copied = false
+    @State private var showingDemos = false
 
     /// The folder the researcher chose — nil with no workspace yet, and nil
     /// for a developer build standing on its own checkout.
@@ -131,10 +136,20 @@ struct ResearchSetupSheet: View {
                         Button("New Workspace…", action: createWorkspace)
                     }
                     Button("Open Workspace…", action: openWorkspace)
+                    // A worked example, opened as a copy in a folder the
+                    // researcher chooses. Offered beside the other two ways
+                    // to get a workspace, and listed by what this build
+                    // carries — which may be nothing, and the sheet says so.
+                    Button(DemoWorkspaceCopy.button) { showingDemos = true }
                 }.disabled(model.busy || workspace.isEnvironmentPinned)
                 Text(ResearchSetupCopy.workspaceCaption)
                     .font(.caption).foregroundStyle(.secondary)
+                Text(ResearchSetupCopy.demoCaption)
+                    .font(.caption).foregroundStyle(.secondary)
             }.frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .sheet(isPresented: $showingDemos, onDismiss: demoSheetClosed) {
+            DemoWorkspaceSheet(demos: DemoWorkspace.available(), open: openDemo)
         }
     }
 

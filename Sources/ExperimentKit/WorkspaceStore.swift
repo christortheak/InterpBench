@@ -162,10 +162,21 @@ public enum WorkspaceRoot {
         return Resolution(source: .none, url: noWorkspacePlaceholder)
     }
 
+    /// Set only inside `WorkspaceRoot.reading(_:_:)` (DemoWorkspace.swift):
+    /// one scoped read of a named folder as the workspace, ahead of every
+    /// rule above, in a process that runs a single verb. nil everywhere else,
+    /// and never set by the app. nonisolated(unsafe) on the same terms as
+    /// `programmaticOverride`: written and read on the one thread that runs
+    /// the verb.
+    nonisolated(unsafe) static var scopedReadRoot: URL?
+
     /// The live resolution. UserDefaults is read per call (cheap, and the app
     /// can change it); the environment is cached.
     public static var currentResolution: Resolution {
-        resolution(
+        if let scopedReadRoot {
+            return Resolution(source: .programmaticOverride, url: scopedReadRoot)
+        }
+        return resolution(
             environment: environmentValue.map { [environmentKey: $0] } ?? [:],
             programmaticOverride: programmaticOverride,
             persistedPath: UserDefaults.standard.string(forKey: defaultsKey),
@@ -216,6 +227,11 @@ public final class WorkspaceStore {
     ///   cases, emotion corpora, or authoring job cards. A fresh workspace
     ///   starts CONCEPT-EMPTY; `SampleWorkspace/` is where a worked example
     ///   lives, and it is a separate folder the user opens on purpose.
+    /// - **Nothing that is only an example** (decision 13). Every file here
+    ///   is one a study needs to function or one a default path names. The
+    ///   example task prompts were the last file no code path used, and
+    ///   moved out; worked examples ship as Demo Workspaces
+    ///   (`DemoWorkspace`), which a researcher opens as a copy.
     /// - **Neutral bytes.** Nothing here names a study, an institution, a
     ///   person, or a task domain. `AgentContractTests` walks
     ///   `WorkspaceSeed/` against the private name denylist, and asserts
@@ -267,6 +283,28 @@ public final class WorkspaceStore {
         at url: URL,
         seedingFrom seedRootOverride: URL? = nil
     ) throws -> URL {
+        try create(
+            at: url, seedingFrom: seedRootOverride, placingFirst: nil, beforeCommit: nil,
+            commitMessage: nil)
+    }
+
+    /// `create`, with the two hooks a Demo Workspace is opened through
+    /// (`DemoWorkspace.open`) — the same staged, all-or-nothing install.
+    ///
+    /// `placingFirst` puts the demo's own files into the staged tree before
+    /// the seed is copied, so the seed only fills in what the demo does not
+    /// carry and never replaces a byte of it. `beforeCommit` runs once the
+    /// tree is complete and before anything is committed or installed;
+    /// throwing there leaves nothing behind. With neither, this is exactly
+    /// an ordinary new workspace. Python twin: `workspace_bootstrap.initialize`.
+    @discardableResult
+    nonisolated static func create(
+        at url: URL,
+        seedingFrom seedRootOverride: URL?,
+        placingFirst place: ((URL) throws -> Void)?,
+        beforeCommit check: ((URL) throws -> Void)?,
+        commitMessage: String?
+    ) throws -> URL {
         let fm = FileManager.default
         let root = url.standardizedFileURL
         guard !isWorkspace(url: root) else {
@@ -301,7 +339,9 @@ public final class WorkspaceStore {
         let staging = root.deletingLastPathComponent().appending(
             component: ".\(root.lastPathComponent).steerlab-staging-\(UUID().uuidString)")
         do {
-            try seedWorkspace(at: staging, from: seedRoot)
+            try seedWorkspace(
+                at: staging, from: seedRoot, placingFirst: place, beforeCommit: check,
+                commitMessage: commitMessage)
             // The vetted destination is empty or absent; either way it must
             // be gone for the rename to land the staged tree whole.
             if fm.fileExists(atPath: root.path) { try fm.removeItem(at: root) }
@@ -317,7 +357,10 @@ public final class WorkspaceStore {
     /// failure propagates: the caller discards the whole tree, so there is no
     /// partial state to reason about here.
     private nonisolated static func seedWorkspace(
-        at root: URL, from seedRoot: URL
+        at root: URL, from seedRoot: URL,
+        placingFirst place: ((URL) throws -> Void)?,
+        beforeCommit check: ((URL) throws -> Void)?,
+        commitMessage: String?
     ) throws {
         let fm = FileManager.default
 
@@ -337,6 +380,10 @@ public final class WorkspaceStore {
         try fm.createDirectory(
             at: root.appending(component: "adapters"),
             withIntermediateDirectories: true)
+
+        // A Demo Workspace's own files go in first, so the seed below only
+        // fills in what the demo does not carry.
+        try place?(root)
 
         // Seed: exactly the files `seedManifest` names, at the same relative
         // paths. A seed root that lacks one is skipped silently (a partial
@@ -370,7 +417,14 @@ public final class WorkspaceStore {
             to: root.appending(component: ".gitignore"), atomically: true,
             encoding: .utf8)
 
-        initializeGit(at: root)
+        // The tree is complete. A Demo Workspace verifies its copy and
+        // records its compute binding here, before anything is committed.
+        try check?(root)
+
+        initializeGit(
+            at: root,
+            message: commitMessage
+                ?? "workspace created (seeded from SteerLab \(SteerLabVersion.current))")
     }
 
     /// Switches the process to a workspace: validates it, persists the choice
@@ -570,7 +624,7 @@ public final class WorkspaceStore {
     /// git init + initial commit, silent no-op when git is unavailable. A
     /// local fallback identity is configured only when the machine has none,
     /// so app-made commits never fail on an unconfigured git.
-    private nonisolated static func initializeGit(at root: URL) {
+    private nonisolated static func initializeGit(at root: URL, message: String) {
         // /usr/bin/git is an installation shim on a fresh Mac. Optional Git
         // must not start a developer-tools download during workspace creation.
         let selection = Process()
@@ -587,11 +641,7 @@ public final class WorkspaceStore {
             _ = runGit(["config", "user.email", "steerlab@localhost"], in: root)
         }
         _ = runGit(["add", "-A", "."], in: root)
-        _ = runGit(
-            [
-                "commit", "-m",
-                "workspace created (seeded from SteerLab \(SteerLabVersion.current))",
-            ], in: root)
+        _ = runGit(["commit", "-m", message], in: root)
     }
 
     private nonisolated static func runGit(

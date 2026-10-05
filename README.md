@@ -73,7 +73,7 @@ Run it from where it is, or put it on your `PATH`:
 mkdir -p ~/.local/bin
 ln -s "<path-to>/SteerLab.app/Contents/Helpers/steerlab-cli" ~/.local/bin/steerlab-cli
 export PATH="$HOME/.local/bin:$PATH"
-steerlab-cli --version      # reports 6/6 resource families resolved
+steerlab-cli --version      # reports 7/7 resource families resolved
 ```
 
 Do not name the link `steerlab`; that name belongs to the app-free client

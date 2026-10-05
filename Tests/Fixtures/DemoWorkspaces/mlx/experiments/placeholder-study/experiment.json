@@ -1,0 +1,51 @@
+{
+  "appVersion" : "swift-app 0.9.6+4fcaf93b",
+  "concepts" : [
+    {
+      "name" : "courtesy",
+      "options" : {
+        "method" : "meanDifference",
+        "readingPosition" : {
+          "lastToken" : {
+
+          }
+        }
+      },
+      "stimulusSetHash" : "0f512a8c770134f0b28e691a1b6083cf9982e231656b2ae437cc7fbf156a7203",
+      "validationHash" : "d7e8974873578525cfda8f5e8e8b72e3f63595d55f6f542b659beab466056323"
+    }
+  ],
+  "conditions" : [
+
+  ],
+  "createdAt" : "2026-10-05T01:41:23Z",
+  "experimentDescription" : "A synthetic placeholder study. Nothing in it was measured.",
+  "forcedGatesSkipped" : [
+    "validateEvidence"
+  ],
+  "freezeForced" : true,
+  "freezeHash" : "b00e686507789a7c149da014d29f36b67a1a939d369a9510f1c4f5d9b58d837e",
+  "frozenAt" : "2026-10-05T01:41:24Z",
+  "frozenBy" : "swift",
+  "gitCommit" : "037d43a8f0d3cc03db5d9a3e597a1db359a08fae",
+  "maxTokens" : 2048,
+  "modelID" : "example\/placeholder-model",
+  "modelRevision" : "0000000000000000000000000000000000000000",
+  "multiAgentIncludeBaseline" : true,
+  "name" : "placeholder-study",
+  "preregistrationGeneratedHash" : "cb5f0fdd0a9c0569948e12c5fd9c2d01de4c1ca04b9f92a175291e023ee47756",
+  "promptMode" : "chatAssistant",
+  "reasoningEffort" : "off",
+  "recordTokenIDs" : false,
+  "seeds" : [
+    20260610
+  ],
+  "status" : "frozen",
+  "studyKind" : "modelOutput",
+  "taskPromptsFile" : "prompts\/tasks\/example-task-prompts.jsonl",
+  "taskPromptsHash" : "f0970d4fdd2eec48883b8843a480202e76790bd466d179a0fddfa7f2dd2f3763",
+  "temperature" : 0,
+  "variantConditions" : [
+
+  ]
+}

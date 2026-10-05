@@ -633,6 +633,7 @@ METAVARS: dict = {
     "--bundle-sha": "<digest>",
     "--ca-bundle": "<path>",
     "--corpus": "<a,b,c>",
+    "--demo": "<mlx|mps|cuda>",
     "--description": "<text>",
     "--dev-prompts": "<path>",
     "--device": "<cuda|cpu|mps>",

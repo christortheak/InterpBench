@@ -5,8 +5,12 @@ import Foundation
 // Phase A of docs/MAC-DISTRIBUTION-AND-MANAGED-SERVER-PROPOSAL.md (§3–§4,
 // §12). Everything the app ships as CODE — workspace seed data, the Python
 // server payload, cluster bootstrap/Slurm templates, analysis scripts, web
-// assets, and the packaging resource manifest — resolves through this type
-// and nothing else. Wave 2 migrated the non-cluster call sites (workspace
+// assets, the Demo Workspaces, and the packaging resource manifest — resolves
+// through this type and nothing else. That is SEVEN families, and the count
+// is quoted: `steerlab-cli --version` prints "7/7 resource families
+// resolved", and the root AGENTS.md, README.md, docs/ONBOARDING.md, and
+// docs/CLI-REFERENCE.md repeat it (`ResourceFamilyCountTests` holds them to
+// `Family.allCases.count`). Wave 2 migrated the non-cluster call sites (workspace
 // seeding, analysis tools, the local Python engine, web assets, version
 // stamping); wave 3 migrated the last one — the cluster payload
 // (`ClusterProvisioner.defaultLocalRepoPath` resolves through
@@ -82,6 +86,14 @@ public enum CodeResources {
         case analysisTools = "AnalysisTools"
         /// The Swift web server's browser client (`web/` in both layouts).
         case webAssets = "web"
+        /// Demo Workspaces: worked examples the product carries, one folder
+        /// per compute backend (`DemoWorkspaces/<backend>/` in both layouts),
+        /// each opened as a verified copy and never in place — see
+        /// `DemoWorkspace`. The FOLDER is part of every build (it always
+        /// holds its `README.md`, so the family resolves and the manifest
+        /// lists it); the backends inside are optional, and a build may
+        /// carry any subset of them, including none.
+        case demoWorkspaces = "DemoWorkspaces"
         /// The packaging resource manifest (`resource-manifest.json`),
         /// generated at packaging time (Phase B). A file, not a directory;
         /// honestly absent in developer mode — see `buildManifest()`.
@@ -95,6 +107,7 @@ public enum CodeResources {
             case .clusterPayload: return "cluster deployment payload"
             case .analysisTools: return "analysis tools"
             case .webAssets: return "web assets"
+            case .demoWorkspaces: return "Demo Workspaces"
             case .buildManifest: return "resource manifest"
             }
         }
@@ -109,6 +122,7 @@ public enum CodeResources {
             case .clusterPayload: return "."
             case .analysisTools: return "scripts"
             case .webAssets: return "web"
+            case .demoWorkspaces: return "DemoWorkspaces"
             case .buildManifest: return nil
             }
         }
@@ -389,6 +403,11 @@ public enum CodeResources {
 
     /// Browser-client assets directory (`web/` in both layouts).
     public static func webAssets() throws -> URL { try url(for: .webAssets) }
+
+    /// The folder of Demo Workspaces this build carries (`DemoWorkspaces/` in
+    /// both layouts): a `README.md` and one folder per backend it has.
+    /// `DemoWorkspace` is the reader; nothing opens a carried tree in place.
+    public static func demoWorkspaces() throws -> URL { try url(for: .demoWorkspaces) }
 
     /// The packaging resource manifest. Release mode: required — missing is
     /// the same fail-closed error as any family. Developer mode: honestly

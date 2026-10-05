@@ -129,10 +129,10 @@ and the two answers look nothing alike.**
 *Paths 1–2, the Swift CLI:*
 
 ```sh
-steerlab-cli --version      # must report 6/6 resource families resolved
+steerlab-cli --version      # must report 7/7 resource families resolved
 ```
 
-Fewer than 6/6 means an incomplete install: stop and show the person the
+Fewer than 7/7 means an incomplete install: stop and show the person the
 output.
 
 *Path 4, the Python client:* it does not have resource families and will never

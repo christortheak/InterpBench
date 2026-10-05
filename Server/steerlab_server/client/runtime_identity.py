@@ -3,6 +3,10 @@
 A release number alone cannot distinguish different builds of that release.
 Hash shipped Python sources and seed resources; omit caches and installation
 metadata so a wheel and the matching app payload have the same identity.
+
+Demo Workspaces are omitted too. A release carries them inside the package
+(``client/demo-workspaces/``) and the app payload does not, and they are study
+data: a demo study that holds a Python file is not part of this client's code.
 """
 import hashlib
 from pathlib import Path
@@ -10,7 +14,8 @@ from pathlib import Path
 
 def source_sha256(package_root=None):
     root = Path(package_root) if package_root is not None else Path(__file__).resolve().parents[1]
-    paths = set(root.rglob('*.py'))
+    demos = root / 'client' / 'demo-workspaces'
+    paths = {p for p in root.rglob('*.py') if demos not in p.parents}
     for resource in ('experiment/seed', 'client/resources'):
         paths.update(p for p in (root / resource).rglob('*')
                      if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc')

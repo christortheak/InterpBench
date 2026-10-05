@@ -87,6 +87,9 @@ import Testing
         try stage("AnalysisTools/gemmascope_analyze.py", "# fake analysis script\n")
         // Web assets.
         try stage("web/index.html", "<!doctype html><title>SteerLab</title>\n")
+        // Demo Workspaces: the folder ships in every build with its README;
+        // the backends inside it are optional, and this bundle carries none.
+        try stage("DemoWorkspaces/README.md", "# Demo Workspaces\n")
         // Manifest over everything staged so far (written after generation,
         // so it never lists itself — verify() ignores unlisted siblings).
         let manifest = try ResourceManifest.generate(
@@ -164,8 +167,12 @@ import Testing
                 try CodeResources.clusterPayload(),
                 try CodeResources.analysisTools(),
                 try CodeResources.webAssets(),
+                try CodeResources.demoWorkspaces(),
                 try #require(try CodeResources.buildManifest()),
             ]
+            // One accessor per family: a family added without one would
+            // leave this list short of what `--version` counts.
+            #expect(resolved.count == CodeResources.Family.allCases.count)
             for url in resolved {
                 #expect(url.path.hasPrefix(stagedPrefix) || url.path == staged.standardizedFileURL.path)
                 #expect(!url.path.hasPrefix(checkoutPrefix))
@@ -409,10 +416,13 @@ import Testing
             try stage(
                 "WorkspaceSeed/prompts/parsers/parser-registry.json",
                 "{\"schemaVersion\": 1, \"parsers\": {}}\n")
+            // Unlisted: the allowlist's whole point. The example task
+            // prompts were seeded until decision 13 moved example content to
+            // the Demo Workspace, so a bundle that still carries the file
+            // must not hand it to a new workspace.
             try stage(
                 "WorkspaceSeed/prompts/tasks/example-task-prompts.jsonl",
                 "{\"id\": \"t1\", \"text\": \"staged task\"}\n")
-            // Unlisted: the allowlist's whole point.
             try stage(
                 "WorkspaceSeed/prompts/concepts/staged-concept/positive.jsonl",
                 "{\"text\": \"staged positive\"}\n")
@@ -462,7 +472,6 @@ import Testing
                 "prompts/batteries/basic.jsonl",
                 "prompts/dev/dev-prompts.jsonl",
                 "prompts/parsers/parser-registry.json",
-                "prompts/tasks/example-task-prompts.jsonl",
             ] {
                 try stagedBytesLanded(relative, at: relative)
             }
@@ -470,6 +479,7 @@ import Testing
             // …the unlisted staged files did NOT: an explicit allowlist, not
             // a sweep of whatever the bundle happens to carry.
             for unlisted in [
+                "prompts/tasks/example-task-prompts.jsonl",
                 "prompts/concepts/staged-concept/positive.jsonl",
                 "prompts/rubrics/staged-rubric.md",
             ] {
@@ -579,6 +589,15 @@ import Testing
             FileManager.default.fileExists(
                 atPath: root.appending(path: "web/index.html").path),
             "web/index.html is tracked source and must be in every checkout")
+        // `DemoWorkspaces/` resolves on a cold clone whether or not it holds a
+        // backend: its README is tracked, so the family is always there.
+        #expect(
+            try CodeResources.demoWorkspaces().path
+                == root.appending(path: "DemoWorkspaces").path)
+        #expect(
+            FileManager.default.fileExists(
+                atPath: root.appending(path: "DemoWorkspaces/README.md").path),
+            "DemoWorkspaces/README.md is what makes the family ship in every build")
         // The checkout ships no packaging manifest — honest absence.
         #expect(try CodeResources.buildManifest() == nil)
     }

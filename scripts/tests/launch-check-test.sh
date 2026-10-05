@@ -46,9 +46,9 @@ make_fake() {  # name, behaviour
     echo '#!/bin/zsh'
     echo "env > '$WORK/$1.env'"
     case "$2" in
-      pass)      echo "echo '$ARMED' >&2; echo 'CodeResources: release mode — 6/6 resource families resolved; no problems' >&2; echo '$OFFLINE' >&2; sleep 30" ;;
+      pass)      echo "echo '$ARMED' >&2; echo 'CodeResources: release mode — 7/7 resource families resolved; no problems' >&2; echo '$OFFLINE' >&2; sleep 30" ;;
       violation) echo "echo '$ARMED' >&2; echo '$VIOLATED' >&2; sleep 30" ;;
-      ignores)   echo "echo 'CodeResources: release mode — 6/6 resource families resolved; no problems' >&2; sleep 30" ;;
+      ignores)   echo "echo 'CodeResources: release mode — 7/7 resource families resolved; no problems' >&2; sleep 30" ;;
       noverdict) echo "echo '$ARMED' >&2; sleep 30" ;;
       exits)     echo "echo 'dyld: Library not loaded' >&2; exit 1" ;;
     esac

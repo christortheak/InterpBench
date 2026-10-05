@@ -839,11 +839,29 @@ public struct ExperimentCLIRunner: Sendable {
         let args = invocation.args
         switch args.first {
         case "init":
-            guard args.count >= 2 else {
-                throw ExperimentError(reason: "usage: workspace init <path>")
+            // The path, and the one value flag. Read by position rather than
+            // as `args[1]`, so `--demo mlx <path>` and `<path> --demo mlx`
+            // are the same request.
+            var positionals: [String] = []
+            var demo: String?
+            var index = 1
+            while index < args.count {
+                if args[index] == "--demo", index + 1 < args.count {
+                    demo = args[index + 1]
+                    index += 2
+                } else {
+                    positionals.append(args[index])
+                    index += 1
+                }
             }
-            let root = try WorkspaceStore.create(
-                at: URL(filePath: args[1]).standardizedFileURL)
+            guard positionals.count == 1 else {
+                throw ExperimentError(reason: "usage: workspace init <path> [--demo <backend>]")
+            }
+            let destination = URL(filePath: positionals[0]).standardizedFileURL
+            if let demo {
+                return try openDemoWorkspace(named: demo, at: destination)
+            }
+            let root = try WorkspaceStore.create(at: destination)
             sink.out("created workspace at \(root.path)")
             var payload: [String: JSONValue] = ["workspace": .string(root.path)]
             if let seed = try? CodeResources.workspaceSeed() {
@@ -909,6 +927,91 @@ public struct ExperimentCLIRunner: Sendable {
         default:
             throw ExperimentError(reason: "usage: workspace init <path>")
         }
+    }
+
+    /// `workspace init <path> --demo <backend>`: a verified copy of a Demo
+    /// Workspace this build carries — never the carried original.
+    ///
+    /// Every refusal is typed, says what is wrong in plain words, and names a
+    /// command this client can run. Nothing is left at `<path>` on a refusal.
+    func openDemoWorkspace(named name: String, at destination: URL) throws
+        -> ExperimentCLIResult
+    {
+        let program = "steerlab-cli workspace init <path>"
+        guard let backend = DemoWorkspace.Backend(rawValue: name) else {
+            let all = DemoWorkspace.Backend.allCases.map { "\($0.rawValue) (\($0.title))" }
+            throw ExperimentError.malformed(
+                "There is no Demo Workspace named '\(name)'.",
+                repair: "Choose one of: " + all.dropLast().joined(separator: ", ")
+                    + ", or " + (all.last ?? "") + ". For example: \(program) --demo "
+                    + DemoWorkspace.Backend.mlx.rawValue)
+        }
+        let opened: DemoWorkspace.Opened
+        do {
+            opened = try DemoWorkspace.open(backend, at: destination, verifyingStudies: true)
+        } catch let refusal as DemoWorkspace.Refusal {
+            var repair = refusal.repair
+            switch refusal.code {
+            case .demoNotCarried:
+                repair =
+                    (refusal.carried.first.map {
+                        "\(program) --demo \($0.rawValue)  (a demo this copy carries), or "
+                    } ?? "") + "\(program)  (an ordinary new workspace)"
+            case .destinationNotEmpty:
+                repair = "steerlab-cli workspace init <a-new-or-empty-path> --demo \(backend.rawValue)"
+            case .demoDamaged, .demoCopyUnverified:
+                break
+            }
+            // A stop prints nothing further in human mode, so say it here.
+            sink.err("steerlab-cli workspace init: \(refusal.reason)\n  \(repair)\n")
+            var payload: [String: JSONValue] = ["backend": .string(backend.rawValue)]
+            if refusal.code == .demoNotCarried {
+                payload["carried"] = .array(refusal.carried.map { .string($0.rawValue) })
+            }
+            if !refusal.studies.isEmpty {
+                payload["studies"] = .array(refusal.studies.map(DemoWorkspace.json))
+            }
+            if !refusal.differingFiles.isEmpty {
+                payload["differingFiles"] = .array(refusal.differingFiles.map(JSONValue.string))
+            }
+            throw ExperimentCLIStop(
+                exitCode: SteerLabCLIState.refused.exitCode, state: .refused,
+                code: refusal.code.rawValue, reason: refusal.reason,
+                repairAction: repair, payload: payload)
+        }
+
+        let root = opened.root
+        let description = opened.entry.description
+        sink.out("opened a copy of the \(backend.rawValue) Demo Workspace at \(root.path)")
+        sink.out("  \(description.title): \(description.summary)")
+        sink.out("  read first: \(opened.readme.path)")
+        sink.out("  use it via: steerlab-cli --workspace \(root.path) <verb> …")
+        sink.out("  or: export STEERLAB_WORKSPACE=\(root.path)")
+        var compute: [String: JSONValue] = [
+            WorkspaceCompute.substrateKey: .string(backend.computeChoice.binding.rawValue)
+        ]
+        if let location = backend.computeChoice.location {
+            compute[WorkspaceCompute.locationKey] = .string(location.rawValue)
+        }
+        return ExperimentCLIResult(
+            message: "Opened a copy of the \(backend.rawValue) Demo Workspace at \(root.path).",
+            changed: true,
+            payload: [
+                "workspace": .string(root.path),
+                "demo": description.document,
+                "demoReadme": .string(opened.readme.path),
+                "compute": .object(compute),
+                "verification": .object([
+                    "files": .number(Double(opened.fileCount)),
+                    "bytes": .number(Double(opened.byteCount)),
+                    "identical": .bool(true),
+                    "studies": .array((opened.studies ?? []).map(DemoWorkspace.json)),
+                ]),
+            ],
+            nextAction: DemoWorkspace.nextAction(rootPath: root.path),
+            // As for a plain `workspace init`: the root this verb answered
+            // ABOUT is the one it just made.
+            workspaceOverride: root.path)
     }
 
     // MARK: - data

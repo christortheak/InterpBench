@@ -32,6 +32,12 @@ extension CodeResourceError: LocalizedError {
     public var errorDescription: String? { description }
 }
 
+extension DemoWorkspace.Refusal: LocalizedError {
+    /// The reason and what to do about it: an alert that only says what went
+    /// wrong leaves the researcher with nothing to do.
+    public var errorDescription: String? { "\(reason) \(repair)" }
+}
+
 extension ExperimentError: LocalizedError {
     public var errorDescription: String? { description }
 }

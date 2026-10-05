@@ -262,15 +262,67 @@ import Testing
         #expect(compared >= 15, "the drift gate compared almost nothing")
     }
 
-    /// The seeded task-prompts example is documentation that RUNS: it must
-    /// parse through the run loop's own loader, and it must exercise the
-    /// `responseFormat` declaration it exists to demonstrate — including
-    /// the case the compatibility rule exists for (options present, format
-    /// not answer-token scorable).
-    @Test func seededExampleTaskPromptsParseAndDeclareResponseFormats() throws {
-        let seed = try CodeResources.workspaceSeed()
-            .appending(path: "prompts/tasks/example-task-prompts.jsonl")
-        let data = try Data(contentsOf: seed)
+    /// A new workspace is born with what every study needs and nothing that
+    /// is only an example (decision 13). The example task prompts were the
+    /// one seeded file no code path used by default; they now live in the
+    /// Demo Workspace, and `prompts/tasks/` starts empty.
+    @Test func aNewWorkspaceCarriesNoExampleTaskPrompts() throws {
+        #expect(
+            !WorkspaceStore.seedManifest.contains { $0.hasPrefix("prompts/tasks/") },
+            "an example task-prompts file is seeded again")
+        let root = tempDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let created = try WorkspaceStore.create(at: root)
+        let tasks = created.appending(components: "prompts", "tasks")
+        var isDirectory: ObjCBool = false
+        #expect(
+            FileManager.default.fileExists(atPath: tasks.path, isDirectory: &isDirectory)
+                && isDirectory.boolValue,
+            "the folder a study's task prompts go in must still be created")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: tasks.path).isEmpty)
+    }
+
+    /// The seed is sorted into the kinds of file every study needs. A file
+    /// outside these folders is example content or a stowaway, and belongs in
+    /// a Demo Workspace instead. Python twin:
+    /// `test_seed_holds_only_what_every_study_needs`.
+    @Test func theSeedHoldsOnlyWhatEveryStudyNeeds() {
+        let kept = [
+            "prompts/batteries/",  // capability batteries, and the presets' defaults
+            "prompts/dev/",  // a sweep's default development and coherence prompts
+            "prompts/neutral/",  // the neutral corpus
+            "prompts/parsers/",  // the parser registry
+            "prompts/rubrics/",  // the default rubric
+            "prompts/templates/",  // file-shape and reader templates
+            "prompts/authoring-prompts/", "prompts/generation/",
+            "prompts/method-guides/", "prompts/study-interviews/",
+        ]
+        let strays = WorkspaceStore.seedManifest.filter { file in
+            !kept.contains { file.hasPrefix($0) }
+        }
+        #expect(strays.isEmpty, "seeded outside the kept folders: \(strays)")
+        // The defaults both engines hard-code still resolve in a new workspace.
+        for required in [
+            "prompts/batteries/basic.jsonl", "prompts/dev/dev-prompts.jsonl",
+            "prompts/dev/robustness-coherence.jsonl", "prompts/neutral/corpus.jsonl",
+            "prompts/parsers/parser-registry.json", "prompts/rubrics/default-paired-v1.md",
+        ] + VariantRobustness.presets.flatMap({ [$0.batteryFile, $0.coherencePromptsFile] }) {
+            #expect(
+                WorkspaceStore.seedManifest.contains(required),
+                "a default path is no longer seeded: \(required)")
+        }
+    }
+
+    /// The example task prompts are documentation that RUNS: they must parse
+    /// through the run loop's own loader, and exercise the `responseFormat`
+    /// declaration they exist to demonstrate — including the case the
+    /// compatibility rule exists for (options present, format not
+    /// answer-token scorable). They moved from the seed to the placeholder
+    /// Demo Workspace, where they are the demo study's task prompts.
+    @Test func exampleTaskPromptsParseAndDeclareResponseFormats() throws {
+        let example = VectorCatalog.bundledSeedRoot.appending(
+            path: "Tests/Fixtures/DemoWorkspaces/mlx/prompts/tasks/example-task-prompts.jsonl")
+        let data = try Data(contentsOf: example)
         let prompts = try ExperimentTasks.parseTaskPrompts(data)
         #expect(prompts.count >= 4)
 

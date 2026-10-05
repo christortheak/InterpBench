@@ -18,7 +18,9 @@ parser.add_argument('--archive', action='store_true',
 args = parser.parse_args()
 if args.output.exists():
     parser.error('Output exists; choose a new release directory.')
-for check in ('check-workspace-bootstrap.py', 'check-science-resources.py', 'check-study-interviews.py', 'check-python-client-identity.py'):
+for check in ('check-workspace-bootstrap.py', 'check-science-resources.py', 'check-study-interviews.py', 'check-python-client-identity.py',
+              # Shape, size limits, and identifying strings, before a Demo Workspace is packed into the wheel.
+              'check-demo-workspaces.py'):
     subprocess.run([sys.executable, str(ROOT / 'scripts/ci' / check)], check=True)
 sys.path.insert(0, str(ROOT / 'Server'))
 from steerlab_server.client.runtime_identity import source_sha256
@@ -28,6 +30,15 @@ with tempfile.TemporaryDirectory(prefix='steerlab-client-build-', dir=args.outpu
     # Build from a disposable source copy: setuptools never writes into the checkout.
     source = stage / 'Server'
     shutil.copytree(ROOT / 'Server', source, ignore=shutil.ignore_patterns('.venv*', '__pycache__', '*.egg-info', '.pytest_cache', 'build', 'dist'))
+    # Demo Workspaces travel inside the wheel as package data, so an installed
+    # client can open a copy of one with `workspace init <dir> --demo <backend>`.
+    # They are copied into the disposable tree only: the checkout keeps one copy,
+    # at DemoWorkspaces/, and the wheel's source identity leaves them out. A
+    # checkout that carries no backend ships the folder's README and nothing
+    # else, and the client then says plainly that it carries no demo.
+    if (ROOT / 'DemoWorkspaces').is_dir():
+        shutil.copytree(ROOT / 'DemoWorkspaces', source / 'steerlab_server/client/demo-workspaces',
+                        ignore=shutil.ignore_patterns('.*', '__pycache__', '*.pyc'))
     release = stage / 'release'
     release.mkdir()
     # The terms travel with the artifact, twice over: beside the installer in the
