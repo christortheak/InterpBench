@@ -28,19 +28,24 @@ import Testing
     /// rule — a cold clone must produce it), so these checks predicate on
     /// the file's presence per the ResearchTreeFixtures discipline and skip
     /// with a reason on a foreign tree. Caught by the clean-clone rehearsal
-    /// (2026-08-20).
-    private func webClientSource() throws -> String? {
-        let url = Self.repoRoot.appending(path: "web/index.html")
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            return nil
-        }
-        return try String(contentsOf: url, encoding: .utf8)
+    /// (2026-08-20). The skip is a real one (`.enabled(if:)`), so the run
+    /// summary counts it as skipped rather than passed.
+    private static var webClientURL: URL { repoRoot.appending(path: "web/index.html") }
+
+    static var hasWebClient: Bool { FileManager.default.fileExists(atPath: webClientURL.path) }
+
+    static let noWebClient: Comment =
+        "web/index.html is not in this checkout, so the web client was not checked"
+
+    private func webClientSource() throws -> String {
+        try String(contentsOf: Self.webClientURL, encoding: .utf8)
     }
 
     /// No slot in the web client is born with, or falls back to, a numeric α
     /// literal — `alpha: 2`, `alpha ?? 2`, `last.alpha : 2` and kin.
-    @Test func webClientCarriesNoHardcodedAlphaDefault() throws {
-        guard let source = try webClientSource() else { return }
+    @Test(.enabled(if: hasWebClient, noWebClient))
+    func webClientCarriesNoHardcodedAlphaDefault() throws {
+        let source = try webClientSource()
         let literalDefault = try Regex("alpha\\s*(:|\\?\\?|=)\\s*-?[0-9]")
         #expect(
             source.firstMatch(of: literalDefault) == nil,
@@ -50,8 +55,9 @@ import Testing
     /// The client actually uses the engine paths that replace the literal:
     /// selection and slot-addition are server verbs, and the served decision
     /// is rendered.
-    @Test func webClientConsumesTheServedDecision() throws {
-        guard let source = try webClientSource() else { return }
+    @Test(.enabled(if: hasWebClient, noWebClient))
+    func webClientConsumesTheServedDecision() throws {
+        let source = try webClientSource()
         #expect(source.contains("/api/steering/select-vector"))
         #expect(source.contains("/api/steering/slots/add"))
         #expect(source.contains("S.alphaDefault"))

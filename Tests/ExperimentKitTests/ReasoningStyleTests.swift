@@ -739,20 +739,31 @@ extension ExperimentStoreTests {
         }
     }
 
-    @Test(arguments: ["reasoning-style-parity.json", "portable-regex-vectors.json"])
-    func reasoningStyleFixtureCopiesAreByteIdenticalAcrossEngines(
-        name: String
-    ) throws {
-        let serverCopy = URL(filePath: #filePath)
+    /// The Python engine's copies of the shared fixtures. A Swift-only
+    /// checkout has none, and the comparison is then skipped (reported as
+    /// skipped, not passed); with the server tree present, a missing copy is
+    /// a failure.
+    private static var serverFixtureDirectory: URL {
+        URL(filePath: #filePath)
             .deletingLastPathComponent()  // ExperimentKitTests
             .deletingLastPathComponent()  // Tests
             .deletingLastPathComponent()  // project root
-            .appending(
-                components: "Server", "tests", "fixtures", "reasoning-style",
-                name)
-        guard FileManager.default.fileExists(atPath: serverCopy.path) else {
-            return  // server tree not present (Swift-only checkout)
-        }
+            .appending(components: "Server", "tests", "fixtures", "reasoning-style")
+    }
+
+    static var hasServerFixtures: Bool {
+        FileManager.default.fileExists(atPath: serverFixtureDirectory.path)
+    }
+
+    @Test(
+        .enabled(
+            if: hasServerFixtures,
+            "the Python engine's tree is not in this checkout, so its fixture copies were not compared"),
+        arguments: ["reasoning-style-parity.json", "portable-regex-vectors.json"])
+    func reasoningStyleFixtureCopiesAreByteIdenticalAcrossEngines(
+        name: String
+    ) throws {
+        let serverCopy = Self.serverFixtureDirectory.appending(component: name)
         let swiftCopy = Self.reasoningStyleFixtureURL
             .deletingLastPathComponent()
             .appending(component: name)
