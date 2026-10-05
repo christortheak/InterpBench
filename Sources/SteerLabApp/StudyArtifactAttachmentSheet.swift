@@ -40,7 +40,7 @@ struct StudyArtifactAttachmentSheet: View {
                         problem = nil
                     } catch {
                         artifact = nil
-                        problem = error.localizedDescription
+                        problem = RefusalPresentation(error, context: "Couldn't inspect the vector.").summary
                     }
                 }
                 .disabled(pathIsEmpty)
@@ -80,7 +80,9 @@ struct StudyArtifactAttachmentSheet: View {
                         try panel.management.attachArtifact(concept, artifact: artifact, reviewed: reviewed,
                             sourceConcept: optional(sourceConcept), evalRun: optional(evalRun))
                         dismiss()
-                    } catch { problem = error.localizedDescription }
+                    } catch {
+                        problem = RefusalPresentation(error, context: "Couldn't attach the vector.").summary
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)

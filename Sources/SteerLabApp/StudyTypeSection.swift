@@ -71,11 +71,7 @@ struct StudyTypeSection: View {
                         artifactStudy = try panel.management.reviewStudy(named: manifest.name)
                         showArtifactSheet = true
                     } catch {
-                        panel.note(
-                            "Couldn't open the attach sheet — reload the study "
-                                + "and try again. Details: "
-                                + error.localizedDescription,
-                            severity: .error)
+                        panel.noteRefusal("Couldn't open the attach sheet.", error)
                     }
                 }
                 .help(
@@ -208,7 +204,7 @@ struct StudyTypeSection: View {
                         packPreviewError = nil
                     } catch {
                         packPreview = nil
-                        packPreviewError = error.localizedDescription
+                        packPreviewError = RefusalPresentation(error, context: "Couldn't preview the study pack.").summary
                     }
                 }
                 .disabled(pasteIsEmpty)

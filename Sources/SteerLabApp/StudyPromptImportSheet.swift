@@ -118,11 +118,11 @@ struct ImportJSONLSheet: View {
                     text = String(decoding: try Data(contentsOf: url), as: UTF8.self)
                     fileReadError = nil
                 } catch {
-                    fileReadError =
-                        "could not read \(url.lastPathComponent): \(error.localizedDescription)"
+                    fileReadError = RefusalPresentation(
+                        error, context: "Couldn't read \(url.lastPathComponent).").summary
                 }
             case .failure(let error):
-                fileReadError = error.localizedDescription
+                fileReadError = RefusalPresentation(error, context: "Couldn't open the file.").summary
             }
         }
     }
