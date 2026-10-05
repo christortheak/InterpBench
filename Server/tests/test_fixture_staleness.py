@@ -373,6 +373,9 @@ def test_every_committed_fixture_has_a_staleness_test():
         # Checked inline in test_sampled_effect_pairing.py (analyze re-run
         # over the committed records, and the derived seeds re-derived).
         "sampled-effect-pairing.json",
+        # Checked inline in test_effect_outcomes.py (analyze re-run over the
+        # committed records; rows, outcome list, and definitions compared).
+        "effect-outcomes.json",
         # Hand-authored contract (not regenerated from either engine — it
         # states the INTENDED verdicts, SCI-04, 2026-09-05), checked inline on
         # both sides: test_study_stats.py

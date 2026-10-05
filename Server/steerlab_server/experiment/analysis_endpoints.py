@@ -2,10 +2,213 @@
 from __future__ import annotations
 import json
 import os
+import struct
 from . import judicial, paths
 from .manifest import Manifest
 _STRATUM_JOIN = "×"
 _PRIMARY_ENDPOINT_ORDER = ("choiceLogOdds", "meanMonths", "choiceRate")
+
+# --- the outcomes analyze pairs, defined once in words ------------------------
+#
+# Both engines pair the SAME outcomes from the same records, under the same
+# names. Each entry says how one response is read and how one item's value is
+# formed from its responses; `PAIRING_DEFINITION` says what every row then
+# does with those item values. The Mac engine carries the identical text
+# (`StudyAnalysisOutcomes`), and the shared fixture
+# ``Tests/Fixtures/cross-engine/effect-outcomes.json`` holds both engines to
+# it — and to the same estimates from one record set.
+
+#: What one effect row is, whatever the outcome.
+PAIRING_DEFINITION = (
+    "Each row compares a condition with the baseline, item by item: the "
+    "item's value in the condition minus the same item's value at baseline, "
+    "averaged over the items that have a value on both sides.")
+
+#: One entry per outcome family: its id, how its rows are named, and its
+#: definition in words.
+OUTCOME_FAMILIES = [
+    {"id": "wordCount", "name": "wordCount",
+     "definition": (
+         "The number of words in a response. One item's value is the mean "
+         "over its responses in the condition.")},
+    {"id": "distinct2", "name": "distinct2",
+     "definition": (
+         "The share of a response's adjacent word pairs that differ from "
+         "one another; lower means more repetition. One item's value is the "
+         "mean over its responses in the condition.")},
+    {"id": "markerDensity", "name": "<concept>MarkerDensity",
+     "definition": (
+         "How many of the concept's marker words and characters a response "
+         "contains, per word, as recorded when the response was generated. "
+         "One item's value is the mean over its responses in the condition; "
+         "a response whose record names no value for the concept counts as "
+         "zero.")},
+    {"id": "reasoningStyle", "name": "rs_<feature>",
+     "definition": (
+         "The reasoning-style feature's value for a response, worked out "
+         "from the response's text with the study's pinned taxonomy. One "
+         "item's value is the mean over its responses in the condition.")},
+    {"id": "readerScore", "name": "readerScore:<concept>",
+     "definition": (
+         "The concept reader's score for a response's text, as recorded "
+         "when the response was generated. One item's value is the mean "
+         "over its responses that carry a score.")},
+    {"id": "choiceRate", "name": "choiceRate",
+     "definition": (
+         "Whether a response's parsed choice is the item's target option. "
+         "One item's value is the share of its responses that chose the "
+         "target, among those with a readable choice; responses with no "
+         "readable choice are left out.")},
+    {"id": "meanMonths", "name": "meanMonths",
+     "definition": (
+         "The number the study's numeric parser read from a response. The "
+         "name is historical: the value is in months only when the parser "
+         "reads durations. One item's value is the mean over its responses "
+         "that the parser could read; unreadable responses are left out.")},
+    {"id": "monthsSpread", "name": "monthsSpread",
+     "definition": (
+         "How much the parsed numbers of one item's responses vary. One "
+         "item's value is the sample standard deviation of its readable "
+         "responses, and it needs at least two of them.")},
+    {"id": "parsedValueMean", "name": "parsedValueMean",
+     "definition": (
+         "The same values as meanMonths, under a neutral name. It is "
+         "reported as well when the study declares a numeric parser that "
+         "does not read durations.")},
+    {"id": "parsedValueSpread", "name": "parsedValueSpread",
+     "definition": (
+         "The same values as monthsSpread, under a neutral name. It is "
+         "reported as well when the study declares a numeric parser that "
+         "does not read durations.")},
+    {"id": "choiceLogOdds", "name": "choiceLogOdds",
+     "definition": (
+         "The log-odds of the item's declared target option, from the "
+         "answer-token readout. There is one readout for each item and "
+         "condition, so nothing is averaged. An item that declares no "
+         "target has no value.")},
+    {"id": "ordinalPosition", "name": "ordinalPosition",
+     "definition": (
+         "The position on the study's rating scale, from the answer-token "
+         "readout. There is one readout for each item and condition, so "
+         "nothing is averaged.")},
+]
+
+_MARKER_DENSITY_SUFFIX = "MarkerDensity"
+_OUTCOME_DEFINITIONS = {family["id"]: family["definition"]
+                        for family in OUTCOME_FAMILIES}
+#: The families whose one row name IS the family id (no concept or feature
+#: in the name).
+_EXACT_OUTCOME_NAMES = frozenset(
+    family["id"] for family in OUTCOME_FAMILIES
+    if family["name"] == family["id"])
+
+#: Why this engine has no marker density for a study it ran itself. Said in
+#: the analysis output (``outcome-coverage.json`` and the log) for every
+#: concept the study declares — never left as a silently absent row.
+MARKER_DENSITY_NOT_RECORDED = (
+    "Not available on this engine: marker density is measured when a "
+    "response is generated, and the Python engine's study run does not "
+    "record it, so these records carry no markerDensity values. The Mac "
+    "engine records it for the studies it runs.")
+
+
+def outcome_family(name: str, marker_concepts=()) -> str:
+    """The family id of an outcome name, or "" for a name no family covers.
+
+    ``marker_concepts`` are the concepts whose marker density the records
+    carry; a marker-density name is recognized by them rather than by its
+    suffix alone, so a reasoning-style feature whose id happens to end in
+    "MarkerDensity" keeps its own family. Mac twin:
+    ``StudyAnalysisOutcomes.family(of:markerConcepts:)``."""
+    if name.endswith(_MARKER_DENSITY_SUFFIX) \
+            and name[:-len(_MARKER_DENSITY_SUFFIX)] in set(marker_concepts):
+        return "markerDensity"
+    if name in _EXACT_OUTCOME_NAMES:
+        return name
+    if name.startswith("rs_") and len(name) > 3:
+        return "reasoningStyle"
+    if name.startswith("readerScore:") and len(name) > len("readerScore:"):
+        return "readerScore"
+    return ""
+
+
+def _is_sampled_response(record: dict) -> bool:
+    """A sampled response as BOTH engines' surface measures count one: no
+    error, not an instrument readout, and a word count. (The Mac engine
+    builds its per-response rows from exactly these records.)"""
+    words = record.get("wordCount")
+    return ("error" not in record and record.get("instrument") is None
+            and isinstance(words, (int, float)) and not isinstance(words, bool))
+
+
+def marker_density_concepts(records: list[dict]) -> list[str]:
+    """The concepts whose marker density the run recorded: every key of
+    every sampled response's ``markerDensity`` object, sorted. Empty when no
+    record carries one — which is every run of this engine today (see
+    ``MARKER_DENSITY_NOT_RECORDED``)."""
+    concepts: set[str] = set()
+    for record in records:
+        if not _is_sampled_response(record):
+            continue
+        density = record.get("markerDensity")
+        if isinstance(density, dict):
+            concepts.update(str(key) for key in density)
+    return sorted(concepts)
+
+
+def marker_density_not_recorded(records: list[dict],
+                                concept_names: list[str]) -> list[str]:
+    """The study's concepts whose marker density this analysis cannot
+    produce because the run never recorded it: every declared concept, when
+    the run has sampled responses and NONE of them carries a
+    ``markerDensity`` object. (An empty object counts as carrying one: that
+    is a run that measured, for records naming no concept.) Empty when the
+    study declares no concept or the run sampled nothing — there is then no
+    marker density to be missing."""
+    sampled = [record for record in records if _is_sampled_response(record)]
+    if not concept_names or not sampled:
+        return []
+    if any(isinstance(record.get("markerDensity"), dict) for record in sampled):
+        return []
+    return list(concept_names)
+
+
+def _marker_density(record: dict, concept: str) -> float:
+    """One response's recorded marker density for ``concept``; zero when the
+    record names none (the Mac engine's rule, mirrored).
+
+    Read at single precision, as the Mac engine reads it: that engine both
+    measures and stores the value as a 32-bit float, so reading the same
+    JSON number at double precision would give a slightly different number
+    than the one it analyzes."""
+    density = record.get("markerDensity")
+    value = density.get(concept) if isinstance(density, dict) else None
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return 0.0
+    return struct.unpack("f", struct.pack("f", float(value)))[0]
+
+
+def outcome_coverage(endpoint_names, *, marker_concepts=(),
+                     not_available=()) -> dict:
+    """The ``outcome-coverage.json`` payload: every outcome that reached the
+    effect rows, with its definition in words, and every outcome this
+    analysis could NOT produce, with the reason — so an absent row is never
+    silent. ``not_available`` is ``(name, familyID, reason)`` triples.
+    Cross-engine shape (Mac twin: ``StudyAnalysisOutcomes.coverage``)."""
+    outcomes = []
+    for name in sorted(set(endpoint_names)):
+        family = outcome_family(name, marker_concepts)
+        outcomes.append({
+            "name": name, "family": family, "status": "computed",
+            "definition": _OUTCOME_DEFINITIONS.get(family, "")})
+    for name, family, reason in not_available:
+        outcomes.append({
+            "name": name, "family": family, "status": "notAvailable",
+            "definition": _OUTCOME_DEFINITIONS.get(family, ""),
+            "reason": reason})
+    outcomes.sort(key=lambda entry: entry["name"])
+    return {"schemaVersion": 1, "pairing": PAIRING_DEFINITION,
+            "outcomes": outcomes}
 
 def condition_modalities(manifest: Manifest, root: str | None = None) -> dict[str, str]:
     """Intervention modality per condition, derived from the manifest
@@ -106,10 +309,12 @@ def endpoint_values(records: list[dict], style=None,
     ``effectSizes``), ``choiceRate`` (sampled parsed-choice rate of the
     target), ``meanMonths`` and ``monthsSpread`` (Case 3 mean and stdev over
     the sample axis), ``readerScore:<concept>`` (mean RepE reader score of the
-    sampled outputs, one endpoint per pinned reader), and — when ``style``
-    pins a reasoning-style taxonomy — ``rs_<featureID>`` (mean per-generation
-    feature value over the sample axis, recomputed from the output text).
-    Same-item pairing happens downstream by promptID.
+    sampled outputs, one endpoint per pinned reader),
+    ``<concept>MarkerDensity`` (mean recorded marker density, when the run
+    recorded it), and — when ``style`` pins a reasoning-style taxonomy —
+    ``rs_<featureID>`` (mean per-generation feature value over the sample
+    axis, recomputed from the output text). ``OUTCOME_FAMILIES`` defines each
+    in words. Same-item pairing happens downstream by promptID.
 
     Endpoint-label honesty (2026-08-06): the ``parsedMonths`` record key is
     written by ANY declared registry parser — percentage and 1–7 scale
@@ -145,6 +350,23 @@ def endpoint_values(records: list[dict], style=None,
                       if isinstance(r.get(field), (int, float))]
             if values:
                 put(endpoint, condition, prompt_id, sum(values) / len(values))
+    # Marker density, when the run recorded it (``<concept>MarkerDensity`` —
+    # the Mac engine's name for the outcome it has always paired). The value
+    # is the record's own: nothing is re-measured here. Every sampled
+    # response of a run that measured ANY concept counts toward every
+    # concept, zero where its record names none, which is the Mac engine's
+    # rule. No record carries the key on a run of this engine, so its own
+    # runs gain no rows — `analyze` says so instead (`outcome_coverage`).
+    marker_concepts = marker_density_concepts(records)
+    if marker_concepts:
+        for (condition, prompt_id), items in cells.items():
+            sampled = [r for r in items if _is_sampled_response(r)]
+            if not sampled:
+                continue
+            for concept in marker_concepts:
+                put(f"{concept}{_MARKER_DENSITY_SUFFIX}", condition, prompt_id,
+                    sum(_marker_density(r, concept) for r in sampled)
+                    / len(sampled))
     for (condition, prompt_id), items in cells.items():
         months: list[float | None] = []
         target_hits: list[bool] = []
@@ -278,8 +500,9 @@ def _endpoint_sample_values(
         style=None) -> dict[str, dict[str, dict[str, dict[int, float]]]]:
     """endpoint → condition → promptID → {sampleIndex: value}, for endpoints
     that have a per-sample reading (``wordCount``, ``distinct2``,
-    ``choiceRate`` as the 0/1 target hit, ``meanMonths`` as the per-sample
-    parse, ``readerScore:<concept>``, ``rs_<featureID>``). Deterministic
+    ``<concept>MarkerDensity``, ``choiceRate`` as the 0/1 target hit,
+    ``meanMonths`` as the per-sample parse, ``readerScore:<concept>``,
+    ``rs_<featureID>``). Deterministic
     instrument readouts (choiceLogOdds, ordinalPosition) and cross-sample
     aggregates (monthsSpread) have no sample axis and are absent. This is the
     single-item stratum's resolution: within one item, treatment sample k
@@ -291,6 +514,7 @@ def _endpoint_sample_values(
         out.setdefault(endpoint, {}).setdefault(condition, {}) \
            .setdefault(prompt_id, {})[sample] = value
 
+    marker_concepts = marker_density_concepts(records)
     for record in records:
         if "error" in record or record.get("instrument"):
             continue
@@ -302,6 +526,10 @@ def _endpoint_sample_values(
             value = record.get(field)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 put(endpoint, condition, prompt_id, sample, float(value))
+        if _is_sampled_response(record):
+            for concept in marker_concepts:
+                put(f"{concept}{_MARKER_DENSITY_SUFFIX}", condition, prompt_id,
+                    sample, _marker_density(record, concept))
         if record.get("parsedMonths") is not None:
             put("meanMonths", condition, prompt_id, sample,
                 float(record["parsedMonths"]))

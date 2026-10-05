@@ -16,9 +16,10 @@ from .run_reporting import reasoning_style_summary as _reasoning_style_block
 from .run_artifacts import latest_run, write_config_snapshot
 from .study_admission import (advise_implicit_case_family, require_source_epoch,
                               stamped_experiment_hash, verify_or_warn)
-from .analysis_endpoints import (condition_modalities, endpoint_values,
-    key_records_by_transcript, promotion_decisions, stratified_effect_rows,
-    transcript_level_diffs)
+from .analysis_endpoints import (MARKER_DENSITY_NOT_RECORDED,
+    condition_modalities, endpoint_values, key_records_by_transcript,
+    marker_density_concepts, marker_density_not_recorded, outcome_coverage,
+    promotion_decisions, stratified_effect_rows, transcript_level_diffs)
 
 
 def analyze(name: str, root: str | None = None, source_run: str | None = None,
@@ -31,7 +32,9 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
     residuals against the pinned human baseline (alien-residuals.csv), the
     per-item paired choice deltas of the answer-token instrument
     (choice-deltas.csv — the citable version of the per-item Δ a viewer would
-    otherwise derive), and the promoted-movers funnel artifact for
+    otherwise derive), the outcome list with each outcome's definition in
+    words and anything this engine could not produce (outcome-coverage.json),
+    and the promoted-movers funnel artifact for
     screen-phase studies. Pure CPU — reads the immutable run directory,
     writes a new analyze run directory. Records whose run-time numeric parse
     was null are re-parsed under the manifest's pinned grammar first (the
@@ -97,6 +100,14 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
               "BASELINE records — there is no non-baseline condition to pair "
               "against, so this analysis will produce no effect sizes. Check "
               "the study's conditions before citing it.", file=sys.stderr)
+    # Marker density is the one outcome this engine cannot produce for a
+    # study it ran itself: marker density is the RECORD's value on both
+    # engines, and this engine's run does not record one. Decided here, from
+    # the records as the run wrote them — before exclusions or transcript
+    # re-keying touch the list — and SAID in the output below rather than
+    # left as a missing row.
+    concepts_without_marker_density = marker_density_not_recorded(
+        records, [concept.name for concept in manifest.concepts])
 
     # Endpoint rescue (2026-08-10, an anchoring run): a record whose
     # run-time numeric parse came back null is re-parsed from its stored
@@ -456,6 +467,23 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
     if any('probeMeasurements' in r or 'interventionDecisions' in r for r in records):
         with open(os.path.join(out, 'instrumentation-summary.json'), 'w', encoding='utf-8') as handle:
             json.dump(instrumentation_evidence.summarize(records), handle, indent=2, sort_keys=True, allow_nan=False)
+
+    # Which outcomes reached the effect rows, each with its definition in
+    # words, and which this analysis could not produce and why — written on
+    # every analysis, so a reader never has to infer either from the rows
+    # (cross-engine artifact; the Mac engine writes the same shape).
+    coverage = outcome_coverage(
+        [row.endpoint for row in rows + stratified_rows],
+        marker_concepts=marker_density_concepts(records),
+        not_available=[(f"{concept}MarkerDensity", "markerDensity",
+                        MARKER_DENSITY_NOT_RECORDED)
+                       for concept in concepts_without_marker_density])
+    with open(os.path.join(out, "outcome-coverage.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump(coverage, handle, indent=2, sort_keys=True)
+    for entry in coverage["outcomes"]:
+        if entry["status"] == "notAvailable":
+            _log(f"{entry['name']}: {entry['reason']}")
 
     with open(os.path.join(out, "effect-sizes.csv"), "w", newline="",
               encoding="utf-8") as handle:

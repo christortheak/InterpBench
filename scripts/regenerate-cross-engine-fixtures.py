@@ -1462,9 +1462,291 @@ def sampled_effect_pairing() -> None:
     })
 
 
+#: The effect-outcomes fixture's design: ONE record set that reaches every
+#: outcome either engine's `analyze` pairs, so both suites can hold the same
+#: outcome list, estimates, counts, and stamps
+#: (`Server/tests/test_effect_outcomes.py` re-derives the rows from the
+#: committed records; `Tests/ExperimentKitTests/EffectOutcomeCoverageTests`
+#: reads the same file). Every value is an integer or a dyadic fraction, so
+#: the per-item means are exact in binary floating point on both engines.
+EFFECT_OUTCOMES_SEEDS = [11, 22, 33]
+EFFECT_OUTCOMES_NUMERIC_PARSER = "percent"
+#: The workspace files the study pins or declares, as exact text: both
+#: suites write these bytes into a temporary workspace.
+EFFECT_OUTCOMES_PARSER_REGISTRY = {
+    "path": "prompts/parsers/parser-registry.json",
+    "text": json.dumps({
+        "schemaVersion": 1,
+        "parsers": {
+            "percent": {
+                "kind": "number",
+                "description": "A percentage from 0 to 100.",
+                "range": "refuse", "percent": "accept",
+                "decimalComma": False,
+            },
+        },
+    }, indent=2, sort_keys=True) + "\n",
+}
+EFFECT_OUTCOMES_TAXONOMY = {
+    "path": "prompts/taxonomies/outcome-fixture.json",
+    "text": json.dumps({
+        "schemaVersion": 1,
+        "name": "outcome-fixture",
+        "features": [{
+            "id": "hedge", "kind": "wordList", "normalize": "rawCount",
+            "patterns": ["might"],
+        }],
+    }, indent=2, sort_keys=True) + "\n",
+}
+#: Sampled measurements, three responses per (condition, item) cell.
+#: promptID → {measure: (baseline per sample, steered per sample)}. `None` is
+#: a response the parser could not read; `...` (Ellipsis) is a response whose
+#: record carries no value at all for that measure.
+EFFECT_OUTCOMES_ITEMS = [
+    ("item-1", "x", {
+        "wordCount": ([10, 12, 14], [15, 18, 21]),
+        "distinct2": ([0.5, 0.5, 0.5], [0.75, 0.75, 0.75]),
+        "markerDensity": ([0, 0, 0], [0.25, 0.5, 0.75]),
+        "readerScore": ([1, 1.5, 2], [2, 2.5, 3]),
+        "parsedValue": ([10, 20, 30], [30, 40, 50]),
+        "parsedChoice": (["A", "B", None], ["A", "A", "A"]),
+        "hedges": ([0, 1, 2], [2, 2, 2]),
+    }),
+    ("item-2", "y", {
+        "wordCount": ([20, 20, 23], [22, 25, 25]),
+        "distinct2": ([0.5, 0.25, 0.75], [0.5, 0.5, 0.5]),
+        "markerDensity": ([0.125, 0.125, 0.125], [0.125, 0.25, 0.375]),
+        "readerScore": ([0.25, 0.75, ...], [1, 1, 1]),
+        "parsedValue": ([50, 60, 70], [55, None, 75]),
+        "parsedChoice": (["B", "B", "B"], ["A", "B", None]),
+        "hedges": ([1, 1, 1], [0, 1, 2]),
+    }),
+    ("item-3", "x", {
+        "wordCount": ([30, 33, 36], [31, 32, 33]),
+        "distinct2": ([0.25, 0.25, 0.25], [0.5, 0.5, 0.5]),
+        "markerDensity": ([0.25, 0, 0.5], [0.25, 0.25, 0.25]),
+        "readerScore": ([-1, 0, 1], [-1, -0.75, -0.5]),
+        "parsedValue": ([20, 40, 60], [30, 30, 30]),
+        "parsedChoice": (["A", "A", "A"], ["B", None, "A"]),
+        "hedges": ([0, 0, 0], [3, 3, 3]),
+    }),
+    ("item-4", "y", {
+        "wordCount": ([40, 41, 45], [50, 52, 54]),
+        "distinct2": ([0.75, 0.75, 0.75], [0.25, 0.25, 0.25]),
+        "markerDensity": ([0.5, 0.5, 0.5], [0.25, 0.25, 0.25]),
+        "readerScore": ([2, 2, 2], [4, 4.5, 5]),
+        "parsedValue": ([80, None, None], [90, 100, 110]),
+        "parsedChoice": ([None, None, None], ["A", "A", "A"]),
+        "hedges": ([2, 2, 2], [1, 1, 1]),
+    }),
+]
+#: The answer-token readouts, one per (condition, item): promptID → (arm,
+#: baseline, steered, steeredHigh), each a pair (log-odds of the target,
+#: scale position). Items 1–4 declare the target "A". item-5 is a rating
+#: item that declares none: its record carries a scale position and, like
+#: records written before targets were stamped, a `target` that names the
+#: scale's lowest option — so it reaches `ordinalPosition` and must NOT
+#: reach `choiceLogOdds`.
+#:
+#: `steeredHigh` is measured by the readout alone (it has no sampled
+#: responses), which gives the two readout outcomes a second condition: a
+#: correction family of more than one row, where Benjamini–Hochberg and
+#: Holm give different adjusted p-values.
+EFFECT_OUTCOMES_CONDITIONS = ("baseline", "steered", "steeredHigh")
+EFFECT_OUTCOMES_READOUTS = [
+    ("item-1", "x", (-1.0, 2.0), (0.5, 2.5), (1.0, 3.0)),
+    ("item-2", "y", (0.25, 1.0), (0.75, 1.75), (1.25, 2.0)),
+    ("item-3", "x", (2.0, 3.0), (1.0, 2.75), (1.5, 3.0)),
+    ("item-4", "y", (-0.5, 2.5), (2.0, 2.5), (2.5, 3.0)),
+    ("item-5", "x", (-2.0, 4.0), (-1.0, 3.5), (-0.5, 3.5)),
+]
+#: The effect-sizes.csv columns both engines compute the same way (the
+#: bootstrap interval is left out: the engines resample with different
+#: generators, so its bounds agree only loosely).
+EFFECT_OUTCOMES_COLUMNS = SAMPLED_PAIRING_COLUMNS
+
+
+def effect_outcomes_records() -> list[dict]:
+    """One run's records in the order a run writes them: per condition, the
+    answer-token readouts, then the sampled responses (sample, item)."""
+    records: list[dict] = []
+    for side, condition in enumerate(EFFECT_OUTCOMES_CONDITIONS):
+        for index, (prompt_id, arm, *readouts) in enumerate(
+                EFFECT_OUTCOMES_READOUTS):
+            log_odds, position = readouts[side]
+            record = {
+                "condition": condition, "promptIndex": index + 1,
+                "promptID": prompt_id, "arm": arm,
+                "instrument": "answerTokenLogprob",
+                "ordinalPosition": position,
+            }
+            if prompt_id == "item-5":
+                record.update({
+                    "target": "1", "options": ["1", "2", "3", "4", "5"],
+                    "logOdds": {"1": log_odds}, "selected": "4"})
+            else:
+                record.update({
+                    "target": "A", "targetSource": "declared",
+                    "options": ["A", "B"],
+                    "logOdds": {"A": log_odds, "B": -log_odds},
+                    "selected": "A" if log_odds > 0 else "B"})
+            records.append(record)
+        if condition == "steeredHigh":
+            continue
+        for sample in range(3):
+            for index, (prompt_id, arm, measures) in enumerate(
+                    EFFECT_OUTCOMES_ITEMS):
+                def value(name: str):
+                    return measures[name][side][sample]
+                record = {
+                    "condition": condition,
+                    "seed": EFFECT_OUTCOMES_SEEDS[sample],
+                    "sampleIndex": sample,
+                    "promptIndex": index + 1,
+                    "promptID": prompt_id, "arm": arm, "target": "A",
+                    "output": ("might " * value("hedges") + "it is so"),
+                    "wordCount": value("wordCount"),
+                    "distinct2": value("distinct2"),
+                    "markerDensity": {"warm": value("markerDensity")},
+                    "parsedMonths": value("parsedValue"),
+                    "parsedChoice": value("parsedChoice"),
+                }
+                if value("readerScore") is not ...:
+                    record["readerScores"] = {"warm": value("readerScore")}
+                records.append(record)
+    return records
+
+
+def effect_outcomes_manifest(phase: str | None,
+                             exclusion_rules: list[dict] | None = None) -> dict:
+    """The Python engine's manifest for the fixture study. The Mac suite
+    builds its own engine's manifest with the same declarations."""
+    import hashlib
+
+    manifest = {
+        "name": "outcomes", "modelID": "test/model", "concepts": [],
+        "taskPromptsFile": None,
+        "conditions": [{"name": "steered",
+                        "slots": [{"concept": "c", "layer": 1,
+                                   "alpha": 2.0}]},
+                       {"name": "steeredHigh",
+                        "slots": [{"concept": "c", "layer": 1,
+                                   "alpha": 4.0}]}],
+        "numericParser": EFFECT_OUTCOMES_NUMERIC_PARSER,
+        "reasoningStyleTaxonomyPath": EFFECT_OUTCOMES_TAXONOMY["path"],
+        "reasoningStyleTaxonomyHash": hashlib.sha256(
+            EFFECT_OUTCOMES_TAXONOMY["text"].encode("utf-8")).hexdigest(),
+    }
+    if phase is not None:
+        manifest["phase"] = phase
+    if exclusion_rules:
+        manifest["exclusionRules"] = exclusion_rules
+    return manifest
+
+
+def effect_outcomes_analysis(workspace: str, records: list[dict],
+                             phase: str | None,
+                             exclusion_rules: list[dict] | None = None) -> str:
+    """Write the fixture study into ``workspace`` and run the Python
+    engine's real ``analyze`` over it. Returns the analysis directory."""
+    from steerlab_server.experiment import tasks
+    from steerlab_server.experiment.manifest import Manifest
+
+    manifest = effect_outcomes_manifest(phase, exclusion_rules)
+    for pinned in (EFFECT_OUTCOMES_PARSER_REGISTRY, EFFECT_OUTCOMES_TAXONOMY):
+        path = os.path.join(workspace, pinned["path"])
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(pinned["text"])
+    experiment_dir = os.path.join(workspace, "experiments", "outcomes")
+    os.makedirs(experiment_dir)
+    with open(os.path.join(experiment_dir, "experiment.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump(manifest, handle)
+    run_dir = os.path.join(
+        workspace, "runs", "20261004T000000000-exp-outcomes-run")
+    os.makedirs(run_dir)
+    with open(os.path.join(run_dir, "experiment-hash.txt"), "w",
+              encoding="utf-8") as handle:
+        handle.write(Manifest.from_dict(manifest).content_hash() + "\n")
+    with open(os.path.join(run_dir, "generations.jsonl"), "w",
+              encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record) + "\n")
+    return tasks.analyze("outcomes", root=workspace, log=lambda _: None)
+
+
+def effect_outcomes_rows(analysis_dir: str) -> list[dict]:
+    """An analysis directory's effect-sizes.csv in the fixture's shape (the
+    values carry the file's six significant digits)."""
+    import csv
+
+    with open(os.path.join(analysis_dir, "effect-sizes.csv"),
+              encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+
+    def cell(column: str, value: str):
+        if column == "n":
+            return int(value)
+        if column in ("deltaMean", "wilcoxonW", "wilcoxonP", "adjustedP"):
+            return float(value) if value else None
+        return value
+
+    return [{column: cell(column, row[column])
+             for column in EFFECT_OUTCOMES_COLUMNS} for row in rows]
+
+
+def effect_outcomes() -> None:
+    """Every outcome `analyze` pairs, from one record set.
+
+    The cases hold the same records under an unphased study (corrected by
+    Benjamini–Hochberg), a confirm-phase one (Holm), and an unphased one
+    that declares an exclusion (responses the numeric parser could not read
+    are left out of every outcome) — so the correction family and the
+    exclusion path are pinned for every outcome too. `outcomeFamilies` is
+    the definition of each outcome in words — the one text both engines
+    carry — and `outcomeCoverage` is what `analyze` says it computed."""
+    from steerlab_server.experiment import analysis_endpoints
+
+    records = effect_outcomes_records()
+    cases = []
+    for label, phase, exclusion_rules in (
+            ("unphased", None, []),
+            ("confirm", "confirm", []),
+            ("excluded", None, [{"rule": "unparseableEndpoint"}])):
+        workspace = tempfile.mkdtemp(prefix="steerlab-outcomes-fixture-")
+        try:
+            out = effect_outcomes_analysis(
+                workspace, records, phase, exclusion_rules)
+            with open(os.path.join(out, "outcome-coverage.json"),
+                      encoding="utf-8") as handle:
+                coverage = json.load(handle)
+            cases.append({
+                "label": label,
+                "phase": phase,
+                "exclusionRules": exclusion_rules,
+                "effectRows": effect_outcomes_rows(out),
+                "outcomeCoverage": coverage,
+            })
+        finally:
+            shutil.rmtree(workspace, ignore_errors=True)
+    _write(os.path.join(FIXTURES, "effect-outcomes.json"), {
+        "note": "one record set that reaches every outcome analyze pairs; "
+                "both engines must report the same outcome list, estimates, "
+                "counts, and stamps from it",
+        "numericParser": EFFECT_OUTCOMES_NUMERIC_PARSER,
+        "parserRegistry": EFFECT_OUTCOMES_PARSER_REGISTRY,
+        "taxonomy": EFFECT_OUTCOMES_TAXONOMY,
+        "outcomeFamilies": analysis_endpoints.OUTCOME_FAMILIES,
+        "records": records,
+        "cases": cases,
+    })
+
+
 def main() -> int:
     os.makedirs(FIXTURES, exist_ok=True)
     sampled_effect_pairing()
+    effect_outcomes()
     promotion_keys()
     paired_difference_pca()
     concept_stats_splits()
