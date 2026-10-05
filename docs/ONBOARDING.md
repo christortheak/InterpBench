@@ -85,11 +85,15 @@ Mac or x86_64 Linux machine (glibc) for the app-free client. Internet access
 for the one-time client setup. Nothing else: no Xcode, no repository
 checkout, no Python of your own. Windows is not supported.
 
-**To run a study**: a model and suitable compute. Supported studies can run
-locally on an Apple Silicon Mac or through the Python engine on a
-workstation or cluster. Choose according to the method, model size and
-available memory; [SUBSTRATES.md](SUBSTRATES.md) says which methods run
-where and what has been measured. Remote results return to your local
+**To run a study**: a model and somewhere to run it, and a Mac on its own is
+a supported place. A workspace runs its studies in one of three places:
+**This Mac, quick start** (the engine built into the app, for core steering
+studies on small models), **This Mac, full capabilities** (the Python engine
+on the Mac's own graphics processor, which runs every method after a
+one-time setup of several gigabytes), or **Another machine** (the Python
+engine on a workstation or cluster). Choose according to the method, model
+size and available memory; [SUBSTRATES.md](SUBSTRATES.md) says which methods
+run where and what has been measured. Remote results return to your local
 workspace with their evidence verified. As a rough guide, a 4-bit 4B model
 needs a few gigabytes of memory and a 12 to 14B model in the low tens,
 before the KV cache and activations, which grow with context length; the
@@ -120,11 +124,15 @@ Download the app zip from the
 [Releases page](https://github.com/christortheak/InterpBench/releases/latest),
 unzip it, and open SteerLab. Keep the app wherever you like, such as
 `/Applications` or a `SteerLab` folder in your home directory. On first
-launch, or any time from the Workspace menu, **Research Setup** does three
-things: creates or opens a workspace folder for your studies, shows you a
-plan for installing the small Python helper that study authoring uses and
-installs it when you approve, and, behind **Copy Agent Handoff**, copies the
-text to paste into your coding-agent tool.
+launch, or any time from the Workspace menu, **Research Setup** takes four
+steps: it creates or opens a workspace folder for your studies, or opens a
+copy of a Demo Workspace (a worked example); it records where the
+workspace's studies run, from the three choices in §3, installing nothing by
+itself; it shows you a plan for installing the small Python helper that study
+design uses, and installs it when you approve; and, behind **Copy
+Instructions for Your Coding Assistant**, it copies the text to paste into
+your coding assistant. [Getting started](CLIENT-FIRST-RUN.md) walks through
+each step, with how long it takes and how much disk space it needs.
 
 <details>
 <summary>The app's command line</summary>
@@ -175,9 +183,9 @@ The installer prints the absolute path of the `steerlab` executable; use that
 path, or add its `bin` directory to your `PATH` yourself. It provisions its
 own Python, verifies every download by hash, never replaces a folder it did
 not create, and does not edit your shell startup files. A correct install
-answers `steerlab --version` with `steerlab <version> (client)`. Full details,
-including repair and upgrades, are in
-[CLIENT-FIRST-RUN.md](CLIENT-FIRST-RUN.md).
+answers `steerlab --version` with `steerlab <version> (client)`.
+[Getting started](CLIENT-FIRST-RUN.md) walks through each step, including
+running on a runner, updates, and repair.
 
 ### 4.3 From a source checkout
 
@@ -330,7 +338,11 @@ the formality concept — see [its README](../SampleWorkspace/README.md) for wha
 is deliberately left out: no vectors, no runs, no frozen manifest. Activations
 do not transfer between substrates, so a shipped vector would be useless at best
 and misleading at worst. You derive it on your own machine, which is exactly
-what the firewall asks of every study.
+what the firewall asks of every study. `SampleWorkspace/` is in a source
+checkout (§4.3); the app and the client releases do not include it. With a
+release, open a Demo Workspace from Research Setup or with `workspace init
+<folder> --demo <backend>`, or create a workspace and author a concept as §6
+describes.
 
 Every command from here through §7 is **`steerlab-cli`**, the Mac instrument of
 §4.1 or §4.3. **If you took the app-free route (§4.2)**, your instrument is the
@@ -338,13 +350,14 @@ Every command from here through §7 is **`steerlab-cli`**, the Mac instrument of
 measure locally. Your first hour starts from the workspace handoff instead:
 read the workspace's own `AGENTS.md`, ask `steerlab authoring study
 <intent> --json` for the researcher interview (`conceptStudy`,
-`agentComparison` or `multiAgent`), and follow the Python study-authoring
-guides, [PYTHON-STUDY-ASSEMBLY-WORKFLOW.md](PYTHON-STUDY-ASSEMBLY-WORKFLOW.md)
-and [PYTHON-DESIGN-INTERVIEW-WORKFLOW.md](PYTHON-DESIGN-INTERVIEW-WORKFLOW.md),
-which build the same study through pack preview and apply. Execution then
-goes through a runner (`steerlab run <experiment> --runner <url>`, or the
-managed local runner from the `[runner]` extra); the concepts in §5 through
-§7 apply unchanged, and §8 and §9 are written for both clients.
+`agentComparison` or `multiAgent`), and read the guide topics the client
+prints for itself: `steerlab workspace guide lifecycle` for the order of the
+steps, `workspace guide assembly` for building a study from a reviewed pack
+(`pack preview`, then `pack apply`), and `workspace guide templates` for
+reusable study settings. Execution then goes through a runner (`steerlab run
+<experiment> --runner <url>`, or the managed local runner from the `[runner]`
+extra); the concepts in §5 through §7 apply unchanged, and §8 and §9 are
+written for both clients.
 
 ```bash
 cp -R SampleWorkspace ~/SteerLab/Workspaces/first-hour
@@ -452,8 +465,9 @@ The intuition to build, in the app's Steering tab or across a sweep, is the
 dose-response curve: too little α and nothing moves, too much and the model
 stops making sense. On small models expression usually appears well below α ≈
 0.5 and coherence starts failing above ≈ 1 — a bracket to sweep, never a setting
-to adopt. Mid-network layers usually steer best. Two self-tests ship for exactly
-this, and they are what to run after touching the engine:
+to adopt. Mid-network layers usually steer best. Two self-tests ship in a source
+checkout's `prompts/configs/` for exactly this, and they are what to run, from
+the checkout, after touching the engine:
 
 ```bash
 steerlab-cli --config prompts/configs/smoke-test.json   # steered ≠ baseline; α=0 == baseline
@@ -608,7 +622,7 @@ apply:
 | `measurementPins` | the pins that determine what is measured are present and valid |
 | `validateEvidence` | a `validate` run matching the exact pins, on this engine, that is not vacuous |
 | `variantValidity` | attached variants carry hashed weights and a pinnable dataset manifest |
-| `batteryEvidence` | each variant condition has scope-matched capability-battery evidence |
+| `batteryEvidence` | baseline and each agent condition have scope-matched capability-battery evidence; a condition whose agent uses an intervention policy is exempt, and the frozen study records the exemption |
 | `judgeValidity` | a rubric *file* and at least one judge (a panel of two or more must be genuinely distinct) |
 | `gitClean` | every pinned input is committed in the workspace repository |
 
@@ -689,6 +703,15 @@ result licenses you to claim.
   confidence intervals rather than bare p-values and multiplicity correction
   appropriate to the phase (FDR for broad screens, Holm for confirmations).
   `analyze` writes `effect-sizes.csv` and folds the numbers into `report.json`.
+- **The headline** of every summary is the outcome the study is about: the one
+  you declare with `experiment set-primary-outcome` (or on the app's Studies
+  page), else one chosen by a stated order that puts judged outcomes first and
+  surface measures such as word count last. The summary says which rule chose
+  it.
+- **Exporting**: `steerlab-cli results export <study>` (Export Results… in the
+  app) copies a completed run's stored results into a new folder outside
+  `runs/` — tables for R, Stata, SPSS, or a spreadsheet, transcripts, a
+  methods summary, and a codebook — and recalculates nothing.
 - **Marker density** — how often your concept's vocabulary appears — is a
   *manipulation check*, not an outcome. Selecting doses on it optimizes for
   surface style, the precise confound most steering work falls into. Declare a
