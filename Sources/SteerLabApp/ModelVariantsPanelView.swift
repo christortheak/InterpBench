@@ -112,10 +112,10 @@ struct ModelVariantsPanelView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "Removes the definition from this workspace's agent library. "
-                    + "Studies that already pinned it keep their own hashed "
-                    + "copy, and frozen studies and run directories are "
-                    + "untouched. This cannot be undone.")
+                "Moves the definition out of this workspace's agent library, "
+                    + "into a .trash folder you can restore it from. An agent "
+                    + "a study uses, or one a run saved, is not deleted; the "
+                    + "app says which.")
         }
         // Nothing on the tab-switch path may touch the disk (2026-08-27):
         // this used to be an `onAppear` that ran the library scan, a runs/

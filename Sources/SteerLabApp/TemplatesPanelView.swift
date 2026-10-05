@@ -163,7 +163,10 @@ struct TemplatesPanelView: View {
                     do {
                         let source = try panel.management.reviewDesignSource(named: name)
                         panel.management.newDesignFromStudy(reviewedSource: source)
-                    } catch { panel.draft.formErrors[.template] = error.localizedDescription }
+                    } catch {
+                        panel.draft.formErrors[.template] = RefusalPresentation(
+                            error, context: "Couldn't read the study to save as a template.").summary
+                    }
                 } label: {
                     Label("New from Study", systemImage: "square.on.square")
                 }

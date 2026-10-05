@@ -37,7 +37,7 @@ extension ExperimentPanel {
                 severity: .success)
             return nil
         } catch {
-            return "\(error)"
+            return RefusalPresentation(error, context: "Couldn't generate the factorial items.").summary
         }
     }
 }

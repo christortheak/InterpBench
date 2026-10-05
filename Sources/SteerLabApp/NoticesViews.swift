@@ -106,6 +106,15 @@ struct NoticesFeedView: View {
                 Text(notice.message)
                     .font(.caption)
                     .textSelection(.enabled)
+                if let command = notice.refusal?.commandLine {
+                    DisclosureGroup("For the command line") {
+                        Text(command)
+                            .font(.caption2.monospaced())
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .font(.caption2)
+                }
                 Text(
                     "\(notice.source) · "
                         + notice.timestamp.formatted(

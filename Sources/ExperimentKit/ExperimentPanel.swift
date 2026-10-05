@@ -48,10 +48,9 @@ public final class ExperimentPanel {
             }
             refresh()
         } catch {
-            note(
-                "Couldn't save the study-type change — the study file may be "
-                    + "locked or the disk full. Details: \(error)",
-                severity: .error)
+            noteRefusal(
+                "Couldn't save the study-type change.", error,
+                advice: "Check that the study file is not locked and the disk has space, then try again.")
         }
     }
 
@@ -122,10 +121,7 @@ public final class ExperimentPanel {
                     + "must stay disjoint from)." + poolNote,
                 severity: .success)
         } catch {
-            note(
-                "Couldn't create the confirmation draft — nothing was "
-                    + "changed. Details: \(error)",
-                severity: .error)
+            noteRefusal("Couldn't create the confirmation draft; nothing was changed.", error)
         }
     }
 
@@ -142,7 +138,31 @@ public final class ExperimentPanel {
     /// ring would evict the failures the feed exists to keep.
     public func note(_ message: String, severity: PanelNotice.Severity = .info) {
         status = message
+        statusRefusal = nil
         notices.record(source: "Studies", severity: severity, message: message)
+    }
+
+    /// The structured refusal behind the current status line, when the last
+    /// event was a refusal or a failure; nil after any plain note. The
+    /// Studies status row renders it: the reason, what to do (as a button
+    /// when the app can do it), and the command-line repair behind a
+    /// disclosure.
+    public private(set) var statusRefusal: RefusalPresentation?
+
+    /// The ONE way this panel speaks a refusal or a failure. `context` says
+    /// what the researcher was trying to do; `advice` is what to check when
+    /// the error carries no repair of its own. Never a raw error string.
+    public func noteRefusal(
+        _ context: String, _ error: any Error, advice: String? = nil,
+        severity: PanelNotice.Severity = .error
+    ) {
+        speak(RefusalPresentation(error, context: context, advice: advice), severity: severity)
+    }
+
+    func speak(_ refusal: RefusalPresentation, severity: PanelNotice.Severity) {
+        status = refusal.summary
+        statusRefusal = refusal
+        notices.record(source: "Studies", severity: severity, message: refusal.summary, refusal: refusal)
     }
 
     /// A form whose refusals must render AT the control, not only in the
@@ -157,6 +177,18 @@ public final class ExperimentPanel {
     ) {
         draft.formErrors[field] = message
         note(message, severity: severity)
+    }
+
+    /// Refuse a form action because something threw: the inline label shows
+    /// the reason and what to do, and the status row shows the whole
+    /// presentation.
+    public func refuse(
+        _ field: FormField, _ context: String, _ error: any Error, advice: String? = nil,
+        severity: PanelNotice.Severity = .error
+    ) {
+        let refusal = RefusalPresentation(error, context: context, advice: advice)
+        draft.formErrors[field] = refusal.summary
+        speak(refusal, severity: severity)
     }
 
     /// Clear a form's inline refusal — on success, or when the researcher
@@ -205,7 +237,9 @@ public final class ExperimentPanel {
                 note("cancel requested for server sweep job \(job.id) "
                     + "('\(job.study)') — cancelling…", severity: .warning)
             } catch {
-                note("cancel failed for sweep job \(job.id): \(error)", severity: .error)
+                noteRefusal(
+                    "Couldn't cancel sweep job \(job.id).", error,
+                    advice: "Refresh the job list to see whether it is still running, then try again.")
             }
             return
         }
@@ -560,6 +594,7 @@ public final class ExperimentPanel {
             refresh: { [weak self] in self?.refresh() })
         management.presentation = StudyManagementPresentation(
             note: { [weak self] text, severity in self?.note(text, severity: severity) },
+            refusal: { [weak self] refusal, severity in self?.speak(refusal, severity: severity) },
             selectionChanged: { [weak self] in self?.managementSelectionChanged() },
             refreshed: { [weak self] in self?.refreshStudyDetails() })
         freezeCoordinator.presentation = StudyFreezePresentation(
@@ -631,7 +666,7 @@ public final class ExperimentPanel {
             note("pinned \(relative)", severity: .info)
             return true
         } catch {
-            note("could not pin \(relative): \(error)", severity: .warning)
+            noteRefusal("Couldn't pin \(relative).", error, severity: .warning)
             return false
         }
     }
@@ -748,10 +783,7 @@ public final class ExperimentPanel {
                     + "scenario",
                 severity: .success)
         } catch {
-            note(
-                "Couldn't save the seats — nothing was pinned. "
-                    + ((error as? ExperimentError)?.reason ?? "\(error)"),
-                severity: .error)
+            noteRefusal("Couldn't save the seats; nothing was pinned.", error)
         }
     }
 
@@ -795,10 +827,7 @@ public final class ExperimentPanel {
                     + "— each row below mints one sibling study",
                 severity: .info)
         } catch {
-            refuse(
-                .template,
-                "Couldn't open the permutation table — "
-                    + ((error as? ExperimentError)?.reason ?? "\(error)"))
+            refuse(.template, "Couldn't open the permutation table.", error)
         }
     }
 
@@ -918,7 +947,7 @@ public final class ExperimentPanel {
                 + (draft.confirmIncludeControl ? ", matched-norm control)" : ")"), severity: .success)
             refresh()
         } catch {
-            note("confirm failed: \(error)", severity: .error)
+            noteRefusal("Couldn't attach the confirmation policy.", error)
         }
     }
 
@@ -1028,7 +1057,7 @@ public final class ExperimentPanel {
                 + suffix, severity: .success)
             refresh()
         } catch {
-            note("promote failed: \(error)", severity: .error)
+            noteRefusal("Couldn't promote '\(concept)' to an agent.", error)
         }
     }
 
@@ -1118,13 +1147,11 @@ public final class ExperimentPanel {
                 }
             }
             return true
-        } catch let error as ExperimentError {
-            // A store refusal (sweepGridRule, statusImmutable, …) — the
-            // engine's own words, inline beside the Save button.
-            refuse(.sweepSpec, "sweep spec not saved: \(error.reason)")
-            return false
         } catch {
-            refuse(.sweepSpec, "declare optimization failed: \(error)")
+            // A store refusal (sweepGridRule, statusImmutable, …) keeps the
+            // engine's own words, inline beside the Save button, with what to
+            // do and the command-line repair.
+            refuse(.sweepSpec, "The sweep settings were not saved.", error)
             return false
         }
     }
@@ -1202,7 +1229,8 @@ public final class ExperimentPanel {
             remoteJobs.remoteProfileSummary = Self.profileSummary(caps)
             remoteJobs.remoteStatus = "connected: \(caps.engine ?? "server") \(caps.serverVersion ?? "")"
         } catch {
-            remoteJobs.remoteStatus = "remote connection failed: \(error)"
+            remoteJobs.remoteStatus = RefusalPresentation(
+                error, context: "Couldn't connect to the server.").summary
         }
     }
 
@@ -1367,8 +1395,8 @@ public final class ExperimentPanel {
             refresh()
         } catch {
             guard environment.isCurrent(context, selection: true) else { return }
-            remoteJobs.remoteStatus = "sweep judging failed: "
-                + String(describing: error)
+            remoteJobs.remoteStatus = RefusalPresentation(
+                error, context: "Judging the sweep on this Mac failed.").summary
         }
     }
 
@@ -1422,7 +1450,8 @@ public final class ExperimentPanel {
         } catch {
             guard generation == remoteRunsGeneration, environment.isCurrent(context) else { return }
             remoteRuns = []
-            remoteJobs.remoteStatus = "could not list server runs: \(error)"
+            remoteJobs.remoteStatus = RefusalPresentation(
+                error, context: "Couldn't list the server's runs.").summary
         }
     }
 
@@ -1542,8 +1571,8 @@ public final class ExperimentPanel {
             // — the round trip is visible without a manual refresh.
             await pipelines.refresh(in: operationEnvironment)
         } catch {
-            results.remoteResultsStatus =
-                "evidence import failed: \(error.localizedDescription)"
+            results.remoteResultsStatus = RefusalPresentation(
+                error, context: "Couldn't import the evidence.").summary
         }
     }
 
@@ -1613,9 +1642,7 @@ public final class ExperimentPanel {
             // that printed a whole `NSURLErrorDomain … _kCFStreamErrorCodeKey=61`
             // paragraph into the Optimizations card (2026-09-06 audit,
             // headline 17). URLError answers with a plain sentence.
-            note(
-                "could not list optimizations on \(substrate): "
-                    + error.localizedDescription, severity: .error)
+            noteRefusal("Couldn't list the optimizations on \(substrate).", error)
         }
     }
 
@@ -1648,7 +1675,7 @@ public final class ExperimentPanel {
         } catch {
             guard environment.isCurrent(context) else { return nil }
             let substrate = cluster?.substrateLabel ?? "server"
-            note("could not load sweep run for '\(experiment)' from \(substrate): \(error)", severity: .error)
+            noteRefusal("Couldn't load the sweep run for '\(experiment)' from \(substrate).", error)
             return nil
         }
     }
@@ -1707,7 +1734,7 @@ public final class ExperimentPanel {
             await host?.catalog.refreshRemoteVectors()
         } catch {
             guard environment.isCurrent(context) else { return }
-            note("server promote failed: \(error)", severity: .error)
+            noteRefusal("The server couldn't promote the agent.", error)
         }
     }
 
@@ -1835,9 +1862,8 @@ public final class ExperimentPanel {
             // — the round trip is visible without a manual refresh.
             await pipelines.refresh(in: operationEnvironment)
         } catch {
-            let failureMessage = "evidence import failed: \(error)"
-            remoteJobs.remoteStatus = failureMessage
-            note(failureMessage, severity: .error)
+            noteRefusal("Couldn't import the evidence.", error)
+            remoteJobs.remoteStatus = status
         }
     }
 
@@ -1912,11 +1938,9 @@ public final class ExperimentPanel {
                 note("saved protocol notes and run defaults", severity: .success)
             }
         } catch {
-            note(
-                "Couldn't save the study setup — check the study is still a "
-                    + "draft and its file is writable, then save again. "
-                    + "Details: \(error)",
-                severity: .error)
+            noteRefusal(
+                "Couldn't save the study setup.", error,
+                advice: "Check that the study is still a draft and its file is writable, then save again.")
         }
     }
 
@@ -1976,10 +2000,9 @@ public final class ExperimentPanel {
             note("declared outcome instruments: "
                 + (instruments?.joined(separator: ", ") ?? "none"), severity: .success)
         } catch {
-            note(
-                "Couldn't declare the outcome mode — the study must still be "
-                    + "a draft (frozen studies are read-only). Details: \(error)",
-                severity: .error)
+            noteRefusal(
+                "Couldn't declare the outcome mode.", error,
+                advice: "The study must still be a draft; frozen studies are read-only.")
         }
     }
 
@@ -2018,7 +2041,7 @@ public final class ExperimentPanel {
                         : remaining.joined(separator: ", ")),
                 severity: .success)
         } catch {
-            note("\(error)", severity: .error)
+            noteRefusal("Couldn't remove the instrument.", error)
         }
     }
 
@@ -2048,7 +2071,7 @@ public final class ExperimentPanel {
                     + "will run and each response is scored by the pinned readers",
                 severity: .success)
         } catch {
-            note("\(error)", severity: .error)
+            noteRefusal("Couldn't add the reader instrument.", error)
         }
     }
 
@@ -2079,10 +2102,9 @@ public final class ExperimentPanel {
             refresh()
             note("saved promotion rule (screen→confirm gate)", severity: .success)
         } catch {
-            note(
-                "Couldn't save the promotion rule — the study must still be a "
-                    + "draft and its file writable. Details: \(error)",
-                severity: .error)
+            noteRefusal(
+                "Couldn't save the promotion rule.", error,
+                advice: "The study must still be a draft, and its file writable.")
         }
     }
 
@@ -2099,10 +2121,7 @@ public final class ExperimentPanel {
             refresh()
             note("human baseline unpinned", severity: .success)
         } catch {
-            note(
-                "Couldn't unpin the human baseline — the study must still be "
-                    + "a draft. Details: \(error)",
-                severity: .error)
+            noteRefusal("Couldn't unpin the human baseline.", error, advice: "The study must still be a draft.")
         }
     }
 
@@ -2118,11 +2137,9 @@ public final class ExperimentPanel {
             refresh()
             note("pinned human baseline \(pinned.path) @ \(pinned.hash.prefix(12))…", severity: .success)
         } catch {
-            note(
-                "Couldn't pin the human baseline — check the path points at "
-                    + "an existing CSV inside the workspace (e.g. "
-                    + "prompts/baselines/…). Details: \(error)",
-                severity: .error)
+            noteRefusal(
+                "Couldn't pin the human baseline.", error,
+                advice: "Check that the path points at an existing CSV inside the workspace, for example under prompts/baselines/.")
         }
     }
 
@@ -2205,10 +2222,8 @@ public final class ExperimentPanel {
                 severity: .success)
         } catch {
             refuse(
-                .addCondition,
-                "Couldn't add the condition — the study may be frozen, or "
-                    + "the referenced concept is no longer pinned. "
-                    + "Details: \(error)")
+                .addCondition, "Couldn't add the condition.", error,
+                advice: "The study may be frozen, or the concept it uses is no longer pinned.")
         }
     }
 
@@ -2247,10 +2262,8 @@ public final class ExperimentPanel {
                 severity: .success)
         } catch {
             refuse(
-                .validationControl,
-                "Couldn't declare '\(concept)' as a control — the study must "
-                    + "still be a draft, and the concept needs a readable "
-                    + "stimulus set. Details: \(error)")
+                .validationControl, "Couldn't declare '\(concept)' as a control.", error,
+                advice: "The study must still be a draft, and the concept needs a readable stimulus set.")
         }
     }
 
@@ -2264,7 +2277,7 @@ public final class ExperimentPanel {
             refresh()
             note("removed control '\(concept)'", severity: .info)
         } catch {
-            refuse(.validationControl, "Couldn't remove the control: \(error)")
+            refuse(.validationControl, "Couldn't remove the control.", error)
         }
     }
 
@@ -2297,9 +2310,8 @@ public final class ExperimentPanel {
                 severity: .success)
         } catch {
             refuse(
-                .validationControl,
-                "Couldn't declare the scope — load the study's task prompts "
-                    + "first. Details: \(error)")
+                .validationControl, "Couldn't declare the scope.", error,
+                advice: "Load the study's task prompts first.")
         }
     }
 
@@ -2316,10 +2328,7 @@ public final class ExperimentPanel {
             refresh()
             note("added sign control '\(control.name)' (α negated — direction control)", severity: .success)
         } catch {
-            note(
-                "Couldn't add the sign control — the study must still be a "
-                    + "draft. Details: \(error)",
-                severity: .error)
+            noteRefusal("Couldn't add the sign control.", error, advice: "The study must still be a draft.")
         }
     }
 
@@ -2345,10 +2354,9 @@ public final class ExperimentPanel {
                         + "(controlType: randomMatchedNorm)",
                 severity: .success)
         } catch {
-            note(
-                "Couldn't add the random-direction control — the study must "
-                    + "still be a draft. Details: \(error)",
-                severity: .error)
+            noteRefusal(
+                "Couldn't add the random-direction control.", error,
+                advice: "The study must still be a draft.")
         }
     }
 
@@ -2374,10 +2382,8 @@ public final class ExperimentPanel {
             draft.lastControlMatrixNotes = result.notes
         } catch {
             refuse(
-                .addCondition,
-                "Couldn't scaffold the control matrix — no conditions were "
-                    + "changed; the study must still be a draft. "
-                    + "Details: \(error)")
+                .addCondition, "Couldn't scaffold the control matrix; no conditions were changed.",
+                error, advice: "The study must still be a draft.")
             draft.lastControlMatrixNotes = []
         }
     }
@@ -2432,7 +2438,8 @@ public final class ExperimentPanel {
             draft.taskPromptsDocumentFile = nil
             draft.taskPromptsReview = nil
             draft.taskPromptsInstrumentSummary = nil
-            draft.taskPromptsStatus = "\(error)"
+            draft.taskPromptsStatus = RefusalPresentation(
+                error, context: "Couldn't read the task prompts.").summary
         }
     }
 
@@ -2474,12 +2481,10 @@ public final class ExperimentPanel {
                 + " @ \(hash.prefix(12))… — \(activation)"
             note("saved a new prompt version and pinned its hash — \(activation)", severity: .success)
         } catch {
-            draft.taskPromptsStatus = "\(error)"
-            note(
-                "Couldn't save the task prompts — nothing was pinned; check "
-                    + "the file path stays inside the workspace and the study "
-                    + "is a draft. Details: \(error)",
-                severity: .error)
+            noteRefusal(
+                "Couldn't save the task prompts; nothing was pinned.", error,
+                advice: "Check that the file stays inside the workspace and the study is a draft.")
+            draft.taskPromptsStatus = status
         }
     }
 
@@ -2516,7 +2521,8 @@ public final class ExperimentPanel {
             note("imported task-prompt JSONL and pinned its hash", severity: .success)
             return true
         } catch {
-            draft.taskPromptsStatus = "\(error)"
+            draft.taskPromptsStatus = RefusalPresentation(
+                error, context: "Couldn't import the task prompts.").summary
             return false
         }
     }
@@ -2799,11 +2805,8 @@ public final class ExperimentPanel {
         let declaredRendering: ExtractionRendering?
         do {
             declaredRendering = try draft.attachRendering.declared()
-        } catch let error as ExtractionRendering.DeclarationError {
-            note("\(error.reason) — repair: \(error.repair)", severity: .error)
-            return
         } catch {
-            note("\(error)", severity: .error)
+            noteRefusal("Couldn't attach the concept with that rendering.", error)
             return
         }
         // A non-off reasoning effort on a family without a thinking mode is
@@ -2861,16 +2864,11 @@ public final class ExperimentPanel {
             // rendering, the two spellings of one position. It reaches the
             // notice VERBATIM, with its repair: wrapping it in "check your
             // stimulus files" would send a person to look at the wrong thing.
-            note(
-                "\(error.reason) — repair: "
-                    + "\(error.malformedInvocation?.repairAction ?? "")",
-                severity: .error)
+            noteRefusal("Couldn't attach the concept.", error)
         } catch {
-            note(
-                "Couldn't attach the concept — check its stimulus files "
-                    + "exist on disk and the study is still a draft. "
-                    + "Details: \(error)",
-                severity: .error)
+            noteRefusal(
+                "Couldn't attach the concept.", error,
+                advice: "Check that its stimulus files exist on disk and the study is still a draft.")
         }
     }
 
@@ -2887,7 +2885,7 @@ public final class ExperimentPanel {
             refresh()
             note("detached concept '\(concept)' from '\(experiment)'")
         } catch {
-            note("\(error)", severity: .error)
+            noteRefusal("Couldn't detach '\(concept)'.", error)
         }
     }
 
@@ -2908,11 +2906,9 @@ public final class ExperimentPanel {
             refresh()
             note("pinned \(name) @ \(stimuli.hash.prefix(12))…", severity: .success)
         } catch {
-            note(
-                "Couldn't attach the concept — check its stimulus files "
-                    + "under prompts/concepts/\(name)/ and that the study is "
-                    + "still a draft. Details: \(error)",
-                severity: .error)
+            noteRefusal(
+                "Couldn't attach the concept.", error,
+                advice: "Check its stimulus files under prompts/concepts/\(name)/ and that the study is still a draft.")
         }
     }
 
@@ -2926,11 +2922,9 @@ public final class ExperimentPanel {
             refresh()
             note("added agent '\(artifact.record.artifact.name)'", severity: .success)
         } catch {
-            note(
-                "Couldn't add the agent — check it uses this study's "
-                    + "baseline model and the study is still a draft. "
-                    + "Details: \(error)",
-                severity: .error)
+            noteRefusal(
+                "Couldn't add the agent.", error,
+                advice: "Check that it uses this study's base model and the study is still a draft.")
         }
     }
 
@@ -2942,7 +2936,7 @@ public final class ExperimentPanel {
             refresh()
             note("removed agent '\(name)'", severity: .success)
         } catch {
-            note("\(error)", severity: .error)
+            noteRefusal("Couldn't remove agent '\(name)'.", error)
         }
     }
 
@@ -2971,7 +2965,7 @@ public final class ExperimentPanel {
         do {
             return try ExperimentStore.exportStudyJSON(manifest)
         } catch {
-            note("could not export study JSON: \(error)", severity: .error)
+            noteRefusal("Couldn't export the study JSON.", error)
             return nil
         }
     }
@@ -3022,10 +3016,8 @@ public final class ExperimentPanel {
             // so a refusal that only reaches the status line at the bottom of
             // the form lands behind it (UI audit 2026-09-06, headline 9).
             refuse(
-                .studyImport,
-                "Couldn't complete the study import. Inspect the named "
-                    + "destination before retrying. Details: "
-                    + error.localizedDescription)
+                .studyImport, "Couldn't complete the study import.", error,
+                advice: "Inspect the named destination before retrying.")
             return false
         }
     }
@@ -3071,7 +3063,7 @@ public final class ExperimentPanel {
                     + "promotes for '\(concept)', resolved at run time",
                 severity: .success)
         } catch {
-            note("could not declare forward reference: \(error)", severity: .error)
+            noteRefusal("Couldn't declare the forward reference.", error)
         }
     }
 
@@ -3129,10 +3121,9 @@ public final class ExperimentPanel {
             refresh()
             note("captured '\(name)' (\(slots.count) slot\(slots.count == 1 ? "" : "s"))", severity: .success)
         } catch {
-            note(
-                "Couldn't capture the condition — the study file may be "
-                    + "locked or the disk full. Details: \(error)",
-                severity: .error)
+            noteRefusal(
+                "Couldn't capture the condition.", error,
+                advice: "Check that the study file is not locked and the disk has space.")
         }
     }
 
@@ -3152,9 +3143,8 @@ public final class ExperimentPanel {
             note("added no-steer baseline '\(name)'", severity: .success)
         } catch {
             refuse(
-                .addCondition,
-                "Couldn't add the baseline condition — the study file may be "
-                    + "locked or read-only. Details: \(error)")
+                .addCondition, "Couldn't add the baseline condition.", error,
+                advice: "Check that the study file is not locked or read-only.")
         }
     }
 
@@ -3165,7 +3155,7 @@ public final class ExperimentPanel {
             try management.persistReviewedDraft(manifest)
             refresh()
         } catch {
-            note("\(error)", severity: .error)
+            noteRefusal("Couldn't remove condition '\(name)'.", error)
         }
     }
 
@@ -3469,10 +3459,8 @@ public enum SweepSpecForm {
         probe.objective = .init(metric: SweepSelectionRule.implementedMetrics[0])
         do {
             _ = try SweepSelectionRule.resolve(probe)
-        } catch let error as ExperimentError {
-            return .invalid(error.reason)
         } catch {
-            return .invalid("\(error)")
+            return .invalid(RefusalPresentation.plainReason(error))
         }
         return SweepSelectionRule.implementedMetrics.contains(metric)
             ? .valid
@@ -3520,10 +3508,8 @@ public enum SweepSpecForm {
                     criterion: criterion, spec: selection, manifest: manifest,
                     hasClaudeCredential: true, hasOpenRouterCredential: true,
                     root: root)
-            } catch let error as ExperimentError {
-                return error.reason
             } catch {
-                return "\(error)"
+                return RefusalPresentation.plainReason(error)
             }
         default:
             break
@@ -3638,10 +3624,8 @@ public enum SweepSpecForm {
                     maxOptions: optionCounts.max() ?? 0,
                     explicitTargetRows: explicit,
                     defaultedTargetRows: rows.count - explicit))
-        } catch let error as ExperimentError {
-            return .problem(error.reason)
         } catch {
-            return .problem("\(error)")
+            return .problem(RefusalPresentation.plainReason(error))
         }
     }
 
@@ -3763,12 +3747,9 @@ extension ExperimentPanel {
                 "pinned task prompts \(relativePath) @ \(hash.prefix(12))…",
                 severity: .success)
         } catch {
-            note(
-                "Couldn't pin the chosen prompts file — it must be JSONL "
-                    + "the run loop can parse (one {\"text\": …} object per "
-                    + "line; Import table… converts spreadsheets). "
-                    + "Details: \(error)",
-                severity: .error)
+            noteRefusal(
+                "Couldn't pin the chosen prompts file.", error,
+                advice: "It must be JSONL the run loop can parse, one {\"text\": …} object per line; Import table… converts spreadsheets.")
         }
     }
 
@@ -3783,7 +3764,7 @@ extension ExperimentPanel {
                 return draft.taskPromptsStatus ?? "Prompt import was refused; review the study and retry."
             }
             return nil
-        } catch { return "\(error)" }
+        } catch { return RefusalPresentation(error, context: "Couldn't import the table.").summary }
     }
 
     /// The Import table… flow for the human baseline: convert the mapped
@@ -3815,7 +3796,7 @@ extension ExperimentPanel {
                 severity: .success)
             return nil
         } catch {
-            return "\(error)"
+            return RefusalPresentation(error, context: "Couldn't import the human baseline.").summary
         }
     }
 }

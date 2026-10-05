@@ -1511,13 +1511,22 @@ public final class FineTuningPanel {
             note("select an agent to delete", severity: .info)
             return
         }
+        // The same owner both command lines' `agent delete` use: it refuses
+        // an agent a study uses (naming the studies) or a run saved, and
+        // moves a library entry into a `.trash-<time>` folder.
         do {
-            try ModelVariantStore.delete(selectedVariant)
+            let reviewed = try AgentArtifactSnapshot(
+                workspaceRoot: ExperimentStore.workspaceRoot, reviewedRecord: selectedVariant)
+            let moved = try WorkspaceHousekeeping.deleteAgent(reviewed: reviewed)
             refresh()
-            note("deleted agent \(selectedVariant.artifact.name)", severity: .success)
+            note(
+                "moved agent \(selectedVariant.artifact.name) to "
+                    + "runs/model-variants/\(moved.deletingLastPathComponent().lastPathComponent)/ "
+                    + "— recover it from there if needed",
+                severity: .success)
         } catch {
             note(
-                "could not delete agent: \(error.localizedDescription)",
+                RefusalPresentation(error, context: "Couldn't delete the agent; nothing was deleted.").summary,
                 severity: .error)
         }
     }
