@@ -126,11 +126,7 @@ struct EffectChartsSection: View {
         "each row: the condition's shift in \(EffectNarrative.metricPhrase(metric)) "
             + "vs its paired baseline, with the 95% bootstrap CI — whiskers "
             + "crossing the zero line are consistent with no effect"
-            + (activeRows.contains(where: EffectNarrative.hasTooFewPairs)
-                ? ". A row with fewer than "
-                    + "\(EffectNarrative.minimumPairsForInterval) paired items "
-                    + "has no whisker: that is too few pairs for an interval"
-                : "")
+            + (EffectNarrative.tooFewCaption(activeRows).map { ". " + $0 } ?? "")
     }
 
     private var doseCaption: String {
@@ -186,8 +182,9 @@ struct EffectForestChart: View {
                 .foregroundStyle(.tertiary)
                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
             ForEach(rows) { row in
-                // No whisker for one or two paired items: that is too few
-                // pairs for an interval (the caption says so).
+                // No whisker for one or two pairs (for paired responses, one
+                // or two items): that is too few for an interval (the caption
+                // says so).
                 if EffectNarrative.hasReportableInterval(row) {
                     RuleMark(
                         xStart: .value("CI lower", row.ciLower),
@@ -250,8 +247,9 @@ struct EffectForestChart: View {
         else { return nil }
         guard EffectNarrative.hasReportableInterval(match) else {
             return String(
-                format: "%@ · Δ %+.4g (too few pairs for an interval)",
-                match.condition, match.meanDiff)
+                format: "%@ · Δ %+.4g (too few %@ for an interval)",
+                match.condition, match.meanDiff,
+                EffectNarrative.tooFewNoun(match))
         }
         return String(
             format: "%@ · Δ %+.4g [%.4g, %.4g]", match.condition,

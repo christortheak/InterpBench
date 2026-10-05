@@ -376,6 +376,11 @@ def test_every_committed_fixture_has_a_staleness_test():
         # Checked inline in test_effect_outcomes.py (analyze re-run over the
         # committed records; rows, outcome list, and definitions compared).
         "effect-outcomes.json",
+        # Checked inline in test_results_export.py (the reader's unit rule
+        # re-run over the committed records and rows, and its wording
+        # compared). Read by EffectUnitTests.swift and the results
+        # explorer's test/effectUnits.test.ts.
+        "effect-units.json",
         # Checked inline in test_battery_error_row_fixture.py (validation
         # re-run with one agent failing to load; the written evidence file is
         # compared with the committed one). Read by BatteryEvidenceRowTests.

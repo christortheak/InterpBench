@@ -2,6 +2,7 @@
 // shell import from here so no module re-declares a shape.
 
 import type { AnalysisStamps } from "./analysisStamps";
+import type { EffectUnit, PairedItems } from "./effectUnits";
 import type { FreezeStamp } from "./freeze";
 import type { RunKind, RunKindSource } from "./runKind";
 import type { StatusInfo } from "./status";
@@ -64,6 +65,11 @@ export type Effect = {
   /// because its unit is the run's, so without this a pooled row over
   /// transcripts was labelled "paired items". See lib/analysisStamps.ts.
   analysisUnit?: string;
+  /// What one paired difference of this row is, settled when the run is
+  /// loaded from the row's `unit`, the run's stamp, and the run's records
+  /// (lib/effectUnits.ts). Absent on a row nothing has settled, which then
+  /// claims no unit: an item is never assumed.
+  effectUnit?: EffectUnit;
 };
 
 export type Generation = {
@@ -265,6 +271,11 @@ export type WorkspaceRun = {
   /// interval, and so are not among `effectRows`. Absent or 0 when every
   /// line was read.
   skippedEffectRows?: number;
+  /// What the effect rows' units were settled against: the items the run's
+  /// records (for an analysis, its source run's) pair with the baseline.
+  /// null when a stamp settled every row or no records could be read;
+  /// absent until the run is activated. See lib/effectUnits.ts.
+  effectUnitRecords?: PairedItems | null;
 };
 
 export type FilePreview = {

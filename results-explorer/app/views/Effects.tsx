@@ -8,6 +8,7 @@ import { skippedLinesNote } from "../lib/csv";
 import { demoCopy, demoEffects, DemoBanner, DemoEffectsLower, demoPreviewEnabled } from "../demo";
 import { findFile } from "../lib/discovery";
 import { effectConditions, effectEndpoints, estimandLabel, groupEffects, isDiagnostic, pairedCountLabel, stratumLabel } from "../lib/effects";
+import { effectsUnitSummary, unitCaveat, unitOf } from "../lib/effectUnits";
 import { csvFilename, type ExportColumn } from "../lib/export";
 import { fmt } from "../lib/format";
 import type { Effect, RunFile, WorkspaceRun } from "../lib/types";
@@ -44,7 +45,12 @@ const columns: ExportColumn<Effect>[] = [
   { header: "unit", kind: "derived", value: (row) => row.unit, description: "A display unit the explorer chose from the endpoint's name. It is a label for reading, not a measured unit." },
   // The run's own stamp, repeated on every row so the table still says what
   // `n` counts once it has left the run directory.
-  { header: "unitOfAnalysis", kind: "stored", value: (row) => row.analysisUnit ?? "", description: "The run's unit of analysis as the run stamps it, such as transcript: what n counts on a pooled row. Empty when the run stamps none, in which case the engines pair by prompt item." },
+  { header: "unitOfAnalysis", kind: "stored", value: (row) => row.analysisUnit ?? "", description: "The run's unit of analysis as the run stamps it, such as transcript: what n counts on a pooled row. Empty when the run stamps none; unitResolved then says what the run's records show." },
+  // The unit each row is read in, settled the way `results export` settles
+  // it (lib/effectUnits.ts), so the exported table names the same unit.
+  { header: "unitResolved", kind: "derived", value: (row) => unitOf(row).unit, description: "What one paired difference is: an item (its samples averaged), a transcript (one play-through of a multi-agent conversation), a sample, a response (one response paired with the baseline response to the same item and seed; responses to the same item are not independent), or unknown." },
+  { header: "unitSource", kind: "derived", value: (row) => unitOf(row).source, description: "Where the unit comes from: recorded when the row or the analysis stamped it; engine_default when it did not and the run's records agree with the engines' rule, the item; inferred_from_records when the row counts more pairs than the items paired in the run, so it paired responses; and not_established when the records cannot tell." },
+  { header: "pairedItems", kind: "derived", value: (row) => unitOf(row).pairedItems, description: "How many distinct items the run's records answer under both this row's condition and the baseline, counted by the explorer from generations.jsonl. Empty when the records were not read or hold none for the condition." },
 ];
 
 /// The p-value pair for one row. A DIAGNOSTIC row (a single item's own
@@ -90,7 +96,6 @@ export function EffectsView({ run, onOpenFile }: { run: WorkspaceRun | null; onO
   // and an empty stamp from them must not blank the label for the rest.
   const corrections = [...new Set(availableEffects.filter((effect) => !isDiagnostic(effect)).map((effect) => effect.correction).filter(Boolean))];
   const correctionLabel = corrections.length === 1 ? `${corrections[0]} p` : "Adjusted p";
-  const transcriptUnit = run ? analysisStampsOf(run).unit?.unit === "transcript" : false;
   return (
     <div className="view-enter inner-view">
       {!run && <DemoBanner />}
@@ -98,7 +103,7 @@ export function EffectsView({ run, onOpenFile }: { run: WorkspaceRun | null; onO
         {/* What one paired difference IS comes from the run's own stamp. A
             multi-agent run pairs whole transcripts, and saying "the item"
             there described a different analysis than the one on screen. */}
-        <div><span className="section-number">{run ? `${pooledCount} POOLED ROW${pooledCount === 1 ? "" : "S"}${stratifiedCount ? ` · ${stratifiedCount} STRATIFIED` : ""} · LOCAL RUN` : demoCopy.effectsEyebrow}</span><h1>Effects &amp; robustness</h1><p>Paired intervention-minus-baseline estimates, one row per condition × endpoint. {transcriptUnit ? "Each transcript—not each turn—is the unit of analysis." : "The item—not the generation—is the unit of analysis, except where a stratum says otherwise."}</p></div>
+        <div><span className="section-number">{run ? `${pooledCount} POOLED ROW${pooledCount === 1 ? "" : "S"}${stratifiedCount ? ` · ${stratifiedCount} STRATIFIED` : ""} · LOCAL RUN` : demoCopy.effectsEyebrow}</span><h1>Effects &amp; robustness</h1><p>Paired intervention-minus-baseline estimates, one row per condition × endpoint. {run ? effectsUnitSummary(run.effectRows, analysisStampsOf(run).unit?.unit ?? "") : "The item—not the generation—is the unit of analysis, except where a stratum says otherwise."}</p></div>
         <div className="title-actions"><button className="secondary" onClick={() => document.querySelector(run && run.effectRows.length ? ".interval-note" : run ? ".local-method-note" : ".table-note")?.scrollIntoView({ behavior: "smooth" })}>Method notes</button><ExportButton filename={csvFilename(run?.name ?? "invented-demo-data", "effect-sizes")} columns={columns} rows={visible} /><button className="primary" disabled={!run || !findFile(run.files, "effect-sizes.csv")} onClick={() => { const file = run && findFile(run.files, "effect-sizes.csv"); if (file) onOpenFile(file); }}>{run ? "Open table" : "Preview table"} <span>→</span></button></div>
       </header>
       <section className="filterbar" aria-label="Effect filters">
@@ -123,6 +128,9 @@ export function EffectsView({ run, onOpenFile }: { run: WorkspaceRun | null; onO
                 <div>
                   <strong>{parent.endpoint}</strong>
                   <span>{parent.condition ? `${parent.condition} · ` : ""}{parent.unit} · {pairedCountLabel(parent)}</span>
+                  {/* A row of paired responses, or one whose unit nothing
+                      settles, says so beside its count. */}
+                  {run && unitCaveat(parent) && <small className="unit-caveat">{unitCaveat(parent)}</small>}
                   {/* Collapsed by default — a promptID family is one row per
                       item per endpoint — but the count is stated, and so is
                       how many of them are within-item diagnostics, so nothing
@@ -163,7 +171,7 @@ export function EffectsView({ run, onOpenFile }: { run: WorkspaceRun | null; onO
 
       {/* The plain-language reading of an interval. It used to be shown only
           beside the invented demo rows; a reader needs it beside real ones. */}
-      {run && run.effectRows.length > 0 && <IntervalNote unit={analysisStampsOf(run).unit} corrections={corrections} />}
+      {run && run.effectRows.length > 0 && <IntervalNote unit={analysisStampsOf(run).unit} corrections={corrections} rows={run.effectRows} records={run.effectUnitRecords ?? null} />}
       {!run && <DemoEffectsLower />}
       {run && <section className="card local-method-note"><span className="section-number">LOCAL ARTIFACT CONTRACT</span><h2>No statistics are recomputed in the browser.</h2><p>The explorer presents the run’s saved estimates and intervals. It does not silently derive missing tests, correction families, or human residuals from partial files — and it does not pool a stratified row back into its parent, which would be a hierarchical model no artifact declared.</p></section>}
     </div>

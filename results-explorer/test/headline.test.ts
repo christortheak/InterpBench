@@ -93,6 +93,9 @@ const effect = (overrides: Partial<Effect> & { condition: string; endpoint: stri
     p: 0.012 as number | null, correction: "bh",
     direction: "positive" as const, stratifyBy: "pooled", stratum: "",
     pairedUnit: "", estimand: "", inference: "",
+    // Item-level, as a current run's rows read once its records settle them
+    // (test/effectUnits.test.ts covers the settling).
+    effectUnit: { unit: "item", source: "engine_default" as const, pairedItems: null },
     ...overrides,
   };
   return { ...base, key: effectKey(base) };
@@ -145,16 +148,24 @@ describe("the headline card", () => {
     for (const n of [1, 2]) {
       const tiny = effect({ condition: "steered", endpoint: "choiceLogOdds", n });
       expect(hasTooFewPairs(tiny)).toBe(true);
-      expect(intervalLine(tiny, fmt)).toBe(`too few pairs for a confidence interval (n = ${n}; at least 3 are needed)`);
+      expect(intervalLine(tiny, fmt)).toBe(`too few pairs for a confidence interval (n = ${n} paired item${n === 1 ? "" : "s"}; at least 3 are needed)`);
       expect(intervalLine(tiny, fmt)).not.toContain("95% CI");
       expect(pLine(tiny, [tiny])).toBe("");
     }
     const three = effect({ condition: "steered", endpoint: "choiceLogOdds", n: 3 });
     expect(hasTooFewPairs(three)).toBe(false);
-    expect(intervalLine(three, fmt)).toBe("95% CI +0.12 to +0.48 · n = 3");
+    expect(intervalLine(three, fmt)).toBe("95% CI +0.12 to +0.48 · n = 3 paired items");
     // A table that carried no n says so; it is not "too few pairs".
     const unstamped = effect({ condition: "steered", endpoint: "choiceLogOdds", n: null });
     expect(hasTooFewPairs(unstamped)).toBe(false);
     expect(intervalLine(unstamped, fmt)).toBe("95% CI +0.12 to +0.48 · n not reported");
+  });
+
+  it("counts the items of a row that paired responses", () => {
+    // Eight responses from two items are two items: too few.
+    const responses = effect({ condition: "steered", endpoint: "choiceLogOdds", n: 8, effectUnit: { unit: "response", source: "inferred_from_records", pairedItems: 2 } });
+    expect(hasTooFewPairs(responses)).toBe(true);
+    expect(intervalLine(responses, fmt)).toBe("too few items for a confidence interval (n = 8 paired responses from 2 items; at least 3 are needed)");
+    expect(pLine(responses, [responses])).toBe("");
   });
 });

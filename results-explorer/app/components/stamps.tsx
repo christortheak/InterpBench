@@ -7,7 +7,8 @@
 import { adjudicationSentence, analysisStampsOf, exclusionsSentence, rescueSentence, unitSentence, type UnitOfAnalysis } from "../lib/analysisStamps";
 import { freezeDetails, freezeLabel, freezeOf, freezeTone, runsBeforeFreeze } from "../lib/freeze";
 import { cellsOverThreshold, cutOffCells, parseTruncation, percentText, thresholdSentence, truncationSentence } from "../lib/runReport";
-import type { RunFile, WorkspaceRun } from "../lib/types";
+import { RESPONSE_UNIT_EXPLANATION, UNKNOWN_UNIT_NOTE, unitOf, unsettledUnitSentence, type PairedItems } from "../lib/effectUnits";
+import type { Effect, RunFile, WorkspaceRun } from "../lib/types";
 import { Badge } from "./ui";
 
 /// The study's freeze state as one badge, for the run's header. The tooltip
@@ -52,17 +53,24 @@ export function FreezeNotice({ run }: { run: WorkspaceRun }) {
 /// of paired differences; the interval is a percentile bootstrap over them;
 /// the raw p is a Wilcoxon signed-rank test) and takes the two things that
 /// DO vary from the run itself: its unit of analysis, and the correction its
-/// table names.
-export function IntervalNote({ unit, corrections }: { unit: UnitOfAnalysis | null; corrections: string[] }) {
+/// table names. A run that stamps no unit is read from its records
+/// (`rows` carry their settled units): rows that paired responses are said
+/// to be what they are.
+export function IntervalNote({ unit, corrections, rows = [], records = null }: { unit: UnitOfAnalysis | null; corrections: string[]; rows?: Effect[]; records?: PairedItems | null }) {
   const one = unit?.unit === "transcript" ? "transcript" : "prompt item";
   const many = `${one}s`;
+  const pooled = rows.filter((row) => row.stratifyBy === "pooled");
+  const responses = pooled.some((row) => unitOf(row).unit === "response");
+  const unknown = pooled.some((row) => unitOf(row).unit === "unknown");
   return (
     <section className="card methods-card interval-note" aria-label="What the interval means">
       <span className="section-number">HOW TO READ THE NUMBERS</span>
       <h2>What the interval means</h2>
       <p>Each pooled row compares one condition with the baseline on the <strong>same {many}</strong>. For every {one}, the engine takes the condition&rsquo;s value minus the baseline&rsquo;s value. The estimate is the average of those differences.</p>
       <p>The 95% interval is the range the engine found for that average by drawing the {many} again, many times over, from the ones in the study. It shows how much the average depends on which {many} the study happened to use. It does not show how much one answer differs from the next.</p>
-      <div className="method-item"><span>Unit</span><small>{unit ? `One ${unit.unit}, as this run stamps it (${unit.source}).` : "One prompt item. This run stamps no other unit."}</small></div>
+      {responses && <p><strong>Rows of paired responses are not read this way.</strong> {RESPONSE_UNIT_EXPLANATION}</p>}
+      {unknown && <p>{UNKNOWN_UNIT_NOTE} for some rows, so this reading may not hold for them.</p>}
+      <div className="method-item"><span>Unit</span><small>{unit ? `One ${unit.unit}, as this run stamps it (${unit.source}).` : unsettledUnitSentence(rows, records)}</small></div>
       <div className="method-item"><span>Raw p</span><small>A Wilcoxon signed-rank test on the same differences: a second check that does not assume they follow a bell curve.</small></div>
       <div className="method-item"><span>Adjusted p</span><small>{corrections.length ? `The raw p after the ${corrections.join(" / ")} correction, which allows for several outcomes being tested at once.` : "This table names no correction, so the explorer does not say which one was used."}</small></div>
       <footer>An interval that includes zero means the data are consistent with no difference. The explorer shows every number here as the engine stored it and works out none of them.</footer>
@@ -192,7 +200,7 @@ export function AnalysisStampsCard({ run, onOpenFile }: { run: WorkspaceRun; onO
         <div>
           <dt>Unit of analysis</dt>
           <dd>
-            <p>{unitSentence(stamps.unit)}</p>
+            <p>{unitSentence(stamps.unit, run.effectRows, run.effectUnitRecords ?? null)}</p>
             {stamps.unit && <small>Stamped in {stamps.unit.source}. {open(stamps.unit.source)}</small>}
           </dd>
         </div>

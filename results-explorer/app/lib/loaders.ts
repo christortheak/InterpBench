@@ -6,6 +6,7 @@ import { parseAnalysisStamps, type AnalysisStamps } from "./analysisStamps";
 import { splitCSV, strictNumber } from "./csv";
 import { findFile, recordValue } from "./discovery";
 import { effectKey } from "./effects";
+import { countPairedItems, resolveUnits, type PairedItems } from "./effectUnits";
 import { parseFreezeStamp, type FreezeStamp } from "./freeze";
 import { GENERATION_INSTRUMENT_OUTPUT_PREFIX } from "./instruments";
 import type {
@@ -310,11 +311,30 @@ export const loadAnalysisStamps = async (run: WorkspaceRun): Promise<AnalysisSta
   return parseAnalysisStamps({ exclusions, reparse, adjudication, unit, epochUnverified, measurementDrift, analysis, report, config: run.config });
 };
 
-export const hydrateRun = async (run: WorkspaceRun): Promise<WorkspaceRun> => {
+/// The items the run's records pair with the baseline, per condition: what
+/// an effect row's unit is settled against (lib/effectUnits.ts). Read from
+/// the run's own generations.jsonl, whole, or — for an analysis, which
+/// holds no records — from those of `source`, the run it analyzed. null
+/// when there are no records to read.
+export const loadPairedItems = async (run: WorkspaceRun, source: WorkspaceRun | null): Promise<PairedItems | null> => {
+  const atTop = (candidate: WorkspaceRun) => candidate.files.find((file) => file.path === "generations.jsonl") ?? null;
+  const file = atTop(run) ?? (source ? atTop(source) : null);
+  if (!file) return null;
+  const counts = await countPairedItems(file);
+  return counts ? { counts, complete: true } : null;
+};
+
+/// `source` is the run this one analyzed, when it is an analysis on screen
+/// beside its run (`findSourceRun`); its records settle the effect rows'
+/// units.
+export const hydrateRun = async (run: WorkspaceRun, source: WorkspaceRun | null = null): Promise<WorkspaceRun> => {
   const [effectTable, generationData, cosineMatrices, sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps] = await Promise.all([loadEffectTable(run), loadGenerations(run), loadCosineMatrices(run), loadSweepRows(run), loadSweepRecommendations(run), loadPanelEffects(run), loadFreezeStamp(run), loadAnalysisStamps(run)]);
   // The run's unit of analysis travels ON each row, so every surface that
   // prints a row's count prints it in the right unit (lib/effects.ts).
   const analysisUnit = analysisStamps.unit?.unit ?? "";
-  const effectRows = analysisUnit ? effectTable.rows.map((effect) => ({ ...effect, analysisUnit })) : effectTable.rows;
-  return { ...run, effectRows, skippedEffectRows: effectTable.skipped, generationRows: generationData.rows, generationFile: generationData.handle, previewTruncated: generationData.truncated, skippedGenerationLines: generationData.skipped, cosineMatrices, validationConcepts: validationRows(run.validationReport), sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps };
+  const stamped = analysisUnit ? effectTable.rows.map((effect) => ({ ...effect, analysisUnit })) : effectTable.rows;
+  // What one paired difference of each row is: stamped, or settled from the
+  // run's records. Never assumed to be an item.
+  const settled = await resolveUnits(stamped, analysisUnit, () => loadPairedItems(run, source));
+  return { ...run, effectRows: settled.rows, effectUnitRecords: settled.pairedItems, skippedEffectRows: effectTable.skipped, generationRows: generationData.rows, generationFile: generationData.handle, previewTruncated: generationData.truncated, skippedGenerationLines: generationData.skipped, cosineMatrices, validationConcepts: validationRows(run.validationReport), sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps };
 };

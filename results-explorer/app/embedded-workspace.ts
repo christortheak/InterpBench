@@ -83,7 +83,8 @@ const listTree = async (path: string): Promise<TreeEntry[]> => {
 // so listing a workspace must not download every artifact — bytes are
 // fetched once, on first read, and cached for the object's lifetime. The
 // cast is safe because readers only use the surface implemented here
-// (text / slice().text / arrayBuffer / size / lastModified / name).
+// (text / slice().text / slice().arrayBuffer / arrayBuffer / size /
+// lastModified / name).
 //
 // It is NOT a real File or Blob, so it must never reach
 // `URL.createObjectURL` — that call throws on it, which is how the download
@@ -107,8 +108,8 @@ const lazyFile = (path: string, entry: TreeEntry): File => {
     // bridge serves offset/length, so previewing the head of a huge
     // generations.jsonl never materializes the whole file — on either
     // side of the bridge.
-    slice: (start?: number, end?: number) => ({
-      text: async () => {
+    slice: (start?: number, end?: number) => {
+      const read = async () => {
         const offset = Math.max(0, start ?? 0);
         const length = end == null ? null : Math.max(0, end - offset);
         const bounded =
@@ -118,9 +119,15 @@ const lazyFile = (path: string, entry: TreeEntry): File => {
         if (!response.ok) {
           throw new Error(`file '${path}': HTTP ${response.status}`);
         }
-        return await response.text();
-      },
-    }),
+        return response;
+      };
+      return {
+        text: async () => await (await read()).text(),
+        // Bytes, for a reader that decodes across several slices (the
+        // paired-item count reads a whole generations file this way).
+        arrayBuffer: async () => await (await read()).arrayBuffer(),
+      };
+    },
   };
   return like as unknown as File;
 };

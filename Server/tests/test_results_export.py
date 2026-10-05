@@ -542,7 +542,7 @@ def test_an_old_mac_response_level_interval_is_shown_with_what_it_is_not(root):
     [row] = _table(_export(root), "effects.csv")
     assert (row["n_pairs"], row["unit_of_analysis"]) == ("8", "response")
     page = study_results.render(results_export.read_results(str(root), STUDY))
-    assert "across 8 paired responses from 4 items" in page
+    assert "across 8 paired responses from 4 items. " + _effect_units()["wording"]["responseCaveat"] in page
     assert "is not a finding about items" in page and "(interval 1.5 to 2.5)" in page
     assert "too few" not in page.split("Headline outcome", 1)[1].split("</section>", 1)[0]
 
@@ -559,6 +559,94 @@ def test_a_row_the_records_cannot_place_has_an_unknown_unit(root):
     methods = _read(result, "methods.md")
     assert "Unit of analysis for the rows marked `unknown`: not established." in methods
     assert "Unit of analysis for the rows marked `item`: the item" in methods
+    page = study_results.render(results_export.read_results(str(root), STUDY))
+    assert "across 3 pairs. " + _effect_units()["wording"]["unknownNote"] in page
+
+
+# --- the rule the Mac app and the results explorer copy ------------------------
+#
+# Tests/Fixtures/cross-engine/effect-units.json holds cases of stored effect
+# rows and the run records beside them, with this reader's answers. The Mac
+# app (EffectUnitTests.swift) and the results explorer
+# (test/effectUnits.test.ts) read the same file, so the three copies of the
+# rule cannot drift apart unnoticed. Regenerate it with
+# `scripts/regenerate-cross-engine-fixtures.py`.
+
+EFFECT_UNITS = os.path.join(REPOSITORY, "Tests", "Fixtures", "cross-engine", "effect-units.json")
+
+
+def _effect_units():
+    with open(EFFECT_UNITS, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _settled_units(case, directory):
+    """This reader's answers for one fixture case, through the export's own
+    record loader, table reader, and rule."""
+    path = os.path.join(directory, "generations.jsonl")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("".join(line + "\n" for line in case["generations"]))
+    loaded = results_export._load_generations(path, results_export._Sources(directory))
+    paired = results_export._paired_items(loaded["responses"])
+    table = io.StringIO()
+    writer = csv.writer(table, lineterminator="\n")
+    writer.writerow(["condition", "metric", "n", "meanDiff", "ciLower", "ciUpper", "stratifyBy", "stratum", "unit"])
+    for row in case["effectRows"]:
+        writer.writerow([row["condition"], row["endpoint"], row["n"], "1.0", "0.5", "1.5", row["stratifyBy"],
+                         row["stratum"], row["unit"]])
+    rows, _ = results_export._read_effects(table.getvalue())
+    results_export.resolve_units(rows, case["stampedUnit"], paired)
+
+    def count(row):
+        n = study_results.stored_number(row["n_pairs"])
+        if n is None or n < 1:
+            return None
+        text = study_results._plural(int(n), *study_results._UNITS[row["unit_resolved"]])
+        if row["unit_resolved"] == "response":
+            text += " from " + study_results._plural(row["paired_items"], "item", "items")
+        return text
+
+    return {
+        "pairedItems": dict(sorted(paired.items())),
+        "rows": [{"condition": row["condition"], "endpoint": row["outcome"], "stratifyBy": row["stratify_by"],
+                  "stratum": row["stratum"], "unit": row["unit_resolved"], "unitSource": row["unit_source"],
+                  "pairedItems": row["paired_items"], "count": count(row), "tooFew": study_results.Page.too_few(row)}
+                 for row in rows],
+    }
+
+
+@pytest.mark.parametrize("case", _effect_units()["cases"], ids=lambda case: case["label"])
+def test_the_shared_effect_unit_cases_are_this_readers_answers(case, tmp_path):
+    assert _settled_units(case, str(tmp_path)) == case["expected"], (
+        "stale fixture: re-run scripts/regenerate-cross-engine-fixtures.py and commit")
+
+
+def test_the_shared_effect_unit_cases_cover_the_rule():
+    """The cases the external review named, and one of each way a unit is
+    known, stay in the fixture."""
+    cases = {case["label"]: case["expected"]["rows"] for case in _effect_units()["cases"]}
+    [one_prompt] = cases["one prompt, five seeds"]
+    assert (one_prompt["unit"], one_prompt["count"], one_prompt["tooFew"]) == (
+        "response", "5 paired responses from 1 item", True)
+    [four_items] = cases["four items, two seeds"]
+    assert (four_items["unit"], four_items["count"]) == ("response", "8 paired responses from 4 items")
+    [current] = cases["a current item-level analysis of four items, two seeds"]
+    assert (current["unit"], current["unitSource"], current["count"]) == ("item", "engine_default", "4 paired items")
+    sources = {row["unitSource"] for rows in cases.values() for row in rows}
+    assert sources == {"recorded", "engine_default", "inferred_from_records", "not_established"}
+
+
+def test_the_shared_effect_unit_wording_is_this_readers():
+    """The sentences the Mac app and the explorer copy are the ones this
+    reader writes."""
+    fixture = _effect_units()
+    wording = fixture["wording"]
+    assert fixture["minimumPairs"] == study_results.MINIMUM_PAIRS
+    assert wording["responseUnitExplanation"] == results_export.RESPONSE_UNIT_EXPLANATION
+    for source, unit in (("engine_default", "item"), ("inferred_from_records", "response"),
+                         ("not_established", "unknown")):
+        context = {"effectRows": [{"stratify_by": "pooled", "unit_source": source, "unit_resolved": unit}]}
+        assert results_export.unit_lines(context) == ["- Unit of analysis: " + wording["unitLines"][source]]
 
 
 def test_a_run_without_analysis_says_effects_are_not_available(root):

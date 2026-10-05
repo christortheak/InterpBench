@@ -1906,8 +1906,232 @@ def panel_transcript_analysis_fixture() -> None:
     })
 
 
+#: The effect-units fixture: what one paired difference of a stored effect row
+#: is, settled from the run's records (`results_export.resolve_units`). The
+#: inputs are designed here; every answer comes from the Python reader. The
+#: Mac app (`EffectUnitTests.swift`) and the results explorer
+#: (`test/effectUnits.test.ts`) hold their copies of the rule to it, and
+#: `Server/tests/test_results_export.py` re-derives it from the committed
+#: inputs.
+EFFECT_UNITS_COLUMNS = ("condition", "metric", "n", "meanDiff", "ciLower",
+                        "ciUpper", "stratifyBy", "stratum", "unit")
+
+
+def effect_units_sampled(conditions, items, seeds) -> list[str]:
+    """A multi-sample run's generations lines as the Mac engine writes them:
+    every item answered once per seed under each condition."""
+    lines = []
+    for condition in conditions:
+        for index, item in enumerate(items):
+            for seed in range(seeds):
+                lines.append(json.dumps({
+                    "condition": condition, "seed": seed,
+                    "promptIndex": index, "promptID": item,
+                    "output": f"An answer to {item} under {condition}.",
+                    "wordCount": 6}))
+    return lines
+
+
+def effect_units_row(condition, n, unit="", stratify_by="pooled", stratum="",
+                     endpoint="wordCount") -> dict:
+    """One stored effect row, as its file holds it: `n` is the cell's text,
+    and an empty cell is a count the file did not give."""
+    return {"condition": condition, "endpoint": endpoint, "n": n,
+            "unit": unit, "stratifyBy": stratify_by, "stratum": stratum}
+
+
+def effect_units_resolve(case: dict) -> dict:
+    """What the Python reader settles for one case: the paired items per
+    condition, and each row's unit, its source, its paired items, the count
+    the results page states, and whether the row has too few independent
+    pairs for an interval."""
+    import csv
+    import io
+
+    from steerlab_server.client import results_export
+    from steerlab_server.client.reports import study_results
+
+    directory = tempfile.mkdtemp(prefix="steerlab-effect-units-")
+    try:
+        path = os.path.join(directory, "generations.jsonl")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("".join(line + "\n" for line in case["generations"]))
+        loaded = results_export._load_generations(
+            path, results_export._Sources(directory))
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+    paired = results_export._paired_items(loaded["responses"])
+    table = io.StringIO()
+    writer = csv.writer(table, lineterminator="\n")
+    writer.writerow(EFFECT_UNITS_COLUMNS)
+    for row in case["effectRows"]:
+        writer.writerow([row["condition"], row["endpoint"], row["n"], "1.0",
+                         "0.5", "1.5", row["stratifyBy"], row["stratum"],
+                         row["unit"]])
+    rows, _ = results_export._read_effects(table.getvalue())
+    results_export.resolve_units(rows, case["stampedUnit"], paired)
+
+    def count(row):
+        n = study_results.stored_number(row["n_pairs"])
+        if n is None or n < 1:
+            return None
+        one, many = study_results._UNITS[row["unit_resolved"]]
+        text = study_results._plural(int(n), one, many)
+        if row["unit_resolved"] == "response":
+            text += " from " + study_results._plural(
+                row["paired_items"], "item", "items")
+        return text
+
+    return {
+        "pairedItems": dict(sorted(paired.items())),
+        "rows": [{"condition": row["condition"], "endpoint": row["outcome"],
+                  "stratifyBy": row["stratify_by"], "stratum": row["stratum"],
+                  "unit": row["unit_resolved"], "unitSource": row["unit_source"],
+                  "pairedItems": row["paired_items"], "count": count(row),
+                  "tooFew": study_results.Page.too_few(row)}
+                 for row in rows],
+    }
+
+
+def effect_units_cases() -> list[dict]:
+    items = ["item-1", "item-2", "item-3", "item-4"]
+    old = ("an analysis from before SteerLab 0.9.7, when the Mac engine "
+           "paired every response with the baseline response to the same "
+           "item and seed, counted responses in n, and stamped no unit")
+    # The Python engine's own analysis of a sampled run, through the real
+    # entry point: pooled rows count items, and its strata stamp their unit.
+    sampled = [dict(record, output=f"An answer to {record['promptID']}.")
+               for record in sampled_pairing_records("manifestSeeds")]
+    analyzed = [effect_units_row(row["condition"], str(row["n"]), row["unit"],
+                                 row["stratifyBy"], row["stratum"],
+                                 row["endpoint"])
+                for row in sampled_pairing_effect_rows(sampled)]
+    # The records a reader leaves out: an error, a choice readout, a record
+    # with no output, and lines that are not records. item-3 reaches the
+    # condition only through them, so it is not paired. The NaN is a value
+    # Python's reader accepts, so the line is a response.
+    filtered = effect_units_sampled(["baseline"], items[:3], 1) + [
+        json.dumps({"condition": "formal", "promptID": "item-1", "seed": 0,
+                    "output": "An answer.", "wordCount": 2}),
+        '{"condition": "formal", "promptID": "item-2", "seed": 0, '
+        '"output": "An answer.", "distinct2": NaN}',
+        json.dumps({"condition": "formal", "promptID": "item-3", "seed": 0,
+                    "error": "the model could not be loaded"}),
+        json.dumps({"condition": "formal", "promptID": "item-3",
+                    "instrument": "choiceReadout", "selected": "A",
+                    "output": "A"}),
+        json.dumps({"condition": "formal", "promptID": "item-3", "seed": 1}),
+        "not a record",
+        "[1, 2]",
+        "   ",
+    ]
+    return [
+        {"label": "one prompt, five seeds", "note": old,
+         "generations": effect_units_sampled(["baseline", "formal"],
+                                             items[:1], 5),
+         "stampedUnit": None, "effectRows": [effect_units_row("formal", "5")]},
+        {"label": "four items, two seeds", "note": old,
+         "generations": effect_units_sampled(["baseline", "formal"], items, 2),
+         "stampedUnit": None, "effectRows": [effect_units_row("formal", "8")]},
+        {"label": "two items, four seeds", "note": old,
+         "generations": effect_units_sampled(["baseline", "formal"],
+                                             items[:2], 4),
+         "stampedUnit": None, "effectRows": [effect_units_row("formal", "8")]},
+        {"label": "a current item-level analysis of four items, two seeds",
+         "note": "the same records, analyzed with samples averaged within "
+                 "each item",
+         "generations": effect_units_sampled(["baseline", "formal"], items, 2),
+         "stampedUnit": None, "effectRows": [effect_units_row("formal", "4")]},
+        {"label": "the Python engine's analysis of a sampled run",
+         "note": "rows written by the Python engine's analyze from these "
+                 "records",
+         "generations": [json.dumps(record) for record in sampled],
+         "stampedUnit": None, "effectRows": analyzed},
+        {"label": "too few items at item level",
+         "generations": effect_units_sampled(["baseline", "formal"],
+                                             items[:2], 1),
+         "stampedUnit": None, "effectRows": [effect_units_row("formal", "2")]},
+        {"label": "a count the file did not give",
+         "generations": effect_units_sampled(["baseline", "formal"],
+                                             items[:3], 1),
+         "stampedUnit": None, "effectRows": [effect_units_row("formal", "")]},
+        {"label": "a condition the records cannot place",
+         "generations": effect_units_sampled(["baseline", "formal"],
+                                             items[:3], 1),
+         "stampedUnit": None,
+         "effectRows": [effect_units_row("formal", "3"),
+                        effect_units_row("casual", "3")]},
+        {"label": "items that never meet the baseline",
+         "generations": effect_units_sampled(["baseline"], items[:2], 1)
+         + effect_units_sampled(["formal"], ["item-8", "item-9"], 1),
+         "stampedUnit": None, "effectRows": [effect_units_row("formal", "2")]},
+        {"label": "records a reader leaves out",
+         "generations": filtered, "stampedUnit": None,
+         "effectRows": [effect_units_row("formal", "3")]},
+        {"label": "a unit the analysis stamped",
+         "generations": effect_units_sampled(["baseline", "formal"],
+                                             items[:1], 4),
+         "stampedUnit": "transcript",
+         "effectRows": [effect_units_row("formal", "4")]},
+        {"label": "a unit the row records",
+         "generations": effect_units_sampled(["baseline", "formal"],
+                                             items[:1], 3),
+         "stampedUnit": None,
+         "effectRows": [effect_units_row("formal", "3", "sample", "promptID",
+                                         "item-1"),
+                        effect_units_row("formal", "1", "item", "arm", "x")]},
+    ]
+
+
+def effect_units() -> None:
+    """Which unit each stored effect row counts, settled from the run's
+    records exactly as the Python reader settles it for the export and the
+    results page."""
+    from steerlab_server.client import results_export
+    from steerlab_server.client.reports import study_results
+
+    cases = []
+    for case in effect_units_cases():
+        case = {key: value for key, value in case.items()}
+        case["expected"] = effect_units_resolve(case)
+        cases.append(case)
+    _write(os.path.join(FIXTURES, "effect-units.json"), {
+        "note": "a recorded unit is used; otherwise a row counting no more "
+                "pairs than the items paired with the baseline in the run's "
+                "records is item-level, a row counting more is response-level, "
+                "and a condition with no paired items is unknown",
+        "minimumPairs": study_results.MINIMUM_PAIRS,
+        "wording": {
+            "responseCaveat": (
+                "These are responses, not items: the analysis paired each "
+                "response with the baseline response to the same item and "
+                "seed, so its interval treats responses to the same item as "
+                "independent and is not a finding about items"),
+            "unknownNote": "The unit of these pairs is not established",
+            "responseUnitExplanation": results_export.RESPONSE_UNIT_EXPLANATION,
+            "unitLines": {
+                "engine_default": (
+                    "the item, with an item's samples averaged within each "
+                    "condition. This is the engines' documented default; the "
+                    "analysis did not stamp the unit itself. The run's records "
+                    "agree: no such row counts more pairs than the items "
+                    "paired in the run."),
+                "inferred_from_records": (
+                    "the response, not the item. "
+                    + results_export.RESPONSE_UNIT_EXPLANATION),
+                "not_established": (
+                    "not established. The analysis did not stamp it, and the "
+                    "run's records have no items paired with the baseline for "
+                    "these conditions."),
+            },
+        },
+        "cases": cases,
+    })
+
+
 def main() -> int:
     os.makedirs(FIXTURES, exist_ok=True)
+    effect_units()
     marker_scoring()
     panel_transcript_analysis_fixture()
     sampled_effect_pairing()

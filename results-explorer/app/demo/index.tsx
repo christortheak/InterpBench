@@ -59,9 +59,12 @@ export const demoLabel = () => demoPreviewEnabled() ? "Invented demo data" : "";
 // The rows carry the same shape a real table does: one condition, pooled rows
 // only (a preview must not illustrate a stratified finding that no file ever
 // stated).
+// The invented rows stand in for a current item-level analysis, so they are
+// read in items, as such a run's rows are once its records settle them.
 const demoRow = (row: Omit<Effect, "condition" | "stratifyBy" | "stratum" | "pairedUnit" | "estimand" | "inference" | "key">): Effect => ({
   ...row, condition: "example-condition", stratifyBy: "pooled", stratum: "",
   pairedUnit: "", estimand: "", inference: "",
+  effectUnit: { unit: "item", source: "engine_default", pairedItems: null },
   key: effectKey({ condition: "example-condition", endpoint: row.endpoint, stratifyBy: "pooled", stratum: "" }),
 });
 

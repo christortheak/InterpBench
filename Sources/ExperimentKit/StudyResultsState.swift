@@ -186,6 +186,7 @@ public final class StudyResultsState {
         "alien-residuals.csv": RunBrowser.jsonPreviewByteLimit,
         "cosine-matrix.csv": RunBrowser.jsonPreviewByteLimit,
         "panel-effects.csv": RunBrowser.jsonPreviewByteLimit,
+        "unit-of-analysis.json": remoteReportByteLimit,
     ]
 
     public func loadRemoteRunDetail(

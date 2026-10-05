@@ -17,6 +17,8 @@
 // Nothing here computes a statistic, and nothing here reorders the table:
 // selection is arrangement. Every number the card shows comes from the file.
 
+import { hasTooFewIndependentPairs, MINIMUM_PAIRS, tooFewNoun } from "./effectUnits";
+import { pairedCountLabel } from "./effects";
 import { headlineOutcomeData } from "./headlineOutcomes.generated";
 import type { Effect } from "./types";
 
@@ -146,14 +148,15 @@ export const selectHeadline = (declaredValue: unknown, analysisOutcomes: string[
 
 // --- what the card prints ------------------------------------------------------
 
-/// Fewer paired items than this cannot carry an interval, so the card says
-/// there are too few pairs instead of printing one.
-export const MINIMUM_PAIRS_FOR_INTERVAL = 3;
+/// Fewer independent pairs than this cannot carry an interval, so the card
+/// says there are too few instead of printing one.
+export const MINIMUM_PAIRS_FOR_INTERVAL = MINIMUM_PAIRS;
 
-/// One or two paired items. A row whose `n` is null did not report its
-/// count, which is a different fact and is left alone.
-export const hasTooFewPairs = (row: Effect): boolean =>
-  row.n != null && row.n >= 1 && row.n < MINIMUM_PAIRS_FOR_INTERVAL;
+/// One or two independent pairs. Paired responses are not independent of
+/// each other, so a row that paired responses counts its ITEMS: five
+/// responses from one item are one item. A row whose `n` is null did not
+/// report its count, which is a different fact and is left alone.
+export const hasTooFewPairs = (row: Effect): boolean => hasTooFewIndependentPairs(row);
 
 /// How many comparisons the row's multiple-comparison correction covered.
 /// Both engines correct one outcome at a time, across the conditions that
@@ -166,9 +169,9 @@ export const correctionFamilySize = (row: Effect, pooled: Effect[]): number =>
 /// "n = 0"; one or two pairs read as too few for an interval.
 export const intervalLine = (row: Effect, format: (value: number) => string): string => {
   if (hasTooFewPairs(row)) {
-    return `too few pairs for a confidence interval (n = ${row.n}; at least ${MINIMUM_PAIRS_FOR_INTERVAL} are needed)`;
+    return `too few ${tooFewNoun(row)} for a confidence interval (${pairedCountLabel(row)}; at least ${MINIMUM_PAIRS_FOR_INTERVAL} are needed)`;
   }
-  return `95% CI ${format(row.low)} to ${format(row.high)} · ${row.n == null ? "n not reported" : `n = ${row.n}`}`;
+  return `95% CI ${format(row.low)} to ${format(row.high)} · ${pairedCountLabel(row)}`;
 };
 
 /// The p-value line, or "" when the row prints no test. A correction over ONE

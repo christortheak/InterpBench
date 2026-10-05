@@ -136,6 +136,24 @@ struct SampledEffectPairingTests {
         return Analysis(entries: report.effectSizes, csv: csv)
     }
 
+    /// The rows as the Results views read them: settled against the items
+    /// the run's records pair with the baseline (`RunResults.resolveUnits`).
+    /// These records carry no output text, so the paired items are counted
+    /// here from their promptIDs.
+    private func settled(
+        _ rows: [RunResults.EffectSizeRow], records: [Record]
+    ) -> [RunResults.EffectSizeRow] {
+        let baseline = Set(records.filter { $0.condition == "baseline" }.map(\.promptID))
+        var counts: [String: Int] = [:]
+        for condition in Set(records.map(\.condition)) where condition != "baseline" {
+            counts[condition] = Set(records.filter { $0.condition == condition }.map(\.promptID))
+                .intersection(baseline).count
+        }
+        return RunResults.resolveUnits(rows, stampedUnit: nil) {
+            RunResults.PairedItems(counts: counts, complete: true)
+        }.rows
+    }
+
     private func entry(
         _ entries: [ExperimentTasks.EffectSizeEntry], metric: String,
         stratifyBy: String? = nil, stratum: String? = nil
@@ -280,10 +298,14 @@ struct SampledEffectPairingTests {
             #expect(row.adjustedP == nil && row.correction == nil)
         }
 
-        // The plain-language sentence counts what the row counts: items.
-        let rows = try #require(RunResults.effectSizes(fromCSV: analysis.csv))
+        // The plain-language sentence counts what the row counts: items,
+        // which the run's records confirm.
+        let rows = settled(
+            try #require(RunResults.effectSizes(fromCSV: analysis.csv)), records: value.records)
         let sentenceRow = try #require(rows.first { $0.metric == "wordCount" })
         #expect(sentenceRow.n == 4)
+        #expect(sentenceRow.unit == RunResults.EffectUnit(
+            unit: "item", source: .engineDefault, pairedItems: 4))
         #expect(
             EffectNarrative.sentence(for: sentenceRow, in: rows)
                 .contains("by +4.5 across 4 paired items"))
@@ -500,7 +522,8 @@ struct SampledEffectPairingTests {
         #expect(within.unit == "sample" && within.inference == "diagnostic")
         #expect(within.adjustedP == nil)
 
-        let table = try #require(RunResults.effectSizes(fromCSV: analysis.csv))
+        let table = settled(
+            try #require(RunResults.effectSizes(fromCSV: analysis.csv)), records: records)
         let row = try #require(table.first { $0.metric == "wordCount" })
         #expect(
             EffectNarrative.sentence(for: row, in: table)

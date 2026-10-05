@@ -129,12 +129,20 @@ describe("pairedCountLabel", () => {
     expect(pairedCountLabel(effect({ condition: "c", endpoint: "e", n: null }))).toBe("n not reported");
   });
 
-  it("names the paired unit the row's own column declares", () => {
-    expect(pairedCountLabel(effect({ condition: "c", endpoint: "e", n: 12 }))).toBe("n = 12 paired items");
-    expect(pairedCountLabel(effect({ condition: "c", endpoint: "e", n: 50, pairedUnit: "sample" }))).toBe("n = 50 paired samples");
+  // The unit a row is counted in is settled when the run is loaded
+  // (lib/effectUnits.ts); these rows carry it as the loader would set it.
+  const item = { unit: "item", source: "engine_default" as const, pairedItems: 12 };
+
+  it("names the paired unit the row's settled unit declares", () => {
+    expect(pairedCountLabel(effect({ condition: "c", endpoint: "e", n: 12, effectUnit: item }))).toBe("n = 12 paired items");
+    expect(pairedCountLabel(effect({ condition: "c", endpoint: "e", n: 50, pairedUnit: "sample", effectUnit: { unit: "sample", source: "recorded", pairedItems: null } }))).toBe("n = 50 paired samples");
   });
 
   it("keeps a genuine zero distinguishable from a missing count", () => {
-    expect(pairedCountLabel(effect({ condition: "c", endpoint: "e", n: 0 }))).toBe("n = 0 paired items");
+    expect(pairedCountLabel(effect({ condition: "c", endpoint: "e", n: 0, effectUnit: item }))).toBe("n = 0 paired items");
+  });
+
+  it("never calls an unsettled row's pairs items", () => {
+    expect(pairedCountLabel(effect({ condition: "c", endpoint: "e", n: 12 }))).toBe("n = 12 pairs");
   });
 });
