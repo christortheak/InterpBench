@@ -22,6 +22,26 @@ def bodies(text):
             if isinstance(n, (ast.FunctionDef, ast.ClassDef))}
 
 
+#: Wave 3 (reviewed and approved 2026-10-05) adds each operation's execution
+#: profile per backend, generated from docs/substrate-capabilities.json, whose
+#: check (check-substrates.py) proves the catalog is exactly that inventory
+#: annotated. It is permitted only as an ADDITION of exactly this shape; a base
+#: that already carries it compares it like every other key.
+PROFILE_BACKENDS = {'cuda', 'mps', 'mlx'}
+
+
+def added_execution_profile(original, current):
+    if 'executionProfile' in original or 'executionProfile' not in current:
+        return False
+    profile = current['executionProfile']
+    return (isinstance(profile, dict) and set(profile) == {'profile', 'runs', 'backends'}
+            and isinstance(profile['profile'], str) and isinstance(profile['runs'], str)
+            and isinstance(profile['backends'], dict) and set(profile['backends']) == PROFILE_BACKENDS
+            and all(isinstance(backend, dict) and set(backend) == {'status', 'label'}
+                    and all(isinstance(value, str) for value in backend.values())
+                    for backend in profile['backends'].values()))
+
+
 def declaration_preserved(original, current, filename):
     """Allow presentation edits and added routes, preserving execution contracts.
 
@@ -31,6 +51,8 @@ def declaration_preserved(original, current, filename):
     """
     if filename == 'catalog.json':
         ignored = {'mac', 'http', 'actions'}
+        if added_execution_profile(original, current):
+            current = {k: v for k, v in current.items() if k != 'executionProfile'}
         old_actions = original.get('actions', [])
         new_actions = current.get('actions', [])
         if len({a['id'] for a in new_actions}) != len(new_actions):
@@ -71,6 +93,26 @@ def declaration_controls(original, filename):
     mutant = copy.deepcopy(example)
     mutant[member].pop(0)
     assert not declaration_preserved(example, mutant, filename), 'Removal control accepted'
+    if filename == 'catalog.json':
+        profile = {'profile': 'stability', 'runs': 'Python engine or built-in engine',
+                   'backends': {b: {'status': 'implementedUnqualified', 'label': 'implemented'}
+                                for b in sorted(PROFILE_BACKENDS)}}
+        added = copy.deepcopy(example)
+        added['executionProfile'] = profile
+        assert declaration_preserved(example, added, filename), 'Execution profile addition rejected'
+        mutant = copy.deepcopy(added)
+        mutant['actions'][0]['serviceRole'] = 'changed-role'
+        assert not declaration_preserved(example, mutant, filename), 'Profile masked an action mutation'
+        mutant = copy.deepcopy(added)
+        mutant['executionProfile']['backends']['cuda']['extra'] = 'x'
+        assert not declaration_preserved(example, mutant, filename), 'Malformed profile accepted'
+        mutant = copy.deepcopy(added)
+        mutant['unknownKey'] = True
+        assert not declaration_preserved(example, mutant, filename), 'Unknown key accepted beside a profile'
+        assert not declaration_preserved(added, example, filename), 'Removed profile accepted'
+        changed = copy.deepcopy(added)
+        changed['executionProfile']['runs'] = 'changed'
+        assert not declaration_preserved(added, changed, filename), 'Changed existing profile accepted'
 
 
 
