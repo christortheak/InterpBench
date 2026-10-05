@@ -296,10 +296,16 @@ public enum RunStatusFile {
         /// scrolls away. No-op when no directory was ever created (a
         /// preflight refusal left nothing on disk to annotate).
         public func fail(_ error: Error) {
-            guard directory != nil else { return }
+            guard let directory else { return }
             finishedAt = Date()
-            let message = (error as? ExperimentError)?.reason
-                ?? String(describing: error)
+            // Redacted here, when written, for both files: a partial
+            // evidence bundle archives this directory verbatim and
+            // hash-pinned (see `redactingPaths`). The caller rethrows the
+            // error itself, unchanged.
+            let message = RunStatusFile.redactingPaths(
+                (error as? ExperimentError)?.reason
+                    ?? String(describing: error),
+                runDirectory: directory)
             let errorType = String(describing: type(of: error))
             write(status: "failed", error: message, errorType: errorType)
             writeFailureNote(error: message, errorType: errorType)
@@ -385,5 +391,129 @@ public enum RunStatusFile {
                     component: RunStatusFile.failureNoteFilename),
                 atomically: true, encoding: .utf8)
         }
+    }
+
+    // MARK: - Paths in a failure record
+
+    /// `text` with its absolute paths rewritten, in the Python writer's
+    /// spellings (`steerlab_server/experiment/path_redaction.py`):
+    ///
+    ///     the run's own directory          runs/<run ID>
+    ///     a sibling run directory          runs/<run ID>
+    ///     the workspace that holds them    <workspace>
+    ///     installed Python packages        <site-packages>
+    ///     a macOS per-user temp folder     <tmp>
+    ///     a home folder                    <home>
+    ///     the account's name, as a folder  <user>
+    ///
+    /// A failure's error is written into the run directory, and a partial
+    /// evidence bundle archives that directory verbatim with every member
+    /// hash-pinned, so the error is redacted when it is written. An
+    /// `ExperimentError` often names a run file or a model folder, and a
+    /// Foundation file error describes itself with `NSFilePath=`; either
+    /// named the account in every copy of the directory. The Python
+    /// writer's `<steerlab_server>` and `<stdlib>` roots name its own
+    /// install, which has no counterpart here, and Swift writes no
+    /// traceback. Roots this process knows go first, longest first, so the
+    /// most specific spelling wins; generic patterns follow. Only text
+    /// changes; nothing parses these strings back.
+    static func redactingPaths(_ text: String, runDirectory: URL) -> String {
+        // A component continues on these characters, so a root replaces
+        // only whole components: `/w/runs/R` never rewrites inside
+        // `/w/runs/R2`, nor `/var/folders` inside `/private/var/folders`.
+        let component = #"[\w.@+~-]"#
+        let before = "(?<!\(component))"
+        let after = "(?!\(component))"
+
+        var roots: [String: String] = [:]
+        func add(_ path: String, _ placeholder: String, depth: Int = 2) {
+            // A root shallower than `depth` components names no one (a
+            // workspace at `/tmp`); a home folder can be one deep (`/root`).
+            for spelling in pathSpellings(path)
+            where spelling.filter({ $0 == "/" }).count >= depth {
+                if roots[spelling] == nil { roots[spelling] = placeholder }
+            }
+        }
+        let run = pathSpellings(runDirectory.path).first ?? runDirectory.path
+        let runsRoot = (run as NSString).deletingLastPathComponent
+        let runsRootName = ((pathSpellings(runsRoot).last ?? runsRoot)
+            as NSString).lastPathComponent
+        if runsRootName == "runs" {
+            // The whole runs tree, so a sibling run reads `runs/<its ID>`
+            // too, and the workspace around it.
+            add(runsRoot, "runs")
+            add((runsRoot as NSString).deletingLastPathComponent, "<workspace>")
+        } else {
+            add(run, "runs/\((run as NSString).lastPathComponent)")
+        }
+        add(FileManager.default.homeDirectoryForCurrentUser.path, "<home>",
+            depth: 1)
+
+        var out = text
+        let known = roots.keys.sorted { $0.count > $1.count }
+            .map(NSRegularExpression.escapedPattern(for:))
+        if !known.isEmpty,
+            let pattern = try? NSRegularExpression(
+                pattern: before + "(" + known.joined(separator: "|") + ")"
+                    + after)
+        {
+            out = replacingMatches(of: pattern, in: out) { roots[$0] ?? $0 }
+        }
+        let generic: [(String, String)] = [
+            (before + "(?:/\(component)+)+?/(?:site|dist)-packages" + after,
+             "<site-packages>"),
+            (before + "(?:/private)?/var/folders/\(component)+/\(component)+"
+                + after, "<tmp>"),
+            (before + "/(?:Users|home)/\(component)+" + after, "<home>"),
+        ]
+        for (source, placeholder) in generic {
+            if let pattern = try? NSRegularExpression(pattern: source) {
+                out = replacingMatches(of: pattern, in: out) { _ in placeholder }
+            }
+        }
+        // A cluster's scratch trees name the account as a folder
+        // (`/scratch/<name>/…`), outside any home folder.
+        let account = NSUserName()
+        if account.count >= 2,
+            let pattern = try? NSRegularExpression(
+                pattern: "(?<=/)"
+                    + NSRegularExpression.escapedPattern(for: account) + after)
+        {
+            out = replacingMatches(of: pattern, in: out) { _ in "<user>" }
+        }
+        return out
+    }
+
+    /// `path` as written and as resolved, without a trailing slash: an error
+    /// can name either spelling (`/var/…` and `/private/var/…` on macOS).
+    private static func pathSpellings(_ path: String) -> [String] {
+        var spellings = [(path as NSString).standardizingPath]
+        if let resolved = realpath(path, nil) {
+            spellings.append(String(cString: resolved))
+            free(resolved)
+        }
+        var seen = Set<String>()
+        return spellings
+            .map { $0.count > 1 && $0.hasSuffix("/") ? String($0.dropLast()) : $0 }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    private static func replacingMatches(
+        of pattern: NSRegularExpression, in text: String,
+        with replacement: (String) -> String
+    ) -> String {
+        let source = text as NSString
+        var out = ""
+        var cursor = 0
+        for match in pattern.matches(
+            in: text, range: NSRange(location: 0, length: source.length))
+        {
+            out += source.substring(
+                with: NSRange(location: cursor,
+                              length: match.range.location - cursor))
+            out += replacement(source.substring(with: match.range))
+            cursor = match.range.location + match.range.length
+        }
+        return out + source.substring(from: cursor)
     }
 }

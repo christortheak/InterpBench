@@ -128,6 +128,78 @@ import Testing
                     component: RunStatusFile.failureNoteFilename).path))
     }
 
+    // MARK: - a failure record names no machine (2026-10-05)
+
+    // A partial evidence bundle archives the run directory verbatim with its
+    // members hash-pinned, so the error both files record is redacted when
+    // written, in the Python writer's spellings. Home folders are assembled
+    // at run time: a committed file must not contain one
+    // (`scripts/ci/public_scan.py`).
+
+    @Test func aFailureRecordNamesNoMachine() async throws {
+        let workspace = try tempDirectory("redact")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let runID = "20261005T000000000-exp-s-run"
+        let directory = workspace.appending(components: "runs", runID)
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true)
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let someone = "/" + "Users" + "/someone"
+
+        let tracker = RunStatusFile.Tracker(
+            stage: "run", experiment: "s",
+            itemLabel: "record", itemsFile: "generations.jsonl")
+        await tracker.begin(directoryPath: directory.path)
+        await tracker.fail(ExperimentError(reason:
+            "cannot write \(directory.path)/generations.jsonl beside "
+                + "\(workspace.path)/runs/other-run/a.json for "
+                + "\(workspace.path)/experiments/s; model at "
+                + "\(home)/models/m and \(someone)/hf/m"))
+
+        let expected = "cannot write runs/\(runID)/generations.jsonl beside "
+            + "runs/other-run/a.json for <workspace>/experiments/s; model at "
+            + "<home>/models/m and <home>/hf/m"
+        let status = try #require(RunStatusFile.read(at: directory))
+        #expect(status.error == expected)
+        #expect(status.errorType == "ExperimentError")
+        let note = try String(
+            contentsOf: directory.appending(
+                component: RunStatusFile.failureNoteFilename),
+            encoding: .utf8)
+        // The line the Results Explorer reads keeps its shape.
+        #expect(note.contains("- **Error:** `ExperimentError: \(expected)`\n"))
+        for spelling in [workspace.path, home, someone] {
+            #expect(!note.contains(spelling))
+        }
+    }
+
+    @Test func aFoundationErrorNamesTheRunNotTheMachine() async throws {
+        // A Foundation file error describes itself with `NSFilePath=` and
+        // `NSURL=`. A run outside a `runs` folder is still named by its ID.
+        let directory = try tempDirectory("foundation")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let tracker = RunStatusFile.Tracker(
+            stage: "run", experiment: "s",
+            itemLabel: "record", itemsFile: "generations.jsonl")
+        await tracker.begin(directoryPath: directory.path)
+        do {
+            _ = try String(
+                contentsOf: directory.appending(component: "missing.txt"),
+                encoding: .utf8)
+            Issue.record("expected the read to fail")
+        } catch {
+            await tracker.fail(error)
+        }
+
+        let error = try #require(RunStatusFile.read(at: directory)?.error)
+        #expect(error.contains(
+            "NSFilePath=runs/\(directory.lastPathComponent)/missing.txt"))
+        for spelling in [directory.path, "/var/folders",
+                         FileManager.default.homeDirectoryForCurrentUser.path] {
+            #expect(!error.contains(spelling))
+        }
+    }
+
     // MARK: - the two asymmetries with the Python writer (2026-07-27)
 
     /// `itemsWritten` must be current ON DISK while the stage runs.

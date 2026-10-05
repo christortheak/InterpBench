@@ -11,9 +11,11 @@ malformed judge responses are preserved verbatim, the surviving directory
 says plainly that it failed — and it is never mistakable for a result.
 """
 
+import hashlib
 import json
 import time
 import os
+import re
 import tarfile
 
 import pytest
@@ -911,3 +913,150 @@ def test_heal_after_completion_is_a_noop_on_a_clean_directory(tmp_path):
     before = open(os.path.join(run_dir, rs.STATUS_FILENAME), "rb").read()
     assert rs.heal_after_completion(run_dir) is False
     assert open(os.path.join(run_dir, rs.STATUS_FILENAME), "rb").read() == before
+
+
+# ------------------------------------- a failure record names no machine
+#
+# 2026-10-05: `FAILED.md` and `run-status.json` are written into the run
+# directory when a stage fails and archived verbatim into its partial bundle,
+# whose members are hash-pinned and must match the directory on disk. The
+# note's traceback named every frame's source file (the server's install,
+# inside a home folder), and the error, in both files, often named the run's
+# own files by absolute path. Both are now redacted when they are written; the
+# job record, which stays on the machine that ran the job, keeps the paths.
+#
+# Home folders are assembled at run time: a committed file must not contain
+# one (`scripts/ci/public_scan.py`).
+
+#: The Results Explorer's `failureNoteError`
+#: (`results-explorer/app/lib/status.ts`), which reads the note's error line.
+_EXPLORER_ERROR_LINE = re.compile(r"^\s*[-*]\s*\*\*Error:\*\*\s*(.*)$")
+
+
+def _explorer_error(note):
+    for line in note.splitlines():
+        match = _EXPLORER_ERROR_LINE.match(line)
+        if match:
+            return match.group(1).strip().strip("`").strip()
+    return ""
+
+
+def _machine_spellings(tmp_path):
+    from steerlab_server.experiment import path_redaction
+    server = os.path.dirname(os.path.dirname(path_redaction.__file__))
+    return {str(tmp_path), os.path.realpath(tmp_path), server,
+            os.path.realpath(server), os.path.expanduser("~"),
+            "/" + "Users" + "/someone"}
+
+
+def _failure_raised_inside_the_server(run):
+    users = "/" + "Users"
+    try:
+        try:
+            # A server frame, refusing with a message that names one of the
+            # run's own files.
+            bundles.package_evidence(str(run / "missing"))
+        except bundles.BundleError as cause:
+            raise RuntimeError(
+                f"weights at {users}/someone/hf/model.bin and "
+                f"{os.path.expanduser('~')}/hf/token are unreadable"
+            ) from cause
+    except RuntimeError as exc:
+        return exc
+    raise AssertionError("expected a failure")
+
+
+def test_a_failure_record_names_no_machine(tmp_path):
+    run = tmp_path / "runs" / "20261005T000000000-exp-s-run"
+    run.mkdir(parents=True)
+    error = _failure_raised_inside_the_server(run)
+    run_status.RunStatus(str(run), stage="run", experiment="s").fail(error)
+
+    status_text = (run / run_status.STATUS_FILENAME).read_text("utf-8")
+    note = (run / run_status.FAILURE_NOTE_FILENAME).read_text("utf-8")
+    for spelling in _machine_spellings(tmp_path):
+        assert spelling not in status_text
+        assert spelling not in note
+    message = ("weights at <home>/hf/model.bin and <home>/hf/token are "
+               "unreadable")
+    assert run_status.read_status(str(run))["error"] == message
+    # The error line keeps the shape the Results Explorer reads.
+    assert _explorer_error(note) == f"RuntimeError: {message}"
+    # Still a usable traceback: each module and line, and the cause, which
+    # names the run's file by its place in the run.
+    assert 'File "<steerlab_server>/experiment/bundles.py", line ' in note
+    assert ("BundleError: run directory not found: "
+            "runs/20261005T000000000-exp-s-run/missing") in note
+    # Only what the directory records changes; the exception the caller
+    # re-raises, and so the job record, keeps its paths.
+    assert os.path.expanduser("~") + "/hf/token" in str(error)
+
+
+
+def test_a_redaction_fault_never_replaces_the_real_error(tmp_path,
+                                                          monkeypatch):
+    # `fail` runs while the real error unwinds; the status file's first rule
+    # is that its own trouble never takes that error's place.
+    from steerlab_server.experiment import path_redaction
+
+    def broken(text, *, run_directory=None):
+        raise RuntimeError("redactor fault")
+
+    monkeypatch.setattr(path_redaction, "redact_paths", broken)
+    run = tmp_path / "runs" / "R"
+    run.mkdir(parents=True)
+    run_status.RunStatus(str(run), stage="run").fail(
+        ValueError("node evicted"))
+    assert run_status.read_status(str(run))["error"] == "node evicted"
+    note = (run / run_status.FAILURE_NOTE_FILENAME).read_text("utf-8")
+    assert _explorer_error(note) == "ValueError: node evicted"
+
+def test_the_partial_bundle_archives_the_redacted_record_unchanged(
+        tmp_path, monkeypatch):
+    bundle_path, target, record_path = _bundle_fixture(tmp_path)
+    run_id = "20261005T000000000-exp-bexec-run"
+
+    def failing_run(name, prompts_path=None, root=None, dtype="auto",
+                    device=None, *, checkpoint=None, run_directory=None,
+                    on_run_directory=None, **kwargs):
+        run_dir = os.path.join(root, "runs", run_id)
+        os.makedirs(run_dir, exist_ok=True)
+        on_run_directory(run_dir)
+        with open(os.path.join(run_dir, "generations.jsonl"), "w",
+                  encoding="utf-8") as handle:
+            handle.write('{"condition": "baseline", "promptID": "p0"}\n')
+        raise OSError(f"cannot write {run_dir}/generations.jsonl: "
+                      "disk quota exceeded")
+
+    monkeypatch.setattr(tasks, "run", failing_run)
+    with pytest.raises(OSError, match="disk quota"):
+        bundles.execute_run_bundle(bundle_path, verb="run",
+                                   target_root=target,
+                                   record_path=record_path)
+    run_dir = os.path.join(target, "runs", run_id)
+    result = json.load(open(record_path, encoding="utf-8"))["result"]
+    # The job record stays on this machine and keeps the full path.
+    assert f"{run_dir}/generations.jsonl" in result["error"]
+
+    bundle = result["evidenceBundle"]["bundlePath"]
+    entries = {entry["path"]: entry["sha256"] for entry in
+               bundles.inspect_bundle(bundle)["entries"]}
+    with tarfile.open(bundle, "r:gz") as tar:
+        for name in (run_status.STATUS_FILENAME,
+                     run_status.FAILURE_NOTE_FILENAME):
+            member = f"runs/{run_id}/{name}"
+            archived = tar.extractfile(member).read()
+            # Archived as written: the bundle matches the directory on disk.
+            on_disk = open(os.path.join(run_dir, name), "rb").read()
+            assert archived == on_disk
+            assert entries[member] == hashlib.sha256(on_disk).hexdigest()
+            text = archived.decode("utf-8")
+            for spelling in _machine_spellings(tmp_path):
+                assert spelling not in text
+    expected = (f"cannot write runs/{run_id}/generations.jsonl: "
+                "disk quota exceeded")
+    assert run_status.read_status(run_dir)["error"] == expected
+    note = open(os.path.join(run_dir, run_status.FAILURE_NOTE_FILENAME),
+                encoding="utf-8").read()
+    assert _explorer_error(note) == f"OSError: {expected}"
+    assert 'File "<steerlab_server>/experiment/bundles.py", line ' in note
