@@ -94,7 +94,7 @@ def run(invocation) -> CLIResult:
     hashes = invocation.all("--sha256")
     if not hashes:
         rows = custom_code.status(document, root)
-        sources = custom_code.provider_sources(document)
+        sources = custom_code.provider_sources(document, root)
         payload = {"study": name, "providers": [{**row, "sourceText": sources.get(row["sha256"])}
                                                 for row in rows],
                    "recordFile": custom_code.FILENAME, "changed": False}

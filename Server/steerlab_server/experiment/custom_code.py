@@ -77,19 +77,81 @@ def _is_digest(value) -> bool:
             and all(c in "0123456789abcdef" for c in value))
 
 
-def providers(document) -> list[dict]:
+def providers(document, root=None) -> list[dict]:
     """Every expert provider in ``document``, one entry per source hash.
 
     ``[{"sha256": <hex>, "policyNames": [<sorted names>]}]`` sorted by hash.
-    Scans nested agents and panels, and parses each attached policy's exact
-    ``json`` text, because that is where a study carries its agents'
-    policies. The hash is computed from ``sourceText``; a document that
-    declares a different ``sourceSHA256`` is refused by the engine anyway, and
-    an acknowledgement must name the code itself."""
-    found: dict[str, set] = {}
-    _scan(document, found, 0)
-    return [{"sha256": digest, "policyNames": sorted(found[digest])}
+    Scans nested agents and parses each attached policy's exact ``json``
+    text, because that is where a study carries its agents' policies. With a
+    ``root``, also scans the workspace files the document references by
+    path (:data:`REFERENCE_KEYS`): a multi-agent study reaches its seats'
+    agents only through its compiled panel. The hash is computed from
+    ``sourceText``; a document that declares a different ``sourceSHA256`` is
+    refused by the engine anyway, and an acknowledgement must name the code
+    itself."""
+    found: dict[str, dict] = {}
+    for value in _documents(document, root):
+        _scan(value, found, 0)
+    return [{"sha256": digest, "policyNames": sorted(found[digest]["names"])}
             for digest in sorted(found)]
+
+
+def provider_sources(document, root=None) -> dict[str, str]:
+    """``{sha256: sourceText}`` for every provider, so a person can read the
+    code before acknowledging it."""
+    found: dict[str, dict] = {}
+    for value in _documents(document, root):
+        _scan(value, found, 0)
+    return {digest: found[digest]["source"] for digest in sorted(found)}
+
+
+#: The keys by which a study document names another workspace file that may
+#: carry an agent. Swift twin: ``InstrumentationSupport.references``.
+REFERENCE_KEYS: tuple[str, ...] = ("artifactPath", "multiAgentScenarioPath",
+                                   "variantArtifactPath")
+_MAX_FILES = 1024
+
+
+def _references(value, depth: int = 0) -> set[str]:
+    found: set[str] = set()
+    if depth > _MAX_DEPTH:
+        return found
+    if isinstance(value, dict):
+        for key in REFERENCE_KEYS:
+            if isinstance(value.get(key), str) and value[key]:
+                found.add(value[key])
+        for child in value.values():
+            found |= _references(child, depth + 1)
+    elif isinstance(value, list):
+        for child in value:
+            found |= _references(child, depth + 1)
+    return found
+
+
+def _documents(document, root):
+    """``document``, then every referenced JSON file inside ``root``. A
+    reference that leaves the workspace, is missing, or is not JSON is
+    skipped: verification reports those, and a notice must not fail on them."""
+    yield document
+    if root is None:
+        return
+    base = Path(root).resolve()
+    pending = sorted(_references(document), reverse=True)
+    seen: set[str] = set()
+    while pending and len(seen) < _MAX_FILES:
+        relative = pending.pop()
+        if relative in seen:
+            continue
+        seen.add(relative)
+        try:
+            path = (base / relative).resolve()
+            if not path.is_relative_to(base) or not path.is_file():
+                continue
+            parsed = json.loads(path.read_bytes())
+        except (OSError, ValueError):
+            continue
+        yield parsed
+        pending.extend(sorted(_references(parsed) - seen, reverse=True))
 
 
 def _scan(value, found: dict, depth: int) -> None:
@@ -98,9 +160,10 @@ def _scan(value, found: dict, depth: int) -> None:
     if isinstance(value, dict):
         provider = value.get("provider")
         if isinstance(provider, dict) and isinstance(provider.get("sourceText"), str):
-            names = found.setdefault(_digest(provider["sourceText"]), set())
+            entry = found.setdefault(_digest(provider["sourceText"]),
+                                     {"names": set(), "source": provider["sourceText"]})
             if isinstance(value.get("name"), str) and value["name"]:
-                names.add(value["name"])
+                entry["names"].add(value["name"])
         attached = value.get("interventionPolicies")
         if isinstance(attached, list):
             for item in attached:
@@ -115,34 +178,6 @@ def _scan(value, found: dict, depth: int) -> None:
     elif isinstance(value, list):
         for child in value:
             _scan(child, found, depth + 1)
-
-
-def provider_sources(document) -> dict[str, str]:
-    """``{sha256: sourceText}`` for every provider, so a person can read the
-    code before acknowledging it."""
-    sources: dict[str, str] = {}
-
-    def visit(value, depth):
-        if depth > _MAX_DEPTH:
-            return
-        if isinstance(value, dict):
-            provider = value.get("provider")
-            if isinstance(provider, dict) and isinstance(provider.get("sourceText"), str):
-                sources.setdefault(_digest(provider["sourceText"]), provider["sourceText"])
-            for item in value.get("interventionPolicies") or []:
-                if isinstance(item, dict) and isinstance(item.get("json"), str):
-                    try:
-                        visit(json.loads(item["json"]), depth + 1)
-                    except ValueError:
-                        pass
-            for child in value.values():
-                visit(child, depth + 1)
-        elif isinstance(value, list):
-            for child in value:
-                visit(child, depth + 1)
-
-    visit(document, 0)
-    return sources
 
 
 def record_path(root) -> Path:
@@ -190,7 +225,7 @@ def status(document, root) -> list[dict]:
     """Each provider with whether, when, and by whom it was acknowledged."""
     seen = acknowledged(root)
     rows = []
-    for provider in providers(document):
+    for provider in providers(document, root):
         entry = seen.get(provider["sha256"])
         rows.append({**provider, "acknowledged": entry is not None,
                      "acknowledgedAt": entry.get("acknowledgedAt") if entry else None,
@@ -261,7 +296,7 @@ def acknowledge(root, document, hashes, *, study: str, client: str,
     Idempotent: a hash already acknowledged keeps its first record. A hash the
     study does not carry is refused, so a typo can never acknowledge code
     nobody looked at."""
-    carried = {row["sha256"]: row for row in providers(document)}
+    carried = {row["sha256"]: row for row in providers(document, root)}
     if not carried:
         raise CustomCodeError(
             f"'{study}' carries no custom code, so there is nothing to "

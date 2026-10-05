@@ -141,6 +141,24 @@ def test_providers_are_found_inside_attached_policy_bytes_and_named_by_their_cod
     assert custom_code.provider_sources(document) == {DIGEST: SOURCE}
 
 
+def test_a_panel_seats_agent_is_found_through_its_references(tmp_path):
+    """A multi-agent study reaches its seats' agents only by path: manifest →
+    compiled panel → seat's agent file."""
+    relative, digest = write_agent(str(tmp_path), agent("seat-agent"))
+    panel = tmp_path / "prompts/panels/compiled/panel.json"
+    panel.parent.mkdir(parents=True)
+    panel.write_text(json.dumps({"agents": [{"id": "a", "variantArtifactPath": relative,
+                                             "variantArtifactHash": digest}]}))
+    document = {"studyKind": "multiAgent",
+                "multiAgentScenarioPath": "prompts/panels/compiled/panel.json",
+                "variantConditions": [{"artifactPath": "../outside.json"}]}
+    assert custom_code.providers(document) == []
+    assert custom_code.providers(document, tmp_path) == [
+        {"sha256": DIGEST, "policyNames": ["expert-policy"]}]
+    assert custom_code.run_refusal(document, tmp_path, study="s", verb="run",
+                                   program="steerlab") is not None
+
+
 def test_acknowledge_records_who_which_hash_and_when_once(tmp_path):
     document = {"variantConditions": [{"artifact": agent()}]}
     assert custom_code.notice(document, tmp_path, study="s", program="steerlab")["notice"] \
