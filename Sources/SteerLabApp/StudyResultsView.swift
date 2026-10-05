@@ -82,42 +82,10 @@ struct StudyResultsView<JudgeControls: View>: View {
                 judgeControls()
 
                 if let judge = detail.pairedJudgeReport {
-                    DisclosureGroup("Paired Judge Report") {
-                        LabeledContent("Judge", value: judge.judgeModel)
-                        Text(judge.sourceRunDirectory)
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                        ForEach(judge.conditions, id: \.name) { condition in
-                            LabeledContent(condition.name) {
-                                Text(judgeConditionLine(condition))
-                            }
-                            if !condition.structuredSummaries.isEmpty {
-                                ForEach(condition.structuredSummaries.keys.sorted(), id: \.self) {
-                                    field in
-                                    if let summary = condition.structuredSummaries[field] {
-                                        LabeledContent(field) {
-                                            Text(structuredSummaryText(summary))
-                                        }
-                                        .font(.caption)
-                                    }
-                                }
-                            }
-                        }
-                        if !detail.judgments.isEmpty {
-                            Button("Review Judge Responses") {
-                                reviewSheet = ResultReviewSheet(mode: .judgments, detail: detail)
-                            }
-                            .help(
-                                "opens every recorded judgment in a sheet — "
-                                    + "prompt, both outputs' scores, the brief "
-                                    + "reason and the raw judge JSON")
-                        }
-                    }
-                    .help(
-                        "the paired judge's per-condition tallies from "
-                            + "judge-report.json — wins, ties and mean confidence")
+                    judgedSection(judge, detail: detail)
                 }
+
+                unfinishedEvaluations(detail)
 
                 if !detail.robustnessReports.isEmpty {
                     DisclosureGroup("Agent Robustness") {
@@ -144,20 +112,153 @@ struct StudyResultsView<JudgeControls: View>: View {
                             + "same text freeze's validation gate reads")
                 }
 
-                if !detail.generations.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Button("Review Responses (\(detail.generations.count))") {
-                            reviewSheet = ResultReviewSheet(mode: .generations, detail: detail)
-                        }
-                        .help(
-                            "opens every generated response in a sheet — "
-                                + "prompt, condition and the full output text")
-                        ForEach(detail.generations.prefix(5)) { generation in
-                            LabeledContent("\(generation.condition) · \(generation.promptID)") {
-                                Text("\(generation.wordCount) words")
-                                    .foregroundStyle(.secondary)
+                if detail.responseRecordCount > 0 {
+                    responsesSection(detail)
+                }
+            }
+        }
+    }
+
+    /// The judged section, from either engine's judge-report.json: the
+    /// tallies as the report holds them, then the reliability numbers and
+    /// stamps the report carries, each with a visible plain explanation.
+    private func judgedSection(
+        _ judge: PairedJudgeReportView, detail: StudyRunDetail
+    ) -> some View {
+        DisclosureGroup("Paired Judge Report") {
+            LabeledContent(
+                judge.judgeNames.count > 1 ? "Judges" : "Judge",
+                value: judge.judgeModel.isEmpty ? "not recorded" : judge.judgeModel)
+            Text(judge.sourceRunDirectory)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            ForEach(judge.tallyGroups) { group in
+                if let title = group.title {
+                    Text("Judge \(title)")
+                        .font(.callout.weight(.semibold))
+                }
+                if let note = group.note {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(group.conditions, id: \.name) { condition in
+                    LabeledContent(condition.name) {
+                        Text(condition.tallyLine)
+                    }
+                    ForEach(condition.structuredSummaries.keys.sorted(), id: \.self) {
+                        field in
+                        if let summary = condition.structuredSummaries[field] {
+                            LabeledContent(field) {
+                                Text(structuredSummaryText(summary))
                             }
+                            .font(.caption)
                         }
+                    }
+                }
+            }
+            ForEach(judge.reliabilityLines) { line in
+                LabeledContent {
+                    HStack(spacing: 6) {
+                        Text(line.value)
+                            .foregroundStyle(line.tone == .caution ? Color.orange : Color.primary)
+                            .textSelection(.enabled)
+                        InfoButton(text: line.explanation)
+                    }
+                } label: {
+                    Text(line.label)
+                }
+                .help(line.explanation)
+            }
+            if detail.judgmentRecordCount > 0 {
+                Button(
+                    "Review Judge Responses (\(StudyReviewText.grouped(detail.judgmentRecordCount)))"
+                ) {
+                    reviewSheet = ResultReviewSheet(mode: .judgments, detail: detail)
+                }
+                .help(
+                    "opens all \(StudyReviewText.grouped(detail.judgmentRecordCount)) "
+                        + "rows of judgments.jsonl in pages — each verdict "
+                        + "with its scores and reason, and each pair with no "
+                        + "verdict, labelled with why")
+            }
+        }
+        .help(
+            "the paired judge's tallies and reliability figures from "
+                + "judge-report.json, as the evaluation recorded them")
+    }
+
+    /// Evaluations of this run that stopped before writing a report. They
+    /// are not results, and they are not nothing: the rows they kept are
+    /// reviewable, and the reader is told an evaluation stopped.
+    @ViewBuilder
+    private func unfinishedEvaluations(_ detail: StudyRunDetail) -> some View {
+        ForEach(detail.unfinishedEvaluations) { evaluation in
+            VStack(alignment: .leading, spacing: 4) {
+                Label(
+                    "A judge evaluation of this run has not finished",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.callout)
+                .foregroundStyle(.orange)
+                Text(evaluation.summary + " It wrote no judge report, so it is not a result.")
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                Text(evaluation.directoryName)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                if evaluation.judgmentRecordCount > 0 {
+                    Button(
+                        "Review the \(StudyReviewText.grouped(evaluation.judgmentRecordCount)) judge rows it kept"
+                    ) {
+                        reviewSheet = ResultReviewSheet(
+                            mode: .judgments, detail: detail,
+                            judgmentsDirectory: evaluation.path)
+                    }
+                    .help(
+                        "opens the rows this evaluation wrote before it "
+                            + "stopped — real judgments, kept for review, "
+                            + "and not a finished evaluation")
+                }
+            }
+        }
+    }
+
+    /// The run's own records. The count is the file's, not the preview's:
+    /// the review pages through all of them.
+    private func responsesSection(_ detail: StudyRunDetail) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(
+                "Review Responses (\(StudyReviewText.grouped(detail.responseRecordCount)))"
+            ) {
+                reviewSheet = ResultReviewSheet(mode: .generations, detail: detail)
+            }
+            .help(
+                "opens all \(StudyReviewText.grouped(detail.responseRecordCount)) "
+                    + "records of generations.jsonl in pages — each response "
+                    + "with its prompt and text, and each cut-off response, "
+                    + "failure record, and answer-option reading, labelled "
+                    + "as what it is")
+            if !detail.generations.isEmpty {
+                Text(
+                    "The first \(min(5, detail.generations.count)) responses, of "
+                        + "\(StudyReviewText.grouped(detail.responseRecordCount)) "
+                        + "records in the file:"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                // Keyed by position: two records can share a condition and
+                // prompt ID (samples, panel turns), and rows that share an
+                // identity are rows a list may quietly merge.
+                ForEach(
+                    Array(detail.generations.prefix(5).enumerated()), id: \.offset
+                ) { _, generation in
+                    LabeledContent("\(generation.condition) · \(generation.promptID)") {
+                        Text("\(generation.wordCount) words")
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -171,11 +272,13 @@ struct StudyResultsView<JudgeControls: View>: View {
     @ViewBuilder
     private func artifactLinks(_ detail: StudyRunDetail) -> some View {
         HStack {
-            if !detail.generations.isEmpty {
+            // Gated on the files' own record counts: a file holding only
+            // failure records or noncompliant rows is still a file.
+            if detail.responseRecordCount > 0 {
                 Link("generations.jsonl", destination: artifactURL(detail, "generations.jsonl"))
-                    .help(Self.artifactLinkHelp("one JSON line per generated response"))
+                    .help(Self.artifactLinkHelp("one JSON line per record of the run"))
             }
-            if !detail.judgments.isEmpty {
+            if detail.judgmentRecordCount > 0 {
                 Link("judgments.jsonl", destination: artifactURL(detail, "judgments.jsonl"))
                     .help(
                         Self.artifactLinkHelp(
@@ -225,12 +328,6 @@ struct StudyResultsView<JudgeControls: View>: View {
         case .other:
             return "artifact · \(item.directoryName)"
         }
-    }
-
-    private func judgeConditionLine(_ condition: PairedJudgeReportView.Condition) -> String {
-        let confidence = condition.meanConfidence.formatted(.number.precision(.fractionLength(2)))
-        return "condition \(condition.conditionWins) · baseline \(condition.baselineWins)"
-            + " · ties \(condition.ties) · confidence \(confidence)"
     }
 
     private func robustnessReportView(name: String, report: VariantRobustnessReport) -> some View {
