@@ -191,5 +191,172 @@
     "probe-train": "python-cpu",
     "probe-evaluate": "python-cpu",
     "instrumentation-cost": "python-model"
-  }
+  },
+  "core": {
+    "steering": {
+      "title": "Chat with a model and steer it with a vector",
+      "cuda": "implementedUnqualified",
+      "mps": "implementedUnqualified",
+      "mlx": "implementedUnqualified",
+      "qualificationEvidence": [],
+      "notes": "Additive injection and ablation share mechanics and scope descriptors on both engines. CPU/MPS hooks have a scoped comparison; native cross-backend qualification remains pending.",
+      "sources": [
+        "Server/steerlab_server/steering/injector.py",
+        "Sources/SteeringKit/Injection/VectorInjector.swift"
+      ]
+    },
+    "extraction": {
+      "title": "Build a concept vector from example texts",
+      "cuda": "implementedUnqualified",
+      "mps": "implementedUnqualified",
+      "mlx": "implementedUnqualified",
+      "qualificationEvidence": [],
+      "notes": "Both engines implement the extraction recipes. Three recipes have a scoped CPU/MPS capture comparison, not a full qualification. Vectors do not transfer between engines.",
+      "sources": [
+        "Server/steerlab_server/experiment/extraction_workflow.py",
+        "Sources/ExperimentKit/ConceptBuilder.swift"
+      ]
+    },
+    "measured-generation": {
+      "title": "Run a study's measured generation",
+      "cuda": "implementedUnqualified",
+      "mps": "implementedUnqualified",
+      "mlx": "implementedUnqualified",
+      "qualificationEvidence": [],
+      "notes": "Both engines record the effective per-record seed policy. The same surface intent does not establish identical numerical output.",
+      "sources": [
+        "Server/steerlab_server/experiment/condition_execution.py",
+        "Sources/ExperimentKit/ExperimentTasks.swift"
+      ]
+    },
+    "multi-agent": {
+      "title": "Run a scenario in which several agents take turns",
+      "cuda": "implementedUnqualified",
+      "mps": "implementedUnqualified",
+      "mlx": "implementedUnqualified",
+      "qualificationEvidence": [],
+      "notes": "Both engines derive seeds per turn with common streams across conditions. Live full-transcript qualification remains pending.",
+      "sources": [
+        "Server/steerlab_server/experiment/multi_agent.py",
+        "Sources/ExperimentKit/MultiAgent/MultiAgentRunner.swift"
+      ]
+    },
+    "sweep": {
+      "title": "Search layers and strengths with a sweep",
+      "cuda": "implementedUnqualified",
+      "mps": "implementedUnqualified",
+      "mlx": "implementedUnqualified",
+      "qualificationEvidence": [],
+      "notes": "Both engines run sweeps through their stage owners. Inspect artifacts and effective configuration; the engines are not numerically interchangeable.",
+      "sources": [
+        "Server/steerlab_server/experiment/sweep_workflow.py",
+        "Sources/ExperimentKit/ExperimentTasks.swift"
+      ]
+    }
+  },
+  "studyFeatures": {
+    "probeMeasurements": {
+      "label": "Probe measurements",
+      "phrase": "probe measurements",
+      "plural": true,
+      "manifestKey": "probeMeasurements",
+      "cuda": "implementedUnqualified",
+      "mps": "implementedUnqualified",
+      "mlx": "unsupported",
+      "qualificationEvidence": [],
+      "notes": "Probe readings recorded while a study generates. The engine built into the app refuses a study that declares them before it loads a model.",
+      "sources": [
+        "Server/steerlab_server/experiment/probe_measurements.py",
+        "Server/steerlab_server/experiment/probe_observation.py",
+        "Sources/ExperimentKit/ExperimentTasks.swift"
+      ]
+    },
+    "interventionPolicies": {
+      "label": "Agents with intervention policies",
+      "phrase": "agents with intervention policies",
+      "plural": true,
+      "manifestKey": "variantConditions[].artifact.interventionPolicies",
+      "cuda": "implementedUnqualified",
+      "mps": "implementedUnqualified",
+      "mlx": "unsupported",
+      "qualificationEvidence": [],
+      "notes": "A policy changes steering while the agent generates. The engine built into the app refuses an agent that carries one.",
+      "sources": [
+        "Server/steerlab_server/experiment/policy_execution.py",
+        "Sources/ExperimentKit/InterventionPolicyLibrary.swift"
+      ]
+    },
+    "saeLatentArms": {
+      "label": "SAE latent arms",
+      "phrase": "SAE latent arms",
+      "plural": true,
+      "manifestKey": "saeLatentConditions",
+      "cuda": "implementedUnqualified",
+      "mps": "implementedUnqualified",
+      "mlx": "unsupported",
+      "qualificationEvidence": [],
+      "notes": "Arms that steer with a sparse-autoencoder feature. The engine built into the app refuses a study that declares them, rather than run its other arms alone.",
+      "sources": [
+        "Server/steerlab_server/experiment/sae_latent.py",
+        "Sources/ExperimentKit/ExperimentStore.swift"
+      ]
+    },
+    "jlensReadout": {
+      "label": "J-lens readout",
+      "phrase": "a J-lens readout",
+      "plural": false,
+      "manifestKey": "jlensReadout",
+      "cuda": "implementedUnqualified",
+      "mps": "implementedUnqualified",
+      "mlx": "unsupported",
+      "qualificationEvidence": [],
+      "notes": "What a run reads out of the residual stream while it generates. The engine built into the app refuses a study that declares one before it loads a model.",
+      "sources": [
+        "Server/steerlab_server/experiment/run_readouts.py",
+        "Server/steerlab_server/jlens/readout.py",
+        "Sources/ExperimentKit/ExperimentTasks.swift"
+      ]
+    }
+  },
+  "computeChoices": [
+    {
+      "id": "mac-quick-start",
+      "title": "This Mac, quick start",
+      "shortTitle": "Quick start",
+      "engine": "the engine built into this app",
+      "backends": ["mlx"],
+      "computeSubstrate": "local-mlx"
+    },
+    {
+      "id": "mac-full-capabilities",
+      "title": "This Mac, full capabilities",
+      "shortTitle": "Full capabilities",
+      "engine": "the Python engine on this Mac",
+      "backends": ["mps"],
+      "computeSubstrate": "cluster",
+      "computeLocation": "this-mac"
+    },
+    {
+      "id": "another-machine",
+      "title": "Another machine",
+      "shortTitle": "Another machine",
+      "engine": "the Python engine on the machine you connect to",
+      "backends": ["cuda", "mps"],
+      "computeSubstrate": "cluster",
+      "computeLocation": "another-machine"
+    }
+  ],
+  "activities": [
+    {"id": "chat", "activity": "Chat with a model and try a steering vector", "basis": ["core:steering"]},
+    {"id": "vector", "activity": "Build a concept vector from example texts", "basis": ["core:extraction"]},
+    {"id": "study", "activity": "Run a study that compares a model with and without steering", "basis": ["core:measured-generation"]},
+    {"id": "multi-agent", "activity": "Run a scenario in which several agents take turns", "basis": ["core:multi-agent"]},
+    {"id": "optimize", "activity": "Search for the best place and strength to steer", "basis": ["core:sweep"]},
+    {"id": "adapter", "activity": "Train an adapter", "basis": ["operation:finetune"]},
+    {"id": "probes", "activity": "Probes and intervention policies", "basis": ["operation:probe-capture", "feature:probeMeasurements", "feature:interventionPolicies"]},
+    {"id": "optvec", "activity": "Trained steering vectors (OptVec)", "basis": ["operation:optvec-train"]},
+    {"id": "jlens", "activity": "Jacobian lens: import or fit a lens, and derive token directions", "basis": ["operation:jlens", "operation:jlens-fit", "feature:jlensReadout"]},
+    {"id": "sae", "activity": "Import a feature from a sparse autoencoder (SAE)", "basis": ["operation:gemmascope", "feature:saeLatentArms"]},
+    {"id": "battery", "activity": "Standalone capability checks", "basis": ["operation:battery"]}
+  ]
 }

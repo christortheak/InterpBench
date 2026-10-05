@@ -29,6 +29,19 @@ public enum ScienceCatalog {
             if let macCLI { try c.encode(macCLI, forKey: .macCLI) } else { try c.encodeNil(forKey: .macCLI) }
         }
     }
+    /// Where one operation runs: its status on each numerical backend, and
+    /// a short phrase for the index. Generated into the catalog from
+    /// `docs/substrate-capabilities.json`; guidance, never admission.
+    public struct ExecutionProfile: Codable, Sendable, Equatable {
+        public struct Backend: Codable, Sendable, Equatable {
+            public let status: String
+            public let label: String
+        }
+        public let profile: String
+        public let runs: String
+        /// Keyed by `cuda`, `mps` and `mlx`.
+        public let backends: [String: Backend]
+    }
     public struct Operation: Codable, Identifiable, Sendable {
         public let id: String
         public let method: String
@@ -41,8 +54,9 @@ public enum ScienceCatalog {
         public let restriction: String
         public let actions: [Action]
         public let access: Access
+        public let executionProfile: ExecutionProfile
 
-        enum CodingKeys: String, CodingKey { case id, method, title, engineCLI, mac, http, compute, outputs, restriction, actions, access }
+        enum CodingKeys: String, CodingKey { case id, method, title, engineCLI, mac, http, compute, outputs, restriction, actions, access, executionProfile }
         public func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(id, forKey: .id); try c.encode(method, forKey: .method)
@@ -52,13 +66,54 @@ public enum ScienceCatalog {
             try c.encode(outputs, forKey: .outputs); try c.encode(restriction, forKey: .restriction)
             try c.encode(actions, forKey: .actions); try c.encode(access, forKey: .access)
             if let http { try c.encode(http, forKey: .http) } else { try c.encodeNil(forKey: .http) }
+            try c.encode(executionProfile, forKey: .executionProfile)
         }
+    }
+    /// What each compute choice can run, from the same inventory as each
+    /// operation's profile: the choices, the study declarations a run must
+    /// be able to carry out, and the rows of the app's What Runs Where
+    /// table. Every yes and no here is derived by the generator from the
+    /// per-backend statuses; nothing is set by hand.
+    public struct WhereItRuns: Codable, Sendable, Equatable {
+        public struct Choice: Codable, Sendable, Equatable, Identifiable {
+            public let id: String
+            public let title: String
+            public let shortTitle: String
+            public let engine: String
+            public let backends: [String]
+            public let computeSubstrate: String
+            public let computeLocation: String?
+        }
+        public struct StudyFeature: Codable, Sendable, Equatable, Identifiable {
+            public let id: String
+            public let label: String
+            public let phrase: String
+            public let plural: Bool
+            public let manifestKey: String
+            public let backends: [String: String]
+            /// Keyed by compute choice id.
+            public let runsOn: [String: Bool]
+            /// The sentence for each choice that cannot run it.
+            public let advisories: [String: String]
+        }
+        public struct Activity: Codable, Sendable, Equatable, Identifiable {
+            public let id: String
+            public let activity: String
+            public let runsOn: [String: Bool]
+        }
+        public let source: String
+        public let statuses: [String: String]
+        public let computeChoices: [Choice]
+        public let studyFeatures: [StudyFeature]
+        public let activities: [Activity]
+        public let qualifiedAnywhere: Bool
     }
     public struct Catalog: Codable, Sendable {
         public let schemaVersion: Int
         public let methods: [Method]
         public let operations: [Operation]
         public let scope: String
+        public let whereItRuns: WhereItRuns
         public var catalogSHA256: String?
     }
     public struct Guide: Codable, Sendable {
@@ -113,6 +168,8 @@ public enum ScienceCatalog {
             public let method: String
             public let title: String
             public let purpose: String
+            /// Where it runs, in a few words: its execution profile's phrase.
+            public let runs: String
         }
         public let schemaVersion: Int
         public let brief: Bool
@@ -132,7 +189,8 @@ public enum ScienceCatalog {
     /// the hash of the FULL catalog this was read from. Nothing here is new
     /// text: an operation's line is the first sentence of its guided
     /// workflow's purpose when it has one, and its method's purpose when it
-    /// does not. `catalog()` is unchanged. Python twin: `science_catalog.brief`.
+    /// does not; its `runs` phrase is its execution profile's.
+    /// `catalog()` is unchanged. Python twin: `science_catalog.brief`.
     public static func brief() throws -> Brief {
         let full = try catalog()
         let guided = Dictionary(try workflows().map { ($0.id, $0.purpose) }, uniquingKeysWith: { first, _ in first })
@@ -142,7 +200,8 @@ public enum ScienceCatalog {
             methods: full.methods.map { .init(id: $0.id, title: $0.title, purpose: $0.purpose) },
             operations: full.operations.map {
                 .init(id: $0.id, method: $0.method, title: $0.title,
-                      purpose: firstSentence(guided[$0.id] ?? methods[$0.method] ?? $0.title))
+                      purpose: firstSentence(guided[$0.id] ?? methods[$0.method] ?? $0.title),
+                      runs: $0.executionProfile.runs)
             })
     }
     /// Where a caller goes after the short index. Python twins:

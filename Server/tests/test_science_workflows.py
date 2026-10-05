@@ -82,8 +82,10 @@ def test_brief_list_is_a_short_index_of_the_same_catalog(tmp_path, monkeypatch, 
     for method, source in zip(brief['methods'], full['methods'], strict=True):
         assert method == {'id': source['id'], 'title': source['title'], 'purpose': source['purpose']}
     for operation, source in zip(brief['operations'], full['operations'], strict=True):
-        assert set(operation) == {'id', 'method', 'title', 'purpose'}
+        assert set(operation) == {'id', 'method', 'title', 'purpose', 'runs'}
         assert (operation['method'], operation['title']) == (source['method'], source['title'])
+        # Where it runs: its execution profile's phrase, not new text.
+        assert operation['runs'] == source['executionProfile']['runs']
         # One line, one sentence.
         assert operation['purpose'].strip() and '\n' not in operation['purpose']
         assert operation['purpose'].endswith('.') and '. ' not in operation['purpose']
