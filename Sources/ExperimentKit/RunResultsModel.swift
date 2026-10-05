@@ -64,6 +64,14 @@ extension RunResults {
         public var classification = Classification(
             runClass: .draftPilot, epoch: .unknown,
             unpinnedResolvedRevision: nil)
+        /// Which outcome leads this run's summary and which rule chose it
+        /// (`HeadlineOutcome`): the outcome the study declared when the run
+        /// has it, else the first by the default order. Chosen from the
+        /// pooled effect rows and, for a local run, the evaluation report
+        /// that judged the same source run. The rows themselves are never
+        /// reordered — the charts and the header read this to decide what
+        /// LEADS.
+        public var headline = HeadlineOutcome.Selection.none
 
         /// The run carries any option-bearing item — in its decoded records
         /// OR stamped in its report's choice metrics — drives the
@@ -99,6 +107,12 @@ extension RunResults {
         public var cosineMatrixText: String?
         public var panelEffectsText: String?
         public var snapshotData: Data?
+        /// Whether an evaluation report (a judged outcome) exists for this
+        /// run's source run. The local loader looks beside the run
+        /// (`HeadlineOutcome.evaluationReport`); a remote reading cannot, and
+        /// leaves it false. Not an artifact of the run itself, so it takes no
+        /// part in `isEmpty`.
+        public var hasEvaluationReport = false
 
         public init() {}
 
@@ -240,6 +254,15 @@ extension RunResults {
             model.conditionInterventions = interventionSummaries(manifest: manifest)
         }
         model.classification = classify(reading, model.records)
+        // What leads the summary. The declared outcome is read tolerantly
+        // from the snapshot bytes, so a snapshot the strict decoder cannot
+        // read still says which outcome its study declared.
+        model.headline = HeadlineOutcome.select(
+            declared: HeadlineOutcome.declaredOutcome(
+                inSnapshot: artifacts.snapshotData),
+            analysisOutcomes: (model.effectSizes ?? []).map(\.metric),
+            evaluationOutcomes: artifacts.hasEvaluationReport
+                ? [HeadlineOutcome.judged] : [])
         return model
     }
 
@@ -282,6 +305,8 @@ extension RunResults {
             maxBytes: RunBrowser.jsonPreviewByteLimit)?.text
         artifacts.snapshotData = try? Data(
             contentsOf: runDirectory.appending(component: "experiment.json"))
+        artifacts.hasEvaluationReport =
+            HeadlineOutcome.evaluationReport(forRunAt: runDirectory) != nil
 
         return assemble(runDirectory: runDirectory, artifacts: artifacts) {
             reading, records in

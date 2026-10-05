@@ -17,6 +17,10 @@ import SwiftUI
 struct EffectChartsSection: View {
     let rows: [RunResults.EffectSizeRow]
     let interventions: [String: String]
+    /// Which outcome leads this run's summary (`RunResults.Model.headline`).
+    /// The charts open on it instead of on the first row the engine wrote,
+    /// which is a surface measure. Every other measure stays in the picker.
+    var headline = HeadlineOutcome.Selection.none
 
     @State private var selectedMetric: String?
 
@@ -30,11 +34,26 @@ struct EffectChartsSection: View {
         return ordered
     }
 
+    /// The measure the charts open on, and how it was chosen
+    /// (`HeadlineOutcome.chartLead` — the rule lives in ExperimentKit).
+    private var lead: HeadlineOutcome.Selection {
+        HeadlineOutcome.chartLead(headline, among: metrics)
+    }
+
     private var activeMetric: String? {
         if let selectedMetric, metrics.contains(selectedMetric) {
             return selectedMetric
         }
-        return metrics.first
+        return lead.outcome
+    }
+
+    /// Says why the charts opened on this measure, in the same words every
+    /// other surface uses. Shown only while the charts are on that measure.
+    private var leadCaption: String? {
+        guard let activeMetric, activeMetric == lead.outcome else { return nil }
+        return "the charts open on \(lead.summaryLine)"
+            + (metrics.count > 1
+                ? ". The other measures are in the Measure menu." : ".")
     }
 
     private var activeRows: [RunResults.EffectSizeRow] {
@@ -66,6 +85,12 @@ struct EffectChartsSection: View {
                             "choose which measure the charts plot — effects of "
                                 + "different measures do not share an axis "
                                 + "scale, so only one is drawn at a time")
+                    }
+                    if let leadCaption {
+                        Text(leadCaption)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     if let activeMetric {
                         EffectForestChart(
@@ -101,6 +126,11 @@ struct EffectChartsSection: View {
         "each row: the condition's shift in \(EffectNarrative.metricPhrase(metric)) "
             + "vs its paired baseline, with the 95% bootstrap CI — whiskers "
             + "crossing the zero line are consistent with no effect"
+            + (activeRows.contains(where: EffectNarrative.hasTooFewPairs)
+                ? ". A row with fewer than "
+                    + "\(EffectNarrative.minimumPairsForInterval) paired items "
+                    + "has no whisker: that is too few pairs for an interval"
+                : "")
     }
 
     private var doseCaption: String {
@@ -156,7 +186,9 @@ struct EffectForestChart: View {
                 .foregroundStyle(.tertiary)
                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
             ForEach(rows) { row in
-                if row.ciLower.isFinite, row.ciUpper.isFinite {
+                // No whisker for one or two paired items: that is too few
+                // pairs for an interval (the caption says so).
+                if EffectNarrative.hasReportableInterval(row) {
                     RuleMark(
                         xStart: .value("CI lower", row.ciLower),
                         xEnd: .value("CI upper", row.ciUpper),
@@ -216,6 +248,11 @@ struct EffectForestChart: View {
                 atY: location.y - frame.minY, as: String.self),
             let match = rows.first(where: { $0.condition == condition })
         else { return nil }
+        guard EffectNarrative.hasReportableInterval(match) else {
+            return String(
+                format: "%@ · Δ %+.4g (too few pairs for an interval)",
+                match.condition, match.meanDiff)
+        }
         return String(
             format: "%@ · Δ %+.4g [%.4g, %.4g]", match.condition,
             match.meanDiff, match.ciLower, match.ciUpper)
@@ -225,8 +262,11 @@ struct EffectForestChart: View {
         row.ciExcludesZero ? Color.accentColor : Color.secondary.opacity(0.55)
     }
 
+    /// A row with too few pairs never draws in the accent color: its
+    /// interval is not shown, so it cannot be the reason a point stands out.
     private func pointStyle(_ row: RunResults.EffectSizeRow) -> Color {
-        row.ciExcludesZero ? Color.accentColor : Color.secondary
+        row.ciExcludesZero && EffectNarrative.hasReportableInterval(row)
+            ? Color.accentColor : Color.secondary
     }
 }
 
