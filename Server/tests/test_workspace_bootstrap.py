@@ -97,6 +97,54 @@ def test_empty_destination_supported_and_missing_guide_is_never_rewritten(tmp_pa
     assert not guide.exists()
 
 
+#: The kinds of file every study needs. Anything seeded outside these folders
+#: is example content, and belongs in a Demo Workspace instead.
+SEED_FOLDERS = (
+    'prompts/batteries/',  # capability batteries, and the presets' defaults
+    'prompts/dev/',  # a sweep's default development and coherence prompts
+    'prompts/neutral/',  # the neutral corpus
+    'prompts/parsers/',  # the parser registry
+    'prompts/rubrics/',  # the default rubric
+    'prompts/templates/',  # file-shape and reader templates
+    'prompts/authoring-prompts/', 'prompts/generation/',
+    'prompts/method-guides/', 'prompts/study-interviews/',
+)
+
+
+def test_seed_holds_only_what_every_study_needs(tmp_path):
+    """A new workspace carries what a study needs to function and nothing
+    that is only an example. Swift twin: `theSeedHoldsOnlyWhatEveryStudyNeeds`."""
+    files = owner.manifest()['seedFiles']
+    assert [name for name in files if not name.startswith(SEED_FOLDERS)] == []
+    # The example task prompts moved to the Demo Workspace.
+    assert not any(name.startswith('prompts/tasks/') for name in files)
+    # The paths the engine uses by default still arrive in a new workspace.
+    for required in ('prompts/batteries/basic.jsonl', 'prompts/dev/dev-prompts.jsonl',
+                     'prompts/neutral/corpus.jsonl', 'prompts/parsers/parser-registry.json',
+                     'prompts/rubrics/default-paired-v1.md'):
+        assert required in files, required
+    root = tmp_path / 'workspace'
+    owner.initialize(root, use_git=False)
+    assert (root / 'prompts/tasks').is_dir() and not any((root / 'prompts/tasks').iterdir())
+
+
+def test_the_two_seed_copies_are_the_same_files_with_the_same_bytes():
+    """`WorkspaceSeed/` is the source and the packaged tree is what a wheel
+    carries. A file present in one and absent from the other, or differing by
+    a byte, would hand the two clients different workspaces."""
+    checkout = Path(__file__).resolve().parents[2] / 'WorkspaceSeed'
+    if not checkout.is_dir():
+        pytest.skip('no checkout beside this install (a wheel or a payload)')
+
+    def tree(root):
+        return {path.relative_to(root).as_posix(): path.read_bytes()
+                for path in root.rglob('*') if path.is_file() and path.name != '.DS_Store'}
+
+    source, packaged = tree(checkout), tree(owner.SEED)
+    assert sorted(source) == sorted(packaged) == sorted(owner.manifest()['seedFiles'])
+    assert [name for name in source if source[name] != packaged[name]] == []
+
+
 def test_packaged_seed_gate_and_bootstrap_stay_light():
     root=Path(__file__).resolve().parents[2]
     subprocess.run([sys.executable,str(root/'scripts/ci/check-workspace-bootstrap.py')],check=True)

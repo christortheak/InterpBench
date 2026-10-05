@@ -409,10 +409,13 @@ import Testing
             try stage(
                 "WorkspaceSeed/prompts/parsers/parser-registry.json",
                 "{\"schemaVersion\": 1, \"parsers\": {}}\n")
+            // Unlisted: the allowlist's whole point. The example task
+            // prompts were seeded until decision 13 moved example content to
+            // the Demo Workspace, so a bundle that still carries the file
+            // must not hand it to a new workspace.
             try stage(
                 "WorkspaceSeed/prompts/tasks/example-task-prompts.jsonl",
                 "{\"id\": \"t1\", \"text\": \"staged task\"}\n")
-            // Unlisted: the allowlist's whole point.
             try stage(
                 "WorkspaceSeed/prompts/concepts/staged-concept/positive.jsonl",
                 "{\"text\": \"staged positive\"}\n")
@@ -462,7 +465,6 @@ import Testing
                 "prompts/batteries/basic.jsonl",
                 "prompts/dev/dev-prompts.jsonl",
                 "prompts/parsers/parser-registry.json",
-                "prompts/tasks/example-task-prompts.jsonl",
             ] {
                 try stagedBytesLanded(relative, at: relative)
             }
@@ -470,6 +472,7 @@ import Testing
             // …the unlisted staged files did NOT: an explicit allowlist, not
             // a sweep of whatever the bundle happens to carry.
             for unlisted in [
+                "prompts/tasks/example-task-prompts.jsonl",
                 "prompts/concepts/staged-concept/positive.jsonl",
                 "prompts/rubrics/staged-rubric.md",
             ] {

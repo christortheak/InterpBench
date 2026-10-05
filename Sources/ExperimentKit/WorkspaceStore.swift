@@ -216,6 +216,11 @@ public final class WorkspaceStore {
     ///   cases, emotion corpora, or authoring job cards. A fresh workspace
     ///   starts CONCEPT-EMPTY; `SampleWorkspace/` is where a worked example
     ///   lives, and it is a separate folder the user opens on purpose.
+    /// - **Nothing that is only an example** (decision 13). Every file here
+    ///   is one a study needs to function or one a default path names. The
+    ///   example task prompts were the last file no code path used, and
+    ///   moved out; worked examples ship as Demo Workspaces
+    ///   (`DemoWorkspace`), which a researcher opens as a copy.
     /// - **Neutral bytes.** Nothing here names a study, an institution, a
     ///   person, or a task domain. `AgentContractTests` walks
     ///   `WorkspaceSeed/` against the private name denylist, and asserts
