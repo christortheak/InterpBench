@@ -400,11 +400,19 @@ def repair_action(name: str, max_tokens: int,
     """The executable repair. A command, not advice. Under a reasoning
     budget it names BOTH flags, because the refusal has said which cap was
     hit and the person picks the one that matches."""
-    flags = f"--max-tokens <n>  (n above {max_tokens})"
+    from . import command_vocabulary as vocabulary
+
+    # The Mac command line raises the cap with a flag of `set-sampling`; on
+    # the cross-platform client the same two caps are protocol fields.
+    flags, fields = "--max-tokens <n>", ["maxTokens=<n>"]
+    bounds = f"n above {max_tokens}"
     if reasoning_max_tokens is not None:
-        flags = (f"--max-tokens <n> and/or --reasoning-max-tokens <m>  "
-                 f"(n above {max_tokens}, m above {reasoning_max_tokens}, "
-                 f"whichever cap the refusal names)")
-    return (f"steerlab-cli experiment set-sampling {name} {flags}, then "
-            f"re-run; a frozen study is iterated by duplicating first: "
-            f"steerlab-cli experiment duplicate {name} {name}-v2")
+        flags += " and/or --reasoning-max-tokens <m>"
+        fields.append("reasoningMaxTokens=<m>")
+        bounds = (f"n above {max_tokens}, m above {reasoning_max_tokens}, "
+                  "whichever cap the refusal names")
+    raise_cap = vocabulary.authoring(vocabulary.protocol_field(
+        name, f"experiment set-sampling {name} {flags}", *fields))
+    duplicate = vocabulary.authoring(f"experiment duplicate {name} {name}-v2")
+    return (f"{raise_cap}  ({bounds}), then re-run; a frozen study is "
+            f"iterated by duplicating first: {duplicate}")

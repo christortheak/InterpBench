@@ -5,6 +5,7 @@ preserve their own integrity checks; this policy owns gate scope and ordering.
 """
 from __future__ import annotations
 from dataclasses import dataclass
+from . import command_vocabulary as vocabulary
 from . import manifest_declaration_policy as declarations
 from .manifest_errors import ExperimentStoreError
 
@@ -95,9 +96,16 @@ def needs_validation(d: dict) -> bool:
 def evaluate(name: str, d: dict, evidence: FreezeEvidence) -> list[tuple[str, str]]:
     failures: list[tuple[str, str]] = []
     if not d.get("modelRevision"):
-        failures.append(("revision",
+        failures.append(("revision", (
+            # The client loads no model, so "load it once" is not something
+            # its reader can do; it names what is.
+            f"cannot freeze '{name}': no model revision is pinned, and this "
+            "client loads no model to resolve one. Pin the commit, or "
+            "validate on a runner, which pins the commit it resolved when "
+            "the evidence comes home"
+            if vocabulary.is_client() else
             f"cannot freeze '{name}': model revision not pinned and "
-            f"{d['modelID']} not in the local HF cache — load it once or freeze --force"))
+            f"{d['modelID']} not in the local HF cache — load it once or freeze --force")))
     symbolic = declarations.symbolic_revision_problem(d)
     if symbolic:
         failures.append(("revision", f"cannot freeze '{name}': {symbolic}"))
@@ -114,9 +122,14 @@ def evaluate(name: str, d: dict, evidence: FreezeEvidence) -> list[tuple[str, st
         failures.append(("judgeValidity", evidence.judge))
     if needs_validation(d):
         if not evidence.validation_present:
-            failures.append(("validateEvidence",
+            failures.append(("validateEvidence", (
+                f"cannot freeze '{name}': no validation run in this workspace "
+                "matches its exact pins. Validate it on a runner first "
+                f"('{vocabulary.study_verb('validate', name)}'), or freeze "
+                "with --force, which marks the study as not citable"
+                if vocabulary.is_client() else
                 f"cannot freeze '{name}': no validate run matches its exact "
-                f"pins — run 'steerlab-server experiment validate {name}' first, or force-freeze"))
+                f"pins — run 'steerlab-server experiment validate {name}' first, or force-freeze")))
         elif evidence.vacuous_validation:
             failures.append(("validateEvidence", evidence.vacuous_validation))
     if operative and d.get("variantConditions") and evidence.battery is not None:
@@ -127,40 +140,81 @@ def evaluate(name: str, d: dict, evidence: FreezeEvidence) -> list[tuple[str, st
 
 
 def freeze_gate_repair(gate: str, name: str) -> str:
-    """The RUNNABLE repair for a freeze-gate refusal on THIS engine.
+    """The RUNNABLE repair for a freeze-gate refusal, for whoever shows it.
 
     Gate-5 dry run #2 (P2/P3): every freeze-gate refusal here carried one
     boilerplate string — "satisfy the named gate, or freeze --force to record
     an explicitly non-citable experiment" — which names no command, and whose
     only concrete token (`freeze --force`) is a verb this CLI does not have.
 
-    Each repair below names the engine that can actually satisfy its gate.
-    The evidence gates name THIS one: ``_matching_validate_evidence`` accepts
-    only evidence stamped ``python-hf-transformers`` and there is no
-    run-substrate seam here, so evidence from the other engine can never
-    satisfy them. Everything else is an authoring act, which is Mac-authority.
+    Each repair names commands its reader can run (:mod:`command_vocabulary`).
+    Freezing, and every other change to the study, is an authoring act: the
+    cross-platform client names its own verbs, and the engine — which cannot
+    know which client the reader has — says "on your authoring client" and
+    gives both spellings.
+
+    The two evidence gates name the engine that can satisfy them.
+    ``_matching_validate_evidence`` accepts only evidence stamped
+    ``python-hf-transformers`` and there is no run-substrate seam here, so on
+    the engine that is THIS engine's own ``validate``. The client loads no
+    model: there the same evidence comes from a runner, and ``run <name>
+    --verb validate`` accepts a draft for exactly that.
     """
-    freeze_again = (f"steerlab-cli experiment freeze {name}  "
-                    "(authoring is Mac-authority)")
+    freeze_again = vocabulary.authoring(f"experiment freeze {name}")
+    validate = vocabulary.study_verb("validate", name)
+    pin_rubric = vocabulary.authoring(vocabulary.pin_rubric(
+        name, "prompts/rubrics/default-paired-v1.md",
+        judges="a:local[,b:claude]"))
+    if vocabulary.is_client():
+        pin_revision = vocabulary.authoring(
+            f"experiment pin-revision {name} <commit>")
+        attach_agent = vocabulary.authoring(
+            f"experiment attach-agent {name} --artifact <path> "
+            "--artifact-sha256 <digest> --manifest-sha256 <digest>")
+        repairs = {
+            "revision": f"{pin_revision}  (a full commit id, not a branch "
+                        "name). Or validate on a runner, which pins the "
+                        f"commit it resolved: {validate}. Then {freeze_again}",
+            "measurementPins": "repoint the invalid measurement pin at a "
+                               "loadable value (the reason names it), then "
+                               f"{freeze_again}",
+            "validateEvidence": f"{validate}  (a draft is accepted for this "
+                                "step; the validation evidence comes home "
+                                "into this workspace and is what this gate "
+                                f"reads), then {freeze_again}",
+            "variantValidity": "save the agent again with hashed adapter "
+                               f"weights and attach it again ({attach_agent})"
+                               f", then {freeze_again}",
+            "batteryEvidence": f"{validate}  (each agent condition the "
+                               "capability battery can run is scored), then "
+                               f"{freeze_again}",
+            "judgeValidity": "declare the rubric file and the judges: "
+                             f"{pin_rubric}  (or apply a study pack, which "
+                             "pins the rubric's bytes for you), then "
+                             f"{freeze_again}",
+            "gitClean": "commit the pinned inputs in the workspace git "
+                        f"repository, then {freeze_again}",
+        }
+        return repairs.get(
+            gate, f"satisfy the '{gate}' gate, then {freeze_again}")
+    create_pinned = vocabulary.authoring(
+        (f"experiment create {name} --model <id> --revision <commit>",
+         f"experiment pin-revision {name} <commit>"))
     repairs = {
-        "revision": f"steerlab-cli experiment create {name} --model <id> "
-                    "--revision <commit> on the Mac, or load the model once "
-                    f"here so it is cached, then {freeze_again}",
+        "revision": f"{create_pinned}; or load the model once here so it is "
+                    f"cached. Then {freeze_again}",
         "measurementPins": "repoint the invalid measurement pin at a loadable "
-                           f"value on the Mac, then {freeze_again}",
-        "validateEvidence": f"steerlab-server experiment validate {name}  "
+                           f"value, then {freeze_again}",
+        "validateEvidence": f"{validate}  "
                             "(this gate reads evidence stamped "
                             "python-hf-transformers; evidence from the other "
                             f"engine will not satisfy it), then {freeze_again}",
         "variantValidity": "re-save the variant with hashed adapter weights "
-                           "and re-attach it on the Mac, then "
-                           f"{freeze_again}",
-        "batteryEvidence": f"steerlab-server experiment validate {name}  "
+                           f"and re-attach it, then {freeze_again}",
+        "batteryEvidence": f"{validate}  "
                            "(each variant condition runs the pinned battery), "
                            f"then {freeze_again}",
-        "judgeValidity": f"steerlab-cli experiment pin-rubric {name} "
-                         "prompts/rubrics/default-paired-v1.md --judges "
-                         f"a:local[,b:claude] on the Mac, then {freeze_again}",
+        "judgeValidity": f"{pin_rubric}. Then {freeze_again}",
         "gitClean": "commit the pinned inputs in the workspace git repo, then "
                     f"{freeze_again}",
     }
@@ -258,13 +312,17 @@ def check_battery_evidence(name: str, d: dict, evidence: dict | None,
         vc.get("name", "?") for vc in d.get("variantConditions") or []
         if not isinstance(vc.get("fromPromotion"), dict)
         and battery_exemption_reason(vc) is None]
+    # The engine's sentence names its own verb without a program, as it always
+    # has; the client has no such verb, so it names its runner route.
+    validate = (vocabulary.study_verb("validate", name)
+                if vocabulary.is_client() else f"experiment validate {name}")
     missing = [c for c in required
                if c not in results or results[c].get("accuracy") is None]
     if missing:
         raise ExperimentStoreError(
             f"cannot freeze '{name}': validate evidence has no capability-"
             f"battery results for condition(s) {', '.join(missing)} — run "
-            f"'experiment validate {name}' (each variant condition runs the "
+            f"'{validate}' (each variant condition runs the "
             "pinned battery), or freeze --force")
     expected = expected_hash
     if expected:
@@ -274,4 +332,4 @@ def check_battery_evidence(name: str, d: dict, evidence: dict | None,
             raise ExperimentStoreError(
                 f"cannot freeze '{name}': capability battery drifted since "
                 f"validation for condition(s) {', '.join(drifted)} — "
-                f"re-run 'experiment validate {name}', or freeze --force")
+                f"re-run '{validate}', or freeze --force")

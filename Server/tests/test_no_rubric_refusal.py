@@ -32,11 +32,24 @@ def _manifest(**overrides):
     return Manifest.from_dict(raw)
 
 
-def test_the_no_rubric_sentence_is_the_cross_engine_literal():
+def test_the_no_rubric_sentence_says_where_and_the_repair_says_how():
+    """Pinning a rubric is authoring, and this engine never authors. Its
+    sentence says WHERE the pin happens; its repair carries the command for
+    both authoring clients, each with its own verb. (The Swift twin,
+    ``JudgeRubricStore.noRubricRefusal``, is the Mac command line speaking for
+    itself, so it names its own verb in the sentence.)"""
     assert rubric_inputs.no_rubric_refusal("s") == (
-        "study 's' has no judge rubric — pin one: 'steerlab-cli experiment "
-        "pin-rubric s prompts/rubrics/default-paired-v1.md' (any file under "
-        "prompts/rubrics/; inline draft text is draft-only and cannot freeze)")
+        "study 's' has no judge rubric — pin one on your authoring client "
+        "(any file under prompts/rubrics/, for example "
+        "prompts/rubrics/default-paired-v1.md; inline draft text is "
+        "draft-only and cannot freeze)")
+    assert rubric_inputs.no_rubric_repair("s") == (
+        "on your authoring client: steerlab-cli experiment pin-rubric s "
+        "prompts/rubrics/default-paired-v1.md  (Mac command line), or "
+        "steerlab experiment set-protocol s --set "
+        "judgeRubricFile='\"prompts/rubrics/default-paired-v1.md\"' --set "
+        "judgeRubricHash='\"<sha256 of that file>\"'  (cross-platform client)"
+        " ; then steerlab-server experiment evaluate s")
 
 
 def test_an_empty_inline_rubric_refuses_instead_of_judging_on_nothing(tmp_path):
@@ -79,11 +92,16 @@ def test_a_pinned_rubric_file_that_is_gone_refuses_typed(tmp_path):
     # The cross-engine sentence (Swift: JudgeRubricStore.missingRubricRefusal).
     assert str(error).startswith("judge rubric file not found: ")
     assert str(error).endswith("prompts/rubrics/nope.md")
-    # The repair names the CONVENTION directory, the Mac verb that pins, and
-    # the re-run here — none of which a traceback carried.
+    # The repair names the CONVENTION directory, the command that pins on
+    # each authoring client, and the re-run here — none of which a traceback
+    # carried.
     assert "under prompts/rubrics/" in error.repair_action
+    assert "on your authoring client: " in error.repair_action
     assert ("steerlab-cli experiment pin-rubric no-rubric "
             "prompts/rubrics/nope.md") in error.repair_action
+    assert ("steerlab experiment set-protocol no-rubric --set "
+            "judgeRubricFile='\"prompts/rubrics/nope.md\"'") \
+        in error.repair_action
     assert "steerlab-server experiment evaluate no-rubric" in \
         error.repair_action
 
@@ -100,9 +118,41 @@ def test_a_task_prompt_file_that_is_gone_refuses_typed(tmp_path):
     assert error.gate == lifecycle_gates.MISSING_PREREQUISITE
     # Byte-identical to Swift's sentence for the same rule.
     assert str(error).startswith("task prompt file not found: ")
+    # Pinning is authoring: the command for each client, each with its verb.
+    assert "on your authoring client: " in error.repair_action
     assert ("steerlab-cli experiment pin-prompts no-rubric "
             "prompts/tasks/nope.jsonl") in error.repair_action
+    assert ("steerlab experiment import-prompts no-rubric --file "
+            "prompts/tasks/nope.jsonl") in error.repair_action
     assert "steerlab-server experiment run no-rubric" in error.repair_action
+
+
+def test_a_study_that_pins_no_task_prompts_refuses_typed(tmp_path):
+    """The first thing a study frozen without task prompts met was a bare
+    ``RuntimeError`` with no repair — after it had been uploaded and
+    scheduled. It is a typed ``missingPrerequisite`` now, and the repair is
+    the route a frozen study actually has: a duplicate, which is a draft
+    again."""
+    with pytest.raises(lifecycle_gates.LifecycleError) as caught:
+        task_inputs.load_prompts(_manifest(status="frozen"), None,
+                                 str(tmp_path))
+    error = caught.value
+    assert error.gate == lifecycle_gates.MISSING_PREREQUISITE
+    assert "pins no task prompts" in str(error)
+    assert ("steerlab-cli experiment duplicate no-rubric no-rubric-v2 && "
+            "steerlab-cli experiment pin-prompts no-rubric-v2 "
+            "prompts/tasks/<file>.jsonl && steerlab-cli experiment freeze "
+            "no-rubric-v2") in error.repair_action
+    assert ("steerlab experiment duplicate no-rubric no-rubric-v2 && "
+            "steerlab experiment import-prompts no-rubric-v2 --file "
+            "prompts/tasks/<file>.jsonl") in error.repair_action
+
+    # A draft is pinned in place, then run.
+    with pytest.raises(lifecycle_gates.LifecycleError) as caught:
+        task_inputs.load_prompts(_manifest(), None, str(tmp_path))
+    assert "duplicate" not in caught.value.repair_action
+    assert "steerlab-server experiment run no-rubric" in \
+        caught.value.repair_action
 
 
 def test_a_real_inline_draft_rubric_still_judges_loudly(tmp_path):

@@ -22,6 +22,17 @@ from . import run_reporting
 from . import study_admission
 from . import task_inputs
 from . import vector_materialization
+from . import command_vocabulary as vocabulary
+
+
+def _declare_an_arm(name: str) -> str:
+    """Declaring a measured arm: an authoring act, so the command is spelled
+    for the reader's authoring client. This engine never authors."""
+    return vocabulary.authoring(
+        (f"experiment declare-condition {name} <arm> --slots "
+         "<concept>:<layer>:<alpha>",
+         f"experiment declare-condition {name} <arm> --slots "
+         "<concept>:<layer>:<alpha> --alpha-units norm|raw"))
 
 
 def run(name: str, prompts_file: str | None = None, root: str | None = None,
@@ -121,9 +132,8 @@ def run(name: str, prompts_file: str | None = None, root: str | None = None,
             # instead of 96), now machine-readable on both engines.
             raise lifecycle_gates.refusing(
                 lifecycle_gates.INERT_CONDITIONS, inert_problem,
-                repair=("declare arms the study's studyType actually runs, on "
-                        "the Mac: steerlab-cli experiment declare-condition "
-                        f"{name} <arm> --slots <concept>:<layer>:<alpha>"))
+                repair=("declare arms the study's studyType actually runs — "
+                        + _declare_an_arm(name)))
         # The other road to a silent baseline-only run (WP0 dry run #0,
         # P0-2): a concept study whose arms were never declared at all. Same
         # place, same reason — before any queue wait or model load.
@@ -131,9 +141,7 @@ def run(name: str, prompts_file: str | None = None, root: str | None = None,
         if nothing_to_measure:
             raise lifecycle_gates.refusing(
                 lifecycle_gates.INERT_CONDITIONS, nothing_to_measure,
-                repair=("steerlab-cli experiment declare-condition "
-                        f"{name} <arm> --slots <concept>:<layer>:<alpha>  "
-                        "(authoring is Mac-authority)"))
+                repair=_declare_an_arm(name))
         run_preflight.token_preflight_or_warn(manifest, prompts_file, root, _log)
         run_preflight.artifact_preflight(manifest, root, _log)
         run_preflight.instrument_preflight(manifest, prompts_file, root, _log)

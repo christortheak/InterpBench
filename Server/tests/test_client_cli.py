@@ -195,6 +195,12 @@ def test_the_frozen_study_packages_and_reimports_with_its_outer_pin(
     assert _document(capsys)["result"]["extracted"]
 
 
+#: The α-units repair as THIS client says it: the engine's and the Mac's
+#: sentence, word for word, with the one program this client's reader can run.
+_CLIENT_ALPHA_UNITS_REPAIR = experiment_store.ALPHA_UNITS_REPAIR.replace(
+    "steerlab-cli experiment", "steerlab experiment")
+
+
 def test_declaring_an_arm_without_its_alpha_units_is_refused_with_the_twin_repair(
         workspace, capsys):
     """CONTRACT: condition-alpha-units-explicit (Phase 1a, G6) reaches the
@@ -202,10 +208,12 @@ def test_declaring_an_arm_without_its_alpha_units_is_refused_with_the_twin_repai
 
     The client passes an ABSENT key through rather than defaulting, so the
     refusal is ``experiment_store``'s own and its ``repairAction`` is the
-    twin literal of the Mac's ``ExperimentManifest.alphaUnitsRepairAction``.
-    A client that invented its own sentence here would be the third
-    independent spelling of a rule whose entire value is that there are
-    exactly two, kept equal by test."""
+    twin sentence of the Mac's ``ExperimentManifest.alphaUnitsRepairAction``
+    — the SAME sentence, naming the program its reader has. A client that
+    invented its own sentence here would be a third independent spelling of
+    a rule whose entire value is that there is one, kept equal by test; a
+    client that named the Mac's program would hand its reader a command they
+    cannot run."""
     _concept_files(workspace)
     assert _run(["experiment", "create", "demo", "--model", "org/m"]) == 0
     assert _run(["experiment", "attach", "demo", "french"]) == 0
@@ -215,8 +223,9 @@ def test_declaring_an_arm_without_its_alpha_units_is_refused_with_the_twin_repai
                  "--slots", "french:17:0.4", "--json"]) == 65
     document = _document(capsys)
     assert document["error"]["code"] == client_cli.AUTHORING_REFUSED_CODE
-    assert document["error"]["repairAction"] == \
-        experiment_store.ALPHA_UNITS_REPAIR
+    assert document["error"]["repairAction"] == _CLIENT_ALPHA_UNITS_REPAIR
+    assert "steerlab experiment declare-condition <study> <condition>" \
+        in document["error"]["repairAction"]
     # Nothing was declared: a refusal that half-wrote the arm is worse than no
     # refusal.
     assert experiment_store.load_raw("demo", str(workspace))["conditions"] == []
@@ -322,7 +331,10 @@ def test_set_protocol_refuses_an_unknown_instrument_value(workspace, capsys):
     """The vocabulary gate covers VALUES where a closed value vocabulary
     exists: an unknown instrument declared through ``set-protocol`` is the
     same silent loss ``set-instruments`` refuses on the Mac (the downstream
-    readers are set-membership tests), so the store refuses it here too."""
+    readers are set-membership tests), so the store refuses it here too.
+
+    The repair is the verb the caller just typed, with the vocabulary in it —
+    not the Mac's ``set-instruments``, which this client does not have."""
     assert _run(["experiment", "create", "demo", "--model", "org/m"]) == 0
     capsys.readouterr()
     assert _run(["experiment", "set-protocol", "demo",
@@ -330,7 +342,10 @@ def test_set_protocol_refuses_an_unknown_instrument_value(workspace, capsys):
     error = _document(capsys)["error"]
     assert error["code"] == "authoringRefused"
     assert "sampledTxt" in error["reason"]
-    assert "set-instruments" in error["repairAction"]
+    assert error["repairAction"].startswith(
+        "steerlab experiment set-protocol demo --set outcomeInstruments=")
+    assert "sampledText" in error["repairAction"]
+    assert "set-instruments" not in error["repairAction"]
     document = experiment_store.load_raw("demo", str(workspace))
     assert "outcomeInstruments" not in document
 
@@ -384,7 +399,10 @@ def test_set_protocol_refuses_an_out_of_vocabulary_sampling_value(
                  "--json"]) == 65
     error = _document(capsys)["error"]
     assert "declares no bounds" in error["reason"]
-    assert "set-exclusions" in error["repairAction"]
+    # This client's own verb, not the Mac's `set-exclusions`.
+    assert error["repairAction"].startswith(
+        "steerlab experiment set-protocol demo --set exclusionRules=")
+    assert "set-exclusions" not in error["repairAction"]
     document = experiment_store.load_raw("demo", str(workspace))
     assert "seedPolicy" not in document
     assert "samplesPerItem" not in document
@@ -713,8 +731,7 @@ def test_client_declare_condition_without_alpha_units_golden(workspace,
     document = _check_golden(capsys,
                              "client-declare-condition-no-alpha-units",
                              workspace, expect_state="refused")
-    assert document["error"]["repairAction"] == \
-        experiment_store.ALPHA_UNITS_REPAIR
+    assert document["error"]["repairAction"] == _CLIENT_ALPHA_UNITS_REPAIR
 
 
 # =============================================================================

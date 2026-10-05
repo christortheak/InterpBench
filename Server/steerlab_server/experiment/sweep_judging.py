@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from ..steering import model_loader
+from . import command_vocabulary as vocabulary
 from . import lifecycle_gates, prompt_render
 from . import cancellation
 from . import evaluation_evidence
@@ -158,10 +159,10 @@ def judge_preflight(manifest: manifest_module.Manifest, max_loaded: int | None, 
             "grid, so every judge model needs one beside it: use the study "
             "model as judge, pin external judges, or raise the limit",
             repair=("set STEERLAB_MAX_LOADED_MODELS to at least "
-                    f"{len(resident)} on this server, or re-pin the panel on "
-                    "the Mac so every local judge resolves to the study model "
-                    "(steerlab-cli experiment pin-rubric <name> <rubric> "
-                    "--judges <name>:local)"))
+                    f"{len(resident)} on this server, or re-pin the panel so "
+                    "every local judge resolves to the study model — "
+                    + vocabulary.authoring(vocabulary.pin_rubric(
+                        "<name>", "<rubric>", judges="<name>:local"))))
 
 
 def _assert_study_model_judge_matches_held(ref, manifest, model) -> None:

@@ -267,6 +267,14 @@ def _client_spelling(label: str) -> str:
     return f"{client_cli.synopsis(spec)} {client_cli.ROOT_FLAG} <workspace-dir>"
 
 
+def _authoring_command(command: str) -> str:
+    """One authoring command, as this engine names it: "on your authoring
+    client", with both clients' spellings (:mod:`command_vocabulary`). This
+    engine never authors and cannot know which client its reader has."""
+    from .experiment import command_vocabulary as vocabulary
+    return vocabulary.authoring(command)
+
+
 def _mac_authority_refusal(label: str, repair: str, *, note: str = "",
                            exit_code: int = 64):
     """A verb that authors, typed against the engine that executes.
@@ -589,7 +597,8 @@ def _exception_envelope(invocation, exc: BaseException):
                 gates=freeze_gates, reason=reason,
                 repair_action=lifecycle_gates.repair_of(exc) or (
                     f"satisfy the '{freeze_gate}' gate  (this engine has no "
-                    "freeze verb — freezing, forced or not, is Mac-authority)"))
+                    "freeze verb — freezing, forced or not, happens on your "
+                    "authoring client)"))
     if isinstance(exc, FileNotFoundError):
         missing = getattr(exc, "filename", None)
         # Gate-5 dry run #2 (P3): the commonest instance by far is a MISTYPED
@@ -599,14 +608,15 @@ def _exception_envelope(invocation, exc: BaseException):
         # actually typed nowhere in the document. Say what is missing.
         experiment = _experiment_name_in_missing_path(missing)
         if experiment:
+            author_it = _authoring_command(
+                "experiment create <name> --model <id>")
             return envelope.refusal(
                 label, code="notFound", state="notFound",
                 reason=f"experiment '{experiment}' not found in this workspace",
                 repair_action=(
                     "steerlab-server experiment list  (the experiments this "
                     "workspace holds), then re-run with a name from it — or "
-                    "author it on the Mac: steerlab-cli experiment create "
-                    "<name> --model <id>"))
+                    f"author it {author_it}"))
         return envelope.refusal(
             label, code="notFound", reason=reason, state="notFound",
             repair_action=(f"no file at {missing}" if missing else
@@ -1134,8 +1144,8 @@ def _panel(args: list[str]) -> int:
             note="casting a panel binds a study's model and sampling settings "
                  "to a seat assignment, writes the compiled scenario as a "
                  "workspace input, and pins it into a draft manifest — all "
-                 "authoring. Cast and freeze on the Mac, then submit the "
-                 "frozen study here")
+                 "authoring. Cast and freeze on your authoring client, then "
+                 "submit the frozen study here")
         return refusal.exit_code
 
     if verb == "list":
@@ -2346,9 +2356,10 @@ def _experiment(args: list[str]):
             repair_action=(
                 f"steerlab-server experiment verify {manifest.name} "
                 "(names every drifted pin) ; then restore the named files, or "
-                "author the manifest's replacement on the Mac "
-                f"(steerlab-cli experiment duplicate {manifest.name} "
-                f"{manifest.name}-v2) and re-pin"),
+                "author the manifest's replacement and re-pin — "
+                + _authoring_command(
+                    f"experiment duplicate {manifest.name} "
+                    f"{manifest.name}-v2")),
             payload={"experiment": manifest.name, "status": manifest.status,
                      "verified": False, "violations": list(violations)})
     if verb == "attach-artifact":
@@ -2429,8 +2440,8 @@ def _experiment(args: list[str]):
             next_action=(
                 next_action(
                     f"experiment freeze {name}",
-                    detail="run it on the Mac (steerlab-cli) — authoring is "
-                           "Mac-authority and this engine has no freeze verb")
+                    detail="this engine has no freeze verb — run it "
+                           + _authoring_command(f"experiment freeze {name}"))
                 if not vacuous else
                 next_action(
                     f"experiment validate {name}", requires_human=True,
@@ -2901,8 +2912,8 @@ def _experiment(args: list[str]):
             # part of the command (gate-5 dry run #2, P3).
             next_action=next_action(
                 f"experiment run {name}",
-                detail="freeze it on the Mac first (steerlab-cli experiment "
-                       f"freeze {name}) — authoring is Mac-authority"))
+                detail="freeze it first — "
+                       + _authoring_command(f"experiment freeze {name}")))
 
     sys.stderr.write(
         _EXPERIMENT_VERB_LINE

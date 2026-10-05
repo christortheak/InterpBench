@@ -2073,9 +2073,16 @@ def _model(invocation: Invocation) -> CLIResult:
                         + (f" at revision {revision}" if revision else "")
                         + f" under {mc.DIRECTORY}/ — an override sits beside a "
                         "DETECTED value, so the template has to be probed first"),
-                repair_action=(f"steerlab-server model capabilities {model_id} "
-                               "--probe (or steerlab-cli model capabilities "
-                               f"{model_id} --probe on the Mac), then re-run"))
+                # This client has no tokenizer, so it cannot probe; an ENGINE
+                # does, and its command line is named because that is the one
+                # command that produces the record. No other client's verb is
+                # named here: a repair is a command its reader can run.
+                repair_action=(f"probe the template on an engine, which can "
+                               "load the tokenizer: steerlab-server model "
+                               f"capabilities {model_id} --probe on the "
+                               "machine that runs the model. The record it "
+                               f"writes under {mc.DIRECTORY}/ belongs in this "
+                               "workspace; then re-run"))
         # The workspace `main` resolved is exported as STEERLAB_ROOT, which
         # is what every store path reads — the same tree `mc.lookup` searched.
         from .experiment import paths as _paths
@@ -4388,6 +4395,22 @@ def _version_result() -> CLIResult:
 
 
 def main(argv: list | None = None) -> int:
+    """One invocation, speaking as the CLIENT from first byte to last.
+
+    The store and policy modules this client shares with the engine compose
+    their repairs for whoever is showing them
+    (:mod:`steerlab_server.experiment.command_vocabulary`). Declaring the
+    speaker here, around the whole invocation, is what makes every refusal
+    that leaves this binary name ``steerlab`` verbs — the ones its reader can
+    run — and never another client's. It is scoped to the call, so an
+    in-process caller is left as it was found.
+    """
+    from .experiment import command_vocabulary as vocabulary
+    with vocabulary.speaking_as(vocabulary.CLIENT):
+        return _main(argv)
+
+
+def _main(argv: list | None = None) -> int:
     """One invocation: parse strictly, resolve the workspace, run the verb, and
     answer in the shared envelope.
 

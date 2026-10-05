@@ -5,6 +5,7 @@ Numerical/rendering rules remain in their existing domain owners.
 """
 from __future__ import annotations
 import math
+from . import command_vocabulary as vocabulary
 from . import prompt_render
 from .manifest_errors import ExperimentStoreError
 
@@ -95,11 +96,14 @@ def unknown_outcome_instrument_problem(d: dict) -> str | None:
 
 
 def unknown_outcome_instrument_repair(name: str) -> str:
-    """THE repair, on both engines: ``set-instruments`` is authoring, and
-    authoring is Mac-authority (audit §10.x), so this engine's copy of the
-    refusal names the Mac binary too — exactly like the no-rubric sentence."""
-    return (f"steerlab-cli experiment set-instruments {name} <"
-            + "|".join(KNOWN_OUTCOME_INSTRUMENTS) + ">[,…]")
+    """THE repair: declaring instruments is authoring, so the command is
+    spelled for whoever shows the refusal (:mod:`command_vocabulary`) — its
+    own verb on the Mac command line, a protocol field on the cross-platform
+    client."""
+    known = "|".join(KNOWN_OUTCOME_INSTRUMENTS)
+    return vocabulary.authoring(vocabulary.protocol_field(
+        name, f"experiment set-instruments {name} <{known}>[,…]",
+        f"outcomeInstruments='[\"<{known}>\", …]'"))
 
 
 def apply_protocol(name: str, d: dict, fields: dict, *, capabilities=None) -> None:
@@ -255,13 +259,15 @@ def apply_protocol(name: str, d: dict, fields: dict, *, capabilities=None) -> No
         violations = exclusions.rule_violations(
             {"exclusionRules": fields["exclusionRules"]})
         if violations:
+            rules = "|".join(exclusions.RULE_IDS)
             raise ExperimentStoreError(
                 "; ".join(violations),
-                repair=f"steerlab-cli experiment set-exclusions {name} <"
-                       + "|".join(exclusions.RULE_IDS)
-                       + ">[,…] [--endpoint <key>] [--min <x>] [--max <x>], "
-                       "or re-run with a --set exclusionRules=<json> the "
-                       "sentences above accept")
+                repair=vocabulary.authoring(vocabulary.protocol_field(
+                    name,
+                    f"experiment set-exclusions {name} <{rules}>[,…] "
+                    "[--endpoint <key>] [--min <x>] [--max <x>]",
+                    "exclusionRules=<a JSON list the sentences above "
+                    "accept>")))
     for key, value in fields.items():
         if value is None:
             # An explicit JSON null CLEARS the field — it does not persist as

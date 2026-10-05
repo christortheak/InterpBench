@@ -34,6 +34,7 @@ import os
 
 import pytest
 
+from steerlab_server.experiment import command_vocabulary as vocabulary
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import lifecycle_gates
 from steerlab_server.experiment.manifest import resolve_sweep_layers
@@ -440,7 +441,11 @@ def test_the_client_carries_the_stores_gate_out_verbatim(tmp_path, capsys):
     envelope = json.loads(capsys.readouterr().out)
     assert envelope["state"] == "refused"
     assert envelope["error"]["gate"] == lifecycle_gates.SWEEP_GRID_RULE
-    assert envelope["error"]["repairAction"] == es.sweep_grid_repair("s")
+    # The store's own repair, in the words of the client that shows it.
+    with vocabulary.speaking_as(vocabulary.CLIENT):
+        assert envelope["error"]["repairAction"] == es.sweep_grid_repair("s")
+    assert envelope["error"]["repairAction"].startswith(
+        "steerlab experiment set-sweep-grid s ")
 
 
 # =============================================================================
@@ -505,29 +510,59 @@ def test_sweep_grid_repairs_match_the_swift_literals():
     """Copied from ``ExperimentStore.sweepGridRepair`` /
     ``.absoluteLayersNeedDepthRepair`` / ``.absoluteLayersOutOfRangeRepair`` /
     ``.sweepSelectionOwnsRepair`` (``Sources/ExperimentKit/
-    ExperimentStore.swift``). Every one names ``steerlab-cli``, because a grid
-    is authoring and authoring is Mac-authority whichever engine answered.
+    ExperimentStore.swift``). The Swift sentences are the Mac command line
+    speaking for itself, so they are compared with this engine's sentence
+    AS THE MAC SAYS IT: same words, same order, same program.
     Swift twin test:
-    ``CLIEnvelopeParityTests.sweepGridRepairsMatchServerLiterals``."""
-    assert es.sweep_grid_repair("demo") == (
-        "steerlab-cli experiment set-sweep-grid demo --layer-fractions "
-        "0.5,0.7,0.85 --alphas 0.05,0.08,0.1,0.13  (both axes ascend, each "
-        "value once; alphas are residual-norm units above 0)")
-    assert es.absolute_layers_need_depth_repair("demo") == (
-        "steerlab-cli experiment extract demo  (any vector for the pinned "
-        "model states its depth) && steerlab-cli experiment set-sweep-grid "
-        "demo --layers <L>,…  ; or declare the grid in depth fractions, which "
-        "need no model: steerlab-cli experiment set-sweep-grid demo "
-        "--layer-fractions 0.5,0.7,0.85")
-    assert es.absolute_layers_out_of_range_repair("demo", 34) == (
-        "steerlab-cli experiment set-sweep-grid demo --layers <0…33>,…  ; or "
-        "declare depths instead, which survive a change of model: "
-        "steerlab-cli experiment set-sweep-grid demo --layer-fractions "
-        "0.5,0.7,0.85")
-    assert es.sweep_selection_owns_repair("demo", "--objective") == (
-        "steerlab-cli experiment set-sweep-selection demo --objective "
-        "<value>  (the selection RULE is that verb's; set-sweep-grid writes "
-        "the layer × alpha grid the rule then picks a winner from)")
+    ``CLIEnvelopeParityTests.sweepGridRepairsMatchServerLiterals``.
+
+    The same four repairs on the cross-platform client name its own verbs —
+    including the two places its route differs: extraction is a submission to
+    a runner, and the selection rule is a field of ``set-protocol``."""
+    with vocabulary.speaking_as(vocabulary.MAC):
+        assert es.sweep_grid_repair("demo") == (
+            "steerlab-cli experiment set-sweep-grid demo --layer-fractions "
+            "0.5,0.7,0.85 --alphas 0.05,0.08,0.1,0.13  (both axes ascend, "
+            "each value once; alphas are residual-norm units above 0)")
+        assert es.absolute_layers_need_depth_repair("demo") == (
+            "steerlab-cli experiment extract demo  (any vector for the pinned "
+            "model states its depth) && steerlab-cli experiment "
+            "set-sweep-grid demo --layers <L>,…  ; or declare the grid in "
+            "depth fractions, which need no model: steerlab-cli experiment "
+            "set-sweep-grid demo --layer-fractions 0.5,0.7,0.85")
+        assert es.absolute_layers_out_of_range_repair("demo", 34) == (
+            "steerlab-cli experiment set-sweep-grid demo --layers <0…33>,…  ; "
+            "or declare depths instead, which survive a change of model: "
+            "steerlab-cli experiment set-sweep-grid demo --layer-fractions "
+            "0.5,0.7,0.85")
+        assert es.sweep_selection_owns_repair("demo", "--objective") == (
+            "steerlab-cli experiment set-sweep-selection demo --objective "
+            "<value>  (the selection RULE is that verb's; set-sweep-grid "
+            "writes the layer × alpha grid the rule then picks a winner from)")
+
+    with vocabulary.speaking_as(vocabulary.CLIENT):
+        assert es.sweep_grid_repair("demo") == (
+            "steerlab experiment set-sweep-grid demo --layer-fractions "
+            "0.5,0.7,0.85 --alphas 0.05,0.08,0.1,0.13  (both axes ascend, "
+            "each value once; alphas are residual-norm units above 0)")
+        assert es.absolute_layers_need_depth_repair("demo") == (
+            "steerlab run demo --runner <url> --verb extract  (any vector "
+            "for the pinned model states its depth) && steerlab experiment "
+            "set-sweep-grid demo --layers <L>,…  ; or declare the grid in "
+            "depth fractions, which need no model: steerlab experiment "
+            "set-sweep-grid demo --layer-fractions 0.5,0.7,0.85")
+        assert es.sweep_selection_owns_repair("demo", "--objective") == (
+            "steerlab experiment set-protocol demo --set sweep=<the sweep "
+            "block as JSON, with its selection>  (the selection RULE is part "
+            "of that block; set-sweep-grid writes the layer × alpha grid the "
+            "rule then picks a winner from)")
+
+    # The engine cannot know which client its reader has: both spellings.
+    engine = es.sweep_grid_repair("demo")
+    assert engine.startswith(
+        "on your authoring client: steerlab-cli experiment set-sweep-grid ")
+    assert "(Mac command line), or steerlab experiment set-sweep-grid demo " \
+        in engine
 
 
 def test_sweep_grid_problem_matches_the_swift_literals():

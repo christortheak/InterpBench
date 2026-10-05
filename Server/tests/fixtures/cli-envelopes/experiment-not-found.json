@@ -4,7 +4,7 @@
   "error": {
     "code": "notFound",
     "reason": "experiment 'nope' not found in this workspace",
-    "repairAction": "steerlab-server experiment list  (the experiments this workspace holds), then re-run with a name from it \u2014 or author it on the Mac: steerlab-cli experiment create <name> --model <id>"
+    "repairAction": "steerlab-server experiment list  (the experiments this workspace holds), then re-run with a name from it \u2014 or author it on your authoring client: steerlab-cli experiment create <name> --model <id>  (Mac command line), or steerlab experiment create <name> --model <id>  (cross-platform client)"
   },
   "message": "experiment 'nope' not found in this workspace",
   "observedAt": "1970-01-01T00:16:40Z",

@@ -24,6 +24,7 @@ import os
 
 import pytest
 
+from steerlab_server.experiment import command_vocabulary as vocabulary
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment import lifecycle_gates
 
@@ -381,7 +382,13 @@ def test_the_client_carries_the_gate_id_out_of_a_dependent_refusal(
     assert envelope["error"]["code"] == lifecycle_gates.CONCEPT_IN_USE
     assert envelope["error"]["gate"] == lifecycle_gates.CONCEPT_IN_USE
     assert "condition 'arm'" in envelope["error"]["reason"]
-    assert envelope["error"]["repairAction"] == es.concept_in_use_repair("c")
+    # The store's own repair, in the words of the client that shows it.
+    with vocabulary.speaking_as(vocabulary.CLIENT):
+        assert envelope["error"]["repairAction"] == \
+            es.concept_in_use_repair("c")
+    assert "steerlab experiment detach c <concept>…" \
+        in envelope["error"]["repairAction"]
+    assert "steerlab-cli" not in envelope["error"]["repairAction"]
     assert [c["name"] for c in es.load_raw("c", root)["concepts"]] == \
         ["alpha", "beta"]
 
@@ -486,18 +493,36 @@ def test_detach_repairs_match_the_swift_literals():
     """Copied from ``ExperimentStore.conceptInUseRepair`` /
     ``.conceptNotPinnedRepair`` (``Sources/ExperimentKit/ExperimentStore.swift``).
     ``detach``'s two typed refusals are the same rules on both engines, so the
-    repairs an agent follows verbatim must be the same bytes — and both name
-    ``steerlab-cli``, because authoring is Mac-authority whichever engine
-    answered. Swift twin test:
-    ``CLIEnvelopeParityTests.detachRepairsMatchServerLiterals``."""
-    assert es.concept_in_use_repair("demo") == (
-        "remove or re-declare those conditions first: steerlab-cli experiment "
-        "declare-condition demo <condition> … (re-declare onto a concept that "
-        "stays), then steerlab-cli experiment detach demo <concept>…")
-    assert es.concept_not_pinned_repair("demo") == (
-        "steerlab-cli experiment list  (result.experiments[].concepts names "
-        "what 'demo' pins), then steerlab-cli experiment detach demo <one of "
-        "those>")
+    repairs an agent follows verbatim must be the same sentence. The Swift
+    sentences are the Mac command line speaking for itself, so they are
+    compared with this engine's sentence AS THE MAC SAYS IT; the
+    cross-platform client says the same sentence with its own program. Swift
+    twin test: ``CLIEnvelopeParityTests.detachRepairsMatchServerLiterals``."""
+    with vocabulary.speaking_as(vocabulary.MAC):
+        assert es.concept_in_use_repair("demo") == (
+            "remove or re-declare those conditions first: steerlab-cli "
+            "experiment declare-condition demo <condition> … (re-declare "
+            "onto a concept that stays), then steerlab-cli experiment detach "
+            "demo <concept>…")
+        assert es.concept_not_pinned_repair("demo") == (
+            "steerlab-cli experiment list  (result.experiments[].concepts "
+            "names what 'demo' pins), then steerlab-cli experiment detach "
+            "demo <one of those>")
+    with vocabulary.speaking_as(vocabulary.CLIENT):
+        assert es.concept_in_use_repair("demo") == (
+            "remove or re-declare those conditions first: steerlab "
+            "experiment declare-condition demo <condition> … (re-declare "
+            "onto a concept that stays), then steerlab experiment detach "
+            "demo <concept>…")
+        assert es.concept_not_pinned_repair("demo") == (
+            "steerlab experiment list  (result.experiments[].concepts names "
+            "what 'demo' pins), then steerlab experiment detach demo <one of "
+            "those>")
+    # The engine cannot know which client its reader has: both spellings.
+    assert "on your authoring client: steerlab-cli experiment detach demo " \
+        "<concept>…  (Mac command line), or steerlab experiment detach demo " \
+        "<concept>…  (cross-platform client)" in \
+        es.concept_in_use_repair("demo")
 
 
 def test_the_two_engines_word_the_two_refusals_the_same_way(tmp_path):

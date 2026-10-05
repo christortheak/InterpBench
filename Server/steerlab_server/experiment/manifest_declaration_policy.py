@@ -466,9 +466,11 @@ def no_judge_declared_reason(name: str) -> str:
     state the panel-size rule actually protects against. Swift twin:
     ``ExperimentStore.noJudgeDeclaredReason``; the sentence is the
     contract."""
+    from . import command_vocabulary as vocabulary
+    pin_panel = vocabulary.authoring(vocabulary.pin_rubric(
+        name, "<rubric>", judges="<name>:<kind>[,…]"))
     return ("judge-evaluated study pins no judge — a judged instrument with "
-            "no judge codes nothing; pin a panel: 'steerlab-cli experiment "
-            f"pin-rubric {name} <rubric> --judges <name>:<kind>[,…]'. Or "
+            f"no judge codes nothing; pin a panel — {pin_panel}. Or "
             "freeze --force")
 
 

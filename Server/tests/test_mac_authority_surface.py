@@ -133,8 +133,12 @@ def test_refreezing_a_frozen_manifest_is_status_immutable(tmp_path):
     # Prose byte-stable; the structure is what moved.
     assert str(caught.value) == "'done' is already frozen"
     assert caught.value.gate == lifecycle_gates.STATUS_IMMUTABLE
+    # Duplicating is an authoring act: this engine names it for both clients.
     assert caught.value.repair_action.startswith(
-        "steerlab-cli experiment duplicate done done-v2")
+        "on your authoring client: steerlab-cli experiment duplicate done "
+        "done-v2 && steerlab-cli experiment freeze done-v2  (Mac command "
+        "line), or steerlab experiment duplicate done done-v2 && steerlab "
+        "experiment freeze done-v2  (cross-platform client)")
 
 
 def test_the_validate_evidence_gate_repair_names_this_engine():
@@ -145,9 +149,18 @@ def test_the_validate_evidence_gate_repair_names_this_engine():
     repair = freeze_policy.freeze_gate_repair("validateEvidence", "demo")
     assert repair.startswith("steerlab-server experiment validate demo")
     assert "python-hf-transformers" in repair
-    # Authoring gates still name the Mac.
-    assert freeze_policy.freeze_gate_repair(
-        "judgeValidity", "demo").startswith("steerlab-cli experiment pin-rubric")
+    # The freeze that follows is authoring, which this engine never does: it
+    # says where, and gives the command for both clients.
+    assert repair.endswith(
+        "then on your authoring client: steerlab-cli experiment freeze demo  "
+        "(Mac command line), or steerlab experiment freeze demo  "
+        "(cross-platform client)")
+    # Authoring gates name both clients too, each with its own verb.
+    judge = freeze_policy.freeze_gate_repair("judgeValidity", "demo")
+    assert judge.startswith(
+        "on your authoring client: steerlab-cli experiment pin-rubric demo ")
+    assert "or steerlab experiment set-protocol demo --set judgeRubricFile=" \
+        in judge
     # And every gate id in the closed vocabulary has one.
     for gate in experiment_store.FORCED_GATE_IDS:
         assert freeze_policy.freeze_gate_repair(gate, "demo")
