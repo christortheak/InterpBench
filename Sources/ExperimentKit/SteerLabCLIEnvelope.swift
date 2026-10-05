@@ -261,6 +261,16 @@ public enum CLIAdvisory: String, CaseIterable, Sendable, Codable {
     /// no capability control behind it.
     case capabilityControlNotApplied
 
+    /// The workspace's chosen compute cannot run something the study
+    /// declares: probe measurements, agents with intervention policies, SAE
+    /// latent arms, or a J-lens readout on the engine built into this app.
+    /// Said at verify and in the readiness checklist, while the study is
+    /// still being designed, and never a refusal: verify and freeze stay
+    /// open, because a study may be authored here and run elsewhere. Which
+    /// choice runs what is the shipped catalog's `whereItRuns`
+    /// (`ComputeLimits`; server twin `compute_limits`).
+    case computeCannotRun
+
     public static let vocabulary: [String] = allCases.map(\.rawValue)
 }
 

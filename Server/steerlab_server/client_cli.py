@@ -1951,6 +1951,14 @@ def _experiment(invocation: Invocation) -> CLIResult:
             for note in manifest.capability_advisories(None):
                 sys.stderr.write(f"ADVISORY: {note}\n")
                 advisories.append(_advisory("modelCapabilities", note))
+            # Something the study declares that the workspace's chosen
+            # compute cannot run: said now, while designing, and never a
+            # refusal. Swift twin: the Mac `experiment verify`.
+            from .experiment import compute_limits, paths as _paths
+            for note in compute_limits.client_advisories(
+                    manifest.raw, _paths.project_root(), program=PROGRAM):
+                sys.stderr.write(f"ADVISORY: {note}\n")
+                advisories.append(_advisory("computeCannotRun", note))
             return CLIResult(
                 message="OK — all pinned inputs verified",
                 state="okWithAdvisories" if advisories else "ready",
