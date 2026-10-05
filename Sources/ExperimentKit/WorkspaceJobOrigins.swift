@@ -230,7 +230,7 @@ public enum WorkspaceJobOrigins {
             let existingVersion = document["schemaVersion"] as? Int ?? 0
             document["schemaVersion"] = max(existingVersion, schemaVersion)
             let data = try JSONSerialization.data(
-                withJSONObject: document, options: [.prettyPrinted, .sortedKeys])
+                withJSONObject: document, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
             try data.write(to: url, options: .atomic)
         }
     }
