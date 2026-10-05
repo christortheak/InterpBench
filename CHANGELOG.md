@@ -12,6 +12,28 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **Older Mac analyses are described by what they counted.** Before this
+  release, the Mac engine paired every response of a study run with several
+  samples per item and counted responses, not items. `results export` and
+  `results report` now check each stored effect against the run's records: a
+  row that counts more pairs than the run has items is labelled as paired
+  responses from so many items, its interval is said not to be an item-level
+  finding, and the minimum-pairs rule counts its items. The stored numbers are
+  unchanged; analyzing the run again gives item-level rows.
+- **Custom code in a standalone diagnostic gets the same notice.** The cost
+  instrument, or a battery whose agents carry policies, can run a policy's
+  expert provider. `science input-plan` now shows the notice and the code,
+  and `science package` packages such inputs only once the code is
+  acknowledged, earlier or with `--custom-code-sha256` and the SHA-256 the
+  plan shows.
+- **Large numbers in settings an older app does not know are kept exactly.**
+  A draft saved by an older app used to round integers above 2^53 in settings
+  added by a newer version, such as a 64-bit seed.
+- **The client installer never deletes a running setup's work.** In a sandbox
+  that refuses process inspection, a second setup used to take the first
+  one's lock and delete its staging folder. A lock is now reclaimed only when
+  its owner is shown to be gone; otherwise the setup stops and says how to
+  clear the lock if no setup is running.
 - **A quick card for coding assistants.** `workspace guide verbs`, on either
   command line, gives one line per task: the command, and the rule that
   applies. It is about 5 KB, where the topics an assistant used to load for a
