@@ -8,8 +8,10 @@ where a value was not stored.
 Layout, so a later page (a study's results, say) reuses the general parts:
 
 * ``page``    the document frame, styles, tables, and small building blocks;
-* ``charts``  inline SVG line charts with a text alternative;
+* ``charts``  inline SVG line charts and forest charts, with a text alternative;
 * ``jlens_assessment``  the J-lens assessment page, built from those two;
 * ``science_report``    the ``science report`` verb: find the stored report,
-  choose where the page goes, and write it without touching a run directory.
+  choose where the page goes, and write it without touching a run directory;
+* ``study_results``     the results page of an ordinary study, drawn from the
+  same reading ``results export`` makes (``results_export.read_results``).
 """

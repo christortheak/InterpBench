@@ -1891,38 +1891,51 @@ def _codebook(study, tables, transcripts):
     lines += ["## Other files", "",
               "- `methods.md`: a plain-language account of how the results were "
               "produced, built from the run's stored facts.",
+              f"- `{REPORT_PAGE}`: the same results as one readable page, which "
+              "opens in any web browser and can be sent to a colleague as it "
+              "is. It holds no response text.",
               "- `manifest.json`: every file this export was built from, with its "
               "SHA-256 hash, and every file it wrote.", ""]
     return "\n".join(lines)
 
 
-# --- the export ----------------------------------------------------------------
+#: The readable page an export carries, drawn by ``reports.study_results``
+#: from the same reading as every other file here.
+REPORT_PAGE = "report.html"
 
 
-def export_results(root, study, *, run=None, out=None, client=PYTHON_CLIENT, now=None):
-    """Export ``study``'s results from the workspace at ``root``.
+# --- reading a study's stored results once -------------------------------------
 
-    ``run`` names a run directory (absolute, relative to the workspace, or a
-    bare directory name under ``runs/``); absent, the newest completed run is
-    used, with its newest analysis and evaluation. ``out`` names a new or
-    empty destination folder; absent, a new folder under ``exports/`` in the
-    workspace. A relative ``out`` is taken from the workspace root.
 
-    Returns a JSON-ready description of what was written. Raises
-    :class:`ResultsExportRefusal` before anything is written when the request
-    cannot be met.
-    """
+def selected_run(root, study, *, run=None, client=PYTHON_CLIENT):
+    """The run a request names, after the checks every reader makes: the
+    workspace's absolute path, the run's directory name, and the steps for
+    the client that asked. Raises :class:`ResultsExportRefusal`."""
     if client not in CLIENTS:
         client = PYTHON_CLIENT
     root = os.path.abspath(root)
-    # The folder's name and the summary's date are for a person, so they use
-    # the local calendar; the manifest's timestamp is UTC.
-    now = (now or datetime.now(timezone.utc)).astimezone()
     steps = _steps(client, study)
     _check_study_name(study, steps)
-    run_name = _select_run(root, study, run, steps, client)
-    target = _destination(root, study, out, steps, now)
+    return root, _select_run(root, study, run, steps, client), steps
 
+
+def read_results(root, study, *, run=None, client=PYTHON_CLIENT, now=None):
+    """Everything a completed run, its analysis, and its evaluation stored,
+    read once, for any reader that shows it (the export, the results page).
+
+    Nothing is written and nothing is recalculated. ``run`` is chosen exactly
+    as :func:`export_results` chooses it. The answer is a dictionary: the
+    tables and summaries the export writes, the facts they were built from
+    (``context``), the normalized effect rows, what was read with its hashes
+    (``sources``), and what the run did not store (``missing``).
+    """
+    root, run_name, steps = selected_run(root, study, run=run, client=client)
+    now = (now or datetime.now(timezone.utc)).astimezone()
+    return _collect(root, study, run_name, steps, now)
+
+
+def _collect(root, study, run_name, steps, now):
+    """Read one run with its newest analysis and evaluation. The one reader."""
     runs_root = _runs_root(root)
     run_directory = os.path.join(runs_root, run_name)
     sources = _Sources(root)
@@ -1963,12 +1976,12 @@ def export_results(root, study, *, run=None, out=None, client=PYTHON_CLIENT, now
     analysis_label = _relative(effects_directory, root) if effects_directory else None
     effects_source, outcomes, corrections, units = None, [], [], []
     unit_recorded, strata_rows, analysis_flags = False, 0, {}
-    exclusions = []
+    exclusions, effect_rows, stamped_unit = [], [], None
     if effects_directory:
         role = "analysis" if analysis_name else "run"
         text = sources.text(os.path.join(effects_directory, "effect-sizes.csv"), role) or ""
         rows, effects_source = _read_effects(text)
-        stamped_unit = None
+        effect_rows = rows
         if analysis_name:
             unit_stamp = sources.json(os.path.join(effects_directory, "unit-of-analysis.json"), role)
             if isinstance(unit_stamp, dict):
@@ -2064,17 +2077,60 @@ def export_results(root, study, *, run=None, out=None, client=PYTHON_CLIENT, now
         "corrections": corrections, "units": units, "unitRecorded": unit_recorded,
         "strataRows": strata_rows, "effectsSource": effects_source,
         "analysisFlags": analysis_flags, "exclusions": exclusions,
-        "experimentHash": experiment_hash, **context_rows,
+        "experimentHash": experiment_hash, "effectRows": effect_rows,
+        "stampedUnit": stamped_unit, **context_rows,
     }
+    # Writing the summary also completes ``missing``: every fact it looks
+    # for and does not find is added there, so any reader that shows
+    # ``missing`` lists exactly what the summary says is not available.
     methods = _methods(context)
+    seen, not_available = set(), []
+    for entry in missing:
+        if entry["what"] not in seen:
+            seen.add(entry["what"])
+            not_available.append(entry)
+    return {"study": study, "runName": run_name, "context": context, "methods": methods,
+            "tables": tables, "conversations": conversations, "sources": sources.entries,
+            "notAvailable": not_available, "names": names, "version": __version__}
+
+
+def export_results(root, study, *, run=None, out=None, client=PYTHON_CLIENT, now=None):
+    """Export ``study``'s results from the workspace at ``root``.
+
+    ``run`` names a run directory (absolute, relative to the workspace, or a
+    bare directory name under ``runs/``); absent, the newest completed run is
+    used, with its newest analysis and evaluation. ``out`` names a new or
+    empty destination folder; absent, a new folder under ``exports/`` in the
+    workspace. A relative ``out`` is taken from the workspace root.
+
+    Returns a JSON-ready description of what was written. Raises
+    :class:`ResultsExportRefusal` before anything is written when the request
+    cannot be met.
+    """
+    # The folder's name and the summary's date are for a person, so they use
+    # the local calendar; the manifest's timestamp is UTC.
+    now = (now or datetime.now(timezone.utc)).astimezone()
+    root, run_name, steps = selected_run(root, study, run=run, client=client)
+    target = _destination(root, study, out, steps, now)
+
+    stored = _collect(root, study, run_name, steps, now)
+    context, tables, conversations = stored["context"], stored["tables"], stored["conversations"]
+    snapshot, config = context["snapshot"], context["config"]
+    names, not_available = stored["names"], stored["notAvailable"]
+    analysis_label, experiment_hash = context["analysisLabel"], context["experimentHash"]
+    __version__ = stored["version"]
     codebook = _codebook(study, tables, len(conversations))
 
     files = {table.file: table.csv_text() for table in tables}
     for conversation in conversations:
         files[f"transcripts/{conversation['name']}.txt"] = _transcript_text(
             study, run_name, conversation)
-    files["methods.md"] = methods
+    files["methods.md"] = stored["methods"]
     files["codebook.md"] = codebook
+    # The readable page, drawn from this same reading: byte for byte the page
+    # `results report` writes for the same run, analysis, and evaluation.
+    from .reports import study_results
+    files[REPORT_PAGE] = study_results.render(stored)
 
     written = []
     row_counts = {table.file: table for table in tables}
@@ -2085,11 +2141,6 @@ def export_results(root, study, *, run=None, out=None, client=PYTHON_CLIENT, now
             entry["rows"] = len(row_counts[name].rows)
             entry["columns"] = row_counts[name].names
         written.append(entry)
-    seen, not_available = set(), []
-    for entry in missing:
-        if entry["what"] not in seen:
-            seen.add(entry["what"])
-            not_available.append(entry)
     # The files stay neutral about which client made them: a repair that
     # names a command goes only into the answer returned to the caller.
     recorded = [{"what": entry["what"], "why": entry["why"]} for entry in not_available]
@@ -2108,7 +2159,7 @@ def export_results(root, study, *, run=None, out=None, client=PYTHON_CLIENT, now
         "forcedGatesSkipped": list(snapshot.get("forcedGatesSkipped") or []),
         "capabilityBatteryNotApplied": list(snapshot.get("capabilityBatteryNotApplied") or []),
         "lineBreakMark": LINE_BREAK_MARK,
-        "sources": sources.entries,
+        "sources": stored["sources"],
         "files": written,
         "notAvailable": recorded,
     }

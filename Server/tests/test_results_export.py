@@ -340,7 +340,7 @@ def test_a_python_engine_run_exports_every_file_from_its_real_analysis(root):
     assert os.path.dirname(directory) == os.path.join(str(root), "exports")
     assert sorted(os.listdir(directory)) == [
         "codebook.md", "effects-by-stratum.csv", "effects.csv", "manifest.json",
-        "methods.md", "responses.csv"]
+        "methods.md", "report.html", "responses.csv"]
 
     # One row per response, with the outcomes the run recorded for each.
     responses = _table(result, "responses.csv")
