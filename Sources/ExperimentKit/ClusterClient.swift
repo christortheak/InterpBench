@@ -9,11 +9,17 @@ public struct ClusterConnectionProfile: Codable, Sendable, Equatable {
     public var name: String
     public var baseURL: URL
     public var tokenKey: String?
+    /// The durable identity of the saved server this connection belongs to
+    /// (`ClusterConnectionStore.registryKey`): an SSH site's remote endpoint,
+    /// never its tunnel's local port. Nil for a connection built from a bare
+    /// URL, and absent from origins recorded before it existed.
+    public var serverIdentity: String?
 
-    public init(name: String = "Default", baseURL: URL, tokenKey: String? = nil) {
+    public init(name: String = "Default", baseURL: URL, tokenKey: String? = nil, serverIdentity: String? = nil) {
         self.name = name
         self.baseURL = baseURL
         self.tokenKey = tokenKey
+        self.serverIdentity = serverIdentity
     }
 }
 

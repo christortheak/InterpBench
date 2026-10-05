@@ -2493,11 +2493,37 @@ public struct ExperimentCLIRunner: Sendable {
             }
         }
         let client = ClusterClient(profile: ClusterConnectionProfile(baseURL: url), token: token)
+        /// Leave a record in the workspace of where this job went, so the app
+        /// can import from or act on it without a reconnect. Best effort: the
+        /// job exists whatever happens here, so a failure is a warning.
+        func recordJobOrigin(_ jobID: String?, experiment: String? = nil, verb: String? = nil, operation: String) async {
+            guard let jobID, !jobID.isEmpty else { return }
+            let servingRoot = (try? await client.serverInfo())?.root
+            do {
+                try WorkspaceJobOrigins.record(
+                    WorkspaceJobOrigin(
+                        serverIdentity: serverIdentity, endpoint: url.absoluteString, siteID: siteID,
+                        servingRoot: servingRoot, workspaceRoot: remoteWorkspaceRoot.path,
+                        submittedBy: WorkspaceJobOrigin.macCommandLine, experiment: experiment,
+                        verb: verb, operation: operation),
+                    jobID: jobID, workspaceRoot: remoteWorkspaceRoot)
+            } catch {
+                sink.err("warning: job \(jobID) was submitted, but its origin could not be recorded in "
+                    + "this workspace (\(error.localizedDescription)) — the app will ask you to reconnect "
+                    + "to it by job ID before importing its evidence\n")
+            }
+        }
         if DiagnosticRemoteCLI.verbs.contains(verb) {
             return try await DiagnosticRemoteCLI.run(args, client: client, root: remoteWorkspaceRoot, sink: sink)
         }
         if scientificWorkflow {
-            return try await RemoteScientificWorkflowsCLI.run(args, client: client, endpoint: url, sink: sink)
+            let result = try await RemoteScientificWorkflowsCLI.run(args, client: client, endpoint: url, sink: sink)
+            if verb == "science-submit", case .object(let response)? = result.payload["response"],
+                case .string(let jobID)? = response["jobId"]
+            {
+                await recordJobOrigin(jobID, operation: "science-submit")
+            }
+            return result
         }
         if preparesModel {
             return try await RemoteModelPreparationCLI.run(args, client: client, endpoint: url, sink: sink)
@@ -2627,6 +2653,9 @@ public struct ExperimentCLIRunner: Sendable {
                 sourceRun: submitSourceRun,
                 samplePerCondition: submitSubsample?.samplePerCondition,
                 sampleSeed: submitSubsample?.seedText)
+            await recordJobOrigin(
+                submission.jobId, experiment: submission.experiment, verb: submission.verb,
+                operation: "submit-bundle")
             return try respond(
                 submission, message: "submitted \(path)",
                 extra: [
@@ -2770,6 +2799,13 @@ public struct ExperimentCLIRunner: Sendable {
                         + "under the script's own walltime\n")
             }
             let continuation = resubmission.jobId ?? "(existing continuation)"
+            // The continuation is a NEW job record on the same server; its
+            // evidence is imported by its own ID.
+            let originalOrigin = WorkspaceJobOrigins.origins(forJob: resubmitJobID, workspaceRoot: remoteWorkspaceRoot)
+                .first { $0.serverIdentity == serverIdentity }
+            await recordJobOrigin(
+                resubmission.jobId, experiment: originalOrigin?.experiment, verb: originalOrigin?.verb,
+                operation: "resubmit")
             let message: String
             if resubmission.resumedAfterCancel == true,
                 resubmission.resumedShards != nil
