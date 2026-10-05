@@ -231,11 +231,7 @@ def test_every_download_is_bounded_and_retried(tmp_path):
         assert flag in arguments, f'curl runs without {flag}'
     assert int(arguments[arguments.index('--retry') + 1]) >= 1
     assert int(arguments[arguments.index('--max-time') + 1]) > 0
-    # uv downloads the managed Python and the packages itself; its own bounds
-    # are set in the environment it runs in.
-    text = (RESOURCES / 'install-client.sh').read_text()
-    for variable in ('UV_HTTP_TIMEOUT', 'UV_HTTP_CONNECT_TIMEOUT', 'UV_HTTP_RETRIES'):
-        assert f'{variable}="${{{variable}:-' in text, f'uv runs without {variable}'
+    # uv's own bounds: test_a_failed_uv_step_is_named_by_what_went_wrong.
     assert_nothing_changed(tmp_path, runtime, old)
 
 
@@ -348,6 +344,83 @@ def test_an_unwritable_location_has_its_own_message(tmp_path):
     (tmp_path / 'a-file').write_text('')
     result, response = call(folder, 'plan', '--runtime', str(tmp_path / 'a-file' / 'client-runtime'))
     assert result.returncode == 65 and response['code'] == 'unwritableDestination'
+
+
+def stand_in_uv(tmp_path, platform, body):
+    """Tools that get the installer past its uv download to a stand-in uv.
+
+    curl "downloads" a small tarball holding `uv-<platform>/uv` (the given
+    shell body). The installer's checksum comparison is unchanged: a
+    stand-in `sha256sum` reports the installer's own pinned value for that
+    one tarball, and the true SHA-256 for everything else, plan hashes
+    included."""
+    import hashlib
+    import io
+    import re
+    import sys
+    import tarfile
+    pinned = dict(re.findall(r'platform=(\S+)\n\s+uv_sha=([0-9a-f]{64})', (RESOURCES / 'install-client.sh').read_text()))[platform]
+    tarball = tmp_path / 'uv.tar.gz'
+    with tarfile.open(tarball, 'w:gz') as archive:
+        data = ('#!/bin/sh\n' + body).encode()
+        member = tarfile.TarInfo(f'uv-{platform}/uv')
+        member.size, member.mode = len(data), 0o755
+        archive.addfile(member, io.BytesIO(data))
+    digest = hashlib.sha256(tarball.read_bytes()).hexdigest()
+    return tools(
+        tmp_path,
+        curl=f'while [ "$#" -gt 1 ]; do [ "$1" = -o ] && cp "{tarball}" "$2"; shift; done\nexit 0\n',
+        sha256sum=(f'real=$("{sys.executable}" -c "import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())")\n'
+                   f'if [ "$real" = {digest} ]; then echo "{pinned}  -"; else echo "$real  -"; fi\n'))
+
+
+@pytest.mark.parametrize('message, code', [
+    ('error: No space left on device (os error 28)', 'diskFull'),
+    ('error: Hash mismatch for `numpy==2.5.3`', 'checksumMismatch'),
+    ('error: invalid peer certificate: UnknownIssuer', 'tlsFailure'),
+    ('error: Failed to download distribution due to network timeout. Try increasing UV_HTTP_TIMEOUT', 'downloadStalled'),
+    ('error: dns error: failed to lookup address information', 'noNetwork'),
+    ('error: something nobody anticipated', 'installFailed'),
+])
+def test_a_failed_uv_step_is_named_by_what_went_wrong(tmp_path, message, code):
+    folder = release(tmp_path)
+    runtime, old = managed_runtime(tmp_path)
+    _, plan = call(folder, 'plan', '--runtime', str(runtime))
+    record = tmp_path / 'uv-environment'
+    env = stand_in_uv(tmp_path, plan['platform'], f'env > "{record}"\necho \'{message}\' >&2\nexit 2\n')
+    for variable in ('UV_HTTP_TIMEOUT', 'UV_HTTP_CONNECT_TIMEOUT', 'UV_HTTP_RETRIES'):
+        env.pop(variable, None)   # the installer's own bounds, not this machine's
+    result, response = install(folder, runtime, env)
+    assert response['code'] == code, response
+    assert result.returncode == (65 if code == 'checksumMismatch' else 70)
+    assert message in result.stderr, 'the step output reaches the setup log'
+    if code == 'installFailed':
+        assert 'while downloading the managed Python' in response['reason']
+    # uv ran with bounded downloads.
+    settings = dict(line.split('=', 1) for line in record.read_text().splitlines() if line.startswith('UV_HTTP_'))
+    assert settings['UV_HTTP_TIMEOUT'] == '60' and settings['UV_HTTP_CONNECT_TIMEOUT'] == '20'
+    assert int(settings['UV_HTTP_RETRIES']) >= 1
+    assert_nothing_changed(tmp_path, runtime, old)
+
+
+@pytest.mark.parametrize('shell', SHELLS)
+def test_cancel_stops_a_stalled_uv_step(tmp_path, shell):
+    folder = release(tmp_path)
+    runtime, old = managed_runtime(tmp_path)
+    _, plan = call(folder, 'plan', '--runtime', str(runtime))
+    env = stand_in_uv(tmp_path, plan['platform'], f'echo "$$" > "{tmp_path}/uv-pid"\nexec sleep 60\n')
+    process = subprocess.Popen([shell, str(folder / 'install-client.sh'), 'repair', '--runtime', str(runtime), '--expect', plan['planSHA256'], '--yes'],
+                               text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    try:
+        uv = wait_for(tmp_path / 'uv-pid')
+        process.send_signal(signal.SIGTERM)
+        stdout, _ = process.communicate(timeout=15)
+    finally:
+        if process.poll() is None:
+            process.kill()
+    assert process.returncode == 130 and json.loads(stdout)['code'] == 'cancelled'
+    assert gone(uv)
+    assert_nothing_changed(tmp_path, runtime, old)
 
 
 # A curl that stays connected until it is stopped, recording its process.
