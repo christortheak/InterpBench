@@ -170,7 +170,8 @@ struct RunSemanticSectionsContent<AnalyzeRow: View>: View {
                     headline: model.headline)
                 EffectSizesTableView(
                     rows: effectSizes,
-                    interventions: model.conditionInterventions)
+                    interventions: model.conditionInterventions,
+                    records: model.effectUnitRecords)
             }
             if let residuals = model.alienResiduals, !residuals.isEmpty {
                 AlienResidualsTableView(rows: residuals)
@@ -1122,6 +1123,10 @@ struct EffectSizesTableView: View {
     /// lets the narrative lead with "Steering 'fear' at layer 12 …" instead
     /// of the bare condition name.
     var interventions: [String: String] = [:]
+    /// What the rows' units were settled against
+    /// (`RunResults.Model.effectUnitRecords`), for the unit-of-analysis
+    /// lines under the table.
+    var records: RunResults.PairedItems?
 
     var body: some View {
         GroupBox("Effect sizes (paired to baseline)") {
@@ -1160,6 +1165,7 @@ struct EffectSizesTableView: View {
             Text("condition")
             Text("metric")
             Text("n")
+            Text("unit")
             Text("Δ mean [95% CI]")
             Text("CI")
             Text("p (Wilcoxon)")
@@ -1175,10 +1181,17 @@ struct EffectSizesTableView: View {
             Text(row.condition)
             Text(row.metric)
             Text("\(row.n)")
-            // One or two paired items cannot carry an interval, so the cell
-            // says so instead of printing a range (and draws no bar).
+            // What `n` counts, settled from the run's records when the
+            // analysis did not stamp it (`EffectSizeRow.unit`).
+            Text(EffectNarrative.unitLabel(row))
+            // One or two pairs (for paired responses, one or two items)
+            // cannot carry an interval, so the cell says so instead of
+            // printing a range (and draws no bar).
             if EffectNarrative.hasTooFewPairs(row) {
-                Text(String(format: "%+.4g  [too few pairs]", row.meanDiff))
+                Text(
+                    String(
+                        format: "%+.4g  [too few %@]", row.meanDiff,
+                        EffectNarrative.tooFewNoun(row)))
                 Text("—").foregroundStyle(.secondary)
             } else {
                 Text(
@@ -1222,12 +1235,22 @@ struct EffectSizesTableView: View {
     }
 
     private var caption: some View {
-        Text(
-            "significance uses the corrected p when the run carries one "
-                + "(adjustedP — both engines stamp it), else the raw Wilcoxon "
-                + "p — bars show the bootstrap CI around zero")
-            .font(.caption2)
-            .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 2) {
+            // What one paired difference is, and how that is known: stamped
+            // by the analysis, or settled from the run's records.
+            ForEach(
+                EffectNarrative.unitLines(rows: rows, records: records), id: \.self
+            ) { line in
+                Text(line)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(
+                "significance uses the corrected p when the run carries one "
+                    + "(adjustedP — both engines stamp it), else the raw Wilcoxon "
+                    + "p — bars show the bootstrap CI around zero")
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
     }
 }
 

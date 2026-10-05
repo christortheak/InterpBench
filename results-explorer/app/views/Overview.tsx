@@ -5,6 +5,7 @@ import { FreezeNotice, TruncationCard } from "../components/stamps";
 import { Badge, ForestRow, NoRunSelected } from "../components/ui";
 import { DemoOverview, demoPreviewEnabled } from "../demo";
 import { findFile, runKindOf, runStatusOf } from "../lib/discovery";
+import { unitCaveat } from "../lib/effectUnits";
 import { fmt } from "../lib/format";
 import { freezeLabel, freezeOf } from "../lib/freeze";
 import {
@@ -161,6 +162,9 @@ function HeadlineCard({ run, pooled, onNavigate }: { run: WorkspaceRun; pooled: 
             {row.condition ? `${row.condition} · ` : ""}{intervalLine(row, fmt)}{pLine(row, pooled) ? ` · ${pLine(row, pooled)}` : ""}
             {rows.length > 1 ? ` · ${rows.length - 1} more condition${rows.length === 2 ? "" : "s"} in the full table` : ""}
           </p>
+          {/* Paired responses, or pairs nothing settles, are said to be what
+              they are beside the headline (lib/effectUnits.ts). */}
+          {unitCaveat(row) && <p>{unitCaveat(row)}</p>}
         </> : <p>Read from this run&apos;s evaluation report (<code>{report}</code>). <button className="quiet-link" onClick={() => onNavigate(report === "coding-report.json" ? "coding" : "judged")}>Open the judged evaluation →</button></p>}
         <p>Headline {headline.chosenBy}. Every other measure is in the full table.</p>
       </>}

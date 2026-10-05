@@ -20,13 +20,16 @@ import Testing
         ciUpper: Double = 0.48,
         wilcoxonP: Double? = nil,
         adjustedP: Double? = nil,
-        correction: String? = nil
+        correction: String? = nil,
+        unit: RunResults.EffectUnit = .init(unit: "item", source: .engineDefault)
     ) -> RunResults.EffectSizeRow {
+        // An item-level row, as the Results model settles a current run's
+        // rows against its records (`EffectUnitTests` covers the settling).
         RunResults.EffectSizeRow(
             condition: condition, metric: metric, n: n, meanDiff: meanDiff,
             ciLower: ciLower, ciUpper: ciUpper, wilcoxonW: nil,
             wilcoxonP: wilcoxonP, adjustedP: adjustedP, correction: correction,
-            modality: nil)
+            modality: nil, unit: unit)
     }
 
     // MARK: - A sentence per effect
@@ -264,6 +267,39 @@ import Testing
         #expect(!sentence.contains("survive"))
         #expect(EffectNarrative.hasTooFewPairs(row(n: n)))
         #expect(!EffectNarrative.hasReportableInterval(row(n: n)))
+    }
+
+    /// A row that paired responses counts its ITEMS for the minimum: eight
+    /// responses from two items are too few, and the sentence says items.
+    @Test func pairedResponsesCountTheirItemsForTheMinimum() {
+        let responses = row(
+            n: 8, adjustedP: 0.01, correction: "bh",
+            unit: .init(unit: "response", source: .inferredFromRecords, pairedItems: 2))
+        let sentence = EffectNarrative.sentence(for: responses, familySize: 2)
+        #expect(sentence.contains(
+            "across 8 paired responses from 2 items (too few items for a "
+                + "confidence interval; at least 3 are needed) — with so few "
+                + "items this describes these items only, and is not a test."))
+        #expect(EffectNarrative.hasTooFewPairs(responses))
+        #expect(EffectNarrative.tooFewNoun(responses) == "items")
+        // Three items carry the stored interval, with what it is not.
+        let three = row(
+            n: 6, unit: .init(unit: "response", source: .inferredFromRecords, pairedItems: 3))
+        #expect(!EffectNarrative.hasTooFewPairs(three))
+        #expect(EffectNarrative.sentence(for: three, familySize: 0).hasSuffix(
+            " " + EffectNarrative.responseCaveat + "."))
+    }
+
+    /// A transcript-level row counts transcripts, and one nothing settles
+    /// counts plain pairs.
+    @Test func otherUnitsCountInTheirOwnNouns() {
+        #expect(EffectNarrative.countPhrase(
+            row(n: 4, unit: .init(unit: "transcript", source: .recorded))) == "4 paired transcripts")
+        #expect(EffectNarrative.countPhrase(row(n: 1, unit: .unresolved)) == "1 pair")
+        #expect(EffectNarrative.countPhrase(row(n: 0)) == nil)
+        #expect(EffectNarrative.tooFewCaption([row(n: 2)]) == "A row with fewer than 3 "
+            + "paired items has no whisker: that is too few pairs for an interval")
+        #expect(EffectNarrative.tooFewCaption([row(n: 3)]) == nil)
     }
 
     @Test func threePairsCarryAnInterval() {

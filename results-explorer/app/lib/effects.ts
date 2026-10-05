@@ -19,6 +19,7 @@
 // Nothing here computes a statistic. Grouping is arrangement; every number
 // still comes from the file.
 
+import { countPhrase, UNIT_NOUNS, unitOf } from "./effectUnits";
 import type { Effect } from "./types";
 
 // ASCII unit separator: it cannot occur in a CSV field either engine writes,
@@ -90,24 +91,24 @@ export const isDiagnostic = (row: Effect) =>
   row.inference === "diagnostic" || row.estimand === "withinItemSamples"
   || (row.stratifyBy !== "pooled" && row.pairedUnit === "sample");
 
-/// The paired-count sentence, in the unit the count is actually in.
+/// The paired-count sentence, in the unit the count is actually in: the
+/// row's settled unit (lib/effectUnits.ts), never an assumed one.
 ///
 /// A stratified row names its own unit (`unit` = "sample" or "item"). A
-/// POOLED row leaves that column empty, because its unit is the run's: one
-/// prompt item, or — for a multi-agent run — one TRANSCRIPT, where each
-/// conversation is reduced to a single difference before any test. Such a
-/// row used to read "n = 4 paired items" when four transcripts were all
-/// there was; it now reads "n = 4 transcripts". An absent `n` reads "n not
-/// reported" — never "n = 0 items", which is a substantive claim the file
-/// did not make.
+/// POOLED row leaves that column empty, so its unit is the run's stamp — one
+/// TRANSCRIPT for a multi-agent run, where each conversation is reduced to a
+/// single difference before any test — or, when nothing is stamped, what
+/// the run's records show: "n = 4 paired items" for a current analysis, "n =
+/// 8 paired responses from 4 items" for an analysis that paired every
+/// response (the Mac engine before 0.9.7), and plain "n = 3 pairs" when the
+/// records cannot settle it. An absent `n` reads "n not reported" — never
+/// "n = 0 items", which is a substantive claim the file did not make.
 export const pairedCountLabel = (row: Effect) => {
   if (row.n == null) return "n not reported";
-  if (row.pairedUnit === "sample") return `n = ${row.n} paired samples`;
-  if (row.pairedUnit === "item") return `n = ${row.n} paired items`;
-  const unit = row.analysisUnit ?? "";
-  if (unit === "transcript") return `n = ${row.n} transcript${row.n === 1 ? "" : "s"}`;
-  if (unit && unit !== "item") return `n = ${row.n} (unit of analysis: ${unit})`;
-  return `n = ${row.n} paired items`;
+  const unit = unitOf(row).unit;
+  const nouns = UNIT_NOUNS[unit];
+  if (!nouns) return `n = ${row.n} (unit of analysis: ${unit})`;
+  return `n = ${countPhrase(row) ?? `${row.n} ${nouns[1]}`}`;
 };
 
 /// How to name a row's stratum on screen: "promptID · loan-notLegal".

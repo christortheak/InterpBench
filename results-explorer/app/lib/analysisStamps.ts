@@ -16,7 +16,8 @@
 // when the thing happened, so "no file" means "this run records none".
 
 import { recordValue, textValue } from "./discovery";
-import type { WorkspaceRun } from "./types";
+import { unsettledUnitSentence, type PairedItems } from "./effectUnits";
+import type { Effect, WorkspaceRun } from "./types";
 
 const count = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -203,8 +204,11 @@ export const hasAnalysisStamps = (stamps: AnalysisStamps) =>
 
 const plural = (value: number, noun: string) => `${value} ${noun}${value === 1 ? "" : "s"}`;
 
-export const unitSentence = (unit: UnitOfAnalysis | null): string => {
-  if (!unit) return "Not stamped in this run. The engines pair by prompt item unless a run says otherwise.";
+/// A run that stamps no unit is read from its records, never assumed to pair
+/// items: `rows` are its effect rows with their settled units, and `records`
+/// what they were settled against (lib/effectUnits.ts).
+export const unitSentence = (unit: UnitOfAnalysis | null, rows: Pick<Effect, "effectUnit" | "stratifyBy">[] = [], records: PairedItems | null = null): string => {
+  if (!unit) return rows.length ? `Not stamped in this run. ${unsettledUnitSentence(rows, records)}` : "Not stamped in this run.";
   if (unit.unit === "transcript") {
     return `One transcript. Turns in the same conversation depend on each other, so each transcript is reduced to its own average difference before any test, and n counts transcripts, not turns.${unit.transcriptsPerCondition !== null ? ` This run has ${plural(unit.transcriptsPerCondition, "transcript")} for each condition.` : ""}${unit.skippedForSingleTranscript ? " Some outcomes were left out because a condition had only one transcript, which gives an estimate but no interval." : ""}`;
   }

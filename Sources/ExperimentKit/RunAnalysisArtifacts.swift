@@ -31,6 +31,15 @@ extension RunResults {
         public var adjustedP: Double?
         public var correction: String?
         public var modality: String?
+        /// The row's own `unit` column: what one paired difference is, when
+        /// the row records it. Stratified rows do; pooled rows leave it
+        /// empty, so this is nil for them.
+        public var recordedUnit: String? = nil
+        /// What one paired difference of this row is, settled from the row,
+        /// its analysis's stamp, and the run's records
+        /// (`RunResults.resolveUnits`). A row nothing has settled claims no
+        /// unit: an item is never assumed.
+        public var unit: EffectUnit = .unresolved
 
         public var id: String { "\(condition)\u{1F}\(metric)" }
 
@@ -87,7 +96,10 @@ extension RunResults {
                 wilcoxonP: index["wilcoxonp"].flatMap { double(row, $0) },
                 adjustedP: index["adjustedp"].flatMap { double(row, $0) },
                 correction: index["correction"].flatMap { field(row, $0) },
-                modality: index["modality"].flatMap { field(row, $0) })
+                modality: index["modality"].flatMap { field(row, $0) },
+                recordedUnit: index["unit"].flatMap { field(row, $0) }
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .flatMap { $0.isEmpty ? nil : $0 })
         }
     }
 
@@ -112,7 +124,8 @@ extension RunResults {
             wilcoxonP: (entry["wilcoxonP"] as? NSNumber)?.doubleValue,
             adjustedP: (entry["adjustedP"] as? NSNumber)?.doubleValue,
             correction: entry["correction"] as? String,
-            modality: nil)
+            modality: nil,
+            recordedUnit: (entry["unit"] as? String).flatMap { $0.isEmpty ? nil : $0 })
     }
 
     // MARK: - alien-residuals.csv (server analyze)

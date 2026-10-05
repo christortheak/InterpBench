@@ -14,12 +14,16 @@ migration that rewrites frozen bytes.
 
 - **Older Mac analyses are described by what they counted.** Before this
   release, the Mac engine paired every response of a study run with several
-  samples per item and counted responses, not items. `results export` and
-  `results report` now check each stored effect against the run's records: a
-  row that counts more pairs than the run has items is labelled as paired
-  responses from so many items, its interval is said not to be an item-level
-  finding, and the minimum-pairs rule counts its items. The stored numbers are
-  unchanged; analyzing the run again gives item-level rows.
+  samples per item and counted responses, not items. `results export`,
+  `results report`, the app's results views, and the results explorer now
+  check each stored effect against the run's records (for an analysis, those
+  of the run it analyzed): a row that counts more pairs than the run has items
+  is labelled as paired responses from so many items, its interval is said not
+  to be an item-level finding, and the minimum-pairs rule counts its items. A
+  row the records cannot place is described as pairs whose unit is not
+  established. The stored numbers are unchanged; analyzing the run again gives
+  item-level rows. The app now also reads a multi-agent analysis's
+  `unit-of-analysis.json`, so those rows count transcripts there as well.
 - **Custom code in a standalone diagnostic gets the same notice.** The cost
   instrument, or a battery whose agents carry policies, can run a policy's
   expert provider. `science input-plan` now shows the notice and the code,

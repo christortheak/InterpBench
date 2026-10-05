@@ -33,6 +33,12 @@ extension RunResults {
         public var summaries: SummariesTable?
         public var validationReport: ValidationReport?
         public var effectSizes: [EffectSizeRow]?
+        /// What the effect rows' units were settled against
+        /// (`RunResults.resolveUnits`): the analysis's stamped unit, and the
+        /// items the run's records pair with the baseline. `effectUnitRecords`
+        /// is nil when a stamp settled every row, or no records could be read.
+        public var stampedUnit: String?
+        public var effectUnitRecords: PairedItems?
         public var alienResiduals: [AlienResidualRow]?
         public var promotedMovers: PromotedMovers?
         public var cosineMatrix: CosineMatrix?
@@ -112,6 +118,10 @@ extension RunResults {
         public var cosineMatrixText: String?
         public var panelEffectsText: String?
         public var snapshotData: Data?
+        /// `unit-of-analysis.json`: the unit an analysis stamped for its
+        /// pooled rows. Small, and read only to settle the effect rows' unit,
+        /// so it takes no part in `isEmpty`.
+        public var unitOfAnalysisData: Data?
         /// Whether an evaluation report (a judged outcome) exists for this
         /// run's source run. The local loader looks beside the run
         /// (`HeadlineOutcome.evaluationReport`); a remote reading cannot, and
@@ -137,7 +147,7 @@ extension RunResults {
             "summaries.csv", "validation-report.json",
             "validation-evidence.json", "effect-sizes.csv",
             "alien-residuals.csv", "promoted-movers.json",
-            "cosine-matrix.csv", "panel-effects.csv",
+            "cosine-matrix.csv", "panel-effects.csv", "unit-of-analysis.json",
         ]
 
         /// Route one fetched file's bytes to its slot. `truncated` matters
@@ -169,6 +179,8 @@ extension RunResults {
                 cosineMatrixText = String(decoding: data, as: UTF8.self)
             case "panel-effects.csv":
                 panelEffectsText = String(decoding: data, as: UTF8.self)
+            case "unit-of-analysis.json":
+                unitOfAnalysisData = data
             default:
                 break
             }
@@ -179,9 +191,16 @@ extension RunResults {
     /// Only the classification CONTEXT differs by surface (local runs can
     /// compare against the live workspace manifest; remote browsing cannot)
     /// — everything else is byte-identical by construction.
+    ///
+    /// `effectUnitRecords` supplies the paired items the effect rows' units
+    /// are settled against, and is asked only when a row needs them. A local
+    /// run reads its records whole (or, for an analysis, its source run's);
+    /// by default they are counted from the generations bytes in hand, which
+    /// a remote preview holds only the head of.
     static func assemble(
         runDirectory: URL,
         artifacts: ArtifactBytes,
+        effectUnitRecords: (() -> PairedItems?)? = nil,
         classify: (ManifestSnapshotReading?, [Record]) -> Classification
     ) -> Model {
         var model = Model(runDirectory: runDirectory)
@@ -232,6 +251,22 @@ extension RunResults {
             !inline.isEmpty
         {
             model.effectSizes = inline
+        }
+        // What one paired difference of each row is: stamped, or settled
+        // from the run's records. Never assumed to be an item.
+        if let rows = model.effectSizes {
+            model.stampedUnit = stampedUnit(
+                unitOfAnalysisData: artifacts.unitOfAnalysisData, report: model.report)
+            let settled = resolveUnits(rows, stampedUnit: model.stampedUnit) {
+                if let effectUnitRecords { return effectUnitRecords() }
+                return artifacts.generationsText.map {
+                    PairedItems(
+                        counts: pairedItems(fromJSONL: $0),
+                        complete: !artifacts.generationsTruncated)
+                }
+            }
+            model.effectSizes = settled.rows
+            model.effectUnitRecords = settled.pairedItems
         }
 
         if let text = artifacts.alienResidualsText {
@@ -324,11 +359,18 @@ extension RunResults {
             maxBytes: RunBrowser.jsonPreviewByteLimit)?.text
         artifacts.snapshotData = try? Data(
             contentsOf: runDirectory.appending(component: "experiment.json"))
+        artifacts.unitOfAnalysisData = try? Data(
+            contentsOf: runDirectory.appending(component: "unit-of-analysis.json"))
         artifacts.hasEvaluationReport =
             HeadlineOutcome.evaluationReport(forRunAt: runDirectory) != nil
 
-        return assemble(runDirectory: runDirectory, artifacts: artifacts) {
-            reading, records in
+        let read = artifacts
+        return assemble(
+            runDirectory: runDirectory, artifacts: artifacts,
+            effectUnitRecords: {
+                localPairedItems(runDirectory: runDirectory, artifacts: read)
+            }
+        ) { reading, records in
             classification(
                 reading: reading, runDirectory: runDirectory, records: records)
         }

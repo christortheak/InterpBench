@@ -242,6 +242,9 @@ public enum RunResults {
         public var seedCount: Int?
         public var conditions: [String: ConditionSummary] = [:]
         public var effectSizes: [EffectSizeRow] = []
+        /// What one paired difference of the report's effect rows is, when
+        /// the run stamps it (a multi-agent run stamps "transcript").
+        public var unitOfAnalysis: String?
 
         public init() {}
     }
@@ -257,6 +260,8 @@ public enum RunResults {
         report.promptCount = intValue(dictionary["promptCount"])
         report.conditionCount = intValue(dictionary["conditionCount"])
         report.seedCount = intValue(dictionary["seedCount"])
+        report.unitOfAnalysis = (dictionary["unitOfAnalysis"] as? String)
+            .flatMap { $0.isEmpty ? nil : $0 }
         if let conditions = dictionary["conditions"] as? [String: Any] {
             for (name, raw) in conditions {
                 guard let block = raw as? [String: Any] else { continue }

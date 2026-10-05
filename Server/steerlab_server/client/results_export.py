@@ -914,6 +914,13 @@ def _paired_items(records):
     return {condition: len(ids & baseline) for condition, ids in items.items() if condition != "baseline"}
 
 
+def paired_items(loaded):
+    """``_paired_items`` over what ``_load_generations`` read: its responses and
+    its readouts. The one entry point, so the reader and the fixture generator
+    that pins the Mac app and the explorer to it count the same records."""
+    return _paired_items(loaded["responses"] + loaded["readouts"])
+
+
 def resolve_units(rows, stamped_unit, paired_items):
     """Settle each effect row's unit of analysis, once, for every reader: the
     export's tables, its methods summary, and the results page.
@@ -2094,7 +2101,7 @@ def _collect(root, study, run_name, steps, now):
             exclusions.append(("The run's own analysis", report.get("exclusions")))
         if not isinstance(stamped_unit, str) or not stamped_unit:
             stamped_unit = None
-        resolve_units(rows, stamped_unit, _paired_items(loaded["responses"] + loaded["readouts"]))
+        resolve_units(rows, stamped_unit, paired_items(loaded))
         pooled, strata = _effects_tables(
             study, run_name, os.path.basename(effects_directory), rows,
             effects_source, stamped_unit)

@@ -200,6 +200,7 @@ main { grid-column: 2; min-width: 0; }
    tinted band, so a per-cell row is never mistaken for a second pooled
    estimate of the same endpoint. */
 .strata-toggle { margin-top: 6px; font-size: 8px; }
+.effect-table-row .unit-caveat { display: block; color: var(--muted); font-size: 8px; line-height: 1.35; margin-top: 4px; }
 .effect-stratum-row { background: #f5f4ee; min-height: 62px; }
 .effect-stratum-row > div:first-child { padding-left: 14px; border-left: 2px solid var(--line); }
 .effect-stratum-row > div:first-child strong { font-size: 10px; font-weight: 500; }

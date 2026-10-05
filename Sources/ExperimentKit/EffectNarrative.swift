@@ -13,11 +13,37 @@ public enum EffectNarrative {
 
     // MARK: - A sentence per effect
 
-    /// Fewer paired items than this cannot carry an interval. One or two
-    /// pairs still give a bootstrap "interval", but it is two or three
+    /// Fewer independent pairs than this cannot carry an interval. One or
+    /// two pairs still give a bootstrap "interval", but it is two or three
     /// possible values dressed as a range, so the sentence, the table, and
-    /// the chart say there are too few pairs instead of printing it.
+    /// the chart say there are too few pairs instead of printing it. Paired
+    /// responses are not independent of each other, so a row that paired
+    /// responses counts its items here.
     public static let minimumPairsForInterval = 3
+
+    /// What a row that paired responses is, and is not. The Python reader's
+    /// results page says the same (`effect-units.json` holds the words).
+    public static let responseCaveat =
+        "These are responses, not items: the analysis paired each response "
+        + "with the baseline response to the same item and seed, so its "
+        + "interval and test treat responses to the same item as independent "
+        + "and are not findings about items"
+
+    /// What a row whose unit nothing settles says about its pairs.
+    public static let unknownUnitNote = "The unit of these pairs is not established"
+
+    /// Why a row is read as paired responses (the Python reader's
+    /// `RESPONSE_UNIT_EXPLANATION`, word for word).
+    public static let responseUnitExplanation =
+        "These rows count more pairs than the run has paired items, so the "
+        + "analysis paired responses, not items: each response with the "
+        + "baseline response to the same item and seed. That is how the Mac "
+        + "engine paired a study with several samples per item before "
+        + "SteerLab 0.9.7, and it stamped no unit. Responses to the same item "
+        + "are not independent, so these intervals and tests are likely to "
+        + "understate the uncertainty, and they are not findings about items. "
+        + "The stored numbers are copied unchanged; analyzing the run again "
+        + "computes item-level rows."
 
     /// One plain-language line for an effect row, e.g.:
     ///
@@ -25,6 +51,12 @@ public enum EffectNarrative {
     ///    density (fearMarkerDensity) by +0.31 across 24 paired items
     ///    (95% CI 0.12 to 0.48) — survives multiple-comparison correction
     ///    (corrected p = 0.012)."
+    ///
+    /// The count is in the row's settled unit (`EffectSizeRow.unit`): paired
+    /// items, transcripts, or samples; "8 paired responses from 4 items",
+    /// followed by `responseCaveat`, for an analysis that paired responses;
+    /// and plain "pairs", followed by `unknownUnitNote`, when nothing
+    /// settles the unit.
     ///
     /// Honest edge cases are first-class: a CI crossing zero reads
     /// "consistent with no effect", a corrected p ≥ 0.05 reads "does not
@@ -39,8 +71,8 @@ public enum EffectNarrative {
     /// argument on purpose: a caller that does not know the family cannot
     /// claim a correction.
     ///
-    /// A row with one or two paired items prints no interval and no test:
-    /// it says there are too few pairs.
+    /// A row with one or two pairs (for paired responses, one or two items)
+    /// prints no interval and no test: it says there are too few.
     ///
     /// `intervention` is the run's intervention summary for the row's
     /// condition (`RunResults.interventionSummaries`); when it names a single
@@ -52,8 +84,8 @@ public enum EffectNarrative {
     ) -> String {
         "\(subject(condition: row.condition, intervention: intervention)) "
             + "shifted \(metricPhrase(row.metric)) by \(signed(row.meanDiff))"
-            + sampleClause(row.n) + ciClause(row) + " — "
-            + verdict(row, familySize: familySize) + "."
+            + (countPhrase(row).map { " across " + $0 } ?? "") + ciClause(row)
+            + " — " + verdict(row, familySize: familySize) + "." + unitNote(row)
     }
 
     /// The sentence for a row of `table`, with the row's correction family
@@ -78,11 +110,146 @@ public enum EffectNarrative {
         table.filter { $0.metric == row.metric && $0.adjustedP != nil }.count
     }
 
-    /// True when the row has one or two paired items — too few for an
-    /// interval or a test. A row whose `n` is 0 did not report its count
-    /// (the column was absent), which is a different fact and is left alone.
+    /// True when the row has one or two independent pairs — too few for an
+    /// interval or a test. Paired responses are not independent of each
+    /// other, so a row that paired responses counts its ITEMS: five
+    /// responses from one item are one item. A row whose `n` is 0 did not
+    /// report its count (the column was absent), which is a different fact
+    /// and is left alone.
     public static func hasTooFewPairs(_ row: RunResults.EffectSizeRow) -> Bool {
-        (1..<minimumPairsForInterval).contains(row.n)
+        let independent = row.unit.isResponses ? row.unit.pairedItems : row.n
+        guard let independent else { return false }
+        return (1..<minimumPairsForInterval).contains(independent)
+    }
+
+    /// What `hasTooFewPairs` counted: "items" for a row that paired
+    /// responses, "pairs" otherwise.
+    public static func tooFewNoun(_ row: RunResults.EffectSizeRow) -> String {
+        row.unit.isResponses ? "items" : "pairs"
+    }
+
+    /// The row's count in its own unit, as the Python reader's results page
+    /// states it: "24 paired items", "4 paired transcripts", "3 pairs", or
+    /// "8 paired responses from 4 items". nil when the file gave no count.
+    public static func countPhrase(_ row: RunResults.EffectSizeRow) -> String? {
+        guard row.n >= 1 else { return nil }
+        let (one, many) = unitNouns[row.unit.unit] ?? ("paired unit", "paired units")
+        var text = plural(row.n, one, many)
+        if row.unit.isResponses, let items = row.unit.pairedItems {
+            text += " from " + plural(items, "item", "items")
+        }
+        return text
+    }
+
+    /// The nouns a count takes in each unit (the Python reader's `_UNITS`).
+    private static let unitNouns: [String: (String, String)] = [
+        "item": ("paired item", "paired items"),
+        "transcript": ("paired transcript", "paired transcripts"),
+        "sample": ("paired sample", "paired samples"),
+        "response": ("paired response", "paired responses"),
+        "unknown": ("pair", "pairs"),
+    ]
+
+    private static func plural(_ count: Int, _ one: String, _ many: String) -> String {
+        "\(count) \(count == 1 ? one : many)"
+    }
+
+    /// What follows the sentence for a row that is not about items:
+    /// `responseCaveat`, or `unknownUnitNote`.
+    private static func unitNote(_ row: RunResults.EffectSizeRow) -> String {
+        if row.unit.isResponses { return " " + responseCaveat + "." }
+        if row.unit.unit == "unknown" { return " " + unknownUnitNote + "." }
+        return ""
+    }
+
+    /// The unit cell of the effect table: the settled unit, marked when the
+    /// analysis did not record it itself — "item (default)" when the run's
+    /// records are consistent with the engines' rule, "response (from the records)"
+    /// when they show the row paired responses (the Python reader's page
+    /// marks its table the same way).
+    public static func unitLabel(_ row: RunResults.EffectSizeRow) -> String {
+        switch row.unit.source {
+        case .engineDefault: row.unit.unit + " (default)"
+        case .inferredFromRecords: row.unit.unit + " (from the records)"
+        case .recorded, .notEstablished: row.unit.unit
+        }
+    }
+
+    /// The forest plot's note on the rows it draws no whisker for, or nil
+    /// when every row has enough independent pairs for an interval.
+    public static func tooFewCaption(_ rows: [RunResults.EffectSizeRow]) -> String? {
+        let few = rows.filter(hasTooFewPairs)
+        guard !few.isEmpty else { return nil }
+        let noun = Set(few.map(\.unit.unit)) == ["item"] ? "paired items" : "pairs"
+        var text = "A row with fewer than \(minimumPairsForInterval) \(noun) "
+            + "has no whisker: that is too few pairs for an interval"
+        if few.contains(where: \.unit.isResponses) {
+            text += ". A row of paired responses counts its items, since "
+                + "responses to the same item are not independent"
+        }
+        return text
+    }
+
+    // MARK: - The unit of analysis, in words
+
+    /// One "Unit of analysis" line per way the rows' units are known, in the
+    /// order they first appear: the Python reader's methods summary
+    /// (`unit_lines`), for the app's effect table. `records` is what the
+    /// units were settled against (`Model.effectUnitRecords`), which says
+    /// why a unit is not established.
+    public static func unitLines(
+        rows: [RunResults.EffectSizeRow], records: RunResults.PairedItems?
+    ) -> [String] {
+        var groups: [(source: RunResults.EffectUnit.Source, units: [String])] = []
+        for row in rows {
+            if let index = groups.firstIndex(where: { $0.source == row.unit.source }) {
+                if !groups[index].units.contains(row.unit.unit) {
+                    groups[index].units.append(row.unit.unit)
+                }
+            } else {
+                groups.append((row.unit.source, [row.unit.unit]))
+            }
+        }
+        return groups.map { group in
+            let marked = groups.count > 1
+                ? " for the rows marked " + joined(group.units) : ""
+            let said: String
+            switch group.source {
+            case .recorded:
+                said = joined(group.units) + ", as the analysis recorded."
+            case .engineDefault:
+                said = "the item, with an item's samples averaged within each "
+                    + "condition. This is the engines' documented default; the "
+                    + "analysis did not stamp the unit itself. The run's records "
+                    + "are consistent with it: no such row counts more pairs "
+                    + "than the items paired in the run."
+            case .inferredFromRecords:
+                said = "the response, not the item. " + responseUnitExplanation
+            case .notEstablished:
+                if records == nil {
+                    said = "not established. The analysis did not stamp it, and "
+                        + "the run's records are not available here."
+                } else if records?.complete == false {
+                    said = "not established. The analysis did not stamp it, and "
+                        + "only the first part of the run's records was read "
+                        + "here, which does not settle it."
+                } else {
+                    said = "not established. The analysis did not stamp it, and "
+                        + "the run's records have no items paired with the "
+                        + "baseline for these conditions."
+                }
+            }
+            return "Unit of analysis\(marked): \(said)"
+        }
+    }
+
+    private static func joined(_ items: [String]) -> String {
+        switch items.count {
+        case 0: ""
+        case 1: items[0]
+        case 2: "\(items[0]) and \(items[1])"
+        default: items.dropLast().joined(separator: ", ") + ", and \(items.last!)"
+        }
     }
 
     /// Whether the row's interval should be shown at all: it exists, and
@@ -106,22 +273,10 @@ public enum EffectNarrative {
         return "Condition '\(condition)'"
     }
 
-    /// `n` counts ITEMS. An item sampled several times contributes one
-    /// difference — its responses are averaged within each condition before
-    /// the item is paired with its own baseline — so a study of four items
-    /// with three responses each reads "across 4 paired items", never 12.
-    private static func sampleClause(_ n: Int) -> String {
-        switch n {
-        case ..<1: ""
-        case 1: " across 1 paired item"
-        default: " across \(n) paired items"
-        }
-    }
-
     private static func ciClause(_ row: RunResults.EffectSizeRow) -> String {
         if hasTooFewPairs(row) {
-            return " (too few pairs for a confidence interval; at least "
-                + "\(minimumPairsForInterval) are needed)"
+            return " (too few \(tooFewNoun(row)) for a confidence interval; at "
+                + "least \(minimumPairsForInterval) are needed)"
         }
         guard hasCI(row) else { return " (no confidence interval available)" }
         return " (95% CI \(plain(row.ciLower)) to \(plain(row.ciUpper)))"
@@ -141,8 +296,8 @@ public enum EffectNarrative {
         _ row: RunResults.EffectSizeRow, familySize: Int
     ) -> String {
         if hasTooFewPairs(row) {
-            return "with so few pairs this describes these items only, and "
-                + "is not a test"
+            return "with so few \(tooFewNoun(row)) this describes these items "
+                + "only, and is not a test"
         }
         let corrected = familySize > 1
         guard hasCI(row) else { return noCIVerdict(row, corrected: corrected) }

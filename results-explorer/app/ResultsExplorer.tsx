@@ -14,6 +14,7 @@ import { Badge, FilePreviewModal, Mark } from "./components/ui";
 import { asView, setPendingRecord, updateDeepLink } from "./lib/deeplink";
 import { demoLabel } from "./demo";
 import { discoverRuns, runKindOf, runStatusOf, sortRunsByTimestamp } from "./lib/discovery";
+import { findSourceRun } from "./lib/judged";
 import { hydrateRun } from "./lib/loaders";
 import { runKindLabel, type RunKind } from "./lib/runKind";
 import { statusLabel, statusTone } from "./lib/status";
@@ -134,10 +135,14 @@ export default function Home() {
   };
   // `landOn` is the section a deep link asked for; without one a newly
   // activated run opens on its overview, as it always has.
-  const activateRun = async (run: WorkspaceRun, landOn?: View) => {
+  // `runs` is the workspace the run belongs to: it holds the run an
+  // analysis analyzed, whose records settle the analysis's effect units.
+  // The embedded deep link passes the list it just discovered, which state
+  // does not yet hold.
+  const activateRun = async (run: WorkspaceRun, landOn?: View, runs: WorkspaceRun[] = workspaceRuns) => {
     setLoadingRun(true);
     try {
-      const hydrated = await hydrateRun(run);
+      const hydrated = await hydrateRun(run, findSourceRun(runs, run.sourceRun ?? ""));
       setWorkspaceRuns((current) => current.map((candidate) => candidate.key === hydrated.key ? hydrated : candidate));
       setSelectedRun(hydrated);
       setRunPickerOpen(false);
@@ -175,7 +180,7 @@ export default function Home() {
         const linkedView = asView(embeddedViewParam());
         const linkedRecord = embeddedRecordParam() ?? "";
         if (linkedView && linkedRecord) setPendingRecord(linkedView, linkedRecord);
-        await activateRun(target, linkedView ?? undefined);
+        await activateRun(target, linkedView ?? undefined, discovered);
       } else {
         // No ?run= deep link: land on WORKSPACE TRIAGE, not on a modal over
         // an empty overview. Triage is the answer to "what happened since I
