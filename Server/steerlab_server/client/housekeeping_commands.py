@@ -8,6 +8,8 @@ between. Same verbs, flags, and result keys as on the Mac (``steerlab-cli``).
 """
 from __future__ import annotations
 
+import shlex
+
 from ..cli_envelope import CLIResult, VerbSpec
 
 #: The reviewed-digest flag each family already uses for its other reviewed
@@ -121,7 +123,9 @@ def run(invocation) -> CLIResult:
             if not effect.startswith("Moves "):
                 print(effect)
         return CLIResult(message=line, changed=True, payload=review)
-    confirm = f"{family} {verb} {' '.join(args)} {digest_flag} {review[key]} --yes"
+    # Quoted as a shell reads it back (the Mac uses the same rule), so the
+    # printed command can be run as is even when a new name has a space.
+    confirm = f"{family} {verb} {' '.join(shlex.quote(a) for a in args)} {digest_flag} {review[key]} --yes"
     review["confirmCommand"] = f"steerlab {confirm}"
     print("Preview — nothing has changed yet.")
     for effect in review["effects"]:

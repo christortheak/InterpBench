@@ -75,7 +75,7 @@ def test_experiment_rename_previews_then_applies_with_the_reviewed_digest(tmp_pa
     assert result['applied'] is False and result['newName'] == 'second-name'
     digest = result['manifestFileSHA256']
     assert result['confirmCommand'] == (
-        f'steerlab experiment rename first Second Name --manifest-sha256 {digest} --yes')
+        f"steerlab experiment rename first 'Second Name' --manifest-sha256 {digest} --yes")
     assert preview['nextAction']['missingPermissionFlags'] == ['--manifest-sha256', '--yes']
     assert (tmp_path / 'experiments/first/experiment.json').exists()
 

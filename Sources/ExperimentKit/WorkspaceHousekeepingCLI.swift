@@ -171,7 +171,7 @@ enum WorkspaceHousekeepingCLI {
         }
         let digest = review.manifestFileSHA256 ?? review.designFileSHA256
             ?? review.artifactFileSHA256 ?? ""
-        let confirm = "\(family) \(verb) " + positionals.joined(separator: " ")
+        let confirm = "\(family) \(verb) " + positionals.map(shellQuoted).joined(separator: " ")
             + " \(digestFlag) \(digest) --yes"
         payload["confirmCommand"] = .string("\(ExperimentCLIHelp.program) \(confirm)")
         sink.out("Preview — nothing has changed yet.")
@@ -184,6 +184,17 @@ enum WorkspaceHousekeepingCLI {
             nextAction: .init(
                 verb: confirm, missingPermissionFlags: [digestFlag, "--yes"],
                 detail: "Show the researcher what will change and apply only after they agree."))
+    }
+
+    /// An argument as a shell reads it back unchanged: as typed when it
+    /// holds only safe characters, single-quoted otherwise. The same rule as
+    /// Python's `shlex.quote`, which the Python client uses, so both print
+    /// the same confirmation command.
+    static func shellQuoted(_ argument: String) -> String {
+        let safe = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-")
+        guard !argument.isEmpty else { return "''" }
+        guard argument.contains(where: { !safe.contains($0) }) else { return argument }
+        return "'" + argument.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
     }
 
     private static func usage(family: String, verb: String) -> ExperimentError {

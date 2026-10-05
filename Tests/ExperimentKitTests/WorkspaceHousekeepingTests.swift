@@ -75,7 +75,7 @@ import Testing
             #expect(string(preview, "newName") == "second-name")
             #expect(string(preview, "manifestFileSHA256") == before.file.sha256)
             #expect(string(preview, "confirmCommand")
-                == "steerlab-cli experiment rename first Second Name --manifest-sha256 \(before.file.sha256) --yes")
+                == "steerlab-cli experiment rename first 'Second Name' --manifest-sha256 \(before.file.sha256) --yes")
             #expect(preview.envelope.nextAction?.missingPermissionFlags == ["--manifest-sha256", "--yes"])
             // Nothing moved.
             #expect(try ExperimentStore.load(name: "first").name == "first")
@@ -263,6 +263,15 @@ import Testing
             #expect(trashFolders(root.appending(component: "runs")).isEmpty)
             #expect(try StudyAgentAuthoring.list(workspaceRoot: root).agents.map(\.path) == [path])
         }
+    }
+
+    /// The printed confirmation runs as is: a name with a space or an
+    /// apostrophe is quoted the way Python's `shlex.quote` quotes it.
+    @Test func theConfirmationCommandQuotesArgumentsLikeShlex() {
+        #expect(WorkspaceHousekeepingCLI.shellQuoted("plain-name_1.v2") == "plain-name_1.v2")
+        #expect(WorkspaceHousekeepingCLI.shellQuoted("Second Name") == "'Second Name'")
+        #expect(WorkspaceHousekeepingCLI.shellQuoted("it's") == "'it'\"'\"'s'")
+        #expect(WorkspaceHousekeepingCLI.shellQuoted("") == "''")
     }
 
     // MARK: - The app's owners
