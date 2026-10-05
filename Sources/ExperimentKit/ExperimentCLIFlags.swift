@@ -327,6 +327,7 @@ public enum ExperimentCLIParser {
 
         .init(namespace: "workspace", verb: "inspect", purpose: "Inspect an existing workspace without modifying it."),
         .init(namespace: "workspace", verb: "handoff", purpose: "Return the first steps for a coding assistant: the study interview, the short method index, and how to work with the researcher."),
+        .init(namespace: "workspace", verb: "guide", positional: "[<topic>]", purpose: "List the agent guide topics, or print one topic with this client's commands."),
 
         // data
         .init(

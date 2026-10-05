@@ -4486,8 +4486,13 @@ def main(argv: list | None = None) -> int:
             else:
                 resolve_workspace(explicit_root)
                 resolved = True
+                _refresh_agent_guide()
         except ClientRefusal as workspace_exc:
-            if not (family in WORKSPACE_OPTIONAL_FAMILIES
+            # `workspace guide` joins the workspace-optional families for one
+            # verb: it prints text shipped inside this client, so asking for it
+            # before a workspace exists is a question, not a mistake.
+            if not ((family in WORKSPACE_OPTIONAL_FAMILIES
+                     or (family, invocation.spec.verb) == ("workspace", "guide"))
                     and workspace_exc.code == WORKSPACE_UNSET_CODE):
                 raise
         invocation.document_stream = document_stream
@@ -4504,6 +4509,25 @@ def main(argv: list | None = None) -> int:
         document = _envelope_for_exception(label, exc)
     return _emit(document, invocation.json, invocation.out_path,
                  document_stream, resolved)
+
+
+def _refresh_agent_guide() -> None:
+    """One pass of agent-guide upkeep for this invocation.
+
+    The Mac command line refreshes a workspace's ``AGENTS.md`` on any verb when
+    its header hash proves nobody has edited it; this is the same rule here,
+    so a workspace made by an older client does not keep an outdated guide
+    forever. It only ever upgrades, it never creates or touches a file the
+    researcher owns, and it says what it did in one ``notice:`` line on stderr.
+    A failure is swallowed: guide upkeep must never be why a verb fails.
+    """
+    try:
+        from .client import workspace_bootstrap
+        notice = workspace_bootstrap.refresh_agent_guide(os.environ["STEERLAB_ROOT"])
+    except Exception:   # noqa: BLE001 — documentation upkeep is never fatal
+        return
+    if notice:
+        sys.stderr.write(f"notice: {notice}\n")
 
 
 class _NullContext:

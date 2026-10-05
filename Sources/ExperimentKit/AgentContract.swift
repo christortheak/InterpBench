@@ -4,13 +4,17 @@ import Foundation
 // =============================================================================
 // AGENTS.md — the contract every workspace carries (WP0 step 10)
 //
-// EDITS GO TO `docs/AGENTS-WORKSPACE-DRAFT.md` FIRST, then get mirrored here.
+// EDITS GO TO `WorkspaceGuide/core.md` FIRST, then get mirrored here.
 // scripts/ci/check-workspace-bootstrap.py generates both clients from it.
-// That document is the human source of truth; this binding is the shipping
+// That file is the human source of truth; this binding is the shipping
 // copy, and `AgentContractTests.agentContractMatchesTheDraftDocument` asserts
 // the two are byte-identical (modulo the generated header line below and the
-// draft's own `<!-- … -->` markers, which are stripped). Editing only one of
+// source's own `<!-- … -->` markers, which are stripped). Editing only one of
 // them fails that gate rather than drifting silently.
+//
+// The file is the CORE guide: short, client-neutral, and byte-identical from
+// both clients. The depth is in topics (`WorkspaceGuide`), served on demand by
+// `workspace guide [<topic>]` and never written into a workspace.
 //
 // The maintained guide is packaged as a resource for Python and compiled into
 // WorkspaceBootstrapText for the Mac. Both use the same generated-file hash.
@@ -96,10 +100,35 @@ public enum AgentContract {
             .joined()
     }
 
-    /// The contract text, byte-identical to `docs/AGENTS-WORKSPACE-DRAFT.md`
-    /// with its draft-only comment markers removed. Ends with exactly one
+    /// The contract text, byte-identical to `WorkspaceGuide/core.md`
+    /// with its source-only comment markers removed. Ends with exactly one
     /// newline.
     public static let body: String = literal + "\n"
+
+    // MARK: - The guide version
+
+    /// The line a body declares its version on: `Guide version: <n>`.
+    static let guideVersionPrefix = "Guide version: "
+
+    /// The version a body declares. Bodies written before the line existed
+    /// carry none and are version 1 — older than every body that has one.
+    ///
+    /// The version is what makes a refresh ONE-WAY. The hashed header proves a
+    /// file is unedited; it cannot say whether the text under it is older or
+    /// newer than this build's. Without the version, an older build opening a
+    /// workspace a newer build had written would "refresh" it backwards.
+    static func guideVersion(of body: String) -> Int {
+        for line in body.split(separator: "\n", omittingEmptySubsequences: true).prefix(12)
+        where line.hasPrefix(guideVersionPrefix) {
+            if let version = Int(line.dropFirst(guideVersionPrefix.count)) {
+                return version
+            }
+        }
+        return 1
+    }
+
+    /// The version of the guide this build ships.
+    public static var guideVersion: Int { guideVersion(of: body) }
 
     /// The bytes written into a workspace: header line, blank line, body.
     public static func contents() -> String {
@@ -145,6 +174,13 @@ public enum AgentContract {
         /// what it deliberately is not).
         case staleProven(linesBehind: Int)
 
+        /// **Proven machine-owned and AHEAD.** The header hash matches the
+        /// body, so nobody has edited it — and the body declares a guide
+        /// version higher than this build ships, so a NEWER build wrote it.
+        /// Never rewritten and silent: a refresh only upgrades, and an older
+        /// build has nothing to teach a newer guide.
+        case newerProven(version: Int)
+
         /// **A legacy header, intact, over an older body.** Written by a build
         /// from before the hash: the header says SteerLab wrote the file and
         /// nobody has touched the line that says so, which is a heuristic and
@@ -169,8 +205,10 @@ public enum AgentContract {
     /// 1. **Hashed header** (`headerPrefix … sha256:<hex> -->`). Recompute the
     ///    hash over the body actually present. Match → SteerLab wrote these
     ///    exact bytes and nobody has edited them: `current` if the body is the
-    ///    shipped body, else `staleProven` — the state that is safe to rewrite
-    ///    without asking, because we can *show* no human text is at risk.
+    ///    shipped body; `newerProven` if it declares a higher guide version
+    ///    than this build ships (a newer build's text — left alone); else
+    ///    `staleProven` — the state that is safe to rewrite without asking,
+    ///    because we can *show* no human text is at risk.
     ///    Mismatch → someone edited the body under our header: `edited`, hands
     ///    off, no notice.
     /// 2. **Legacy hashless header**, byte-for-byte. Exactly the pre-hash
@@ -189,6 +227,8 @@ public enum AgentContract {
         if let declared = declaredBodyHash(inHeaderLine: headerLine) {
             guard declared == sha256Hex(rest) else { return .edited }
             if rest == body { return .current }
+            let theirs = guideVersion(of: rest)
+            if theirs > guideVersion { return .newerProven(version: theirs) }
             return .staleProven(
                 linesBehind: missingLineCount(shipped: body, workspace: rest))
         }

@@ -1,0 +1,279 @@
+# Judging, evaluation, and analysis
+
+<!-- client: mac -->
+
+## `pin-rubric` — the judging instrument
+
+```bash
+steerlab-cli experiment pin-rubric <name> prompts/rubrics/default-paired-v1.md \
+  --judges <name>:<kind>[:<model>[:<provider>]][,…]
+```
+
+Pins `judgeRubricFile` + `judgeRubricHash`, optionally replaces the judge
+panel, and writes the explicit `evaluation` declaration the pin pair implies.
+Kinds are `claude`, `local`, `openrouter`. A blank model field is *absent*, not
+empty: a local judge then resolves to the study model at its pinned revision; a
+`claude` judge to the default judge model. The fourth field pins a serving
+provider and is only legal on `openrouter`.
+
+The judge **name is a label, never a model id.** Declare **any number of
+judges, including exactly one**: a single-coder design is a legal methodology
+and freezes cleanly. What it costs is said rather than forbidden — a
+`judgePanelTooSmall` advisory here and again at freeze, saying that no
+inter-rater agreement statistics will exist for the study's codings, and the
+coding report then records `fieldAgreement` as **absent with that reason**
+rather than as an empty list. Zero judges is the state `judgeValidity` refuses:
+a judged instrument with no judge codes nothing. Inline rubric text is
+draft-only and cannot freeze — pin a file.
+
+A panel of two or more must be **distinct**: identity resolves to (kind, model,
+provider), so `--judges a:local,b:local` with both model fields blank resolves
+twice to the study model at temperature 0 — one judge agreeing with itself by
+construction — and refuses at freeze under `judgeValidity`. Vary the kind, the
+model, or the provider.
+
+A **local judge naming a model other than the study model** must pin the exact
+bytes that will judge — `judges[].revision` and `judges[].dtype` — or freeze
+refuses under `judgeValidity`. Declare them with `--judge-pin`, repeated per
+judge and keyed by judge name:
+
+```bash
+steerlab-cli experiment pin-rubric <name> prompts/rubrics/default-paired-v1.md \
+  --judges strict:local:google/gemma-3-27b-it,lenient:claude \
+  --judge-pin strict=<commit-hash>:bfloat16
+```
+
+Dtypes are `bfloat16`, `float16`, `float32` (aliases `bf16`/`fp16`/`fp32`,
+stored canonically). The revision must be a commit hash: a branch or tag is
+re-pointed by definition, so it cannot identify the weights a run used, and
+that is refused at the declaration rather than at freeze. A pin naming no
+declared judge, or a pin on a `claude`/`openrouter` judge (which carry no
+revision or dtype), is a malformed invocation — never silently dropped.
+
+`--judges` replaces the ROSTER, but the pins merge field by field beneath it: a
+judge whose name survives with the same kind and model **keeps** the revision
+and dtype it had, a judge whose model changed **drops** them (they identify the
+old bytes), and either way the echo says which — under
+`result.inheritedFromExistingDeclaration`, the same key the sweep-selection
+merge uses. Before this, `pin-rubric --judges` wiped pins the app had written
+and the study then refused at freeze for want of pins it used to have.
+
+<!-- client: python -->
+
+## Declare the judging instrument
+
+This client has no dedicated rubric verb. The rubric and the judge panel are
+protocol fields — `judgeRubricFile`, `judgeRubricHash`, `judges`, and
+`evaluation` — written with `steerlab experiment set-protocol <name> --set
+<key>=<json>`, or delivered already pinned by a study pack
+(`steerlab workspace guide assembly`). Prefer the pack: it pins the rubric
+file's real bytes, so no hash is typed by hand. The rules are the same on
+every client:
+
+- The judge **name is a label, never a model id.** Kinds are `claude`,
+  `local`, `openrouter`. A blank model field is *absent*, not empty: a local
+  judge then resolves to the study model at its pinned revision; a `claude`
+  judge to the default judge model. A serving provider is only legal on
+  `openrouter`.
+- Declare **any number of judges, including exactly one**: a single-coder
+  design is a legal methodology and freezes cleanly. What it costs is said
+  rather than forbidden — a `judgePanelTooSmall` advisory at freeze, saying
+  that no inter-rater agreement statistics will exist for the study's codings,
+  and the coding report then records `fieldAgreement` as **absent with that
+  reason** rather than as an empty list. Zero judges is the state
+  `judgeValidity` refuses: a judged instrument with no judge codes nothing.
+- Inline rubric text is draft-only and cannot freeze — pin a file.
+- A panel of two or more must be **distinct**: identity resolves to (kind,
+  model, provider), so two `local` judges with blank model fields resolve twice
+  to the study model at temperature 0 — one judge agreeing with itself by
+  construction — and refuse at freeze under `judgeValidity`. Vary the kind,
+  the model, or the provider.
+- A **local judge naming a model other than the study model** must pin the
+  exact bytes that will judge — `judges[].revision` and `judges[].dtype` — or
+  freeze refuses under `judgeValidity`. Dtypes are `bfloat16`, `float16`,
+  `float32`. The revision must be a commit hash: a branch or tag is re-pointed
+  by definition, so it cannot identify the weights a run used.
+- A paid judge (`claude`, `openrouter`) spends the researcher's money per
+  response. Ask before a judged evaluation runs.
+
+<!-- client: all -->
+
+## `analyze`
+
+<!-- client: mac -->
+
+```bash
+steerlab-cli experiment analyze <name> [--allow-unverified-epoch]
+```
+
+Pure CPU, no model load. Paired-to-baseline effect sizes — bootstrap CIs and
+Wilcoxon — over the newest completed run; writes `effect-sizes.csv` and folds
+`effectSizes` into `report.json`.
+
+Guarded by the **epoch guard**: the run's stamped experiment hash must equal
+the live manifest's content hash, or the verb refuses. `--allow-unverified-epoch`
+bypasses only *unstamped legacy* runs and stamps `epochUnverified` on the
+result. The guard is per-engine — analyze a run on the engine that produced it.
+
+<!-- client: python -->
+
+```bash
+steerlab run <name> --runner <url> --verb analyze
+```
+
+Pure CPU, no model load. Paired-to-baseline effect sizes — bootstrap CIs and
+Wilcoxon — over the newest completed run the runner holds for the study;
+writes `effect-sizes.csv` and folds `effectSizes` into `report.json`.
+
+Guarded by the **epoch guard**: the run's stamped experiment hash must equal
+the manifest's content hash, or the verb refuses. The guard is per-engine —
+analyze a run on the runner that produced it.
+
+<!-- client: all -->
+
+Zero effect-size entries is reported as an `emptyAnalysis` advisory, not a
+failure. It means the source run had no non-baseline condition. Check for it.
+
+## `evaluate`
+
+<!-- client: mac -->
+
+**`evaluate <name> [--run <dir>] [--allow-unverified-epoch]
+[--sample-per-condition <n> --sample-seed <hex-or-int>]`** — paired-judge
+evaluation of a completed run through the manifest's pinned rubric and judges,
+writing a new evaluation directory beside the source run, which is never
+mutated. Same epoch guard as `analyze`; defaults to the newest completed run.
+
+**To code a preregistered SUBSAMPLE rather than the whole run**, pass
+`--sample-per-condition <n>` together with `--sample-seed <hex-or-int>`. Both
+or neither: a sample with no seed is one nobody can redraw, a seed with no
+size is a stamp on a coding it did not shape, and either half alone refuses
+at 64. The draw is stratified — within each condition, `floor(n / P)` records
+per promptID with the remainder handed out in seeded order, and records inside
+each cell chosen over `sampleIndex` — and it is the same draw on both engines
+for the same seed. An `n` above a condition's population REFUSES; it never
+clamps, because a clamped design is a different design than the one that was
+preregistered. Per-response coding only: a paired rubric refuses, since a pair
+is not a record. The result is stamped loudly — a `sampling` block in
+`coding-report.json` and in the run's `config.json` carrying
+`samplePerCondition`, `sampleSeed`, `sampledRecords`, `sourceRecords` and the
+derivation `rule`, and every human line reading `coded N of M (seeded
+subsample)`. **No `sampling` block means the full corpus was coded**; never
+report a sampled coding as a census.
+
+Under a per-response coding rubric it writes `coding-report.json`. Read its
+`fieldAgreement` entries before the aggregates: each categorical entry carries
+`percentAgreement`, `kappa`, and a `confusion` block where `confusion[a][b]`
+is how many shared cells judgeA coded `a` while judgeB coded `b`, summing to
+the entry's `n` — so you can say WHERE two coders part ways without
+re-deriving anything. A single-coder run has **no** `fieldAgreement` key at
+all; it carries `fieldAgreementAbsentReason` instead. Do not report that as
+"agreement was measured and was zero" — report it as what it says.
+
+**To re-measure an existing run with a NEW instrument, duplicate — never edit
+the source study.** The epoch guard tolerates exactly the drift that cannot
+have moved a byte of the source run's generations: `judges`, `evaluation`,
+`pipeline`, `judgeRubricFile`, `judgeRubricHash`, `humanValidation`, and the
+study's own `name` (identity, not a measurement setting — and the one field a
+duplication must change). So the sanctioned path is:
+
+```bash
+steerlab-cli experiment duplicate <name> <name>-recoded
+steerlab-cli experiment pin-rubric <name>-recoded prompts/rubrics/<new>.md \
+  --judges a:local:<judge-model>,b:claude --judge-pin a=<commit-hash>:bfloat16
+steerlab-cli experiment evaluate <name>-recoded --run runs/<original-run-dir>
+```
+
+The original run directory is read, never mutated; the evaluation writes
+beside it as always. The tolerated fields are named in the output's
+`measurementDrift` stamp with a warning on stderr, so a re-measurement is
+never mistaken for the original measurement. Change any generation-side pin —
+model, concepts, task prompts, sampling protocol — and the guard refuses, as
+it should: those runs would have been different. **`promote` tolerates
+nothing** and still refuses a renamed or re-judged manifest, because a
+promotion binds a judged sweep's evidence.
+
+<!-- client: python -->
+
+```bash
+steerlab run <name> --runner <url> --verb evaluate
+```
+
+Paired-judge evaluation of a completed run through the manifest's pinned
+rubric and judges, writing a new evaluation directory beside the source run,
+which is never mutated. Same epoch guard as `analyze`; the runner evaluates
+the newest completed run it holds for the study.
+
+**To code a preregistered SUBSAMPLE rather than the whole run**, declare the
+design on the draft before freezing:
+`steerlab experiment set-evaluation-sampling <name> <n> <seed>`
+(`workspace guide settings`). The evaluation then draws it with no flags. The
+draw is stratified — within each condition, `floor(n / P)` records per
+promptID with the remainder handed out in seeded order, and records inside
+each cell chosen over `sampleIndex` — and it is the same draw on both engines
+for the same seed. An `n` above a condition's population REFUSES; it never
+clamps, because a clamped design is a different design than the one that was
+preregistered. Per-response coding only: a paired rubric refuses, since a pair
+is not a record. The result is stamped loudly — a `sampling` block in
+`coding-report.json` and in the run's `config.json` carrying
+`samplePerCondition`, `sampleSeed`, `sampledRecords`, `sourceRecords` and the
+derivation `rule`. **No `sampling` block means the full corpus was coded**;
+never report a sampled coding as a census.
+
+<!-- client: python -->
+
+Under a per-response coding rubric it writes `coding-report.json`. Read its
+`fieldAgreement` entries before the aggregates: each categorical entry carries
+`percentAgreement`, `kappa`, and a `confusion` block where `confusion[a][b]`
+is how many shared cells judgeA coded `a` while judgeB coded `b`, summing to
+the entry's `n` — so you can say WHERE two coders part ways without
+re-deriving anything. A single-coder run has **no** `fieldAgreement` key at
+all; it carries `fieldAgreementAbsentReason` instead. Do not report that as
+"agreement was measured and was zero" — report it as what it says.
+
+**To re-measure an existing run with a NEW instrument, duplicate — never edit
+the source study.** The epoch guard tolerates exactly the drift that cannot
+have moved a byte of the source run's generations: `judges`, `evaluation`,
+`pipeline`, `judgeRubricFile`, `judgeRubricHash`, `humanValidation`, and the
+study's own `name`. Duplicate with `steerlab experiment duplicate <name>
+<name>-recoded` and declare the new instrument on the copy. This client's
+submission verbs carry no flag that names a source run, so evaluating the
+duplicate against the ORIGINAL run cannot be submitted from here yet. Say so
+to the researcher as a gap; do not edit the source study to get around it.
+
+<!-- client: all -->
+
+## Reasoning-style rescoring and CPU completion
+
+<!-- client: mac -->
+
+**`rescore-style <name> [--run <dir>]`** — recomputes reasoning-style features
+for a completed run through that taxonomy into a **new** run directory, never
+touching the source. Epoch-guarded like `analyze`. Pure CPU.
+
+<!-- client: all -->
+
+CPU completion is available through
+`steerlab-server experiment complete-sweep-judgment <study> --awaiting-run
+<run> --judgments <file> --json` or `steerlab-server experiment complete-judgment` for an
+evaluation. Preserve the original packet, judge and epoch requirements.
+The sweep may project a recommendation into a draft; repeated evaluation
+completion reuses evidence. Read `result.runDirectory`, `reused` and `changed`.
+
+<!-- client: mac -->
+
+For style use `steerlab-cli experiment rescore-style <study> --run <run>` on
+the Mac and `steerlab-server experiment rescore-style <study> --source <run>`
+on the engine, with `--json`. New reports preserve the source run.
+
+<!-- client: python -->
+
+For style rescoring use `steerlab-server experiment rescore-style <study>
+--source <run>` on the engine, with `--json`. It recomputes reasoning-style
+features for a completed run through the pinned taxonomy into a **new** run
+directory, never touching the source. New reports preserve the source run.
+
+<!-- client: all -->
+
+The engine's three CPU verbs return typed envelopes and 64/65/66/70 for
+usage/refusal/missing input/failure; do not depend on the old catch-all exit 1.

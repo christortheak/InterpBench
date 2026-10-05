@@ -149,6 +149,53 @@ import Testing
         #expect(AgentContract.stalenessAdvisory(at: root) == nil)
     }
 
+    /// A refresh only ever UPGRADES. A file a newer build wrote — its hash
+    /// intact, its guide version higher than this build ships — is proven
+    /// unedited and still left byte-for-byte alone, on every write path and in
+    /// silence: an older build must not overwrite a newer guide.
+    @Test func aNewerGuideIsNeverDowngraded() throws {
+        #expect(AgentContract.guideVersion >= 2, "the shipped guide declares no version")
+        let newerVersion = AgentContract.guideVersion + 1
+        let newer =
+            AgentContract.body.replacingOccurrences(
+                of: "Guide version: \(AgentContract.guideVersion)\n",
+                with: "Guide version: \(newerVersion)\n")
+            + "\n## A section this build has never heard of\n"
+        #expect(AgentContract.guideVersion(of: newer) == newerVersion)
+        let contents = machineWritten(body: newer)
+        let root = try makeWorkspace(contract: contents)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appending(component: AgentContract.fileName)
+
+        #expect(AgentContract.status(at: root) == .newerProven(version: newerVersion))
+        #expect(AgentContract.stalenessAdvisory(at: root) == nil)
+        #expect(WorkspaceStore.upkeepAgentContract(at: root) == .unchanged)
+        #expect(ExperimentCLIRunner.agentContractUpkeepLine(root: root) == nil)
+        #expect(WorkspaceStore.ensureAgentContract(at: root) == false)
+        #expect(try String(contentsOf: url, encoding: .utf8) == contents)
+
+        // The same text EDITED is the researcher's, whatever version it claims.
+        try (contents + "my note\n").write(to: url, atomically: true, encoding: .utf8)
+        #expect(AgentContract.status(at: root) == .edited)
+
+        // A body from before the version line existed is version 1: older than
+        // every guide that declares one, so it is still refreshed.
+        let unversioned = truncatedBody(keepingLines: 40).replacingOccurrences(
+            of: "Guide version: \(AgentContract.guideVersion)\n\n", with: "")
+        #expect(AgentContract.guideVersion(of: unversioned) == 1)
+        try machineWritten(body: unversioned).write(
+            to: url, atomically: true, encoding: .utf8)
+        guard case .staleProven = AgentContract.status(at: root) else {
+            Issue.record("expected staleProven, got \(AgentContract.status(at: root))")
+            return
+        }
+        guard case .refreshed = WorkspaceStore.upkeepAgentContract(at: root) else {
+            Issue.record("expected .refreshed")
+            return
+        }
+        #expect(try String(contentsOf: url, encoding: .utf8) == AgentContract.contents())
+    }
+
     /// The proof from the "hands off" side, and the case the old heuristic got
     /// WRONG: the header is intact but the body under it has been edited. The
     /// hash no longer matches, so the file is the researcher's — silent, and

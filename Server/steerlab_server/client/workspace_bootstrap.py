@@ -26,6 +26,82 @@ def agent_contents():
     return HEADER + hashlib.sha256(body.encode()).hexdigest() + ' -->\n\n' + body
 
 
+#: The line the guide body declares its version on. Bodies written before the
+#: line existed carry none and are version 1.
+GUIDE_VERSION_PREFIX = 'Guide version: '
+
+
+def guide_version(body):
+    """The guide version a body declares; 1 when it declares none.
+
+    Swift twin: ``AgentContract.guideVersion(of:)``. The version is what makes
+    a refresh one-way: the header hash proves a file is unedited, but only the
+    version can say whether its text is older or newer than this client's."""
+    for line in [candidate for candidate in body.split('\n') if candidate][:12]:
+        if line.startswith(GUIDE_VERSION_PREFIX):
+            digits = line[len(GUIDE_VERSION_PREFIX):]
+            if digits.isascii() and digits.isdigit():
+                return int(digits)
+    return 1
+
+
+def refresh_agent_guide(directory):
+    """Upgrade an unedited, older ``AGENTS.md`` in place; return a notice or None.
+
+    The Mac command line has always done this (``WorkspaceStore.upkeepAgentContract``);
+    this is the same rule for the Python client. It writes in exactly one case:
+    the file's first line carries SteerLab's header, that header's SHA-256 is
+    the hash of the text under it (so nobody has edited it), and the text is
+    not the guide this client ships and does not declare a NEWER guide version.
+    A missing guide is never created here, an edited one is never touched, and
+    a refresh never downgrades. Any failure leaves the file as it was."""
+    path = Path(directory) / 'AGENTS.md'
+    try:
+        text = path.read_text(encoding='utf-8')
+    except (OSError, UnicodeDecodeError):
+        return None
+    header, newline, rest = text.partition('\n')
+    if not newline or not (header.startswith(HEADER) and header.endswith(' -->')):
+        return None
+    if rest.startswith('\n'):
+        rest = rest[1:]
+    declared = header[len(HEADER):-len(' -->')]
+    if len(declared) != 64 or declared != hashlib.sha256(rest.encode()).hexdigest():
+        return None
+    shipped = (RESOURCES / 'agent-guide.md').read_text(encoding='utf-8')
+    if rest == shipped or guide_version(rest) > guide_version(shipped):
+        return None
+    staging = path.with_name(f'.AGENTS.md.{os.getpid()}.tmp')
+    try:
+        staging.write_text(HEADER + hashlib.sha256(shipped.encode()).hexdigest() + ' -->\n\n' + shipped, encoding='utf-8')
+        os.replace(staging, path)
+    except OSError:
+        try:
+            staging.unlink()
+        except OSError:
+            pass
+        return None
+    return (f'refreshed {path} to the agent guide this client ships — its header hashed the text it '
+            'wrote and that hash still matched, so nobody had edited it; nothing else in the workspace was touched')
+
+
+#: The executable whose commands the packaged guide topics show.
+GUIDE_CLIENT = 'steerlab'
+
+
+def guide_topics():
+    """The packaged topic index: names and one-line summaries, in guide order."""
+    index = json.loads((RESOURCES / 'agent-guide-topics.json').read_bytes())
+    return [{'name': topic['name'], 'summary': topic['summary']} for topic in index['topics']]
+
+
+def guide_topic(name):
+    """One topic's text as this client renders it. The caller checks the name."""
+    if name not in {topic['name'] for topic in guide_topics()}:
+        raise KeyError(name)
+    return (RESOURCES / f'agent-guide-topic-{name}.md').read_text(encoding='utf-8')
+
+
 def refuse(reason):
     raise ExperimentStoreError(reason, gate='workspaceBootstrap', repair='Choose a new or empty workspace directory; keep existing studies and outputs in their current workspace.')
 
