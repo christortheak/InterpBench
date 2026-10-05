@@ -549,6 +549,77 @@ def test_a_live_setup_lock_is_never_taken(tmp_path):
     assert runtime.resolve() == old
 
 
+def _hold_lock(tmp_path, pid):
+    """A setup lock recorded for process `pid` on this machine, with the
+    staging folder that setup is working in."""
+    stage = tmp_path / '.steerlab-client.held'
+    stage.mkdir()
+    (stage / 'partial').write_text('work in progress')
+    lock = tmp_path / 'client-runtime.setup-lock'
+    lock.mkdir()
+    host = subprocess.check_output(['uname', '-n'], text=True).strip()
+    record = f'pid={pid}\nhost={host}\nstarted=2026-10-05T00:00:00Z\nstage={stage}\n'
+    (lock / 'owner').write_text(record)
+    return lock, stage, record
+
+
+@pytest.mark.parametrize('shell', SHELLS)
+@pytest.mark.parametrize('ps', ['exit 1\n', 'exit 0\n'], ids=['ps-refused', 'ps-silent'])
+def test_a_live_setup_that_cannot_be_inspected_keeps_its_lock_and_its_work(tmp_path, shell, ps):
+    """A sandbox may refuse `ps`, or it may answer with nothing. Neither is
+    evidence that the lock's owner is gone: the lock and the running setup's
+    staging folder stay, nothing is downloaded, and the refusal says how to
+    clear the lock if no setup is running."""
+    folder = release(tmp_path)
+    runtime, old = managed_runtime(tmp_path)
+    holder = subprocess.Popen(['sleep', '60'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        lock, stage, record = _hold_lock(tmp_path, holder.pid)
+        result, response = install(folder, runtime, tools(tmp_path, curl=FAILING_CURL.format(status=22), ps=ps), shell)
+        assert result.returncode == 65 and response['code'] == 'setupInProgress', response
+        assert str(holder.pid) in response['reason'] and 'does not allow checking' in response['reason']
+        assert f'remove the folder {lock}' in response['repairAction']
+        assert (lock / 'owner').read_text() == record, 'a running setup lost its lock'
+        assert (stage / 'partial').read_text() == 'work in progress', "a running setup's work was deleted"
+        assert not (tmp_path / 'tools/curl-arguments').exists()
+    finally:
+        holder.terminate()
+        holder.wait()
+    assert runtime.resolve() == old
+
+
+@pytest.mark.parametrize('owner', ['another-program', 'another-account'])
+def test_a_lock_whose_process_number_now_belongs_to_something_else_is_reclaimed(tmp_path, owner):
+    """Positive identification still recovers automatically: the number is
+    in use, by a program that `ps` shows is not this installer. Process 1 runs
+    under another account, so `kill -0` answers "not permitted"; that means
+    running, not gone, and the inspection decides."""
+    folder = release(tmp_path)
+    runtime, old = managed_runtime(tmp_path)
+    other = subprocess.Popen(['sleep', '60']) if owner == 'another-program' else None
+    try:
+        lock, stage, _ = _hold_lock(tmp_path, other.pid if other else 1)
+        result, response = install(folder, runtime, tools(tmp_path, curl=FAILING_CURL.format(status=22)))
+        assert response['code'] == 'downloadRefused', response   # it got past the lock to the download
+        assert 'no longer running' in result.stderr
+        assert not stage.exists()
+    finally:
+        if other is not None:
+            other.terminate()
+            other.wait()
+    assert_nothing_changed(tmp_path, runtime, old)
+
+
+def test_a_process_under_another_account_that_cannot_be_inspected_keeps_the_lock(tmp_path):
+    folder = release(tmp_path)
+    runtime, old = managed_runtime(tmp_path)
+    lock, stage, record = _hold_lock(tmp_path, 1)
+    result, response = install(folder, runtime, tools(tmp_path, curl=FAILING_CURL.format(status=22), ps='exit 1\n'))
+    assert response['code'] == 'setupInProgress' and 'does not allow checking' in response['reason'], response
+    assert (lock / 'owner').read_text() == record and (stage / 'partial').is_file()
+    assert runtime.resolve() == old
+
+
 def test_a_lock_without_an_owner_is_reclaimed_only_once_it_is_old(tmp_path):
     """Earlier installers wrote no owner record. A fresh empty lock may be a
     setup that is starting; an old one is reclaimed."""

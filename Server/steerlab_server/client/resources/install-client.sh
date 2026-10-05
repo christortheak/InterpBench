@@ -204,9 +204,9 @@ take_lock() {
     printf 'pid=%s\nhost=%s\nstarted=%s\n' "$$" "$host" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$lock/owner"
 }
 owner_value() { sed -n "s/^$1=//p" "$lock/owner" 2>/dev/null | head -n 1; }
-owner_pid=''; owner_host=''
+owner_pid=''; owner_host=''; owner_unchecked=''
 lock_is_stale() {
-    owner_pid=$(owner_value pid); owner_host=$(owner_value host)
+    owner_pid=$(owner_value pid); owner_host=$(owner_value host); owner_unchecked=''
     case "$owner_pid" in
         ''|*[!0-9]*)
             # No owner record: an earlier installer that wrote none, or a setup
@@ -217,12 +217,25 @@ lock_is_stale() {
     esac
     [ "$owner_host" = "$host" ] || return 1   # another machine: its processes cannot be checked from here
     [ "$owner_pid" != "$$" ] || return 0      # this very process number, recorded before a restart
-    kill -0 "$owner_pid" 2>/dev/null || return 0
-    # A live process with that number that is not this installer: the number was reused.
-    if command -v ps >/dev/null 2>&1; then
-        case "$(ps -p "$owner_pid" -o args= 2>/dev/null || true)" in *install-client.sh*) return 1 ;; *) return 0 ;; esac
+    # Is a process with that number running? kill -0 asks without signalling;
+    # "not permitted" means it runs, under an account this one cannot signal.
+    if ! kill -0 "$owner_pid" 2>/dev/null; then
+        case "$(LC_ALL=C kill -0 "$owner_pid" 2>&1 || true)" in
+            *ermitted*) ;;
+            *) return 0 ;;
+        esac
     fi
-    return 1
+    # It runs. The lock is stale only when inspection shows that the number now
+    # belongs to something other than this installer. A process that cannot be
+    # inspected (no ps, ps refused, or nothing reported) is the live setup: a
+    # failed check must never delete a running setup's work.
+    command -v ps >/dev/null 2>&1 || { owner_unchecked=yes; return 1; }
+    owner_args=$(ps -p "$owner_pid" -o args= 2>/dev/null) || { owner_unchecked=yes; return 1; }
+    case "$owner_args" in
+        '') owner_unchecked=yes; return 1 ;;
+        *install-client.sh*) return 1 ;;
+        *) return 0 ;;
+    esac
 }
 reclaim_lock() {
     old_stage=$(owner_value stage)
@@ -251,6 +264,8 @@ if ! take_lock; then
         refuse setupInProgress "Something that is not a setup lock is in the way at $lock." 'Move it aside, then review a fresh plan.'
     elif [ -n "$owner_pid" ] && [ "$owner_host" != "$host" ]; then
         refuse setupInProgress "A setup on another machine ($owner_host) holds this runtime's lock." "If no setup is running there, remove the folder $lock, then review a fresh plan."
+    elif [ -n "$owner_pid" ] && [ -n "$owner_unchecked" ]; then
+        refuse setupInProgress "Process $owner_pid holds this runtime's setup lock (started $(owner_value started)), and this environment does not allow checking whether it is a setup." "If a setup is running, wait for it to finish. If none is, remove the folder $lock, then review a fresh plan."
     elif [ -n "$owner_pid" ]; then
         refuse setupInProgress "Another setup is installing into this runtime (process $owner_pid, started $(owner_value started))." 'Wait for it to finish, or stop it, then review a fresh plan. A lock left by a setup that is no longer running is reclaimed automatically.'
     else
