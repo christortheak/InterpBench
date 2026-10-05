@@ -23,7 +23,7 @@ import traceback
 from dataclasses import dataclass
 from typing import Iterable
 
-from . import experiment_store, paths
+from . import experiment_store, path_redaction, paths
 from . import resume as resume_mod
 from . import run_status
 from .manifest import Manifest
@@ -582,7 +582,16 @@ def package_evidence(run_directory: str, *, output_path: str | None = None,
         # completed-stage or evidence-grade gate, and every reader decides
         # that from these two keys rather than from the filename.
         meta["evidenceComplete"] = False
-        meta["failure"] = failure
+        # The ARCHIVED failure names no machine. Its traceback named every
+        # frame's source file, which is the server's install inside a home
+        # folder, and its error often named the run's own files, so every
+        # partial bundle named the account that packaged it. Paths are
+        # rewritten (`<steerlab_server>/…`, `runs/<run ID>/…`, `<home>/…`),
+        # which keeps the module, line, and run file a reader needs. Nothing
+        # parses these strings on either engine; the app checks only that a
+        # failure is present. The receipt returned below keeps the original.
+        meta["failure"] = path_redaction.redact_value(
+            failure, run_directory=run_directory)
     # DECLARE every sibling directory that was packed, pipeline or not.
     #
     # This key used to be written only for pipeline bundles, so a bundle
@@ -621,6 +630,10 @@ def package_evidence(run_directory: str, *, output_path: str | None = None,
         if portable_ledger is not None:
             _add_json(tar, "steerlab-pipeline.json", portable_ledger)
         _add_json(tar, "steerlab-evidence.json", meta)
+    if failure:
+        # The RECEIPT, for this machine only, goes into the job record and
+        # the server's log, where the absolute paths are the useful spelling.
+        meta["failure"] = failure
     meta["bundlePath"] = output_path
     meta["bundleSha256"] = sha256_file(output_path)
     return meta

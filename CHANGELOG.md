@@ -12,6 +12,17 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **A partial evidence bundle no longer names the computer that packaged
+  it.** When a run fails, its partial bundle records the error and, from the
+  Python engine, the traceback. Both gave full paths: the traceback named
+  every file of the server's installation, usually inside a home folder, and
+  the error often named the run's own files. In the bundle, the server's
+  files now read `<steerlab_server>/…`, the run's files `runs/<run ID>/…`,
+  and other locations `<workspace>`, `<site-packages>`, `<stdlib>`, `<tmp>`,
+  or `<home>`, so the traceback still shows each module and line. The job
+  record on the computer that ran the job keeps the full paths. Neither app
+  reads these fields beyond noting that a failure is recorded, so importing
+  is unchanged.
 - **Older Mac analyses are described by what they counted.** Before this
   release, the Mac engine paired every response of a study run with several
   samples per item and counted responses, not items. `results export` and
