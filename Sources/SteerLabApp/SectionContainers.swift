@@ -35,25 +35,61 @@ struct DataSectionView: View {
         case adapterTraining = "Adapter Training"
         case optvec = "OptVec"
         var id: String { rawValue }
+
+        /// The expert builders, listed apart under "Advanced"
+        /// (`WorkbenchNavigation`, unit-tested).
+        var isAdvanced: Bool { WorkbenchNavigation.isAdvancedDataTool(rawValue) }
+        static var basic: [Tool] { allCases.filter { !$0.isAdvanced } }
+        static var advanced: [Tool] { allCases.filter(\.isAdvanced) }
+    }
+
+    /// Each picker shows a selection only while one of its own tools is
+    /// active; choosing in either one switches the section's tool.
+    private func selection(among tools: [Tool]) -> Binding<Tool?> {
+        Binding(
+            get: { tools.contains(tool) ? tool : nil },
+            set: { if let chosen = $0 { tool = chosen } })
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            // A real title (kept hidden) so VoiceOver announces the control
-            // rather than an unnamed segmented picker.
-            Picker("Data tool", selection: $tool) {
-                ForEach(Tool.allCases) { tool in
-                    Text(tool.rawValue).tag(tool)
+            // The two tools a first study uses, then the two expert builders
+            // under an "Advanced" label (2026-10 release review, A6). One
+            // row, always the same height, in both states: this view sits in
+            // a split-view column, where a row that came and went would move
+            // the column's minimum (the macOS 27 crash class).
+            HStack(spacing: 10) {
+                // Real titles (kept hidden) so VoiceOver announces each
+                // control rather than an unnamed segmented picker.
+                Picker("Data tool", selection: selection(among: Tool.basic)) {
+                    ForEach(Tool.basic) { tool in
+                        Text(tool.rawValue).tag(Optional(tool))
+                    }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .help(
+                    "Inventory lists what the workspace holds; Concepts & "
+                        + "Vectors builds steering vectors from it")
+                .accessibilityLabel("Data tool")
+                Text(WorkbenchNavigation.advancedDataToolsLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+                Picker("Advanced data tool", selection: selection(among: Tool.advanced)) {
+                    ForEach(Tool.advanced) { tool in
+                        Text(tool.rawValue).tag(Optional(tool))
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .help(
+                    "expert builders: Adapter Training fine-tunes a LoRA adapter "
+                        + "from a dataset; OptVec trains a steering vector against "
+                        + "a declared objective")
+                .accessibilityLabel("Advanced data tool")
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
             .padding(8)
-            .help(
-                "switch this section's tool — Inventory lists what the "
-                    + "workspace holds; the other three are the builders that "
-                    + "derive artifacts from it")
-            .accessibilityLabel("Data tool")
 
             switch tool {
             case .inventory:
