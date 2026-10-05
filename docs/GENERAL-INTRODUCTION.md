@@ -199,9 +199,10 @@ The output side has three tiers of instrument:
 - **Judge models** for qualities parsers cannot reach. Every steered output is
   paired with its same-item baseline; a judge sees the two side by side — order
   randomized, condition never revealed — and scores them under a version-pinned
-  rubric, with at least two genuinely distinct judges and agreement statistics.
-  A second mode codes each response individually against a declared field
-  schema, reporting per-field agreement (Cohen's κ for categorical fields).
+  rubric. One judge is a legal design; a panel of two or more must be genuinely
+  distinct, and only a panel yields agreement statistics. A second mode codes
+  each response individually against a declared field schema, reporting
+  per-field agreement between judges (Cohen's κ for categorical fields).
 
 Alongside those, two surface measures that are diagnostics rather than outcomes:
 **marker density** (how often the concept's own vocabulary appears) and a pinned,
@@ -240,9 +241,13 @@ emotion-concepts paper), and every divergence from those sources, logged.*
 a **native macOS application and CLI** (Swift, Apple's MLX framework) — the
 interactive research cockpit for authoring concepts, watching a dose-response
 sweep by hand, chatting under steering, and iterating fast — and a **Python
-engine** (PyTorch / Hugging Face) for Linux/CUDA hardware, with an HTTP API and
-browser workbench, built for unattended batch campaigns: scheduler submission,
-durable jobs, evidence bundles.
+engine** (PyTorch / Hugging Face), which runs every method, on CUDA hardware or
+on a Mac's own graphics processor, with an HTTP API and browser workbench,
+built for unattended batch campaigns: scheduler submission, durable jobs,
+evidence bundles. In the app, where a workspace's studies run is one of three
+plainly named choices: "This Mac, quick start" (the built-in engine), "This
+Mac, full capabilities" (the Python engine on the Mac), and "Another machine"
+(the Python engine on a workstation or cluster).
 
 They are not wrappers around each other. They share one *artifact model* — the
 same stimulus files, manifests, vector formats, and run directories, pinned by
@@ -333,8 +338,8 @@ evidence gates apply:
 | `measurementPins` | the inputs that determine what is measured are present and valid |
 | `validateEvidence` | a `validate` run matching the exact pins, on this engine, that is not vacuous |
 | `variantValidity` | attached variants carry hashed weights and a pinnable dataset manifest |
-| `batteryEvidence` | each variant condition has scope-matched capability-battery evidence |
-| `judgeValidity` | a rubric *file* and at least two genuinely distinct judges |
+| `batteryEvidence` | baseline and each agent condition have scope-matched capability-battery evidence; a condition whose agent uses an intervention policy is exempt, and the frozen study records the exemption |
+| `judgeValidity` | a rubric *file* and at least one judge (a panel of two or more must be genuinely distinct) |
 | `gitClean` | every pinned input is committed in the workspace repository |
 
 A refusal is typed and names its repair. `--force` skips the seven gates — never
@@ -363,9 +368,9 @@ confirmatory later:
 | 0 · Shakedown | Prove the instruments end to end on small development models; run the standing smoke tests | Mac |
 | 1 · Author data | Concept corpora, never-named validation sets, the independence screen, runnable task items, batteries | (research work) |
 | 2 · Screen | Many concepts, coarse doses, one sensitive endpoint; FDR correction; promote the movers | Mac or server |
-| 3 · Confirm | Promoted movers only, held-out items, fine dose grids, the full control matrix, a second model family | server for anything sampled |
+| 3 · Confirm | Promoted movers only, held-out items, fine dose grids, the full control matrix, a second model family | Mac or server, by model size and method |
 | 4 · Triangulate | The same concept as vector / adapter / prompt; alternative extraction recipes; feature cross-checks; human-anchored residuals where a baseline exists | mixed |
-| 5 · Panels | Multi-agent deliberation with 0/1/2/3 conditioned seats; spillover and transmission | server |
+| 5 · Panels | Multi-agent deliberation with 0/1/2/3 conditioned seats; spillover and transmission | Mac or server, by model size and context length |
 
 One pass through the middle of the funnel, concretely:
 
@@ -390,8 +395,8 @@ One pass through the middle of the funnel, concretely:
 8. **Run** — generate the full condition matrix: baseline, each treatment at two
    or more positive doses and a negative dose, the matched-norm random placebo,
    any positive control, and the capability battery under every condition.
-   Deterministic runs execute locally; anything needing repeated stochastic
-   samples runs on the Python engine.
+   Deterministic and sampled runs both work on either engine; where a study
+   runs is a choice of method, model size, and memory.
 9. **Evaluate** — blinded paired judging or per-response coding, where free text
    is an endpoint.
 10. **Analyze** — paired effect sizes with bootstrap confidence intervals, FDR
@@ -423,8 +428,9 @@ For categorical outcomes, answer-token/logprob instruments remain temperature-fr
 
 - **Two engines over one artifact model.** `steerlab-cli` (Swift/MLX, Apple
   silicon) for authoring and local runs; `steerlab-server` (Python/PyTorch/
-  Hugging Face) for CUDA hardware, larger models, and stochastic multi-sample
-  work. Both read and write the same manifests, vectors, and run directories.
+  Hugging Face) for every method, on CUDA hardware or a Mac's own graphics
+  processor, and for larger models. Both read and write the same manifests,
+  vectors, and run directories, and both run sampled studies.
   The bare name `steerlab` is neither of them — it is the cross-platform Python
   client, a third product with its own smaller verb surface.
 - **CLI-first, headless by contract.** Every paper-relevant operation is a
@@ -444,9 +450,13 @@ For categorical outcomes, answer-token/logprob instruments remain temperature-fr
   **neutral instrument seed**: capability batteries, a neutral corpus, sweep dev
   prompts, judging rubrics, a parser registry, and templates for every study-data
   file you will need. It is deliberately concept-empty — the concept is what you
-  are studying and arrives by your decision. `SampleWorkspace/` is a recipe-only
-  worked example (the formality concept, task prompts, a battery, a neutral
-  corpus, a default rubric) with no vectors, no runs, no frozen manifest.
+  are studying and arrives by your decision. A **Demo Workspace** is a worked
+  example with a finished study to read and a draft to run, opened as a copy
+  with `workspace init <folder> --demo <backend>` or from the app's Research
+  Setup; a release may carry none. In a source checkout, `SampleWorkspace/` is
+  a recipe-only worked example (the formality concept, task prompts, a battery,
+  a neutral corpus, a default rubric) with no vectors, no runs, no frozen
+  manifest.
 - **The freeze firewall,** with hash-pinned inputs, a one-way gated freeze,
   stamped forcing, immutable runs, epoch guards on analysis, and a
   data-readiness checklist (`data check`) that names the file you still owe and
@@ -460,7 +470,11 @@ For categorical outcomes, answer-token/logprob instruments remain temperature-fr
   intervals, Wilcoxon tests, BH-FDR for screens and Holm for confirmations,
   dose-monotonicity, control margins, and human-anchored residuals where a
   baseline is pinned. `analyze` writes `effect-sizes.csv` and folds the numbers
-  into `report.json`.
+  into `report.json`. Summaries lead with the outcome the study is about (the
+  one the researcher declares, else one chosen by a stated order) and say which
+  rule chose it. `results export` copies a run's stored results, recalculating
+  nothing, into tables for R, Stata, SPSS, or a spreadsheet, with transcripts, a
+  methods summary, and a codebook.
 - **A cluster path.** Saved site profiles, an SSH bootstrap that installs from
   the committed platform dependency locks, durable jobs with checkpoint/resume
   and fan-out, submission preflight, evidence bundles for engines that cannot
@@ -476,8 +490,9 @@ For categorical outcomes, answer-token/logprob instruments remain temperature-fr
 ## 8. If you want to see it with your own eyes
 
 The visceral demonstration takes about half an hour on a Mac and needs no study
-apparatus. Load a small 4-billion-parameter development model and run the
-bundled toy configuration (`prompts/configs/toy-french.json`): in minutes it
+apparatus. Load a small 4-billion-parameter development model and, from a
+source checkout, run the toy configuration (`steerlab-cli --config
+prompts/configs/toy-french.json`): in minutes it
 extracts a French-language concept vector and verifies both that it moves
 generation into French and that an equal-magnitude random vector does nothing.
 Then open the app's steering surface, enable the vector, and slide the dose:
@@ -494,6 +509,7 @@ through.)*
 | Read | For |
 |---|---|
 | [README.md](../README.md) | Orientation, requirements, install, quickstart |
+| [Getting started](CLIENT-FIRST-RUN.md) | Both routes, from a download to a first workspace and first results, step by step |
 | [TECHNICAL-OVERVIEW.md](TECHNICAL-OVERVIEW.md) | The engines, the artifact model and the design philosophy, in full |
 | [ONBOARDING.md](ONBOARDING.md) | **Start here to use it.** The hands-on tour: first vector, first experiment, first freeze |
 | [METHODS.md](METHODS.md) | The math, the source lineage, and every logged divergence from it |
@@ -559,7 +575,7 @@ you download.
   cell as a reusable agent with a birth certificate.
 - **Answer-token logprob instrument** — reads the probability over fixed answer
   options directly; deterministic and temperature-free. **Paired judge** —
-  blinded side-by-side scoring of steered versus baseline output by two or more
+  blinded side-by-side scoring of steered versus baseline output by one or more
   judge models under a hash-pinned rubric.
 - **Marker density / reasoning-style taxonomy** — surface diagnostics measured
   beside the outcome endpoint, never as a substitute for it. **FDR / Holm** —

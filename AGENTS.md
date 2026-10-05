@@ -115,7 +115,10 @@ Pick the first path that applies:
    this codebase and wants Windows is welcome to pursue it themselves.
    Create a workspace with `steerlab workspace init <directory> --json`.
    The Python client has none of the Mac lifecycle verbs (extract, validate,
-   sweep, promote, analyze); use its method catalog for managed execution. The full contract is
+   sweep, promote, analyze) as local commands: a draft's validate and extract
+   steps, and a frozen study's measured run, go to a runner through
+   `steerlab run <exp> --runner <url> --verb <verb>`, and managed scientific
+   operations go through its method catalog. The full contract is
    `docs/PORTABILITY-CONTRACTS.md`, and `docs/CLI-REFERENCE.md` §1.4 is the
    verb-by-verb reference.
 
@@ -139,7 +142,7 @@ output.
 print that line. Two checks instead:
 
 ```sh
-steerlab --version                     # -> steerlab <version> (client), e.g. 0.9.1
+steerlab --version                     # -> steerlab <version> (client)
 steerlab experiment list --root <any-directory> --json
 ```
 
@@ -168,13 +171,18 @@ open an existing one. No prescribed home layout or Mac is required.
 
 ```sh
 python3.12 -m venv Server/.venv.nosync
+Server/.venv.nosync/bin/pip install -r Server/requirements-macos-arm64.lock   # or requirements-linux-x86_64.lock
 Server/.venv.nosync/bin/pip install -e "Server[all]"
 Server/.venv.nosync/bin/python -m steerlab_server.cli serve --root <workspace>
 ```
 
-Serve with an explicit `--root`; the artifact root must be the workspace, not
-`Server/`. The server binds loopback by default — read `SECURITY.md` before
-changing that.
+Install from the committed lock for the platform first, never from the
+version floors alone: two machines that satisfy the same floors can resolve
+different `torch` and `transformers` and produce different numbers.
+`Server/README.md` ("Dependency locks") maintains the locks and the cluster's
+site-owned `torch` exception. Serve with an explicit `--root`; the artifact
+root must be the workspace, not `Server/`. The server binds loopback by
+default — read `SECURITY.md` before changing that.
 
 ## Step 4 — first workspace, then hand off (either client)
 
@@ -182,6 +190,11 @@ changing that.
 steerlab-cli workspace init ~/SteerLab/Workspaces/<study-name>
 export STEERLAB_WORKSPACE=~/SteerLab/Workspaces/<study-name>
 ```
+
+To start from a worked example instead, `workspace init <directory> --demo
+<mlx|mps|cuda>` (either client) opens a verified copy of a Demo Workspace;
+a release that carries none says so, and a plain `workspace init` is the
+repair.
 
 The new workspace contains its own `AGENTS.md`. **Read it and follow it from
 here** — it is a short core guide, and the study lifecycle (create → attach →

@@ -10,9 +10,9 @@ result you cannot reproduce headlessly is a result you cannot hand to anyone,
 and the app drives the same engine through the same store (§8).
 
 The running example is **formality** — the register difference between "I
-regret to inform you" and "bad news, sorry" — the concept that ships in
-[SampleWorkspace](../SampleWorkspace/README.md). Substitute your own; nothing
-in the engine knows the difference.
+regret to inform you" and "bad news, sorry" — the concept in a source
+checkout's [SampleWorkspace](../SampleWorkspace/README.md). Substitute your
+own; nothing in the engine knows the difference.
 
 Companions: [GENERAL-INTRODUCTION.md](GENERAL-INTRODUCTION.md),
 [RESULTS-ARCHITECTURE.md](RESULTS-ARCHITECTURE.md) (what each layer of result
@@ -555,7 +555,7 @@ gates**, each with a stable cross-engine id, are force-skippable:
 | `measurementPins` | the pins that determine *what is measured* are present and valid |
 | `validateEvidence` | a `validate` run matching the exact pins on the run substrate, and not vacuous |
 | `variantValidity` | attached variants carry hashed weights and a pinnable dataset manifest |
-| `batteryEvidence` | each variant condition has scope-matched capability-battery evidence |
+| `batteryEvidence` | baseline and each agent condition have scope-matched capability-battery evidence; a condition whose agent uses an intervention policy is exempt, and the frozen study records the exemption in `capabilityBatteryNotApplied` without being marked forced |
 | `judgeValidity` | a rubric **file** and at least one judge (a panel of two or more must be genuinely distinct) |
 | `gitClean` | every pinned input is committed in the workspace git repo |
 

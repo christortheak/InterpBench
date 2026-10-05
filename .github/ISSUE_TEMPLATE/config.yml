@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/christortheak/InterpBench/blob/main/SECURITY.md
+    about: Report vulnerabilities privately, as SECURITY.md describes, never in a public issue.
+  - name: Getting started
+    url: https://github.com/christortheak/InterpBench/blob/main/docs/CLIENT-FIRST-RUN.md
+    about: Installing SteerLab and creating your first workspace, step by step.

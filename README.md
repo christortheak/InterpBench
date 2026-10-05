@@ -1,7 +1,7 @@
 # SteerLab
 
 **Change how a language model behaves from the inside, then measure what
-changed, fairly.** Works through a Mac app, your coding agent, or the
+changed, fairly.** Works through a Mac app, your coding assistant, or the
 command line.
 
 A language model's behavior can be nudged while it writes by adding a
@@ -15,11 +15,13 @@ organized.
 
 Study one model, compare several configured agents, or investigate what
 happens when agents interact. Use the Mac app or your coding assistant to
-prepare studies, choose local or remote compute, monitor execution, and
-inspect the evidence in your own workspace.
+prepare studies, choose where they run, monitor execution, and inspect and
+export the evidence in your own workspace. A Mac on its own, laptops
+included, is enough to work with.
 
 **[Download from the Releases page](https://github.com/christortheak/InterpBench/releases/latest)**
 (the Mac app, or the app-free client archive) · **[Getting started](docs/CLIENT-FIRST-RUN.md)**
+· **[Report a problem](CONTRIBUTING.md#reporting-a-problem)**
 
 *Pre-release research software. It has so far run in earnest on a small
 number of installations. Expect some rough edges; setup guidance and
@@ -29,29 +31,30 @@ hardware, and what has actually been measured, is recorded in
 
 ## Start here
 
-Start designing a study before downloading a model or connecting to
-compute. Pick either route; you can move between the app and your agent at
-any time, because both work on the same workspace folder.
+Start designing a study before downloading a model or choosing where it
+runs. Pick either route; you can move between the app and your coding
+assistant at any time, because both work on the same workspace folder.
+[Getting started](docs/CLIENT-FIRST-RUN.md) walks through each step, with how
+long it takes and how much disk space it needs.
 
-Release files carry the version and a short source revision in their names,
-for example `SteerLab-0.9.6+416d0675.zip` and
-`steerlab-client-0.9.6+416d0675.tar.gz`. Each has a `.sha256` file beside it
-on the Releases page, and the client archive carries a `SHA256SUMS` for its
-contents.
+Release files are named `SteerLab-<version>+<revision>.zip` and
+`steerlab-client-<version>+<revision>.tar.gz`, where `<revision>` is a short
+source revision. Each has a `.sha256` file beside it on the Releases page.
 
 ### Use the Mac app
 
 1. **Download `SteerLab-<version>+<revision>.zip`** from the Releases page,
    unzip it, and open SteerLab. Keep the app wherever you like, such as
    `/Applications` or a `SteerLab` folder in your home directory.
-2. **Follow Research Setup.** It opens on first launch and stays in the
-   Workspace menu. It creates or opens a workspace folder, and shows you a
-   plan for the small Python helper that study authoring uses before
-   installing it with your approval.
-3. **Work in the app, or hand the workspace to your agent.** Click
-   **Copy Agent Handoff** in Research Setup, open the workspace folder in
-   your coding-agent tool, and paste the handoff followed by your question.
-   For example:
+2. **Follow Research Setup.** It opens at first launch and stays in the
+   Workspace menu. Create or open a workspace folder, or open a copy of a
+   Demo Workspace, a worked example. Choose where studies run. Then review
+   the plan for the small Python helper that study design uses, and approve
+   it.
+3. **Work in the app, or hand the workspace to your coding assistant.**
+   Click **Copy Instructions for Your Coding Assistant** in Research Setup,
+   open the workspace folder in your coding assistant, and paste the
+   instructions followed by your question. For example:
 
 > Read this workspace's AGENTS.md and help me design a study. I want to test
 > whether an intervention changes a model's response style on new prompts.
@@ -60,8 +63,9 @@ contents.
 
 Requires an Apple Silicon Mac on macOS 26.4 or later. No Xcode, no
 repository checkout, no separate Python. The one-time helper setup needs
-internet access. Models and where they run are separate choices you make
-when you are ready.
+internet access. Choosing where studies run installs nothing by itself;
+downloading a model, and any setup the place you chose needs, are separate
+steps you take when you are ready.
 
 <details>
 <summary>Prefer the command line on the Mac?</summary>
@@ -130,9 +134,9 @@ and get its handoff:
 ### Build from source
 
 For development, or to run the Python engine on your own GPU machine, start
-from a checkout: [AGENTS.md](AGENTS.md) is the contract for a coding agent
-pointed at this repository, and [ONBOARDING.md](docs/ONBOARDING.md) §4.3 is
-the walk for a person. Install the Python engine from the committed
+from a checkout: [AGENTS.md](AGENTS.md) is the contract for a coding
+assistant pointed at this repository, and
+[ONBOARDING.md](docs/ONBOARDING.md) §4.3 is the walk for a person. Install the Python engine from the committed
 dependency lock for your platform rather than from the version floors, so
 that two machines resolve the same `torch` and `transformers`; the
 maintained instructions are in [Server/README.md](Server/README.md) under
@@ -161,15 +165,35 @@ workspace; create one with `workspace init` on either client.
 - **Try models by hand.** The Mac app downloads open-weight models into your
   local cache and lets you chat with them, with or without an intervention
   applied, before you design anything measured.
-- **Run where the work fits.** To run a study, you need a model and suitable
-  compute. Supported studies can run locally on an Apple Silicon Mac or
-  through the Python engine on a workstation or cluster. Choose according to
-  the method, model size and available memory. Remote results return to your
-  local workspace with their evidence verified.
+- **Run where the work fits.** To run a study, you need a model and
+  somewhere to run it, and a Mac on its own is a supported place. Each
+  workspace runs its studies in one of three places: **This Mac, quick
+  start**, the engine built into the app, for core steering studies on small
+  models with nothing to install beyond a model; **This Mac, full
+  capabilities**, the Python engine on the Mac's own graphics processor,
+  which runs every method after a one-time setup of several gigabytes; or
+  **Another machine**, the Python engine on a workstation or cluster you
+  connect to. Choose by method, model size, and available memory. Remote
+  results return to your local workspace with their evidence verified.
+- **Start from a worked example.** A Demo Workspace holds a finished study
+  to read and a draft to run. SteerLab opens it as a copy in a folder you
+  choose: **Open Demo Workspace…** in Research Setup, or `workspace init
+  <folder> --demo <backend>` on either command line. A release may carry
+  none, and then says so.
+- **Read results that lead with your question.** Results lead with the
+  outcome the study is about: the primary outcome you declare, or else one
+  chosen by a stated order that puts judged outcomes before surface measures
+  such as word count. Every summary says which rule chose it.
+- **Take the results elsewhere.** `results export` on either command line,
+  or **Export Results…** in the app, writes a completed run's stored results
+  to a new folder: tables for R, Stata, SPSS, or a spreadsheet, transcripts
+  for coding by hand, a methods summary, and a codebook. Nothing is
+  recalculated. `science report` turns a stored J-lens assessment into one
+  self-contained web page.
 
 The methods, their inputs and their limits are described in the shipped
-method guides your agent can read (`science list`, `science guide <method>`
-on either command line).
+method guides your coding assistant can read (`science list`, `science guide
+<method>` on either command line).
 
 ### Investigate how behavior changes through interaction
 
@@ -217,5 +241,14 @@ runner and retrieve its results.
 No model weights are distributed here. You download the models you choose
 under their own licenses, some of which carry use restrictions that can
 extend to artifacts you derive; see [NOTICE](NOTICE).
+
+## Report a problem
+
+Open an issue on the
+[issue tracker](https://github.com/christortheak/InterpBench/issues/new/choose)
+and follow the form; [CONTRIBUTING.md](CONTRIBUTING.md) says what to include
+and how to propose a change. Never paste a token, a password, a log that
+shows folder paths, or study data into an issue. Report a security
+vulnerability privately, as [SECURITY.md](SECURITY.md) describes.
 
 Apache License 2.0; see [LICENSE](LICENSE).
