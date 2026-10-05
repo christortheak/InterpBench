@@ -118,11 +118,13 @@ public enum ExperimentTasks {
         let manifest = try ExperimentStore.load(name: name)
         let violations = ExperimentStore.verify(manifest)
         guard violations.isEmpty else {
-            throw ExperimentError.refusing(
-                .pinDrift,
-                "experiment '\(name)' failed verification:\n  - "
-                    + violations.joined(separator: "\n  - "),
-                repair: pinDriftRepair(name: name, violations: violations))
+            // `pinDrift` only when a pinned file's bytes are involved. An
+            // empty draft and a contradictory declaration used to arrive under
+            // the same id, with a repair about restoring files nobody changed.
+            throw VerificationRefusal.error(
+                name: name, violations: violations,
+                reason: "experiment '\(name)' failed verification:\n  - "
+                    + violations.joined(separator: "\n  - "))
         }
         return manifest
     }

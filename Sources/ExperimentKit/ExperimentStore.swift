@@ -7321,7 +7321,13 @@ public enum ExperimentStore {
             }
             let violations = verify(manifest)
             guard violations.isEmpty else {
-                throw ExperimentError(
+                // Typed (`VerificationRefusal`): this was a bare error, so a
+                // draft with nothing attached answered `failed`/`verbFailed`
+                // — what a crash answers. The prose is unchanged except for
+                // the empty study, which gets plain words and a repair that
+                // says what to attach.
+                throw VerificationRefusal.error(
+                    name: name, violations: violations,
                     reason: "cannot freeze '\(name)':\n  - "
                         + violations.joined(separator: "\n  - "))
             }

@@ -168,6 +168,14 @@ import Testing
             let outcome = await invoke("workspace", ["init", target.path])
             #expect(outcome.envelope.state == .ready)
             #expect(outcome.envelope.changed)
+            // A new workspace points at the study interview, not at
+            // `experiment create <name> --model <id>`.
+            #expect(outcome.envelope.nextAction?.verb == "authoring study <intent>")
+            #expect(
+                outcome.envelope.nextAction
+                    == WorkspaceBootstrap.initNextAction(
+                        rootPath: try #require(
+                            outcome.envelope.workspace)))
             try check(outcome, fixture: "workspace-init", root: root)
         }
     }
@@ -581,6 +589,22 @@ import Testing
             let gates = try #require(outcome.envelope.error?.gates)
             #expect(gates.contains(FreezeGate.validateEvidence.rawValue))
             try check(outcome, fixture: "experiment-freeze-refused", root: root)
+        }
+    }
+
+    /// The first refusal a new author meets: freezing a draft with nothing
+    /// attached. It used to be `failed` / 70 / `verbFailed` with the untyped
+    /// repair; it is a typed refusal that says what to attach.
+    @Test func experimentFreezeEmptyDraftEnvelope() async throws {
+        try await withTempRoot { root in
+            await invoke(
+                "experiment",
+                ["create", "demo", "--model", "mlx-community/gemma-3-4b-it-4bit"])
+            let outcome = await invoke("experiment", ["freeze", "demo"])
+            #expect(outcome.envelope.state == .refused)
+            #expect(outcome.envelope.exitCode == 65)
+            #expect(outcome.envelope.error?.code == LifecycleGate.emptyStudy.rawValue)
+            try check(outcome, fixture: "experiment-freeze-empty", root: root)
         }
     }
 

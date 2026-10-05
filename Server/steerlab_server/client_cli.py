@@ -531,9 +531,20 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
 
 _SPECS_BY_LABEL = {spec.label: spec for spec in CLIENT_VERB_SPECS}
 
-#: Families this binary dispatches, in the order ``--help`` prints them.
-FAMILIES: tuple[str, ...] = ("experiment", "concept", "bundle", "pack", "design", "agent", "model",
-                             "authoring", "runner", "run", "science")
+#: Families this binary dispatches, in the order ``--help`` prints them: the
+#: first-run families lead (``setup``, ``workspace``, then ``authoring``, which
+#: holds the study interview), because the top of this page is the first thing
+#: a new caller reads.
+#:
+#: This tuple is what ``--help``, ``<family> --help``, and the unknown-family
+#: repair all print, and :data:`HANDLERS` is what :func:`main` dispatches. The
+#: two once disagreed — ``workspace``, ``setup``, and ``panel`` ran but were
+#: listed nowhere, and ``steerlab workspace --help`` printed no verbs — so
+#: ``test_client_cli.py::test_help_lists_every_dispatched_family`` now holds
+#: this tuple, the handler table, and the verb table to the same set.
+FAMILIES: tuple[str, ...] = ("setup", "workspace", "authoring", "experiment",
+                             "concept", "bundle", "pack", "design", "agent",
+                             "panel", "model", "science", "runner", "run")
 
 #: Families whose ENTIRE surface is one verb, spelled as the family name and
 #: nothing after it: ``steerlab run <experiment>``. Maps family → the verb its
@@ -1855,17 +1866,26 @@ def _experiment(invocation: Invocation) -> CLIResult:
                          "experimentHash": manifest.content_hash()})
         for violation in violations:
             print(f"VIOLATION: {violation}")
-        from .experiment import lifecycle_gates
+        # `pinDrift` only when a pinned file's bytes changed, went missing, or
+        # appeared. A draft with nothing attached, and a declaration that
+        # contradicts itself, used to arrive under the same code with a repair
+        # about restoring files that never changed.
+        from .experiment import lifecycle_gates, verification_refusal
+        gate = verification_refusal.gate(violations)
+        if gate == lifecycle_gates.PIN_DRIFT:
+            message = (f"{len(violations)} pinned input(s) of "
+                       f"{manifest.name!r} no longer match their hashes")
+        elif gate == lifecycle_gates.EMPTY_STUDY:
+            message = verification_refusal.empty_reason(manifest.name,
+                                                        violations)
+        else:
+            message = (f"{len(violations)} problem(s) in the declared "
+                       f"settings of {manifest.name!r} (each is listed in "
+                       "result.violations)")
         return CLIResult(
-            state="refused",
-            code=lifecycle_gates.PIN_DRIFT, gate=lifecycle_gates.PIN_DRIFT,
-            message=(f"{len(violations)} pinned input(s) of "
-                     f"{manifest.name!r} no longer match their hashes"),
-            repair_action=(
-                f"{PROGRAM} experiment verify {manifest.name}  (names every "
-                "drifted pin); then restore the named files, or duplicate the "
-                f"study and re-pin: {PROGRAM} experiment duplicate "
-                f"{manifest.name} {manifest.name}-v2"),
+            state="refused", code=gate, gate=gate, message=message,
+            repair_action=verification_refusal.repair(
+                manifest.name, violations, program=PROGRAM),
             payload={"experiment": manifest.name, "status": manifest.status,
                      "verified": False, "violations": list(violations)})
 
@@ -3681,16 +3701,21 @@ def _run(invocation: Invocation) -> CLIResult:
     if violations:
         for violation in violations:
             print(f"VIOLATION: {violation}")
+        # The same naming `experiment verify` uses: `pinDrift` when bytes
+        # changed, and the declaration's own code when they did not.
+        from .experiment import verification_refusal
+        load_gate = verification_refusal.gate(violations)
         raise _die(
-            stages, "load", code=lifecycle_gates.PIN_DRIFT,
-            gate=lifecycle_gates.PIN_DRIFT,
-            reason=(f"{len(violations)} pinned input(s) of {name!r} no longer "
-                    "match their hashes — the bundle would carry a study that "
-                    "is not the one on disk"),
-            repair=(f"{PROGRAM} experiment verify {name}  (names every drifted "
-                    "pin); then restore the named files, or duplicate the "
-                    f"study and re-pin: {PROGRAM} experiment duplicate {name} "
-                    f"{name}-v2"),
+            stages, "load", code=load_gate, gate=load_gate,
+            reason=((f"{len(violations)} pinned input(s) of {name!r} no longer "
+                     "match their hashes — the bundle would carry a study that "
+                     "is not the one on disk")
+                    if load_gate == lifecycle_gates.PIN_DRIFT else
+                    (f"{name!r} did not verify, so it cannot be handed to a "
+                     f"runner: {len(violations)} problem(s) in its declared "
+                     "settings (each is listed in result.violations)")),
+            repair=verification_refusal.repair(name, violations,
+                                               program=PROGRAM),
             common=common, facts={"violations": list(violations)},
             stage_facts={"status": status})
 
@@ -4405,7 +4430,12 @@ def main(argv: list | None = None) -> int:
 
     family = args[0]
     if family not in HANDLERS:
-        sys.stderr.write(help_text())
+        # The whole page is for a person at a terminal. Under --json the
+        # refusal below already names every family and `--help`, and writing
+        # some twenty kilobytes beside it charges a machine caller for a
+        # manual it did not ask for.
+        if not json_mode:
+            sys.stderr.write(help_text())
         exc = ClientRefusal(
             code=UNKNOWN_VERB_CODE,
             reason=f"{family!r} is not a family of this client",

@@ -3531,7 +3531,14 @@ def freeze(name: str, *, force: bool = False, cached_revision=None,
         manifest = Manifest.from_dict(d)
         violations = manifest.verify(root)
         if violations:
-            raise ExperimentStoreError("cannot freeze:\n  - " + "\n  - ".join(violations))
+            # Typed, so the caller can tell a file that drifted from a draft
+            # with nothing attached yet from a declaration that contradicts
+            # itself. The prose is unchanged except for the empty study, which
+            # gets plain words and a repair that says what to attach.
+            from . import verification_refusal
+            raise verification_refusal.error(
+                name, violations,
+                "cannot freeze:\n  - " + "\n  - ".join(violations))
         # Panel identity: a pinned panel in which two agents, or two turns,
         # share an ID REFUSES the freeze, force included. Record identity is
         # the never-skippable class, like the pins above — a turn ID keys
@@ -3571,7 +3578,9 @@ def freeze(name: str, *, force: bool = False, cached_revision=None,
         manifest = Manifest.from_dict(d)
         violations = manifest.verify(root)
         if violations:
-            raise ExperimentStoreError(
+            from . import verification_refusal
+            raise verification_refusal.error(
+                name, violations,
                 "cannot freeze (after pinning inputs):\n  - " + "\n  - ".join(violations))
 
         # No-git reproducibility floor: snapshot EVERY pinned input into

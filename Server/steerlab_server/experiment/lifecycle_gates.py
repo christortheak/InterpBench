@@ -43,9 +43,13 @@ from __future__ import annotations
 
 #: A frozen or complete manifest was asked to change. Iterate by duplicating.
 STATUS_IMMUTABLE = "statusImmutable"
-#: A pinned input no longer matches its pinned hash — or appeared after being
-#: pinned as absent. Every ``verify()`` violation, plus the task-prompt hash
-#: checks the run loop repeats at run time.
+#: A pinned input no longer matches its pinned hash — or is missing, or
+#: appeared after being pinned as absent. The ``verify()`` violations that
+#: report bytes, plus the task-prompt hash checks the run loop repeats at run
+#: time. On the client, ``verification_refusal`` separates these from
+#: ``EMPTY_STUDY`` and ``STUDY_DECLARATION``; the engine's own ``experiment
+#: verify`` and its frozen-study admission still raise this id for every
+#: ``verify()`` violation.
 PIN_DRIFT = "pinDrift"
 #: A source run's stamped experiment hash ≠ the live manifest's.
 MANIFEST_EPOCH = "manifestEpoch"
@@ -117,6 +121,17 @@ SWEEP_GRID_RULE = "sweepGridRule"
 #: and truncation lands unevenly across arms — so this is a per-cell gate, and
 #: a run-wide fraction is exactly what would hide it.
 LENGTH_STOPPED = "lengthStopped"
+#: The study has nothing to measure yet: no concept, no agent, and (for a
+#: multi-agent study) no panel scenario. ``verify()`` reports it, and it used to
+#: reach a caller as ``PIN_DRIFT`` with a repair about restoring files — on a
+#: draft where nothing was ever pinned. The repair is to attach something.
+EMPTY_STUDY = "emptyStudy"
+#: ``verify()`` found a problem in the study's own declaration — an incomplete
+#: pin, two settings that contradict each other, a name used twice — and no
+#: pinned file's bytes are involved. ``PIN_DRIFT``'s sibling, and the reason
+#: that id now means what it says: drift is repaired by restoring a file, and
+#: this is repaired by correcting the setting each violation names.
+STUDY_DECLARATION = "studyDeclaration"
 
 #: The closed vocabulary, in the fixed cross-engine order. Swift twin:
 #: ``LifecycleGate.vocabulary`` (declaration order of the enum's cases).
@@ -144,6 +159,8 @@ LIFECYCLE_GATE_IDS: tuple[str, ...] = (
     CONCEPT_IN_USE,
     SWEEP_GRID_RULE,
     LENGTH_STOPPED,
+    EMPTY_STUDY,
+    STUDY_DECLARATION,
 )
 
 

@@ -19,6 +19,35 @@ def catalog():
     return {**json.loads(data), 'catalogSHA256': hashlib.sha256(data).hexdigest()}
 
 
+def first_sentence(text):
+    """The text up to its first sentence break, as one line. Swift twin:
+    ``ScienceCatalog.firstSentence`` — the same literal ``". "`` split, so the
+    two brief catalogs stay equal."""
+    head = text.split('. ', 1)[0].strip()
+    return head if head.endswith('.') else head + '.'
+
+
+def brief():
+    """The catalog as a short index, for a caller choosing where to read next.
+
+    Method and operation ids, titles, and one line of purpose each, plus the
+    hash of the FULL catalog this was read from. Nothing here is new text: an
+    operation's line is the first sentence of its guided workflow's purpose
+    when it has one, and its method's purpose when it does not. The full
+    catalog (``catalog()``) is unchanged. Swift twin: ``ScienceCatalog.brief``.
+    """
+    full = catalog()
+    guided = {w['id']: w['purpose'] for w in json.loads(resource('workflows.json'))['operations']}
+    methods = {m['id']: m['purpose'] for m in full['methods']}
+    return {
+        'schemaVersion': full['schemaVersion'], 'brief': True, 'catalogSHA256': full['catalogSHA256'],
+        'methods': [{'id': m['id'], 'title': m['title'], 'purpose': m['purpose']} for m in full['methods']],
+        'operations': [{'id': o['id'], 'method': o['method'], 'title': o['title'],
+                        'purpose': first_sentence(guided.get(o['id']) or methods.get(o['method']) or o['title'])}
+                       for o in full['operations']],
+    }
+
+
 def guide(method):
     entry = next((m for m in catalog()['methods'] if m['id'] == method), None)
     if entry is None:

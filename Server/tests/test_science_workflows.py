@@ -60,6 +60,76 @@ def test_client_and_http_return_the_same_shipped_reference(tmp_path, monkeypatch
     capsys.readouterr()
 
 
+def test_brief_list_is_a_short_index_of_the_same_catalog(tmp_path, monkeypatch, capsys):
+    """`science list --json` is about 75 KB, and it was the second command a
+    new assistant was told to run. `--brief` is the index: every method and
+    operation id, its title, one line of purpose, and the hash of the full
+    catalog it summarizes. The full form is untouched."""
+    monkeypatch.delenv('STEERLAB_WORKSPACE', raising=False)
+    monkeypatch.delenv('STEERLAB_ROOT', raising=False)
+    monkeypatch.chdir(tmp_path)
+    full = science_catalog.catalog()
+
+    assert client_cli.main(['science', 'list', '--brief', '--json']) == 0
+    captured = capsys.readouterr()
+    document = json.loads(captured.out)
+    brief = document['result']
+    assert brief == science_catalog.brief()
+    assert set(brief) == {'schemaVersion', 'brief', 'catalogSHA256', 'methods', 'operations'}
+    assert brief['brief'] is True and brief['catalogSHA256'] == full['catalogSHA256']
+    assert [m['id'] for m in brief['methods']] == [m['id'] for m in full['methods']]
+    assert [o['id'] for o in brief['operations']] == [o['id'] for o in full['operations']]
+    for method, source in zip(brief['methods'], full['methods'], strict=True):
+        assert method == {'id': source['id'], 'title': source['title'], 'purpose': source['purpose']}
+    for operation, source in zip(brief['operations'], full['operations'], strict=True):
+        assert set(operation) == {'id', 'method', 'title', 'purpose'}
+        assert (operation['method'], operation['title']) == (source['method'], source['title'])
+        # One line, one sentence.
+        assert operation['purpose'].strip() and '\n' not in operation['purpose']
+        assert operation['purpose'].endswith('.') and '. ' not in operation['purpose']
+    # A guided operation is described by its own workflow; the rest by their method.
+    workflows = {w['id']: w['purpose'] for w in json.loads(science_catalog.resource('workflows.json'))['operations']}
+    by_id = {o['id']: o['purpose'] for o in brief['operations']}
+    assert by_id['optvec-train'] == science_catalog.first_sentence(workflows['optvec-train'])
+    assert 'battery' not in workflows
+    assert by_id['battery'] == next(m['purpose'] for m in full['methods'] if m['id'] == 'batteries')
+
+    # The size bound: the whole document an assistant reads, not just the payload.
+    assert len(captured.out.encode()) < 12_000, len(captured.out.encode())
+    assert len(json.dumps(brief).encode()) * 5 < len(json.dumps(full).encode())
+    # It says where to read next, and it does not execute or write anything.
+    assert document['nextAction']['verb'] == 'science guide <method>'
+    assert document['changed'] is False and list(tmp_path.iterdir()) == []
+
+    # The full form stays exactly as it is.
+    assert client_cli.main(['science', 'list', '--json']) == 0
+    assert json.loads(capsys.readouterr().out)['result'] == full
+    # --brief belongs to `list` alone.
+    assert client_cli.main(['science', 'guide', 'extraction', '--brief', '--json']) == 64
+    capsys.readouterr()
+
+
+def test_json_reads_say_one_line_on_stderr_instead_of_echoing_the_body(tmp_path, monkeypatch, capsys):
+    """Under --json the document is on stdout. The same body used to be printed
+    again on stderr, so a caller reading both streams paid for the catalog twice."""
+    monkeypatch.delenv('STEERLAB_WORKSPACE', raising=False)
+    monkeypatch.delenv('STEERLAB_ROOT', raising=False)
+    monkeypatch.chdir(tmp_path)
+    for args in (['list'], ['list', '--brief'], ['guide', 'extraction'], ['operation', 'battery']):
+        assert client_cli.main(['science', *args, '--json']) == 0
+        captured = capsys.readouterr()
+        assert json.loads(captured.out)['state'] == 'ready'
+        lines = captured.err.splitlines()
+        assert len(lines) == 1, (args, len(captured.err))
+        assert lines[0].startswith('science ' + args[0]) and lines[0].endswith('the document is on stdout')
+        assert len(captured.err) < 200
+    # Without --json the body is the output, as before.
+    assert client_cli.main(['science', 'list']) == 0
+    assert json.loads(capsys.readouterr().out) == science_catalog.catalog()
+    assert client_cli.main(['science', 'guide', 'extraction']) == 0
+    assert capsys.readouterr().out.rstrip('\n') == science_catalog.guide('extraction')['text'].rstrip('\n')
+
+
 def test_import_and_guides_need_no_gpu_or_checkout_working_directory(tmp_path):
     script = """
 import json, sys

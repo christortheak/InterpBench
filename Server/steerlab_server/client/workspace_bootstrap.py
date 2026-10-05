@@ -100,6 +100,39 @@ def inspect(directory):
             'seedSchemaVersion': specification['schemaVersion'], 'changed': False}
 
 
+# What a coding assistant is handed first. The two clients return the same
+# object: these three literals are duplicated in
+# Sources/ExperimentKit/WorkspaceBootstrap.swift, and
+# WorkspaceBootstrapParityTests.handoffLeadsWithTheInterviewOnBothClients
+# holds them equal.
+
+#: The three interviews, each with one line a researcher would recognize.
+STUDY_INTENTS = (
+    {'id': 'conceptStudy', 'purpose': 'Steer one model along a concept, such as a tone or a stance, and measure what changes.'},
+    {'id': 'agentComparison', 'purpose': 'Compare agents (configured models) with each other, or with the unmodified model, on the same prompts.'},
+    {'id': 'multiAgent', 'purpose': 'Have several agents interact in a scenario, and study the conversation.'},
+)
+HANDOFF_INSTRUCTIONS = (
+    'Read AGENTS.md in this workspace, then begin with the study interview: run the first discovery command with the '
+    "intent from studyIntents that fits the researcher's question. Work at the researcher's level: use plain words, "
+    'explain each choice you offer, and settle the research question and the open scientific choices with them. '
+    'Ask before anything that spends compute or money, such as downloading or running a model, submitting a job, '
+    'generating a dataset, or calling a paid judge. Use only what this installed client reports in its help and '
+    'method catalog. Workspace data stays local; running hardware receives execution copies.')
+HANDOFF_NEXT_ACTION = 'Ask the researcher what they want to learn, then run the study interview for the intent that fits.'
+#: The placeholder in the first discovery command; studyIntents lists its values.
+INTENT_PLACEHOLDER = '<intent>'
+
+
+def discovery(command, root, *, workspace_flag='--root'):
+    """The first commands, in the order to run them: the study interview, the
+    short method index, then the verb list. Each is a complete argument list."""
+    where = [workspace_flag, root, '--json']
+    return [command + ['authoring', 'study', INTENT_PLACEHOLDER] + where,
+            command + ['science', 'list', '--brief'] + where,
+            command + ['--help']]
+
+
 def handoff(directory, *, executable=None):
     report = inspect(directory)
     if not report['recognized'] or not report['agentGuidePresent']:
@@ -113,6 +146,5 @@ def handoff(directory, *, executable=None):
     command = executable
     root = report['workspaceRoot']
     return {**report, 'executable': command, 'agentGuide': str(Path(root) / 'AGENTS.md'),
-            'instructions': 'Read AGENTS.md before working. Discuss the research question and unresolved scientific choices with the researcher. Use only capabilities reported by this installed client. Workspace data remains local; running hardware receives execution copies.',
-            'discovery': [command + ['--help'], command + ['science', 'list', '--root', root, '--json']],
-            'nextAction': 'Read the agent guide, then choose a method with the researcher.'}
+            'instructions': HANDOFF_INSTRUCTIONS, 'studyIntents': [dict(intent) for intent in STUDY_INTENTS],
+            'discovery': discovery(command, root), 'nextAction': HANDOFF_NEXT_ACTION}

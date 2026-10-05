@@ -305,6 +305,13 @@ public struct ExperimentCLIRunner: Sendable {
             // discuss. The document is where the distinction lives.
             if let refusal = error.lifecycleRefusal {
                 failure.gate = refusal.gateID
+                // The two verification gates that are not drift say their
+                // repair in human mode too. Their reason alone ("… is empty")
+                // leaves a person at a terminal with no next step, and unlike
+                // the older gates they have no historical human line to keep.
+                if refusal.gate == .emptyStudy || refusal.gate == .studyDeclaration {
+                    failure.repairAction = refusal.repairAction
+                }
                 let envelope = SteerLabCLIEnvelope.refusal(
                     verb: verb, engine: SteerLabCLIEnvelope.localEngine,
                     code: refusal.gateID, gate: refusal.gateID,
@@ -767,10 +774,8 @@ public struct ExperimentCLIRunner: Sendable {
             return ExperimentCLIResult(
                 message: "created workspace at \(root.path)", changed: true,
                 payload: payload,
-                nextAction: .init(
-                    verb: "experiment create <name> --model <id>",
-                    detail: "run with --workspace \(root.path), or export "
-                        + "STEERLAB_WORKSPACE=\(root.path)"),
+                // The interview first, not `experiment create`.
+                nextAction: WorkspaceBootstrap.initNextAction(rootPath: root.path),
                 // The root this verb answered ABOUT is the one it just made,
                 // not the one the invocation resolved to (which is still the
                 // old/fallback root — this verb takes its target as a
@@ -3488,16 +3493,41 @@ public struct ExperimentCLIRunner: Sendable {
             // on failure" (§2.1) — a caller redirecting stdout to a file got
             // the bad news in the file and nothing on the terminal.
             for violation in violations { sink.err("VIOLATION: \(violation)\n") }
+            // `pinDrift` only when a pinned file's bytes changed, went
+            // missing, or appeared. A draft with nothing attached, and a
+            // declaration that contradicts itself, used to arrive under the
+            // same code with a repair about restoring files that never
+            // changed — the first refusal a new author met, and a false one.
+            let gate = VerificationRefusal.gate(violations)
+            let reason: String =
+                switch gate {
+                case .emptyStudy:
+                    VerificationRefusal.emptyReason(
+                        name: manifest.name, violations: violations)
+                case .studyDeclaration:
+                    "\(violations.count) problem(s) in the declared settings "
+                        + "of '\(manifest.name)' (each is listed in "
+                        + "result.violations)"
+                default:
+                    "\(violations.count) pinned input(s) of "
+                        + "'\(manifest.name)' no longer match their hashes"
+                }
+            let repair = VerificationRefusal.repair(
+                name: manifest.name, violations: violations)
+            // A stop prints nothing further in human mode, so the two gates
+            // that are not drift say their reason and repair here. Drift's
+            // human output stays exactly the `VIOLATION:` lines it always was.
+            if gate != .pinDrift {
+                sink.err("steerlab-cli experiment: \(reason)\n  \(repair)\n")
+            }
             throw ExperimentCLIStop(
-                exitCode: LifecycleGate.pinDrift.humanExitCode, state: .refused,
-                code: LifecycleGate.pinDrift.rawValue,
-                reason: "\(violations.count) pinned input(s) of "
-                    + "'\(manifest.name)' no longer match their hashes",
+                exitCode: gate.humanExitCode, state: .refused,
+                code: gate.rawValue,
+                reason: reason,
                 // The same repair `loadVerified` hands every other verb — an
                 // appeared-after-attach violation is repaired by ONE attach,
                 // and nothing on the surface used to say so (§9, P5).
-                repairAction: ExperimentTasks.pinDriftRepair(
-                    name: manifest.name, violations: violations),
+                repairAction: repair,
                 payload: [
                     "experiment": .string(manifest.name),
                     "status": .string(manifest.status.rawValue),

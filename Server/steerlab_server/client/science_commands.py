@@ -30,7 +30,7 @@ VERB_SPECS = (
     VerbSpec('science', 'import', positional='<archive.tar.gz>', purpose='Verify and import diagnostic evidence into the captured local workspace without replacing outputs.', value_flags=frozenset({'--sha256'}), required_flags=frozenset({'--sha256'})),
     VerbSpec('science', 'custody', purpose='Reverify and list retained diagnostic evidence receipts for offline inspection.'),
     VerbSpec('science', 'verify-custody', positional='<receipt-sha256>', purpose='Re-read the retained archive and every expanded local output before reporting custody.'),
-    VerbSpec('science', 'list', purpose='List shipped methods, public operation paths and engine restrictions; does not execute.'),
+    VerbSpec('science', 'list', purpose='List shipped methods, public operation paths and engine restrictions; does not execute. With --brief, return a short index instead: ids, titles, and one line of purpose each.', boolean_flags=frozenset({'--brief'})),
     VerbSpec('science', 'guide', positional='<method>', purpose='Read the shared method guide, dataset schemas and coworker/reviewer instructions.'),
     VerbSpec('science', 'operation', positional='<operation>', purpose='Inspect exact public execution paths, outputs and restrictions for one operation.'),
 )
@@ -44,10 +44,41 @@ def run(invocation):
         return local(invocation)
     if len(args) != (0 if verb == 'list' else 1):
         raise ClientRefusal(code='usage', reason='Supply exactly the declared arguments.', repair_action=f'steerlab science {verb} --help')
+    brief = verb == 'list' and '--brief' in invocation.flags
     try:
-        result = science_catalog.catalog() if verb == 'list' else getattr(science_catalog, verb)(args[0])
+        if verb == 'list':
+            result = science_catalog.brief() if brief else science_catalog.catalog()
+        else:
+            result = getattr(science_catalog, verb)(args[0])
     except science_catalog.ScienceRefusal as exc:
         raise ClientRefusal(code='usage', reason=str(exc), repair_action=exc.repair_action, state='blocked') from exc
-    import json
-    print(result['text'] if verb == 'guide' else json.dumps(result, indent=2, ensure_ascii=False))
-    return CLIResult(message='Scientific workflow reference read; no execution performed.', payload=result)
+    if invocation.json:
+        # Under --json this print lands on stderr, and the document on stdout
+        # already carries the whole result. Echoing the body again doubled what
+        # a caller reading both streams paid for the catalog, so one line says
+        # what was read and where it is.
+        print(summary(verb, result))
+    else:
+        import json
+        print(result['text'] if verb == 'guide' else json.dumps(result, indent=2, ensure_ascii=False))
+    from ..cli_envelope import next_action
+    return CLIResult(message='Scientific workflow reference read; no execution performed.', payload=result,
+                     next_action=next_action(BRIEF_NEXT_VERB, detail=BRIEF_NEXT_DETAIL) if brief else None)
+
+
+#: Where a caller goes after the short index. Swift twins:
+#: ``ScienceCatalog.briefNextVerb`` and ``ScienceCatalog.briefNextDetail``.
+BRIEF_NEXT_VERB = 'science guide <method>'
+BRIEF_NEXT_DETAIL = ('Read one method with science guide <method>, or one operation with science operation <operation>. '
+                     'science list without --brief is the full catalog.')
+
+
+def summary(verb, result):
+    """One stderr line for a --json read: what was read, never the body."""
+    if verb == 'list':
+        return (f"science list: {len(result['methods'])} methods and {len(result['operations'])} operations "
+                f"(catalog {result['catalogSHA256'][:12]}…); the document is on stdout")
+    if verb == 'guide':
+        return (f"science guide {result['method']['id']}: {len(result['text'])} characters "
+                f"(guide {result['guideSHA256'][:12]}…); the document is on stdout")
+    return f"science operation {result['id']}: the document is on stdout"

@@ -49,9 +49,11 @@ public enum LifecycleGate: String, CaseIterable, Sendable, Codable {
     /// firewall: iterate by duplicating.
     case statusImmutable
 
-    /// A pinned input no longer matches its pinned hash — or appeared after
-    /// being pinned as absent. Every `verify()` violation, plus the task-prompt
-    /// hash checks the run loop repeats at run time.
+    /// A pinned input no longer matches its pinned hash — or is missing, or
+    /// appeared after being pinned as absent. The `verify()` violations that
+    /// report bytes (`VerificationRefusal` separates them from `emptyStudy`
+    /// and `studyDeclaration`), plus the task-prompt hash checks the run loop
+    /// repeats at run time.
     case pinDrift
 
     /// A source run's stamped experiment hash ≠ the live manifest's
@@ -162,6 +164,21 @@ public enum LifecycleGate: String, CaseIterable, Sendable, Codable {
     /// looked unremarkable while a whole arm was truncated.
     case lengthStopped
 
+    /// The study has nothing to measure yet: no concept, no agent, and (for a
+    /// multi-agent study) no panel scenario. `verify()` reports it, and it
+    /// used to reach a caller as `pinDrift` with a repair about restoring
+    /// files — on a draft where nothing was ever pinned — or, from `freeze`,
+    /// as an untyped failure. The repair is to attach something.
+    case emptyStudy
+
+    /// `verify()` found a problem in the study's own declaration — an
+    /// incomplete pin, two settings that contradict each other, a name used
+    /// twice — and no pinned file's bytes are involved. `pinDrift`'s sibling,
+    /// and the reason that id now means what it says: drift is repaired by
+    /// restoring a file, and this is repaired by correcting the setting each
+    /// violation names.
+    case studyDeclaration
+
     /// The vocabulary as wire strings, in the fixed cross-engine order. Python
     /// twin (step 8): `LIFECYCLE_GATE_IDS`.
     public static let vocabulary: [String] = allCases.map(\.rawValue)
@@ -260,10 +277,12 @@ public enum RefusalSiteRegistry {
         /// A throw site carries the gate id directly.
         case typedRefusal
         /// It surfaces inside `verify()`'s violation list, so the caller sees
-        /// `pinDrift` with the specific rule named in `result.violations`.
-        /// Recorded rather than hidden: audit §2.4's divergence list warns
-        /// against a shared id implying a parity that does not exist, and the
-        /// server refuses two of these separately.
+        /// `studyDeclaration` (the rule is about the study's settings, not
+        /// about a file's bytes) with the specific rule named in the reason
+        /// and in `result.violations`. Recorded rather than hidden: audit
+        /// §2.4's divergence list warns against a shared id implying a parity
+        /// that does not exist, and the server refuses two of these
+        /// separately.
         case verifyViolation
     }
 
@@ -535,6 +554,35 @@ public enum RefusalSiteRegistry {
                 + "--reasoning-max-tokens <m> raises the other), then re-run; a "
                 + "frozen study is iterated by duplicating first: steerlab-cli "
                 + "experiment duplicate <name> <name>-v2"),
+        .init(
+            gate: .emptyStudy,
+            // Every verb that verifies before it works, plus the two that
+            // report verification itself.
+            verbs: [
+                "experiment verify", "experiment freeze", "experiment extract",
+                "experiment validate", "experiment sweep", "experiment run",
+                "experiment evaluate",
+            ],
+            origin: "ExperimentStore.verify (no concept, agent, or panel "
+                + "scenario attached) → VerificationRefusal, reached through "
+                + "ExperimentTasks.loadVerified, ExperimentStore.freeze, and "
+                + "ExperimentCLIRunner's experiment verify",
+            repairAction: VerificationRefusal.emptyRepair(
+                name: "<name>",
+                violations: [VerificationRefusal.emptyModelOutputViolation])),
+        .init(
+            gate: .studyDeclaration,
+            verbs: [
+                "experiment verify", "experiment freeze", "experiment extract",
+                "experiment validate", "experiment sweep", "experiment run",
+                "experiment evaluate",
+            ],
+            origin: "ExperimentStore.verify (every violation that reports a "
+                + "setting rather than a file's bytes) → VerificationRefusal, "
+                + "reached through ExperimentTasks.loadVerified, "
+                + "ExperimentStore.freeze, and ExperimentCLIRunner's "
+                + "experiment verify",
+            repairAction: VerificationRefusal.declarationRepair(name: "<name>")),
     ]
 
     /// The site claiming a gate, or nil — nil is what the exhaustiveness test

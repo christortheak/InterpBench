@@ -25,6 +25,55 @@ def test_cli_creates_complete_seed_and_handoff_without_existing_workspace(tmp_pa
     assert not (root / '.git').exists()
 
 
+def test_handoff_leads_with_the_interview_then_the_brief_catalog(tmp_path, capsys, monkeypatch):
+    """What a coding assistant is handed first. The old handoff sent it to
+    `--help` and then to the full 75 KB method catalog, and never mentioned
+    the study interview, which is where a new researcher actually starts."""
+    from steerlab_server import client_cli
+    monkeypatch.delenv('STEERLAB_WORKSPACE', raising=False)
+    root = tmp_path / 'workspace'
+    assert client_cli.main(['workspace', 'init', str(root), '--no-git', '--json']) == 0
+    created = json.loads(capsys.readouterr().out)
+    # A new workspace points at the interview, not at `experiment create`.
+    assert created['nextAction']['verb'] == 'authoring study <intent>'
+    for intent in ('conceptStudy', 'agentComparison', 'multiAgent'):
+        assert intent in created['nextAction']['detail']
+    assert f'--root {created["result"]["workspaceRoot"]}' in created['nextAction']['detail']
+
+    assert client_cli.main(['workspace', 'handoff', '--root', str(root), '--json']) == 0
+    report = json.loads(capsys.readouterr().out)['result']
+    command, where = report['executable'], ['--root', report['workspaceRoot'], '--json']
+    assert report['discovery'] == [
+        command + ['authoring', 'study', '<intent>'] + where,
+        command + ['science', 'list', '--brief'] + where,
+        command + ['--help']]
+    assert [intent['id'] for intent in report['studyIntents']] == ['conceptStudy', 'agentComparison', 'multiAgent']
+    assert all(intent['purpose'].endswith('.') for intent in report['studyIntents'])
+    instructions = report['instructions']
+    assert instructions == owner.HANDOFF_INSTRUCTIONS
+    assert "Work at the researcher's level" in instructions
+    assert 'Ask before anything that spends compute or money' in instructions
+    assert 'study interview' in instructions and 'studyIntents' in instructions
+    assert report['nextAction'] == owner.HANDOFF_NEXT_ACTION
+    assert set(report) == {'workspaceRoot', 'recognized', 'agentGuidePresent', 'missingSeedFiles', 'seedSchemaVersion', 'changed',
+                           'executable', 'agentGuide', 'instructions', 'studyIntents', 'discovery', 'nextAction'}
+
+    # The commands it names are real: each intent's interview is emitted, and
+    # the placeholder itself is a usage refusal that names the three intents.
+    for intent in report['studyIntents']:
+        assert client_cli.main(['authoring', 'study', intent['id'], *where]) == 0
+        assert json.loads(capsys.readouterr().out)['result']['intent'] == intent['id']
+    assert client_cli.main(['authoring', 'study', '<intent>', *where]) == 64
+    assert 'conceptStudy' in json.loads(capsys.readouterr().out)['error']['reason']
+    assert client_cli.main(['science', 'list', '--brief', *where]) == 0
+    brief = capsys.readouterr().out
+    assert json.loads(brief)['result']['brief'] is True and len(brief.encode()) < 12_000
+
+    # `setup start` carries the same block.
+    assert client_cli.main(['setup', 'start', str(root), '--json']) == 0
+    assert json.loads(capsys.readouterr().out)['result']['handoff'] == report
+
+
 def test_incomplete_seed_existing_data_and_symlink_destinations_refuse(tmp_path):
     target = tmp_path / 'existing'; target.mkdir(); (target/'keep').write_text('original')
     with pytest.raises(ExperimentStoreError): owner.initialize(target)
