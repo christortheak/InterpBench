@@ -9,9 +9,10 @@ import {
   embeddedWorkspaceName,
   isEmbedded,
 } from "./embedded-workspace";
+import { FreezeBadge } from "./components/stamps";
 import { Badge, FilePreviewModal, Mark } from "./components/ui";
 import { asView, setPendingRecord, updateDeepLink } from "./lib/deeplink";
-import { demoPreviewEnabled } from "./lib/demo";
+import { demoLabel } from "./demo";
 import { discoverRuns, runKindOf, runStatusOf, sortRunsByTimestamp } from "./lib/discovery";
 import { hydrateRun } from "./lib/loaders";
 import { runKindLabel, type RunKind } from "./lib/runKind";
@@ -289,8 +290,8 @@ export default function Home() {
           {selectedRun && <p className="local-read-status"><i />Read only · files stay local</p>}
         </section>
         <div className="sidebar-foot">
-          <div className="study-chip"><span>{selectedRun ? "LR" : "—"}</span><div><strong>{selectedRun?.experiment || "No run selected"}</strong><small>{selectedRun?.model || (demoPreviewEnabled() ? "Synthetic preview" : "choose a run above")}</small></div><button aria-label="Change run" onClick={() => workspaceRuns.length && setRunPickerOpen(true)}>⌄</button></div>
-          <p><span className={selectedRun ? "local-dot" : "live-dot"} />{selectedRun ? "Local run selected" : demoPreviewEnabled() ? "Synthetic preview data" : "No data loaded"}</p>
+          <div className="study-chip"><span>{selectedRun ? "LR" : "—"}</span><div><strong>{selectedRun?.experiment || "No run selected"}</strong><small>{selectedRun?.model || demoLabel() || "choose a run above"}</small></div><button aria-label="Change run" onClick={() => workspaceRuns.length && setRunPickerOpen(true)}>⌄</button></div>
+          <p><span className={selectedRun ? "local-dot" : "live-dot"} />{selectedRun ? "Local run selected" : demoLabel() || "No data loaded"}</p>
         </div>
       </aside>
       <main>
@@ -300,8 +301,12 @@ export default function Home() {
             {/* Status truth, not `status === "complete"`: run-status.json +
                 FAILED.md + cancelled.txt, with "not stamped" as the honest
                 fallback (upgrade plan Phase 0). */}
-            <Badge tone={selectedRun ? statusTone(runStatusOf(selectedRun).state) : "neutral"}>{selectedRun ? statusLabel(runStatusOf(selectedRun)) : "—"}</Badge></div>
-          <div className="top-actions"><span className={selectedRun ? "local-epoch" : "epoch"}>{selectedRun ? "Local read" : demoPreviewEnabled() ? "Synthetic preview" : "No run selected"}</span>{workspaceRuns.length > 0 && <button className="icon-button" aria-label="Change selected run" onClick={() => setRunPickerOpen(true)}>⌄</button>}</div>
+            <Badge tone={selectedRun ? statusTone(runStatusOf(selectedRun).state) : "neutral"}>{selectedRun ? statusLabel(runStatusOf(selectedRun)) : "—"}</Badge>
+            {/* Beside "did it finish": was the study frozen, was the freeze
+                forced, was the capability check left off a condition. Read
+                from the run's own experiment.json; shown on every section. */}
+            {selectedRun && <FreezeBadge run={selectedRun} />}</div>
+          <div className="top-actions"><span className={selectedRun ? "local-epoch" : "epoch"}>{selectedRun ? "Local read" : demoLabel() || "No run selected"}</span>{workspaceRuns.length > 0 && <button className="icon-button" aria-label="Change selected run" onClick={() => setRunPickerOpen(true)}>⌄</button>}</div>
         </header>
         <div className="content">
           {shownView === "triage" && <TriageView run={selectedRun} workspaceRuns={workspaceRuns} onActivateRun={(run) => void activateRun(run)} onNavigate={go} onOpenFile={openRunFile} />}

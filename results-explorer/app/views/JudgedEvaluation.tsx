@@ -14,7 +14,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { DerivedBadge, ProvenanceLegend } from "../components/provenance";
+import { NoncompliantNotice } from "../components/stamps";
 import { Badge, CopyLinkButton, ExportButton } from "../components/ui";
+import { skippedLinesNote } from "../lib/csv";
 import { responseRecordKey, splitRecordKey, takePendingRecord, updateDeepLink } from "../lib/deeplink";
 import { findFile } from "../lib/discovery";
 import { csvFilename, type ExportColumn } from "../lib/export";
@@ -27,6 +29,9 @@ import {
   judgeTallies,
   loadJudgments,
   loadSourceResponses,
+  NO_VERDICT_MEANING,
+  noncompliantRows,
+  OUTCOME_LABEL,
   parseJudgeReport,
   parseJudgingContext,
   parseRunStatus,
@@ -36,7 +41,6 @@ import {
   type JudgeTally,
   type JudgingContext,
   type JudgmentCell,
-  type JudgmentOutcome,
   type JudgmentRow,
   type RunStatus,
   type SourceResponse,
@@ -54,7 +58,9 @@ type JudgedData = {
   judgmentsPresent: boolean;
 };
 
-const outcomeLabel: Record<JudgmentOutcome, string> = { variant: "Variant", baseline: "Baseline", tie: "Tie", unknown: "Not stamped" };
+// The labels live in lib/judged.ts: a row with no verdict is "No verdict",
+// which is a different fact from a row that stamped no outcome at all.
+const outcomeLabel = OUTCOME_LABEL;
 const percent = (value: number | null, digits = 0) => value == null ? "—" : `${(value * 100).toFixed(digits)}%`;
 const count = (value: number | null) => value == null ? "—" : String(value);
 const decimal = (value: number | null, digits = 2) => value == null ? "—" : value.toFixed(digits);
@@ -86,7 +92,7 @@ const tallyColumns: ExportColumn<ConditionTally>[] = [
 type PerJudgeExportRow = {
   condition: string; judge: string;
   n: number | null; baselineWins: number | null; ties: number | null;
-  variantWins: number | null; unknown: number | null; meanConfidence: number | null;
+  variantWins: number | null; unknown: number | null; noVerdict: number | null; meanConfidence: number | null;
 };
 
 const judgeTallyColumns = (stored: boolean): ExportColumn<PerJudgeExportRow>[] => {
@@ -98,23 +104,28 @@ const judgeTallyColumns = (stored: boolean): ExportColumn<PerJudgeExportRow>[] =
     { header: "baselineWins", kind, value: (row) => row.baselineWins },
     { header: "ties", kind, value: (row) => row.ties },
     { header: "variantWins", kind, value: (row) => row.variantWins },
-    { header: "notStamped", kind, value: (row) => row.unknown },
+    { header: "notStamped", kind, value: (row) => row.unknown, description: "Rows that stamped no outcome at all." },
+    // Always the viewer's count of rows flagged noncompliant: the report
+    // gives one figure per judge, not one per judge and condition.
+    { header: "noVerdict", kind: "derived", value: (row) => row.noVerdict, description: "Rows where the judge answered without a usable verdict. They are not part of n." },
     { header: "meanConfidence", kind, value: (row) => row.meanConfidence },
   ];
 };
 
-const perJudgeRows = (report: JudgeReport, derived: JudgeTally[], stored: boolean): PerJudgeExportRow[] =>
-  stored
+const perJudgeRows = (report: JudgeReport, derived: JudgeTally[], stored: boolean): PerJudgeExportRow[] => {
+  const noVerdict = (judge: string, condition: string) => derived.find((tally) => tally.judge === judge && tally.condition === condition)?.noncompliant ?? null;
+  return stored
     ? report.judges.flatMap((judge) => judge.conditions.map((entry) => ({
       condition: entry.condition, judge: judge.name,
       n: entry.pairs, baselineWins: entry.baselineWins, ties: entry.ties,
-      variantWins: entry.variantWins, unknown: null, meanConfidence: entry.meanConfidence,
+      variantWins: entry.variantWins, unknown: null, noVerdict: noVerdict(judge.name, entry.condition), meanConfidence: entry.meanConfidence,
     })))
     : derived.map((tally) => ({
       condition: tally.condition, judge: tally.judge,
       n: tally.n, baselineWins: tally.baselineWins, ties: tally.ties,
-      variantWins: tally.variantWins, unknown: tally.unknown, meanConfidence: tally.meanConfidence,
+      variantWins: tally.variantWins, unknown: tally.unknown, noVerdict: tally.noncompliant, meanConfidence: tally.meanConfidence,
     }));
+};
 
 type SplitExportRow = { cell: JudgmentCell; row: JudgmentRow };
 
@@ -130,6 +141,8 @@ const splitColumns: ExportColumn<SplitExportRow>[] = [
   { header: "confidence", kind: "stored", value: ({ row }) => row.confidence },
   { header: "briefReason", kind: "stored", value: ({ row }) => row.briefReason },
   { header: "reasoningTruncated", kind: "stored", value: ({ row }) => row.reasoningTruncated },
+  { header: "noncompliant", kind: "stored", value: ({ row }) => row.noncompliant, description: "True when the judge answered without a usable verdict. The outcome column then reads noncompliant." },
+  { header: "noncomplianceReason", kind: "stored", value: ({ row }) => row.noncomplianceReason, description: "What the judge said instead of a verdict, as the engine kept it." },
   { header: "judgesInCell", kind: "derived", value: ({ cell }) => cell.verdicts.length },
   { header: "cellDisagrees", kind: "derived", value: ({ cell }) => cell.disagrees },
 ];
@@ -254,6 +267,8 @@ export function JudgedEvaluationView({ run, workspaceRuns, onActivateRun, onNavi
   // One row per judgment inside a split cell, in the order shown, honouring
   // the condition/judge filters above the browser.
   const splitExportRows: SplitExportRow[] = visibleCells.flatMap((cell) => cell.rows.map((row) => ({ cell, row })));
+  const noVerdictItems = noncompliantRows(rows).map((row) => ({ judge: row.judge, condition: row.condition, promptID: row.promptID, sampleIndex: row.sampleIndex, reason: row.noncomplianceReason }));
+  const anyNoVerdict = derivedTallies.some((tally) => tally.noncompliant > 0);
 
   // Judge identity is a pin, assembled from the two artifacts that stamp it
   // (judging-context.json before judging, judge-report.json after). No
@@ -284,7 +299,7 @@ export function JudgedEvaluationView({ run, workspaceRuns, onActivateRun, onNavi
     <div className="view-enter inner-view judged-view">
       <header className="page-title">
         <div>
-          <span className="section-number">{rows.length} JUDGMENT ROWS · {judgeCards.length} JUDGE{judgeCards.length === 1 ? "" : "S"} · {cells.length} SPLIT CELL{cells.length === 1 ? "" : "S"}{data.truncated ? " · BOUNDED PREVIEW" : ""}</span>
+          <span className="section-number">{rows.length} JUDGMENT ROWS · {judgeCards.length} JUDGE{judgeCards.length === 1 ? "" : "S"} · {cells.length} SPLIT CELL{cells.length === 1 ? "" : "S"}{data.truncated ? " · BOUNDED PREVIEW" : ""}{data.skipped ? ` · ${data.skipped} LINE${data.skipped === 1 ? "" : "S"} SKIPPED` : ""}</span>
           <h1>Judged evaluation</h1>
           <p>Which arm each judge preferred, how far the judges agreed, and every pair they read differently — with the two responses unblinded side by side.</p>
         </div>
@@ -310,6 +325,10 @@ export function JudgedEvaluationView({ run, workspaceRuns, onActivateRun, onNavi
       {judgeReport.measurementDrift && <div className="card judged-alert alert-warn"><span>⚠</span><div><strong>Measurement drift tolerated.</strong><p>The live manifest differed from the source run&rsquo;s epoch in measurement-side fields: <code>{judgeReport.measurementDrift}</code>. Judging proceeded under the live settings.</p></div></div>}
       {judgeReport.evaluationSource === "pinnedRubric" && <div className="card judged-alert alert-note"><span>i</span><div><strong>Evaluation spec synthesized from pins.</strong><p>No explicit evaluation block: the panel and rubric came from the manifest&rsquo;s pinned judges + rubric file (<code>evaluationSource: pinnedRubric</code>).</p></div></div>}
       {judgeReport.exclusions && <div className="card judged-alert alert-note"><span>i</span><div><strong>Declared exclusions applied before judging.</strong><p>{Object.entries(judgeReport.exclusions).map(([key, value]) => `${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`).join(" · ")}</p></div></div>}
+      {/* Rows where a judge answered without a usable verdict: named as
+          that, counted apart from the tallies, and listed with what the
+          judge said. They used to read "Not stamped". */}
+      <NoncompliantNotice items={noVerdictItems} stamped={judgeReport.noncompliantJudgments} kind="judgment" />
 
       <section className="card judged-pins">
         <header className="section-header"><div><span className="section-number">MEASUREMENT PINS</span><h2>What judged what</h2></div>{judgeReport.judgedOn && <Badge tone="neutral">judged on {judgeReport.judgedOn}</Badge>}</header>
@@ -381,8 +400,8 @@ export function JudgedEvaluationView({ run, workspaceRuns, onActivateRun, onNavi
           </div>;
         })}
         {!tallyRows.length && rows.length > 0 && <table className="jv-table">
-          <thead><tr><th>Condition · judge <DerivedBadge formula="outcomes counted from judgments.jsonl rows; judge-report.json carried no conditions block" /></th><th>n</th><th>Baseline</th><th>Ties</th><th>Variant</th><th>Mean confidence</th></tr></thead>
-          <tbody>{derivedTallies.map((tally) => <tr key={`${tally.condition}-${tally.judge}`}><th scope="row">{tally.condition} · {tally.judge}</th><td>{tally.n}</td><td>{tally.baselineWins}</td><td>{tally.ties}</td><td>{tally.variantWins}</td><td>{decimal(tally.meanConfidence)}</td></tr>)}</tbody>
+          <thead><tr><th>Condition · judge <DerivedBadge formula="outcomes counted from judgments.jsonl rows; judge-report.json carried no conditions block" /></th><th>n</th><th>Baseline</th><th>Ties</th><th>Variant</th>{anyNoVerdict && <th title={NO_VERDICT_MEANING}>No verdict</th>}<th>Mean confidence</th></tr></thead>
+          <tbody>{derivedTallies.map((tally) => <tr key={`${tally.condition}-${tally.judge}`}><th scope="row">{tally.condition} · {tally.judge}</th><td>{tally.n}</td><td>{tally.baselineWins}</td><td>{tally.ties}</td><td>{tally.variantWins}</td>{anyNoVerdict && <td>{tally.noncompliant}</td>}<td>{decimal(tally.meanConfidence)}</td></tr>)}</tbody>
         </table>}
         <footer className="table-note"><strong>Stored:</strong> judge-report.json <code>conditions</code>{storedPerJudge ? " and its per-judge blocks" : ""}. The engine&rsquo;s vocabulary differs by substrate (Swift writes <code>conditionWins</code>, the server <code>variantWins</code>); both are shown here as <em>variant</em>.</footer>
       </section>
@@ -405,7 +424,7 @@ export function JudgedEvaluationView({ run, workspaceRuns, onActivateRun, onNavi
 
       <section className="card disagreement-card">
         <header className="section-header">
-          <div><span className="section-number">DISAGREEMENT BROWSER <DerivedBadge formula="cells where two judges recorded different outcomes for the same (condition, promptID, sampleIndex); selection computed in the viewer from judgments.jsonl" /></span><h2>Where the judges split</h2><p>{cells.length} of {new Set(rows.map((row) => cellKey(row.condition, row.promptID, row.sampleIndex))).size} judged cells drew different verdicts. Ties count as a verdict.</p></div>
+          <div><span className="section-number">DISAGREEMENT BROWSER <DerivedBadge formula="cells where two judges recorded different outcomes for the same (condition, promptID, sampleIndex); selection computed in the viewer from judgments.jsonl" /></span><h2>Where the judges split</h2><p>{cells.length} of {new Set(rows.map((row) => cellKey(row.condition, row.promptID, row.sampleIndex))).size} judged cells drew different verdicts. Ties count as a verdict.{data.skipped ? ` ${skippedLinesNote(data.skipped, "judgments.jsonl", "judgment rows")}` : ""}</p></div>
           {rows.length > 0 && <div className="disagree-filters">
             <select value={conditionFilter} onChange={(event) => { setConditionFilter(event.target.value); setSelectedKey(""); }} aria-label="Filter split cells by condition"><option>All conditions</option>{conditions.map((name) => <option key={name}>{name}</option>)}</select>
             <select value={judgeFilter} onChange={(event) => { setJudgeFilter(event.target.value); setSelectedKey(""); }} aria-label="Filter split cells by judge"><option>All judges</option>{judgeNames.map((name) => <option key={name}>{name}</option>)}</select>
@@ -466,7 +485,7 @@ export function JudgedEvaluationView({ run, workspaceRuns, onActivateRun, onNavi
 
 /// The flagship pane: one split cell, every judge's verdict, and the two
 /// responses unblinded through `baselineWas`.
-function DisagreementDetail({ cell, sources, sourceLoading, sourceRun, sourceRunName }: {
+export function DisagreementDetail({ cell, sources, sourceLoading, sourceRun, sourceRunName }: {
   cell: JudgmentCell;
   sources: { responses: Map<string, SourceResponse>; truncated: boolean; present: boolean } | null;
   sourceLoading: boolean;
@@ -498,11 +517,15 @@ function DisagreementDetail({ cell, sources, sourceLoading, sourceRun, sourceRun
         {cell.rows.map((row, index) => <div className={`verdict verdict-${row.outcome}`} key={`${row.judge}-${index}`}>
           <header>
             <div><strong>{row.judge}</strong><span>{row.judgeModel || row.judgeKind || "model not stamped"}{row.judgeProvider ? ` · ${row.judgeProvider}` : ""}</span></div>
-            <div className="verdict-outcome"><strong>{outcomeLabel[row.outcome]}</strong><span>{row.winner ? `chose Response ${row.winner}` : "no winner stamped"}{row.baselineWas ? ` · baseline was ${row.baselineWas}` : ""}</span></div>
+            <div className="verdict-outcome"><strong>{outcomeLabel[row.outcome]}</strong><span>{row.noncompliant ? "the judge gave no usable verdict" : row.winner ? `chose Response ${row.winner}` : "no winner stamped"}{row.baselineWas ? ` · baseline was ${row.baselineWas}` : ""}</span></div>
           </header>
-          <p>{row.briefReason || "No reason recorded."}{row.reasoningTruncated && <em> — the judge&rsquo;s JSON never closed; this reason is only the salvageable prefix.</em>}</p>
+          {/* A row with no verdict has no reason FOR a verdict. What it has
+              is the judge's own words, kept by the engine; show those. */}
+          {row.noncompliant
+            ? <p>{NO_VERDICT_MEANING} {row.noncomplianceReason ? <>What the judge said: <q>{row.noncomplianceReason}</q></> : "No reason was recorded."}</p>
+            : <p>{row.briefReason || "No reason recorded."}{row.reasoningTruncated && <em> — the judge&rsquo;s JSON never closed; this reason is only the salvageable prefix.</em>}</p>}
           <footer>
-            <span>Confidence {decimal(row.confidence)}</span>
+            {!row.noncompliant && <span>Confidence {decimal(row.confidence)}</span>}
             {Object.keys(row.aScores).length > 0 && <span>A: {Object.entries(row.aScores).map(([key, value]) => `${key} ${value}`).join(", ")}</span>}
             {Object.keys(row.bScores).length > 0 && <span>B: {Object.entries(row.bScores).map(([key, value]) => `${key} ${value}`).join(", ")}</span>}
           </footer>

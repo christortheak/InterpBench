@@ -90,13 +90,24 @@ export const isDiagnostic = (row: Effect) =>
   row.inference === "diagnostic" || row.estimand === "withinItemSamples"
   || (row.stratifyBy !== "pooled" && row.pairedUnit === "sample");
 
-/// The paired-count sentence: "n = 48 paired items", or "paired samples"
-/// where the row's own `unit` column says a difference is one sample. An
-/// absent `n` reads "n not reported" — never "n = 0 items", which is a
-/// substantive claim the file did not make.
+/// The paired-count sentence, in the unit the count is actually in.
+///
+/// A stratified row names its own unit (`unit` = "sample" or "item"). A
+/// POOLED row leaves that column empty, because its unit is the run's: one
+/// prompt item, or — for a multi-agent run — one TRANSCRIPT, where each
+/// conversation is reduced to a single difference before any test. Such a
+/// row used to read "n = 4 paired items" when four transcripts were all
+/// there was; it now reads "n = 4 transcripts". An absent `n` reads "n not
+/// reported" — never "n = 0 items", which is a substantive claim the file
+/// did not make.
 export const pairedCountLabel = (row: Effect) => {
   if (row.n == null) return "n not reported";
-  return `n = ${row.n} paired ${row.pairedUnit === "sample" ? "samples" : "items"}`;
+  if (row.pairedUnit === "sample") return `n = ${row.n} paired samples`;
+  if (row.pairedUnit === "item") return `n = ${row.n} paired items`;
+  const unit = row.analysisUnit ?? "";
+  if (unit === "transcript") return `n = ${row.n} transcript${row.n === 1 ? "" : "s"}`;
+  if (unit && unit !== "item") return `n = ${row.n} (unit of analysis: ${unit})`;
+  return `n = ${row.n} paired items`;
 };
 
 /// How to name a row's stratum on screen: "promptID · loan-notLegal".

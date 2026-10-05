@@ -101,6 +101,17 @@
 .verdict-baseline { border-left-color: #8d9891; }
 .verdict-tie { border-left-color: var(--amber); }
 .verdict-unknown { border-left-color: var(--line-dark); }
+/* A judge that answered without a usable verdict: its own colour and a
+   broken edge, so it is not read as a win, a tie, or a missing stamp. */
+.verdict-noncompliant { border-left-color: #9a3b2e; border-left-style: dashed; }
+.verdict q { font-style: italic; }
+
+/* The list of no-verdict (or no-codes) rows under the notice. */
+.noncompliant-notice details { margin-top: 8px; }
+.noncompliant-notice summary { color: var(--muted); font-size: 10px; cursor: pointer; }
+.noncompliant-notice ul { margin: 8px 0 0; padding-left: 16px; display: grid; gap: 5px; font-size: 10px; line-height: 1.5; color: var(--muted); }
+.noncompliant-notice li strong { display: inline; font-size: inherit; color: var(--ink); }
+.noncompliant-notice q { font-style: italic; overflow-wrap: anywhere; }
 
 .side-by-side { margin-top: 20px; }
 .side-by-side > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }

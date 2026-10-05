@@ -11,6 +11,10 @@ import Foundation
 /// plain-name discipline the promotion gates apply to run names. The
 /// explorer is a READING surface (CLAUDE.md's thin-view rule): it renders
 /// what the engines wrote; paper numbers never originate in it.
+///
+/// One narrow write exists, for exports and downloads: `save` writes a
+/// single file to a place the reader picked in a save panel, and refuses
+/// any place inside `runs/`. Nothing under the served root is ever written.
 public enum ResultsExplorerBridge {
 
     /// One directory entry, shaped for the page's fetch adapter
@@ -148,6 +152,174 @@ public enum ResultsExplorerBridge {
             return try handle.read(upToCount: length) ?? Data()
         }
         return try handle.readToEnd() ?? Data()
+    }
+
+    // MARK: - Saving one file the reader chose a place for
+
+    /// The one thing the page may ask the host to write: a file the reader
+    /// then places with a save panel. The page supplies WHAT to save and a
+    /// suggested name; it never supplies WHERE. Everything else on this
+    /// bridge stays read-only.
+    public enum SaveRequest: Equatable, Sendable {
+        /// Text the page built itself, such as a table export.
+        case text(String)
+        /// One file under the served `runs/` root, named by a contained
+        /// relative path. The host copies the bytes; they never pass
+        /// through the page, so a multi-gigabyte `generations.jsonl` is
+        /// not loaded into the web view to be saved.
+        case runFile(path: String)
+    }
+
+    /// Read the page's message. Only two shapes are understood, and
+    /// anything else is nil:
+    /// `{"kind": "text", "filename": …, "text": …}` and
+    /// `{"kind": "runFile", "filename": …, "path": …}`.
+    public static func saveRequest(
+        fromMessage body: Any?
+    ) -> (request: SaveRequest, suggestedName: String)? {
+        guard let fields = body as? [String: Any],
+            let kind = fields["kind"] as? String,
+            let filename = fields["filename"] as? String
+        else { return nil }
+        switch kind {
+        case "text":
+            guard let text = fields["text"] as? String else { return nil }
+            return (.text(text), suggestedFilename(filename))
+        case "runFile":
+            guard let path = fields["path"] as? String, !path.isEmpty else {
+                return nil
+            }
+            return (.runFile(path: path), suggestedFilename(filename))
+        default:
+            return nil
+        }
+    }
+
+    /// A page-supplied name reduced to a plain file name for the save
+    /// panel's name field: the last path component, with control characters
+    /// and leading dots removed. It is a suggestion only; the reader can
+    /// change it, and the destination always comes from the panel.
+    public static func suggestedFilename(
+        _ raw: String, fallback: String = "export"
+    ) -> String {
+        let last =
+            raw.split(whereSeparator: { $0 == "/" || $0 == "\\" || $0 == ":" })
+            .last.map(String.init) ?? ""
+        let cleaned = String(
+            last.unicodeScalars.filter {
+                !CharacterSet.controlCharacters.contains($0)
+            }.map(Character.init)
+        )
+        .trimmingCharacters(in: .whitespaces)
+        let visible = String(cleaned.drop(while: { $0 == "." }))
+        return visible.isEmpty ? fallback : String(visible.prefix(200))
+    }
+
+    /// Write the requested file to `destination`, which must be the place
+    /// the reader picked in a save panel. Returns the number of bytes
+    /// written.
+    ///
+    /// Refusals, each in plain words:
+    /// - a destination inside the served `runs/` root, however it is
+    ///   reached. A run's folder is never changed after the run, because
+    ///   custody checks re-read its files.
+    /// - a destination that is a symbolic link or a folder.
+    /// - a run-file path that is not contained under the root, or is a
+    ///   symbolic link (the same refusals every read on this bridge makes).
+    @discardableResult
+    public static func save(
+        _ request: SaveRequest, to destination: URL, runsRoot: URL
+    ) throws -> Int {
+        let name = destination.lastPathComponent
+        guard destination.isFileURL, !name.isEmpty else {
+            throw ExperimentError(
+                reason: "The explorer can only save to a file on this Mac.")
+        }
+        let values = try? destination.resourceValues(
+            forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
+        if values?.isSymbolicLink == true {
+            throw ExperimentError(
+                reason: "'\(name)' is a link to another file, so the "
+                    + "explorer will not write through it. Choose a "
+                    + "different name or location.")
+        }
+        if values?.isDirectory == true {
+            throw ExperimentError(
+                reason: "'\(name)' is a folder. Choose a file name instead.")
+        }
+        // The folder the file will sit in, with every link resolved, so a
+        // linked folder that leads into runs/ is refused like runs/ itself.
+        let resolvedRoot = runsRoot.resolvingSymlinksInPath()
+            .standardizedFileURL.path
+        let resolvedDestination = destination.deletingLastPathComponent()
+            .resolvingSymlinksInPath().standardizedFileURL
+            .appending(component: name).path
+        let rootPrefix =
+            resolvedRoot.hasSuffix("/") ? resolvedRoot : resolvedRoot + "/"
+        if resolvedDestination == resolvedRoot
+            || resolvedDestination.hasPrefix(rootPrefix)
+        {
+            throw ExperimentError(
+                reason: "The explorer does not save into the workspace's "
+                    + "runs folder, because a run's folder is never changed "
+                    + "after the run. Choose a location outside it, such as "
+                    + "Documents or the Desktop.")
+        }
+        switch request {
+        case .text(let text):
+            let data = Data(text.utf8)
+            do {
+                try data.write(to: destination, options: .atomic)
+            } catch {
+                throw ExperimentError(
+                    reason: "Could not save '\(name)': "
+                        + error.localizedDescription)
+            }
+            return data.count
+        case .runFile(let path):
+            guard let source = containedURL(path: path, under: runsRoot) else {
+                throw ExperimentError(
+                    reason: "results-explorer bridge: path '\(path)' is not "
+                        + "a plain relative path — refusing to read outside "
+                        + "the served root")
+            }
+            let manager = FileManager.default
+            var isDirectory: ObjCBool = false
+            guard
+                manager.fileExists(
+                    atPath: source.path, isDirectory: &isDirectory),
+                !isDirectory.boolValue
+            else {
+                throw ExperimentError(
+                    reason: "The file '\(path)' is not in the workspace's "
+                        + "runs folder any more, so there is nothing to "
+                        + "save. Rescan the workspace and try again.")
+            }
+            // Copy beside the destination first, then move into place, so
+            // a copy that fails part-way never leaves a short file under
+            // the name the reader chose.
+            let partial = destination.deletingLastPathComponent()
+                .appending(
+                    component: ".\(name).partial-\(UUID().uuidString)")
+            do {
+                try manager.copyItem(at: source, to: partial)
+                if manager.fileExists(atPath: destination.path) {
+                    _ = try manager.replaceItemAt(
+                        destination, withItemAt: partial)
+                } else {
+                    try manager.moveItem(at: partial, to: destination)
+                }
+            } catch {
+                try? manager.removeItem(at: partial)
+                throw ExperimentError(
+                    reason: "Could not save '\(name)': "
+                        + error.localizedDescription)
+            }
+            let size =
+                (try? destination.resourceValues(forKeys: [.fileSizeKey]))?
+                .fileSize
+            return size ?? 0
+        }
     }
 
     /// Content type by extension — the handful the embedded page actually

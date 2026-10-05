@@ -1,4 +1,5 @@
 import react from "@vitejs/plugin-react";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 
@@ -46,10 +47,59 @@ function bundledPackages(): Plugin {
   };
 }
 
+// The demo (app/demo/index.tsx) holds every invented number in the explorer:
+// a layout preview for someone working on the explorer in a browser. The app
+// a researcher runs must never contain it, so this build swaps in
+// app/demo/stub.tsx for every import of the demo module — same names,
+// nothing behind them — and then FAILS if any demo module other than the
+// stub, or any string the demo lists in DEMO_SENTINELS, reached the bundle.
+// An invented result cannot be shown as a researcher's own if it is not in
+// the app.
+const norm = (path: string) => path.split("\\").join("/");
+const demoDirectory = norm(fileURLToPath(new URL("./app/demo/", import.meta.url)));
+const demoStub = norm(fileURLToPath(new URL("./app/demo/stub.tsx", import.meta.url)));
+const isDemoModule = (id: string) => norm(id).startsWith(demoDirectory) && norm(id) !== demoStub;
+
+// The sentinels, read from the demo's own source so the two lists can never
+// drift. A plain read: the file is TSX, and only these literals are wanted.
+const demoSentinels = (): string[] => {
+  const source = readFileSync(fileURLToPath(new URL("./app/demo/index.tsx", import.meta.url)), "utf8");
+  const marker = /export const DEMO_MARKER = "([^"]+)"/.exec(source)?.[1];
+  const block = /export const DEMO_SENTINELS = \[([\s\S]*?)\];/.exec(source)?.[1] ?? "";
+  const listed = [...block.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  const sentinels = [...(marker ? [marker] : []), ...listed];
+  if (sentinels.length < 2) throw new Error("vite.embed.config.ts: could not read DEMO_SENTINELS from app/demo/index.tsx");
+  return sentinels;
+};
+
+function withoutDemo(): Plugin {
+  const sentinels = demoSentinels();
+  return {
+    name: "steerlab-without-demo",
+    enforce: "pre",
+    async resolveId(source, importer, options) {
+      if (!importer) return null;
+      const resolved = await this.resolve(source, importer, { ...options, skipSelf: true });
+      if (!resolved) return null;
+      return isDemoModule(resolved.id) ? demoStub : null;
+    },
+    generateBundle(_options, bundle) {
+      for (const output of Object.values(bundle)) {
+        const ids = output.type === "chunk" ? output.moduleIds : [];
+        const leaked = ids.find(isDemoModule);
+        if (leaked) this.error(`the embedded build contains demo content (${leaked}). It must import app/demo only through the stub.`);
+        const text = output.type === "chunk" ? output.code : typeof output.source === "string" ? output.source : "";
+        const found = sentinels.find((sentinel) => text.includes(sentinel));
+        if (found) this.error(`the embedded build contains demo content: "${found}" in ${output.fileName}.`);
+      }
+    },
+  };
+}
+
 export default defineConfig({
   root: fileURLToPath(new URL("./embed", import.meta.url)),
   base: "./",
-  plugins: [react(), bundledPackages()],
+  plugins: [withoutDemo(), react(), bundledPackages()],
   build: {
     outDir,
     emptyOutDir: true,

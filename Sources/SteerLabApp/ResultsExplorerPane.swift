@@ -1,14 +1,18 @@
+import AppKit
 import ExperimentKit
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
 
-/// The native Results Explorer pane: the separate team's explorer SPA
-/// (vendored at `results-explorer/`, embedded build committed at
-/// `web/results-explorer/`) presented in a WKWebView — no browser, no
-/// server, no ports. A custom URL scheme serves the bundled assets AND the
-/// page's `/api/tree` + `/api/file` reads, answered directly from the
-/// active workspace's `runs/` directory through the containment-checked
-/// `ResultsExplorerBridge`. Everything stays on-box and read-only.
+/// The native Results Explorer pane: the explorer SPA (source at
+/// `results-explorer/`, built into the app's `web/results-explorer/`)
+/// presented in a WKWebView — no browser, no server, no ports. A custom URL
+/// scheme serves the bundled assets AND the page's `/api/tree` +
+/// `/api/file` reads, answered directly from the active workspace's `runs/`
+/// directory through the containment-checked `ResultsExplorerBridge`.
+/// Everything stays on-box, and the workspace is only ever read: the one
+/// thing the page can write is a file the reader places with a save panel
+/// (`ResultsExplorerSaveHandler`).
 final class ResultsExplorerSchemeHandler: NSObject, WKURLSchemeHandler {
     static let scheme = "steerlab-explorer"
     private let runsRoot: URL
@@ -85,6 +89,91 @@ final class ResultsExplorerSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 }
 
+/// The explorer's export and download controls, inside the app. A web view
+/// has no downloads folder, so the page posts what it wants saved (a table
+/// it built, or the path of one file in `runs/`) and this handler asks the
+/// reader where to put it. The page never names the destination, and
+/// `ResultsExplorerBridge.save` refuses any place inside `runs/`.
+///
+/// The page's side is `results-explorer/app/lib/save.ts`; the reply it
+/// reads is `{"state": "saved", "name": …}`, `{"state": "cancelled"}`, or
+/// `{"state": "failed", "message": …}`.
+final class ResultsExplorerSaveHandler: NSObject, WKScriptMessageHandlerWithReply {
+    static let name = "steerlabSave"
+    private let runsRoot: URL
+
+    init(runsRoot: URL) {
+        self.runsRoot = runsRoot
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage,
+        replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void
+    ) {
+        // Only the explorer's own page, in the main frame, may ask.
+        guard message.frameInfo.isMainFrame,
+            message.frameInfo.securityOrigin.protocol
+                == ResultsExplorerSchemeHandler.scheme,
+            let parsed = ResultsExplorerBridge.saveRequest(
+                fromMessage: message.body)
+        else {
+            replyHandler(
+                [
+                    "state": "failed",
+                    "message": "The explorer sent a save request the app "
+                        + "did not understand, so nothing was saved.",
+                ], nil)
+            return
+        }
+        let request = parsed.request
+        let root = runsRoot
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = parsed.suggestedName
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        let fileExtension =
+            (parsed.suggestedName as NSString).pathExtension
+        if let type = UTType(filenameExtension: fileExtension) {
+            panel.allowedContentTypes = [type]
+        }
+        panel.message =
+            "Choose where to save a copy. Nothing in the workspace's runs "
+            + "folder is changed."
+        let finish: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let destination = panel.url else {
+                replyHandler(["state": "cancelled"], nil)
+                return
+            }
+            // Off the main actor: a run's generations file can be large.
+            Task.detached {
+                let outcome: Result<Int, any Error> = Result {
+                    try ResultsExplorerBridge.save(
+                        request, to: destination, runsRoot: root)
+                }
+                let name = destination.lastPathComponent
+                await MainActor.run {
+                    switch outcome {
+                    case .success:
+                        replyHandler(["state": "saved", "name": name], nil)
+                    case .failure(let error):
+                        let reason =
+                            (error as? ExperimentError)?.reason
+                            ?? error.localizedDescription
+                        replyHandler(
+                            ["state": "failed", "message": reason], nil)
+                    }
+                }
+            }
+        }
+        if let window = message.webView?.window {
+            panel.beginSheetModal(for: window, completionHandler: finish)
+        } else {
+            panel.begin(completionHandler: finish)
+        }
+    }
+}
+
 /// The WKWebView hosting the embedded explorer, deep-linked to a run.
 struct ResultsExplorerPane: NSViewRepresentable {
     let runName: String?
@@ -95,6 +184,11 @@ struct ResultsExplorerPane: NSViewRepresentable {
             ResultsExplorerSchemeHandler(
                 runsRoot: ExperimentStore.runsDirectory),
             forURLScheme: ResultsExplorerSchemeHandler.scheme)
+        configuration.userContentController.addScriptMessageHandler(
+            ResultsExplorerSaveHandler(
+                runsRoot: ExperimentStore.runsDirectory),
+            contentWorld: .page,
+            name: ResultsExplorerSaveHandler.name)
         let webView = WKWebView(frame: .zero, configuration: configuration)
         var components = URLComponents()
         components.scheme = ResultsExplorerSchemeHandler.scheme

@@ -2,9 +2,11 @@
 // parsed here, and only here. Missing artifacts return empty results —
 // nothing is inferred or substituted.
 
+import { parseAnalysisStamps, type AnalysisStamps } from "./analysisStamps";
 import { splitCSV, strictNumber } from "./csv";
 import { findFile, recordValue } from "./discovery";
 import { effectKey } from "./effects";
+import { parseFreezeStamp, type FreezeStamp } from "./freeze";
 import { GENERATION_INSTRUMENT_OUTPUT_PREFIX } from "./instruments";
 import type {
   CosineMatrix,
@@ -17,14 +19,18 @@ import type {
   WorkspaceRun,
 } from "./types";
 
-export const loadEffects = async (run: WorkspaceRun): Promise<Effect[]> => {
+/// effect-sizes.csv as rows, plus how many of its lines could not be shown.
+/// A line is left out when it has no endpoint, estimate, or interval the
+/// viewer can read — it is never patched up. The count travels with the
+/// rows so the effects page can say that the table on screen is short.
+export const loadEffectTable = async (run: WorkspaceRun): Promise<{ rows: Effect[]; skipped: number }> => {
   const runFile = findFile(run.files, "effect-sizes.csv");
-  if (!runFile) return [];
+  if (!runFile) return { rows: [], skipped: 0 };
   const lines = (await (await runFile.handle.getFile()).text()).split(/\r?\n/).filter(Boolean);
-  if (lines.length < 2) return [];
+  if (lines.length < 2) return { rows: [], skipped: 0 };
   const headers = splitCSV(lines[0]).map((value) => value.toLowerCase());
   const cell = (row: string[], ...keys: string[]) => row[headers.findIndex((header) => keys.includes(header))] ?? "";
-  return lines.slice(1).map(splitCSV).flatMap((row) => {
+  const rows = lines.slice(1).map(splitCSV).flatMap((row) => {
     // Both engines append per-stratum companion rows (stratifyBy ≠ "pooled",
     // 2026-08-06). ALL of them are read here — the view nests them under
     // their pooled parent rather than hiding them, so a saturated-cell
@@ -64,7 +70,10 @@ export const loadEffects = async (run: WorkspaceRun): Promise<Effect[]> => {
       key: effectKey({ condition, endpoint, stratifyBy, stratum }),
     }];
   });
+  return { rows, skipped: lines.length - 1 - rows.length };
 };
+
+export const loadEffects = async (run: WorkspaceRun): Promise<Effect[]> => (await loadEffectTable(run)).rows;
 
 export const loadGenerations = async (run: WorkspaceRun) => {
   const runFile = findFile(run.files, "generations.jsonl");
@@ -265,7 +274,47 @@ export const loadPanelEffects = async (run: WorkspaceRun): Promise<PanelEffect[]
   }] : []);
 };
 
+/// One JSON file at the TOP of the run directory, parsed; `{}` when it is
+/// absent or unreadable. By exact path, not by name: a nested folder may
+/// carry a file of the same name that says nothing about this run.
+export const readRunJSON = async (run: WorkspaceRun, name: string): Promise<Record<string, unknown>> => {
+  const runFile = run.files.find((file) => file.path === name);
+  if (!runFile) return {};
+  try {
+    const parsed: unknown = JSON.parse(await (await runFile.handle.getFile()).text());
+    return recordValue(parsed);
+  } catch { return {}; }
+};
+
+/// The study's freeze state, from the manifest snapshot the run carries.
+export const loadFreezeStamp = async (run: WorkspaceRun): Promise<FreezeStamp> =>
+  parseFreezeStamp(await readRunJSON(run, "experiment.json"), run.report);
+
+/// The stamps an analysis leaves beside its effect table: exclusions,
+/// endpoint rescue, adjudication, and the unit of analysis. Each is its own
+/// small file at the top of the run directory; a file the run does not
+/// carry is a stamp the run does not record.
+export const loadAnalysisStamps = async (run: WorkspaceRun): Promise<AnalysisStamps> => {
+  const [exclusions, reparse, adjudication, unit, epochUnverified, measurementDrift, analysis] = await Promise.all([
+    readRunJSON(run, "exclusions.json"),
+    readRunJSON(run, "endpoint-reparse.json"),
+    readRunJSON(run, "adjudicated-endpoint.json"),
+    readRunJSON(run, "unit-of-analysis.json"),
+    readRunJSON(run, "epoch-unverified.json"),
+    readRunJSON(run, "measurement-drift.json"),
+    readRunJSON(run, "analysis.json"),
+  ]);
+  // `run.report` falls back to analysis.json when there is no report.json;
+  // report.json itself is read here so the two are never confused.
+  const report = await readRunJSON(run, "report.json");
+  return parseAnalysisStamps({ exclusions, reparse, adjudication, unit, epochUnverified, measurementDrift, analysis, report, config: run.config });
+};
+
 export const hydrateRun = async (run: WorkspaceRun): Promise<WorkspaceRun> => {
-  const [effectRows, generationData, cosineMatrices, sweepRows, sweepRecommendations, panelEffects] = await Promise.all([loadEffects(run), loadGenerations(run), loadCosineMatrices(run), loadSweepRows(run), loadSweepRecommendations(run), loadPanelEffects(run)]);
-  return { ...run, effectRows, generationRows: generationData.rows, generationFile: generationData.handle, previewTruncated: generationData.truncated, skippedGenerationLines: generationData.skipped, cosineMatrices, validationConcepts: validationRows(run.validationReport), sweepRows, sweepRecommendations, panelEffects };
+  const [effectTable, generationData, cosineMatrices, sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps] = await Promise.all([loadEffectTable(run), loadGenerations(run), loadCosineMatrices(run), loadSweepRows(run), loadSweepRecommendations(run), loadPanelEffects(run), loadFreezeStamp(run), loadAnalysisStamps(run)]);
+  // The run's unit of analysis travels ON each row, so every surface that
+  // prints a row's count prints it in the right unit (lib/effects.ts).
+  const analysisUnit = analysisStamps.unit?.unit ?? "";
+  const effectRows = analysisUnit ? effectTable.rows.map((effect) => ({ ...effect, analysisUnit })) : effectTable.rows;
+  return { ...run, effectRows, skippedEffectRows: effectTable.skipped, generationRows: generationData.rows, generationFile: generationData.handle, previewTruncated: generationData.truncated, skippedGenerationLines: generationData.skipped, cosineMatrices, validationConcepts: validationRows(run.validationReport), sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps };
 };

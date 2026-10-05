@@ -2,9 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { DerivedBadge } from "../components/provenance";
-import { Badge, CopyLinkButton, NoRunSelected } from "../components/ui";
+import { Badge, CopyLinkButton, NoRunSelected, SaveStatus, useSave } from "../components/ui";
+import { skippedLinesNote } from "../lib/csv";
 import { responseRecordKey, splitRecordKey, takePendingRecord, updateDeepLink } from "../lib/deeplink";
-import { demoPreviewEnabled, generations } from "../lib/demo";
+import { DemoBanner, demoCopy, demoGenerations, demoPreviewEnabled } from "../demo";
+import { exportFilename } from "../lib/export";
+import { saveRunFile } from "../lib/save";
 import {
   instrumentRecordFor,
   loadInstrumentRecords,
@@ -111,8 +114,17 @@ export function GenerationsView({ run }: { run: WorkspaceRun | null }) {
   // Keyed by run so a pending read can never paint the previous run's
   // readouts onto this one.
   const [instrument, setInstrument] = useState<{ key: string; records: InstrumentRecord[] }>({ key: "", records: [] });
-  const records = run ? run.generationRows : generations;
-  const [selected, setSelectedRecord] = useState(records[0] ?? generations[0]);
+  const save = useSave();
+  // With no run, the only records are the layout preview's invented ones,
+  // and only in a browser that asked for the preview: app/demo/ is not in
+  // the embedded app, where this list is always empty.
+  const records = run ? run.generationRows : demoGenerations;
+  // The record on screen. No stand-in is ever substituted for it: when
+  // nothing is selected the first loaded record is shown, and when there is
+  // none the view says so below instead of reading a record that is not
+  // there.
+  const [selectedRecord, setSelectedRecord] = useState<Generation | undefined>(records[0]);
+  const selected = selectedRecord ?? records[0];
   const setSelected = (row: Generation) => { setSelectedRecord(row); setCompare(false); };
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- resets the filters, then applies the one-shot deep-link / choice-view hand-offs below; both takePendingRecord and takeGenerationRecord CONSUME, so they must not run during render
@@ -130,7 +142,7 @@ export function GenerationsView({ run }: { run: WorkspaceRun | null }) {
     const requested = request ? records.find((row) => row.isInstrument && promptIDFromGenerationID(row.id) === request.promptID && row.condition === request.condition) : null;
     if (linkedRow) { setSelected(linkedRow); setQuery(promptIDFromGenerationID(linkedRow.id)); }
     else if (request && requested) { setSelected(requested); setQuery(request.promptID); }
-    else setSelected(records[0] ?? generations[0]);
+    else { setSelectedRecord(records[0]); setCompare(false); }
   }, [run?.key]);
   useEffect(() => {
     let cancelled = false;
@@ -175,6 +187,9 @@ export function GenerationsView({ run }: { run: WorkspaceRun | null }) {
       </div>
     );
   }
+  // No record to show and no run: there is nothing here, and nothing is
+  // invented to fill the page.
+  if (!selected) return <NoRunSelected title="Generations" />;
   // Prefer a partner of the same kind (instrument ↔ instrument), and among
   // those prefer the baseline condition — the comparison that matters.
   const partnerPool = records.filter((record) => record.id === selected.id && record.condition !== selected.condition);
@@ -183,29 +198,27 @@ export function GenerationsView({ run }: { run: WorkspaceRun | null }) {
   const pairedRecord = pool.find((record) => record.condition.toLowerCase() === "baseline") ?? pool[0] ?? null;
   const recordFor = (row: Generation) => row.isInstrument ? instrumentRecordFor(instrumentRecords, promptIDFromGenerationID(row.id), row.condition) : null;
   const selectedInstrument = recordFor(selected);
-  const downloadGenerations = async () => {
-    if (!run?.generationFile) return;
-    const file = await run.generationFile.getFile();
-    const url = URL.createObjectURL(file);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "generations.jsonl";
-    anchor.click();
-    URL.revokeObjectURL(url);
-  };
+  // The WHOLE file, byte for byte — not the bounded preview loaded above.
+  // In the app the native host copies it to the place the reader picks, so
+  // even a very large file is never pulled into this page (lib/save.ts).
+  const downloadGenerations = () => save.run(() => saveRunFile(exportFilename("jsonl", run?.name, "generations"), run?.generationFile));
   return (
     <div className="view-enter inner-view generation-view">
+      {!run && <DemoBanner />}
       <header className="page-title compact-title">
-        <div><span className="section-number">{run ? `${records.length} LOADED RECORDS${run.previewTruncated ? " · BOUNDED PREVIEW" : ""}${instrumentRecords.length ? ` · ${instrumentRecords.length} INSTRUMENT READOUTS` : ""}` : "384 RECORDS · 0 DECODE ERRORS"}</span><h1>Generation reader</h1><p>Inspect outputs, paired conditions, parser results, and record-level provenance without leaving the study.</p></div>
-        <button className="primary" onClick={downloadGenerations} disabled={!run?.generationFile}>{run ? "Download JSONL" : "Preview only"} <span>↓</span></button>
+        <div><span className="section-number">{run ? `${records.length} LOADED RECORDS${run.previewTruncated ? " · BOUNDED PREVIEW" : ""}${instrumentRecords.length ? ` · ${instrumentRecords.length} INSTRUMENT READOUTS` : ""}` : demoCopy.generationsEyebrow}</span><h1>Generation reader</h1><p>Inspect outputs, paired conditions, parser results, and record-level provenance without leaving the study.</p></div>
+        <div className="title-actions"><SaveStatus status={save.status} /><button className="primary" onClick={downloadGenerations} disabled={!run?.generationFile}>{run ? "Download JSONL" : demoCopy.downloadLabel} <span>↓</span></button></div>
       </header>
+      {/* Said whenever ANY line was skipped. It used to be said only when
+          every line was, so a file that lost a few records looked whole. */}
+      {run && run.skippedGenerationLines > 0 && <div className="preview-warning skipped-note" role="status">{skippedLinesNote(run.skippedGenerationLines, "generations.jsonl", "generation records")}</div>}
       <div className="reader-shell">
         <aside className="record-list">
           <div className="reader-filters">
             <label className="search"><span>⌕</span><input value={query} onChange={(event) => changeQuery(event.target.value)} placeholder="Search cases, speakers, or output" aria-label="Search generations" /></label>
             <select value={condition} onChange={(event) => changeCondition(event.target.value)} aria-label="Filter by condition"><option>All conditions</option>{conditions.map((name) => <option key={name}>{name}</option>)}</select>
           </div>
-          <div className="record-count"><span>{filtered.length} {run ? "local" : "preview"} records</span><span>{run?.previewTruncated ? "First 32 MB" : "Complete preview"}</span></div>
+          <div className="record-count"><span>{filtered.length} {run ? "local" : "invented"} records</span><span>{run?.previewTruncated ? "First 32 MB" : run ? "Complete file" : "Invented"}</span></div>
           <div className="records">
             {pageRecords.map((generation, index) => (
               <button key={`${generation.id}-${generation.condition}-${index}`} onClick={() => setSelected(generation)} className={selected === generation ? "selected" : ""}>
@@ -214,7 +227,7 @@ export function GenerationsView({ run }: { run: WorkspaceRun | null }) {
                 <footer><span>{rowSubtitle(generation)}</span><span>{generation.decision}</span></footer>
               </button>
             ))}
-            {filtered.length === 0 && <div className="empty-state">No preview records match those filters.</div>}
+            {filtered.length === 0 && <div className="empty-state">No records match those filters.</div>}
           </div>
           {filtered.length > pageSize && <div className="record-pagination"><button onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={page === 0}>← Previous</button><span>Page {page + 1} of {pageCount}</span><button onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))} disabled={page >= pageCount - 1}>Next →</button></div>}
         </aside>
@@ -223,7 +236,7 @@ export function GenerationsView({ run }: { run: WorkspaceRun | null }) {
             <div><span className="section-number">{rowEyebrow(selected)}</span><h2>{rowTitle(selected)}</h2>{run && <CopyLinkButton view="generations" record={generationKey(selected)} label="Copy link to this record" />}</div>
             <div className="pager"><button aria-label="Previous record" onClick={() => moveSelected(-1)} disabled={selectedIndex <= 0}>←</button><span>{Math.max(1, selectedIndex + 1)} of {records.length || 1}</span><button aria-label="Next record" onClick={() => moveSelected(1)} disabled={selectedIndex < 0 || selectedIndex >= records.length - 1}>→</button></div>
           </header>
-          <div className="record-meta"><Badge tone="blue">{selected.condition}</Badge>{isPanelRow(selected) ? <span>{selected.turnTitle ?? "Turn not titled"}</span> : <span>Sample {selected.sample}</span>}<span>Seed {selected.seed || "not stamped"}</span><span>{selectedInstrument?.modelID ?? selected.modelID ?? run?.model ?? "Gemma 3 · 27B"}</span></div>
+          <div className="record-meta"><Badge tone="blue">{selected.condition}</Badge>{isPanelRow(selected) ? <span>{selected.turnTitle ?? "Turn not titled"}</span> : <span>Sample {selected.sample}</span>}<span>Seed {selected.seed || "not stamped"}</span><span>{selectedInstrument?.modelID ?? selected.modelID ?? run?.model ?? demoCopy.generationsModel}</span></div>
           <section className="text-block prompt-block"><span>PROMPT</span><p>{selected.prompt}</p></section>
           {compare && pairedRecord ? (
             <div className="juxtapose">
@@ -270,7 +283,7 @@ export function GenerationsView({ run }: { run: WorkspaceRun | null }) {
               <button onClick={() => pairedRecord && setSelected(pairedRecord)} disabled={!pairedRecord}>Open pair</button>
             </div>
           </div>
-          <footer className="record-path">generations.jsonl{selectedInstrument ? ` · line ${selectedInstrument.line}` : ""} · complete line{run ? " · read locally" : " · SHA-256 verified"}</footer>
+          <footer className="record-path">generations.jsonl{selectedInstrument ? ` · line ${selectedInstrument.line}` : ""} · complete line{run ? " · read locally" : demoCopy.generationsFooter}</footer>
         </article>
       </div>
     </div>

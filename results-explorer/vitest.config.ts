@@ -7,7 +7,7 @@ import { defineConfig } from "vitest/config";
 // `app/lib/` against in-memory fixtures; no workspace data is read.
 export default defineConfig({
   test: {
-    include: ["test/**/*.test.ts"],
+    include: ["test/**/*.test.ts", "test/**/*.test.tsx"],
     environment: "node",
   },
 });

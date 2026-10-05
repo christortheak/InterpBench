@@ -10,7 +10,7 @@
     "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "test": "vitest run",
-    "test:rendered": "npm run build && node --test tests/rendered-html.test.mjs",
+    "test:embedded": "npm run build:embed && node --test tests/embedded-bundle.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "types": "WRANGLER_SEND_METRICS=false WRANGLER_LOG_PATH=.wrangler/wrangler.log wrangler types -c wrangler.types.jsonc",
     "typecheck": "npm run types && tsc --noEmit --incremental false",

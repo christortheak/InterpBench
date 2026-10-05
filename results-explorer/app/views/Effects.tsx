@@ -1,8 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { AnalysisStampsCard, IntervalNote } from "../components/stamps";
 import { Badge, ExportButton, ForestRow, NoRunSelected } from "../components/ui";
-import { demoPreviewEnabled, effects } from "../lib/demo";
+import { analysisStampsOf } from "../lib/analysisStamps";
+import { skippedLinesNote } from "../lib/csv";
+import { demoCopy, demoEffects, DemoBanner, DemoEffectsLower, demoPreviewEnabled } from "../demo";
 import { findFile } from "../lib/discovery";
 import { effectConditions, effectEndpoints, estimandLabel, groupEffects, isDiagnostic, pairedCountLabel, stratumLabel } from "../lib/effects";
 import { csvFilename, type ExportColumn } from "../lib/export";
@@ -17,24 +20,31 @@ const ALL_ENDPOINTS = "All endpoints";
 // `stratifyBy`/`stratum` and the estimand pair travel with the numbers —
 // without them an exported row cannot be told from another condition's row
 // for the same endpoint, or from a within-item diagnostic.
+//
+// The descriptions travel in the "Column notes" file (lib/export.ts). This is
+// the table most likely to be opened in statistics software, so every column
+// says what it holds.
 const columns: ExportColumn<Effect>[] = [
-  { header: "condition", kind: "stored", value: (row) => row.condition },
-  { header: "endpoint", kind: "stored", value: (row) => row.endpoint },
-  { header: "stratifyBy", kind: "stored", value: (row) => row.stratifyBy },
-  { header: "stratum", kind: "stored", value: (row) => row.stratum },
-  { header: "pairedUnit", kind: "stored", value: (row) => row.pairedUnit },
-  { header: "estimand", kind: "stored", value: (row) => row.estimand },
-  { header: "inference", kind: "stored", value: (row) => row.inference },
+  { header: "condition", kind: "stored", value: (row) => row.condition, description: "The condition being compared with the baseline." },
+  { header: "endpoint", kind: "stored", value: (row) => row.endpoint, description: "The outcome being compared." },
+  { header: "stratifyBy", kind: "stored", value: (row) => row.stratifyBy, description: "\"pooled\" for a row over all items. Otherwise, the grouping this row is restricted to." },
+  { header: "stratum", kind: "stored", value: (row) => row.stratum, description: "The group within stratifyBy. Empty on pooled rows." },
+  { header: "pairedUnit", kind: "stored", value: (row) => row.pairedUnit, description: "On a stratified row, what one paired difference is: item or sample (the file's \"unit\" column). Empty on pooled rows, where it is the run's unit of analysis." },
+  { header: "estimand", kind: "stored", value: (row) => row.estimand, description: "On a stratified row, itemLevel or withinItemSamples. A withinItemSamples row describes one prompt's own generations and supports no claim about other prompts." },
+  { header: "inference", kind: "stored", value: (row) => row.inference, description: "On a stratified row, corrected or diagnostic. A diagnostic row is a locator, not a test, and has no adjusted p." },
   // Absent stays absent on the way out too: a blank `n` is written blank, not
   // as 0 (lib/export.ts writes null as an empty cell).
-  { header: "n", kind: "stored", value: (row) => row.n },
-  { header: "estimate", kind: "stored", value: (row) => row.estimate },
-  { header: "ciLower", kind: "stored", value: (row) => row.low },
-  { header: "ciUpper", kind: "stored", value: (row) => row.high },
-  { header: "wilcoxonP", kind: "stored", value: (row) => row.p },
-  { header: "adjustedP", kind: "stored", value: (row) => row.q },
-  { header: "correction", kind: "stored", value: (row) => row.correction },
-  { header: "unit", kind: "derived", value: (row) => row.unit },
+  { header: "n", kind: "stored", value: (row) => row.n, description: "The number of paired differences behind the estimate. Empty when the file gave none." },
+  { header: "estimate", kind: "stored", value: (row) => row.estimate, description: "The mean paired difference, condition minus baseline (the file's deltaMean)." },
+  { header: "ciLower", kind: "stored", value: (row) => row.low, description: "The lower end of the 95% interval the engine stored." },
+  { header: "ciUpper", kind: "stored", value: (row) => row.high, description: "The upper end of the 95% interval the engine stored." },
+  { header: "wilcoxonP", kind: "stored", value: (row) => row.p, description: "The unadjusted Wilcoxon signed-rank p-value. Empty when the file gave none." },
+  { header: "adjustedP", kind: "stored", value: (row) => row.q, description: "The p-value after the correction named in the correction column. Empty when the file gave none." },
+  { header: "correction", kind: "stored", value: (row) => row.correction, description: "The multiple-comparison correction the engine applied, as the file names it." },
+  { header: "unit", kind: "derived", value: (row) => row.unit, description: "A display unit the explorer chose from the endpoint's name. It is a label for reading, not a measured unit." },
+  // The run's own stamp, repeated on every row so the table still says what
+  // `n` counts once it has left the run directory.
+  { header: "unitOfAnalysis", kind: "stored", value: (row) => row.analysisUnit ?? "", description: "The run's unit of analysis as the run stamps it, such as transcript: what n counts on a pooled row. Empty when the run stamps none, in which case the engines pair by prompt item." },
 ];
 
 /// The p-value pair for one row. A DIAGNOSTIC row (a single item's own
@@ -60,7 +70,10 @@ export function EffectsView({ run, onOpenFile }: { run: WorkspaceRun | null; onO
   const [endpoint, setEndpoint] = useState(ALL_ENDPOINTS);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   if (!run && !demoPreviewEnabled()) return <NoRunSelected title="Effects & robustness" />;
-  const availableEffects = run ? run.effectRows : effects;
+  // With no run, the only rows are the layout preview's invented ones, and
+  // only in a browser that asked for the preview: app/demo/ is not in the
+  // embedded app, where this list is always empty.
+  const availableEffects = run ? run.effectRows : demoEffects;
   // Filtering is by CONDITION (the agent) and endpoint — the two halves of a
   // row's identity. Filtering by endpoint alone left every condition's row
   // for that endpoint on screen at once, indistinguishable from each other.
@@ -77,19 +90,27 @@ export function EffectsView({ run, onOpenFile }: { run: WorkspaceRun | null; onO
   // and an empty stamp from them must not blank the label for the rest.
   const corrections = [...new Set(availableEffects.filter((effect) => !isDiagnostic(effect)).map((effect) => effect.correction).filter(Boolean))];
   const correctionLabel = corrections.length === 1 ? `${corrections[0]} p` : "Adjusted p";
+  const transcriptUnit = run ? analysisStampsOf(run).unit?.unit === "transcript" : false;
   return (
     <div className="view-enter inner-view">
+      {!run && <DemoBanner />}
       <header className="page-title">
-        <div><span className="section-number">{run ? `${pooledCount} POOLED ROW${pooledCount === 1 ? "" : "S"}${stratifiedCount ? ` · ${stratifiedCount} STRATIFIED` : ""} · LOCAL RUN` : "CONFIRMATORY FAMILY · 5 ENDPOINTS"}</span><h1>Effects &amp; robustness</h1><p>Paired intervention-minus-baseline estimates, one row per condition × endpoint. The item—not the generation—is the unit of analysis, except where a stratum says otherwise.</p></div>
-        <div className="title-actions"><button className="secondary" onClick={() => document.querySelector(run ? ".local-method-note" : ".table-note")?.scrollIntoView({ behavior: "smooth" })}>Method notes</button><ExportButton filename={csvFilename(run?.name ?? "synthetic-preview", "effect-sizes")} columns={columns} rows={visible} /><button className="primary" disabled={!run || !findFile(run.files, "effect-sizes.csv")} onClick={() => { const file = run && findFile(run.files, "effect-sizes.csv"); if (file) onOpenFile(file); }}>{run ? "Open table" : "Preview table"} <span>→</span></button></div>
+        {/* What one paired difference IS comes from the run's own stamp. A
+            multi-agent run pairs whole transcripts, and saying "the item"
+            there described a different analysis than the one on screen. */}
+        <div><span className="section-number">{run ? `${pooledCount} POOLED ROW${pooledCount === 1 ? "" : "S"}${stratifiedCount ? ` · ${stratifiedCount} STRATIFIED` : ""} · LOCAL RUN` : demoCopy.effectsEyebrow}</span><h1>Effects &amp; robustness</h1><p>Paired intervention-minus-baseline estimates, one row per condition × endpoint. {transcriptUnit ? "Each transcript—not each turn—is the unit of analysis." : "The item—not the generation—is the unit of analysis, except where a stratum says otherwise."}</p></div>
+        <div className="title-actions"><button className="secondary" onClick={() => document.querySelector(run && run.effectRows.length ? ".interval-note" : run ? ".local-method-note" : ".table-note")?.scrollIntoView({ behavior: "smooth" })}>Method notes</button><ExportButton filename={csvFilename(run?.name ?? "invented-demo-data", "effect-sizes")} columns={columns} rows={visible} /><button className="primary" disabled={!run || !findFile(run.files, "effect-sizes.csv")} onClick={() => { const file = run && findFile(run.files, "effect-sizes.csv"); if (file) onOpenFile(file); }}>{run ? "Open table" : "Preview table"} <span>→</span></button></div>
       </header>
       <section className="filterbar" aria-label="Effect filters">
-        <label>Source<select disabled><option>{run ? run.name : "Synthetic preview"}</option></select></label>
-        <label>Experiment<select disabled><option>{run ? run.experiment : "Alien stance"}</option></select></label>
+        <label>Source<select disabled><option>{run ? run.name : demoCopy.effectsSource}</option></select></label>
+        <label>Experiment<select disabled><option>{run ? run.experiment : demoCopy.effectsExperiment}</option></select></label>
         {conditions.length > 0 && <label>Condition<select value={condition} onChange={(event) => setCondition(event.target.value)}><option>{ALL_CONDITIONS}</option>{conditions.map((name) => <option key={name}>{name}</option>)}</select></label>}
         <label>Endpoint<select value={endpoint} onChange={(event) => setEndpoint(event.target.value)}><option>{ALL_ENDPOINTS}</option>{effectEndpoints(availableEffects).map((name) => <option key={name}>{name}</option>)}</select></label>
         <div className="filter-summary"><span>Correction</span><strong>{corrections.length === 1 ? corrections[0] : corrections.length ? corrections.join(" / ") : "Not stamped in this table"}</strong></div>
       </section>
+      {/* The stamps that say what the estimates below were measured on:
+          the unit of analysis, exclusions, endpoint rescue, adjudication. */}
+      {run && <AnalysisStampsCard run={run} onOpenFile={onOpenFile} />}
       <section className="card effect-table-card">
         <div className="effect-table-head"><span>Condition · endpoint</span><span>Effect with 95% CI</span><span>Estimate</span><span>Raw p</span><span>{correctionLabel}</span><span>Read</span></div>
         {groups.map((group) => {
@@ -134,25 +155,16 @@ export function EffectsView({ run, onOpenFile }: { run: WorkspaceRun | null; onO
           );
         })}
         {groups.length === 0 && <div className="artifact-empty"><span>∅</span><p>No readable effect rows were found for this run.</p></div>}
-        <footer className="table-note"><strong>Interpretation.</strong> {run ? "Values are read directly from effect-sizes.csv; absent fields remain absent. Stratified rows are the engine’s per-cell companions to the pooled row above them: an “itemLevel” stratum is the pooled estimate restricted to that cell, while a “withinItemSamples” stratum compares one prompt’s own generations — a prompt-specific quantity that supports no cross-prompt claim, so the engine leaves it out of every correction family and it is shown here as a diagnostic locator only." : "CIs are percentile bootstrap intervals over paired item-level differences (10,000 resamples; seed 0). Two-sided Wilcoxon signed-rank p-values are a robustness companion, adjusted over the five-endpoint confirmatory family with Holm’s method."}</footer>
+        {/* A line with no readable estimate or interval is left out, never
+            patched up — and the table says it is short. */}
+        {run && (run.skippedEffectRows ?? 0) > 0 && <div className="preview-warning skipped-note" role="status">{skippedLinesNote(run.skippedEffectRows ?? 0, "effect-sizes.csv", "effect rows (a row needs an endpoint, an estimate, and both ends of its interval)")}</div>}
+        <footer className="table-note"><strong>Interpretation.</strong> {run ? "Values are read directly from effect-sizes.csv; absent fields remain absent. Stratified rows are the engine’s per-cell companions to the pooled row above them: an “itemLevel” stratum is the pooled estimate restricted to that cell, while a “withinItemSamples” stratum compares one prompt’s own generations — a prompt-specific quantity that supports no cross-prompt claim, so the engine leaves it out of every correction family and it is shown here as a diagnostic locator only." : demoCopy.effectsNote}</footer>
       </section>
 
-      {!run && <section className="section-grid effects-lower">
-        <div className="card residual-card">
-          <header className="section-header"><div><span className="section-number">HUMAN-ANCHORED RESIDUAL</span><h2>Model movement exceeds the provisional human estimate.</h2></div><Badge tone="warn">Unverified baseline</Badge></header>
-          <div className="equation"><span>R</span><small>=</small><strong>Δ<sub>model</sub></strong><small>−</small><strong>Δ<sub>human</sub></strong></div>
-          <div className="residual-values"><div><span>Model</span><strong>+7.8</strong><small>months</small></div><div><span>Human</span><strong>+2.1</strong><small>months</small></div><div className="accent"><span>Residual R</span><strong>+5.7</strong><small>“hyper-human”</small></div></div>
-          <p>Classification is shown to demonstrate the analysis surface only. It cannot support a human-comparison claim until the source table, page, extraction notes, and file hash are verified.</p>
-        </div>
-        <div className="card sensitivity-card">
-          <header className="section-header"><div><span className="section-number">SENSITIVITY</span><h2>The primary estimate is stable.</h2></div></header>
-          <div className="sensitivity-row"><span>All paired items</span><div><i style={{width:"65%"}}/></div><strong>+7.8</strong></div>
-          <div className="sensitivity-row"><span>Exclude parse failures</span><div><i style={{width:"68%"}}/></div><strong>+8.1</strong></div>
-          <div className="sensitivity-row"><span>Median per item</span><div><i style={{width:"58%"}}/></div><strong>+7.0</strong></div>
-          <div className="sensitivity-row"><span>Winsorize 5%</span><div><i style={{width:"62%"}}/></div><strong>+7.4</strong></div>
-          <footer>All analyses use the same frozen item set. No post-hoc endpoint exclusions.</footer>
-        </div>
-      </section>}
+      {/* The plain-language reading of an interval. It used to be shown only
+          beside the invented demo rows; a reader needs it beside real ones. */}
+      {run && run.effectRows.length > 0 && <IntervalNote unit={analysisStampsOf(run).unit} corrections={corrections} />}
+      {!run && <DemoEffectsLower />}
       {run && <section className="card local-method-note"><span className="section-number">LOCAL ARTIFACT CONTRACT</span><h2>No statistics are recomputed in the browser.</h2><p>The explorer presents the run’s saved estimates and intervals. It does not silently derive missing tests, correction families, or human residuals from partial files — and it does not pool a stratified row back into its parent, which would be a hierarchical model no artifact declared.</p></section>}
     </div>
   );
