@@ -28,6 +28,16 @@ public enum StudyPackAuthoring {
     private struct Pack: Codable {
         var study: ExperimentManifest
         var files: [String: String]?
+
+        enum CodingKeys: String, CodingKey { case study, files }
+
+        /// The study travels as its file document, so keys this build does
+        /// not model leave in an export exactly as they arrived.
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(ManifestFileDocument(study), forKey: .study)
+            try container.encodeIfPresent(files, forKey: .files)
+        }
     }
     private struct Observation: Encodable {
         let name: String

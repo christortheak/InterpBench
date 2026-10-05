@@ -1747,6 +1747,14 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
     /// `preregistrationHash`. Cross-engine key:
     /// "preregistrationGeneratedHash".
     public var preregistrationGeneratedHash: String?
+    /// Every top-level key this build does not model, kept verbatim so that
+    /// loading and re-saving a draft written by a newer engine does not drop
+    /// its newer fields. Not a `CodingKeys` case, so it never enters
+    /// `manifestHash` or any other typed encoding; only the file writers
+    /// (`ManifestFileDocument`) put it back. Freeze refuses while it is
+    /// non-empty (`ManifestMutationPolicy.admitFreeze`): this build's freeze
+    /// hash could not cover fields it does not know.
+    public var unknownTopLevelFields: [String: JSONValue] = [:]
 
     public init(
         name: String, description: String, modelID: String,
@@ -1972,6 +1980,7 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
             String.self, forKey: .preregistrationHash)
         preregistrationGeneratedHash = try container.decodeIfPresent(
             String.self, forKey: .preregistrationGeneratedHash)
+        unknownTopLevelFields = try ManifestFileDocument.unknownFields(in: decoder)
     }
 }
 

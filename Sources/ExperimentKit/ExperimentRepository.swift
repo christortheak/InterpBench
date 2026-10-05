@@ -47,8 +47,8 @@ public struct ExperimentRepository: Sendable {
         let url = manifestURL(manifest.name)
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(manifest).write(to: url, options: .atomic)
+        // Through the file document: top-level keys this build does not model
+        // survive the save verbatim.
+        try ManifestFileDocument.data(manifest).write(to: url, options: .atomic)
     }
 }
