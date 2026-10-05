@@ -263,8 +263,32 @@ def _client_spelling(label: str) -> str:
     spec = next((s for s in client_cli.CLIENT_VERB_SPECS
                  if s.family == family and s.verb == verb), None)
     if spec is None:
-        return ""
+        other = CLIENT_ROUTES.get(label)
+        return (f"{client_cli.PROGRAM} {other} {client_cli.ROOT_FLAG} "
+                "<workspace-dir>") if other else ""
     return f"{client_cli.synopsis(spec)} {client_cli.ROOT_FLAG} <workspace-dir>"
+
+
+#: The redirected acts the cross-platform client performs with a DIFFERENT
+#: verb: the Mac's declaration verbs are protocol fields there, and it pins
+#: task prompts by importing them as a new input. Each value starts with a
+#: verb the client really has
+#: (``test_mac_authority_surface.py::test_every_client_route_names_a_client_verb``).
+CLIENT_ROUTES: dict = {
+    "experiment pin-prompts": "experiment import-prompts <name> --file "
+                              "<file>.jsonl --manifest-sha256 <digest>",
+    "experiment pin-rubric": "experiment set-protocol <name> --set "
+                             "judgeRubricFile=<json> --set "
+                             "judgeRubricHash=<json> --set judges=<json>",
+    "experiment set-instruments": "experiment set-protocol <name> --set "
+                                  "outcomeInstruments=<json list>",
+    "experiment set-sampling": "experiment set-protocol <name> --set "
+                               "temperature=<t> --set maxTokens=<n> …",
+    "experiment set-exclusions": "experiment set-protocol <name> --set "
+                                 "exclusionRules=<json list>",
+    "experiment set-sweep-selection": "experiment set-protocol <name> --set "
+                                      "sweep=<json, with its selection>",
+}
 
 
 def _authoring_command(command: str) -> str:
@@ -313,17 +337,23 @@ def _mac_authority_refusal(label: str, repair: str, *, note: str = "",
     reason = (
         f"'{label}' is not a verb of this engine and will not become one — "
         "authoring (create/attach, the pin-*/declare-*/set-* verbs, freeze, "
-        "duplicate) belongs to an authoring CLIENT: the client's workspace is "
-        "the source of truth and this engine is a runner and a cache")
+        "duplicate) happens on your authoring client: its workspace is the "
+        "source of truth and this engine is a runner and a cache")
     if note:
         reason += f". {note}"
-    # The Mac spelling stays FIRST — it is the table's value, the one an agent
-    # has always read, and the one the Mac lifecycle continues from. The
-    # client's is appended, not substituted, because a caller on Linux or
-    # Windows has no `steerlab-cli` and a repair they cannot run is not one.
+    # Both spellings, because this engine cannot know which authoring client
+    # its reader has — the same form every other authoring repair on this
+    # engine takes (`command_vocabulary.authoring`). The Mac spelling stays
+    # FIRST: it is the table's value, the one an agent has always read. The
+    # client's is read from the client's own verb table, so a verb the client
+    # does not have is never claimed — and the repair says so instead.
     client = _client_spelling(label)
     if client:
-        repair = f"{repair}  (off the Mac: {client})"
+        repair = (f"on your authoring client: {repair}  (Mac command line), "
+                  f"or {client}  (cross-platform client)")
+    else:
+        repair = (f"on your authoring client: {repair}  (Mac command line; "
+                  "the cross-platform client has no verb for this)")
     sys.stderr.write(f"{reason}\n  {repair}\n")
     return CLIResult(state="refused", exit_code=exit_code,
                      code=MAC_AUTHORITY_CODE, message=reason,

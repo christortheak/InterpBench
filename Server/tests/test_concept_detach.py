@@ -419,9 +419,9 @@ def test_the_engine_cli_redirects_detach_to_an_authoring_client(
     envelope = json.loads(capsys.readouterr().out)
     assert envelope["error"]["code"] == cli_envelope.MAC_AUTHORITY_CODE
     assert envelope["error"]["repairAction"] == (
-        "steerlab-cli experiment detach <name> <concept>…"
-        "  (off the Mac: steerlab experiment detach <name> <concept>… "
-        "--root <workspace-dir>)")
+        "on your authoring client: steerlab-cli experiment detach <name> "
+        "<concept>…  (Mac command line), or steerlab experiment detach "
+        "<name> <concept>… --root <workspace-dir>  (cross-platform client)")
 
 
 # =============================================================================
