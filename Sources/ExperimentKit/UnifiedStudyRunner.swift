@@ -112,6 +112,16 @@ public final class UnifiedStudyRunner {
         }
         let dryRun = request.dryRun
         let resources = request.resources
+        // Custom code: a step that can execute the study's agents is not sent
+        // while an expert provider in it is unacknowledged (CustomCodeNotice).
+        if let refusal = CustomCodeNotice.submissionRefusalText(
+            study: manifest.name, verb: verb, dryRun: dryRun,
+            workspaceRoot: origin.workspaceRoot)
+        {
+            statusLine = refusal
+            note(refusal, .error)
+            return
+        }
         do {
             statusLine = "packaging \(manifest.name)…"
             // Packaging copies files, hashes them, and shells out to tar;

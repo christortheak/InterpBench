@@ -816,6 +816,10 @@ import Testing
             // outside runs/.
             "results export", "results report",
             "experiment import-prompts", "experiment inspect-artifact", "experiment attach-artifact",
+            // Custom code a shared study carries (an intervention policy's
+            // expert provider): shown, and acknowledged by its SHA-256 before
+            // a step that executes it is sent to run.
+            "experiment acknowledge-custom-code",
             "science evidence-analyze", "science policy-list", "science policy-inspect", "science policy-review", "science policy-publish", "science policy-attach-review", "science policy-attach", "science measurements-review", "science measurements-save", "science probe-list", "science probe-inspect", "science corpus-preview", "science corpus-publish", "science list", "science guide", "science operation", "science interview", "science draft", "science publish", "science artifact-plan", "science artifact-import", "science sae-check", "science sae-show", "science sae-pin-plan", "science sae-pin", "science input-plan", "science package", "science import", "science custody", "science verify-custody",
             "science report",
         ]
@@ -849,9 +853,10 @@ import Testing
         // the design lived in a command line rather than in the artifact
         // chain the evidence travels in — and `set-primary-outcome`, which
         // declares the outcome a study is about so that every results
-        // summary leads with it.
+        // summary leads with it — and `acknowledge-custom-code`, which
+        // records that the researcher trusts a shared study's custom code.
         #expect(
-            declared.filter { $0.hasPrefix("experiment ") }.count == 37,
+            declared.filter { $0.hasPrefix("experiment ") }.count == 38,
             "the experiment lifecycle includes reviewed agent/vector attachment and prompt import")
     }
 

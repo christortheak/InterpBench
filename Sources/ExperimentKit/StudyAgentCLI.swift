@@ -29,8 +29,11 @@ enum StudyAgentCLI {
         let reviewed = try DraftAuthoringSnapshot.review(name: args[1], workspaceRoot: workspaceRoot, expectedFileSHA256: studySHA)
         let artifact = try StudyAgentAuthoring.reviewArtifact(path: path, workspaceRoot: workspaceRoot, expectedFileSHA256: artifactSHA)
         let saved = try StudyAgentAuthoring.attach(artifact, reviewed: reviewed)
-        return try result(StudyAuthoringHTTP.Document(saved), message: "Agent attached to reviewed draft.",
+        var attached = try result(StudyAuthoringHTTP.Document(saved), message: "Agent attached to reviewed draft.",
             changed: saved.file.sha256 != reviewed.file.sha256, sink: sink)
+        // An agent that carries custom code says so on arrival.
+        CustomCodeCLI.attachNotice(to: &attached.payload, study: args[1], workspaceRoot: workspaceRoot, sink: sink)
+        return attached
     }
 
     private static func result(_ value: some Encodable, message: String, changed: Bool = false,

@@ -5043,10 +5043,13 @@ public enum ExperimentStore {
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
+        // The file document: a key the server froze that this build does not
+        // model is still in the manifest, so it is compared rather than
+        // reported as a difference nobody made.
         guard
             let canonicalObject = comparableFreezeObject(canonicalData)
                 .map(droppingDefaultElidedKeys),
-            let manifestData = try? encoder.encode(manifest),
+            let manifestData = try? encoder.encode(ManifestFileDocument(manifest)),
             let manifestObject = comparableFreezeObject(manifestData)
                 .map(droppingDefaultElidedKeys)
         else {
@@ -7524,10 +7527,10 @@ public enum ExperimentStore {
             exportPreregistration(
                 into: directory.appending(component: manifest.name), &manifest)
             // Bypass the frozen-immutability guard for this one transition.
+            // (`admitFreeze` refused unknown keys, so the file document adds
+            // none here; it is the one manifest writer either way.)
             let url = manifestURL(manifest.name)
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(manifest).write(to: url, options: .atomic)
+            try ManifestFileDocument.data(manifest).write(to: url, options: .atomic)
             // The stamped manifest cannot be inside the commit it stamps (a
             // commit cannot contain its own hash), so a managed workspace gets a
             // follow-up stamp commit — freeze leaves the tree clean. The

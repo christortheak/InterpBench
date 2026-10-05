@@ -2860,6 +2860,14 @@ public struct ExperimentCLIRunner: Sendable {
                 throw ExperimentError(reason: "usage: remote package <experiment-name>")
             }
             let manifest = try ExperimentStore.load(name: args[1])
+            // Custom code: the bundle can be submitted for any step, so an
+            // unacknowledged expert provider holds the packaging itself.
+            if let refusal = try CustomCodeNotice.runRefusal(
+                study: manifest.name, verb: nil, workspaceRoot: ExperimentStore.workspaceRoot,
+                action: "packaged to run elsewhere")
+            {
+                throw refusal
+            }
             let bundle = try RunBundlePackager.packageExperiment(manifest)
             sink.out(bundle.path)
             return ExperimentCLIResult(
@@ -3045,6 +3053,8 @@ public struct ExperimentCLIRunner: Sendable {
             return try StudyAuthoringCommands.run(invocation, root: ExperimentStore.workspaceRoot, sink: sink)
         case "attach-agent":
             return try StudyAgentCLI.attach(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
+        case "acknowledge-custom-code":
+            return try CustomCodeCLI.acknowledge(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
         case "list":
             let manifests = ExperimentStore.list()
             if manifests.isEmpty { sink.out("no experiments") }

@@ -132,6 +132,16 @@ public final class StudyBundleSubmissionController {
             note(refusal, severity: .error)
             return .failure(StudyBatchSubmission.Failure(reason: refusal))
         }
+        // Custom code: a step that can execute the study's agents is not sent
+        // while an expert provider in it is unacknowledged (CustomCodeNotice).
+        if let refusal = CustomCodeNotice.submissionRefusalText(
+            study: manifest.name, verb: submissionVerb, dryRun: request.dryRun,
+            workspaceRoot: transport.origin?.workspaceRoot)
+        {
+            jobs.remoteStatus = refusal
+            note(refusal, severity: .error)
+            return .failure(StudyBatchSubmission.Failure(reason: refusal))
+        }
         do {
             jobs.remoteStatus = "packaging \(manifest.name)..."
             jobs.remoteLogLines = []

@@ -92,5 +92,8 @@ enum ManifestMutationPolicy {
                 "'\(name)' is already \(manifest.status.rawValue)",
                 repair: duplicateToIterateRepair(name))
         }
+        // Keys this build does not model are kept in the draft, but its freeze
+        // hash could not cover them, so it does not freeze them.
+        if let refusal = ManifestFileDocument.freezeRefusal(manifest) { throw refusal }
     }
 }

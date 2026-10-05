@@ -366,6 +366,9 @@ public enum ExperimentCLIParser {
             purpose: "Attach an agent using the reviewed study and artifact file versions.",
             valueFlags: ["--artifact", "--artifact-sha256", "--manifest-sha256"],
             requiredFlags: ["--artifact", "--artifact-sha256", "--manifest-sha256"]),
+        .init(namespace: "experiment", verb: "acknowledge-custom-code", positional: "<name>",
+            purpose: "Show the custom code (intervention-policy expert providers) a study carries; with --sha256, record that you trust it, so the study can run. The code runs with your permissions; it is not sandboxed.",
+            valueFlags: ["--sha256"]),
 
         .init(namespace: "authoring", verb: "study", positional: "<intent>", purpose: "Emit the study interview for one intent (conceptStudy, agentComparison, or multiAgent): what to ask the researcher, and how the answers become a reviewed study pack. The app uses the same interview."),
         .init(namespace: "experiment", verb: "inspect-artifact", positional: "<path>", purpose: "Inspect a vector pair's exact digests and scientific sidecar before attaching."),

@@ -508,9 +508,9 @@ extension ExperimentStore {
     /// `experiment.json` every engine reads, pretty-printed for pasting
     /// into an editor or an LLM conversation.
     public static func exportStudyJSON(_ manifest: ExperimentManifest) throws -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return String(decoding: try encoder.encode(manifest), as: UTF8.self)
+        // The file document, so keys this build does not model travel with
+        // a copied study exactly as they sit in experiment.json.
+        String(decoding: try ManifestFileDocument.data(manifest), as: UTF8.self)
     }
 
     /// Import a pasted study JSON as a NEW DRAFT. The firewall applies

@@ -28,6 +28,7 @@ enum StudyPackCLI {
         guard args.count >= 2 else { throw usage() }
         let data: Data
         let changed: Bool
+        var appliedStudy: String?
         switch args[0] {
         case "preview":
             guard args.count == 2 else { throw usage() }
@@ -40,6 +41,7 @@ enum StudyPackCLI {
                 workspaceRoot: workspaceRoot, expectedReviewSHA256: expected)
             data = try JSONEncoder().encode(StudyPackDocument(result))
             changed = true
+            appliedStudy = result.study.manifest.name
         case "export":
             guard args.count == 2 else { throw usage() }
             let reviewed = try DraftAuthoringSnapshot(workspaceRoot: workspaceRoot, name: args[1])
@@ -51,8 +53,13 @@ enum StudyPackCLI {
         default: throw usage()
         }
         sink.out(String(decoding: data, as: UTF8.self))
+        var payload = try JSONDecoder().decode([String: JSONValue].self, from: data)
+        if let appliedStudy {
+            // A pack that carries custom code says so on arrival.
+            CustomCodeCLI.attachNotice(to: &payload, study: appliedStudy, workspaceRoot: workspaceRoot, sink: sink)
+        }
         return ExperimentCLIResult(message: changed ? "Draft imported; inspect verificationIssues before running." : "Study pack inspected.",
-            changed: changed, payload: try JSONDecoder().decode([String: JSONValue].self, from: data))
+            changed: changed, payload: payload)
     }
     private static func usage() -> ExperimentError {
         .malformed("Use pack preview <file>, pack apply <file> --review-sha256 <digest>, or pack export <study>.",

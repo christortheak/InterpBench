@@ -46,8 +46,14 @@ def run(invocation) -> CLIResult:
             payload = study_packs.export(args[0], root=root)
         else:
             data = Path(args[0]).read_bytes()
-            payload = (study_packs.preview(data, root=root) if spec.verb == "preview"
-                       else study_packs.apply(data, root=root, expected=one("--review-sha256")))
+            if spec.verb == "preview":
+                payload = study_packs.preview(data, root=root)
+            else:
+                from . import custom_code_commands
+                payload = study_packs.apply(data, root=root, expected=one("--review-sha256"))
+                # A pack that carries custom code says so on arrival.
+                custom_code_commands.attach_notice(payload, payload["study"]["document"], root,
+                                                   study=payload["study"]["name"])
     elif spec.verb == "inspect":
         payload = files.snapshot(args[0], root)
     elif spec.verb == "import-prompts":

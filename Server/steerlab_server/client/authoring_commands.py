@@ -36,7 +36,9 @@ def run(invocation):
     if spec.family == 'agent':
         result = study_agents.catalog(root=root)
     elif spec.verb == 'attach-agent':
+        from . import custom_code_commands
         result = study_agents.attach(args[0], one('--artifact'), root=root, expected=one('--manifest-sha256'), artifact_sha256=one('--artifact-sha256'))
+        custom_code_commands.attach_notice(result, result['document'], root, study=args[0])
     elif spec.verb == 'set-pipeline':
         raw = Path(one('--file')).read_bytes()
         block = None if raw.strip() == b'null' else design_files.decode(raw)

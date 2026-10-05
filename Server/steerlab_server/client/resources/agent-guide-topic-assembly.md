@@ -25,6 +25,26 @@ workspace or pack text require another review. Apply creates a draft, pins real
 input bytes and reports `verificationIssues`; import success is not permission
 to skip verification or freeze gates.
 
+**Custom code in a shared study:** an intervention policy can carry an expert
+provider, Python that the engine runs with the researcher's permissions when
+the study runs. It is the one kind of workspace input that is code rather than
+data, and nothing sandboxes it. When `pack apply` or `experiment attach-agent`
+brings such code into the workspace, the result carries a `customCode` block:
+the notice, each provider's source SHA-256, and the commands to read and
+acknowledge it.
+
+`bundle import` carries the same block for each study it lands.
+
+Show the researcher the notice and the code:
+`steerlab experiment acknowledge-custom-code <study> --json` prints it and writes
+nothing. Only the researcher decides to trust it. Once they say so, run
+`steerlab experiment acknowledge-custom-code <study> --sha256 <hash> --json`,
+which records who acknowledged which hash, and when, in
+`custom-code-acknowledgements.json`. Until then, a step that executes the
+study's agents (`run`, `pipeline`, or `sweep`) is refused with
+`missingPrerequisite`. Never acknowledge on the researcher's behalf to get past
+that refusal.
+
 `pack export <study> --json` returns a pack plus external artifact dependencies;
 it is not a model/vector execution bundle. Full-record prompt updates use
 `experiment import-prompts <study> --file <jsonl> --manifest-sha256 <digest> --json`:
