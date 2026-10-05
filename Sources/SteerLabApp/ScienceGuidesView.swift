@@ -82,8 +82,10 @@ struct ScienceGuidesView: View {
                             purpose(layout, guide: guide)
                             dataShapes(layout)
                             guideBody(layout)
-                            Divider()
-                            Text("Supported operation paths").font(.headline)
+                            if !operations.isEmpty {
+                                Divider()
+                                Text("Supported operation paths").font(.headline)
+                            }
                             ForEach(operations) { operation in
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(operation.title).font(.headline)
