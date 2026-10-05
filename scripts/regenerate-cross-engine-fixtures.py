@@ -393,7 +393,7 @@ def auto_prompt_ids() -> None:
     k+1 onto item k and dropped one at each end."""
     import tempfile
 
-    from steerlab_server.experiment import experiment_store as es, tasks
+    from steerlab_server.experiment import experiment_store as es, task_inputs
     from steerlab_server.experiment.manifest import Manifest
 
     # Blank lines and an explicitly-identified row, so the fixture pins the
@@ -412,7 +412,7 @@ def auto_prompt_ids() -> None:
         path = os.path.join(workspace, "prompts.jsonl")
         with open(path, "w", encoding="utf-8") as handle:
             handle.write("\n".join(rows) + "\n")
-        prompts = tasks._load_prompts(
+        prompts = task_inputs.load_prompts(
             Manifest.load("ids", workspace), path, workspace)
         _write(os.path.join(FIXTURES, "auto-prompt-ids.json"), {
             "note": "auto-generated promptIDs must be identical on both "
