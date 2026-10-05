@@ -227,6 +227,63 @@ def test_redaction_keeps_keys_and_values_that_are_not_text():
         f"{users}/someone/key": "kept as a key"}
 
 
+# --- a bundle names no one ----------------------------------------------------
+#
+# 2026-10-05: every file member carried the packaging account (`gettarinfo`
+# copies the uid, gid, and login and group NAMES from the filesystem), and the
+# evidence document carried the run's ABSOLUTE path, which is the
+# researcher's home folder in a real workspace. The committed cross-engine
+# fixture carried both.
+
+def _members(bundle_path):
+    import tarfile
+    with tarfile.open(bundle_path, "r:gz") as tar:
+        return [(member, tar.extractfile(member).read())
+                for member in tar.getmembers()]
+
+
+def _owner(member):
+    return (member.uid, member.gid, member.uname, member.gname)
+
+
+def test_an_evidence_bundle_names_no_owner_and_no_absolute_path(tmp_path):
+    run = tmp_path / "runs" / "20260701T000000-test"
+    run.mkdir(parents=True)
+    (run / "report.json").write_text('{"ok":true}', encoding="utf-8")
+    meta = bundles.package_evidence(str(run))
+
+    members = dict((member.name, (member, data))
+                   for member, data in _members(meta["bundlePath"]))
+    assert set(members) == {"runs/20260701T000000-test/report.json",
+                            "steerlab-evidence.json"}
+    for name, (member, _data) in members.items():
+        assert _owner(member) == (0, 0, "", ""), name
+
+    document = members["steerlab-evidence.json"][1]
+    for spelling in {str(tmp_path), os.path.realpath(tmp_path)}:
+        assert spelling.encode() not in document
+    # Archive-relative, which is where both importers land the run.
+    assert json.loads(document)["runDirectory"] == "runs/20260701T000000-test"
+    # The receipt is for this machine, and keeps the absolute path a failed
+    # child's record has no other way to name.
+    assert meta["runDirectory"] == os.path.realpath(run)
+
+
+def test_a_run_bundle_names_no_owner(tmp_path):
+    # Both of `_add_files`' paths: a JSON member goes through `gettarinfo`
+    # (its captured bytes are read for runtime requirements), and everything
+    # else through `tar.add`.
+    root = str(tmp_path / "source")
+    _study(root)
+    meta = bundles.package_experiment("bundle-study", root=root)
+    members = {member.name: member
+               for member, _data in _members(meta["bundlePath"])}
+    assert "experiments/bundle-study/experiment.json" in members
+    assert "prompts/concepts/fair/positive.jsonl" in members
+    for name, member in members.items():
+        assert _owner(member) == (0, 0, "", ""), name
+
+
 # --- ledger-only failure records skip, never fail ---------------------------
 #
 # The 2026-08-11 factorial-memo-study import: a refused pipeline continuation left

@@ -4904,7 +4904,15 @@ public enum RunBundlePackager {
         var environment = ProcessInfo.processInfo.environment
         environment["COPYFILE_DISABLE"] = "1"
         process.environment = environment
-        process.arguments = ["-czf", bundle.path] + entries
+        // Nothing of this Mac's account: `tar` otherwise records each file's
+        // owner (the uid and gid, and the login and group NAMES) and its
+        // extended attributes (provenance, quarantine, download origin, Finder
+        // tags). A bundle travels to the cluster and to collaborators. The
+        // Python packager writes the same ownerless members
+        // (`bundles._without_owner`), and neither importer reads either.
+        let anonymous = ["--uid", "0", "--gid", "0", "--uname", "", "--gname", "",
+                         "--no-xattrs", "--no-acls", "--no-fflags", "--no-mac-metadata"]
+        process.arguments = anonymous + ["-czf", bundle.path] + entries
         try process.run()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {

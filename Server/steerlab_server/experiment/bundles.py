@@ -573,7 +573,15 @@ def package_evidence(run_directory: str, *, output_path: str | None = None,
         "kind": "evidenceBundle",
         "createdAt": time.time(),
         "runID": run_id,
-        "runDirectory": run_dir,
+        # Where the run sits in the archive, which is also where both
+        # importers land it under their root: workspace-relative, like every
+        # stored reference. This was the ABSOLUTE path, so every bundle that
+        # left the packaging machine named its home folder (or its per-user
+        # temp folder). No importer ever read it; both derive the destination
+        # from `runID`. The receipt returned below still names the absolute
+        # path, because a server-side caller needs it and the receipt is not
+        # archived.
+        "runDirectory": f"runs/{run_id}",
         "entries": [],
     }
     if failure:
@@ -630,9 +638,13 @@ def package_evidence(run_directory: str, *, output_path: str | None = None,
         if portable_ledger is not None:
             _add_json(tar, "steerlab-pipeline.json", portable_ledger)
         _add_json(tar, "steerlab-evidence.json", meta)
+    # The RECEIPT, for this machine only: where the run and its bundle are on
+    # disk here, and the failure as it was raised. It goes into the job record
+    # and the server's log, where absolute paths are the useful spelling, and a
+    # failed child's record names its directory nowhere else (`submissions`
+    # lifts it from here). The archived document carries neither.
+    meta["runDirectory"] = run_dir
     if failure:
-        # The RECEIPT, for this machine only, goes into the job record and
-        # the server's log, where the absolute paths are the useful spelling.
         meta["failure"] = failure
     meta["bundlePath"] = output_path
     meta["bundleSha256"] = sha256_file(output_path)
@@ -2264,6 +2276,21 @@ def _dedupe_existing(files: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
     return out
 
 
+def _without_owner(info: tarfile.TarInfo) -> tarfile.TarInfo:
+    """``info`` with the packaging machine's account taken out of it.
+
+    ``gettarinfo`` (and ``tar.add``, which calls it) copies each file's owner
+    into the member: the uid and gid, and the login and group NAMES. A bundle
+    travels — to a collaborator, into a repository, into a public fixture — and
+    every member then named the researcher who packaged it. Nothing reads
+    ownership back: both importers extract as the importing user. Mode and
+    mtime are kept; they name no one, and the mtime is when the evidence was
+    written."""
+    info.uid = info.gid = 0
+    info.uname = info.gname = ""
+    return info
+
+
 def _add_files(tar: tarfile.TarFile, files: Iterable[tuple[str, str]], *, runtime_requirements=None) -> list[BundleEntry]:
     entries: list[BundleEntry] = []
     for path, rel in files:
@@ -2273,7 +2300,7 @@ def _add_files(tar: tarfile.TarFile, files: Iterable[tuple[str, str]], *, runtim
             # authoring file cannot change between requirement discovery and packing.
             import io
             from . import instrumentation_contract
-            info = tar.gettarinfo(path, arcname=rel)
+            info = _without_owner(tar.gettarinfo(path, arcname=rel))
             if info.isreg():
                 with open(path, 'rb') as handle: raw = handle.read()
                 try: document = json.loads(raw)
@@ -2283,7 +2310,7 @@ def _add_files(tar: tarfile.TarFile, files: Iterable[tuple[str, str]], *, runtim
                 tar.addfile(info, io.BytesIO(raw))
                 entries.append(BundleEntry(path=rel, sha256=hashlib.sha256(raw).hexdigest(), bytes=len(raw)))
                 continue
-        tar.add(path, arcname=rel, recursive=False)
+        tar.add(path, arcname=rel, recursive=False, filter=_without_owner)
         entries.append(BundleEntry(path=rel, sha256=sha256_file(path),
                                    bytes=os.path.getsize(path)))
     return entries

@@ -985,8 +985,9 @@ def _lift_child_evidence(result: dict) -> None:
         result[key] = value
     # A child that FAILED names its directory only inside the bundle it
     # packaged: `bundles.execute_run_bundle`'s failure path stamps
-    # `partialRunID` (a basename) and the bundle, never the path. The bundle's
-    # own `runDirectory` is therefore the only absolute pointer on that path.
+    # `partialRunID` (a basename) and the bundle, never the path. The
+    # packaging RECEIPT's `runDirectory` is therefore the only absolute pointer
+    # on that path (the document inside the archive is workspace-relative).
     if not isinstance(result.get("runDirectory"), str):
         bundle = result.get("evidenceBundle")
         directory = bundle.get("runDirectory") if isinstance(bundle, dict) else None
