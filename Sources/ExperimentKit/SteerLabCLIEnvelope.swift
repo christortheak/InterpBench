@@ -144,7 +144,7 @@ public enum CLIAdvisory: String, CaseIterable, Sendable, Codable {
     /// evidence will nonetheless satisfy the validateEvidence gate, which is
     /// exactly why the number has to reach the document (dry run #1, P4).
     case probeAtChanceFloor
-    /// One judge is pinned where freeze's `judgeValidity` gate wants two.
+    /// One judge is pinned: allowed, but no inter-rater agreement will exist.
     case judgePanelTooSmall
     /// `analyze` produced zero effect-size entries — the source run has no
     /// non-baseline condition to pair against.

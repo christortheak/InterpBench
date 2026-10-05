@@ -93,8 +93,8 @@ believing there are only two.
 **`steerlab` and `steerlab-cli` are two products, not two spellings.** The
 Swift `steerlab-cli` is the Mac instrument — workspace bootstrap and the whole
 measured lifecycle (§3). The Python `steerlab` is this client — authoring, the
-bundle round trip, and `run`. Neither answers the other's verbs: there is no
-`steerlab workspace init`, no `steerlab experiment extract`, no
+bundle round trip, and `run`. Both create workspaces (`workspace init`), but neither answers the other's
+lifecycle verbs: there is no `steerlab experiment extract`, no
 `steerlab cluster …`, and typing one is a `64`, not a fallback. Nothing in this
 section asks you to run a Swift verb under `steerlab`.
 
@@ -286,7 +286,7 @@ steerlab results export <study> [--out <dir>] [--run <run-dir>]
 steerlab results report <study> [--out <file>] [--run <run-dir>]
 ```
 
-All commands accept `--json`; `--out` writes the envelope, except on `results export`, where it names the folder the export is written into. Workspace init takes its destination positionally; other commands accept `--root <directory>`.
+All commands accept `--json`; `--out` writes the envelope, except on `results export`, where it names the folder the export is written into, and on `results report` and `science report`, where it names the page. Workspace init takes its destination positionally; other commands accept `--root <directory>`.
 
 <!-- END CLIENT-STUDY-ASSEMBLY -->
 

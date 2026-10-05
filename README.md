@@ -97,7 +97,7 @@ their results.
 
 1. **Download `steerlab-client-<version>+<revision>.tar.gz`** from the
    Releases page and extract it into a folder.
-2. **Open that folder in your coding-agent tool.** It needs permission to
+2. **Open that folder in your coding assistant.** It needs permission to
    read local files and run commands.
 3. **Paste this:**
 

@@ -8105,8 +8105,9 @@ public enum ExperimentStore {
 
     /// Judge-rubric gate: a judge-evaluated study (paired-judge evaluation
     /// or an explicit judge panel) freezes only with a pinned rubric FILE
-    /// (inline text is draft-only) and >=2 judges, so the report can carry
-    /// agreement statistics. `freeze --force` skips loudly, never silently;
+    /// (inline text is draft-only) and at least one judge; a single judge
+    /// freezes with the `judgePanelTooSmall` advisory, since the report then
+    /// carries no agreement statistics. `freeze --force` skips loudly, never silently;
     /// the rubric-hash drift check in verify() is never skippable.
     private static func checkJudgeEvaluationValidity(_ manifest: ExperimentManifest) throws {
         try ManifestDeclarationPolicy.checkJudgeEvaluationValidity(manifest)

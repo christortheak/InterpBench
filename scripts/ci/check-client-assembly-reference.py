@@ -29,7 +29,7 @@ end = "<!-- END CLIENT-STUDY-ASSEMBLY -->"
 start = text.index(begin) + len(begin)
 stop = text.index(end, start)
 body = "\n```text\n" + "\n".join(client_cli.synopsis(s) for s in VERB_SPECS) + "\n```\n\n"
-body += "All commands accept `--json`; `--out` writes the envelope, except on `results export`, where it names the folder the export is written into. Workspace init takes its destination positionally; other commands accept `--root <directory>`.\n"
+body += "All commands accept `--json`; `--out` writes the envelope, except on `results export`, where it names the folder the export is written into, and on `results report` and `science report`, where it names the page. Workspace init takes its destination positionally; other commands accept `--root <directory>`.\n"
 if args.write:
     path.write_text(text[:start] + "\n" + body + "\n" + text[stop:])
 else:
