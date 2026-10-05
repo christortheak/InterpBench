@@ -273,6 +273,7 @@ steerlab model install <modelID> --plan-sha256 <value> --runner <url> [--ca-bund
 steerlab model status <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab model cancel <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab results export <study> [--out <dir>] [--run <run-dir>]
+steerlab results report <study> [--out <file>] [--run <run-dir>]
 ```
 
 All commands accept `--json`; `--out` writes the envelope, except on `results export`, where it names the folder the export is written into. Workspace init takes its destination positionally; other commands accept `--root <directory>`.

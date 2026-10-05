@@ -33,6 +33,7 @@ MINIMUM_PAIRS = 3
 _UNITS = {'item': ('paired item', 'paired items'), 'transcript': ('paired transcript', 'paired transcripts'),
           'sample': ('paired sample', 'paired samples')}
 _CORRECTIONS = {'bh': 'Benjamini-Hochberg (false discovery rate)', 'holm': 'Holm'}
+_SHORT_CORRECTIONS = {'bh': 'Benjamini-Hochberg', 'holm': 'Holm'}
 _CONTROLS = {
     'randomMatchedNorm': 'adds a random direction of the same size as the concept direction, so an effect that '
                          'appears here too is not specific to the concept',
@@ -151,9 +152,7 @@ class Page:
         self.strata = [row for row in self.rows if row['stratify_by'] not in ('', 'pooled')]
         self.evaluations = [(kind, context[kind + 'Name'], _dict(context[kind + 'Report']))
                             for kind in ('paired', 'coding') if context.get(kind + 'Name')]
-        self.headline = headline_outcome.select(
-            self.snapshot.get(headline_outcome.MANIFEST_KEY), context.get('outcomes') or [],
-            [headline_outcome.JUDGED] if self.evaluations else [])
+        self.headline = headline_of(stored)
         self.limits = []
         self.per_condition = {}
         for record in self.responses:
@@ -467,15 +466,18 @@ class Page:
                           number_text(row['ci_lower']), number_text(row['ci_upper']), count_text(row['n_pairs']),
                           self.unit(row) + ('' if row['unit'] or self.context.get('stampedUnit') else ' (default)'),
                           number_text(row['test_statistic']), p_text(row['p_value']), p_text(row['adjusted_p_value']),
-                          _CORRECTIONS.get(row['correction'], row['correction']) or None,
+                          _SHORT_CORRECTIONS.get(row['correction'], row['correction']) or None,
                           *([row['modality'] or None] if modality else []),
-                          f'Fewer than {MINIMUM_PAIRS} pairs: the stored interval and test describe these items '
-                          'only.' if self.too_few(row) else ''])
+                          f'Fewer than {MINIMUM_PAIRS} pairs: no interval or test' if self.too_few(row) else ''])
+        few = any(self.too_few(row) for row in rows)
         return table(caption, columns, drawn, key=key, row_header=False,
                      footnote='Copied from the analysis and rounded to four significant digits; the stored file holds '
                               'every digit. Estimate is the condition minus the baseline. W is the Wilcoxon signed-rank '
-                              'statistic. “No value” means the analysis stored none, for example a test that is '
-                              'undefined because every difference was zero.')
+                              'statistic. Benjamini-Hochberg controls the false discovery rate. “No value” means the '
+                              'analysis stored none, for example a test that is undefined because every difference '
+                              'was zero.' + (f' A row with fewer than {MINIMUM_PAIRS} pairs still shows the interval '
+                                             'and test the analysis stored, but they describe those items only and '
+                                             'are not a test.' if few else ''))
 
     def effects(self):
         context = self.context
@@ -571,10 +573,19 @@ class Page:
                                      count_text(together.get('n')) or 'an unrecorded number of', ' items')
                                 if together else None] if agreement else []),
                              *[number_text(_dict(block_.get('meanMarkerDensity')).get(concept)) for concept in markers]])
+            explained = {
+                'meanDistinct2': 'Lexical variety is the share of two-word sequences that are distinct.',
+                'choiceRate': 'The target-choice rate is the share of readable responses that chose the item’s '
+                              'declared target.',
+                'ordinalSD': 'SD is the standard deviation the engine stored.'}
+            notes = [explained[key] for key, _, _ in present if key in explained]
+            if agreement:
+                notes.append('Agreement with baseline is the share of items where the condition chose the same answer '
+                             'option as the baseline.')
+            if markers:
+                notes.append('Marker density is the share of a response’s words that are marker words for the concept.')
             parts.append(table('What the run stored for each condition', columns, rows, key='condition-summary',
-                               footnote='Rounded to four significant digits. Lexical variety is the share of two-word '
-                                        'sequences that are distinct. Agreement with baseline is the share of items '
-                                        'where the condition chose the same answer option as the baseline.'))
+                               footnote=' '.join(['Rounded to four significant digits.', *notes])))
         elif conditions:
             parts.append(paragraph('The run’s report stores no per-condition summary this page can show.'))
         else:
@@ -908,6 +919,15 @@ p.headline{font-size:17px;margin:4px 0 12px}
 #first{margin:20px 0}
 #first ul{margin:6px 0 0}
 """
+
+
+def headline_of(stored):
+    """The outcome the page leads with, by the shared rule: the declared primary outcome when the run has it,
+    else the first the run has in the default order. A completed evaluation supplies the judged outcome."""
+    context = stored['context']
+    judged = any(context.get(kind + 'Name') for kind in ('paired', 'coding'))
+    return headline_outcome.select(_dict(context.get('snapshot')).get(headline_outcome.MANIFEST_KEY),
+                                   context.get('outcomes') or [], [headline_outcome.JUDGED] if judged else [])
 
 
 def render(stored):
