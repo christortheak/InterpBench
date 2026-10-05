@@ -378,6 +378,48 @@ def test_the_cli_walks_the_same_path_and_reports_it_in_the_envelope(
     assert document["result"]["lines"]
 
 
+def test_runner_submit_records_the_jobs_origin_in_the_named_workspace(
+        wired_cli, capsys, tmp_path):
+    """The Mac app imports a job's evidence without a reconnect when the
+    workspace records where the job went — so `runner submit` writes that
+    record into the workspace it was given, and only there."""
+    from steerlab_server.client import job_origins
+
+    service = wired_cli
+    runner = ["--runner", "http://testserver"]
+    code, document, _ = _envelope(
+        ["runner", "upload", service["bundle"], *runner], capsys)
+    assert code == 0, document
+    staged, digest = document["result"]["runnerPath"], document["result"]["sha256"]
+    submit = ["runner", "submit", *runner, "--bundle-path", staged,
+              "--bundle-sha", digest, "--verb", "verify", "--executor", "local",
+              "--target-root", service["target"]]
+
+    # No workspace named: nothing is written, not even into the engine root
+    # this process happens to have in its environment.
+    code, document, _ = _envelope(submit, capsys)
+    assert code == 0, document
+    assert job_origins.load(service["source"]) == {}
+
+    workspace = tmp_path / "named-ws"
+    workspace.mkdir()
+    code, document, _ = _envelope(["--root", str(workspace), *submit], capsys)
+    assert code == 0, document
+    job_id = document["result"]["jobId"]
+    rows = job_origins.origins_for(str(workspace), job_id)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["serverIdentity"] == "http://testserver:80"
+    assert row["endpoint"] == "http://testserver"
+    assert row["submittedBy"] == "steerlab"
+    assert row["operation"] == "submit-bundle"
+    assert row["experiment"] == STUDY_NAME
+    assert row["verb"] == "verify"
+    assert row["workspaceRoot"] == os.path.realpath(str(workspace))
+    assert row["servingRoot"] == document["result"]["runnerIdentity"]["root"]
+    assert FAKE_TOKEN not in json.dumps(job_origins.load(str(workspace)))
+
+
 def test_runner_evidence_verifies_downloads_and_names_the_import_command(
         wired_cli, capsys):
     """CONTRACT: `runner evidence` stops at the verified file.

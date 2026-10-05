@@ -74,6 +74,17 @@ def _hermetic_hub_offline(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_inherited_client_workspace(monkeypatch):
+    """No test may write into the workspace of whoever runs the suite. The
+    client resolves ``$STEERLAB_WORKSPACE`` when ``--root`` is absent, and the
+    runner verbs record a submitted job's origin in the workspace they
+    resolved — so a researcher's exported workspace would otherwise collect
+    records from every runner test. Tests that need a workspace name one
+    (``--root``, or their own ``monkeypatch.setenv``, which wins)."""
+    monkeypatch.delenv("STEERLAB_WORKSPACE", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _declared_gpu_vocabulary(monkeypatch):
     """A test bench is a SITE, and since WP5 Step 8 a site declares its own GPU
     vocabulary — there is no built-in list any more (audit G4: the code
