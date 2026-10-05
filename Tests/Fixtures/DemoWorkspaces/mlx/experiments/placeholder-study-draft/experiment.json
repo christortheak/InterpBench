@@ -1,0 +1,41 @@
+{
+  "concepts" : [
+    {
+      "name" : "courtesy",
+      "options" : {
+        "method" : "meanDifference",
+        "readingPosition" : {
+          "lastToken" : {
+
+          }
+        }
+      },
+      "stimulusSetHash" : "0f512a8c770134f0b28e691a1b6083cf9982e231656b2ae437cc7fbf156a7203",
+      "validationHash" : "d7e8974873578525cfda8f5e8e8b72e3f63595d55f6f542b659beab466056323"
+    }
+  ],
+  "conditions" : [
+
+  ],
+  "createdAt" : "2026-10-05T01:41:23Z",
+  "experimentDescription" : "A synthetic placeholder study. Nothing in it was measured.",
+  "maxTokens" : 2048,
+  "modelID" : "example\/placeholder-model",
+  "modelRevision" : "0000000000000000000000000000000000000000",
+  "multiAgentIncludeBaseline" : true,
+  "name" : "placeholder-study-draft",
+  "promptMode" : "chatAssistant",
+  "reasoningEffort" : "off",
+  "recordTokenIDs" : false,
+  "seeds" : [
+    20260610
+  ],
+  "status" : "draft",
+  "studyKind" : "modelOutput",
+  "taskPromptsFile" : "prompts\/tasks\/example-task-prompts.jsonl",
+  "taskPromptsHash" : "f0970d4fdd2eec48883b8843a480202e76790bd466d179a0fddfa7f2dd2f3763",
+  "temperature" : 0,
+  "variantConditions" : [
+
+  ]
+}

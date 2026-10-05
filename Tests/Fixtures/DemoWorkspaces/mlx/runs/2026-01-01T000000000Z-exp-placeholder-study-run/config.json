@@ -1,0 +1,22 @@
+{
+  "appVersion": "swift-app 0.9.6+4fcaf93b",
+  "createdAt": "2026-01-01T00:00:00Z",
+  "dtype": null,
+  "experiment": "placeholder-study",
+  "experimentHash": "b00e686507789a7c149da014d29f36b67a1a939d369a9510f1c4f5d9b58d837e",
+  "jobId": null,
+  "modelID": "example/placeholder-model",
+  "notes": {
+    "placeholder": "Invented record for tests. No model produced this run."
+  },
+  "platform": "macOS-arm64",
+  "pythonEnvironment": null,
+  "revision": "0000000000000000000000000000000000000000",
+  "runId": "2026-01-01T000000000Z-exp-placeholder-study-run",
+  "runType": "run",
+  "samplesPerItem": 1,
+  "schemaVersion": 4,
+  "seedPolicy": "manifestSeeds",
+  "substrate": "swift-mlx",
+  "temperature": 0
+}

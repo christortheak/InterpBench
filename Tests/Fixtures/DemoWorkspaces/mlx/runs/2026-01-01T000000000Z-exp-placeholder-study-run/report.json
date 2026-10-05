@@ -1,0 +1,20 @@
+{
+  "conditionCount": 1,
+  "conditions": {
+    "baseline": {
+      "generations": 5,
+      "meanDistinct2": 0.3952,
+      "meanMarkerDensity": {},
+      "meanWordCount": 11.0
+    }
+  },
+  "effectSizes": [],
+  "experiment": "placeholder-study",
+  "experimentHash": "b00e686507789a7c149da014d29f36b67a1a939d369a9510f1c4f5d9b58d837e",
+  "promptCount": 5,
+  "promptMode": "chatAssistant",
+  "qwenThinkingEnabled": false,
+  "seedCount": 1,
+  "taskPromptsFile": "prompts/tasks/example-task-prompts.jsonl",
+  "taskPromptsHash": "f0970d4fdd2eec48883b8843a480202e76790bd466d179a0fddfa7f2dd2f3763"
+}
