@@ -768,6 +768,11 @@ import Testing
             // DESIGN (`evaluationSampling`), whose draw rule is derived from
             // the engine and can no more be typed than a registry hash can.
             "experiment set-evaluation-sampling",
+            // The study's declared PRIMARY OUTCOME (`primaryOutcome`): which
+            // outcome leads every results summary. Checked against what the
+            // study's own settings can produce, so it is a verb and not a
+            // field assignment.
+            "experiment set-primary-outcome",
             "experiment set-style-taxonomy", "experiment verify",
             "experiment freeze", "experiment duplicate", "experiment extract", "experiment extract-stability",
             "experiment validate", "experiment sweep", "experiment run",
@@ -836,9 +841,11 @@ import Testing
         // the third declaration of that derived-pin shape (review round 12): a
         // preregistered coding subsample could be TYPED but not DECLARED, so
         // the design lived in a command line rather than in the artifact
-        // chain the evidence travels in.
+        // chain the evidence travels in — and `set-primary-outcome`, which
+        // declares the outcome a study is about so that every results
+        // summary leads with it.
         #expect(
-            declared.filter { $0.hasPrefix("experiment ") }.count == 36,
+            declared.filter { $0.hasPrefix("experiment ") }.count == 37,
             "the experiment lifecycle includes reviewed agent/vector attachment and prompt import")
     }
 

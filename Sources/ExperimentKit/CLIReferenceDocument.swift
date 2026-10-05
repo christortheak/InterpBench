@@ -71,6 +71,7 @@ public enum CLIReferenceDocument {
                 "experiment set-parser",
                 "experiment set-instrument-scope",
                 "experiment set-evaluation-sampling",
+                "experiment set-primary-outcome",
                 "experiment set-style-taxonomy",
                 "experiment verify", "experiment freeze", "experiment duplicate",
             ]),

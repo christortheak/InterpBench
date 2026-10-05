@@ -155,6 +155,31 @@ declaration, or pin a `perResponseCoding` rubric — and this verb refuses the
 same way when the rubric is already pinned. Declaring before choosing a rubric
 stays legal; the gate fires only when both are present.
 
+**`set-primary-outcome <name> <outcome>`** — declares the outcome the study is
+ABOUT (`primaryOutcome`); `<name> ""` clears it. Every results summary of the
+study then leads with that outcome and says it was "declared by the
+researcher". Ask the researcher which outcome their question turns on, and
+declare it before freezing: the declaration is frozen with the study, appears
+in the generated settings summary, and travels in every run's manifest
+snapshot.
+
+`<outcome>` is an outcome name: `judged` (the judges' verdict, read from the
+evaluation report), a choice or numeric outcome (`choiceLogOdds`,
+`ordinalPosition`, `parsedValueMean`, `meanMonths`, `choiceRate`), a reader
+score (`readerScore:<concept>`), a reasoning-style feature
+(`rs_<feature>`), a concept's marker density (`<concept>MarkerDensity`), or a
+surface measure (`wordCount`, `distinct2`). An outcome the study's settings
+cannot produce is refused (`blocked`, exit 64), and `error.repairAction` lists
+the ones they can — for example `choiceLogOdds` needs the
+`answerTokenLogprob` instrument, and `judged` needs judges and a rubric. The
+result echoes the same list as `result.producibleOutcomes`.
+
+Declaring nothing is fine. Summaries then lead by the default order — a judged
+outcome, then a choice or numeric outcome, then a reader or probe score, then
+reasoning style, then marker density, then surface measures — and say "chosen
+by default order". Declaring is measurement-side, so it never invalidates a
+run that already exists.
+
 **`set-style-taxonomy <name> prompts/taxonomies/<file>.json`** — pins a
 reasoning-style taxonomy (path + hash) on a draft. No pin, no reasoning-style
 scoring; drift after pinning is a verify violation like any other.

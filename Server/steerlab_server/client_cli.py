@@ -363,6 +363,18 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
                      "manifest and lands in every run's snapshot. evaluate "
                      "then needs no flags, and a flag that disagrees with "
                      "the declaration refuses. \"\" clears the declaration."),
+    # The study's PRIMARY OUTCOME: which outcome leads every results summary.
+    # A verb rather than a `set-protocol` field because the value is checked
+    # against what the study's own settings can produce, and the refusal
+    # lists those outcomes. Same verb, same result keys, on the Mac.
+    VerbSpec("experiment", "set-primary-outcome",
+             positional="<name> <outcome>",
+             purpose="Declare the outcome this study is about, so every "
+                     "results summary leads with it and says it was declared "
+                     "by the researcher. An outcome the study's settings "
+                     "cannot produce is refused, with the list of the ones "
+                     "they can. \"\" clears the declaration; summaries then "
+                     "lead by the default order."),
     VerbSpec("experiment", "pin-revision", positional="<name> <revision>",
              purpose="Pin the model revision a draft study resolves to."),
     VerbSpec("experiment", "set-style-taxonomy", positional="<name> <path>",
@@ -1796,6 +1808,40 @@ def _experiment(invocation: Invocation) -> CLIResult:
                 "samplePerCondition": (design or {}).get("samplePerCondition"),
                 "sampleSeed": (design or {}).get("sampleSeed"),
                 "rule": (design or {}).get("rule"),
+            })
+
+    if verb == "set-primary-outcome":
+        # `<name> <outcome>` declares; `<name> ""` clears. The store owns the
+        # rule and the sentence; the only translation here is the
+        # classification, exactly as for the declarations above: an outcome
+        # the study cannot produce is a value outside this study's
+        # vocabulary, so it answers `blocked` (64) with the list to retype.
+        _require(args, 2, spec)
+        try:
+            document = store.set_primary_outcome(
+                name, args[1], program=PROGRAM)
+        except store.MeasurementDeclarationError as exc:
+            raise ClientRefusal(
+                code=USAGE_CODE, state="blocked", reason=str(exc),
+                repair_action=exc.repair_action) from exc
+        from .experiment import headline_outcome
+        declared = document.get(headline_outcome.MANIFEST_KEY)
+        line = (f"declared the primary outcome of {name!r}: {declared}. "
+                "Every results summary of this study will lead with it."
+                if declared
+                else f"cleared the primary outcome of {name!r}. Results "
+                     "summaries will lead by the default order.")
+        print(line)
+        # FLAT echo keys matching the Swift verb's result shape exactly, so an
+        # agent reads the same fields after either spelling.
+        return CLIResult(
+            message=line, changed=True,
+            payload={
+                "experiment": name,
+                "primaryOutcome": declared,
+                "plain": (headline_outcome.plain_phrase(declared)
+                          if declared else None),
+                "producibleOutcomes": headline_outcome.producible(document),
             })
 
     if verb == "pin-revision":

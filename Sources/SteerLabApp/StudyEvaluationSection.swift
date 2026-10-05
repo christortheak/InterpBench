@@ -181,6 +181,10 @@ struct StudyEvaluationSection<JudgingEditor: View>: View {
         @Bindable var panel = panel
         @Bindable var draft = panel.draft
         let isDraft = manifest.status == .draft
+        // The outcome the study is about, which every results summary leads
+        // with (control in PrimaryOutcomePickerView; one wiring line).
+        PrimaryOutcomeControls(manifest: manifest, panel: panel)
+
         // Editable with suggestions (the manifest accepts any string —
         // `setCaseFamily` does not validate against the known list) plus
         // the honest ⓘ: only 'sentencing' has a parser today.

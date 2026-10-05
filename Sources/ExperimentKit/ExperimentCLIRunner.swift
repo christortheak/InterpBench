@@ -4810,6 +4810,56 @@ public struct ExperimentCLIRunner: Sendable {
                 ],
                 advisories: parserAdvisories)
 
+        case "set-primary-outcome":
+            // WHICH OUTCOME the study is about. Every results summary leads
+            // with the declared outcome and says it was declared by the
+            // researcher; a study that declares none leads by the default
+            // order and says that instead.
+            //
+            // Positional value, like `set-parser`: the declaration IS the
+            // argument, and "" clears it. The store owns the rule and the
+            // sentence, so this verb, the client's spelling, and the Studies
+            // page refuse identically.
+            guard args.count >= 3 else {
+                let listing = (try? ExperimentStore.load(name: args.count > 1 ? args[1] : ""))
+                    .map { HeadlineOutcome.producible($0).choices }
+                throw ExperimentError(
+                    reason: "usage: experiment set-primary-outcome <name> "
+                        + "<outcome>"
+                        + (listing.map {
+                            "  (this study can produce: \($0))"
+                        } ?? "")
+                        + "  (\"\" clears the declaration; summaries then "
+                        + "lead by the default order)")
+            }
+            let declaredStudy = try ExperimentStore.setPrimaryOutcome(
+                args[2], experimentName: args[1])
+            let outcomeLine: String
+            if let declared = declaredStudy.primaryOutcome {
+                outcomeLine =
+                    "declared the primary outcome of '\(declaredStudy.name)': "
+                    + "\(declared). Every results summary of this study will "
+                    + "lead with it."
+            } else {
+                outcomeLine =
+                    "cleared the primary outcome of '\(declaredStudy.name)'. "
+                    + "Results summaries will lead by the default order."
+            }
+            sink.out(outcomeLine)
+            return ExperimentCLIResult(
+                message: outcomeLine, changed: true,
+                payload: [
+                    "experiment": .string(declaredStudy.name),
+                    "primaryOutcome": declaredStudy.primaryOutcome.map {
+                        JSONValue.string($0)
+                    } ?? .null,
+                    "plain": declaredStudy.primaryOutcome
+                        .flatMap(HeadlineOutcome.plainPhrase)
+                        .map { JSONValue.string($0) } ?? .null,
+                    "producibleOutcomes":
+                        HeadlineOutcome.producible(declaredStudy).payload,
+                ])
+
         case "set-instrument-scope":
             // WHICH ROWS the option-consuming instruments read. The run-start
             // responseFormat gate refuses a mixed json+label prompt file the
@@ -5165,6 +5215,7 @@ public struct ExperimentCLIRunner: Sendable {
                     + "| set-system-prompt "
                     + "| set-parser | set-instrument-scope "
                     + "| set-evaluation-sampling "
+                    + "| set-primary-outcome "
                     + "| set-style-taxonomy | verify "
                     + "| freeze | duplicate | extract | validate | sweep | run "
                     + "| analyze | rescore-style | evaluate | promote | confirm")
@@ -6203,6 +6254,26 @@ public struct ExperimentCLIRunner: Sendable {
                 runDirectory.appending(component: "effect-sizes.csv").path),
             "effectSizesSchema": .string(Self.effectSizesSchema),
         ]
+        // WHICH outcome a summary of this analysis leads with, and which
+        // rule chose it: the outcome the study declared when the run has
+        // it, else the first by the default order (judged, then choice or
+        // numeric, then reader or probe score, then reasoning style, then
+        // marker density, then surface measures). `metrics` above stays the
+        // full alphabetical list — nothing is dropped, the surface measures
+        // simply stop leading. Selection only: no row is added, removed, or
+        // reordered. Candidates are the POOLED rows; a stratified companion
+        // row never supplies a headline. Server twin: the same block in
+        // `cli_payloads.analysis_payload`.
+        var pooledOutcomes: [String] = []
+        for entry in entries where entry["stratifyBy"] == nil {
+            if let metric = entry["metric"] as? String {
+                pooledOutcomes.append(metric)
+            }
+        }
+        payload["headline"] = .object(
+            HeadlineOutcome.forRun(
+                at: runDirectory, analysisOutcomes: pooledOutcomes
+            ).payload)
         if let sourceRun = object["sourceRun"] as? String {
             payload["sourceRun"] = .string(sourceRun)
         }

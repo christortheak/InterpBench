@@ -345,6 +345,22 @@ def analysis_payload(run_directory: str) -> dict:
         # `ExperimentCLIRunner.analysisPayload`.
         "effectSizesSchema": EFFECT_SIZES_SCHEMA,
     }
+    # WHICH outcome a summary of this analysis leads with, and which rule
+    # chose it: the outcome the study declared when the run has it, else the
+    # first by the default order (judged, then choice or numeric, then reader
+    # or probe score, then reasoning style, then marker density, then surface
+    # measures). `metrics` above stays the full alphabetical list — nothing
+    # is dropped, the surface measures simply stop leading. Selection only:
+    # no row is added, removed, or reordered. Swift twin: the same block in
+    # `ExperimentCLIRunner.analysisPayload`.
+    from .experiment import headline_outcome
+    # The outcome column is `endpoint` in this engine's table and `metric` in
+    # the Mac engine's; the headline reads whichever the file carries.
+    payload["headline"] = headline_outcome.for_analysis_run(
+        run_directory,
+        [r.get("endpoint") or r.get("metric") for r in pooled
+         if r.get("endpoint") or r.get("metric")],
+    ).as_payload()
     if len(rows) != len(pooled):
         payload["stratifiedRowCount"] = len(rows) - len(pooled)
     source = read_text(os.path.join(run_directory, "source-run.txt"))
