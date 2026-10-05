@@ -96,7 +96,7 @@ def draft(operation, answers, root):
               'effectiveAnswers': effective_answers, 'sourceDocuments': evidence, 'inputs': inputs,
               'claimBoundary': schema['claimBoundary'], 'engineValidation': 'requiredBeforeExecution',
               'nextAction': 'Package these reviewed inputs, stage on the intended engine, then review its effective config and exact execution plan. No execution is authorized by this draft.'}
-    if operation in ('probe-capture', 'probe-train', 'probe-evaluate'):
+    if operation in ('probe-capture', 'probe-train', 'probe-evaluate', 'instrumentation-cost'):
         module, parsed = managed_methods.config_owner(operation, config)
         result['operationReview'] = module.preflight(parsed, root)
     if operation == 'jlens-fit':

@@ -1471,6 +1471,180 @@
         "What do the labels mean, and which related examples belong in one group?",
         "Which data are for fitting, choosing settings, and final assessment?"
       ]
+    },
+    {
+      "id": "instrumentation-cost",
+      "title": "Measure what probes and policies cost",
+      "method": "readers",
+      "purpose": "Measure the time, memory, and evidence size that probe readings and intervention policies add to generation on one model. Each configuration is repeated in a shuffled order after a warm-up, and the report gives the spread, not a single timing.",
+      "fields": [
+        {
+          "id": "modelID",
+          "label": "Model to measure",
+          "kind": "text",
+          "required": true,
+          "help": "Choose a model that is already prepared where this will run. Nothing is downloaded."
+        },
+        {
+          "id": "revision",
+          "label": "Exact model version",
+          "kind": "text",
+          "required": true,
+          "help": "The 40-character commit of that model. The probes and policies must have been made for this same version."
+        },
+        {
+          "id": "prompts",
+          "label": "Reviewed prompt file",
+          "kind": "fileRef",
+          "required": true,
+          "help": "A JSONL file with one object per line, each with an id and a prompt. Use a small sample of the prompts the study will use: at most 64, and a handful is usually enough."
+        },
+        {
+          "id": "probes",
+          "label": "Probes to read",
+          "kind": "fileRefs",
+          "required": false,
+          "help": "One saved probe file per line, such as runs/<run>/trained.probe.json. Leave blank to skip the two probe-reading configurations."
+        },
+        {
+          "id": "zeroActionPolicy",
+          "label": "A policy that never acts",
+          "kind": "fileRef",
+          "required": false,
+          "help": "A published intervention.policy.json whose strength is always zero. It shows what an attached policy costs when it changes nothing. Leave blank to skip."
+        },
+        {
+          "id": "fixedPolicy",
+          "label": "A policy that always acts",
+          "kind": "fileRef",
+          "required": false,
+          "help": "A published policy with one fixed, nonzero strength. Leave blank to skip."
+        },
+        {
+          "id": "conditionalPolicy",
+          "label": "A policy that acts on a probe score",
+          "kind": "fileRef",
+          "required": false,
+          "help": "A published policy with a threshold or adaptive rule. Leave blank to skip."
+        },
+        {
+          "id": "retainActivations",
+          "label": "Also measure keeping activations",
+          "kind": "boolean",
+          "required": false,
+          "default": "false",
+          "help": "true adds a sixth configuration that keeps the activations behind each probe reading, up to the byte budget below. It needs at least one probe."
+        },
+        {
+          "id": "maxTokens",
+          "label": "Token budget per response",
+          "kind": "integer",
+          "required": false,
+          "default": "32",
+          "help": "Tokens to generate. The fixed workload generates exactly this many in every configuration; ordinary generation may stop sooner."
+        },
+        {
+          "id": "repeats",
+          "label": "Measured repeats",
+          "kind": "integer",
+          "required": false,
+          "default": "5",
+          "help": "How many times each configuration is measured on each prompt. More repeats give a steadier spread and take longer."
+        },
+        {
+          "id": "warmups",
+          "label": "Warm-up rounds",
+          "kind": "integer",
+          "required": false,
+          "default": "1",
+          "help": "Complete rounds run first and kept out of the summary, because the first use of a model is slower. Their rows stay in the report."
+        },
+        {
+          "id": "orderSeed",
+          "label": "Seed for the order",
+          "kind": "integer",
+          "required": false,
+          "default": "0",
+          "help": "Each round runs the configurations in a different shuffled order chosen from this seed. The order used is written into the report."
+        },
+        {
+          "id": "rendering",
+          "label": "Prompt rendering",
+          "kind": "text",
+          "required": false,
+          "default": "chatTemplate",
+          "help": "chatTemplate or raw. It must match the rendering the probes and policies were made for."
+        },
+        {
+          "id": "temperature",
+          "label": "Sampling temperature",
+          "kind": "number",
+          "required": false,
+          "default": "0",
+          "help": "0 takes the most likely token each step. Above 0, every configuration uses the same sampling seed for a given prompt and round."
+        },
+        {
+          "id": "samplingSeed",
+          "label": "Sampling seed",
+          "kind": "integer",
+          "required": false,
+          "default": "0",
+          "help": "Used only when the temperature is above 0."
+        },
+        {
+          "id": "readingStages",
+          "label": "When probes are read",
+          "kind": "texts",
+          "required": false,
+          "default": "prefill, decode",
+          "help": "prefill reads the prompt, decode reads each generated token, and both is the usual study setting."
+        },
+        {
+          "id": "recordingStage",
+          "label": "Read before or after steering",
+          "kind": "text",
+          "required": false,
+          "default": "postAction",
+          "help": "preAction or postAction, as in a study's measurement settings."
+        },
+        {
+          "id": "maxReadings",
+          "label": "Reading budget per response",
+          "kind": "integer",
+          "required": false,
+          "default": "4096",
+          "help": "The most probe scores kept for one response, as in a study's measurement settings."
+        },
+        {
+          "id": "maxActivationBytes",
+          "label": "Activation byte budget",
+          "kind": "integer",
+          "required": false,
+          "default": "65536",
+          "help": "The most activation bytes kept for one response in the sixth configuration. Keep it small."
+        },
+        {
+          "id": "device",
+          "label": "Device",
+          "kind": "text",
+          "required": false,
+          "default": "auto",
+          "help": "auto chooses a CUDA GPU, then an Apple GPU, then the CPU. Name cuda, mps, or cpu to choose."
+        },
+        {
+          "id": "dtype",
+          "label": "Model precision",
+          "kind": "text",
+          "required": false,
+          "default": "auto",
+          "help": "auto uses the device's usual precision. Use the precision the study will run in, because the probes were fitted for one."
+        }
+      ],
+      "claimBoundary": "Costs are measured for this model, hardware, prompts, and token budget. No target is set, and nothing here shows that a probe predicts well or that a policy helps.",
+      "questions": [
+        "Which small set of prompts stands for the study's workload?",
+        "Which probes and policies will the study really use?"
+      ]
     }
   ]
 }
