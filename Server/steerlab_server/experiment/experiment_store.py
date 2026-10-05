@@ -3404,6 +3404,63 @@ def _evaluate_freeze_gates(name: str, d: dict, manifest: Manifest,
 from .freeze_policy import freeze_gate_repair
 
 
+def _pin_default_battery_when_unpinned(d: dict, root: str | None) -> None:
+    """Name the default capability battery in an unpinned variant study.
+
+    The validation scope hash composes this pin, so it has to be in the
+    document BEFORE the scope is computed. ``freeze`` applies it to the
+    document it is about to stamp; :func:`validate_evidence_readiness` applies
+    it to a copy, so the question "would this evidence satisfy the gate" is
+    asked of the same scope the gate will compute. One function for both, so
+    the two cannot drift."""
+    if not (model_output_surfaces_operative(d) and d.get("variantConditions")
+            and not d.get("capabilityBatteryHash")):
+        return
+    from . import battery as battery_mod
+    digest = battery_mod.live_hash(battery_mod.DEFAULT_BATTERY_FILE, root)
+    if digest is not None:
+        d.setdefault("capabilityBatteryFile", battery_mod.DEFAULT_BATTERY_FILE)
+        d["capabilityBatteryHash"] = digest
+
+
+def validate_evidence_readiness(name: str, root: str | None = None) -> dict:
+    """What freeze's ``validateEvidence`` gate would say about this study NOW.
+
+    READ-ONLY, and not a second opinion: it asks the same three questions the
+    gate asks, of the same functions, in the same order — does this study need
+    validation at all (:func:`freeze_policy.needs_validation`), is there a
+    complete validate run in this workspace whose scope hash matches its pins
+    (:func:`_matching_validate_evidence`), and did that run actually score a
+    held-out probe for every pinned concept
+    (:func:`vacuous_validate_evidence_problem`). It writes nothing and gates
+    nothing; ``freeze`` still decides.
+
+    It exists for a client that validates on OTHER hardware: when the evidence
+    comes home, the client can say at once whether it is the evidence freeze
+    is waiting for, instead of leaving the researcher to find out from a
+    refusal. Returns ``{"needed", "present", "satisfied",
+    "validationScopeHash"}`` plus ``"problem"`` (the gate's own sentence) when
+    the evidence is present but vacuous."""
+    import copy
+    root = root or paths.project_root()
+    d = copy.deepcopy(load_raw(name, root))
+    _pin_default_battery_when_unpinned(d, root)
+    manifest = Manifest.from_dict(d)
+    scope = manifest.validation_scope_hash()
+    if not freeze_policy.needs_validation(d):
+        return {"needed": False, "present": False, "satisfied": True,
+                "validationScopeHash": scope}
+    evidence = _matching_validate_evidence(scope, root)
+    problem = (vacuous_validate_evidence_problem(name, manifest, evidence)
+               if evidence is not None else None)
+    status = {"needed": True, "present": evidence is not None,
+              "satisfied": evidence is not None and problem is None,
+              "validationScopeHash": scope}
+    if problem:
+        status["problem"] = problem
+    return status
+
+
 def freeze(name: str, *, force: bool = False, cached_revision=None,
            root: str | None = None) -> dict:
     """Gate then stamp a draft as frozen (parallel to Swift ``freeze``).
@@ -3454,12 +3511,7 @@ def freeze(name: str, *, force: bool = False, cached_revision=None,
         # review round 14). The predicate governs the whole freeze transaction,
         # not just gate evaluation.
         model_output = model_output_surfaces_operative(d)
-        if model_output and d.get("variantConditions") and not d.get("capabilityBatteryHash"):
-            from . import battery as battery_mod
-            digest = battery_mod.live_hash(battery_mod.DEFAULT_BATTERY_FILE, root)
-            if digest is not None:
-                d.setdefault("capabilityBatteryFile", battery_mod.DEFAULT_BATTERY_FILE)
-                d["capabilityBatteryHash"] = digest
+        _pin_default_battery_when_unpinned(d, root)
         # Local-judge revision pin (cross-engine contract key
         # "judges[].revision", 2026-07-23): a local judge resolving to the STUDY
         # model inherits the study's pinned revision when its own is blank —
