@@ -41,6 +41,11 @@ public struct LiveStudyJudgment: Codable, Sendable, Equatable {
     public let promptID: String
 }
 
+/// A judge report as the Results view shows it, read from EITHER engine's
+/// judge-report.json (`StudyJudgeReportReader`). The two engines write
+/// different key sets for the same facts; this is the one shape the views
+/// read. Every value here is the report's own — nothing is recomputed, and
+/// a value an engine does not store is nil rather than filled in.
 public struct PairedJudgeReportView: Codable, Sendable, Equatable {
     public struct Condition: Codable, Sendable, Equatable {
         public let name: String
@@ -48,13 +53,91 @@ public struct PairedJudgeReportView: Codable, Sendable, Equatable {
         public let conditionWins: Int
         public let baselineWins: Int
         public let ties: Int
-        public let meanConfidence: Double
+        /// nil when the report stores none (the Python engine's tallies
+        /// carry counts only).
+        public let meanConfidence: Double?
         public let structuredSummaries: [String: StructuredFieldSummaryView]
     }
 
+    /// Which engine's key set the report was written in.
+    public enum Dialect: String, Codable, Sendable {
+        /// The Mac engine: `sourceRunDirectory`, `conditionWins`, one
+        /// tally for the whole panel.
+        case macEngine
+        /// The Python engine (server and cluster runs): `sourceRun`,
+        /// `variantWins`, one tally per judge.
+        case pythonEngine
+    }
+
+    /// One judge's own tallies. The Python engine stores these; the Mac
+    /// engine stores one panel-wide tally instead, so its reports have none.
+    public struct JudgeBlock: Codable, Sendable, Equatable {
+        public let name: String
+        public let requestedModel: String?
+        public let actualModel: String?
+        public let pairs: Int?
+        public let conditions: [Condition]
+        public let noncompliantJudgments: Int?
+        public let salvagedVerdicts: Int?
+    }
+
+    /// Two judges compared over the pairs both judged.
+    public struct JudgeAgreement: Codable, Sendable, Equatable {
+        public let judgeA: String
+        public let judgeB: String
+        public let items: Int
+        /// A fraction from 0 to 1 on both engines.
+        public let percentAgreement: Double
+        /// nil when the report stores none: kappa is undefined when each
+        /// judge gave one label throughout and the two labels differ.
+        public let kappa: Double?
+    }
+
+    /// One judge compared with the human ratings pinned to the study.
+    public struct HumanAgreement: Codable, Sendable, Equatable {
+        public let judge: String
+        public let items: Int
+        public let percentAgreement: Double
+        public let kappa: Double?
+    }
+
+    /// An evaluation finished by resuming an earlier, unfinished one.
+    public struct JudgingSessions: Codable, Sendable, Equatable {
+        public let resumedFrom: String?
+        public let reusedJudgments: Int
+        public let freshJudgments: Int
+    }
+
+    /// The run this report judges. The Mac engine stores a full path; the
+    /// Python engine stores the run directory's name.
     public let sourceRunDirectory: String
     public let judgeModel: String
+    /// The report's top-level tally. On a Mac-engine report this adds up
+    /// the whole panel (pairs count judges × items). On a Python-engine
+    /// report it is the FIRST judge's tally, which that engine repeats at
+    /// the top level for older readers — `judgeBlocks` holds every judge.
     public let conditions: [Condition]
+
+    public var dialect: Dialect? = nil
+    /// Panel names in evaluation order; empty on reports that name none.
+    public var judgeNames: [String] = []
+    public var judgeBlocks: [JudgeBlock] = []
+    public var judgeAgreement: [JudgeAgreement] = []
+    /// nil when the report has no human-agreement entry (no human ratings
+    /// were pinned); an empty list is never written by either engine.
+    public var humanAgreement: [HumanAgreement]? = nil
+    /// Pairs a judge answered without a usable verdict, panel total. Both
+    /// engines write this only when it is not zero.
+    public var noncompliantJudgments: Int? = nil
+    /// true only when the source run carried no study stamp and the
+    /// evaluation was allowed to proceed anyway.
+    public var epochUnverified: Bool? = nil
+    /// The fields that differed from the source run's stamp when a
+    /// difference was accepted, as the engine recorded them.
+    public var measurementDrift: String? = nil
+    /// Responses removed by declared exclusion rules before judging.
+    public var excludedRecords: Int? = nil
+    public var judgingSessions: JudgingSessions? = nil
 }
 
 public struct StructuredFieldSummaryView: Codable, Sendable, Equatable {

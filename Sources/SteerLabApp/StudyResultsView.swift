@@ -83,16 +83,29 @@ struct StudyResultsView<JudgeControls: View>: View {
 
                 if let judge = detail.pairedJudgeReport {
                     DisclosureGroup("Paired Judge Report") {
-                        LabeledContent("Judge", value: judge.judgeModel)
+                        LabeledContent(
+                            judge.judgeNames.count > 1 ? "Judges" : "Judge",
+                            value: judge.judgeModel.isEmpty ? "not recorded" : judge.judgeModel)
                         Text(judge.sourceRunDirectory)
                             .font(.caption2.monospaced())
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
-                        ForEach(judge.conditions, id: \.name) { condition in
-                            LabeledContent(condition.name) {
-                                Text(judgeConditionLine(condition))
+                        // The tallies as the report holds them: per judge
+                        // (Python engine) or one panel-wide sum (Mac engine).
+                        ForEach(judge.tallyGroups) { group in
+                            if let title = group.title {
+                                Text("Judge \(title)")
+                                    .font(.callout.weight(.semibold))
                             }
-                            if !condition.structuredSummaries.isEmpty {
+                            if let note = group.note {
+                                Text(note)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            ForEach(group.conditions, id: \.name) { condition in
+                                LabeledContent(condition.name) {
+                                    Text(condition.tallyLine)
+                                }
                                 ForEach(condition.structuredSummaries.keys.sorted(), id: \.self) {
                                     field in
                                     if let summary = condition.structuredSummaries[field] {
@@ -103,6 +116,22 @@ struct StudyResultsView<JudgeControls: View>: View {
                                     }
                                 }
                             }
+                        }
+                        // The reliability figures and stamps the report
+                        // holds, each with a visible plain explanation.
+                        ForEach(judge.reliabilityLines) { line in
+                            LabeledContent {
+                                HStack(spacing: 6) {
+                                    Text(line.value)
+                                        .foregroundStyle(
+                                            line.tone == .caution ? Color.orange : Color.primary)
+                                        .textSelection(.enabled)
+                                    InfoButton(text: line.explanation)
+                                }
+                            } label: {
+                                Text(line.label)
+                            }
+                            .help(line.explanation)
                         }
                         if !detail.judgments.isEmpty {
                             Button("Review Judge Responses") {
@@ -115,8 +144,8 @@ struct StudyResultsView<JudgeControls: View>: View {
                         }
                     }
                     .help(
-                        "the paired judge's per-condition tallies from "
-                            + "judge-report.json — wins, ties and mean confidence")
+                        "the paired judge's tallies and reliability figures from "
+                            + "judge-report.json, as the evaluation recorded them")
                 }
 
                 if !detail.robustnessReports.isEmpty {
@@ -225,12 +254,6 @@ struct StudyResultsView<JudgeControls: View>: View {
         case .other:
             return "artifact · \(item.directoryName)"
         }
-    }
-
-    private func judgeConditionLine(_ condition: PairedJudgeReportView.Condition) -> String {
-        let confidence = condition.meanConfidence.formatted(.number.precision(.fractionLength(2)))
-        return "condition \(condition.conditionWins) · baseline \(condition.baselineWins)"
-            + " · ties \(condition.ties) · confidence \(confidence)"
     }
 
     private func robustnessReportView(name: String, report: VariantRobustnessReport) -> some View {

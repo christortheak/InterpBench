@@ -116,68 +116,46 @@ public struct StudyResultRepository: Sendable {
         return String(decoding: pretty, as: UTF8.self)
     }
 
-    private struct RawJudgeReport: Decodable {
-        struct Condition: Decodable {
-            let pairs: Int
-            let conditionWins: Int
-            let baselineWins: Int
-            let ties: Int
-            let meanConfidence: Double
-            let structuredSummaries: [String: StructuredFieldSummaryView]?
-
-            enum CodingKeys: String, CodingKey {
-                case pairs
-                case conditionWins
-                case baselineWins
-                case ties
-                case meanConfidence
-                case structuredSummaries = "structuredSummaries"
-            }
-        }
-
-        let sourceRunDirectory: String
-        let judgeModel: String
-        let conditions: [String: Condition]
+    /// Either engine's judge-report.json (`StudyJudgeReportReader`): a
+    /// strict decoder for one engine's keys read the other's as "no report",
+    /// and the judged section went missing for server and cluster runs.
+    private func loadPairedJudgeReport(_ url: URL) -> PairedJudgeReportView? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return StudyJudgeReportReader.read(data)
     }
 
-    private func loadPairedJudgeReport(_ url: URL) -> PairedJudgeReportView? {
-        guard let data = try? Data(contentsOf: url),
-            let raw = try? JSONDecoder().decode(RawJudgeReport.self, from: data)
-        else { return nil }
-        return PairedJudgeReportView(
-            sourceRunDirectory: raw.sourceRunDirectory,
-            judgeModel: raw.judgeModel,
-            conditions: raw.conditions.map { name, condition in
-                PairedJudgeReportView.Condition(
-                    name: name,
-                    pairs: condition.pairs,
-                    conditionWins: condition.conditionWins,
-                    baselineWins: condition.baselineWins,
-                    ties: condition.ties,
-                    meanConfidence: condition.meanConfidence,
-                    structuredSummaries: condition.structuredSummaries ?? [:])
-            }.sorted { $0.name < $1.name })
+    /// Whether a judge report is about the run at `sourceRunPath`.
+    ///
+    /// A Mac-engine report stores the run's full path; a Python-engine
+    /// report stores its directory name. Names are compared as well as
+    /// paths because both directories sit in this workspace's `runs/`,
+    /// where a run's name is unique — and a path stored before the
+    /// workspace was moved or copied no longer equals anything.
+    static func report(
+        _ report: PairedJudgeReportView, judgesRunAt sourceRunPath: String
+    ) -> Bool {
+        if report.sourceRunDirectory == sourceRunPath { return true }
+        let name = URL(filePath: sourceRunPath).lastPathComponent
+        return !name.isEmpty && StudyJudgeReportReader.sourceRunName(report) == name
+    }
+
+    private func evaluationDirectories() -> [URL] {
+        let entries =
+            (try? FileManager.default.contentsOfDirectory(
+                at: runsDirectory, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+        return entries
+            .filter { $0.lastPathComponent.contains("-evaluate") }
+            .sorted { $0.lastPathComponent > $1.lastPathComponent }
     }
 
     private func latestEvaluationDirectory(forSourceRun sourceRunPath: String) -> URL? {
-        let fm = FileManager.default
-        guard
-            let entries = try? fm.contentsOfDirectory(
-                at: runsDirectory,
-                includingPropertiesForKeys: [.isDirectoryKey])
-        else { return nil }
-
-        return entries
-            .filter { $0.lastPathComponent.contains("-evaluate") }
-            .filter { url in
-                guard
-                    let data = try? Data(contentsOf: url.appending(component: "judge-report.json")),
-                    let raw = try? JSONDecoder().decode(RawJudgeReport.self, from: data)
-                else { return false }
-                return raw.sourceRunDirectory == sourceRunPath
-            }
-            .sorted { $0.lastPathComponent > $1.lastPathComponent }
-            .first
+        evaluationDirectories().first { url in
+            guard
+                let report = loadPairedJudgeReport(
+                    url.appending(component: "judge-report.json"))
+            else { return false }
+            return Self.report(report, judgesRunAt: sourceRunPath)
+        }
     }
 
     private struct RawGeneration: Decodable {

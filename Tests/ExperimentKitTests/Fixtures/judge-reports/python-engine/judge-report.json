@@ -1,0 +1,99 @@
+{
+  "actualJudgeModel": "claude-opus-4-8",
+  "agreement": [
+    {
+      "judges": [
+        "judge-a",
+        "judge-b"
+      ],
+      "kappa": 1.0,
+      "n": 3,
+      "percentAgreement": 1.0
+    }
+  ],
+  "conditions": {
+    "warm": {
+      "baselineWins": 1,
+      "n": 3,
+      "ties": 1,
+      "variantWins": 1
+    }
+  },
+  "epochUnverified": true,
+  "evaluationSource": "manifest",
+  "experiment": "tone-study",
+  "humanAgreement": [
+    {
+      "judge": "judge-a",
+      "kappa": 0.0,
+      "n": 3,
+      "percentAgreement": 0.3333333333333333
+    },
+    {
+      "judge": "judge-b",
+      "kappa": 0.0,
+      "n": 3,
+      "percentAgreement": 0.3333333333333333
+    }
+  ],
+  "humanValidation": {
+    "hash": "392fd93da55d24851adf7aa624a879a5d772c204ef5146dd29e41679013bdb05",
+    "path": "prompts/human/ratings.jsonl",
+    "rows": 3
+  },
+  "judgeCredential": {
+    "kind": "anthropic",
+    "source": "env"
+  },
+  "judgeModel": "claude-opus-4-8",
+  "judgedOn": "server",
+  "judges": [
+    {
+      "actualModel": "claude-opus-4-8",
+      "conditions": {
+        "warm": {
+          "baselineWins": 1,
+          "n": 3,
+          "ties": 1,
+          "variantWins": 1
+        }
+      },
+      "credential": {
+        "kind": "anthropic",
+        "source": "env"
+      },
+      "kind": "claude",
+      "name": "judge-a",
+      "noncompliantJudgments": 1,
+      "pairs": 4,
+      "requestedModel": "claude-opus-4-8",
+      "salvagedVerdicts": 1
+    },
+    {
+      "actualModel": "claude-opus-4-8",
+      "conditions": {
+        "warm": {
+          "baselineWins": 2,
+          "n": 4,
+          "ties": 1,
+          "variantWins": 1
+        }
+      },
+      "credential": {
+        "kind": "anthropic",
+        "source": "env"
+      },
+      "kind": "claude",
+      "name": "judge-b",
+      "pairs": 4,
+      "requestedModel": "claude-opus-4-8",
+      "salvagedVerdicts": 1
+    }
+  ],
+  "noncompliantJudgments": 1,
+  "pairs": 4,
+  "requestedJudgeModel": "claude-opus-4-8",
+  "rubricFile": "prompts/rubrics/warmth.md",
+  "rubricHash": "2f9154ba71b7036b1b1256d4ab7e0af9cd95dcb416353d681c06268871e697be",
+  "sourceRun": "20260101T000000000-exp-tone-study-run"
+}
