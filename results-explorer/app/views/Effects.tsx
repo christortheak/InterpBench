@@ -17,24 +17,28 @@ const ALL_ENDPOINTS = "All endpoints";
 // `stratifyBy`/`stratum` and the estimand pair travel with the numbers —
 // without them an exported row cannot be told from another condition's row
 // for the same endpoint, or from a within-item diagnostic.
+//
+// The descriptions travel in the "Column notes" file (lib/export.ts). This is
+// the table most likely to be opened in statistics software, so every column
+// says what it holds.
 const columns: ExportColumn<Effect>[] = [
-  { header: "condition", kind: "stored", value: (row) => row.condition },
-  { header: "endpoint", kind: "stored", value: (row) => row.endpoint },
-  { header: "stratifyBy", kind: "stored", value: (row) => row.stratifyBy },
-  { header: "stratum", kind: "stored", value: (row) => row.stratum },
-  { header: "pairedUnit", kind: "stored", value: (row) => row.pairedUnit },
-  { header: "estimand", kind: "stored", value: (row) => row.estimand },
-  { header: "inference", kind: "stored", value: (row) => row.inference },
+  { header: "condition", kind: "stored", value: (row) => row.condition, description: "The condition being compared with the baseline." },
+  { header: "endpoint", kind: "stored", value: (row) => row.endpoint, description: "The outcome being compared." },
+  { header: "stratifyBy", kind: "stored", value: (row) => row.stratifyBy, description: "\"pooled\" for a row over all items. Otherwise, the grouping this row is restricted to." },
+  { header: "stratum", kind: "stored", value: (row) => row.stratum, description: "The group within stratifyBy. Empty on pooled rows." },
+  { header: "pairedUnit", kind: "stored", value: (row) => row.pairedUnit, description: "On a stratified row, what one paired difference is: item or sample (the file's \"unit\" column). Empty on pooled rows, where it is the run's unit of analysis." },
+  { header: "estimand", kind: "stored", value: (row) => row.estimand, description: "On a stratified row, itemLevel or withinItemSamples. A withinItemSamples row describes one prompt's own generations and supports no claim about other prompts." },
+  { header: "inference", kind: "stored", value: (row) => row.inference, description: "On a stratified row, corrected or diagnostic. A diagnostic row is a locator, not a test, and has no adjusted p." },
   // Absent stays absent on the way out too: a blank `n` is written blank, not
   // as 0 (lib/export.ts writes null as an empty cell).
-  { header: "n", kind: "stored", value: (row) => row.n },
-  { header: "estimate", kind: "stored", value: (row) => row.estimate },
-  { header: "ciLower", kind: "stored", value: (row) => row.low },
-  { header: "ciUpper", kind: "stored", value: (row) => row.high },
-  { header: "wilcoxonP", kind: "stored", value: (row) => row.p },
-  { header: "adjustedP", kind: "stored", value: (row) => row.q },
-  { header: "correction", kind: "stored", value: (row) => row.correction },
-  { header: "unit", kind: "derived", value: (row) => row.unit },
+  { header: "n", kind: "stored", value: (row) => row.n, description: "The number of paired differences behind the estimate. Empty when the file gave none." },
+  { header: "estimate", kind: "stored", value: (row) => row.estimate, description: "The mean paired difference, condition minus baseline (the file's deltaMean)." },
+  { header: "ciLower", kind: "stored", value: (row) => row.low, description: "The lower end of the 95% interval the engine stored." },
+  { header: "ciUpper", kind: "stored", value: (row) => row.high, description: "The upper end of the 95% interval the engine stored." },
+  { header: "wilcoxonP", kind: "stored", value: (row) => row.p, description: "The unadjusted Wilcoxon signed-rank p-value. Empty when the file gave none." },
+  { header: "adjustedP", kind: "stored", value: (row) => row.q, description: "The p-value after the correction named in the correction column. Empty when the file gave none." },
+  { header: "correction", kind: "stored", value: (row) => row.correction, description: "The multiple-comparison correction the engine applied, as the file names it." },
+  { header: "unit", kind: "derived", value: (row) => row.unit, description: "A display unit the explorer chose from the endpoint's name. It is a label for reading, not a measured unit." },
 ];
 
 /// The p-value pair for one row. A DIAGNOSTIC row (a single item's own

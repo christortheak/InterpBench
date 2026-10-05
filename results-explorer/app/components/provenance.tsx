@@ -13,8 +13,8 @@
 ///   `HeuristicBadge` — the tooltip names the assumption.
 /// Hard rules: the viewer never computes CIs, p-values, kappa, or
 /// corrections (those come from engine reports only); a derived number
-/// never appears unbadged beside a stored one; exports stamp each column's
-/// kind.
+/// never appears unbadged beside a stored one; an export's "Column notes"
+/// file states each column's kind.
 
 export function DerivedBadge({ formula }: { formula: string }) {
   return (

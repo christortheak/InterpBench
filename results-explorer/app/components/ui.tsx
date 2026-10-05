@@ -7,7 +7,7 @@ import { useState } from "react";
 import { deepLinkHref, deepLinksAvailable } from "../lib/deeplink";
 import { splitCSV } from "../lib/csv";
 import { pairedCountLabel } from "../lib/effects";
-import { exportCSV, type ExportColumn } from "../lib/export";
+import { exportCSV, exportColumnNotes, type ExportColumn } from "../lib/export";
 import { fmt } from "../lib/format";
 import { saveRunFile, saveStatusText, type SaveOutcome } from "../lib/save";
 import type { Effect, FilePreview, View } from "../lib/types";
@@ -80,11 +80,15 @@ export function SaveStatus({ status }: { status: SaveState }) {
   return <span className={`save-status save-${status.state}`} role="status">{text}</span>;
 }
 
-/// Export the rows a table is CURRENTLY showing, with each column's
-/// provenance kind stamped in the file's first line (lib/export.ts). Given
-/// no rows it is disabled rather than writing a header-only file that would
-/// read as "the table was empty" when the truth is "nothing matched the
-/// filters".
+/// Export the rows a table is CURRENTLY showing. Two controls, two plain
+/// files (lib/export.ts): the table itself, whose first line is the header
+/// row, and "Column notes", a small table saying for each column whether its
+/// values were read from the run's files or worked out by the explorer.
+///
+/// Given no rows the export is disabled rather than writing a header-only
+/// file that would read as "the table was empty" when the truth is "nothing
+/// matched the filters". The notes describe the columns, not the rows, so
+/// they stay available.
 export function ExportButton<Row>({ filename, columns, rows, label = "Export CSV", className = "secondary" }: {
   filename: string;
   columns: ExportColumn<Row>[];
@@ -99,10 +103,15 @@ export function ExportButton<Row>({ filename, columns, rows, label = "Export CSV
         className={className}
         disabled={!rows.length}
         title={rows.length
-          ? `Save these ${rows.length} row${rows.length === 1 ? "" : "s"} as CSV. The first line stamps each column as stored, derived, or heuristic.`
+          ? `Save these ${rows.length} row${rows.length === 1 ? "" : "s"} as a CSV file. The first line is the header row, so it opens directly in R, Stata, SPSS, or a spreadsheet.`
           : "Nothing to export in the current filter."}
         onClick={() => save.run(() => exportCSV(filename, columns, rows))}
       >{label} <span>↓</span></button>
+      <button
+        className="export-notes"
+        title="Save a short table that says, for each column, whether its values were read from the run's files or worked out by the explorer."
+        onClick={() => save.run(() => exportColumnNotes(filename, columns))}
+      >Column notes</button>
       <SaveStatus status={save.status} />
     </span>
   );

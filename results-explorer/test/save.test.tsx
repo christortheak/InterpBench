@@ -8,6 +8,7 @@ vi.mock("react/jsx-runtime", async (original) => (await import("./support/captur
 
 import { ExportButton, FilePreviewModal, SaveStatus } from "../app/components/ui";
 import { embeddedRunsDirectory } from "../app/embedded-workspace";
+import { splitCSV } from "../app/lib/csv";
 import { discoverRuns } from "../app/lib/discovery";
 import type { ExportColumn } from "../app/lib/export";
 import { hydrateRun } from "../app/lib/loaders";
@@ -157,9 +158,8 @@ describe("the Export CSV control", () => {
     const page = render(<ExportButton filename="run-table.csv" columns={columns} rows={rows} />);
     await page.click("Export CSV");
     expect(host.posted).toHaveLength(1);
-    expect(host.posted[0]).toMatchObject({ kind: "text", filename: "run-table.csv" });
-    const text = (host.posted[0] as { text: string }).text;
-    expect(text).toContain("item,value\na,1\nb,\n");
+    // The file's first line is the header row: nothing comes before it.
+    expect(host.posted[0]).toEqual({ kind: "text", filename: "run-table.csv", text: "item,value\na,1\nb,\n" });
     expect(host.createObjectURL).not.toHaveBeenCalled();
   });
 
@@ -168,13 +168,41 @@ describe("the Export CSV control", () => {
     const page = render(<ExportButton filename="run-table.csv" columns={columns} rows={rows} />);
     await page.click("Export CSV");
     expect(browser.downloads.map((download) => download.filename)).toEqual(["run-table.csv"]);
-    expect(await browser.downloads[0].blob.text()).toContain("item,value\na,1\nb,\n");
+    expect(await browser.downloads[0].blob.text()).toBe("item,value\na,1\nb,\n");
   });
 
   it("is disabled, not silently empty, when no rows match", () => {
     enterEmbedded();
     const page = render(<ExportButton filename="run-table.csv" columns={columns} rows={[]} />);
     expect(page.button("Export CSV").disabled).toBe(true);
+  });
+});
+
+describe("the Column notes control", () => {
+  it("embedded: pressing it sends the notes for the same table as a second file", async () => {
+    const host = enterEmbedded();
+    const page = render(<ExportButton filename="run-table.csv" columns={columns} rows={rows} />);
+    await page.click("Column notes");
+    expect(host.posted).toHaveLength(1);
+    expect(host.posted[0]).toMatchObject({ kind: "text", filename: "run-table-columns.csv" });
+    const lines = (host.posted[0] as { text: string }).text.split("\n");
+    expect(lines[0]).toBe("column,kind,kindMeaning,description");
+    expect(lines[1].startsWith("item,stored,")).toBe(true);
+    expect(lines[2].startsWith("value,derived,")).toBe(true);
+    expect(host.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("standalone: pressing it downloads the notes file", async () => {
+    const browser = enterBrowser();
+    const page = render(<ExportButton filename="run-table.csv" columns={columns} rows={rows} />);
+    await page.click("Column notes");
+    expect(browser.downloads.map((download) => download.filename)).toEqual(["run-table-columns.csv"]);
+  });
+
+  it("stays available when no rows match: it describes columns, not rows", () => {
+    enterEmbedded();
+    const page = render(<ExportButton filename="run-table.csv" columns={columns} rows={[]} />);
+    expect(page.button("Column notes").disabled).toBe(false);
   });
 });
 
@@ -187,9 +215,25 @@ describe("export controls inside their views (embedded)", () => {
     await page.click("Export CSV");
     expect(host.posted).toHaveLength(1);
     expect(host.posted[0]).toMatchObject({ kind: "text", filename: `${RUN}-effect-sizes.csv` });
-    const text = (host.posted[0] as { text: string }).text;
-    expect(text).toContain("condition,endpoint,stratifyBy,stratum,pairedUnit,estimand,inference,n,estimate,ciLower,ciUpper,wilcoxonP,adjustedP,correction,unit\n");
-    expect(text).toContain("steered,choiceRate,pooled,,,,,12,0.25,0.05,0.45,0.02,0.04,holm,");
+    const lines = (host.posted[0] as { text: string }).text.split("\n");
+    // A plain header row first, then the row on screen.
+    expect(lines[0]).toBe("condition,endpoint,stratifyBy,stratum,pairedUnit,estimand,inference,n,estimate,ciLower,ciUpper,wilcoxonP,adjustedP,correction,unit");
+    expect(lines[1].startsWith("steered,choiceRate,pooled,,,,,12,0.25,0.05,0.45,0.02,0.04,holm,")).toBe(true);
+    expect(lines.some((line) => line.startsWith("#"))).toBe(false);
+  });
+
+  it("Effects: Column notes describes every column of that table", async () => {
+    const host = enterEmbedded();
+    serveRuns(runFiles);
+    const run = await embeddedRun();
+    const page = render(<EffectsView run={run} onOpenFile={() => {}} />);
+    await page.click("Column notes");
+    expect(host.posted[0]).toMatchObject({ kind: "text", filename: `${RUN}-effect-sizes-columns.csv` });
+    const notes = (host.posted[0] as { text: string }).text.split("\n").filter(Boolean).map(splitCSV);
+    expect(notes[0]).toEqual(["column", "kind", "kindMeaning", "description"]);
+    expect(notes.slice(1).map((row) => row[0])).toEqual(["condition", "endpoint", "stratifyBy", "stratum", "pairedUnit", "estimand", "inference", "n", "estimate", "ciLower", "ciUpper", "wilcoxonP", "adjustedP", "correction", "unit"]);
+    // Every column of the table a methodologist opens says what it holds.
+    for (const row of notes.slice(1)) expect(row[3]).not.toBe("");
   });
 
   it("Workspace triage: Export run list sends one row per run", async () => {
