@@ -25,6 +25,9 @@ struct DiagnosticLifecycleSheet: View {
     @State private var archiveHash = ""
     @State private var jobID = ""
     @State private var receiptHash = ""
+    /// The imported output folder, kept so a stored report in it can be opened
+    /// as a readable page instead of being read as JSON below.
+    @State private var evidenceDirectory: URL?
     @State private var sourcePlan: String?
     @State private var stagedRequest: JSONValue?
     @State private var gpuOptions: ScientificGPUPlacement?
@@ -75,6 +78,12 @@ struct DiagnosticLifecycleSheet: View {
             .formStyle(.grouped)
             .disabled(busy)
             if busy { ProgressView("Working on the request. Reading and verifying large input or evidence files can take several minutes.") }
+            if let evidenceDirectory, ScienceReport.hasReport(in: evidenceDirectory) {
+                HStack(spacing: 8) {
+                    ScienceReportButton(runDirectory: evidenceDirectory, root: root)
+                    caption("The imported evidence holds an assessment report. Open it as a readable page; the details below are the import record.")
+                }
+            }
             ScrollView { Text(output).font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
                 .frame(minHeight: 120)
         }.padding().frame(minWidth: 860, minHeight: 660)
@@ -202,7 +211,7 @@ struct DiagnosticLifecycleSheet: View {
                 LabeledContent("Over HTTP") {
                     Button("Fetch and verify evidence") { perform {
                         let result = try await DiagnosticRemote.fetch(jobID, client: client, root: root)
-                        receiptHash = string(result, "receiptSHA256") ?? ""; show(result)
+                        receiptHash = string(result, "receiptSHA256") ?? ""; show(result); noteEvidence(result)
                     } }.disabled(jobID.isEmpty)
                         .help("have the server package this job's output, download it, "
                             + "verify the bytes, and import it with a custody receipt")
@@ -229,7 +238,7 @@ struct DiagnosticLifecycleSheet: View {
                         + "refuses an archive whose bytes do not match it")
                 Button("Import archive") { perform {
                     let result = try await workspace("import", ["archivePath": .string(archiveFile), "archiveSHA256": .string(archiveHash)])
-                    receiptHash = string(result, "receiptSHA256") ?? ""; show(result)
+                    receiptHash = string(result, "receiptSHA256") ?? ""; show(result); noteEvidence(result)
                 } }.disabled(archiveFile.isEmpty || archiveHash.isEmpty)
                     .help("verify the chosen archive against that digest and "
                         + "import it into this workspace with a custody receipt")
@@ -415,6 +424,9 @@ struct DiagnosticLifecycleSheet: View {
     }
     private func show(_ value: JSONValue) {
         output = formatted(value)
+    }
+    private func noteEvidence(_ result: JSONValue) {
+        evidenceDirectory = string(result, "outputDirectory").map { URL(filePath: $0) }
     }
     private func formatted(_ value: JSONValue) -> String {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

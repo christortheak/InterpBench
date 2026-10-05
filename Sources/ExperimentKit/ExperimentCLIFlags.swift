@@ -295,6 +295,7 @@ public enum ExperimentCLIParser {
         .init(namespace: "science", verb: "import", positional: "<archive.tar.gz>", purpose: "Verify and import diagnostic evidence into this workspace without replacing outputs.", valueFlags: ["--sha256"], requiredFlags: ["--sha256"]),
         .init(namespace: "science", verb: "custody", purpose: "Reverify and list local diagnostic evidence receipts for offline inspection."),
         .init(namespace: "science", verb: "verify-custody", positional: "<receipt-sha256>", purpose: "Verify the retained diagnostic archive and every expanded output file."),
+        .init(namespace: "science", verb: "report", positional: "<run-folder-or-report.json>", purpose: ScienceReport.purpose, valueFlags: ["--out"], ownsOutFlag: true),
         .init(namespace: "science", verb: "list", purpose: "List shipped methods, supported operation interfaces and engine restrictions; does not execute. With --brief, return a short index instead: ids, titles, and one line of purpose each.", booleanFlags: ["--brief"]),
         .init(namespace: "science", verb: "guide", positional: "<method>", purpose: "Read the shared method guide, dataset schemas and coworker/reviewer instructions."),
         .init(namespace: "science", verb: "operation", positional: "<operation>", purpose: "Inspect exact public execution paths, outputs and restrictions for one operation."),

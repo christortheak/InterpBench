@@ -1245,6 +1245,9 @@ private struct RunDetailView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
+                // Shown only for a run that holds a stored report: the same
+                // HTML page a browser opens, instead of the JSON below.
+                ScienceReportButton(runDirectory: item.url, root: ExperimentStore.workspaceRoot)
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([item.url])
                 } label: {
