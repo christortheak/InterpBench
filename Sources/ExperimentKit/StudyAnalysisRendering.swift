@@ -47,6 +47,16 @@ enum StudyAnalysisRendering {
             try artifacts.add("exclusions.json", json: exclusionStamp)
         }
         artifacts.add("effect-sizes.csv", text: effectSizesCSV(entries))
+        if let unit = result.transcriptUnit {
+            // Say what an effect row averages over: in a multi-agent study
+            // `n` counts TRANSCRIPTS, not turns, and a reader cannot tell
+            // which from the number alone. The Python engine writes the same
+            // file.
+            try artifacts.add("unit-of-analysis.json", json: unit)
+            if unit.skippedForSingleTranscript {
+                artifacts.log(StudyAnalysisStatistics.TranscriptUnit.skippedNote)
+            }
+        }
         // Which outcomes reached the effect rows, each with its definition
         // in words, and which this analysis could not produce and why —
         // written on every analysis, so a reader never has to infer either

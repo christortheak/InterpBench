@@ -1793,9 +1793,123 @@ def marker_scoring() -> None:
     })
 
 
+#: The panel fixture's turns: (replicate, turn, configured, baseline), each
+#: side a (wordCount, distinct2) pair. Four play-throughs of a three-turn
+#: script, every value an integer or a dyadic fraction so the per-transcript
+#: means are exact in binary floating point on both engines.
+PANEL_TRANSCRIPT_TURNS = [
+    (0, "t1", (12, 0.5), (10, 0.5)), (0, "t2", (14, 0.5), (10, 0.5)),
+    (0, "t3", (16, 0.5), (10, 0.5)),
+    (1, "t1", (10, 0.75), (11, 0.5)), (1, "t2", (10, 0.75), (12, 0.5)),
+    (1, "t3", (13, 0.75), (10, 0.5)),
+    (2, "t1", (20, 0.25), (15, 0.5)), (2, "t2", (18, 0.5), (15, 0.5)),
+    (2, "t3", (22, 0.75), (15, 0.5)),
+    (3, "t1", (9, 0.25), (10, 0.5)), (3, "t2", (9, 0.25), (11, 0.5)),
+    (3, "t3", (9, 0.25), (12, 0.5)),
+]
+#: The columns the panel fixture pins (the bootstrap interval is left out:
+#: the engines resample with different generators).
+PANEL_TRANSCRIPT_COLUMNS = ("condition", "endpoint", "n", "deltaMean",
+                            "wilcoxonW", "wilcoxonP", "adjustedP",
+                            "correction", "stratifyBy", "stratum", "unit",
+                            "estimand", "inference")
+
+
+def panel_transcript_records(replicates) -> list[dict]:
+    """A panel run's flattened turn records, in the order a run writes them
+    (condition, replicate, turn), shaped as `panel_workflow` writes them."""
+    records = []
+    for condition in ("baseline", "configured"):
+        for replicate, turn, configured, baseline in PANEL_TRANSCRIPT_TURNS:
+            if replicate not in replicates:
+                continue
+            words, distinct = baseline if condition == "baseline" else configured
+            records.append({
+                "condition": condition, "seed": 7,
+                "promptID": turn, "promptIndex": int(turn[1:]) - 1,
+                "replicateIndex": replicate, "sampleIndex": replicate,
+                "speakerAgentID": f"seat-{turn}", "output": "a turn",
+                "wordCount": words, "distinct2": distinct,
+            })
+    return records
+
+
+def panel_transcript_analysis(records: list[dict]) -> dict:
+    """The Python engine's `analyze` over a multi-agent study's records:
+    its effect rows (pinned columns) and its unit-of-analysis.json."""
+    import csv
+
+    from steerlab_server.experiment import tasks
+    from steerlab_server.experiment.manifest import Manifest
+
+    manifest = {"name": "panel", "modelID": "test/model", "concepts": [],
+                "taskPromptsFile": None, "studyKind": "multiAgent",
+                "conditions": []}
+    workspace = tempfile.mkdtemp(prefix="steerlab-panel-fixture-")
+    try:
+        experiment_dir = os.path.join(workspace, "experiments", "panel")
+        os.makedirs(experiment_dir)
+        with open(os.path.join(experiment_dir, "experiment.json"), "w",
+                  encoding="utf-8") as handle:
+            json.dump(manifest, handle)
+        run_dir = os.path.join(
+            workspace, "runs", "20261005T000000000-exp-panel-run")
+        os.makedirs(run_dir)
+        with open(os.path.join(run_dir, "experiment-hash.txt"), "w",
+                  encoding="utf-8") as handle:
+            handle.write(Manifest.from_dict(manifest).content_hash() + "\n")
+        with open(os.path.join(run_dir, "generations.jsonl"), "w",
+                  encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(record) + "\n")
+        out = tasks.analyze("panel", root=workspace, log=lambda _: None)
+        with open(os.path.join(out, "effect-sizes.csv"),
+                  encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        with open(os.path.join(out, "unit-of-analysis.json"),
+                  encoding="utf-8") as handle:
+            unit = json.load(handle)
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+    def cell(column: str, value: str):
+        if column == "n":
+            return int(value)
+        if column in ("deltaMean", "wilcoxonW", "wilcoxonP", "adjustedP"):
+            return float(value) if value else None
+        return value
+
+    return {"effectRows": [{column: cell(column, row[column])
+                            for column in PANEL_TRANSCRIPT_COLUMNS}
+                           for row in rows],
+            "unitOfAnalysis": unit}
+
+
+def panel_transcript_analysis_fixture() -> None:
+    """A multi-agent study is analyzed per CONVERSATION: turns within a
+    transcript depend on the turns before them, so each transcript is reduced
+    to its mean paired difference and `n` counts transcripts, never turns.
+    One case with four transcripts per arm, and one with a single transcript,
+    which supports no interval and is said to have been skipped."""
+    cases = []
+    for label, replicates in (("four-transcripts", (0, 1, 2, 3)),
+                              ("one-transcript", (0,))):
+        records = panel_transcript_records(replicates)
+        cases.append({"label": label, "records": records,
+                      **panel_transcript_analysis(records)})
+    _write(os.path.join(FIXTURES, "panel-transcript-analysis.json"), {
+        "note": "a multi-agent study's paired effects are per transcript: "
+                "turn differences are averaged within each play-through "
+                "(paired by turn and replicate) before any test, so n counts "
+                "transcripts; both engines write unit-of-analysis.json",
+        "cases": cases,
+    })
+
+
 def main() -> int:
     os.makedirs(FIXTURES, exist_ok=True)
     marker_scoring()
+    panel_transcript_analysis_fixture()
     sampled_effect_pairing()
     effect_outcomes()
     promotion_keys()

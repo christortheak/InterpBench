@@ -1,0 +1,418 @@
+{
+  "cases": [
+    {
+      "effectRows": [
+        {
+          "adjustedP": 0.422678,
+          "condition": "configured",
+          "correction": "bh",
+          "deltaMean": 1.75,
+          "endpoint": "wordCount",
+          "estimand": "",
+          "inference": "",
+          "n": 4,
+          "stratifyBy": "pooled",
+          "stratum": "",
+          "unit": "",
+          "wilcoxonP": 0.422678,
+          "wilcoxonW": 1.0
+        },
+        {
+          "adjustedP": 1.0,
+          "condition": "configured",
+          "correction": "bh",
+          "deltaMean": 0.0,
+          "endpoint": "distinct2",
+          "estimand": "",
+          "inference": "",
+          "n": 4,
+          "stratifyBy": "pooled",
+          "stratum": "",
+          "unit": "",
+          "wilcoxonP": 1.0,
+          "wilcoxonW": 1.5
+        }
+      ],
+      "label": "four-transcripts",
+      "records": [
+        {
+          "condition": "baseline",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t1",
+          "promptIndex": 0,
+          "replicateIndex": 0,
+          "sampleIndex": 0,
+          "seed": 7,
+          "speakerAgentID": "seat-t1",
+          "wordCount": 10
+        },
+        {
+          "condition": "baseline",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t2",
+          "promptIndex": 1,
+          "replicateIndex": 0,
+          "sampleIndex": 0,
+          "seed": 7,
+          "speakerAgentID": "seat-t2",
+          "wordCount": 10
+        },
+        {
+          "condition": "baseline",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t3",
+          "promptIndex": 2,
+          "replicateIndex": 0,
+          "sampleIndex": 0,
+          "seed": 7,
+          "speakerAgentID": "seat-t3",
+          "wordCount": 10
+        },
+        {
+          "condition": "baseline",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t1",
+          "promptIndex": 0,
+          "replicateIndex": 1,
+          "sampleIndex": 1,
+          "seed": 7,
+          "speakerAgentID": "seat-t1",
+          "wordCount": 11
+        },
+        {
+          "condition": "baseline",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t2",
+          "promptIndex": 1,
+          "replicateIndex": 1,
+          "sampleIndex": 1,
+          "seed": 7,
+          "speakerAgentID": "seat-t2",
+          "wordCount": 12
+        },
+        {
+          "condition": "baseline",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t3",
+          "promptIndex": 2,
+          "replicateIndex": 1,
+          "sampleIndex": 1,
+          "seed": 7,
+          "speakerAgentID": "seat-t3",
+          "wordCount": 10
+        },
+        {
+          "condition": "baseline",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t1",
+          "promptIndex": 0,
+          "replicateIndex": 2,
+          "sampleIndex": 2,
+          "seed": 7,
+          "speakerAgentID": "seat-t1",
+          "wordCount": 15
+        },
+        {
+          "condition": "baseline",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t2",
+          "promptIndex": 1,
+          "replicateIndex": 2,
+          "sampleIndex": 2,
+          "seed": 7,
+          "speakerAgentID": "seat-t2",
+          "wordCount": 15
+        },
+        {
+          "condition": "baseline",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t3",
+          "promptIndex": 2,
+          "replicateIndex": 2,
+          "sampleIndex": 2,
+          "seed": 7,
+          "speakerAgentID": "seat-t3",
+          "wordCount": 15
+        },
+        {
+          "condition": "baseline",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t1",
+          "promptIndex": 0,
+          "replicateIndex": 3,
+          "sampleIndex": 3,
+          "seed": 7,
+          "speakerAgentID": "seat-t1",
+          "wordCount": 10
+        },
+        {
+          "condition": "baseline",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t2",
+          "promptIndex": 1,
+          "replicateIndex": 3,
+          "sampleIndex": 3,
+          "seed": 7,
+          "speakerAgentID": "seat-t2",
+          "wordCount": 11
+        },
+        {
+          "condition": "baseline",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t3",
+          "promptIndex": 2,
+          "replicateIndex": 3,
+          "sampleIndex": 3,
+          "seed": 7,
+          "speakerAgentID": "seat-t3",
+          "wordCount": 12
+        },
+        {
+          "condition": "configured",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t1",
+          "promptIndex": 0,
+          "replicateIndex": 0,
+          "sampleIndex": 0,
+          "seed": 7,
+          "speakerAgentID": "seat-t1",
+          "wordCount": 12
+        },
+        {
+          "condition": "configured",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t2",
+          "promptIndex": 1,
+          "replicateIndex": 0,
+          "sampleIndex": 0,
+          "seed": 7,
+          "speakerAgentID": "seat-t2",
+          "wordCount": 14
+        },
+        {
+          "condition": "configured",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t3",
+          "promptIndex": 2,
+          "replicateIndex": 0,
+          "sampleIndex": 0,
+          "seed": 7,
+          "speakerAgentID": "seat-t3",
+          "wordCount": 16
+        },
+        {
+          "condition": "configured",
+          "distinct2": 0.75,
+          "output": "a turn",
+          "promptID": "t1",
+          "promptIndex": 0,
+          "replicateIndex": 1,
+          "sampleIndex": 1,
+          "seed": 7,
+          "speakerAgentID": "seat-t1",
+          "wordCount": 10
+        },
+        {
+          "condition": "configured",
+          "distinct2": 0.75,
+          "output": "a turn",
+          "promptID": "t2",
+          "promptIndex": 1,
+          "replicateIndex": 1,
+          "sampleIndex": 1,
+          "seed": 7,
+          "speakerAgentID": "seat-t2",
+          "wordCount": 10
+        },
+        {
+          "condition": "configured",
+          "distinct2": 0.75,
+          "output": "a turn",
+          "promptID": "t3",
+          "promptIndex": 2,
+          "replicateIndex": 1,
+          "sampleIndex": 1,
+          "seed": 7,
+          "speakerAgentID": "seat-t3",
+          "wordCount": 13
+        },
+        {
+          "condition": "configured",
+          "distinct2": 0.25,
+          "output": "a turn",
+          "promptID": "t1",
+          "promptIndex": 0,
+          "replicateIndex": 2,
+          "sampleIndex": 2,
+          "seed": 7,
+          "speakerAgentID": "seat-t1",
+          "wordCount": 20
+        },
+        {
+          "condition": "configured",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t2",
+          "promptIndex": 1,
+          "replicateIndex": 2,
+          "sampleIndex": 2,
+          "seed": 7,
+          "speakerAgentID": "seat-t2",
+          "wordCount": 18
+        },
+        {
+          "condition": "configured",
+          "distinct2": 0.75,
+          "output": "a turn",
+          "promptID": "t3",
+          "promptIndex": 2,
+          "replicateIndex": 2,
+          "sampleIndex": 2,
+          "seed": 7,
+          "speakerAgentID": "seat-t3",
+          "wordCount": 22
+        },
+        {
+          "condition": "configured",
+          "distinct2": 0.25,
+          "output": "a turn",
+          "promptID": "t1",
+          "promptIndex": 0,
+          "replicateIndex": 3,
+          "sampleIndex": 3,
+          "seed": 7,
+          "speakerAgentID": "seat-t1",
+          "wordCount": 9
+        },
+        {
+          "condition": "configured",
+          "distinct2": 0.25,
+          "output": "a turn",
+          "promptID": "t2",
+          "promptIndex": 1,
+          "replicateIndex": 3,
+          "sampleIndex": 3,
+          "seed": 7,
+          "speakerAgentID": "seat-t2",
+          "wordCount": 9
+        },
+        {
+          "condition": "configured",
+          "distinct2": 0.25,
+          "output": "a turn",
+          "promptID": "t3",
+          "promptIndex": 2,
+          "replicateIndex": 3,
+          "sampleIndex": 3,
+          "seed": 7,
+          "speakerAgentID": "seat-t3",
+          "wordCount": 9
+        }
+      ],
+      "unitOfAnalysis": {
+        "reason": "turns within a transcript are dependent; each transcript is reduced to its mean paired difference before testing",
+        "skippedForSingleTranscript": false,
+        "unitOfAnalysis": "transcript"
+      }
+    },
+    {
+      "effectRows": [],
+      "label": "one-transcript",
+      "records": [
+        {
+          "condition": "baseline",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t1",
+          "promptIndex": 0,
+          "replicateIndex": 0,
+          "sampleIndex": 0,
+          "seed": 7,
+          "speakerAgentID": "seat-t1",
+          "wordCount": 10
+        },
+        {
+          "condition": "baseline",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t2",
+          "promptIndex": 1,
+          "replicateIndex": 0,
+          "sampleIndex": 0,
+          "seed": 7,
+          "speakerAgentID": "seat-t2",
+          "wordCount": 10
+        },
+        {
+          "condition": "baseline",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t3",
+          "promptIndex": 2,
+          "replicateIndex": 0,
+          "sampleIndex": 0,
+          "seed": 7,
+          "speakerAgentID": "seat-t3",
+          "wordCount": 10
+        },
+        {
+          "condition": "configured",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t1",
+          "promptIndex": 0,
+          "replicateIndex": 0,
+          "sampleIndex": 0,
+          "seed": 7,
+          "speakerAgentID": "seat-t1",
+          "wordCount": 12
+        },
+        {
+          "condition": "configured",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t2",
+          "promptIndex": 1,
+          "replicateIndex": 0,
+          "sampleIndex": 0,
+          "seed": 7,
+          "speakerAgentID": "seat-t2",
+          "wordCount": 14
+        },
+        {
+          "condition": "configured",
+          "distinct2": 0.5,
+          "output": "a turn",
+          "promptID": "t3",
+          "promptIndex": 2,
+          "replicateIndex": 0,
+          "sampleIndex": 0,
+          "seed": 7,
+          "speakerAgentID": "seat-t3",
+          "wordCount": 16
+        }
+      ],
+      "unitOfAnalysis": {
+        "reason": "turns within a transcript are dependent; each transcript is reduced to its mean paired difference before testing",
+        "skippedForSingleTranscript": true,
+        "unitOfAnalysis": "transcript"
+      }
+    }
+  ],
+  "note": "a multi-agent study's paired effects are per transcript: turn differences are averaged within each play-through (paired by turn and replicate) before any test, so n counts transcripts; both engines write unit-of-analysis.json"
+}

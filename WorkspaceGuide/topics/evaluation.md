@@ -185,6 +185,14 @@ today is marker density on a run made by an earlier version of the Python
 engine, which did not record it; both engines record it now, so running the
 study again measures it.
 
+A multi-agent study is analyzed per conversation on both engines. Each turn
+is paired with the baseline's same turn in the same play-through, the
+differences are averaged within each conversation, and `n` counts
+conversations, not turns, because a turn depends on the turns before it.
+`unit-of-analysis.json` says so. With one conversation per arm there are no
+effect rows, since one conversation supports no interval; run the study with
+`samplesPerItem` of 2 or more.
+
 ## `evaluate`
 
 <!-- client: mac -->

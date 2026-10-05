@@ -13,6 +13,10 @@ enum StudyAnalysisCalculator {
         let exclusionRules = manifest.exclusionRules ?? []
         let exclusionChecks = input.exclusionChecks
         let declaredTargets = input.declaredTargets
+        // D1, multi-agent only: turns within a transcript are dependent, so
+        // the unit of analysis is the transcript (Python twin: `clustered`
+        // in `analysis_workflow.analyze`).
+        let clustered = manifest.studyKind == .multiAgent
         var diagnostics: [StudyAnalysisDiagnostic] = []
         func log(_ text: String) { diagnostics.append(StudyAnalysisDiagnostic(text: text)) }
         let exclusionEndpoints = Set(
@@ -169,6 +173,9 @@ enum StudyAnalysisCalculator {
                     parsedValue: record.parsedMonths?.value,
                     choseTarget: choseTarget,
                     readerScores: record.readerScores?.value ?? [:]))
+            // The transcript a panel turn belongs to: a record without the
+            // stamp is the first play-through, as on the Python engine.
+            if clustered { rows[rows.count - 1].replicate = record.replicateIndex ?? 0 }
         }
         // Choice readouts count as analyzable material alongside sampled
         // generations and ordinal readouts: a study whose whole instrument is
@@ -237,29 +244,48 @@ enum StudyAnalysisCalculator {
                     value: $0)
             }
         }
-        let pooledEntries = StudyAnalysisStatistics.effectSizes(
-            rows: rows, concepts: conceptSet.sorted(),
-            styleFeatureIDs: style?.taxonomy.featureIDs ?? [],
-            choiceReadouts: ordinalReadouts,
-            targetLogOdds: targetLogOdds,
-            numericParserKind: input.numericParser.kind,
-            phase: manifest.phase)
-        // Per-cell strata beside the pooled rows (same file, extra rows):
-        // pooling across items has both hidden a real single-cell effect
-        // behind saturated cells and manufactured pooled effects from one
-        // cell's parse garbage. Pooled entries keep their exact semantics
-        // and correction family; each stratified family is corrected
-        // independently. Server twin: tasks.analyze.
-        let entries =
-            pooledEntries
-            + StudyAnalysisStatistics.stratifiedEffectSizes(
+        let pooledEntries: [ExperimentTasks.EffectSizeEntry]
+        let entries: [ExperimentTasks.EffectSizeEntry]
+        var transcriptUnit: StudyAnalysisStatistics.TranscriptUnit?
+        if clustered {
+            // One value per transcript before any test, and no strata: the
+            // per-turn cells are the dependent observations the transcript
+            // aggregation exists to absorb. Server twin: tasks.analyze.
+            let clusteredResult = StudyAnalysisStatistics.transcriptEffectSizes(
                 rows: rows, concepts: conceptSet.sorted(),
                 styleFeatureIDs: style?.taxonomy.featureIDs ?? [],
                 choiceReadouts: ordinalReadouts,
                 targetLogOdds: targetLogOdds,
                 numericParserKind: input.numericParser.kind,
-                factorsByItem: factorsByItem,
                 phase: manifest.phase)
+            pooledEntries = clusteredResult.entries
+            entries = pooledEntries
+            transcriptUnit = clusteredResult.unit
+        } else {
+            pooledEntries = StudyAnalysisStatistics.effectSizes(
+                rows: rows, concepts: conceptSet.sorted(),
+                styleFeatureIDs: style?.taxonomy.featureIDs ?? [],
+                choiceReadouts: ordinalReadouts,
+                targetLogOdds: targetLogOdds,
+                numericParserKind: input.numericParser.kind,
+                phase: manifest.phase)
+            // Per-cell strata beside the pooled rows (same file, extra rows):
+            // pooling across items has both hidden a real single-cell effect
+            // behind saturated cells and manufactured pooled effects from one
+            // cell's parse garbage. Pooled entries keep their exact semantics
+            // and correction family; each stratified family is corrected
+            // independently. Server twin: tasks.analyze.
+            entries =
+                pooledEntries
+                + StudyAnalysisStatistics.stratifiedEffectSizes(
+                    rows: rows, concepts: conceptSet.sorted(),
+                    styleFeatureIDs: style?.taxonomy.featureIDs ?? [],
+                    choiceReadouts: ordinalReadouts,
+                    targetLogOdds: targetLogOdds,
+                    numericParserKind: input.numericParser.kind,
+                    factorsByItem: factorsByItem,
+                    phase: manifest.phase)
+        }
 
         // Which outcomes reached the rows, and which this analysis could
         // not produce — said, never left as a silently absent row. The one
@@ -290,7 +316,8 @@ enum StudyAnalysisCalculator {
             entries: entries, pooledCount: pooledEntries.count,
             sampledCount: rows.count, ordinalCount: ordinalReadouts.count,
             exclusions: exclusionStamp, choiceDeltas: ChoiceDeltas.table(choiceReadouts),
-            margins: marginReports, outcomes: outcomes, diagnostics: diagnostics)
+            margins: marginReports, outcomes: outcomes, transcriptUnit: transcriptUnit,
+            diagnostics: diagnostics)
     }
 
     static func rescoreStyle(_ input: StudyAnalysisInput) throws -> StudyStyleResult {

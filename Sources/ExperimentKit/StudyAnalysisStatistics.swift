@@ -149,6 +149,170 @@ enum StudyAnalysisStatistics {
             phase: phase)
     }
 
+    /// What a multi-agent analysis says about its unit, written beside its
+    /// effect rows as `unit-of-analysis.json`. Python twin: the same file
+    /// from `analysis_workflow.analyze`, same keys and words.
+    struct TranscriptUnit: Codable, Equatable {
+        static let reasonText =
+            "turns within a transcript are dependent; each transcript is "
+            + "reduced to its mean paired difference before testing"
+        /// The log line for a skipped outcome (Python twin, same words).
+        static let skippedNote =
+            "effect sizes: some endpoints skipped — 1 transcript per "
+            + "condition supports a point estimate but no interval. "
+            + "Re-run with samplesPerItem > 1."
+
+        var unitOfAnalysis = "transcript"
+        var reason = reasonText
+        /// True when an outcome a condition measured paired fewer than two
+        /// transcripts, so it has no row.
+        var skippedForSingleTranscript: Bool
+    }
+
+    /// A multi-agent study's paired effects, per CONVERSATION (plan D1).
+    ///
+    /// Turns are not independent observations: turn k is conditioned on
+    /// turns 1..k-1, and after the first turn the two arms diverge, so what
+    /// pairs across conditions is a script POSITION within one play-through.
+    /// A turn's value pairs with the baseline's value at the same turn of the
+    /// same replicate; the turn differences are averaged within each
+    /// transcript; and the paired bootstrap and Wilcoxon run over one value
+    /// per transcript, so `n` counts transcripts, never turns. An outcome a
+    /// condition measured that pairs fewer than two transcripts has no row —
+    /// one transcript supports a point estimate but no interval — and sets
+    /// `skippedForSingleTranscript`. Every row is a member of its outcome's
+    /// correction family, and nothing is stratified: the per-turn strata are
+    /// the dependent observations this estimator exists to aggregate.
+    ///
+    /// Python twin: `analysis_endpoints.key_records_by_transcript` and
+    /// `transcript_level_diffs` in `analysis_workflow.analyze`; both engines
+    /// are pinned to `Tests/Fixtures/cross-engine/panel-transcript-analysis.json`.
+    /// Answer-token readouts carry no replicate, so they read as one
+    /// transcript, exactly as on the Python engine. Row order follows this
+    /// engine's pooled order: condition, then outcome.
+    static func transcriptEffectSizes(
+        rows: [MetricRow], concepts: [String], styleFeatureIDs: [String] = [],
+        choiceReadouts: [ReportChoiceReadout] = [],
+        targetLogOdds: [ItemReadout] = [], numericParserKind: String? = nil,
+        replicates: Int = 10_000, phase: String? = nil
+    ) -> (entries: [EffectSizeEntry], unit: TranscriptUnit) {
+        struct Cell: Hashable {
+            let condition: String
+            let promptID: String
+            let transcript: Int
+        }
+        var skipped = false
+        var entries: [EffectSizeEntry] = []
+        /// One outcome for one condition: its per-cell values beside the
+        /// baseline's, reduced to one mean paired difference per transcript.
+        func entry(
+            condition: String, metric: String, values: [(Cell, Double)],
+            baseline: [Cell: Double]
+        ) {
+            guard !values.isEmpty else { return }
+            var byTranscript: [Int: [Double]] = [:]
+            for (cell, value) in values {
+                let partner = Cell(
+                    condition: "baseline", promptID: cell.promptID,
+                    transcript: cell.transcript)
+                guard let base = baseline[partner] else { continue }
+                byTranscript[cell.transcript, default: []].append(value - base)
+            }
+            let diffs = byTranscript.keys.sorted().map { key in
+                let turns = byTranscript[key] ?? []
+                return turns.reduce(0, +) / Double(turns.count)
+            }
+            guard diffs.count >= 2 else {
+                skipped = true
+                return
+            }
+            let ci = StudyStatistics.pairedBootstrapCI(
+                diffs, replicates: replicates, seed: 0)
+            let wilcoxon = StudyStatistics.wilcoxonSignedRank(diffs)
+            entries.append(
+                EffectSizeEntry(
+                    condition: condition, metric: metric, n: ci.n,
+                    meanDiff: ci.mean, ciLower: ci.ciLower, ciUpper: ci.ciUpper,
+                    wilcoxonW: wilcoxon.w.isNaN ? nil : wilcoxon.w,
+                    wilcoxonP: wilcoxon.p.isNaN ? nil : wilcoxon.p))
+        }
+
+        var conditionOrder: [String] = []
+        var seen = Set<String>()
+        for condition in rows.map(\.condition) + choiceReadouts.map(\.condition)
+            + targetLogOdds.map(\.condition) where condition != "baseline"
+        {
+            if seen.insert(condition).inserted { conditionOrder.append(condition) }
+        }
+        // Sampled outcomes: each (condition, turn, transcript) cell's value,
+        // in the order the cells first appear in run order.
+        var cellOrder: [Cell] = []
+        var rowsByCell: [Cell: [MetricRow]] = [:]
+        for row in inRunOrder(rows) {
+            let cell = Cell(
+                condition: row.condition, promptID: row.promptID,
+                transcript: row.replicate ?? 0)
+            if rowsByCell[cell] == nil { cellOrder.append(cell) }
+            rowsByCell[cell, default: []].append(row)
+        }
+        let outcomes = sampledOutcomes(
+            rows: rows, concepts: concepts, styleFeatureIDs: styleFeatureIDs,
+            numericParserKind: numericParserKind)
+        // Answer-token readouts: one value per (condition, item), last
+        // readout wins, as in the pooled analysis.
+        func readoutValues(_ pairs: [(condition: String, promptID: String, value: Double)])
+            -> [Cell: Double]
+        {
+            var values: [Cell: Double] = [:]
+            for pair in pairs {
+                values[Cell(condition: pair.condition, promptID: pair.promptID, transcript: 0)] =
+                    pair.value
+            }
+            return values
+        }
+        let ordinal = readoutValues(
+            choiceReadouts.compactMap { readout in
+                guard readout.source == "instrument", let position = readout.ordinalPosition
+                else { return nil }
+                return (readout.condition, readout.promptID, position)
+            })
+        let logOdds = readoutValues(
+            targetLogOdds.map { ($0.condition, $0.promptID, $0.value) })
+        for condition in conditionOrder {
+            for outcome in outcomes {
+                var baseline: [Cell: Double] = [:]
+                var values: [(Cell, Double)] = []
+                for cell in cellOrder
+                where cell.condition == condition || cell.condition == "baseline" {
+                    guard let value = outcome.itemValue(rowsByCell[cell] ?? []) else { continue }
+                    if cell.condition == "baseline" {
+                        baseline[cell] = value
+                    } else {
+                        values.append((cell, value))
+                    }
+                }
+                entry(
+                    condition: condition, metric: outcome.name, values: values,
+                    baseline: baseline)
+            }
+        }
+        // The readout outcomes follow the sampled ones, as in the pooled
+        // analysis (`effectSizes`).
+        for (metric, readings) in [("ordinalPosition", ordinal), ("choiceLogOdds", logOdds)] {
+            let baseline = readings.filter { $0.key.condition == "baseline" }
+            for condition in conditionOrder {
+                let values = readings.filter { $0.key.condition == condition }
+                    .sorted { $0.key.promptID < $1.key.promptID }
+                    .map { ($0.key, $0.value) }
+                entry(condition: condition, metric: metric, values: values, baseline: baseline)
+            }
+        }
+        return (
+            applyCorrection(entries, phase: phase),
+            TranscriptUnit(skippedForSingleTranscript: skipped)
+        )
+    }
+
     static func correctionMethod(phase: String?) -> String {
         phase == "confirm" ? "holm" : "bh"
     }
