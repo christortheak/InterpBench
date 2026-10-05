@@ -34,6 +34,7 @@ import pytest
 
 from steerlab_server import cli_envelope, client_cli
 from steerlab_server.client import diagnostic_commands, results_commands, results_export
+from steerlab_server.client.reports import study_results
 from steerlab_server.experiment import study_stats, tasks
 from steerlab_server.experiment.manifest import Manifest
 
@@ -476,6 +477,88 @@ def test_an_unstamped_unit_of_analysis_is_shown_as_the_engine_default(root):
     assert {(row["unit_of_analysis"], row["unit_of_analysis_source"])
             for row in _table(result, "effects.csv")} == {("item", "engine_default")}
     assert "engines' documented default" in _read(result, "methods.md")
+
+
+def _mac_sampled_records(manifest_hash, items, seeds):
+    """A multi-sample Mac run: every item answered once per seed under each
+    condition, as the Mac engine records it."""
+    records = []
+    for condition in ("baseline", "formal"):
+        for index, item in enumerate(items):
+            for seed in range(seeds):
+                text = _text(condition, item, seed)
+                records.append({
+                    "experiment": STUDY, "experimentHash": manifest_hash,
+                    "modelID": "test/model", "modelRevision": "rev-1",
+                    "promptMode": "chatAssistant", "condition": condition, "seed": seed,
+                    "promptIndex": index, "promptID": item,
+                    "prompt": f"Describe a quiet weekend ({item}).", "output": text,
+                    "wordCount": len(text.split()), "distinct2": 0.5, "finishReason": "stop"})
+    return records
+
+
+def _old_mac_analysis(root, items, seeds, rows):
+    """A study whose stored analysis is the Mac engine's from before 0.9.7:
+    pooled rows with no unit, ``n`` counting every paired response."""
+    manifest = _manifest(samplesPerItem=seeds, seeds=list(range(seeds)))
+    _write_study(root, manifest)
+    manifest_hash = Manifest.from_dict(manifest).content_hash()
+    _write_run(root, manifest, _mac_sampled_records(manifest_hash, items, seeds), engine="mac")
+    _write_mac_analysis(root, manifest, rows)
+
+
+def _pooled(condition, n, low, high):
+    return {"condition": condition, "metric": "wordCount", "n": n, "meanDiff": 2.0, "ciLower": low,
+            "ciUpper": high, "wilcoxonW": 0.0, "wilcoxonP": 0.0625, "adjustedP": None, "correction": None}
+
+
+def test_an_old_mac_response_level_analysis_is_not_called_item_level(root):
+    """Before 0.9.7 the Mac engine paired every response of a multi-sample run
+    with the baseline response of the same item and seed, counted responses in
+    ``n``, and stamped no unit. Five seeds of one prompt are five responses
+    from one item: not five items, not averaged, and too few items for an
+    interval. The stored numbers stay as they are."""
+    _old_mac_analysis(root, ["item-1"], 5, [_pooled("formal", 5, 2.0, 2.0)])
+    result = _export(root)
+    [row] = _table(result, "effects.csv")
+    assert (row["n_pairs"], row["unit_of_analysis"], row["unit_of_analysis_source"]) == (
+        "5", "response", "inferred_from_records")
+    assert (row["estimate"], row["ci_lower"], row["ci_upper"]) == ("2.0", "2.0", "2.0")
+    methods = _read(result, "methods.md")
+    assert "Unit of analysis: the response, not the item." in methods
+    assert "samples averaged" not in methods and "documented default" not in methods
+    page = study_results.render(results_export.read_results(str(root), STUDY))
+    assert "across 5 paired responses from 1 item. These are responses, not items" in page
+    assert "too few items for an interval or a test" in page
+    assert not re.search(r"\d+ paired items?\b", page) and "The interval does not include zero" not in page
+    # The page written by `results export` says the same.
+    assert "5 paired responses from 1 item" in _read(result, "report.html")
+
+
+def test_an_old_mac_response_level_interval_is_shown_with_what_it_is_not(root):
+    """With enough items for an interval, the stored interval is shown, and
+    the page says it treats responses to the same item as independent."""
+    _old_mac_analysis(root, ["item-1", "item-2", "item-3", "item-4"], 2, [_pooled("formal", 8, 1.5, 2.5)])
+    [row] = _table(_export(root), "effects.csv")
+    assert (row["n_pairs"], row["unit_of_analysis"]) == ("8", "response")
+    page = study_results.render(results_export.read_results(str(root), STUDY))
+    assert "across 8 paired responses from 4 items" in page
+    assert "is not a finding about items" in page and "(interval 1.5 to 2.5)" in page
+    assert "too few" not in page.split("Headline outcome", 1)[1].split("</section>", 1)[0]
+
+
+def test_a_row_the_records_cannot_place_has_an_unknown_unit(root):
+    """A pooled row for a condition with no items paired in the run's records:
+    the unit is not established, and nothing claims it is an item."""
+    _old_mac_analysis(root, ["item-1", "item-2", "item-3"], 1,
+                      [_pooled("formal", 3, 1.0, 3.0), _pooled("casual", 3, 1.0, 3.0)])
+    result = _export(root)
+    units = {row["condition"]: (row["unit_of_analysis"], row["unit_of_analysis_source"])
+             for row in _table(result, "effects.csv")}
+    assert units == {"formal": ("item", "engine_default"), "casual": ("unknown", "not_established")}
+    methods = _read(result, "methods.md")
+    assert "Unit of analysis for the rows marked `unknown`: not established." in methods
+    assert "Unit of analysis for the rows marked `item`: the item" in methods
 
 
 def test_a_run_without_analysis_says_effects_are_not_available(root):

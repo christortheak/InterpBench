@@ -902,14 +902,58 @@ def _read_effects(text):
     return rows, source
 
 
+def _paired_items(responses):
+    """Condition -> how many distinct items have a response under both that
+    condition and the baseline in the run's records: the most pairs an
+    item-level row of that condition can count."""
+    items = {}
+    for record in responses:
+        items.setdefault(str(record.get("condition", "")), set()).add(str(record.get("promptID", "")))
+    baseline = items.get("baseline", set())
+    return {condition: len(ids & baseline) for condition, ids in items.items() if condition != "baseline"}
+
+
+def resolve_units(rows, stamped_unit, paired_items):
+    """Settle each effect row's unit of analysis, once, for every reader: the
+    export's tables, its methods summary, and the results page.
+
+    Sets ``unit_resolved``, ``unit_source`` and ``paired_items`` on each row.
+    A unit the row or its analysis stamped is ``recorded``. Otherwise the
+    engines' rule is the item, an item's samples averaged within each
+    condition, and the run's records can test it: an item-level row counts at
+    most the items paired in the run. A row that counts more paired
+    *responses* (the Mac engine before 0.9.7 paired every response of a
+    multi-sample run with the baseline response of the same item and seed, and
+    stamped nothing) is ``response``, ``inferred_from_records``. A row whose
+    condition has no paired items in the records is ``unknown``. Nothing
+    stored is changed."""
+    for row in rows:
+        items = paired_items.get(row["condition"])
+        row["paired_items"] = items
+        if row["unit"] or stamped_unit:
+            row["unit_resolved"], row["unit_source"] = row["unit"] or stamped_unit, "recorded"
+            continue
+        try:
+            pairs = float(row["n_pairs"]) if row["n_pairs"] != "" else None
+        except (TypeError, ValueError):
+            pairs = None
+        if not items:
+            row["unit_resolved"], row["unit_source"] = "unknown", "not_established"
+        elif pairs is not None and pairs > items:
+            row["unit_resolved"], row["unit_source"] = "response", "inferred_from_records"
+        else:
+            row["unit_resolved"], row["unit_source"] = "item", "engine_default"
+    return rows
+
+
 def _effects_tables(study, run_name, analysis_label, rows, source, stamped_unit):
     has_test = source["test_statistic"] is not None or source["p_value"] is not None
 
     def unit(row):
-        return row["unit"] or stamped_unit or "item"
+        return row["unit_resolved"]
 
     def unit_source(row):
-        return "recorded" if (row["unit"] or stamped_unit) else "engine_default"
+        return row["unit_source"]
 
     def common(table):
         table.add("study", "The study the estimate belongs to.", lambda r: study)
@@ -935,11 +979,15 @@ def _effects_tables(study, run_name, analysis_label, rows, source, stamped_unit)
                   "and under the baseline.", _key("n_pairs"))
         table.add("unit_of_analysis", "What one paired difference is: an item (its "
                   "samples averaged), a transcript (one play-through of a "
-                  "multi-agent conversation), or a sample.", unit)
+                  "multi-agent conversation), a sample, a response (one response "
+                  "paired with the baseline response to the same item and seed; "
+                  "responses to the same item are not independent), or unknown.", unit)
         table.add("unit_of_analysis_source", "Where the unit comes from: recorded "
-                  "when the analysis stamped it, and engine_default when it did "
-                  "not, in which case the engines' documented default, the item, "
-                  "is shown.", unit_source)
+                  "when the analysis stamped it; engine_default when it did not "
+                  "and the run's records agree with the engines' rule, the item; "
+                  "inferred_from_records when the row counts more pairs than the "
+                  "items paired in the run, so it paired responses; and "
+                  "not_established when the records cannot tell.", unit_source)
         table.add("test", "The significance test the engine ran on the paired "
                   f"differences: {WILCOXON} is the Wilcoxon signed-rank test. Empty "
                   "when the analysis stored no test.",
@@ -1311,6 +1359,52 @@ def _describe_condition(name, snapshot):
         return "no intervention (the comparison arm)."
     return ("not described in the run's settings snapshot, so what it applied is "
             "not available here.")
+
+
+#: How the methods summary and the results page describe a row whose unit
+#: the run's records show to be responses (``resolve_units``).
+RESPONSE_UNIT_EXPLANATION = (
+    "These rows count more pairs than the run has paired items, so the analysis "
+    "paired each response with the baseline response to the same item and seed. "
+    "The Mac engine did this before SteerLab 0.9.7 when an item was sampled more "
+    "than once, and stamped no unit. Responses to the same item are not "
+    "independent, so these intervals are narrower than item-level intervals and "
+    "are not findings about items. The stored numbers are copied unchanged; "
+    "analyzing the run again computes item-level rows.")
+
+
+def unit_groups(context):
+    """The pooled rows' resolved units, grouped by how each is known, in the
+    order they first appear: ``[(source, [unit, ...]), ...]``."""
+    rows = context.get("effectRows") or []
+    pooled = [row for row in rows if row["stratify_by"] in ("", "pooled")] or rows
+    groups = {}
+    for row in pooled:
+        units = groups.setdefault(row["unit_source"], [])
+        if row["unit_resolved"] not in units:
+            units.append(row["unit_resolved"])
+    return list(groups.items())
+
+
+def unit_lines(context):
+    """The methods summary's unit-of-analysis lines."""
+    groups = unit_groups(context)
+    lines = []
+    for source, units in groups:
+        marked = f" for the rows marked {_and(_code(u) for u in units)}" if len(groups) > 1 else ""
+        if source == "recorded":
+            lines.append(f"- Unit of analysis{marked}: {_and(_code(u) for u in units)}, as the analysis recorded.")
+        elif source == "engine_default":
+            lines.append(f"- Unit of analysis{marked}: the item, with an item's samples averaged within each "
+                         "condition. This is the engines' documented default; the analysis did not stamp the "
+                         "unit itself. The run's records agree: no such row counts more pairs than the items "
+                         "paired in the run.")
+        elif source == "inferred_from_records":
+            lines.append(f"- Unit of analysis{marked}: the response, not the item. " + RESPONSE_UNIT_EXPLANATION)
+        else:
+            lines.append(f"- Unit of analysis{marked}: not established. The analysis did not stamp it, and the "
+                         "run's records have no items paired with the baseline for these conditions.")
+    return lines
 
 
 def _methods(context):
@@ -1740,13 +1834,8 @@ def _methods(context):
         say("- Estimate: the mean of the paired differences, condition minus "
             "baseline, where a pair is the same unit of analysis measured under "
             "both.")
-        units = context["units"]
-        if context["unitRecorded"]:
-            say(f"- Unit of analysis: {_and(_code(u) for u in units)}, as the analysis recorded.")
-        else:
-            say("- Unit of analysis: the item, with an item's samples averaged within "
-                "each condition. This is the engines' documented default; the "
-                "analysis did not stamp the unit itself.")
+        for line in unit_lines(context):
+            say(line)
         say("- Interval: a bootstrap confidence interval for the estimate. The "
             "number of bootstrap resamples, the random seed, and the confidence "
             "level are " + unavailable(
@@ -1975,7 +2064,7 @@ def _collect(root, study, run_name, steps, now):
         effects_directory = run_directory
     analysis_label = _relative(effects_directory, root) if effects_directory else None
     effects_source, outcomes, corrections, units = None, [], [], []
-    unit_recorded, strata_rows, analysis_flags = False, 0, {}
+    unit_recorded, strata_rows, analysis_flags, unit_sources = False, 0, {}, set()
     exclusions, effect_rows, stamped_unit = [], [], None
     if effects_directory:
         role = "analysis" if analysis_name else "run"
@@ -2004,6 +2093,7 @@ def _collect(root, study, run_name, steps, now):
             exclusions.append(("The run's own analysis", report.get("exclusions")))
         if not isinstance(stamped_unit, str) or not stamped_unit:
             stamped_unit = None
+        resolve_units(rows, stamped_unit, _paired_items(loaded["responses"]))
         pooled, strata = _effects_tables(
             study, run_name, os.path.basename(effects_directory), rows,
             effects_source, stamped_unit)
@@ -2017,10 +2107,10 @@ def _collect(root, study, run_name, steps, now):
                 outcomes.append(row["outcome"])
             if row["correction"] and row["correction"] not in corrections:
                 corrections.append(row["correction"])
-            unit = row["unit"] or stamped_unit
-            if unit and unit not in units:
-                units.append(unit)
-        unit_recorded = bool(units)
+            if row["unit_resolved"] not in units:
+                units.append(row["unit_resolved"])
+            unit_sources.add(row["unit_source"])
+        unit_recorded = bool(units) and unit_sources == {"recorded"}
     else:
         missing.append({"what": "effects.csv",
                         "why": "no analysis of this run was found; analyze the run, "
@@ -2075,6 +2165,7 @@ def _collect(root, study, run_name, steps, now):
         "codingName": names["coding"], "pairedReport": reports["paired"],
         "codingReport": reports["coding"], "outcomes": outcomes,
         "corrections": corrections, "units": units, "unitRecorded": unit_recorded,
+        "unitSources": sorted(unit_sources),
         "strataRows": strata_rows, "effectsSource": effects_source,
         "analysisFlags": analysis_flags, "exclusions": exclusions,
         "experimentHash": experiment_hash, "effectRows": effect_rows,

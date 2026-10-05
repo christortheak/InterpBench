@@ -31,7 +31,11 @@ PAGE_NAME = source.REPORT_PAGE
 MINIMUM_PAIRS = 3
 
 _UNITS = {'item': ('paired item', 'paired items'), 'transcript': ('paired transcript', 'paired transcripts'),
-          'sample': ('paired sample', 'paired samples')}
+          'sample': ('paired sample', 'paired samples'), 'response': ('paired response', 'paired responses'),
+          'unknown': ('pair', 'pairs')}
+#: What the table adds after a unit the analysis did not record itself.
+_UNIT_NOTES = {'engine_default': ' (default)', 'inferred_from_records': ' (from the records)',
+               'not_established': ''}
 _CORRECTIONS = {'bh': 'Benjamini-Hochberg (false discovery rate)', 'holm': 'Holm'}
 _SHORT_CORRECTIONS = {'bh': 'Benjamini-Hochberg', 'holm': 'Holm'}
 _CONTROLS = {
@@ -163,7 +167,7 @@ class Page:
     # -- shared pieces
 
     def unit(self, row):
-        return row['unit'] or self.context.get('stampedUnit') or 'item'
+        return row['unit_resolved']
 
     def family(self, row):
         """How many comparisons the row's correction covered: the rows of the same outcome that carry an adjusted p."""
@@ -171,7 +175,9 @@ class Page:
 
     @staticmethod
     def too_few(row):
-        n = stored_number(row['n_pairs'])
+        """Fewer than the minimum independent pairs. Paired responses are not
+        independent of each other, so a response row counts its items."""
+        n = row['paired_items'] if row['unit_resolved'] == 'response' else stored_number(row['n_pairs'])
         return n is not None and 1 <= n < MINIMUM_PAIRS
 
     def sentence(self, row):
@@ -182,8 +188,16 @@ class Page:
         parts = ['Under ', el('strong', row['condition'] or 'an unnamed condition'), ', ',
                  headline_outcome.plain_phrase(row['outcome']) or row['outcome'], ' differed from the baseline by ',
                  signed_text(row['estimate']) or 'an unrecorded amount', across]
+        if row['unit_resolved'] == 'response':
+            items = row['paired_items']
+            parts.append(f' from {_plural(items, "item", "items")}. These are responses, not items: the analysis '
+                         'paired each response with the baseline response to the same item and seed, so its interval '
+                         'treats responses to the same item as independent and is not a finding about items')
+        elif row['unit_resolved'] == 'unknown':
+            parts.append('. The unit of these pairs is not established')
         if self.too_few(row):
-            parts.append(f'. That is too few pairs for an interval or a test (at least {MINIMUM_PAIRS} are needed), '
+            fewer = 'items' if row['unit_resolved'] == 'response' else 'pairs'
+            parts.append(f'. That is too few {fewer} for an interval or a test (at least {MINIMUM_PAIRS} are needed), '
                          'so this describes these items only.')
             return join(*parts)
         low, high = stored_number(row['ci_lower']), stored_number(row['ci_upper'])
@@ -464,7 +478,7 @@ class Page:
         for row in rows:
             drawn.append([code(row['outcome']), row['condition'], signed_text(row['estimate']),
                           number_text(row['ci_lower']), number_text(row['ci_upper']), count_text(row['n_pairs']),
-                          self.unit(row) + ('' if row['unit'] or self.context.get('stampedUnit') else ' (default)'),
+                          self.unit(row) + _UNIT_NOTES.get(row['unit_source'], ''),
                           number_text(row['test_statistic']), p_text(row['p_value']), p_text(row['adjusted_p_value']),
                           _SHORT_CORRECTIONS.get(row['correction'], row['correction']) or None,
                           *([row['modality'] or None] if modality else []),
@@ -479,22 +493,39 @@ class Page:
                                              'and test the analysis stored, but they describe those items only and '
                                              'are not a test.' if few else ''))
 
+    def unit_explanations(self):
+        """One "Unit of analysis" line per way the rows' units are known: the
+        export's methods summary draws on the same resolution."""
+        groups = source.unit_groups(self.context)
+        lines = []
+        for how, units in groups:
+            label = (join(' for the rows marked ', join(*[code(unit) for unit in units], sep=', '))
+                     if len(groups) > 1 else '')
+            if how == 'recorded':
+                said = join(join(*[code(unit) for unit in units], sep=', '), ', as the analysis recorded.')
+            elif how == 'engine_default':
+                said = ('the item, with an item’s samples averaged within each condition. This is the engines’ '
+                        'documented default; the analysis did not stamp the unit itself. The run’s records agree: no '
+                        'such row counts more pairs than the items paired in the run.')
+            elif how == 'inferred_from_records':
+                said = 'the response, not the item. ' + source.RESPONSE_UNIT_EXPLANATION
+            else:
+                said = ('not established. The analysis did not stamp it, and the run’s records have no items paired '
+                        'with the baseline for these conditions.')
+            lines.append(join(el('strong', 'Unit of analysis'), label, ': ', said))
+        return lines
+
     def effects(self):
         context = self.context
         if context.get('effectsSource') is None:
             return block('Effects', paragraph(
                 'No analysis of this run was found, so there are no effect estimates. Analyze the run, then make '
                 'this page again.'), key='effects')
-        units = context.get('units') or []
         corrections = context.get('corrections') or []
         explained = [
             join(el('strong', 'Estimate'), ': the mean of the paired differences, condition minus baseline. A pair is '
                  'the same unit measured under the condition and under the baseline.'),
-            join(el('strong', 'Unit of analysis'), ': ',
-                 join(join(*[code(unit) for unit in units], sep=', '), ', as the analysis recorded.')
-                 if context.get('unitRecorded') else
-                 'the item, with an item’s samples averaged within each condition. This is the engines’ documented '
-                 'default; the analysis did not stamp the unit itself.'),
+            *self.unit_explanations(),
             join(el('strong', 'Interval'), ': a bootstrap confidence interval for the estimate. The engines compute a '
                  '95% percentile interval by default, but the analysis files do not record the level, the number of '
                  'resamples, or the seed, so this page does not state them as fact.'),
