@@ -3213,6 +3213,11 @@ class JobManager:
                 raise RuntimeError(
                     "this executor cannot override walltime on resubmission")
             submit_kwargs["walltime"] = walltime
+        if after_cancel is not None and after_cancel.get("state") == "records":
+            # BEFORE sbatch: the re-executed script continues a run only
+            # from a saved place, so a submission without one would start
+            # the study over in a fresh directory.
+            self._save_place_from_records(job, after_cancel)
         slurm_id = executor.submit(bundle, **submit_kwargs)
         count = int(rr.get("resubmitCount") or 0)
         next_count = count + 1
@@ -3252,8 +3257,14 @@ class JobManager:
             what = {
                 "parked": "continues the cancelled run from the responses "
                           "it kept",
+                "records": "continues the cancelled run from its completed "
+                           "response records (it was stopped in the middle "
+                           "of a response, before it could save its place; "
+                           "that response is generated again)",
                 "complete": "reports and packages the run, which had already "
                             "finished when the cancel arrived",
+                "empty": "starts the cancelled job from the beginning; it "
+                         "had begun, and completed no response",
             }.get(str(after_cancel.get("state")),
                   "starts the cancelled job, which had not begun, from the "
                   "beginning")
@@ -3611,8 +3622,16 @@ class JobManager:
         - ``complete``: the run had already finished when the cancel landed
           (the script then only reports and packages it);
         - ``unstarted``: no pointer, so no run directory was ever created;
-        - ``unparked``: it started but was stopped before it could save its
-          place, so re-executing would generate every response again;
+        - ``records``: it was stopped before it could save its place (in
+          the middle of a response that outlasted the cancel's grace
+          period), but its run directory holds completed response records
+          it can be continued from. ``recordsRunDirectory`` is the directory
+          whose place the resume saves, ``completedRecords`` how many
+          records it keeps;
+        - ``unparked``: it was stopped before it could save its place and
+          cannot be continued from its records either (``detail`` says
+          why, ``code`` names the reason), so re-executing would generate
+          every response again;
         - ``mismatch``: the directory belongs to a different part of a
           sharded run than this job (``detail`` says which).
         """
@@ -3640,8 +3659,22 @@ class JobManager:
                                                             verb=verb)
         if disposition == "complete":
             return {**found, "state": "complete"}
-        if disposition != "resume":
-            return {**found, "state": "unparked"}
+        saved = resume_mod.read_state(directory) or {}
+        from_records = None
+        if (disposition != "resume"
+                or saved.get("reason") == resume_mod.RECORDS_REASON):
+            # No place saved by the run itself: none at all, or one saved
+            # FOR it from its records by an earlier resume, which a
+            # continuation may have outrun before it was stopped the same
+            # way. Either way the records on disk are what there is to
+            # continue from, so they are read (and counted) afresh.
+            from_records = resume_mod.records_basis(directory, verb=verb)
+            if not from_records["qualifies"]:
+                if disposition != "resume":
+                    return {**found, "state": "unparked",
+                            "code": from_records["code"],
+                            "detail": from_records["reason"]}
+                from_records = None     # the saved place still stands
         # Shard identity, as the run's own resume admission checks it: the
         # directory must be this job's shard of the run, or no shard at all.
         def _shard(index, count) -> str | None:
@@ -3662,17 +3695,23 @@ class JobManager:
                                + " but the job is "
                                + (f"part {expected}" if expected
                                   else "a whole run"))}
-        state = resume_mod.read_state(directory) or {}
+        if from_records is not None:
+            return {**found, "state": "records",
+                    "recordsRunDirectory": directory,
+                    "completedRecords": from_records["completedRecords"]}
         return {**found, "state": "parked",
-                "completedRecords": state.get("completedRecords")}
+                "completedRecords": saved.get("completedRecords")}
 
     @staticmethod
     def _cancel_parked_pipeline(pipeline_directory: str) -> dict:
         """A cancelled PIPELINE job's kept state, from its ledger: finished
         stages are skipped on resume, and the run stage continues response
-        by response when it parked. ``unparked`` when the run stage started
-        and saved no place (resuming would generate every response again),
-        ``unstarted`` when no stage had finished."""
+        by response when it parked. ``records`` when the run stage was
+        stopped before it could save its place but holds completed response
+        records to continue from (``recordsRunDirectory`` is the run
+        stage's own directory, not the pipeline's), ``unparked`` when it
+        holds none it can use (resuming would generate every response
+        again), ``unstarted`` when no stage had finished."""
         from ..experiment import resume as resume_mod
         try:
             with open(os.path.join(pipeline_directory, "pipeline.json"),
@@ -3693,11 +3732,22 @@ class JobManager:
         run_done = run_stage.get("status") == "completed" or (
             run_dir is not None and resume_mod.is_complete(run_dir, "run"))
         if run_dir is not None and not run_done:
-            if resume_mod.is_resumable(run_dir, "run"):
-                state = resume_mod.read_state(run_dir) or {}
+            state = resume_mod.read_state(run_dir) or {}
+            parked = resume_mod.is_resumable(run_dir, "run")
+            if parked and state.get("reason") != resume_mod.RECORDS_REASON:
                 return {"state": "parked",
                         "completedRecords": state.get("completedRecords")}
-            return {"state": "unparked"}
+            # No place saved by the run stage itself (see
+            # ``_cancel_parked_state``): its records are read afresh.
+            basis = resume_mod.records_basis(run_dir, verb="run")
+            if basis["qualifies"]:
+                return {"state": "records", "recordsRunDirectory": run_dir,
+                        "completedRecords": basis["completedRecords"]}
+            if parked:
+                return {"state": "parked",
+                        "completedRecords": state.get("completedRecords")}
+            return {"state": "unparked", "code": basis["code"],
+                    "detail": basis["reason"]}
         finished = sorted(
             name for name, entry in (stages.items()
                                      if isinstance(stages, dict) else [])
@@ -3717,14 +3767,22 @@ class JobManager:
            cannot be established the refusal says "wait, then try again":
            two processes must never write to one run directory. Asked FIRST,
            because a job still winding down may be about to save its place.
-        2. The run kept a state to continue from. Without one, re-executing
-           the script would start over, so the refusal says "submit the
-           study again". A run that had already FINISHED when the cancel
-           landed is admitted too: the script recognises a complete run and
-           only reports and packages it, generating nothing.
+        2. The run kept something to continue from: a state it saved as it
+           parked, or, when it was stopped in the middle of a response
+           before it could save one, the completed response records in its
+           run directory (state ``records``; the place is saved from them
+           when the resume is carried out, never here). With neither,
+           re-executing the script would start over, so the refusal says
+           why and "submit the study again". A run that had already
+           FINISHED when the cancel landed is admitted too: the script
+           recognises a complete run and only reports and packages it,
+           generating nothing.
            ``allow_unstarted`` (a sharded parent's fan-out only) lets a
            shard that never began start from the beginning, which loses
-           nothing and lets the run's other parts be merged.
+           nothing and lets the run's other parts be merged. The same goes
+           for a shard that had begun but completed no response (state
+           ``empty``): it has nothing to lose either, and refusing it would
+           throw away every response the run's other parts completed.
 
         The run's own admission checks (manifest content hash, shard
         identity) are unchanged: the continuation re-executes the same
@@ -3738,7 +3796,11 @@ class JobManager:
                 "wait a minute, then try again", wait=True)
         parked = self._cancel_parked_state(job)
         state = parked["state"]
-        if state in ("parked", "complete") or (
+        if (state == "unparked" and allow_unstarted
+                and parked.get("code") == "noRecords"):
+            state = "empty"
+            parked = {**parked, "state": state}
+        if state in ("parked", "complete", "records", "empty") or (
                 state == "unstarted" and allow_unstarted):
             digest = None
             try:
@@ -3752,14 +3814,51 @@ class JobManager:
                 f"job {job.id} cannot be resumed: {parked.get('detail')} — "
                 "submit the study again")
         if state == "unparked":
+            why = str(parked.get("detail")
+                      or "its run folder holds no completed response")
             raise ResubmitRefused(
                 f"job {job.id} was stopped before it could save its place, "
-                "so resuming would generate every response again — there is "
-                "nothing to resume; submit the study again")
+                f"and {why}, so there is nothing to resume; submit the "
+                "study again")
         raise ResubmitRefused(
             f"job {job.id} was cancelled before it had started generating "
             "responses, so there is nothing to resume; submit the study "
             "again")
+
+    def _save_place_from_records(self, job: Job, after_cancel: dict) -> None:
+        """Carry out the ``records`` admission: save the place of a run that
+        was stopped before it could save its own, from the completed
+        response records in its run directory
+        (``resume.adopt_records``: a line cut off in mid-write is dropped,
+        anything the cut-off response left in a side stream is removed, and
+        ``resume-state.json`` is written). The re-executed script then
+        continues the run through its pointer exactly as it continues a
+        parked one.
+
+        Reached only after the admission, so the scheduler has already
+        confirmed the cancelled job ended: nothing else is writing to the
+        directory. Runs before sbatch, and raises the plain refusal when the
+        directory no longer qualifies, so nothing is submitted that would
+        start the study over. Repeating it is harmless: a crash between this
+        and the submission leaves a saved place the next resume finds."""
+        from ..experiment import resume as resume_mod
+        directory = str(after_cancel.get("recordsRunDirectory") or "")
+        try:
+            adopted = resume_mod.adopt_records(directory, verb="run",
+                                               log=job.log)
+        except (resume_mod.ResumeError, OSError) as exc:
+            raise ResubmitRefused(
+                f"job {job.id} cannot be resumed: the place of its run could "
+                f"not be saved from its response records ({exc}). Nothing "
+                "was submitted; submit the study again") from exc
+        kept = adopted.get("completedRecords")
+        if isinstance(kept, int):
+            after_cancel["completedRecords"] = kept
+        job.log(
+            "the cancelled run was stopped before it could save its place; "
+            f"saved it from the {kept} completed response record(s) in "
+            f"{directory}. A response that was still being generated when "
+            "the run stopped has no record and is generated again")
 
     def _stamp_resumed_after_cancel(self, job: Job, child: Job,
                                     after_cancel: dict) -> None:
@@ -3776,7 +3875,11 @@ class JobManager:
             "endProof": after_cancel.get("endProof"),
             "runDirectory": after_cancel.get("runDirectory"),
             "completedRecords": after_cancel.get("completedRecords"),
-            # parked | complete | unstarted: what the cancelled job had left.
+            # parked | records | complete | unstarted | empty: what the
+            # cancelled job had left. Additive, 2026-10-04: ``records`` (it
+            # saved no place, and was continued from its completed response
+            # records) and ``empty`` (one part of a sharded run that had
+            # begun, completed no response, and starts from the beginning).
             "state": after_cancel.get("state"),
             "recordSha256": after_cancel.get("recordSha256"),
         }}
@@ -3790,6 +3893,9 @@ class JobManager:
             f"ended first ({after_cancel.get('endProof')})"
             + (f"; {kept} completed response record(s) are kept and will "
                "not be generated again" if isinstance(kept, int) else "")
+            + ("; the response in progress when the run stopped will be "
+               "generated again" if after_cancel.get("state") == "records"
+               else "")
             + ". This record stays cancelled; the continuation carries the "
               "run")
 
@@ -3804,6 +3910,10 @@ class JobManager:
         if state == "unstarted":
             sentence = (f"Job {job.id} was cancelled before it began, so it "
                         f"starts from the beginning as job {continuation_id}.")
+        elif state == "empty":
+            sentence = (f"Job {job.id} was cancelled before it had completed "
+                        "a response, so it starts from the beginning as job "
+                        f"{continuation_id}.")
         elif state == "complete":
             sentence = (f"Job {job.id} had already finished its run when the "
                         f"cancel arrived; job {continuation_id} now reports "
@@ -3818,8 +3928,16 @@ class JobManager:
             sentence = (f"Job {job.id} was cancelled; it now continues as "
                         f"job {continuation_id}. Everything it had completed "
                         "is kept and will not be generated again.")
+        from_records = state == "records"
+        if from_records:
+            # The run saved no place: it was stopped in the middle of a
+            # response. Say so, and say what happens to that response.
+            sentence += (" The run was stopped while a response was still "
+                         "being generated; that response has no record, so "
+                         "it will be generated again.")
         return {"resumedAfterCancel": True,
                 "completedRecords": kept if isinstance(kept, int) else None,
+                **({"resumedFromRecords": True} if from_records else {}),
                 "message": sentence + " The cancelled job's record stays "
                                       "cancelled."}
 
@@ -3835,8 +3953,10 @@ class JobManager:
         cancelled shard is not yet confirmed ended the answer is "wait, then
         try again"; if any cannot be continued the answer is "submit the
         study again". Nothing is submitted for a run that could never be
-        merged. A shard that had not begun when it was cancelled starts from
-        the beginning (it has no responses to lose).
+        merged. A shard that had not begun when it was cancelled, or had
+        begun and completed no response, starts from the beginning (it has
+        no responses to lose). A shard stopped in the middle of a response
+        continues from its completed response records.
 
         A run cancelled AFTER its shards were merged (during judging or a
         later pipeline stage) is refused plainly: those stages keep no
@@ -3943,16 +4063,24 @@ class JobManager:
             + (f"; NOT resumed: {'; '.join(not_resumed)} — press Resume "
                "again for those" if not_resumed else ""))
         self.store.update(parent)
+        # A part that was stopped in the middle of a response saved no
+        # place and continues from its completed response records.
+        from_records = any(entry.get("resumedFromRecords")
+                           for entry in resumed)
         return {"ok": True, "resubmitOf": parent.id,
                 "resumedShards": resumed, "manualResubmit": True,
                 "resumedAfterCancel": True,
+                **({"resumedFromRecords": True} if from_records else {}),
                 **({"notResumed": not_resumed} if not_resumed else {}),
                 "message": (
                     f"Run {parent.id} was cancelled; {len(resumed)} of its "
                     f"part{'' if len(resumed) == 1 else 's'} now "
                     f"continue{'s' if len(resumed) == 1 else ''}. Responses "
                     "already completed are kept and will not be generated "
-                    "again.")}
+                    "again."
+                    + (" A response that was still being generated when its "
+                       "part stopped has no record, so it will be generated "
+                       "again." if from_records else ""))}
 
     def _await_concurrent_resubmission(self, job: Job, result_now: dict,
                                        timeout: float = 10.0) -> dict:

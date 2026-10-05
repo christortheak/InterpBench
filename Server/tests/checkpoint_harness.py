@@ -3,10 +3,15 @@
 so the signal path can be exercised end-to-end without a model.
 
     python checkpoint_harness.py <run_dir> <total_records> <seconds_per_record>
+        [--resume-from-records]
 
 Behavior mirrors the headless CLI run path exactly:
 - installs SIGUSR1/SIGTERM checkpoint handlers,
 - resumes when the run directory carries resume-state.json,
+- with ``--resume-from-records``, also resumes a directory that saved no
+  place (the process was killed in mid-response) once the resume gate admits
+  it from its record lines; without the flag such a directory starts over,
+  as a scheduler requeue does,
 - exits 0 on completion (report.json written, resume-state cleared),
 - exits ``resume.CHECKPOINT_EXIT_CODE`` (85) when a signal parked the run.
 """
@@ -38,6 +43,9 @@ def main() -> int:
     os.makedirs(run_dir, exist_ok=True)
     flag = resume.CheckpointFlag().install()
     resuming = resume.is_resumable(run_dir)
+    if not resuming and "--resume-from-records" in sys.argv[4:]:
+        resume.require_resumable(run_dir, verb="run")  # raises unless admitted
+        resuming = True
     if resume.is_complete(run_dir):
         raise resume.ResumeError(f"{run_dir} is complete — refusing to touch it")
     writer = resume.GenerationWriter(run_dir, verb="run", checkpoint=flag,

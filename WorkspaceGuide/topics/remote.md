@@ -329,11 +329,16 @@ keeps every response it completed. To continue it, resume the cancelled job:
 `steerlab-cli remote resubmit <job-id> --json`, or Resume in Compute › Server
 Jobs. If the engine says to wait, wait a minute and retry; do not submit the
 study again meanwhile. A new job continues the run and is named in the
-cancelled record's `result.resubmittedAs`; import evidence from it. A run that
-was stopped before it could save its place cannot be resumed: the cancel
-answer's `cancelResume` field says which it is, and then you submit the study
-again. For a run split across jobs, resume the parent. Nothing resumes a
-cancelled job automatically.
+cancelled record's `result.resubmittedAs`; import evidence from it. A run
+cancelled in the middle of a long response is stopped before it can save its
+place, and is still resumed, from the response records it had completed: the
+answer carries `resumedFromRecords`, says how many records were kept
+(`completedRecords`), and says that the response in progress when the run
+stopped is generated again. Nothing of that unfinished response is kept or
+counted. A run that had completed no response, or whose run folder cannot be
+matched to the study, cannot be resumed; the refusal says why, and then you
+submit the study again. For a run split across jobs, resume the parent.
+Nothing resumes a cancelled job automatically.
 
 <!-- client: python -->
 
@@ -348,11 +353,16 @@ cancelled jobs.
 keeps every response it completed. To continue it, resume the cancelled job:
 `steerlab runner resubmit <job-id> --runner <url> --json`. If the engine says to wait, wait a minute and retry; do not submit the
 study again meanwhile. A new job continues the run and is named in the
-cancelled record's `result.resubmittedAs`; import evidence from it. A run that
-was stopped before it could save its place cannot be resumed: the cancel
-answer's `cancelResume` field says which it is, and then you submit the study
-again. For a run split across jobs, resume the parent. Nothing resumes a
-cancelled job automatically.
+cancelled record's `result.resubmittedAs`; import evidence from it. A run
+cancelled in the middle of a long response is stopped before it can save its
+place, and is still resumed, from the response records it had completed: the
+answer carries `resumedFromRecords`, says how many records were kept
+(`completedRecords`), and says that the response in progress when the run
+stopped is generated again. Nothing of that unfinished response is kept or
+counted. A run that had completed no response, or whose run folder cannot be
+matched to the study, cannot be resumed; the refusal says why, and then you
+submit the study again. For a run split across jobs, resume the parent.
+Nothing resumes a cancelled job automatically.
 
 <!-- client: all -->
 

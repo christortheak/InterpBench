@@ -9,7 +9,10 @@ that makes that safe, and what the record says afterwards:
   once under a double request;
 - cancelled but possibly still running: refused, with "wait, then try again"
   (two processes must never write to one run directory);
-- cancelled with no kept state: refused, with "submit the study again";
+- cancelled with nothing kept to continue from: refused, with "submit the
+  study again". A run stopped in the middle of a response saves no place,
+  but is continued from its completed response records when its folder
+  allows it: that path is pinned in test_resume_from_records.py;
 - the AUTOMATIC path still refuses every cancelled job;
 - after the resume, completed responses are not generated again;
 - the cancelled record stays cancelled and links to its continuation, which
@@ -323,8 +326,12 @@ def test_a_job_cancelled_before_it_started_is_refused(tmp_path, fake_slurm):
 
 def test_a_job_stopped_before_it_could_save_its_place_is_refused(
         tmp_path, fake_slurm):
-    """A started run with no resume-state.json: re-executing the script would
-    begin a fresh run directory and generate every response again."""
+    """A started run with no resume-state.json whose folder cannot be
+    continued from its response records either (here: nothing in it says
+    which version of the study wrote them). Re-executing the script would
+    begin a fresh run directory and generate every response again. A run
+    that CAN be continued from its records is resumed:
+    test_resume_from_records.py."""
     mgr = _manager(tmp_path)
     job, _script, _records, run_dir = _cancelled(mgr, tmp_path, "9311")
     os.remove(os.path.join(run_dir, resume.RESUME_STATE_FILENAME))
@@ -332,6 +339,7 @@ def test_a_job_stopped_before_it_could_save_its_place_is_refused(
         mgr.resubmit(job.id)
     message = str(refused.value)
     assert "before it could save its place" in message
+    assert "does not say which version of the study wrote it" in message
     assert "submit the study again" in message
     assert fake_slurm.calls("sbatch") == []
     assert mgr.get(job.id).status == "cancelled"
@@ -698,7 +706,9 @@ def test_a_pipeline_with_no_finished_stage_has_nothing_to_resume(
 def _sharded_run(mgr, tmp_path, base, *, states):
     """A parent with one shard per entry of ``states``: ``succeeded``,
     ``parked`` (running, kept responses), ``queued`` (never started), or
-    ``unparked`` (started, saved no place). The whole run is then cancelled."""
+    ``unparked`` (started, saved no place, and its folder does not say which
+    version of the study wrote its responses, so they cannot be used). The
+    whole run is then cancelled."""
     script = _dummy_script(tmp_path)
     records = tmp_path / "records"
     records.mkdir(exist_ok=True)
@@ -825,6 +835,11 @@ def test_a_sharded_run_waits_until_every_part_is_confirmed_ended(
 
 def test_a_sharded_run_with_a_part_that_saved_no_place_is_refused_whole(
         tmp_path, fake_slurm):
+    """A part that saved no place and whose responses cannot be used blocks
+    the whole run: without every part it could never be merged. (A part
+    stopped in the middle of a response whose records CAN be used, and a
+    part that completed no response at all, do not block it:
+    test_resume_from_records.py.)"""
     mgr = _manager(tmp_path)
     parent, _children, script = _sharded_run(
         mgr, tmp_path, 9830, states=["parked", "unparked"])
@@ -833,6 +848,8 @@ def test_a_sharded_run_with_a_part_that_saved_no_place_is_refused_whole(
     with pytest.raises(ResubmitRefused) as refused:
         mgr.resubmit(parent.id)
     assert refused.value.wait is False
+    assert "does not say which version of the study wrote it" in str(
+        refused.value)
     assert "submit the study again" in str(refused.value)
     assert fake_slurm.calls("sbatch") == []
 
