@@ -11,15 +11,20 @@ validation-layers, choice-margins). These are the four that did not, including
 `server-minted-agent`, which is the one guarding the agent seam.
 """
 
+import ast
+import importlib
+import importlib.util
+import inspect
 import json
 import os
+import sys
 import warnings
 
 import pytest
 
-FIXTURES = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "Tests", "Fixtures", "cross-engine")
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+FIXTURES = os.path.join(REPO, "Tests", "Fixtures", "cross-engine")
+GENERATOR = os.path.join(REPO, "scripts", "regenerate-cross-engine-fixtures.py")
 
 REGENERATE = ("stale fixture — re-run "
               "`Server/.venv.nosync/bin/python "
@@ -420,3 +425,110 @@ def test_every_committed_fixture_has_a_staleness_test():
     assert present <= covered, (
         "these fixtures have no staleness test: "
         + ", ".join(sorted(present - covered)))
+
+
+def _server_bindings(imports):
+    """Local name -> (dotted origin, live object) for every ``steerlab_server``
+    import in ``imports``, and the imported names that no longer exist."""
+    bound, missing = {}, set()
+    for node in imports:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] != "steerlab_server":
+                    continue
+                module = importlib.import_module(alias.name)
+                if alias.asname:
+                    bound[alias.asname] = (alias.name, module)
+                else:
+                    bound["steerlab_server"] = (
+                        "steerlab_server", sys.modules["steerlab_server"])
+        elif (node.module or "").split(".")[0] == "steerlab_server":
+            module = importlib.import_module(node.module)
+            for alias in node.names:
+                origin = f"{node.module}.{alias.name}"
+                try:
+                    value = importlib.import_module(origin)
+                except ModuleNotFoundError as error:
+                    if error.name != origin:
+                        raise  # a missing dependency, not a moved name
+                    if not hasattr(module, alias.name):
+                        missing.add(f"line {node.lineno}: {origin}")
+                        continue
+                    value = getattr(module, alias.name)
+                bound[alias.asname or alias.name] = (origin, value)
+    return bound, missing
+
+
+def _dotted(node):
+    chain = []
+    while isinstance(node, ast.Attribute):
+        chain.append(node.attr)
+        node = node.value
+    return (node.id, chain[::-1]) if isinstance(node, ast.Name) else (None, [])
+
+
+def test_every_server_name_the_generator_uses_still_exists(monkeypatch):
+    """The fixtures above can all be current while the script that remakes them
+    no longer runs. Nothing imports the generator, so a refactor that moves a
+    server function updates every caller and test it can see and leaves this
+    one to fail at the next regeneration — which is exactly when a contract has
+    moved and the fixtures are needed (2026-09-05: the task facade stopped
+    re-exporting ``_load_prompts``, now ``task_inputs.load_prompts``, and every
+    fixture after ``auto_prompt_ids`` stopped regenerating until 2026-10-05).
+
+    Nothing is generated here. The script is imported, then every
+    ``steerlab_server`` import it makes, every attribute it reads off one, and
+    the keywords and arity of every call into one are resolved against the
+    live package."""
+    monkeypatch.setattr(sys, "path", list(sys.path))  # it prepends Server/
+    spec = importlib.util.spec_from_file_location(
+        "regenerate_cross_engine_fixtures", GENERATOR)
+    spec.loader.exec_module(importlib.util.module_from_spec(spec))
+
+    with open(GENERATOR, encoding="utf-8") as handle:
+        tree = ast.parse(handle.read())
+    module_imports = [node for node in tree.body
+                      if isinstance(node, (ast.Import, ast.ImportFrom))]
+    unresolved, resolved = set(), set()
+    for function in tree.body:
+        if not isinstance(function, ast.FunctionDef):
+            continue
+        # Bound per function: the generator imports inside each one, and the
+        # same short alias may name different modules in different functions.
+        bound, missing = _server_bindings(module_imports + [
+            node for node in ast.walk(function)
+            if isinstance(node, (ast.Import, ast.ImportFrom))])
+        unresolved |= missing
+        for node in ast.walk(function):
+            root, chain = _dotted(node.func if isinstance(node, ast.Call) else node)
+            if root not in bound:
+                continue
+            origin, value = bound[root]
+            for attr in chain:
+                if not hasattr(value, attr):
+                    unresolved.add(f"line {node.lineno}: {origin}.{attr}")
+                    break
+                origin, value = f"{origin}.{attr}", getattr(value, attr)
+            else:
+                resolved.add(origin)
+                if (not isinstance(node, ast.Call)
+                        or any(isinstance(a, ast.Starred) for a in node.args)
+                        or any(k.arg is None for k in node.keywords)):
+                    continue
+                try:
+                    signature = inspect.signature(value)
+                except (TypeError, ValueError):
+                    continue
+                try:
+                    signature.bind(*node.args,
+                                   **{k.arg: k.value for k in node.keywords})
+                except TypeError as error:
+                    unresolved.add(f"line {node.lineno}: {origin}(): {error}")
+
+    assert not unresolved, (
+        "scripts/regenerate-cross-engine-fixtures.py uses server names that "
+        "no longer exist or no longer take its arguments:\n  "
+        + "\n  ".join(sorted(unresolved)))
+    # A restructured generator (a dynamic import, say) must not turn this
+    # into a check of nothing.
+    assert len(resolved) >= 30, sorted(resolved)
