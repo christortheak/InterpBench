@@ -159,7 +159,8 @@ def test_the_verb_is_declared_like_every_other(capsys):
 #: Every verb family either client has. A code span that opens with one of
 #: these words followed by a verb is a command, and it must be this client's.
 FAMILIES = {'workspace', 'setup', 'science', 'experiment', 'concept', 'bundle', 'pack', 'design', 'agent', 'model',
-            'authoring', 'runner', 'run', 'panel', 'data', 'vectors', 'remote', 'cluster', 'docs', 'install', 'init'}
+            'authoring', 'runner', 'run', 'panel', 'data', 'vectors', 'remote', 'cluster', 'docs', 'install', 'init',
+            'results'}
 WORD = re.compile(r'[a-z][a-z-]*')
 #: A bare hyphenated word shaped like one of the two clients' verbs
 #: (`set-sampling`, `pin-rubric`, `submit-bundle`): it has to be a verb THIS

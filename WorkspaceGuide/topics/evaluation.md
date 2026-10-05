@@ -283,3 +283,45 @@ directory, never touching the source. New reports preserve the source run.
 
 The engine's three CPU verbs return typed envelopes and 64/65/66/70 for
 usage/refusal/missing input/failure; do not depend on the old catch-all exit 1.
+
+## Exporting results
+
+`results export` takes a completed run out of the workspace as files a
+researcher can use elsewhere. It loads no model, changes nothing under
+`runs/`, and recalculates nothing: every number is copied from what the
+engine stored. It needs no permission beyond the researcher wanting the files.
+
+```bash
+{{cli}} results export <study> [--run <run-dir>] [--out <dir>] --json
+```
+
+By default it exports the newest completed run with its newest analysis and
+evaluation, into a new folder under `exports/` in the workspace. `--run` names
+another run, and `--out` names a new or empty folder. A folder inside `runs/`
+is refused. `result.exportDirectory` is the folder, and `result.files` lists
+what was written:
+
+- `responses.csv`: one row per response, with the outcomes recorded for it.
+- `effects.csv`: one row per outcome and condition, under one set of column
+  names whichever engine made the run. `effects-by-stratum.csv` holds the
+  rows for subgroups of the items.
+- `judgments.csv` for paired judging, or `codings.csv` for response coding:
+  one row per judgment, with noncompliant rows included and marked.
+- `choice-readouts.csv`: readings of the answer options, when the run took any.
+- `transcripts/`: for a multi-agent study, one text file per conversation,
+  and `turns.csv` with one row per turn.
+- `methods.md`, a plain-language account of how the results were produced;
+  `codebook.md`, which describes every column; and `manifest.json`, which
+  names every file the export was built from, with its hash.
+
+The tables are UTF-8 with one header row, and open in R, Stata, SPSS, and
+spreadsheet programs. An empty cell means the run did not record the value. A
+line break inside a text cell is written as ` ¶ `, so that every row stays on
+one line.
+
+Read `result.notAvailable` and tell the researcher what it lists. A run with
+no analysis exports no `effects.csv`, and `methods.md` says so; analyze the
+run, then export again. `methods.md` states plainly when a study was frozen
+with force, was not frozen, or carries a capability-battery exemption. Repeat
+that to the researcher. Do not edit it out of text they will adapt for a
+paper.
