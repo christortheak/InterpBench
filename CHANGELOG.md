@@ -12,6 +12,19 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **A failed run's own record no longer names the computer it ran on.**
+  When a stage fails, either engine writes `FAILED.md` and `run-status.json`
+  into its run directory, and a partial evidence bundle carries that
+  directory home unchanged. The error in both files, and the Python engine's
+  traceback, gave full paths: the traceback named every file of the server's
+  installation, usually inside a home folder, and the error often named the
+  run's own files or a model folder. Both files now spell paths as
+  `runs/<run ID>/…`, `<workspace>`, `<steerlab_server>/…`, `<site-packages>`,
+  `<stdlib>`, `<tmp>`, or `<home>`, so the traceback still shows each module
+  and line. The rewriting happens when the files are written, not when they
+  are packaged, because a bundle's files must match the run directory byte
+  for byte. The job record on the computer that ran the job keeps the full
+  paths, and runs recorded before this change keep their original text.
 - **Older Mac analyses are described by what they counted.** Before this
   release, the Mac engine paired every response of a study run with several
   samples per item and counted responses, not items. `results export` and

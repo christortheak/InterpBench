@@ -29,6 +29,8 @@ import os
 import time
 import traceback
 
+from . import path_redaction
+
 #: The run directory the CURRENT unit of work most recently created.
 #:
 #: Set by ``paths.make_unique_run_directory``, so every stage registers its
@@ -128,6 +130,29 @@ class RunStatus:
     def judgment_count(self) -> int:
         """Back-compat alias for the evaluate path's original name."""
         return self.item_count
+
+    def _redact(self, text: str) -> str:
+        """``text`` with its absolute paths rewritten (``runs/<run ID>/…``,
+        ``<steerlab_server>/…``, ``<home>/…``; see ``path_redaction``).
+
+        Every error this directory records is redacted when it is WRITTEN.
+        A partial evidence bundle archives the directory verbatim, its
+        members are hash-pinned, and it must match the directory on disk, so
+        the archive cannot be redacted on its own. Unredacted, the traceback
+        named every frame's source file, which is the server's install
+        inside a home folder, and an exception message often names the
+        run's own files, so every copy of the bundle named the account that
+        ran the job. The job record and the server's log keep the full
+        paths, on the machine where they are useful.
+
+        Never raises: ``fail`` runs while a real error is unwinding, and a
+        fault in the redactor must not replace it. The record then keeps the
+        text as given, which is what it held before redaction existed."""
+        try:
+            return path_redaction.redact_paths(
+                text, run_directory=self.run_directory)
+        except Exception:  # noqa: BLE001 - the record outranks its redaction
+            return text
 
     # -- snapshot ---------------------------------------------------------
 
@@ -241,14 +266,14 @@ class RunStatus:
         self.status = "checkpointed"
         self.finished_at = time.time()
         if reason:
-            self.error = reason
+            self.error = self._redact(reason)
             self.error_type = "CheckpointRequested"
         self.write()
 
     def fail(self, exc: BaseException) -> None:
         self.status = "failed"
         self.finished_at = time.time()
-        self.error = str(exc)
+        self.error = self._redact(str(exc))
         self.error_type = type(exc).__name__
         self.write()
         self._write_failure_note(exc)
@@ -303,7 +328,10 @@ class RunStatus:
         try:
             path = os.path.join(self.run_directory, FAILURE_NOTE_FILENAME)
             with open(path, "w", encoding="utf-8") as handle:
-                handle.write("\n".join(lines))
+                # The whole note in one pass: the error line and every
+                # traceback frame. Only paths change, so the `**Error:**`
+                # line keeps the shape the Results Explorer parses.
+                handle.write(self._redact("\n".join(lines)))
         except OSError:
             pass
 
