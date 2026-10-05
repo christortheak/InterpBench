@@ -225,6 +225,9 @@ DEVELOPER_DIR=<Xcode 27> xcodebuild test -skipMacroValidation \
 cd Server && .venv.nosync/bin/python -m pytest -q
 ```
 
+`python3 scripts/release-gate.py` runs every release gate in order, serially, and
+stops at the first failure; `RELEASING.md` is the procedure it belongs to.
+
 ## Where the depth is
 
 For coding agents adding scientific capabilities:

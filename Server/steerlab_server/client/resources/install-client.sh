@@ -279,7 +279,10 @@ run_child tar -xzf "$stage/uv.tar.gz" -C "$stage" || step_failed 'unpacking uv'
 uv="$stage/uv-$platform/uv"
 export UV_CACHE_DIR="$stage/cache" UV_PYTHON_INSTALL_DIR="$stage/python" UV_NO_CONFIG=1 UV_PYTHON_PREFERENCE=only-managed
 export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-$stall_seconds}" UV_HTTP_CONNECT_TIMEOUT="${UV_HTTP_CONNECT_TIMEOUT:-$connect_timeout}" UV_HTTP_RETRIES="${UV_HTTP_RETRIES:-$download_retries}"
-unset PYTHONPATH PYTHONHOME UV_INDEX_URL UV_EXTRA_INDEX_URL UV_DEFAULT_INDEX UV_INDEX UV_FIND_LINKS UV_PYTHON UV_PROJECT_ENVIRONMENT VIRTUAL_ENV || true
+# A person's environment must not redirect where packages or the managed Python come from,
+# replace the Python download metadata (which carries its checksums), or weaken TLS.
+unset PYTHONPATH PYTHONHOME UV_INDEX_URL UV_EXTRA_INDEX_URL UV_DEFAULT_INDEX UV_INDEX UV_FIND_LINKS UV_PYTHON UV_PROJECT_ENVIRONMENT VIRTUAL_ENV \
+    UV_PYTHON_INSTALL_MIRROR UV_PYPY_INSTALL_MIRROR UV_PYTHON_DOWNLOADS_JSON_URL UV_INSECURE_HOST || true
 printf 'Preparing Python and installing the lightweight client…\n' >&2
 uv_step 'downloading the managed Python' "$uv" venv --no-project --python "$python_version" "$stage/venv"
 uv_step 'downloading and installing the client packages' "$uv" pip sync --python "$stage/venv/bin/python" --require-hashes --only-binary :all: --default-index https://pypi.org/simple "$stage/release/client-requirements.lock"

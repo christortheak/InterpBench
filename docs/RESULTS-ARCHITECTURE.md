@@ -271,9 +271,10 @@ checkable by someone who was not there.
   condition inside `run` (`conditions[].capabilityBattery`, `battery.jsonl`),
   because "the concept moved the decision" and "the model got worse at
   everything" otherwise produce the same table. Judges are pinned instruments:
-  hashed rubric file, paired against the same item's baseline, at least two
-  genuinely distinct judges — identity resolves to (kind, model, provider), so
-  two local judges with blank model fields are one judge agreeing with itself.
+  hashed rubric file, paired against the same item's baseline. One judge is
+  allowed; a panel of two or more must be genuinely distinct — identity resolves
+  to (kind, model, provider), so two local judges with blank model fields are
+  one judge agreeing with itself — and only a panel can report agreement.
 - **The viewer never invents a statistic.** In the Results Explorer — the one
   canonical results surface — every number is **stored** (read from a run
   artifact, rendered plain), **derived** (computed by the viewer from stored

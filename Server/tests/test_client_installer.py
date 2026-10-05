@@ -577,3 +577,16 @@ def test_a_lock_held_on_another_machine_is_left_alone(tmp_path):
     assert result.returncode == 65 and response['code'] == 'setupInProgress'
     assert 'another-machine' in response['reason'] and str(lock) in response['repairAction']
     assert (lock / 'owner').is_file() and runtime.resolve() == old
+
+
+def test_the_installer_ignores_environment_that_redirects_or_weakens_its_downloads():
+    """A person's environment must not choose where uv fetches packages or the managed
+    Python, replace the Python download metadata that carries its checksums, or weaken
+    TLS. Every such variable is unset before uv runs."""
+    script = (RESOURCES / 'install-client.sh').read_text()
+    start = script.index('unset PYTHONPATH')
+    line = script[start:script.index('|| true', start)]
+    for name in ('UV_INDEX_URL', 'UV_EXTRA_INDEX_URL', 'UV_DEFAULT_INDEX', 'UV_INDEX', 'UV_FIND_LINKS',
+                 'UV_PYTHON_INSTALL_MIRROR', 'UV_PYPY_INSTALL_MIRROR', 'UV_PYTHON_DOWNLOADS_JSON_URL',
+                 'UV_INSECURE_HOST'):
+        assert name in line.split(), name

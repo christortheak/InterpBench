@@ -333,8 +333,10 @@ Caveats specific to MPS:
 - Set `PYTORCH_ENABLE_MPS_FALLBACK=1` so a missing Metal kernel falls back to CPU
   instead of erroring.
 - This is *not* the same path as the native MLX app — it's the PyTorch engine
-  happening to use Metal. For the real M-series-optimized experience on the Mac,
-  the MLX app remains the intended tool; MPS here is for local server testing.
+  using Metal. In the app it is the "This Mac, full capabilities" choice: it runs
+  every method, including those the built-in MLX engine lacks, within the Mac's
+  memory. The built-in engine ("This Mac, quick start") is quicker to set up for
+  core steering studies on small models.
 
 ## Config files
 

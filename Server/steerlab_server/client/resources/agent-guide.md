@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guide version: 3
+Guide version: 4
 
 You are a coding assistant working inside a **SteerLab data workspace**. This
 file is the core contract: read it before running anything. It is short on
@@ -76,6 +76,10 @@ verbs: never type one client's command under the other's name.
 | The Mac app's command line | `steerlab-cli` | `--workspace <dir>` | on this Mac, or on a cluster site |
 | The cross-platform Python client | `steerlab` | `--root <dir>` | through a runner, local or remote |
 
+The Python client is a preview: it authors studies and submits them to a runner
+someone has set up. It does not run models itself. On a Mac, the app is the
+supported route to running studies and reading their results.
+
 Either client also reads `STEERLAB_WORKSPACE`. Name the workspace in every
 session: on the Mac command line an unnamed workspace falls back to the app's
 last choice, which may be a different study. Every JSON answer carries a
@@ -104,8 +108,9 @@ Never guess a verb or a flag. Ask the installed client, in this order:
    `conceptStudy`, `agentComparison`, or `multiAgent`, returns the same
    questions the app asks. Discuss the substantive choices with the researcher
    before authoring anything.
-3. **The method catalog.** `science list --brief --json` names the methods
-   (drop `--brief` for the full catalog, with every operation).
+3. **The method catalog.** `science list --brief --json` names the methods and
+   operations, and says where each operation runs (drop `--brief` for the full
+   catalog).
    `science guide <method> --json` returns one method's dataset shapes, author
    prompt, and independent review prompt. These commands only read guidance.
 4. **The topic guides.** `workspace guide` lists them, and `workspace guide
@@ -157,7 +162,7 @@ Where each file lives, and its exact shape, is the `workspace` topic.
 | Sweep and promote (optional) | Try a planned range of layers and strengths, then choose one | `sweep` |
 | Verify and freeze | Fix the settings before behavior is measured; one-way | `freeze` |
 | Run | Generate under every condition into an immutable run directory | `lifecycle`, `remote` |
-| Evaluate and analyze | Judge the responses and compute effect sizes. Lead a summary with the outcome the study is about, and say how it was chosen. `results export <study>` writes tables, transcripts, and a methods summary | `evaluation` |
+| Evaluate and analyze | Judge the responses and compute effect sizes. Lead a summary with the outcome the study is about, and say how it was chosen. `results export <study>` writes tables, transcripts, and a methods summary; `results report <study>` writes one page to open or send | `evaluation` |
 | Keep the evidence | Verify what came home, and what it proves | `custody` |
 
 Study packs and attaching existing agents or vectors are the `assembly` topic.
@@ -220,6 +225,12 @@ topic.
 - **Do not write into `runs/`**, and do not edit a frozen manifest or a
   `pinned/` snapshot.
 - **Do not edit a manifest to iterate.** `duplicate`, then edit the copy.
+- **Do not move or delete studies, templates, or agents by hand.** Use the
+  `rename` and `delete` verbs, which preview first. The researcher sees your
+  changes when they switch back to the app or press Refresh.
+- **Never acknowledge custom code on the researcher's behalf.** A study can
+  carry an intervention policy's custom code; show them the notice and the
+  code (`experiment acknowledge-custom-code <study>`) and let them decide.
 - **Do not treat an advisory as a failure**, and do not ignore one.
 - **Do not skip `validation.jsonl`.** A study whose vectors were never probed
   on held-out material measures its own stimulus vocabulary.

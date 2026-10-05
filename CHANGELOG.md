@@ -12,6 +12,64 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **Version 0.9.7.**
+- **Home guides a first study.** A seven-step checklist, from a workspace to
+  exported results, marks each step from what the workspace holds and offers
+  Open Demo Workspace. The sidebar groups Probes, Multi-Agent, and Analysis
+  under Advanced, as Data does for Adapter Training and OptVec. Method guides
+  read as formatted text, with command lines in a part for coding assistants.
+- **The app notices a coding assistant's work** without a restart: switch back
+  to it, or press Refresh in Studies, Templates, or the Agent Library. A study
+  or template file it cannot read is listed with the reason. Both command
+  lines record where each job they submit went, so the app imports its
+  evidence without a reconnect.
+- **Rename and delete from either command line**: `experiment rename|delete`
+  for drafts, `design rename|delete` for templates, and `agent delete`. Each
+  previews first and applies with the reviewed digest and `--yes`. Deletes
+  move into a `.trash-<time>` folder; nothing in `runs/` changes. In the app,
+  every Studies refusal shows its reason, what to do, and the command-line
+  repair, and template and agent deletes move to trash instead of erasing.
+- **The app offers the Python engine wherever a method needs it**: on the
+  quick start, a switch to This Mac, full capabilities; on the Python engine,
+  a Connect button. The app says "coding assistant" for your AI tool, "agent"
+  for a configured model, and "template" for reusable study settings.
+- **Method limits while authoring.** The catalog says where each operation
+  runs, on both command lines, and `experiment verify` and the readiness
+  checklist say, without blocking, when the workspace's compute cannot run
+  something the study declares.
+- **Custom code notice.** A shared study whose intervention policy carries
+  custom code says so on `pack apply`, `bundle import`, `attach-agent`, and
+  the app's study page. A step that runs it waits for `experiment
+  acknowledge-custom-code` (or the app's button), which records who
+  acknowledged which SHA-256, and when. `SECURITY.md` explains what is code,
+  what the update check sends, and the open local engine.
+- **The Mac keeps settings it does not know** when it saves a draft, and
+  refuses to freeze them, asking you to update.
+- **`results report <study>`** on both command lines, and Open Report in the
+  app, write a run's stored results as one self-contained HTML page outside
+  `runs/`. `results export` includes it as `report.html`.
+- **Marker density is the same on both engines**: accented and non-Latin words
+  count. Python-engine runs record marker density. The Mac engine analyzes
+  multi-agent studies per conversation, as the Python engine does.
+  `steerlab experiment pin-rubric` computes the rubric hash for you.
+- **A sturdier client installer.** Downloads are bounded and retried; each
+  failure has a code; a lock left by an interrupted setup is reclaimed; the
+  plan states the download size; Ctrl-C or Cancel stops cleanly. A person's
+  environment can no longer redirect the managed Python download or weaken
+  TLS. The app-free client is described everywhere as a preview that authors
+  studies and submits them to a runner.
+- **Documentation for researchers**: a getting-started page for both routes,
+  four guides (concepts and glossary, working with a coding assistant, models
+  and hardware and limits, reporting and troubleshooting), `CONTRIBUTING.md`,
+  issue forms that ask for nothing sensitive, and a filled-in citation file.
+  The documents agree with the code on judges (one is allowed) and sampled
+  runs (either engine).
+- **Release engineering.** `scripts/release-gate.py` runs every release check
+  in order, and `RELEASING.md` is the procedure. Release builds ship only the
+  analysis script the app runs, the artifact scan no longer mistakes a
+  checksum for a private name, and tests that need a cached tokenizer report
+  as skipped.
+- A refused local workspace action, such as `science report`, now exits 65.
 - **Results lead with the outcome the study is about.** The app, both
   analysis envelopes, and the results explorer lead with the outcome the study
   declared (`experiment set-primary-outcome`, or the Studies page), else a
