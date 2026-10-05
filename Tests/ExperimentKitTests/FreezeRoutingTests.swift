@@ -127,7 +127,10 @@ struct FreezeRoutingTests {
                 serverHasSelectedStudy: false))
         #expect(decision.blockedReason?.contains("server-resident copy only") == true)
         #expect(decision.blockedReason?.contains("serve --root") == true)
-        #expect(decision.blockedReason?.contains("Local (MLX)") == true)
+        // The other way forward names the compute choice the app shows.
+        #expect(
+            decision.blockedReason?.contains(ComputeChoice.macQuickStart.title) == true)
+        #expect(decision.blockedReason?.contains("Local (MLX)") == false)
     }
 
     @Test func unknownResidencyNeverBlocks() {

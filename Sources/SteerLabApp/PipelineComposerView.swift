@@ -123,7 +123,7 @@ struct PipelineComposerSection: View {
     cosines (the artifacts the validation gates read).
     • sweep — try the layer×alpha grid on dev prompts; the declared \
     selection rule picks each concept's winning cell.
-    • promote — mint each winning cell as a named agent with a birth \
+    • promote — make each winning cell a named agent with a birth \
     certificate.
     • run — the actual study: every task prompt × condition, paired to \
     baseline, with the capability battery per condition.
@@ -176,7 +176,7 @@ struct PipelineComposerSection: View {
             "include the sweep stage — try the layer×alpha grid on dev "
                 + "prompts and let the declared rule pick each winning cell"
         case "promote":
-            "include the promote stage — mint each winning cell as a named "
+            "include the promote stage — make each winning cell a named "
                 + "agent with a birth certificate"
         case "run":
             "include the run stage — the study itself: every task prompt × "

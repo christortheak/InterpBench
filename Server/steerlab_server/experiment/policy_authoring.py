@@ -90,7 +90,7 @@ def review(settings, root):
     raw = encode(doc)
     notes = ['Validate the complete modified agent on held-out data. A useful probe does not by itself establish a useful intervention.',
              'Strength multiplies the stored vector directly; it is not a residual-norm unit. Policy ablation follows existing static steering.',
-             'Execution uses Python Compute, with one unpadded sequence per response.']
+             'Execution uses the Python engine, with one unpadded sequence per response.']
     if doc.get('provider'): notes.append('Expert provider: publishing pins trusted Python source and assets. Execution runs this code with the engine’s permissions; it is not sandboxed.')
     if any(a.get('source', {}).get('revision') is None for a in doc['actions'] if 'vector' in a): notes.append('At least one direction has no recorded source revision. Confirm its provenance before interpreting transfer.')
     return {'document': doc, 'planSHA256': hashlib.sha256(raw).hexdigest(), 'limitations': notes, 'changed': False}

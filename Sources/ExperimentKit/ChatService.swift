@@ -1474,7 +1474,7 @@ public final class ChatService {
         selectedModelID = record.artifact.baseModelID
         guard loadedModelID == record.artifact.baseModelID, state == .ready else {
             errorMessage =
-                "variant '\(record.artifact.name)' selected; load "
+                "agent '\(record.artifact.name)' selected; load "
                 + "\(record.artifact.baseModelID) to apply its adapter and vectors"
             return
         }
@@ -1573,7 +1573,7 @@ public final class ChatService {
         steeringEnabled = !restoredSlots.isEmpty
         resetChat()
 
-        var notes: [String] = ["loaded variant '\(artifact.name)'"]
+        var notes: [String] = ["loaded agent '\(artifact.name)'"]
         if let unitFlipNote {
             notes.append(unitFlipNote)
         }
@@ -1585,7 +1585,7 @@ public final class ChatService {
             notes.append("\(missingVectors) vector\(missingVectors == 1 ? "" : "s") not found")
         }
         if artifact.systemPrompt == nil, artifact.systemPromptHash != nil {
-            notes.append("older variant stores only a system-prompt hash")
+            notes.append("this older agent file stores only a system-prompt hash")
         }
         errorMessage = notes.count > 1 ? notes.joined(separator: "; ") : nil
     }
@@ -3506,7 +3506,7 @@ public final class ChatService {
                     cluster.remoteVariants = liveVariants
                     guard liveVariants.contains(where: { $0.path == variantPath }) else {
                         errorMessage =
-                            "server variant no longer exists (\(variantPath)); "
+                            "the server agent no longer exists (\(variantPath)); "
                             + "re-select or re-upload it"
                         return
                     }
@@ -3516,7 +3516,7 @@ public final class ChatService {
                     {
                         selectedRemoteVariantHash = liveHash
                         cluster.activity =
-                            "server variant was re-saved; using the latest version"
+                            "the server agent was re-saved; using the latest version"
                     }
                 }
                 lastServerVariantProvenance = "stored variant \(variantPath)"
@@ -3545,7 +3545,7 @@ public final class ChatService {
                 // this send never claims a stored variant's identity.
                 guard let model = selectedRemoteModelID, !model.isEmpty else {
                     errorMessage =
-                        "select a server model first — the inline variant spec "
+                        "select a server model first — an unsaved agent "
                         + "pins its base model"
                     return
                 }

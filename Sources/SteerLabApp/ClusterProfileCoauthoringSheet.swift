@@ -16,19 +16,19 @@ struct ClusterProfileCoauthoringSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Configure from documentation").font(.title2)
-            Text("Give your agent the cluster documentation and this prompt. It will return a profile with sources and questions about missing facts. Credentials stay in the Keychain.")
+            Text("Give your coding assistant the cluster documentation and this prompt. It will return a profile with sources and questions about missing facts. Credentials stay in the Keychain.")
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
                 CopyButton(
                     help: "copies the authoring prompt, the independent "
                         + "reviewer's prompt, and an example of the JSON shape "
-                        + "the agent must answer with",
+                        + "the coding assistant must answer with",
                     text: { promptPacket() }
                 ) {
-                    Text("Copy agent and reviewer prompts")
+                    Text("Copy prompts for your coding assistant and a reviewer")
                 }
-                Button("Review agent draft…") { showingImporter = true }
-                    .help("reads the JSON your agent produced and checks its "
+                Button("Review the returned draft…") { showingImporter = true }
+                    .help("reads the JSON your coding assistant produced and checks its "
                         + "declarations and source references — it never "
                         + "contacts the cluster")
             }
@@ -38,7 +38,7 @@ struct ClusterProfileCoauthoringSheet: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(review.readyForImport ? "Ready for your factual review" : "Questions remain")
                             .font(.headline)
-                        Text("This check verifies declarations and source references. Review the citations with your agent before accepting the configuration. It does not test connectivity or authorize cluster work.")
+                        Text("This check verifies declarations and source references. Review the citations with your coding assistant before accepting the configuration. It does not test connectivity or authorize cluster work.")
                             .font(.caption)
                         switch review.profile.transport {
                         case .ssh(let host, let jump, let port, _):
@@ -132,11 +132,11 @@ struct ClusterProfileCoauthoringSheet: View {
     private var importDisabledReason: String? {
         guard let review else {
             return "no draft reviewed yet — copy the prompts, then open your "
-                + "agent's JSON with Review agent draft…"
+                + "coding assistant's JSON with Review the returned draft…"
         }
         guard review.readyForImport else {
             return "the review left questions or blockers above — answer them "
-                + "with your agent and review the corrected draft"
+                + "with your coding assistant and review the corrected draft"
         }
         return nil
     }
@@ -150,7 +150,7 @@ struct ClusterProfileCoauthoringSheet: View {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let example = String(
                 decoding: try encoder.encode(guide.draftExample), as: UTF8.self)
-            message = "Share the copied prompts with your agent alongside the "
+            message = "Share the copied prompts with your coding assistant alongside the "
                 + "documentation."
             return guide.authorPrompt + "\n\nIndependent reviewer:\n"
                 + guide.reviewerPrompt

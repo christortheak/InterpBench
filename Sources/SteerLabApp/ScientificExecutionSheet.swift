@@ -235,8 +235,8 @@ struct ScientificExecutionSheet: View {
             .frame(height: 60)
             .accessibilityLabel("Agents, one per line")
             .help("one agent per line — the pinned model itself (baseline), a "
-                + "steering condition on it (concept:layer:alpha), or a variant "
-                + "artifact this server holds, which brings its own base model")
+                + "steering condition on it (concept:layer:alpha), or a saved agent "
+                + "file this server holds, which brings its own base model")
     }
 
     /// The model from the server's installed inventory (`/api/state`), with

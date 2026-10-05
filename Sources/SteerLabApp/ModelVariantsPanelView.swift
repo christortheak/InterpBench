@@ -1496,8 +1496,10 @@ struct ModelVariantsPanelView: View {
             else { continue }
             guard let client = service.cluster.client else {
                 panel.setStatus(
-                    "could not save agent: no server connection to fetch "
-                        + "vector '\(record.concept)' into the workspace")
+                    "could not save the agent. "
+                        + PythonEngineNotice.notConnected(
+                            "Copying the vector '\(record.concept)' into this "
+                                + "workspace", plural: false, buttonHere: false))
                 return
             }
             do {
@@ -2219,16 +2221,18 @@ struct ModelVariantsPanelView: View {
                         + "artifact name, \"variant\"")
                 ForEach(report.coherenceItems.filter { $0.judge != nil }, id: \.index) { item in
                     if let judge = item.judge {
-                        DisclosureGroup("Judge \(item.index): \(item.judgeResult ?? judge.winner)") {
+                        DisclosureGroup(
+                            "Judge \(item.index): "
+                                + VariantRobustnessReadout.armLabel(
+                                    item.judgeResult ?? judge.winner)
+                        ) {
                             Text(judge.briefReason)
                                 .font(.caption)
                                 .textSelection(.enabled)
                         }
                         .help(
                             "the judge's verdict and its brief reason for "
-                                + "coherence prompt \(item.index) — "
-                                + "\"variant\" is the report's name for the "
-                                + "agent arm")
+                                + "coherence prompt \(item.index)")
                     }
                 }
             }

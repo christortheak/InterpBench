@@ -43,6 +43,20 @@ final class ComputeChoiceCoordinator {
     /// The cluster setup wizard (presented by the connection menu's view).
     var showingClusterWizard = false
 
+    /// Sheets on screen that present the two sheets above ON themselves
+    /// (`HostsComputeSheets`), innermost last. While any is up the main
+    /// window's copy stands down: a sheet asked for from inside a sheet has
+    /// to be presented on that sheet, as Research Setup already does.
+    private(set) var sheetHosts: [UUID] = []
+
+    func hostSheets(_ id: UUID) {
+        if !sheetHosts.contains(id) { sheetHosts.append(id) }
+    }
+
+    func releaseSheets(_ id: UUID) {
+        sheetHosts.removeAll { $0 == id }
+    }
+
     /// True from the moment the researcher asks for the engine on this Mac
     /// until the app is connected to it — so that when a setup they started
     /// finishes, the app switches over without a second click.

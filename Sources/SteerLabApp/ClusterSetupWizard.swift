@@ -343,7 +343,7 @@ struct ClusterSetupWizard: View {
                         + "seeded with generic Slurm defaults")
                 Button("From documentation…") { showingProfileCoauthoring = true }
                     .controlSize(.small)
-                    .help("hands your agent a prompt and the site's own "
+                    .help("hands your coding assistant a prompt and the site's own "
                         + "documentation, then reviews the profile it returns "
                         + "before anything is imported")
                 // WP5 §4.2: a real site arrives as JSON, so the wizard's first

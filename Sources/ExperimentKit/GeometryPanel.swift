@@ -139,7 +139,8 @@ public final class GeometryPanel {
         // view's promise, not the store's.
         guard !isServerComputing else { return }
         guard let host, let client = host.cluster.client else {
-            serverStatus = "no server connection — check the Compute selector"
+            serverStatus = PythonEngineNotice.notConnected(
+                "Comparing vectors", plural: false, buttonHere: false)
             return
         }
         let requested = records.count

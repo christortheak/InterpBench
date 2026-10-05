@@ -201,8 +201,9 @@ site. Earlier sites may already be affected. Reading does not inject anything.
 Review, save, verify, and freeze normally. Freezing copies run-resident probes
 into the study's pinned inputs without changing their bytes. The study bundle
 carries them to the Python engine; collected evidence carries the scores home.
-Select Python Compute, including a local Python server, in the app. Native MLX
-cannot execute these portable PyTorch probes and gives a direct routing repair.
+In the app, choose “This Mac, full capabilities” or “Another machine” as
+where the workspace runs studies. The quick start cannot execute these portable
+probes and says where the study can run.
 Direct-logprob-only studies do not generate responses for this observer; select
 sampled text if response measurements are wanted. No hidden computation is added.
 
@@ -277,7 +278,7 @@ policy inputs. The workbench API exposes the same owners at
 `POST /api/science/workspace/<action>` with `workspaceRoot`, `settingsText`, and,
 for publication, `planSHA256`; list takes only the root, and inspect adds `path`.
 
-Execute policy agents through Python Compute in sampled-response studies or
+Execute policy agents on the Python engine in sampled-response studies or
 panels. Direct choice scoring, battery qualification, native MLX execution, and
 Playground’s editable steering controls do not execute these policies yet and
 explain the supported route. The Python agent-chat API executes policies; study
@@ -462,7 +463,7 @@ instrumentation structure and token alignment after verifying archive hashes.
 P7 still needs live model and GPU qualification, overhead measurements, and the
 manual app/agent walkthrough. Successful synthetic tests do not qualify a research
 checkpoint. Native MLX policy execution and policy-aware direct scoring/batteries
-are not available; use sampled-response studies through Python Compute.
+are not available; use sampled-response studies on the Python engine.
 
 ## Measure what readings and policies cost
 

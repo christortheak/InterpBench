@@ -5,19 +5,20 @@ import UniformTypeIdentifiers
 
 enum StudyControlCopy {
     static let saveBackHelp =
-        "overwrites the design this study was minted from with this study's "
-        + "current settings (agents stripped). The design's content hash "
-        + "changes; studies already minted from it keep their original lineage "
+        "overwrites the template this study was created from with this study's "
+        + "current settings (agents stripped). The template's content hash "
+        + "changes; studies already created from it keep their original lineage "
         + "stamps."
 
     static let saveAsNewDesignHelp =
-        "adds a NEW design to the library from this study's settings, leaving "
-        + "any design it came from untouched. An unchanged instance of a live "
-        + "design selects that design instead of minting a near-duplicate."
+        "adds a NEW template to the library from this study's settings, leaving "
+        + "any template it came from untouched. An unchanged study made from a "
+        + "live template selects that template instead of creating a "
+        + "near-duplicate."
 
     static let duplicateHelp =
         "copies EVERYTHING, agents included — the only way to iterate on a "
-        + "frozen study. (Saving a study as a DESIGN, in Templates, does the "
+        + "frozen study. (Saving a study as a TEMPLATE, in Templates, does the "
         + "opposite: it strips the agents and re-derives the derived pins.)"
 
     static let deleteStudyHelp =
@@ -28,7 +29,7 @@ enum StudyControlCopy {
     static let freezeHelp =
         "ONE-WAY: verifies every pinned input, requires a pinned model revision, "
         + "and stamps the content hash and git commit. Agent-comparison "
-        + "studies pin each agent (variant artifact) by artifact hash; concept-vector "
+        + "studies pin each agent by the hash of its saved file; concept-vector "
         + "studies also require a matching validate run. Settings must be "
         + "frozen before behavior is measured — iterate afterwards by duplicating. "
         + "Each check that still needs something is listed under this button, "
@@ -122,18 +123,19 @@ enum StudyControlCopy {
     /// both as the section's ⓘ text and as a visible first line.
     static let seatsGlossary =
         "A seat is a role the scenario declares (proposer, reviewer, …). "
-        + "Casting is who fills each seat: a saved agent, or 'baseline' — the "
-        + "study's own model with no intervention, which is a real condition, "
-        + "not an empty seat. The cast panel is one arm of the study; with "
-        + "'Include stripped baseline arm' on, the same panel with every "
-        + "intervention removed is the other. Save Casting compiles the "
-        + "scenario plus the casting into the bound scenario the run executes."
+        + "A seat assignment says who fills each seat: a saved agent, or "
+        + "'baseline' — the study's own model with no intervention, which is a "
+        + "real condition, not an empty seat. The panel as assigned is one arm "
+        + "of the study; with 'Include stripped baseline arm' on, the same "
+        + "panel with every intervention removed is the other. Save Seat "
+        + "Assignments compiles the scenario plus the assignments into the "
+        + "bound scenario the run executes."
 
     /// One line of the same glossary, rendered in the section itself — the ⓘ
     /// is for the whole story, this is for the words in the rows.
     static let seatsGlossaryLine =
-        "seat = a role in the scenario · casting = which agent (or the "
-        + "baseline model) fills each seat · the cast panel is one arm"
+        "seat = a role in the scenario · assignment = which agent (or the "
+        + "baseline model) fills each seat · the panel as assigned is one arm"
 
     static let seatPickerHelp =
         "the agent that speaks for this role. 'baseline' is the study's own "
@@ -142,18 +144,18 @@ enum StudyControlCopy {
         + "base model are eligible."
 
     static let saveCastingHelp =
-        "compiles this scenario plus the casting into a bound scenario under "
-        + "prompts/panels/compiled/ and pins it as the study's scenario — the "
-        + "same write a design's instantiation table performs. The scenario "
-        + "itself is not modified."
+        "compiles this scenario plus the seat assignments into a bound "
+        + "scenario under prompts/panels/compiled/ and pins it as the study's "
+        + "scenario — the same write a template's new-studies table performs. "
+        + "The scenario itself is not modified."
 
     static let permutedSiblingsHelp =
-        "one study runs ONE casting (a panel's arms are the fixed "
-        + "baseline/configured pair), so re-seating the same agents means "
-        + "sibling studies. This saves the study as a design and opens the "
+        "one study runs ONE set of seat assignments (a panel's arms are the "
+        + "fixed baseline/configured pair), so re-seating the same agents means "
+        + "sibling studies. This saves the study as a template and opens the "
         + "new-studies table holding every distinct re-seating of its current "
-        + "cast — swapping two identical occupants is the same panel, so those "
-        + "are deduped rather than run twice."
+        + "assignments — swapping two identical occupants is the same panel, "
+        + "so those are deduped rather than run twice."
 
     static let canonicalNameHelp =
         "lowercase letters, digits and hyphens; anything else is dropped. This "

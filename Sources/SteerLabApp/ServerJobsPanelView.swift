@@ -188,20 +188,30 @@ struct ServerJobsPanelView: View {
     private var jobsRegion: some View {
         VStack(alignment: .leading, spacing: 12) {
             if service.cluster.computeTarget == .local {
-                // One framing of one fact for the Local target, instead of
-                // the old stack of three (UI audit 2026-09-06).
-                ContentUnavailableView(
-                    "No Jobs on Local Compute",
-                    systemImage: "laptopcomputer",
-                    description: Text(
-                        "Local (MLX) runs everything inside this app. Jobs "
-                            + "appear here when the Compute selector in the "
-                            + "window toolbar points at a server."))
+                // One framing of one fact for the quick start, instead of
+                // the old stack of three (UI audit 2026-09-06) — and the way
+                // to the engine that has jobs, rather than only where it is.
+                // The actions are a fixed, short block: this region's
+                // minimum must stay under its constant 280 (see above).
+                ContentUnavailableView {
+                    Label(Self.quickStartTitle, systemImage: "laptopcomputer")
+                } description: {
+                    Text(Self.quickStartDescription)
+                } actions: {
+                    PythonEngineSwitchControls()
+                }
             } else if !hasServerClient {
-                ContentUnavailableView(
-                    "No Active Server",
-                    systemImage: "server.rack",
-                    description: Text("Choose a server compute target in the window toolbar, then connect."))
+                ContentUnavailableView {
+                    Label("Not Connected", systemImage: "server.rack")
+                } description: {
+                    Text(PythonEngineNotice.notConnected("Jobs", plural: true))
+                } actions: {
+                    Button(PythonEngineNotice.connectButton) {
+                        Task { await service.connectCluster() }
+                    }
+                    .controlSize(.small)
+                    .disabled(service.cluster.isConnecting)
+                }
             } else if jobs.isEmpty && awaitingPipelines.isEmpty && isRefreshing {
                 // The first fetch used to render an empty List and an empty
                 // log box, then swap to the "No Jobs" empty state — layout-safe
@@ -228,6 +238,13 @@ struct ServerJobsPanelView: View {
         service.cluster.computeTarget == .server && service.cluster.client != nil
     }
 
+    static let quickStartTitle = "No Jobs on \(ComputeChoice.macQuickStart.title)"
+
+    static let quickStartDescription =
+        "\(ComputeChoice.macQuickStart.title) runs everything inside this app, "
+        + "so there are no jobs to list. Jobs appear here when the app uses "
+        + "the Python engine: " + PythonEngineNotice.pythonChoices + "."
+
     private var panelTitle: String {
         service.cluster.computeTarget == .server ? "Server Jobs" : "Jobs"
     }
@@ -236,8 +253,10 @@ struct ServerJobsPanelView: View {
         service.cluster.computeTarget == .server
             ? "every durable job this compute target is running or has run — "
                 + "select one to read its log"
-            : "jobs exist only on a server compute target; Local (MLX) runs "
-                + "everything inside this app"
+            : "jobs exist only on the Python engine ("
+                + PythonEngineNotice.pythonChoices + "); "
+                + "\(ComputeChoice.macQuickStart.title) runs everything inside "
+                + "this app"
     }
 
     /// The three less-frequent actions behind one menu (researcher complaint
@@ -794,7 +813,9 @@ struct ServerJobsPanelView: View {
             jobsOrigin = nil
             jobs = []
             selectedJobID = nil
-            status = "Connect to a server workspace to inspect jobs."
+            status = service.cluster.computeTarget == .local
+                ? PythonEngineNotice.needsPythonEngineBriefly("Jobs", plural: true)
+                : PythonEngineNotice.notConnectedBriefly
             return
         }
         isRefreshing = true
@@ -856,7 +877,8 @@ struct ServerJobsPanelView: View {
     /// progress lines into the panel's constant status slot.
     private func importClusterRuns() async {
         guard let entry = service.cluster.activeServer else {
-            status = "Select a cluster workspace first."
+            status = PythonEngineNotice.needsPythonEngineBriefly(
+                "Importing runs", plural: true)
             return
         }
         isImporting = true

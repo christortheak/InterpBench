@@ -290,8 +290,8 @@ struct GeometryPanelView: View {
     private var logitLensSectionContent: some View {
         if isServerWorkspace {
             Text(
-                "Logit Lens runs on the local substrate only (it reads "
-                    + "the vector through the locally loaded model's "
+                "Logit Lens runs only on the engine built into this app (it "
+                    + "reads the vector through the locally loaded model's "
                     + "unembed) — switch Compute to "
                     + "\(ComputeChoice.macQuickStart.title).")
                 .font(.caption)
@@ -777,16 +777,14 @@ struct GeometryPanelView: View {
     /// rather than the substrate question.
     private var noServerClient: Bool { service.cluster.client == nil }
 
-    private static let noClientReason =
-        "no server connection — pick a site in the Compute selector, or "
-        + "switch Compute to \(ComputeChoice.macQuickStart.title)"
+    /// The tooltip. It used to suggest switching to the quick start, which
+    /// cannot run any of this; the way out is to connect.
+    private static let noClientReason = PythonEngineNotice.notConnectedBriefly
 
-    /// A disabled server button says why in the pane, not only on hover.
+    /// A disabled server button says why in the pane, not only on hover —
+    /// with the Connect button beside the sentence.
     private var noClientCaption: some View {
-        Label(Self.noClientReason, systemImage: "bolt.horizontal.circle")
-            .font(.caption)
-            .foregroundStyle(.orange)
-            .fixedSize(horizontal: false, vertical: true)
+        PythonEngineNeeded(subject: "Comparing vectors and Gemma Scope analysis")
     }
 
     /// The live selection count, beside Select All / Clear. Without it the
@@ -1061,7 +1059,8 @@ struct GeometryPanelView: View {
 
     private func runServerGemmaScope(record: RemoteVectorRecord, info: GemmaScopeInfo) {
         guard let client = service.cluster.client else {
-            serverGemmaScopeStatus = "no server connection — check the Compute selector"
+            serverGemmaScopeStatus = PythonEngineNotice.notConnected(
+                "Gemma Scope analysis", plural: false, buttonHere: false)
             return
         }
         // Same layer rule as the local run: rank the vector at the SAE's
@@ -1362,7 +1361,7 @@ private struct RemoteGemmaScopeReportView: View {
 
         Text(
             "server report — carries no local artifact sidecar; Import on "
-                + "Server mints the raw decoder direction as a vector in the "
+                + "Server saves the raw decoder direction as a vector in the "
                 + "SERVER catalog (not rescaled to the analyzed vector's norm, "
                 + "unlike local import)")
             .font(.caption2)

@@ -38,7 +38,7 @@ struct StudyDesignActionsView: View {
             let siblings = panel.batchSiblings(manifest)
             if !siblings.isEmpty {
                 DisclosureGroup(
-                    "Minted with \(siblings.count) sibling "
+                    "Created with \(siblings.count) sibling "
                         + "\(siblings.count == 1 ? "study" : "studies")"
                 ) {
                     ForEach(siblings, id: \.self) { sibling in
@@ -49,7 +49,7 @@ struct StudyDesignActionsView: View {
                 }
                 .font(.caption2)
                 .help(
-                    "the other studies minted from this design in the same "
+                    "the other studies created from this template in the same "
                         + "batch, by their display names")
             }
         }
@@ -81,7 +81,7 @@ struct StudyDesignActionsView: View {
                 .disabled(refusal != nil)
                 .help(refusal ?? StudyControlCopy.saveBackHelp)
                 .confirmationDialog(
-                    "Update reviewed design?",
+                    "Update the reviewed template?",
                     isPresented: $confirmSaveBackToDesign,
                     titleVisibility: .visible,
                     presenting: saveReview
@@ -109,8 +109,8 @@ struct StudyDesignActionsView: View {
                     .buttonStyle(.link)
                     .font(.caption2)
                     .help(
-                        "opens the Templates section, where designs are listed, "
-                            + "edited and instantiated into studies")
+                        "opens the Templates section, where templates are listed, "
+                            + "edited, and turned into new studies")
             }
         }
         if let refusal, target != nil {
@@ -132,10 +132,10 @@ struct StudyDesignActionsView: View {
     /// researcher could be surprised by afterwards.
     private static func saveBackConfirmation(design: String, source: String) -> String {
         "Uses the reviewed saved settings of study '\(source)'. Save Study Setup first to include unsaved edits. Keeps every generation and "
-            + "measurement setting, no agents — and updates design '\(design)' "
-            + "in place. Its content hash changes. Studies already minted from "
+            + "measurement setting, no agents — and updates template '\(design)' "
+            + "in place. Its content hash changes. Studies already created from "
             + "it keep their original lineage stamps, so their divergence "
-            + "display goes on reporting what they were minted from. The "
-            + "design's name, description and creation date are unchanged."
+            + "display goes on reporting what they were created from. The "
+            + "template's name, description, and creation date are unchanged."
     }
 }

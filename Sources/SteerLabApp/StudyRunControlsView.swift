@@ -348,7 +348,7 @@ struct StudyRunControlsView: View {
                 LabeledContent("Server", value: service.cluster.serverHostLabel)
                     .help(
                         "shared server connection — edit the URL and bearer token in the "
-                            + "window toolbar's substrate selector")
+                            + "Compute menu in the window toolbar")
                 if let summary = panel.remoteJobs.remoteProfileSummary {
                     LabeledContent("Backend", value: summary)
                         .font(.caption)

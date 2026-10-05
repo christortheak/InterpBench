@@ -118,13 +118,13 @@ public final class StudyDesignLibrary {
         for manifest: ExperimentManifest
     ) -> String? {
         guard let provenance = manifest.templateProvenance else {
-            return "'\(manifest.name)' was not minted from a design — use Save "
-                + "as new design"
+            return "'\(manifest.name)' was not created from a template — use "
+                + "Save as new template"
         }
         guard templates.contains(where: { $0.name == provenance.template })
         else {
-            return "design '\(provenance.template)' is no longer in the library "
-                + "(renamed or deleted) — use Save as new design"
+            return "template '\(provenance.template)' is no longer in the library "
+                + "(renamed or deleted) — use Save as new template"
         }
         return nil
     }
@@ -152,8 +152,8 @@ public final class StudyDesignLibrary {
         let agreement = lineage.agreement
         var line =
             agreement == .diverged
-            ? "diverged from design '\(provenance.template)' "
-            : "from design '\(provenance.template)' "
+            ? "diverged from template '\(provenance.template)' "
+            : "from template '\(provenance.template)' "
         line += "@ \(provenance.templateHash.prefix(12))…"
         if agreement == .designMissing {
             line += " (no longer in the library)"
@@ -166,9 +166,9 @@ public final class StudyDesignLibrary {
         if lineage.designRevised {
             line +=
                 agreement == .diverged
-                ? " · the design has since been revised too"
-                : " · matches its design as minted · the design has since "
-                    + "been revised"
+                ? " · the template has since been revised too"
+                : " · matches its template as created · the template has "
+                    + "since been revised"
         }
         if let batch = provenance.batchGroup {
             let siblings = experiments.filter {
@@ -176,12 +176,12 @@ public final class StudyDesignLibrary {
             }
             line += " · batch \(batch)"
             if siblings.count > 1 {
-                line += " (\(siblings.count) studies minted together)"
+                line += " (\(siblings.count) studies created together)"
             }
         }
         if agreement == .diverged {
             line +=
-                " — edited since minting; edits are allowed and the stamp "
+                " — edited since it was created; edits are allowed and the stamp "
                 + "records where it started"
         }
         return line

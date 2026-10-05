@@ -311,7 +311,7 @@ struct TemplatesPanelView: View {
                     .font(.caption)
                     .help(
                         "this template was saved from a study that had changed "
-                            + "since it was instantiated from that template")
+                            + "since it was created from that template")
             }
         }
     }
@@ -393,7 +393,7 @@ struct TemplatesPanelView: View {
     ) -> some View {
         Section {
             HStack(spacing: 8) {
-                Button("Instantiate…") {
+                Button("Create Studies…") {
                     // Cross-section handoff: Studies opens the new-studies
                     // table on this design (consumed on appear as well as on
                     // change — Studies is not on screen when this is set).
@@ -403,8 +403,8 @@ struct TemplatesPanelView: View {
                 }
                 .help(
                     "opens the Studies tab's new-studies table on this template: "
-                        + "pick the cast, see what the batch will cost, then "
-                        + "create one ordinary draft study per casting")
+                        + "choose the agents, see what the batch will cost, then "
+                        + "create one ordinary draft study per row")
                 Button("Edit template…") {
                     // The round trip's first leg. The draft is ORDINARY — full
                     // editor, no special mode — and the second leg is the
@@ -475,6 +475,7 @@ struct TemplatesPanelView: View {
     private static let designVsDuplicate =
         "Saving a study as a template strips its agents and re-derives the "
         + "derived pins (the instrument scope is re-pinned against the task "
-        + "file at every instantiation). Duplicate as Draft, in Studies, does "
+        + "file each time studies are created from it). Duplicate as Draft, in "
+        + "Studies, does "
         + "the opposite: it copies everything, agents included."
 }

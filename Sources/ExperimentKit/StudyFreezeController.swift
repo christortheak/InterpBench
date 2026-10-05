@@ -103,7 +103,7 @@ public final class StudyFreezeController {
             return
         }
         guard context.isServer else {
-            note("no server workspace active — switch the substrate selector first")
+            note(PythonEngineNotice.switchFirst("Freezing on the server", plural: false))
             return
         }
         let request = request(name: name, context: context)
@@ -135,7 +135,8 @@ public final class StudyFreezeController {
             return
         }
         guard context.isServer else {
-            note("no server workspace active — switch the substrate selector first")
+            note(PythonEngineNotice.switchFirst(
+                "Pushing a draft as the server's copy", plural: false))
             return
         }
         let request = request(name: name, context: context)
@@ -244,7 +245,9 @@ public final class StudyFreezeController {
                     "study '\(name)' is not in \(substrate)'s workspace — "
                         + "freeze stamps the server-resident copy only. Pair the "
                         + "server to this workspace (serve --root <workspace>), or "
-                        + "switch Compute to Local (MLX) to freeze the local copy", severity: .info)
+                        + "choose \(ComputeChoice.macQuickStart.title) in the "
+                        + "Compute menu to freeze the copy in this workspace",
+                    severity: .info)
                 return
             }
         } catch {}

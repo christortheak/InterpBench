@@ -15,7 +15,9 @@ public final class StudyServerJobCoordinator {
         experimentName name: String, verb: String, in environment: StudyOperationEnvironment
     ) async {
         guard let context = environment.current(), context.isServer else {
-            note("no server workspace active — switch the substrate selector first", severity: .info)
+            note(
+                PythonEngineNotice.switchFirst("Running a study as a job", plural: false),
+                severity: .info)
             return
         }
         guard environment.isCurrent(context) else { return }

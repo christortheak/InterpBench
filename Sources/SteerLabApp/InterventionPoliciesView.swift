@@ -40,10 +40,17 @@ struct InterventionPoliciesView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack { Text("Intervention policies").font(.title2); Spacer(); Button("Done") { dismiss() } }
-            Text("A probe reads an agent. A policy uses a reading to change that agent’s behavior. Save the policy, attach it to a new agent version, and compare that agent with a baseline in a study using Python Compute.")
+            Text("A probe reads an agent. A policy uses a reading to change that agent’s behavior. Save the policy, attach it to a new agent version, and compare that agent with a baseline in a study that runs on the Python engine.")
             Text("Workspace: \(root.path)").font(.caption).textSelection(.enabled)
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    // Writing and saving a policy works on any compute; only
+                    // running the agent needs the Python engine. Said with
+                    // the switch, inside the scroll view so the sheet's
+                    // minimum size does not move when the notice does.
+                    PythonEngineNeeded(
+                        subject: "Running an agent with intervention policies",
+                        plural: false)
                     GroupBox("1. Decide when to intervene") {
                         VStack(alignment: .leading) {
                             TextField("Policy name", text: $policyName)
@@ -131,6 +138,8 @@ struct InterventionPoliciesView: View {
             if !status.isEmpty { Text(status).textSelection(.enabled) }
         }.padding(24).frame(minWidth: 760, idealWidth: 840, minHeight: 700)
         .task { work { try await refresh() } }
+        // The notice's switch opens the engine setup on this sheet.
+        .hostsComputeSheets()
     }
 
     private func work(_ operation: @escaping @MainActor () async throws -> Void) {

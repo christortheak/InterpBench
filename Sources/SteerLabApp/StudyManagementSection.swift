@@ -122,8 +122,8 @@ struct StudyManagementSection: View {
                                 ? "creates a draft pinned to the currently selected "
                                     + "model under a placeholder name, and opens "
                                     + "Rename so you can name it now"
-                                : "opens the new-studies table on this design — one "
-                                    + "ordinary draft per casting")
+                                : "opens the new-studies table on this template — one "
+                                    + "ordinary draft per row")
                     if let manifest = panel.management.selected {
                         Button {
                             openRename(manifest)
@@ -309,19 +309,19 @@ struct StudyManagementSection: View {
             }
         }
         .help(
-            "From scratch opens the blank draft interface. A saved design "
-                + "opens the new-studies table, prefilled with that design's "
+            "From scratch opens the blank draft interface. A saved template "
+                + "opens the new-studies table, prefilled with that template's "
                 + "task file and pins, instruments, sampling policy and judges "
-                + "— so the only thing left to decide is the casting.")
+                + "— so the only thing left to decide is which agents take part.")
         if panel.management.designs.templates.isEmpty {
             HStack(spacing: 6) {
-                Text("No saved designs yet.")
+                Text("No saved templates yet.")
                 Button("Open Templates") { openTemplates() }
                     .buttonStyle(.link)
                     .help(
                         "switches to the Templates tab — the template library, "
                             + "where a study you intend to repeat is saved as "
-                            + "a design")
+                            + "a template")
             }
             .font(.caption2)
             .foregroundStyle(.secondary)

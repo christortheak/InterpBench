@@ -398,7 +398,7 @@ struct OptimizationRunsView: View {
         That is the research funnel's SCREEN stage. Declaring the grid and the \
         selection criterion is a manifest edit and can be done in any compute \
         mode; running the sweep executes wherever the compute target points. \
-        The winning cell of a completed sweep is what "Create Agent" mints, \
+        The winning cell of a completed sweep is what "Create Agent" makes, \
         with the run, criterion, dev split and metrics recorded in the agent's \
         birth certificate.
 
@@ -964,7 +964,7 @@ struct OptimizationRunsView: View {
             stageChip(
                 "Agent created", states.promoted,
                 done: "an agent's birth certificate names this study",
-                todo: "no agent has been minted from this study's winning cell")
+                todo: "no agent has been created from this study's winning cell")
         }
     }
 
@@ -1430,18 +1430,18 @@ struct OptimizationRunsView: View {
             if !outcome.isFailure {
                 Button("Open Agents") { navigate(.agents) }
                     .controlSize(.small)
-                    .help("show the minted agent in the Agents library, with "
+                    .help("show the created agent in the Agents library, with "
                         + "its birth certificate")
             }
         }
     }
 
     private func promoteWinnerHelp(_ optimization: OptimizationItem) -> String {
-        let base = "mint an agent from the criterion-selected winning cell — "
+        let base = "create an agent from the criterion-selected winning cell — "
             + "recorded as chosen by the declared criterion "
             + "(promotedBy: criterion)"
         return mintsOnServer(optimization)
-            ? base + " — minted on \(substrate)" : base
+            ? base + " — created on \(substrate)" : base
     }
 
     // The measured heatmap that used to follow the clickable grid was a
@@ -1649,7 +1649,7 @@ struct OptimizationRunsView: View {
     }
 
     private func promoteRecommendationHelp(_ optimization: OptimizationItem) -> String {
-        let base = "mint a reusable agent from this criterion-selected cell — "
+        let base = "create a reusable agent from this criterion-selected cell — "
             + "it carries the birth certificate (run, criterion, dev "
             + "split, metrics) into the Agents library"
         return mintsOnServer(optimization)
@@ -2587,7 +2587,7 @@ struct OverridePromotionSheet: View {
             HStack {
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                    .help("close without minting anything")
+                    .help("close without creating anything")
                 Spacer()
                 Button("Create Agent with override") {
                     promote(trimmedReason)
@@ -2600,7 +2600,7 @@ struct OverridePromotionSheet: View {
                     ? "write a reason first — an override without one is "
                         + "exactly the undocumented deviation this path exists "
                         + "to prevent"
-                    : "mint an agent from this non-winning cell, recorded as a "
+                    : "create an agent from this non-winning cell, recorded as a "
                         + "manual override with the reason above")
             }
         }

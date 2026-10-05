@@ -10,6 +10,10 @@ struct MethodAuthoringSheet: View {
     let root: URL
     let client: ClusterClient?
     @Environment(\.dismiss) private var dismiss
+    /// So the model step can offer the Python engine, and so a switch made
+    /// from this sheet takes effect in it without reopening.
+    @Environment(ComputeChoiceCoordinator.self) private var compute:
+        ComputeChoiceCoordinator?
     @State private var purpose = ""
     @State private var claim = ""
     @State private var controls = ""
@@ -29,6 +33,15 @@ struct MethodAuthoringSheet: View {
     @State private var showingImporter = false
     @State private var showingExecution = false
     @State private var showingCorpusPreparation = false
+
+    /// The engine this sheet talks to: the one it was opened with, or — once
+    /// the researcher switches to the Python engine from the offer below —
+    /// the one the app is now using.
+    private var engineClient: ClusterClient? {
+        if let client { return client }
+        guard let compute, compute.inUse.runsEveryMethod else { return nil }
+        return compute.cluster.client
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -56,12 +69,12 @@ struct MethodAuthoringSheet: View {
                     Section("Supply your data") {
                         Text(workflow.id == "jlens-fit"
                              ? "Supply varied text from the population where you want to use the lens. This is fitting text, not positive/negative concept data. Reserve separate passages to assess readouts afterward. Files must be in this workspace before selection."
-                             : "Use existing files, prepare them yourself, or ask an agent for an authoring prompt. Keep training, validation, and final-test examples separate. Files must be in this workspace before you select them.")
+                             : "Use existing files, prepare them yourself, or ask your coding assistant for an authoring prompt. Keep training, validation, and final-test examples separate. Files must be in this workspace before you select them.")
                             .font(.caption).foregroundStyle(.secondary)
                         ForEach(workflow.fields.filter { isData($0) }) { field in inputRow(field) }
                         if workflow.id == "jlens-fit" {
                             Button("Prepare corpus from existing data…") { showingCorpusPreparation = true }
-                            Button("Copy corpus instructions for my agent") {
+                            Button("Copy corpus instructions for my coding assistant") {
                                 do {
                                     let guide = try ScienceCatalog.guide("jlens").text
                                     NSPasteboard.general.clearContents()
@@ -130,6 +143,9 @@ struct MethodAuthoringSheet: View {
             if let failure { Text(failure).foregroundStyle(.red).textSelection(.enabled) }
         }.padding().frame(minWidth: 820, minHeight: 720)
         .interactiveDismissDisabled(busy)
+        // The offer on the model step can open the engine setup; it opens on
+        // this sheet rather than behind it.
+        .hostsComputeSheets()
         .onChange(of: fields) { old, new in
             if old["modelID"] != new["modelID"] { fields["revision"] = ""; modelNotice = nil }
             invalidateReview()
@@ -143,8 +159,10 @@ struct MethodAuthoringSheet: View {
             fields = Dictionary(uniqueKeysWithValues: workflow.fields.map { ($0.id, $0.default ?? "") })
             step = availableSteps.first ?? 3
         }
-        .task {
-            guard let client else { return }
+        // Keyed on the engine, so a switch made from the offer on the model
+        // step lists that engine's models without reopening the sheet.
+        .task(id: engineClient?.profile.baseURL) {
+            guard let client = engineClient else { return }
             do { modelOptions = try await client.state().models }
             catch { modelNotice = "Could not list engine models. You can still enter a verified model identifier: " + error.localizedDescription }
         }
@@ -155,7 +173,7 @@ struct MethodAuthoringSheet: View {
             }
         }
         .sheet(isPresented: $showingExecution) {
-            DiagnosticLifecycleSheet(root: root, client: client, initialJobID: nil, initialRequestFile: published)
+            DiagnosticLifecycleSheet(root: root, client: engineClient, initialJobID: nil, initialRequestFile: published)
         }
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.data]) { result in
             do {
@@ -192,8 +210,12 @@ struct MethodAuthoringSheet: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(field.label + (field.required ? " (required)" : " (optional)")).font(.headline)
             if field.id == "modelID" {
-                if client == nil {
-                    Text("Choose a Python engine in Compute to list its models and inspect their versions. You can also enter a verified model identifier from another execution environment below.")
+                if engineClient == nil {
+                    // The switch, offered where the model is chosen. Authoring
+                    // carries on either way: the request is written to this
+                    // workspace and runs later.
+                    PythonEngineNeeded(subject: "Listing prepared models and inspecting their versions", plural: false)
+                    Text("You can also enter a verified model identifier below, from wherever the request will run.")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 if !modelOptions.isEmpty {
@@ -213,7 +235,7 @@ struct MethodAuthoringSheet: View {
                 HStack {
                     TextField("Verified model commit", text: fieldBinding(field)).labelsHidden()
                     Button("Inspect selected model") { inspectModel() }
-                        .disabled(client == nil || (fields["modelID"] ?? "").isEmpty || busy)
+                        .disabled(engineClient == nil || (fields["modelID"] ?? "").isEmpty || busy)
                 }
             } else if workflow.id == "jlens-fit-assess" && field.id == "readoutDtype" {
                 Picker(field.label, selection: fieldBinding(field)) {
@@ -246,7 +268,7 @@ struct MethodAuthoringSheet: View {
         }.padding(.vertical, 4)
     }
     private func inspectModel() {
-        guard let client else { return }
+        guard let client = engineClient else { return }
         let model = fields["modelID"] ?? ""
         perform {
             let result = try await client.modelLoadPreflight(model)

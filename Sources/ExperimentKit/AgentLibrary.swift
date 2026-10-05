@@ -454,7 +454,7 @@ public enum AgentLibrary {
         if let label = artifact.neutralPCBasisLabel {
             parts.append("neutral \(label)")
         }
-        if artifact.policyCount > 0 { parts.append("\(artifact.policyCount) intervention policies · Python Compute") }
+        if artifact.policyCount > 0 { parts.append("\(artifact.policyCount) intervention policies · Python engine") }
         if parts.isEmpty { parts.append("base model settings only") }
         return parts.joined(separator: " · ")
     }

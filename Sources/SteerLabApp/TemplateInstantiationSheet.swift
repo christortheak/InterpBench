@@ -37,7 +37,21 @@ struct TemplateInstantiationSheet: View {
     let panel: ExperimentPanel
 
     @Environment(\.dismiss) private var dismiss
+    /// Which compute the app is using, for "Create and Submit" and the offer.
+    @Environment(ComputeChoiceCoordinator.self) private var compute:
+        ComputeChoiceCoordinator?
     @State private var model: TemplateInstantiation
+
+    /// Submitting queues jobs on the Python engine. The request says whether
+    /// a connection existed when the sheet opened; the quick start always
+    /// has a client object (it falls back to an address), so it is ruled out
+    /// here, and a switch made from the offer below enables the button
+    /// without reopening the sheet.
+    private var canSubmit: Bool {
+        guard let compute else { return request.canSubmit }
+        return PythonEngineNotice(
+            inUse: compute.inUse, connected: compute.cluster.client != nil) == .none
+    }
 
     /// Tag for the baseline entry in a seat picker. Not "": an empty tag reads
     /// as "nothing selected", and an all-baseline casting is a real condition
@@ -68,6 +82,17 @@ struct TemplateInstantiationSheet: View {
                     .textSelection(.enabled)
             } else {
                 Form {
+                    // Inside the scrolling form, so the sheet's minimum size
+                    // does not change when the notice comes or goes.
+                    if !canSubmit {
+                        Section {
+                            PythonEngineNeeded(
+                                subject: "Submitting the new studies to run", plural: false)
+                            Text("Create Studies works on any compute; run each new study from the study list.")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                     ForEach(model.advisories, id: \.self) { advisory in
                         Label(advisory, systemImage: "exclamationmark.triangle")
                             .font(.caption)
@@ -89,6 +114,8 @@ struct TemplateInstantiationSheet: View {
         // screen is fatal on this macOS beta (see the split-view minimum-size
         // note) — the table scrolls inside instead.
         .frame(minWidth: 720, idealWidth: 860, minHeight: 520, idealHeight: 640)
+        // The offer above can open the engine setup: on this sheet.
+        .hostsComputeSheets()
     }
 
     // MARK: Header
@@ -161,7 +188,7 @@ struct TemplateInstantiationSheet: View {
                 Toggle("pad with baseline", isOn: $model.permutationPadsWithBaseline)
                     .help(
                         "fills the remaining seats with the unsteered model, so "
-                            + "a two-agent set still casts a three-seat panel")
+                            + "a two-agent set can still fill a three-seat panel")
                 Button("Add all permutations") { model.addAllPermutations() }
                     .disabled(model.permutationRefusal != nil)
                     .help(
@@ -176,7 +203,7 @@ struct TemplateInstantiationSheet: View {
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("\(model.permutationCount) distinct casting(s) — swapping "
+                Text("\(model.permutationCount) distinct seat assignment(s) — swapping "
                     + "two identical occupants gives the same panel, so those "
                     + "are deduped rather than run (and double-counted) twice")
                     .font(.caption2)
@@ -217,7 +244,7 @@ struct TemplateInstantiationSheet: View {
                 Label("Add Study", systemImage: "plus")
             }
             .disabled(model.isWorking)
-            .help("one more study from this design, with its own casting")
+            .help("one more study from this template, with its own agents")
         }
     }
 
@@ -228,7 +255,7 @@ struct TemplateInstantiationSheet: View {
                 TextField(model.defaultName(for: row), text: nameBinding(row: row.id))
                     .font(.caption.monospaced())
                     .help(
-                        "the study directory this casting mints; empty takes the "
+                        "the study directory this row creates; empty takes the "
                             + "template's own naming, and a collision resolves "
                             + "with the usual -2 suffix")
                 Spacer()
@@ -411,11 +438,11 @@ struct TemplateInstantiationSheet: View {
     private var footer: some View {
         HStack {
             if model.isWorking { ProgressView().controlSize(.small) }
-            Button("Discard casting edits and reload design") { model.discardAndReload() }
+            Button("Discard row edits and reload template") { model.discardAndReload() }
                 .disabled(model.isWorking)
                 .help(
                     "throws away every row edited here and rebuilds the table "
-                        + "from the saved design — nothing has been written to "
+                        + "from the saved template — nothing has been written to "
                         + "the workspace yet, so nothing is lost but these edits")
             Spacer()
             Button("Close", role: .cancel) { dismiss() }
@@ -450,7 +477,7 @@ struct TemplateInstantiationSheet: View {
                 "creates one ordinary draft per row (shared batch id) and opens "
                     + "the first one in the Studies editor. Agents optional — a "
                     + "zero-agent draft is legal, and the study's readiness "
-                    + "check surfaces the missing casting")
+                    + "check surfaces the missing agents")
             Button("Create and Submit") {
                 Task {
                     await model.mint(submit: { study in
@@ -465,7 +492,7 @@ struct TemplateInstantiationSheet: View {
                     if model.lastMintWasClean { dismiss() }
                 }
             }
-            .disabled(!model.readyToSubmit || model.isWorking || !request.canSubmit)
+            .disabled(!model.readyToSubmit || model.isWorking || !canSubmit)
             .help(submitHelp)
         }
     }
@@ -482,12 +509,13 @@ struct TemplateInstantiationSheet: View {
     /// blocker matters: "disabled" alone sends the researcher hunting between
     /// a missing server connection and a row with no agents cast.
     private var submitHelp: String {
-        guard request.canSubmit else {
-            return "no server connection — connect one in Compute, or Create "
-                + "Studies and submit from the study list"
+        guard canSubmit else {
+            return PythonEngineNotice.needsPythonEngineBriefly(
+                "Submitting", plural: false)
+                + " Or choose Create Studies and run each one from the study list."
         }
         guard model.readyToSubmit else {
-            return "every study needs a runnable casting before the batch can "
+            return "every study needs runnable agents before the batch can "
                 + "be queued — submitting a baseline-only arm spends cluster "
                 + "time measuring nothing against nothing"
         }

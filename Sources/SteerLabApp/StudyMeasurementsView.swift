@@ -10,7 +10,13 @@ struct StudyMeasurementsView: View {
         GroupBox("Measurements") {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Read trained probes during study responses without changing the agent’s behavior. Scores are saved with each response.").font(.caption)
-                Text("\(ProbeMeasurements.references(manifest.probeMeasurements).count) probe(s) selected · executes on Python Compute").font(.caption).foregroundStyle(.secondary)
+                Text("\(ProbeMeasurements.references(manifest.probeMeasurements).count) probe(s) selected · recorded by the Python engine").font(.caption).foregroundStyle(.secondary)
+                // Choosing probes works on any compute; running the study
+                // needs the Python engine. Offered here, where the probes
+                // are chosen, rather than discovered when the run stops.
+                if manifest.probeMeasurements != nil {
+                    PythonEngineNeeded(subject: "Probe measurements")
+                }
                 Button("Choose study probes…") { showing = true }.disabled(manifest.status != .draft)
             }.frame(maxWidth: .infinity, alignment: .leading)
         }

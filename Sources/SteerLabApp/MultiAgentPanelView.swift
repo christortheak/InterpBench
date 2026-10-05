@@ -87,7 +87,7 @@ struct MultiAgentPanelView: View {
 
         Use it to see whether the prompts render as intended and whether the \
         seats talk past each other. A measured study declares its own model, \
-        sampling settings and seat→agent casting in Studies, and runs on the \
+        sampling settings and seat assignments in Studies, and runs on the \
         study's compute target.
 
         Scenario runs are in-process MLX, so under a server compute target \
@@ -228,7 +228,7 @@ struct MultiAgentPanelView: View {
 
                 Text("A scenario is the ENVIRONMENT: roles, turn structure, "
                     + "case materials and who sees what. It names no model and "
-                    + "no agent — a study picks the model and casts the seats, "
+                    + "no agent — a study picks the model and assigns the seats, "
                     + "so one scenario serves every condition of the "
                     + "experiment.")
                     .font(.caption)
@@ -267,8 +267,8 @@ struct MultiAgentPanelView: View {
                     + "prompt; which agent occupies it is a study parameter")
                 Text("A seat is a role — its name and its system prompt. Which "
                     + "agent occupies it is a study parameter, not scenario "
-                    + "content. Seat order is the order a casting is written "
-                    + "in.")
+                    + "content. Seat order is the order seat assignments are "
+                    + "written in.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -362,7 +362,7 @@ struct MultiAgentPanelView: View {
                 + "deleted — anything pinning it keeps the bytes it pinned. A "
                 + "second file is written holding only the environment, and "
                 + "this tab switches to it. What was extracted (model, "
-                + "sampling settings, seat→agent casting) is listed afterwards "
+                + "sampling settings, seat assignments) is listed afterwards "
                 + "so you can carry it into a study.")
         }
         .confirmationDialog(
@@ -761,7 +761,7 @@ struct MultiAgentPanelView: View {
         return DisclosureGroup(seat.wrappedValue.name.isEmpty ? "Seat" : seat.wrappedValue.name) {
             TextField("Role name", text: seat.name)
                 .help("what this seat is called in the transcript and in every "
-                    + "casting — a turn's speaker picker lists these names")
+                    + "seat assignment — a turn's speaker picker lists these names")
 
             // Blank is the same as absent, normalised on the way into the
             // model so an empty field never writes `"role": ""` into a
@@ -792,7 +792,8 @@ struct MultiAgentPanelView: View {
                 }
                 .disabled(index == nil || index == 0)
                 .help("move this seat one place earlier — seat order is the "
-                    + "reading order every casting of this panel is written in")
+                    + "reading order every seat assignment of this panel is "
+                    + "written in")
                 Button {
                     panel.moveSeat(id: seat.wrappedValue.id, by: 1)
                 } label: {
@@ -800,7 +801,8 @@ struct MultiAgentPanelView: View {
                 }
                 .disabled(index == nil || index == panel.agents.count - 1)
                 .help("move this seat one place later — seat order is the "
-                    + "reading order every casting of this panel is written in")
+                    + "reading order every seat assignment of this panel is "
+                    + "written in")
                 Spacer()
                 Button("Remove Seat", role: .destructive) {
                     // Asks only when the seat carries work: a blank seat the
@@ -866,7 +868,7 @@ struct MultiAgentPanelView: View {
 
             if panel.isLegacyBound {
                 Text("This panel still embeds its own model, sampling settings "
-                    + "and casting, so a rehearsal plays it exactly as the file "
+                    + "and seat assignments, so a rehearsal plays it exactly as the file "
                     + "stands. The settings below apply once it is migrated.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -932,7 +934,7 @@ struct MultiAgentPanelView: View {
                 + "seats every role with the plain model — no agent — so the "
                 + "transcript reads the environment, never an effect. A "
                 + "measured study declares its own model, sampling and "
-                + "casting."
+                + "seat assignments."
                 + (panel.rehearsalTemperature == 0
                     ? ""
                     : " Warm play-throughs vary by design; a measured study "
@@ -982,7 +984,7 @@ struct MultiAgentPanelView: View {
                     .foregroundStyle(.orange)
                 Text("Scenario files are now environment-only: roles, turns, "
                     + "case materials and visibility. The model, sampling "
-                    + "settings and seat→agent casting this file carries belong "
+                    + "settings and seat assignments this file carries belong "
                     + "to the study that runs it.")
                 Text("Migrating writes the environment as a NEW panel file and "
                     + "leaves this one exactly as it is — a study pinning it "

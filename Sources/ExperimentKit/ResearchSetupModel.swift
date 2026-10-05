@@ -17,6 +17,15 @@ import Observation
     /// What to do about `error`, in the app's own words. A plan or install
     /// failure carries its repair; it is kept beside the reason, not dropped.
     public private(set) var errorRepair: String?
+    /// The technical detail behind `error`, for a "Details" disclosure —
+    /// present when the failure was the helper's files not matching this
+    /// build (`ClientIdentityFailure.details`).
+    public private(set) var errorDetails: String?
+    /// Why the readiness check could not confirm the helper belongs to this
+    /// build, when that is what happened. Without it the sheet said "the
+    /// helper is not installed yet" — wrong, and it sent the researcher to a
+    /// setup plan that cannot change which files these are.
+    public private(set) var identityFailure: ClientIdentityFailure?
     public private(set) var handoff: String?
 
     /// Where the installer, the runtime it creates, and the setup logs are.
@@ -56,9 +65,16 @@ import Observation
     /// the command line (verbs, an environment variable, a rebuild); the app
     /// says the same thing as one step the researcher can take in this sheet.
     public var helperGuidance: String? {
-        if clientReady { return nil }
-        return basicClientReady
-            ? ResearchSetupCopy.helperUpdateNeeded : ResearchSetupCopy.helperNeeded
+        ResearchSetupCopy.helperGuidance(
+            clientReady: clientReady, basicClientReady: basicClientReady,
+            identityFailure: identityFailure)
+    }
+
+    /// The title above the helper step.
+    public var helperTitle: String {
+        ResearchSetupCopy.helperTitle(
+            clientReady: clientReady, basicClientReady: basicClientReady,
+            identityFailure: identityFailure)
     }
 
     /// Whether Research Setup opens by itself at launch.
@@ -77,7 +93,7 @@ import Observation
     public func refresh(workspace: URL?) async {
         guard !busy else { return }
         busy = true
-        readiness = await ClientSetup.inspect(workspace: workspace)
+        absorb(await ClientSetup.inspectReport(workspace: workspace))
         handoff = workspace.flatMap { root in
             guard let value = try? WorkspaceBootstrap.handoff(root),
                   let bytes = try? JSONEncoder().encode(JSONValue.object(value)) else { return nil }
@@ -88,7 +104,7 @@ import Observation
 
     public func preview() async {
         guard !busy else { return }
-        busy = true; error = nil; errorRepair = nil; message = nil; plan = [:]
+        busy = true; error = nil; errorRepair = nil; errorDetails = nil; message = nil; plan = [:]
         do { plan = try await ClientSetup.provision("plan", release: locations.release, runtime: locations.runtime) }
         catch { record(error) }
         busy = false
@@ -97,7 +113,7 @@ import Observation
     public func install(workspace: URL?) async {
         guard !busy, let expected = planHash else { return }
         busy = true; installing = true; cancelling = false
-        error = nil; errorRepair = nil; message = ResearchSetupCopy.installing
+        error = nil; errorRepair = nil; errorDetails = nil; message = ResearchSetupCopy.installing
         defer { busy = false; installing = false; cancelling = false; installTask = nil; plan = [:] }
         let operation = clientReady ? "repair" : "apply"
         let locations = self.locations
@@ -110,7 +126,7 @@ import Observation
             let result = try await task.value
             // A Cancel that came after the new helper was switched on is too
             // late: the installation finished, and is reported as finished.
-            readiness = await ClientSetup.inspect(workspace: workspace)
+            absorb(await ClientSetup.inspectReport(workspace: workspace))
             message = clientReady ? ResearchSetupCopy.installed : ResearchSetupCopy.installedButNotReady
             if case .string(let log) = result["logPath"] { message = (message ?? "") + " Setup log: " + log }
         } catch {
@@ -127,10 +143,17 @@ import Observation
         installTask?.cancel()
     }
 
-    private func record(_ failure: any Error) {
+    /// Takes a readiness report in, keeping the identity failure it carried.
+    func absorb(_ report: ClientSetup.ReadinessReport) {
+        readiness = report.readiness
+        identityFailure = report.identityFailure
+    }
+
+    func record(_ failure: any Error) {
         let described = ResearchSetupCopy.failure(failure)
         error = described.reason
         errorRepair = described.repair
+        errorDetails = (failure as? ExperimentError)?.clientIdentityFailure?.details
     }
 }
 
@@ -183,6 +206,38 @@ public enum ResearchSetupCopy {
     public static let helperReady = "Helper ready"
     public static let helperUpdateTitle = "Helper update available"
     public static let helperSetupTitle = "Helper setup needed"
+    /// The helper is there, but could not be confirmed to belong to this
+    /// copy of SteerLab (`ClientIdentityFailure`).
+    public static let helperProblemTitle = "Helper needs attention"
+
+    /// The label of the disclosure that holds a failure's technical detail.
+    public static let detailsLabel = "Details"
+
+    /// What the helper step says, or nil once the helper is ready. An
+    /// identity failure says its own sentence and the one step it allows;
+    /// only a helper that did not start keeps this sheet's setup step.
+    public static func helperGuidance(
+        clientReady: Bool, basicClientReady: Bool,
+        identityFailure: ClientIdentityFailure?
+    ) -> String? {
+        if clientReady { return nil }
+        if let identityFailure {
+            let step = identityFailure.cause == .noAnswer
+                ? helperRepair : identityFailure.appNextStep
+            return identityFailure.appSummary + " " + step
+        }
+        return basicClientReady ? helperUpdateNeeded : helperNeeded
+    }
+
+    /// The title above the helper step.
+    public static func helperTitle(
+        clientReady: Bool, basicClientReady: Bool,
+        identityFailure: ClientIdentityFailure?
+    ) -> String {
+        if clientReady { return helperReady }
+        if identityFailure != nil { return helperProblemTitle }
+        return basicClientReady ? helperUpdateTitle : helperSetupTitle
+    }
 
     /// The helper is missing: the ordinary first-launch state.
     public static let helperNeeded =

@@ -380,16 +380,10 @@ struct ComputeChoiceTests {
 
     // MARK: - The old names, in the sources
 
-    /// Files that still say "Local (MLX)" to a researcher, and why they were
-    /// left: each belongs to another wave-1 stream. Shrink this list as they
-    /// are reworded; it must never grow.
-    private static let oldNameAllowlist: Set<String> = [
-        // The freeze route's "switch Compute to …" messages (freeze gates).
-        "Sources/ExperimentKit/StudyFreezeController.swift",
-        "Sources/ExperimentKit/SubstrateRouting.swift",
-        // The server-jobs empty state (jobs and the Resume controls).
-        "Sources/SteerLabApp/ServerJobsPanelView.swift",
-    ]
+    /// Files that still say "Local (MLX)" to a researcher. Wave 1 left three
+    /// (the freeze route's two messages and the server-jobs empty state);
+    /// wave 3 reworded them, so the list is empty and must stay so.
+    private static let oldNameAllowlist: Set<String> = []
 
     /// The app target has no unit tests of its own, so the renaming is held
     /// by reading the sources: outside comments, the retired engine names

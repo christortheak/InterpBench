@@ -38,13 +38,10 @@ struct JLensSupportSection: View {
         Section("Vector support — read a vector as tokens") {
             explanation
             if service.cluster.client == nil {
-                Text("""
-                     Needs a server connection. The lens is PyTorch/HF-native, so \
-                     there is no local path — rather than degrade to something \
-                     that looks like it worked.
-                     """)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                // The lens belongs to the Python engine, so there is no
+                // quick-start path to fall back to: offer the switch, or the
+                // connection, instead of a dead end.
+                PythonEngineNeeded(subject: "Reading a vector as lens tokens", plural: false)
             } else {
                 catalogRow
                 controls

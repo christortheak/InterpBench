@@ -327,17 +327,17 @@ public final class StudyManagementController {
             guard mint.minted else { return }  // silent dedup: the selection IS the answer
             if let parent = mint.divergedFrom {
                 note(
-                    "created design '\(mint.template.name)' — '\(name)' had "
-                        + "diverged from '\(parent)', so this is a new design "
+                    "created template '\(mint.template.name)' — '\(name)' had "
+                        + "diverged from '\(parent)', so this is a new template "
                         + "rather than an edit of that one",
                     severity: .success)
             } else {
-                note("created design '\(mint.template.name)'", severity: .success)
+                note("created template '\(mint.template.name)'", severity: .success)
             }
         } catch {
             refuse(
                 .template,
-                "Couldn't load '\(name)' as a design — "
+                "Couldn't load '\(name)' as a template — "
                     + ((error as? ExperimentError)?.reason ?? "\(error)"))
         }
     }
@@ -383,15 +383,15 @@ public final class StudyManagementController {
             refresh()
             selectedName = draft.name
             note(
-                "opened '\(draft.name)' — an ordinary draft of design "
-                    + "'\(name)'. Edit it here, then Save back to design to "
+                "opened '\(draft.name)' — an ordinary draft of template "
+                    + "'\(name)'. Edit it here, then Save back to template to "
                     + "update '\(name)' in place",
                 severity: .success)
             return draft.name
         } catch {
             refuse(
                 .template,
-                "Couldn't open design '\(name)' for editing — "
+                "Couldn't open template '\(name)' for editing — "
                     + ((error as? ExperimentError)?.reason ?? "\(error)"))
             return nil
         }
@@ -439,21 +439,21 @@ public final class StudyManagementController {
             for warning in update.warnings { note(warning, severity: .warning) }
             guard update.changed else {
                 note(
-                    "design '\(update.design)' already matched "
+                    "template '\(update.design)' already matched "
                         + "'\(manifest.name)' — nothing about the recipe moved",
                     severity: .info)
                 return
             }
             note(
-                "updated design '\(update.design)' in place "
+                "updated template '\(update.design)' in place "
                     + "(\(update.hashBefore.prefix(12))… → "
-                    + "\(update.hashAfter.prefix(12))…) — studies minted from it "
+                    + "\(update.hashAfter.prefix(12))…) — studies created from it "
                     + "earlier keep their original lineage stamps",
                 severity: .success)
         } catch {
             refuse(
                 .template,
-                "Couldn't update the design. "
+                "Couldn't update the template. "
                     + ((error as? ExperimentError)?.reason ?? "\(error)"))
         }
     }
