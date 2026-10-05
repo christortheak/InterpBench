@@ -376,6 +376,10 @@ def test_every_committed_fixture_has_a_staleness_test():
         # Checked inline in test_effect_outcomes.py (analyze re-run over the
         # committed records; rows, outcome list, and definitions compared).
         "effect-outcomes.json",
+        # Checked inline in test_battery_error_row_fixture.py (validation
+        # re-run with one agent failing to load; the written evidence file is
+        # compared with the committed one). Read by BatteryEvidenceRowTests.
+        "validation-evidence-error-row.json",
         # Hand-authored contract (not regenerated from either engine — it
         # states the INTENDED verdicts, SCI-04, 2026-09-05), checked inline on
         # both sides: test_study_stats.py
