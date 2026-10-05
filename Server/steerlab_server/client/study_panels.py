@@ -8,8 +8,10 @@ from ..experiment import experiment_store as store, manifest_files
 def validate(document: dict) -> dict:
     from ..experiment.multi_agent import Scenario, ScenarioError, validate as validate_scenario
     panel = panel_documents.normalized(document)
-    if not panel['agents'] or len({a['id'] for a in panel['agents']}) != len(panel['agents']):
-        files.refuse('A panel needs unique named seats.')
+    # A seat ID used twice is refused below, by the engine validator, which
+    # names the ID and the two seats that share it.
+    if not panel['agents']:
+        files.refuse('A panel needs at least one seat.')
     if design_panels.semantic(panel) != panel:
         files.refuse('Author an unbound semantic panel; model settings and seat agents belong to a study.')
     # Semantic validation uses the execution validator with explicit throwaway
@@ -21,7 +23,7 @@ def validate(document: dict) -> dict:
     try:
         validate_scenario(Scenario.from_dict(bound))
     except (ScenarioError, ValueError, KeyError, TypeError) as exc:
-        files.refuse(f'Invalid panel: {exc}')
+        design_panels.refuse_invalid('Invalid panel: ', exc)
     return panel
 
 

@@ -129,6 +129,13 @@ extension ExperimentTasks {
         /// generations.jsonl alone, so transcript.md never has to be a
         /// measurement input. Cross-engine twins of the server's flattened
         /// record keys.
+        ///
+        /// `speakerAgentID` is the SEAT, by ID. `speakerName` is a display
+        /// name — two seats may share one, and a rename changes it — so a
+        /// record that carried only the name could be attributed to its seat
+        /// only by joining turns.jsonl. Additive: nil ⇒ key omitted, which is
+        /// every non-panel record, so their bytes are unchanged.
+        var speakerAgentID: String? = nil
         var speakerName: String? = nil
         var turnTitle: String? = nil
         var routedAgentIDs: [String]? = nil

@@ -34,7 +34,8 @@ from dataclasses import dataclass, field
 
 import re
 
-from . import model_variant, paths, truncation_gate, turn_endpoint, voice_lint
+from . import (lifecycle_gates, model_variant, paths, truncation_gate,
+               turn_endpoint, voice_lint)
 from . import system_prompt as system_prompt_mod
 from .turn_endpoint import EndpointError, TurnEndpoint
 
@@ -290,7 +291,132 @@ _OUTPUT_REFS = re.compile(r"\{\{outputs\.([^}]+)\}\}")
 
 
 class ScenarioError(Exception):
-    pass
+    """A panel that cannot be read, authored, or run.
+
+    Optionally TYPED. A refusal that knows which rule declined and how to
+    repair it carries both, under the attribute names every envelope builder
+    already reads (``lifecycle_gates.gate_of`` / ``repair_of``), so a caller
+    gets a refusal with a repair instead of an operational failure. Strictly
+    additive: ``str(exc)`` is the message it always was, and every existing
+    ``raise ScenarioError("…")`` is untouched.
+    """
+
+    def __init__(self, message: str = "", *, gate: str | None = None,
+                 repair: str = "") -> None:
+        super().__init__(message)
+        self.gate = gate
+        self.repair_action = repair
+
+
+#: What to do about a duplicated ID, for a caller that shows a repair beside
+#: the reason. Names no program, because three of them reach this validator
+#: (the Mac CLI, the Python client, and the engine's own CLI) and all three
+#: spell the check the same way.
+DUPLICATE_ID_REPAIR = (
+    "Give one of the two a different ID in the panel file, then check the "
+    "panel again with `panel check`. A study that already uses this panel "
+    "needs the corrected file pinned again before it is frozen or run.")
+
+
+def _first_shared_id(noun: str, entries: list[tuple[str, str]],
+                     why: str) -> ScenarioError | None:
+    """The first ID two ``entries`` share, in file order, as a typed refusal.
+
+    ``entries`` are ``(id, display label)`` pairs. The refusal names the ID,
+    both positions (1-based, as a reader counts them in the file), and both
+    labels, so the author can find the pair without searching.
+    """
+    seen: dict[str, tuple[int, str]] = {}
+    for position, (identifier, label) in enumerate(entries, start=1):
+        first = seen.get(identifier)
+        if first is not None:
+            return ScenarioError(
+                f"{noun}s {first[0]} and {position} ('{first[1]}' and "
+                f"'{label}') share the ID '{identifier}' — each {noun} needs "
+                f"its own ID, because {why}",
+                gate=lifecycle_gates.MISSING_PREREQUISITE,
+                repair=DUPLICATE_ID_REPAIR)
+        seen[identifier] = (position, label)
+    return None
+
+
+def duplicate_agent_id_problem(scenario: Scenario) -> ScenarioError | None:
+    """Two agents sharing one ID, or None.
+
+    An agent ID is what turns, routing, and records name a seat by. Two agents
+    sharing one collapse into a single runtime seat (the later one silently
+    wins), and a record carrying that ID can no longer say which of them
+    spoke.
+
+    The refusal says SEAT, the word a researcher uses for an entry in a
+    panel's ``agents`` list; "agent" is kept for the configured model that is
+    cast into one.
+    """
+    return _first_shared_id(
+        "seat", [(a.id, a.name) for a in scenario.agents],
+        "turns, routing, and records refer to a seat by its ID; give one of "
+        "them a different ID, and update any turn that should name it")
+
+
+def duplicate_turn_id_problem(scenario: Scenario) -> ScenarioError | None:
+    """Two turns sharing one ID, or None.
+
+    A turn ID keys turn-level resume and the per-turn seed. Two turns sharing
+    one draw the same random stream, and a resumed transcript replays the
+    first turn's recorded output in place of the second and never generates
+    it.
+    """
+    return _first_shared_id(
+        "turn", [(t.id, t.title) for t in scenario.turns],
+        "a run uses the turn ID to pick up where it stopped and to set each "
+        "turn's random seed; give one of them a different ID")
+
+
+def duplicate_identifier_problem(scenario: Scenario) -> ScenarioError | None:
+    """The first duplicated agent ID, else the first duplicated turn ID, as a
+    typed refusal — or None when every agent and every turn has its own.
+
+    IDs are identity, not labels, and both failures above are SILENT — the run
+    completes and the records are quietly wrong — which is why this refuses
+    instead of advising.
+
+    Agents before turns, first collision in file order: the order is part of
+    the cross-engine contract, like every other refusal here, and so is the
+    wording (Swift twin: ``MultiAgentRunner.duplicateIdentifierRefusal``).
+
+    A named seam rather than a few lines inside ``validate``: freeze asks the
+    same question of a pinned panel without running the rest of validation.
+    It is deliberately NOT part of decoding (``Scenario.from_dict``), so a
+    panel that already ran — a run directory's ``scenario.json`` snapshot —
+    still reads.
+    """
+    problem = duplicate_agent_id_problem(scenario)
+    if problem is None:
+        problem = duplicate_turn_id_problem(scenario)
+    return problem
+
+
+def pinned_panel_identity_problem(d: dict,
+                                  root: str | None = None) -> ScenarioError | None:
+    """``duplicate_identifier_problem`` for the panel a multi-agent study pins,
+    read from the raw manifest dict ``d`` — the question freeze asks.
+
+    Answers ONLY the identity question. A study that pins no panel, or whose
+    panel cannot be read or decoded, returns None here: ``verify()`` and the
+    run report those in their own words, and a second, vaguer refusal from
+    this function would only hide them.
+    """
+    spath = d.get("multiAgentScenarioPath")
+    if d.get("studyKind") != "multiAgent" or not isinstance(spath, str) or not spath:
+        return None
+    if not os.path.isabs(spath):
+        spath = os.path.join(paths.project_root() if root is None else root, spath)
+    try:
+        scenario, _ = load_scenario(spath)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError,
+            ScenarioError):
+        return None
+    return duplicate_identifier_problem(scenario)
 
 
 def validate(scenario: Scenario) -> None:
@@ -300,6 +426,13 @@ def validate(scenario: Scenario) -> None:
         raise ScenarioError("scenario needs at least one agent")
     if not scenario.turns:
         raise ScenarioError("scenario needs at least one turn")
+    # Every agent and every turn has its own ID. Mirrors the Swift twin, which
+    # has always refused a repeated agent ID, and adds the turn half on both
+    # engines. Checked here — when a panel is authored, checked, cast, or about
+    # to run — and never on decode, so a finished run still reads.
+    duplicate = duplicate_identifier_problem(scenario)
+    if duplicate is not None:
+        raise duplicate
     # Every seat names its own model. Mirrors the Swift twin, which has always
     # required it, and closes a silent fallback on THIS engine: a blank seat
     # inherits whatever model happens to be loaded (``run_scenario`` falls back

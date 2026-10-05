@@ -622,6 +622,126 @@ public enum MultiAgentRunner {
         return out
     }
 
+    // MARK: - Identifier uniqueness
+
+    /// What to do about a duplicated ID: the edit, then the command that
+    /// re-checks it. The parenthesis covers the case the validator cannot see
+    /// from here — a study that already pins the panel pins its BYTES, so the
+    /// corrected file has to be pinned again.
+    static let duplicateIdentifierRepair =
+        "give one of the two a different ID in the panel file ; then "
+        + "steerlab-cli panel check <path-or-name>  (a study that already uses "
+        + "this panel needs the corrected file pinned again before it is frozen "
+        + "or run — for a semantic panel: steerlab-cli panel compile "
+        + "<path-or-name> --experiment <name>)"
+
+    /// The first ID two `entries` share, in file order, as a typed refusal.
+    ///
+    /// The refusal names the ID, both positions (1-based, as a reader counts
+    /// them in the file), and both display labels, so the author can find the
+    /// pair without searching. The prose is a cross-engine contract — server
+    /// twin: `multi_agent._first_shared_id`.
+    private static func firstSharedID(
+        noun: String,
+        entries: [(id: String, label: String)],
+        because why: String
+    ) -> ExperimentError? {
+        var seen: [String: (position: Int, label: String)] = [:]
+        for (offset, entry) in entries.enumerated() {
+            let position = offset + 1
+            if let first = seen[entry.id] {
+                return .refusing(
+                    .missingPrerequisite,
+                    "\(noun)s \(first.position) and \(position) ('\(first.label)' and "
+                        + "'\(entry.label)') share the ID '\(entry.id)' — each "
+                        + "\(noun) needs its own ID, because \(why)",
+                    repair: duplicateIdentifierRepair)
+            }
+            seen[entry.id] = (position, entry.label)
+        }
+        return nil
+    }
+
+    /// Two agents sharing one ID, or nil.
+    ///
+    /// An agent ID is what turns, routing, and records name a seat by. Two
+    /// agents sharing one cannot be told apart in a record — and the run loop
+    /// keys its seats by ID, so it could not hold both at all.
+    ///
+    /// The refusal says SEAT, the word a researcher uses for an entry in a
+    /// panel's `agents` list; "agent" is kept for the configured model that
+    /// is cast into one.
+    static func duplicateAgentIDRefusal(_ scenario: MultiAgentScenario) -> ExperimentError? {
+        firstSharedID(
+            noun: "seat",
+            entries: scenario.agents.map { ($0.id, $0.name) },
+            because: "turns, routing, and records refer to a seat by its ID; "
+                + "give one of them a different ID, and update any turn that "
+                + "should name it")
+    }
+
+    /// Two turns sharing one ID, or nil.
+    ///
+    /// A turn ID keys turn-level resume and the per-turn seed. Two turns
+    /// sharing one draw the same random stream, and a resumed transcript
+    /// replays the first turn's recorded output in place of the second and
+    /// never generates it.
+    static func duplicateTurnIDRefusal(_ scenario: MultiAgentScenario) -> ExperimentError? {
+        firstSharedID(
+            noun: "turn",
+            entries: scenario.turns.map { ($0.id, $0.title) },
+            because: "a run uses the turn ID to pick up where it stopped and to "
+                + "set each turn's random seed; give one of them a different ID")
+    }
+
+    /// The first duplicated agent ID, else the first duplicated turn ID, as a
+    /// typed refusal — or nil when every agent and every turn has its own.
+    ///
+    /// IDs are identity, not labels, and both failures above are SILENT — the
+    /// run completes and the records are quietly wrong — which is why this
+    /// refuses instead of advising.
+    ///
+    /// Agents before turns, first collision in file order: the order is part
+    /// of the cross-engine contract, like every other refusal here, and so is
+    /// the wording (server twin: `multi_agent.duplicate_identifier_problem`).
+    ///
+    /// A named seam rather than a few lines inside `validate`: freeze asks the
+    /// same question of a pinned panel without running the rest of validation.
+    /// It is deliberately NOT part of decoding, so a panel that already ran —
+    /// a run directory's `scenario.json` snapshot — still reads.
+    public static func duplicateIdentifierRefusal(
+        _ scenario: MultiAgentScenario
+    ) -> ExperimentError? {
+        duplicateAgentIDRefusal(scenario) ?? duplicateTurnIDRefusal(scenario)
+    }
+
+    /// `duplicateIdentifierRefusal` for the panel a multi-agent study pins —
+    /// the question freeze asks, phrased for the study being frozen.
+    ///
+    /// Answers ONLY the identity question. A study that pins no panel, or
+    /// whose panel cannot be read or decoded, answers nil here: `verify` and
+    /// the run report those in their own words, and a second, vaguer refusal
+    /// from this function would only hide them.
+    static func pinnedPanelIdentityRefusal(
+        for manifest: ExperimentManifest
+    ) -> ExperimentError? {
+        guard manifest.studyKind == .multiAgent,
+            let path = manifest.multiAgentScenarioPath, !path.isEmpty,
+            let data = try? Data(contentsOf: ExperimentStore.resolveProjectPath(path)),
+            let scenario = try? JSONDecoder().decode(MultiAgentScenario.self, from: data),
+            let refusal = duplicateIdentifierRefusal(scenario)?.lifecycleRefusal
+        else { return nil }
+        return .refusing(
+            refusal.gate,
+            "cannot freeze '\(manifest.name)': in its pinned panel, \(refusal.reason)",
+            repair: "give one of the two a different ID in the panel file ; then "
+                + "steerlab-cli panel check <path-or-name> ; then pin the "
+                + "corrected panel in '\(manifest.name)' (for a semantic panel: "
+                + "steerlab-cli panel compile <path-or-name> --experiment "
+                + "\(manifest.name)) && steerlab-cli experiment freeze "
+                + "\(manifest.name)")
+    }
+
     public static func validate(_ scenario: MultiAgentScenario) throws {
         let name = scenario.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw ExperimentError(reason: "scenario needs a name") }
@@ -631,10 +751,12 @@ public enum MultiAgentRunner {
         guard !scenario.turns.isEmpty else {
             throw ExperimentError(reason: "scenario needs at least one turn")
         }
+        // Every agent and every turn has its own ID. Checked here — when a
+        // panel is authored, checked, cast, or about to run — and never on
+        // decode, so a finished run still reads. Server twin:
+        // `multi_agent.validate`.
+        if let refusal = duplicateIdentifierRefusal(scenario) { throw refusal }
         let agentIDs = Set(scenario.agents.map(\.id))
-        guard agentIDs.count == scenario.agents.count else {
-            throw ExperimentError(reason: "agent IDs must be unique")
-        }
         for agent in scenario.agents {
             guard !agent.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw ExperimentError(reason: "every agent needs a name")

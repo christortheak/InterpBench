@@ -42,10 +42,12 @@ public enum StudyPanelAuthoring {
     }
 
     public static func validate(_ panel: MultiAgentScenario) throws {
-        guard !PanelAuthoring.carriesBindings(panel), !panel.agents.isEmpty,
-            Set(panel.agents.map(\.id)).count == panel.agents.count else {
-            throw malformed("Use a semantic panel with unique seats; model settings and agents belong to a study.")
+        guard !PanelAuthoring.carriesBindings(panel), !panel.agents.isEmpty else {
+            throw malformed("Use a semantic panel with at least one seat; model settings and agents belong to a study.")
         }
+        // A seat ID or a turn ID used twice is refused by name, with its own
+        // repair, before the rehearsal compile below.
+        if let refusal = MultiAgentRunner.duplicateIdentifierRefusal(panel) { throw refusal }
         let bound = try PanelAuthoring.rehearsalScenario(panel, modelID: "validation/model", temperature: 0, maxTokens: 2048)
         try MultiAgentRunner.validate(bound)
     }
