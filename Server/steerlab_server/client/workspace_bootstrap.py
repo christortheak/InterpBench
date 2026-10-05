@@ -117,7 +117,17 @@ def available_git():
     return executable
 
 
-def initialize(directory, *, use_git=True, seed=SEED):
+def initialize(directory, *, use_git=True, seed=SEED, before_seed=None, before_commit=None,
+               commit_message='Create research workspace'):
+    """Create a complete workspace in a new or empty directory.
+
+    The two hooks are how a Demo Workspace is opened as a copy
+    (``demo_workspaces.open_copy``) through this same staged, create-only
+    publication. ``before_seed(staged)`` places the demo's own files first, so
+    the seed only fills in what the demo does not carry and never replaces a
+    byte of it. ``before_commit(staged)`` runs once the tree is complete and
+    before anything is committed or published; raising there leaves nothing
+    behind. With neither hook this is exactly an ordinary new workspace."""
     requested = Path(directory).expanduser().absolute()
     if requested.is_symlink():
         refuse('Workspace creation refuses a symlink destination.')
@@ -137,18 +147,24 @@ def initialize(directory, *, use_git=True, seed=SEED):
         staged.mkdir()
         for name in specification['directories']:
             (staged / name).mkdir(parents=True, exist_ok=True)
+        if before_seed is not None:
+            before_seed(staged)
         for name in specification['seedFiles']:
             target = staged / name
+            if target.exists():
+                continue  # placed by before_seed: a copy's own bytes are never replaced
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(Path(seed) / name, target)
         marker = (RESOURCES / 'workspace-marker.md').read_text().replace('{{version}}', __version__).replace('{{createdAt}}', datetime.now(timezone.utc).isoformat())
         (staged / specification['markerFile']).write_text(marker)
         (staged / 'AGENTS.md').write_text(agent_contents())
         (staged / '.gitignore').write_text(specification['gitignore'])
+        if before_commit is not None:
+            before_commit(staged)
         git = available_git() if use_git else None
         if git:
             commands = [['init'], ['-c', 'user.name=SteerLab', '-c', 'user.email=steerlab@localhost', 'add', '-A', '.'],
-                        ['-c', 'user.name=SteerLab', '-c', 'user.email=steerlab@localhost', 'commit', '-m', 'Create research workspace']]
+                        ['-c', 'user.name=SteerLab', '-c', 'user.email=steerlab@localhost', 'commit', '-m', commit_message]]
             git_status = 'initialized'
             for command in commands:
                 result = subprocess.run([git, *command], cwd=staged, capture_output=True, timeout=30)

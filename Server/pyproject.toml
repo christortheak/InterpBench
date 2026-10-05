@@ -180,7 +180,11 @@ include = ["steerlab_server*"]
 # checkout's WorkspaceSeed/ is still the source of truth; a test asserts these
 # copies are byte-identical to it.
 "steerlab_server.experiment" = ["seed/**/*"]
-"steerlab_server.client" = ["resources/*"]
+# Demo Workspaces ship inside the client too. The trees live once, at
+# `<checkout>/DemoWorkspaces`; `scripts/build-client-release.py` copies them
+# into the disposable source tree it builds the wheel from, so the checkout
+# holds no second copy and an engine payload carries none.
+"steerlab_server.client" = ["resources/*", "demo-workspaces/*", "demo-workspaces/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
