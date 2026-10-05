@@ -32,8 +32,10 @@ A frozen study in this workspace becomes verified evidence in this workspace.
 `upload`, `submit`, `wait`, `evidence`, `import`, `provenance` — each with a
 state, and a failure names `result.failedStage`. `--verb` takes `analyze`,
 `evaluate`, `extract`, `pipeline`, `run`, `sweep`, `validate`, or `verify`
-(default `run`). A draft refuses with `experimentNotFrozen`; use the separate
-steps below for a draft.
+(default `run`). A **draft** is accepted for `--verb validate` and `--verb
+extract`, the steps that come before freeze (`workspace guide lifecycle`,
+step 7). Every other verb refuses a draft with `experimentNotFrozen`, and the
+refusal names the route to a frozen study.
 
 `--timeout` is the WAIT deadline here (default 24 hours);
 `--request-timeout` is the per-request budget. `--no-wait`, ctrl-c during the
