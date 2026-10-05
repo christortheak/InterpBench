@@ -379,6 +379,12 @@ def test_every_committed_fixture_has_a_staleness_test():
         # (test_dose_monotonicity_matches_the_cross_engine_fixture) and
         # Tests/ExperimentKitTests/StudyStatisticsTests.swift.
         "dose-monotonicity.json",
+        # Hand-authored contract too: which outcome leads a results summary
+        # and which outcomes a study can produce. It states the intended
+        # answers and is checked inline in three suites —
+        # test_headline_outcome.py, HeadlineOutcomeTests.swift, and the
+        # results explorer's test/headline.test.ts.
+        "headline-outcome.json",
         # Phase-0 portability contracts. The two produced by THIS engine are
         # write-if-missing goldens checked inline in
         # test_portability_contracts.py (delete the file and re-run that
