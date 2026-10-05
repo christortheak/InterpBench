@@ -38,12 +38,20 @@ public struct StudyResultRepository: Sendable {
                 path: url.path,
                 kind: kind,
                 createdAt: String(name.prefix(24)),
-                generationCount: lineCount(generationsURL),
+                generationCount: StudyRecordFile.recordCount(at: generationsURL),
                 hasReport: fm.fileExists(atPath: url.appending(component: "report.json").path))
         }
         .filter { $0.kind != .evaluate }
         .sorted { lhs, rhs in lhs.directoryName > rhs.directoryName }
     }
+
+    /// How many of a file's first lines the detail's bounded previews read.
+    /// These bound a PREVIEW (the browser client's cards and the short list
+    /// under the review button), never the review: the review sheet pages
+    /// through every record (`StudyRecordReview`), and the counts beside
+    /// the previews are the file's own.
+    public static let previewResponseLimit = 80
+    public static let previewJudgmentLimit = 200
 
     public func detail(for item: StudyRunListItem) -> StudyRunDetail {
         let url = URL(filePath: item.path)
@@ -51,7 +59,10 @@ public struct StudyResultRepository: Sendable {
             item.kind == .run
             ? latestEvaluationDirectory(forSourceRun: item.path)
             : (item.kind == .evaluate ? url : nil)
-        return StudyRunDetail(
+        let responses = StudyRecordFile(url: Self.responsesURL(runDirectory: url))
+        let judgments = StudyRecordFile(
+            url: Self.judgmentsURL(directory: judgeArtifactURL ?? url))
+        var detail = StudyRunDetail(
             item: item,
             judgeArtifactDirectory: judgeArtifactURL?.path,
             report: loadRunReport(url.appending(component: "report.json")),
@@ -59,8 +70,23 @@ public struct StudyResultRepository: Sendable {
             pairedJudgeReport: loadPairedJudgeReport(
                 (judgeArtifactURL ?? url).appending(component: "judge-report.json")),
             robustnessReports: loadRobustnessReports(url.appending(component: "robustness-report.json")),
-            generations: loadGenerations(url.appending(component: "generations.jsonl")),
-            judgments: loadJudgments((judgeArtifactURL ?? url).appending(component: "judgments.jsonl")))
+            generations: previewGenerations(responses),
+            judgments: previewJudgments(judgments))
+        detail.responseRecordCount = responses.count
+        detail.judgmentRecordCount = judgments.count
+        if item.kind == .run {
+            detail.unfinishedEvaluations = unfinishedEvaluations(
+                forSourceRun: item.directoryName, excluding: judgeArtifactURL)
+        }
+        return detail
+    }
+
+    public static func responsesURL(runDirectory: URL) -> URL {
+        runDirectory.appending(component: "generations.jsonl")
+    }
+
+    public static func judgmentsURL(directory: URL) -> URL {
+        directory.appending(component: "judgments.jsonl")
     }
 
     private func loadRobustnessReports(_ url: URL) -> [String: VariantRobustnessReport] {
@@ -158,6 +184,82 @@ public struct StudyResultRepository: Sendable {
         }
     }
 
+    /// Judge evaluations of a run that stopped before writing a report.
+    ///
+    /// Both engines stamp the source run's name in the evaluate directory's
+    /// run-status.json and write judge-report.json only on completion, so a
+    /// stopped evaluation is exactly: an evaluate directory with no report
+    /// whose status names this run and is not `completed`. Its rows were
+    /// kept on purpose; a view that lists only finished evaluations made
+    /// them — and the fact that an evaluation stopped — invisible.
+    private func unfinishedEvaluations(
+        forSourceRun runName: String, excluding finished: URL?
+    ) -> [StudyUnfinishedEvaluation] {
+        evaluationDirectories().compactMap { url in
+            guard url.path != finished?.path,
+                !FileManager.default.fileExists(
+                    atPath: url.appending(component: "judge-report.json").path),
+                Self.statusSourceRun(at: url) == runName,
+                let summary = Self.unfinishedSummary(RunStatusFile.reading(at: url))
+            else { return nil }
+            return StudyUnfinishedEvaluation(
+                directoryName: url.lastPathComponent,
+                path: url.path,
+                summary: summary,
+                judgmentRecordCount: StudyRecordFile.recordCount(
+                    at: Self.judgmentsURL(directory: url)))
+        }
+    }
+
+    /// The `sourceRun` a stage stamped in its status file — a key both
+    /// engines write and `RunStatusFile.Status` does not carry.
+    static func statusSourceRun(at directory: URL) -> String? {
+        guard
+            let data = try? Data(
+                contentsOf: directory.appending(component: RunStatusFile.filename)),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return object["sourceRun"] as? String
+    }
+
+    /// What happened to an evaluation that has no report, in plain words —
+    /// nil when its status says it completed, or when it has no status file
+    /// (a directory that predates the status contract, or one still
+    /// waiting for judgments made elsewhere).
+    static func unfinishedSummary(_ reading: RunStatusFile.Reading) -> String? {
+        switch reading {
+        case .absent:
+            return nil
+        case .unreadable:
+            return "Its status file cannot be read, so it is treated as "
+                + "unfinished."
+        case .present(let status):
+            var parts: [String]
+            switch status.status ?? "" {
+            case "completed":
+                return nil
+            case "checkpointed":
+                parts = ["Paused at a checkpoint; it can be resumed."]
+            case "inProgress":
+                parts = ["Still running, or stopped without recording why."]
+            default:
+                if status.errorType == "Cancelled" {
+                    parts = ["Cancelled before it finished."]
+                } else if let error = status.error, !error.isEmpty {
+                    parts = ["Stopped with an error: \(error)"]
+                } else {
+                    parts = ["Stopped before it finished."]
+                }
+            }
+            if let pending = status.pendingUnits, !pending.isEmpty {
+                parts.append(
+                    "Judges that did not finish: "
+                        + pending.joined(separator: ", ") + ".")
+            }
+            return parts.joined(separator: " ")
+        }
+    }
+
     private struct RawGeneration: Decodable {
         let interventionDecisions: JSONValue?
         let probeMeasurements: JSONValue?
@@ -171,12 +273,12 @@ public struct StudyResultRepository: Sendable {
         let markerDensity: [String: Float]?
     }
 
-    private func loadGenerations(_ url: URL) -> [StudyGenerationPreview] {
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
-        return text.split(separator: "\n").prefix(80).compactMap { line in
-            guard
-                let raw = try? JSONDecoder().decode(
-                    RawGeneration.self, from: Data(line.utf8))
+    /// The bounded preview only — see `StudyRunDetail.generations`. Lines
+    /// that are not generated responses are not in it; they are in the
+    /// review, and in `responseRecordCount`.
+    private func previewGenerations(_ file: StudyRecordFile) -> [StudyGenerationPreview] {
+        file.lines(at: 0..<min(Self.previewResponseLimit, file.count)).compactMap { line in
+            guard let raw = try? JSONDecoder().decode(RawGeneration.self, from: line)
             else { return nil }
             let limit = 1_800
             let truncated = raw.output.count > limit
@@ -213,10 +315,11 @@ public struct StudyResultRepository: Sendable {
         let conditionResult: String
     }
 
-    private func loadJudgments(_ url: URL) -> [StudyJudgePreview] {
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
-        return text.split(separator: "\n").prefix(200).compactMap { line in
-            let data = Data(line.utf8)
+    /// The bounded preview only — see `StudyRunDetail.judgments`. It holds
+    /// Mac-engine verdict rows; noncompliant rows and Python-engine rows are
+    /// in the review (`StudyJudgmentRow`), and in `judgmentRecordCount`.
+    private func previewJudgments(_ file: StudyRecordFile) -> [StudyJudgePreview] {
+        file.lines(at: 0..<min(Self.previewJudgmentLimit, file.count)).compactMap { data in
             guard let raw = try? JSONDecoder().decode(RawJudgment.self, from: data) else {
                 return nil
             }
@@ -227,7 +330,7 @@ public struct StudyResultRepository: Sendable {
                         withJSONObject: $0, options: [.prettyPrinted, .sortedKeys])
                 }
                 .map { String(decoding: $0, as: UTF8.self) }
-                ?? String(line)
+                ?? String(decoding: data, as: UTF8.self)
             return StudyJudgePreview(
                 condition: raw.condition,
                 // Legacy rows keyed by seed: reuse it as the row id's cell
@@ -248,10 +351,5 @@ public struct StudyResultRepository: Sendable {
                 structuredFields: raw.judgment.structuredFields,
                 rawJSON: pretty)
         }
-    }
-
-    private func lineCount(_ url: URL) -> Int {
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return 0 }
-        return text.split(separator: "\n").count
     }
 }

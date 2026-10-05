@@ -25,8 +25,41 @@ public struct StudyRunDetail: Codable, Sendable, Equatable {
     public let validationReportText: String?
     public let pairedJudgeReport: PairedJudgeReportView?
     public let robustnessReports: [String: VariantRobustnessReport]
+    /// The FIRST `StudyResultRepository.previewResponseLimit` lines of
+    /// generations.jsonl that are generated responses — a bounded preview
+    /// for the browser client and the short list under the review button.
+    /// It is not the run: `responseRecordCount` is how many records the
+    /// file holds, and the review sheet pages through all of them
+    /// (`StudyRecordReview`).
     public let generations: [StudyGenerationPreview]
+    /// The FIRST `StudyResultRepository.previewJudgmentLimit` lines of
+    /// judgments.jsonl that carry a verdict — the same bounded preview.
+    /// `judgmentRecordCount` is the file's row count, noncompliant rows
+    /// included.
     public let judgments: [StudyJudgePreview]
+    /// Every record in generations.jsonl: responses, cut-off responses,
+    /// failure records, answer-option readings, and lines that cannot be
+    /// read. A count of lines, so nothing a decoder dislikes can lower it.
+    public var responseRecordCount: Int = 0
+    /// Every row in the judge artifact's judgments.jsonl, noncompliant and
+    /// unreadable rows included.
+    public var judgmentRecordCount: Int = 0
+    /// Judge evaluations of this run that stopped before writing a judge
+    /// report. Their rows are real and reviewable, and they are not a
+    /// result — shown so a stopped evaluation is never simply absent.
+    public var unfinishedEvaluations: [StudyUnfinishedEvaluation] = []
+}
+
+/// A judge evaluation that did not finish: the directory holds the rows it
+/// wrote and a status file, and no judge-report.json.
+public struct StudyUnfinishedEvaluation: Identifiable, Codable, Sendable, Equatable {
+    public var id: String { directoryName }
+    public let directoryName: String
+    public let path: String
+    /// What the status file says happened, in one line.
+    public let summary: String
+    /// Rows the evaluation wrote before it stopped.
+    public let judgmentRecordCount: Int
 }
 
 public struct LiveStudyGeneration: Codable, Sendable, Equatable {
