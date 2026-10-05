@@ -7,18 +7,24 @@ gate, which is how five of them once sat unrun and failing for weeks.
 """
 
 import importlib.util
+import io
 import json
+import os
 import pathlib
 import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CI = ROOT / "scripts" / "ci"
+GATE = ROOT / "scripts" / "release-gate.py"
+STAGE_ORDER = ["preflight", "build-cli", "generated", "audits", "public-scan", "technique",
+               "python-suite", "swift-suite", "results-explorer", "artifact-scan"]
 
 
 def _load(path: pathlib.Path, name: str):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module          # dataclasses resolve annotations through it
     spec.loader.exec_module(module)
     return module
 
@@ -78,3 +84,135 @@ def test_the_python_boundary_audit_defaults_to_its_recorded_checkpoint():
     generated = _load(CI / "check-generated.py", "check_generated")
     assert ("audit-python-boundaries.py", config["candidate"]) in generated.AUDITS
     assert generated.COMMIT_FLAGS["audit-python-boundaries.py"] == "--candidate"
+
+
+# -- the release gate ----------------------------------------------------------
+
+
+def _gate():
+    return _load(GATE, "release_gate")
+
+
+def _context(gate, tmp_path, **overrides):
+    values = dict(python=pathlib.Path(sys.executable), scratch=tmp_path / "scratch",
+                  selected=list(gate.STAGE_NAMES), base_env={"PATH": os.environ["PATH"]})
+    values.update(overrides)
+    return gate.Context(**values)
+
+
+def test_the_stages_run_in_the_documented_order():
+    """The order is the release plan's: what is cheap and most often stale
+    first, the long suites after, and the scan of built artifacts last."""
+    assert _gate().STAGE_NAMES == STAGE_ORDER
+
+
+def test_list_prints_the_plan_in_order_and_runs_nothing(tmp_path):
+    scratch = tmp_path / "scratch"
+    result = subprocess.run(
+        [sys.executable, str(GATE), "--list", "--scratch", str(scratch),
+         "--python", sys.executable], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    lines = [line.split() for line in result.stdout.splitlines() if line[:3].strip().rstrip(".").isdigit()]
+    assert [words[1] for words in lines] == STAGE_ORDER
+    assert "-parallel-testing-enabled NO" in result.stdout     # the Swift suite, serially
+    assert "not applicable: no --artifact given" in result.stdout
+    assert not scratch.exists()                              # nothing was built or written
+
+
+def test_the_gate_stops_at_the_first_failure_and_says_what_to_do(tmp_path):
+    gate = _gate()
+    ran = tmp_path / "ran"
+    ran.mkdir()
+
+    def stand_in(name, code):
+        script = (f"import pathlib, sys; pathlib.Path({str(ran)!r}, {name!r}).touch(); "
+                  f"sys.exit({code})")
+        return gate.Stage(name, f"stand-in {name}", f"the repair for {name}",
+                          commands=lambda context: [gate.Command([sys.executable, "-c", script])])
+
+    plan = [stand_in("first", 0), stand_in("second", 3), stand_in("third", 0)]
+    out = io.StringIO()
+    outcomes = gate.run(plan, _context(gate, tmp_path), out=out)
+    assert [outcome.status for outcome in outcomes] == ["passed", "FAILED", "not run"]
+    assert sorted(path.name for path in ran.iterdir()) == ["first", "second"]   # third never ran
+    summary = io.StringIO()
+    assert gate.summarize(outcomes, plan, partial=False, out=summary) == 1
+    text = summary.getvalue()
+    assert "The second stage failed, so the stages after it did not run." in text
+    assert "the repair for second" in text
+    assert "exit 3" in text
+
+
+def test_a_narrowed_run_says_it_is_not_a_gate_pass(tmp_path):
+    gate = _gate()
+    assert gate.select("public-scan", None) == ["preflight", "public-scan"]
+    assert gate.select(None, "swift-suite") == [
+        "preflight", "swift-suite", "results-explorer", "artifact-scan"]
+    plan = [stage for stage in gate.stages() if stage.name in {"preflight", "public-scan"}]
+    outcomes = [gate.Outcome("preflight", "passed"), gate.Outcome("public-scan", "passed")]
+    summary = io.StringIO()
+    assert gate.summarize(outcomes, plan, partial=True, out=summary) == 0
+    assert "PARTIAL RUN" in summary.getvalue()
+    assert "not a release gate pass" in summary.getvalue()
+
+
+def test_without_artifacts_the_scan_is_reported_as_still_owed(tmp_path):
+    gate = _gate()
+    context = _context(gate, tmp_path)
+    scan = next(stage for stage in gate.stages() if stage.name == "artifact-scan")
+    assert "no --artifact given" in scan.not_applicable(context)
+    outcomes = gate.run([scan], context, out=io.StringIO())
+    assert [outcome.status for outcome in outcomes] == ["not applicable"]
+    summary = io.StringIO()
+    assert gate.summarize(outcomes, [scan], partial=False, out=summary) == 0
+    assert "Still owed before publishing: artifact-scan" in summary.getvalue()
+
+
+def test_every_stage_runs_offline_with_names_required_and_no_real_workspace(tmp_path):
+    gate = _gate()
+    context = _context(gate, tmp_path, base_env={
+        "PATH": os.environ["PATH"], "STEERLAB_WORKSPACE": "/a/real/workspace"})
+    environment = gate.stage_environment(context)
+    assert environment["HF_HUB_OFFLINE"] == "1"
+    assert environment["STEERLAB_REQUIRE_PRIVATE_NAMES"] == "1"
+    stand_in = pathlib.Path(environment["STEERLAB_WORKSPACE"])
+    assert tmp_path in stand_in.parents                      # never the caller's workspace
+    swift = next(stage for stage in gate.stages() if stage.name == "swift-suite")
+    [test] = swift.commands(context)
+    assert test.argv[test.argv.index("-parallel-testing-enabled") + 1] == "NO"
+    assert tmp_path in pathlib.Path(test.argv[test.argv.index("-derivedDataPath") + 1]).parents
+    # xcodebuild hands the test runner only TEST_RUNNER_-prefixed variables.
+    assert test.env["TEST_RUNNER_STEERLAB_WORKSPACE"] == str(stand_in)
+    assert test.env["TEST_RUNNER_STEERLAB_TEST_PYTHON"] == sys.executable
+    assert test.env["TEST_RUNNER_HF_HUB_OFFLINE"] == "1"
+    assert test.env["TEST_RUNNER_STEERLAB_REQUIRE_PRIVATE_NAMES"] == "1"
+
+
+def test_no_stage_reaches_another_machine_signs_installs_or_publishes(tmp_path):
+    gate = _gate()
+    context = _context(gate, tmp_path, artifacts=[tmp_path / "SteerLab.app"],
+                       cli=tmp_path / "steerlab-cli")
+    forbidden = {"ssh", "scp", "rsync", "cluster", "remote", "runner", "codesign",
+                 "notarytool", "stapler", "gh", "curl", "install-cli.sh", "build-app.sh",
+                 "--install", "install", "ci"}
+    for stage in gate.stages():
+        for command in stage.commands(context):
+            words = {pathlib.Path(part).name for part in command.argv}
+            assert not words & forbidden, (stage.name, command.argv)
+
+
+def test_preflight_installs_nothing_and_names_the_command_to_run(tmp_path, monkeypatch):
+    """A results explorer without its dependencies stops the gate with the
+    command to run, and the gate does not run it."""
+    gate = _gate()
+    checkout = tmp_path / "checkout"
+    (checkout / "results-explorer").mkdir(parents=True)
+    (checkout / "results-explorer" / "package-lock.json").write_text("{}")
+    names = tmp_path / "private-names.txt"
+    names.write_text("quuxcluster\n")                      # made up
+    monkeypatch.setattr(gate, "ROOT", checkout)
+    context = _context(gate, tmp_path, selected=["preflight", "results-explorer"], base_env={
+        "PATH": os.environ["PATH"], "STEERLAB_PRIVATE_NAMES_FILE": str(names)})
+    problems = gate.preflight(context)
+    assert any("Run `npm ci` in results-explorer/ yourself" in problem for problem in problems)
+    assert not (checkout / "results-explorer" / "node_modules").exists()
