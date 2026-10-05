@@ -16,7 +16,9 @@ import Testing
             .appending(component: "ws-\(UUID().uuidString)")
     }
 
-    private func gitAvailable() -> Bool {
+    /// Whether git runs on this machine. A test that cannot mean anything
+    /// without git is disabled by it, so the run summary reports a skip.
+    static let hasGit: Bool = {
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/git")
         process.arguments = ["--version"]
@@ -25,7 +27,9 @@ import Testing
         guard (try? process.run()) != nil else { return false }
         process.waitUntilExit()
         return process.terminationStatus == 0
-    }
+    }()
+
+    private func gitAvailable() -> Bool { Self.hasGit }
 
     // MARK: - Root resolution precedence
 
@@ -344,8 +348,8 @@ import Testing
     /// inside a larger repo since 2026-07-13; Swift only scoped its
     /// `git add -A .` to the workspace directory, which still landed a
     /// commit in the PARENT repo's history. This is the Swift twin.
-    @Test func nestedWorkspaceIsDetectedAndStandaloneIsNot() throws {
-        guard gitAvailable() else { return }
+    @Test(.enabled(if: hasGit, "git does not run on this machine, so nesting could not be checked"))
+    func nestedWorkspaceIsDetectedAndStandaloneIsNot() throws {
         let fm = FileManager.default
         let parent = tempDirectory()
         try fm.createDirectory(at: parent, withIntermediateDirectories: true)

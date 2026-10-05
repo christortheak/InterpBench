@@ -2,10 +2,16 @@
 """Prove executable ASTs unchanged by the recorded public-name/import migration.
 
 Usage: python scripts/ci/audit-python-boundaries.py [--candidate REV]
-The default candidate is the working tree. Run against the mechanical commit,
-not the subsequent intentional sweep-judgment behavior fix. Import destinations
-and identifiers are canonicalized; executable statements and test assertions
-must match. Module import inventories are checked by the boundary tests.
+The default candidate is the mechanical commit recorded in
+python-boundary-renames.json (``candidate``), compared with its ``baseline``,
+so a plain run reproduces the original proof; ``check-generated.py --audits``
+runs it. It used to default to the working tree, which every later
+intentional change to these files has moved on from, so a plain run failed by
+design. Never point it at the subsequent sweep-judgment behavior fix, or at
+today's tree. Import destinations and identifiers are canonicalized;
+executable statements and test assertions must match. Module import
+inventories are checked by the boundary tests. Reads git history, so it needs
+a clone that has both commits.
 """
 from __future__ import annotations
 import argparse
@@ -222,5 +228,7 @@ def compare(candidate=None):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--candidate')
+    parser.add_argument('--candidate', default=CONFIG['candidate'],
+                        help='the commit to compare with the baseline (default: the recorded '
+                             'mechanical commit, %(default)s)')
     compare(parser.parse_args().candidate)

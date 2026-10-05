@@ -23,6 +23,14 @@ included — and looks inside zip and tar archives (a wheel is a zip), for:
 
 Both are searched as plain bytes and as UTF-16 text.
 
+Digests are not searched. A hash manifest lists a digest beside each file
+name, and a digest is random text: a wheel's ``RECORD`` writes it in base64,
+mixed letter case, so a short term turns up inside one by chance. In the
+manifests named in ``DIGEST_FIELDS`` (a wheel's ``RECORD``, ``SHA256SUMS``
+and ``*.sha256`` files, pip ``--hash=`` values, and the build's resource and
+deployment manifests) the digest fields alone are blanked before the search.
+The file names beside them are searched like everything else.
+
 Exit 0 clean. Exit 1 with one line per finding: the file (and the archive
 member), the check, and the byte offset. Exit 2 when the scan could not be
 made: a path that does not exist, a file that could not be read, or no
@@ -79,6 +87,44 @@ HOME_PATH = re.compile(
 #: and searched like any other bytes.
 UTF16_LE_RUN = re.compile(rb"(?:[\x20-\x7e]\x00){6,}")
 UTF16_BE_RUN = re.compile(rb"(?:\x00[\x20-\x7e]){6,}")
+
+#: Hash manifests, recognized by name, and the digest field inside each. The
+#: first pattern matches the file's path (an archive member's path when the
+#: file is inside an archive); group 1 of the second is the digest, which is
+#: blanked before searching. Nothing else in the file is blanked, so a term in
+#: a file NAME listed beside a digest is still a finding.
+DIGEST_FIELDS = (
+    # A wheel's <name>.dist-info/RECORD: `path,sha256=<urlsafe base64>,size`.
+    (re.compile(r"(?:^|/)[^/]+\.dist-info/RECORD$"),
+     re.compile(rb"(?m),([A-Za-z0-9_]+=[A-Za-z0-9_-]+=*),[0-9]*\r?$")),
+    # SHA256SUMS and <file>.sha256: `<hex>  <name>`, or a digest on its own.
+    (re.compile(r"(?:^|/)(?:SHA256SUMS|[^/]+\.sha256)$"),
+     re.compile(rb"(?m)^([0-9A-Fa-f]{64})(?=[ \t*\r\n]|$)")),
+    # A pip requirements lock: `--hash=sha256:<hex>`.
+    (re.compile(r"\.(?:lock|txt)$"),
+     re.compile(rb"--hash=[A-Za-z0-9]+:([0-9A-Fa-f]+)")),
+    # The app's resource manifest and the cluster payload's deployment
+    # manifest: `"<path>": "<hex>"`.
+    (re.compile(r"(?:^|/)(?:resource|deployment)-manifest\.json$"),
+     re.compile(rb':\s*"([0-9a-f]{64})"')),
+)
+
+
+def blank_digests(location: str, data: bytes) -> bytes:
+    """``data`` with the digest fields of a hash manifest replaced by NUL
+    bytes of the same length (so offsets still mean what they say). Any other
+    file is returned unchanged."""
+    path = location.rsplit("!", 1)[-1]
+    for name, field in DIGEST_FIELDS:
+        if not name.search(path):
+            continue
+        blanked = bytearray(data)
+        for match in field.finditer(data):
+            start, end = match.span(1)
+            blanked[start:end] = b"\x00" * (end - start)
+        data = bytes(blanked)
+    return data
+
 
 #: How deep to follow an archive inside an archive (a wheel inside a tarball
 #: inside a bundle is depth 2).
@@ -202,7 +248,7 @@ class Scanner:
 
     def scan_bytes(self, location: str, data: bytes, depth: int = 0) -> None:
         self.files += 1
-        self._scan_buffer(location, data)
+        self._scan_buffer(location, blank_digests(location, data))
         if depth >= MAX_ARCHIVE_DEPTH:
             return
         for member, payload in archive_members(data):

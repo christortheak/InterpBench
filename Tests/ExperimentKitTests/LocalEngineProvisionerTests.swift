@@ -491,19 +491,28 @@ import Testing
         #expect(LocalPythonRuntime.startServerScript == nil)
     }
 
+    /// Whether this build resolves its local engine from a code checkout. A
+    /// packaged build with no checkout is a legitimate state with nothing to
+    /// assert about a checkout, so the live test below is then skipped (and
+    /// reported as skipped, not passed).
+    static var runsFromACheckout: Bool {
+        if case .checkout = CodeResources.localEngineSource() { return true }
+        return false
+    }
+
     /// LIVE, and deliberately conditional: this observes the REAL machine
     /// through the real environment, so it asserts only what is true of any
     /// developer checkout rather than of this one Mac. Its job is to catch the
     /// observation layer wiring itself to the wrong paths — a plan whose steps
     /// disagree with what is actually on disk.
     @MainActor
-    @Test func theLiveObservationAgreesWithWhatIsOnDisk() async throws {
+    @Test(.enabled(if: runsFromACheckout, "this build has no code checkout, so there is no checkout observation to compare with the disk"))
+    func theLiveObservationAgreesWithWhatIsOnDisk() async throws {
         let environment = SystemLocalEngineEnvironment()
         let observation = await environment.observe(port: 8080)
 
         guard case .checkout(let path) = observation.source else {
-            // A packaged build with no checkout is a legitimate state; there
-            // is simply nothing to assert about a checkout here.
+            Issue.record("the build runs from a checkout, but the observation reported \(observation.source)")
             return
         }
         let server = URL(filePath: path).appending(component: "Server")

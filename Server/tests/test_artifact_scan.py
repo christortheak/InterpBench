@@ -184,3 +184,97 @@ def test_a_path_that_does_not_exist_is_not_a_clean_scan(tmp_path):
     result = _scan(tmp_path / "nothing-here", names_file=_list(tmp_path))
     assert result.returncode == 2
     assert "no such path" in result.stderr
+
+
+# -- digests in hash manifests are random text, not names ----------------------
+
+#: A base64 digest mixes letter case, so a term can sit inside one by chance.
+#: 43 characters, the length of an unpadded urlsafe SHA-256 digest.
+DIGEST_WITH_TERM = ("Ab3" + "QuUxClUsTeR" + "9-xYz_" + "0123456789abcdefghijklm")[:43]
+assert len(DIGEST_WITH_TERM) == 43 and TERM in DIGEST_WITH_TERM.lower()
+
+
+def _record(*rows: str) -> bytes:
+    return ("\n".join(rows) + "\n").encode()
+
+
+def test_a_term_inside_a_wheel_record_digest_is_not_a_finding(tmp_path):
+    """The false positive a release wheel produced: a private term spelled
+    out, in mixed case, inside the base64 digest of a RECORD line."""
+    app = _clean_tree(tmp_path)
+    (app / "Contents/Resources/payload/demo-1.0-py3-none-any.whl").write_bytes(_zip({
+        "demo/__init__.py": b"VALUE = 1\n",
+        "demo-1.0.dist-info/RECORD": _record(
+            f"demo/__init__.py,sha256={DIGEST_WITH_TERM},10",
+            "demo-1.0.dist-info/RECORD,,"),
+    }))
+    result = _scan(app, names_file=_list(tmp_path))
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_a_term_in_a_file_name_listed_in_a_record_is_still_found(tmp_path):
+    """Only the digest field is skipped: the file names RECORD lists are
+    searched as before."""
+    app = _clean_tree(tmp_path)
+    (app / "Contents/Resources/payload/demo-1.0-py3-none-any.whl").write_bytes(_zip({
+        "demo/__init__.py": b"VALUE = 1\n",
+        "demo-1.0.dist-info/RECORD": _record(
+            "demo/quuxcluster_site.py,sha256=" + "A" * 43 + ",10",
+            "demo-1.0.dist-info/RECORD,,"),
+    }))
+    result = _scan(app, names_file=_list(tmp_path))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "demo-1.0-py3-none-any.whl!demo-1.0.dist-info/RECORD [private-name]" in result.stdout
+    assert TERM not in result.stdout.lower()
+
+
+def test_a_record_that_is_not_a_wheels_is_searched_whole(tmp_path):
+    """The exemption is for a wheel's hash manifest, recognized by where it
+    sits; a file that merely shares the name gets no blanking."""
+    app = _clean_tree(tmp_path)
+    (app / "Contents/Resources/RECORD").write_bytes(_record(
+        f"demo/__init__.py,sha256={DIGEST_WITH_TERM},10"))
+    result = _scan(app, names_file=_list(tmp_path))
+    assert result.returncode == 1, result.stdout + result.stderr
+
+
+#: Hex digests can only carry a term made of the letters a to f, so these
+#: cases use a made-up term of that shape.
+HEX_TERM = "fadedcab"
+HEX_DIGEST = ("0123" + HEX_TERM + "4567" * 13)[:64]
+assert len(HEX_DIGEST) == 64
+
+
+@pytest.mark.parametrize("name, digest_only, name_too", [
+    ("SHA256SUMS",
+     f"{HEX_DIGEST}  install-client.sh\n",
+     f"{HEX_DIGEST}  {HEX_TERM}-notes.txt\n"),
+    ("steerlab-client-1.0.tar.gz.sha256",
+     f"{HEX_DIGEST}  steerlab-client-1.0.tar.gz\n",
+     f"{HEX_DIGEST}  steerlab-client-{HEX_TERM}.tar.gz\n"),
+    ("source.sha256",
+     f"{HEX_DIGEST}\n",
+     f"{HEX_DIGEST}\n# built on {HEX_TERM}\n"),
+    ("client-requirements.lock",
+     f"numpy==2.0 \\\n    --hash=sha256:{HEX_DIGEST}\n",
+     f"{HEX_TERM}==2.0 \\\n    --hash=sha256:{HEX_DIGEST}\n"),
+    ("resource-manifest.json",
+     f'{{"files": {{"web/index.html": "{HEX_DIGEST}"}}}}\n',
+     f'{{"files": {{"web/{HEX_TERM}.html": "{HEX_DIGEST}"}}}}\n'),
+    ("deployment-manifest.json",
+     f'{{"files": {{"Server/app.py": "{HEX_DIGEST}"}}}}\n',
+     f'{{"files": {{"Server/{HEX_TERM}.py": "{HEX_DIGEST}"}}}}\n'),
+], ids=lambda value: value if "\n" not in value else "")
+def test_hex_digests_in_checksum_lists_and_manifests_are_skipped_but_names_are_not(
+        tmp_path, name, digest_only, name_too):
+    app = _clean_tree(tmp_path)
+    names = _list(tmp_path, f"# made up\n{HEX_TERM}\n")
+    manifest = app / "Contents/Resources/payload" / name
+    manifest.write_text(digest_only)
+    clean = _scan(app, names_file=names)
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+    manifest.write_text(name_too)
+    found = _scan(app, names_file=names)
+    assert found.returncode == 1, found.stdout + found.stderr
+    assert f"payload/{name} [private-name]" in found.stdout
+    assert found.stdout.count("[private-name]") == 1

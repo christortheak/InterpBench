@@ -30,7 +30,20 @@ AUDITS = (
     ('audit-jlens-assessment.py', '224de64'),
     ('audit-probe-contract-extraction.py', 'd25c9a2'),
     ('audit-residual-runtime.py', 'bda6d71'),
+    # A historical proof between two fixed commits (baseline f6f746f), not a
+    # ratchet on today's tree; the commit given here is its candidate.
+    ('audit-python-boundaries.py', 'a7536f9'),
 )
+#: How each audit is told its commit, when it takes one on the command line.
+COMMIT_FLAGS = {
+    'audit-managed-scientific-owners.py': '--base',
+    'audit-operation-registration.py': '--base',
+    'audit-python-boundaries.py': '--candidate',
+}
+#: The four Swift syntax-tree audits prove fixed historical checkpoints too.
+#: This runner holds their commit pairs, compiles them with Xcode, and runs
+#: them (a Mac with full git history is required).
+SWIFT_CHECKPOINT_AUDITS = 'run-swift-checkpoint-audits.py'
 
 
 def main():
@@ -43,6 +56,7 @@ def main():
     if args.list:
         for name in GENERATORS: print('generate/check: ' + name)
         for name, base in AUDITS: print(f'read-only audit: {name} (baseline {base})')
+        print(f'read-only audit: {SWIFT_CHECKPOINT_AUDITS} (four Swift audits at their recorded checkpoints)')
         print('read-only gate: check-swift-bridge-retirement.py, normal and --release')
         print('separate qualification: qualify-technique-example.py; backend_probe.py; both suites')
         return
@@ -53,7 +67,8 @@ def main():
                         '--write' if args.write else '--check', '--path', str(ROOT / 'docs/CLI-REFERENCE.md')], cwd=ROOT, check=True)
     if args.audits:
         for name, base in AUDITS:
-            subprocess.run([sys.executable, str(ROOT / 'scripts/ci' / name), *(['--base', base] if name in {'audit-managed-scientific-owners.py', 'audit-operation-registration.py'} else [])], cwd=ROOT, check=True)
+            subprocess.run([sys.executable, str(ROOT / 'scripts/ci' / name), *([COMMIT_FLAGS[name], base] if name in COMMIT_FLAGS else [])], cwd=ROOT, check=True)
+        subprocess.run([sys.executable, str(ROOT / 'scripts/ci' / SWIFT_CHECKPOINT_AUDITS)], cwd=ROOT, check=True)
         for extra in ([], ['--release']):
             subprocess.run([sys.executable, str(ROOT / 'scripts/ci/check-swift-bridge-retirement.py'), *extra], cwd=ROOT, check=True)
 

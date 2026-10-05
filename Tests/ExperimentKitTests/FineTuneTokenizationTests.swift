@@ -27,8 +27,9 @@ import Tokenizers
 /// turn markers as added special tokens. So the template runs for real, the
 /// ids never move, and nothing touches the network. `cachedSnapshotAgrees…`
 /// then re-runs the same claims against the actual cached tokenizers (real
-/// BPE, where a token-level prefix is a genuine question), skipping loudly
-/// when a model is not downloaded.
+/// BPE, where a token-level prefix is a genuine question), one test per
+/// model, each reported as SKIPPED (with the model named) when that model is
+/// not downloaded.
 @Suite struct FineTuneTokenizationTests {
 
     // MARK: - Fixtures
@@ -277,23 +278,39 @@ import Tokenizers
     /// real BPE vocabularies, where "the prompt ids are a prefix of the full
     /// ids" is a genuine question rather than a byte-level tautology. Also
     /// fails loudly if the upstream template has drifted from the pinned one.
-    /// Skips (printed, named) when a model is not in the local cache.
-    @Test(
-        arguments: [
-            ("Qwen/Qwen3-0.6B", "Pong.<|im_end|>\n"),
-            ("google/gemma-3-4b-it", "Pong.<end_of_turn>\n"),
-        ])
-    func cachedSnapshotAgreesWithThePinnedFixture(
+    ///
+    /// One test per model, not a parameterized test: a model that is not in
+    /// the local cache must be reported as SKIPPED, and Swift Testing can
+    /// report a whole test as skipped (`.enabled(if:)`) but not one argument.
+    static let qwen3 = "Qwen/Qwen3-0.6B"
+    static let gemma3 = "google/gemma-3-4b-it"
+
+    static func isCached(_ modelID: String) -> Bool { cachedSnapshot(for: modelID) != nil }
+
+    static func notCached(_ modelID: String) -> Comment {
+        Comment(
+            rawValue: "the tokenizer for \(modelID) is not in the local Hugging Face cache: "
+                + "the pinned fixture still covers this family, but the live template "
+                + "and vocabulary were NOT checked")
+    }
+
+    @Test(.enabled(if: isCached(qwen3), notCached(qwen3)))
+    func cachedQwen3SnapshotAgreesWithThePinnedFixture() async throws {
+        try await Self.cachedSnapshotAgreesWithThePinnedFixture(
+            modelID: Self.qwen3, expectedSupervised: "Pong.<|im_end|>\n")
+    }
+
+    @Test(.enabled(if: isCached(gemma3), notCached(gemma3)))
+    func cachedGemma3SnapshotAgreesWithThePinnedFixture() async throws {
+        try await Self.cachedSnapshotAgreesWithThePinnedFixture(
+            modelID: Self.gemma3, expectedSupervised: "Pong.<end_of_turn>\n")
+    }
+
+    static func cachedSnapshotAgreesWithThePinnedFixture(
         modelID: String, expectedSupervised: String
     ) async throws {
-        guard let snapshot = Self.cachedSnapshot(for: modelID) else {
-            print(
-                "SKIP FineTuneTokenizationTests.cachedSnapshotAgreesWithThePinnedFixture"
-                    + "(\(modelID)): tokenizer not in the local HF cache — the pinned "
-                    + "fixture still covers this family, but the live template and "
-                    + "vocabulary were NOT checked")
-            return
-        }
+        let snapshot = try #require(
+            Self.cachedSnapshot(for: modelID), "the tokenizer for \(modelID) is not cached")
         let renderer = CachedSnapshotInstructionRenderer(
             tokenizer: try await AutoTokenizer.from(modelFolder: snapshot))
         let family = modelID.lowercased().contains("gemma") ? "gemma3" : "qwen3"

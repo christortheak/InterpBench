@@ -25,8 +25,9 @@ import Tokenizers
 ///   (Gemma exactly 1 with AND without a system prompt; Qwen 0).
 ///
 /// Tokenizers load from the local HF cache snapshot (no network, no GPU).
-/// When a model's tokenizer is not cached the test SKIPS LOUDLY (printed
-/// message naming the model + early return) — never a silent pass.
+/// When a model's tokenizer is not cached, that model's tests are SKIPPED
+/// (`.enabled(if:)`, with the model and what went unverified in the reason),
+/// so the run summary counts them as skipped, never as passed.
 ///
 /// KNOWN, DELIBERATELY-PINNED DIVERGENCE (`raw_completion` fixtures): the
 /// Python engine tokenizes rawCompletion text with NO chat template and
@@ -164,19 +165,105 @@ import Tokenizers
             "golden coverage must span both families, found \(families)")
     }
 
+    // MARK: - One test per model and check
+    //
+    // A model whose tokenizer is not in the local cache must show up as
+    // SKIPPED in the run summary. Swift Testing reports a test disabled by
+    // `.enabled(if:)` as skipped, but it cannot report one argument of a
+    // parameterized test as skipped (a cancelled test case is counted with
+    // the passes), so each model has its own tests rather than an argument.
+    // `perModelTestsCoverEveryFixtureModel` holds this list to the models
+    // the committed goldens name.
+
+    static let qwen3_0_6B = "Qwen/Qwen3-0.6B"
+    static let qwen3_4B_MLX = "Qwen/Qwen3-4B-MLX-4bit"
+    static let gemma3_4B = "google/gemma-3-4b-it"
+    static let gemma3_4B_MLX = "mlx-community/gemma-3-4b-it-4bit"
+    static let perModelTestIDs = [qwen3_0_6B, qwen3_4B_MLX, gemma3_4B, gemma3_4B_MLX]
+
+    static func isCached(_ modelID: String) -> Bool { cachedSnapshot(for: modelID) != nil }
+
+    /// The skip reason: which model, and what went unverified because of it.
+    static func notCached(_ modelID: String, _ unverified: String) -> Comment {
+        Comment(
+            rawValue: "the tokenizer for \(modelID) is not in the local Hugging Face "
+                + "cache, so \(unverified) was NOT verified on the Swift side")
+    }
+
+    @Test func perModelTestsCoverEveryFixtureModel() {
+        #expect(
+            Set(Self.perModelTestIDs) == Set(Self.fixtureModelIDs),
+            "the committed goldens name models without per-model tests here, or the reverse")
+    }
+
+    @Test(.enabled(if: isCached(qwen3_0_6B), notCached(qwen3_0_6B, "render parity")))
+    func renderParityQwen3_0_6B() async throws {
+        try await Self.goldenRenderParity(modelID: Self.qwen3_0_6B)
+    }
+
+    @Test(.enabled(if: isCached(qwen3_4B_MLX), notCached(qwen3_4B_MLX, "render parity")))
+    func renderParityQwen3_4B_MLX() async throws {
+        try await Self.goldenRenderParity(modelID: Self.qwen3_4B_MLX)
+    }
+
+    @Test(.enabled(if: isCached(gemma3_4B), notCached(gemma3_4B, "render parity")))
+    func renderParityGemma3_4B() async throws {
+        try await Self.goldenRenderParity(modelID: Self.gemma3_4B)
+    }
+
+    @Test(.enabled(if: isCached(gemma3_4B_MLX), notCached(gemma3_4B_MLX, "render parity")))
+    func renderParityGemma3_4B_MLX() async throws {
+        try await Self.goldenRenderParity(modelID: Self.gemma3_4B_MLX)
+    }
+
+    @Test(.enabled(if: isCached(qwen3_0_6B), notCached(qwen3_0_6B, "the conversation constraint table")))
+    func constraintTableQwen3_0_6B() async throws {
+        try await Self.constraintTableMatchesLiveTemplate(modelID: Self.qwen3_0_6B)
+    }
+
+    @Test(.enabled(if: isCached(qwen3_4B_MLX), notCached(qwen3_4B_MLX, "the conversation constraint table")))
+    func constraintTableQwen3_4B_MLX() async throws {
+        try await Self.constraintTableMatchesLiveTemplate(modelID: Self.qwen3_4B_MLX)
+    }
+
+    @Test(.enabled(if: isCached(gemma3_4B), notCached(gemma3_4B, "the conversation constraint table")))
+    func constraintTableGemma3_4B() async throws {
+        try await Self.constraintTableMatchesLiveTemplate(modelID: Self.gemma3_4B)
+    }
+
+    @Test(.enabled(if: isCached(gemma3_4B_MLX), notCached(gemma3_4B_MLX, "the conversation constraint table")))
+    func constraintTableGemma3_4B_MLX() async throws {
+        try await Self.constraintTableMatchesLiveTemplate(modelID: Self.gemma3_4B_MLX)
+    }
+
+    @Test(.enabled(if: isCached(qwen3_0_6B), notCached(qwen3_0_6B, "the pinned raw-completion divergence")))
+    func rawCompletionQwen3_0_6B() async throws {
+        try await Self.rawCompletionDivergence(modelID: Self.qwen3_0_6B)
+    }
+
+    @Test(.enabled(if: isCached(qwen3_4B_MLX), notCached(qwen3_4B_MLX, "the pinned raw-completion divergence")))
+    func rawCompletionQwen3_4B_MLX() async throws {
+        try await Self.rawCompletionDivergence(modelID: Self.qwen3_4B_MLX)
+    }
+
+    @Test(.enabled(if: isCached(gemma3_4B), notCached(gemma3_4B, "the pinned raw-completion divergence")))
+    func rawCompletionGemma3_4B() async throws {
+        try await Self.rawCompletionDivergence(modelID: Self.gemma3_4B)
+    }
+
+    @Test(.enabled(if: isCached(gemma3_4B_MLX), notCached(gemma3_4B_MLX, "the pinned raw-completion divergence")))
+    func rawCompletionGemma3_4B_MLX() async throws {
+        try await Self.rawCompletionDivergence(modelID: Self.gemma3_4B_MLX)
+    }
+
     // MARK: - The parity claim (chatAssistant + multi-turn + reader)
 
-    /// Token-id AND decode-string parity against the Python goldens, per
-    /// model. Loud skip (printed, named) when the tokenizer isn't cached.
-    @Test(arguments: fixtureModelIDs)
-    func goldenRenderParity(modelID: String) async throws {
-        guard let snapshot = Self.cachedSnapshot(for: modelID) else {
-            print(
-                "SKIP GoldenRenderFixtureTests.goldenRenderParity(\(modelID)): "
-                    + "tokenizer not in local HF cache — cross-engine render "
-                    + "parity for this model NOT verified on the Swift side")
-            return
-        }
+    /// Token-id AND decode-string parity against the Python goldens, for one
+    /// model whose tokenizer is cached (the per-model tests above skip the
+    /// others).
+    static func goldenRenderParity(modelID: String) async throws {
+        let snapshot = try #require(
+            Self.cachedSnapshot(for: modelID), "the tokenizer for \(modelID) is not cached")
         let tokenizer = try await AutoTokenizer.from(modelFolder: snapshot)
         let fixtures = try Self.loadFixtures().filter { $0.modelID == modelID }
         #expect(!fixtures.isEmpty, "no fixtures for \(modelID)")
@@ -365,15 +452,9 @@ import Tokenizers
     /// REAL cached tokenizer's chat template, so re-vendoring a family whose
     /// template changed its conversation rules fails HERE, not as a
     /// mid-session refusal (or 400) in the Playground.
-    @Test(arguments: fixtureModelIDs)
-    func constraintTableMatchesLiveTemplate(modelID: String) async throws {
-        guard let snapshot = Self.cachedSnapshot(for: modelID) else {
-            print(
-                "SKIP GoldenRenderFixtureTests.constraintTableMatchesLiveTemplate"
-                    + "(\(modelID)): tokenizer not in local HF cache — the "
-                    + "constraint table is NOT verified live for this model")
-            return
-        }
+    static func constraintTableMatchesLiveTemplate(modelID: String) async throws {
+        let snapshot = try #require(
+            Self.cachedSnapshot(for: modelID), "the tokenizer for \(modelID) is not cached")
         let tokenizer = try await AutoTokenizer.from(modelFolder: snapshot)
         let constraints = ExperimentTasks.conversationConstraints(modelID: modelID)
 
@@ -426,14 +507,9 @@ import Tokenizers
     /// 3. the ids the Swift engine ACTUALLY feeds the model (chat-templated)
     ///    differ from the golden — the divergence itself. If this ever starts
     ///    matching, the engines have converged: update the fixtures + README.
-    @Test(arguments: fixtureModelIDs)
-    func rawCompletionDivergence(modelID: String) async throws {
-        guard let snapshot = Self.cachedSnapshot(for: modelID) else {
-            print(
-                "SKIP GoldenRenderFixtureTests.rawCompletionDivergence(\(modelID)): "
-                    + "tokenizer not in local HF cache")
-            return
-        }
+    static func rawCompletionDivergence(modelID: String) async throws {
+        let snapshot = try #require(
+            Self.cachedSnapshot(for: modelID), "the tokenizer for \(modelID) is not cached")
         let tokenizer = try await AutoTokenizer.from(modelFolder: snapshot)
         let fixtures = try Self.loadFixtures().filter {
             $0.modelID == modelID && $0.inputs.promptMode == "rawCompletion"
