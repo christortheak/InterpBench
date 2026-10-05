@@ -688,6 +688,20 @@ main { grid-column: 2; min-width: 0; }
 .truncation-card { padding: 24px; margin-top: 18px; }
 .truncation-summary { margin: 12px 0 14px; font-size: 11px; line-height: 1.55; color: var(--ink); max-width: 820px; }
 
+/* "What the interval means", under a real run's effect table. It reuses the
+   methods card; the labels here are words, not the large numerals that card
+   was drawn for. */
+.interval-note { margin-top: 18px; }
+.interval-note > p { max-width: 820px; }
+.interval-note .method-item { grid-template-columns: 110px 1fr; }
+.interval-note .method-item span { font-size: 13px; }
+.interval-note .method-item small { font-size: 10px; line-height: 1.5; }
+
+/* The strip across every page of the browser-only layout preview
+   (app/demo/). The embedded app has no such page. */
+.demo-banner { margin: 0 0 18px; padding: 12px 16px; border: 2px solid #9a3b2e; background: #fbeeea; color: #6d2a20; font-size: 12px; line-height: 1.5; }
+.demo-banner strong { letter-spacing: .06em; }
+
 /* What the analysis did to the records, above the effect table. */
 .analysis-stamps-card { padding: 24px; margin-bottom: 18px; }
 .analysis-stamps { margin: 14px 0 0; }

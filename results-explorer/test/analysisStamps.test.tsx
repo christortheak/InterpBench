@@ -205,6 +205,25 @@ describe("the stamps beside the effects", () => {
     expect(page.text).toContain("Adjudication None recorded.");
   });
 
+  it("explains what the interval means for a real run, in the run's own unit and correction", async () => {
+    const itemRun = await load({});
+    const items = render(<EffectsView run={itemRun} onOpenFile={() => {}} />);
+    expect(items.text).toContain("What the interval means");
+    expect(items.text).toContain("on the same prompt items");
+    expect(items.text).toContain("after the bh correction");
+    leaveHost();
+    const transcripts = render(<EffectsView run={await load({ "unit-of-analysis.json": transcriptUnit })} onOpenFile={() => {}} />);
+    expect(transcripts.text).toContain("on the same transcripts");
+    expect(transcripts.text).toContain("One transcript, as this run stamps it (unit-of-analysis.json).");
+  });
+
+  it("shows no interval card for a run with no effect rows", async () => {
+    enterEmbedded();
+    serveRuns({ [`${RUN}/report.json`]: JSON.stringify({ experiment: "panel", conditions: {} }) });
+    const [found] = await discoverRuns(embeddedRunsDirectory() as unknown as LocalDirectoryHandle);
+    expect(render(<EffectsView run={await hydrateRun(found)} onOpenFile={() => {}} />).text).not.toContain("What the interval means");
+  });
+
   it("the exported effect table carries the unit of analysis on every row", async () => {
     const host = enterEmbedded();
     serveRuns({

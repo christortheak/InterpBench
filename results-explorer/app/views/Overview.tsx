@@ -2,7 +2,7 @@
 
 import { FreezeNotice, TruncationCard } from "../components/stamps";
 import { Badge, ForestRow, NoRunSelected } from "../components/ui";
-import { demoPreviewEnabled, effects } from "../lib/demo";
+import { DemoOverview, demoPreviewEnabled } from "../demo";
 import { runKindOf, runStatusOf } from "../lib/discovery";
 import { fmt } from "../lib/format";
 import { freezeLabel, freezeOf } from "../lib/freeze";
@@ -227,91 +227,9 @@ export function LocalOverview({ run, onNavigate }: { run: WorkspaceRun; onNaviga
 
 export function Overview({ onNavigate, run }: { onNavigate: (view: View) => void; run: WorkspaceRun | null }) {
   if (run) return <LocalOverview run={run} onNavigate={onNavigate} />;
+  // With no run there is nothing to show. The one exception is the layout
+  // preview a developer asks for by name in a browser; its page lives in
+  // app/demo/, which the embedded app does not contain.
   if (!demoPreviewEnabled()) return <NoRunSelected title="Study overview" />;
-  return (
-    <div className="view-enter">
-      <section className="hero-grid">
-        <div className="hero-copy">
-          <div className="kicker"><span>Confirmatory readout</span><span>·</span><span>Synthetic preview</span></div>
-          <h1>Anger shifts decisions toward <em>harsher, more formalistic</em> outcomes.</h1>
-          <p className="dek">Across matched judicial prompts, activation steering increased sentence severity and rule adherence without measurable capability loss. The human-anchored residual remains provisional.</p>
-          <div className="hero-actions">
-            <button className="primary" onClick={() => onNavigate("effects")}>Inspect the evidence <span>→</span></button>
-            <button className="text-button" onClick={() => onNavigate("generations")}>Read all 384 generations</button>
-          </div>
-        </div>
-        <div className="hero-stat" aria-label="Primary effect estimate">
-          <span className="hero-stat-label">Paired mean shift</span>
-          <div><strong>+7.8</strong><span>months</span></div>
-          <p>95% bootstrap CI <b>+3.1 to +12.4</b></p>
-          <div className="mini-scale"><i /><b /><em /></div>
-          <footer><span>Holm-adjusted p</span><strong>0.012</strong></footer>
-        </div>
-      </section>
-
-      <div className="notice" role="note">
-        <span className="notice-icon">i</span>
-        <p><strong>Demonstration data.</strong> Values are realistic but synthetic, designed to show how a completed frozen run will read. Nothing on this page is a research finding.</p>
-      </div>
-
-      <section className="metric-strip" aria-label="Study summary">
-        <div><span>Paired items</span><strong>64</strong><small>5 samples / condition</small></div>
-        <div><span>Conditions</span><strong>6</strong><small>baseline + interventions</small></div>
-        <div><span>Parse success</span><strong>98.7%</strong><small>379 / 384 outputs</small></div>
-        <div><span>Capability retained</span><strong>99.1%</strong><small>−0.4 pp vs baseline</small></div>
-      </section>
-
-      <section className="section-grid main-evidence">
-        <div className="card evidence-card">
-          <header className="section-header">
-            <div><span className="section-number">01 / EFFECTS</span><h2>What moved?</h2></div>
-            <button className="quiet-link" onClick={() => onNavigate("effects")}>Full analysis →</button>
-          </header>
-          <div className="axis-hint"><span>Favors less / lower</span><span>No difference</span><span>Favors more / higher</span></div>
-          <div className="forest">
-            {effects.map((effect) => <ForestRow key={effect.key} effect={effect} compact />)}
-          </div>
-          <div className="legend"><span><i className="legend-dot" /> Estimate</span><span><i className="legend-line" /> 95% paired bootstrap CI</span><span>● Holm-adjusted p &lt; .05</span></div>
-        </div>
-
-        <aside className="card claim-card">
-          <span className="section-number">CLAIM STATUS</span>
-          <h2>Evidence is coherent, not yet citable.</h2>
-          <div className="claim-step active">
-            <i>1</i><div><strong>Model-internal effect</strong><span>Supported in preview</span></div><Badge tone="good">4 / 5 gates</Badge>
-          </div>
-          <div className="claim-step">
-            <i>2</i><div><strong>Human-anchored residual</strong><span>Baseline transcription pending</span></div><Badge tone="warn">Provisional</Badge>
-          </div>
-          <div className="claim-step">
-            <i>3</i><div><strong>Panel propagation</strong><span>Not included in this run</span></div><Badge>Not run</Badge>
-          </div>
-          <button className="claim-foot" onClick={() => onNavigate("provenance")}><span>Why this is not publication-ready</span><b>→</b></button>
-        </aside>
-      </section>
-
-      <section className="section-grid lower-grid">
-        <div className="card dose-card">
-          <header className="section-header"><div><span className="section-number">02 / DOSE RESPONSE</span><h2>The effect rises with intervention strength.</h2></div><Badge tone="good">ρ = .98</Badge></header>
-          <div className="dose-chart" aria-label="Sentence severity by steering dose">
-            <div className="y-labels"><span>+12 mo</span><span>+6 mo</span><span>0</span><span>−6 mo</span></div>
-            <div className="dose-plot">
-              <span className="gridline g1"/><span className="gridline g2"/><span className="gridline g3"/><span className="gridline g4"/>
-              <span className="dose-segment s1"/><span className="dose-segment s2"/><span className="dose-segment s3"/><span className="dose-segment s4"/>
-              <i className="dose-dot d1"/><i className="dose-dot d2"/><i className="dose-dot d3"/><i className="dose-dot d4"/><i className="dose-dot d5"/>
-              <div className="x-labels"><span>−1.0σ</span><span>−0.5σ</span><span>0</span><span>+0.5σ</span><span>+1.0σ</span></div>
-            </div>
-          </div>
-          <p className="annotation"><span>↗</span> Monotone across the preregistered grid; negative-dose reversal is visible and the random-vector control stays near zero.</p>
-        </div>
-        <div className="card controls-card">
-          <header className="section-header"><div><span className="section-number">03 / VALIDITY CHECKS</span><h2>Alternative explanations</h2></div></header>
-          <div className="control-row"><span className="status-check">✓</span><div><strong>Random direction floor</strong><span>CI crosses zero on all primary endpoints</span></div><Badge tone="good">Pass</Badge></div>
-          <div className="control-row"><span className="status-check">✓</span><div><strong>Negative-dose reversal</strong><span>Expected sign on 3 / 3 primary endpoints</span></div><Badge tone="good">Pass</Badge></div>
-          <div className="control-row"><span className="status-check">✓</span><div><strong>Capability battery</strong><span>Change −0.4 pp; threshold −3.0 pp</span></div><Badge tone="good">Pass</Badge></div>
-          <div className="control-row"><span className="status-warn">!</span><div><strong>Human baseline pin</strong><span>Placeholder source; transcription unverified</span></div><Badge tone="warn">Open</Badge></div>
-        </div>
-      </section>
-    </div>
-  );
+  return <DemoOverview onNavigate={onNavigate} />;
 }

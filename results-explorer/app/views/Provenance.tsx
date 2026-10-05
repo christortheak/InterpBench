@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Badge, NoRunSelected } from "../components/ui";
-import { demoPreviewEnabled } from "../lib/demo";
+import { DemoProvenance, demoPreviewEnabled } from "../demo";
 import { textValue } from "../lib/discovery";
 import { freezeLabel, freezeOf, gateLabel } from "../lib/freeze";
 import type { RunFile, WorkspaceRun } from "../lib/types";
@@ -55,61 +55,9 @@ export function LocalProvenanceView({ run, onOpenFile }: { run: WorkspaceRun; on
 
 export function ProvenanceView({ run, onOpenFile }: { run: WorkspaceRun | null; onOpenFile: (file: RunFile) => void }) {
   if (run) return <LocalProvenanceView run={run} onOpenFile={onOpenFile} />;
+  // The layout preview's page lives in app/demo/, which the embedded app
+  // does not contain. It used to be written out here, with a "Run epoch
+  // verified" banner over invented checks.
   if (!demoPreviewEnabled()) return <NoRunSelected title="Run files & provenance" />;
-  const artifacts = [
-    ["report.json", "Run summary + condition diagnostics", "12.8 KB"],
-    ["generations.jsonl", "384 complete generation records", "1.8 MB"],
-    ["effect-sizes.csv", "Paired estimates + inferential tests", "3.4 KB"],
-    ["alien-residuals.csv", "Human-anchored residual classifications", "1.1 KB"],
-    ["exclusions.json", "Declared exclusions and counts", "0.7 KB"],
-    ["battery.jsonl", "Per-condition capability checks", "42.2 KB"],
-  ];
-  return (
-    <div className="view-enter inner-view provenance-view">
-      <header className="page-title">
-        <div><span className="section-number">IMMUTABLE RUN · SCHEMA 2</span><h1>Provenance & validity</h1><p>Everything needed to audit what ran, what was measured, and what this result is allowed to claim.</p></div>
-        <button className="primary">Export audit bundle <span>↓</span></button>
-      </header>
-      <section className="audit-banner"><span className="audit-mark">✓</span><div><strong>Run epoch verified</strong><p>The experiment hash matches the frozen manifest. Measurement inputs and model revision are pinned.</p></div><Badge tone="good">5 / 6 gates closed</Badge></section>
-      <section className="provenance-grid">
-        <div className="card config-card">
-          <header className="section-header"><div><span className="section-number">RUN IDENTITY</span><h2>Configuration</h2></div><Badge tone="blue">Frozen</Badge></header>
-          <dl>
-            <div><dt>Experiment</dt><dd>alien-stance-emotion-confirm-01</dd></div>
-            <div><dt>Model</dt><dd>google/gemma-3-27b-it</dd></div>
-            <div><dt>Revision</dt><dd><code>2f3c8a7…91d4</code></dd></div>
-            <div><dt>Engine</dt><dd>Python · PyTorch/HF · CUDA</dd></div>
-            <div><dt>Intervention</dt><dd>Vector injection · layer 38 · +1.0σ</dd></div>
-            <div><dt>Sampling</dt><dd>temperature 0.7 · 5 samples/item</dd></div>
-            <div><dt>Seed policy</dt><dd>Per-record deterministic isolation</dd></div>
-            <div><dt>Unit of analysis</dt><dd>Paired prompt item</dd></div>
-          </dl>
-        </div>
-        <div className="card gates-card">
-          <header className="section-header"><div><span className="section-number">CIRCULARITY FIREWALL</span><h2>Evidence gates</h2></div></header>
-          <div className="gate"><i>✓</i><div><strong>Experiment frozen</strong><span>One-way freeze · no forced gates</span></div><Badge tone="good">Closed</Badge></div>
-          <div className="gate"><i>✓</i><div><strong>Validation evidence</strong><span>Held-out probe movement + independence screen</span></div><Badge tone="good">Closed</Badge></div>
-          <div className="gate"><i>✓</i><div><strong>Measurement inputs</strong><span>Prompts, markers, rubric, neutral corpus pinned</span></div><Badge tone="good">Closed</Badge></div>
-          <div className="gate"><i>✓</i><div><strong>Capability retention</strong><span>Every condition within preregistered threshold</span></div><Badge tone="good">Closed</Badge></div>
-          <div className="gate"><i>✓</i><div><strong>Multiple comparisons</strong><span>Holm correction on confirmatory family</span></div><Badge tone="good">Closed</Badge></div>
-          <div className="gate gate-open"><i>!</i><div><strong>Human baseline source</strong><span>Demonstration placeholder; not hash-pinned</span></div><Badge tone="warn">Open</Badge></div>
-        </div>
-      </section>
-      <section className="section-grid provenance-lower">
-        <div className="card artifact-card">
-          <header className="section-header"><div><span className="section-number">ARTIFACTS</span><h2>Files in this run</h2></div><span className="muted">All checksums valid</span></header>
-          {artifacts.map(([name, description, size]) => <button className="artifact" key={name}><span className="file-icon">↳</span><div><strong>{name}</strong><span>{description}</span></div><small>{size}</small><b>→</b></button>)}
-        </div>
-        <div className="card methods-card">
-          <span className="section-number">STATISTICAL NOTE</span>
-          <h2>What the interval means</h2>
-          <p>The 95% interval is a percentile bootstrap over <strong>same-item intervention-minus-baseline differences</strong>. It quantifies uncertainty across prompt items, not token-level or generation-level variability.</p>
-          <div className="method-item"><span>10,000</span><small>bootstrap resamples</small></div>
-          <div className="method-item"><span>0</span><small>deterministic analysis seed</small></div>
-          <div className="method-item"><span>Holm</span><small>confirmatory family correction</small></div>
-          <footer>Wilcoxon signed-rank is reported as a nonparametric robustness companion; the paired mean and bootstrap interval remain the primary estimand.</footer>
-        </div>
-      </section>
-    </div>
-  );
+  return <DemoProvenance />;
 }

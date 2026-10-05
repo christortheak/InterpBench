@@ -4,7 +4,7 @@
 // here comes from lib/ (which reads the run's files); these components only
 // arrange it.
 
-import { adjudicationSentence, analysisStampsOf, exclusionsSentence, rescueSentence, unitSentence } from "../lib/analysisStamps";
+import { adjudicationSentence, analysisStampsOf, exclusionsSentence, rescueSentence, unitSentence, type UnitOfAnalysis } from "../lib/analysisStamps";
 import { freezeDetails, freezeLabel, freezeOf, freezeTone, runsBeforeFreeze } from "../lib/freeze";
 import { cellsOverThreshold, cutOffCells, parseTruncation, percentText, thresholdSentence, truncationSentence } from "../lib/runReport";
 import type { RunFile, WorkspaceRun } from "../lib/types";
@@ -41,6 +41,32 @@ export function FreezeNotice({ run }: { run: WorkspaceRun }) {
         {details.join(" ")}
       </p>
     </div>
+  );
+}
+
+/// "What the interval means", in plain words, beside a real run's effects.
+///
+/// This card used to exist only on the invented demo page, where it quoted
+/// a resample count and a seed no run file states. Here it says only what
+/// holds for every effect table both engines write (the estimate is the mean
+/// of paired differences; the interval is a percentile bootstrap over them;
+/// the raw p is a Wilcoxon signed-rank test) and takes the two things that
+/// DO vary from the run itself: its unit of analysis, and the correction its
+/// table names.
+export function IntervalNote({ unit, corrections }: { unit: UnitOfAnalysis | null; corrections: string[] }) {
+  const one = unit?.unit === "transcript" ? "transcript" : "prompt item";
+  const many = `${one}s`;
+  return (
+    <section className="card methods-card interval-note" aria-label="What the interval means">
+      <span className="section-number">HOW TO READ THE NUMBERS</span>
+      <h2>What the interval means</h2>
+      <p>Each pooled row compares one condition with the baseline on the <strong>same {many}</strong>. For every {one}, the engine takes the condition&rsquo;s value minus the baseline&rsquo;s value. The estimate is the average of those differences.</p>
+      <p>The 95% interval is the range the engine found for that average by drawing the {many} again, many times over, from the ones in the study. It shows how much the average depends on which {many} the study happened to use. It does not show how much one answer differs from the next.</p>
+      <div className="method-item"><span>Unit</span><small>{unit ? `One ${unit.unit}, as this run stamps it (${unit.source}).` : "One prompt item. This run stamps no other unit."}</small></div>
+      <div className="method-item"><span>Raw p</span><small>A Wilcoxon signed-rank test on the same differences: a second check that does not assume they follow a bell curve.</small></div>
+      <div className="method-item"><span>Adjusted p</span><small>{corrections.length ? `The raw p after the ${corrections.join(" / ")} correction, which allows for several outcomes being tested at once.` : "This table names no correction, so the explorer does not say which one was used."}</small></div>
+      <footer>An interval that includes zero means the data are consistent with no difference. The explorer shows every number here as the engine stored it and works out none of them.</footer>
+    </section>
   );
 }
 
