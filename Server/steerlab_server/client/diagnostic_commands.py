@@ -41,13 +41,18 @@ def workspace_action(action, payload):
         'publish': {'operation', 'answersText', 'destination', 'planSHA256'},
         'input-plan': {'requestFile'}, 'package': {'requestFile', 'archivePath', 'planSHA256'},
         'import': {'archivePath', 'archiveSHA256'}, 'verify-custody': {'receiptSHA256'}, 'custody': set(),
+        'report': {'path'},
     }
     if action not in required or not isinstance(payload, dict): raise archives.Refusal('Unknown diagnostic workspace operation.')
     fields = required[action] | {'workspaceRoot'}
-    optional = {'expectedContext'} if action == 'import' else set()
+    optional = {'import': {'expectedContext'}, 'report': {'out'}}.get(action, set())
     if not fields <= payload.keys() or payload.keys() - fields - optional or any(not isinstance(payload[k], str) or not payload[k] for k in fields):
         raise archives.Refusal('Supply exactly the declared action fields as nonempty strings.')
     root = str(Path(payload['workspaceRoot']).resolve())
+    if action == 'report':
+        # Reads stored JSON and writes one page outside any run folder; no model, no statistics.
+        from .reports import science_report
+        return science_report.render(payload['path'], root, payload.get('out'))
     if action == 'evidence-analyze':
         from ..experiment import instrumentation_evidence
         return instrumentation_evidence.inspect(payload['path'], root)
@@ -133,8 +138,14 @@ def local(invocation):
         if verb == 'package': payload.update(archivePath=invocation.one('--archive'), planSHA256=invocation.one('--plan-sha256'))
         if verb == 'import': payload.update(archivePath=value, archiveSHA256=invocation.one('--sha256'))
         if verb == 'verify-custody': payload['receiptSHA256'] = value
+        if verb == 'report':
+            payload['path'] = value
+            if invocation.has('--out'): payload['out'] = invocation.one('--out')
         result = workspace_action(verb, payload)
         print(json.dumps(result, indent=2))
+        if verb == 'report':
+            return CLIResult(message=result['message'] + ' Open ' + result['htmlPath'] + ' in a browser.',
+                             changed=result['changed'], payload=result)
         return CLIResult(message='Diagnostic workspace operation completed; custody is byte verification, not scientific qualification.',
                          changed=result.get('changed', verb in ('package', 'import')), payload=result)
     except CorpusError as exc:

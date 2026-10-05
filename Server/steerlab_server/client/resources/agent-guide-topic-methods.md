@@ -104,3 +104,13 @@ between.
   a custom lens or SAE decoder and hashes its source files without publishing;
   `science artifact-import <description.json> --plan-sha256 <digest>` imports
   the reviewed instrument into a fresh library destination.
+- **Readable reports:** `science report <run-folder-or-report.json>` turns a
+  stored J-lens assessment report into one self-contained HTML page: a plain
+  summary first, then every comparison with its hashes, a chart and a table
+  by layer for each text, the texts each lens was fitted on, and a list of
+  anything omitted. A new assessment run already holds the page as
+  `assessment-report.html`. For an older run the page is written to
+  `reports/<run-name>/` in the workspace, or to `--out <file>`, and never into
+  the run folder. The page shows only what the report stores: it adds no
+  average, interval, or test. Give the researcher the `htmlPath` from the
+  result to open in a browser or send to a colleague.

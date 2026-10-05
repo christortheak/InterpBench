@@ -226,7 +226,12 @@ struct JSpacePanelSection: View {
                     (lens.fit?.revisionKnown ?? false)
                         ? (lens.fit?.revision ?? "—")
                         : "unknown — the published configs pin none")
-                row("fit corpus", lens.fit?.corpus ?? "—")
+                row("fit corpus", lens.fit?.corpusSummary ?? "—")
+                // A mixed lens lists every text it was fitted on, with row
+                // counts, so it is never mistaken for a one-text lens.
+                ForEach(Array((lens.fit?.corpusContributionLines ?? []).enumerated()), id: \.offset) { index, line in
+                    row("fitted text \(index + 1)", line)
+                }
                 row("prompts fitted", lens.fit?.promptsFitted.map(String.init) ?? "—")
                 row("converted", lens.converted.map {
                     "\($0.layerCount ?? 0) layers, \($0.dtype ?? "?")" } ?? "—")

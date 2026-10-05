@@ -250,8 +250,32 @@ def assess(config, *, root, log=print, on_run_created=None):
         (run/'comparisons').mkdir()
         for comparison in comparisons:
             (run/'comparisons'/comparison_name(comparison)).write_bytes(archives.encoded(comparison))
-        (run/'assessment-report.json').write_bytes(archives.encoded(report));(run/'COMPLETED').write_text('jlens-fit-assess\n')
+        document=archives.encoded(report)
+        (run/'assessment-report.json').write_bytes(document)
+        # Before COMPLETED, so the page travels with the evidence and a completed run is never added to.
+        page=write_page(run,document,log)
+        (run/'COMPLETED').write_text('jlens-fit-assess\n')
         return {'runDirectory':str(run),'reportPath':str(run/'assessment-report.json'),'qualification':'notPerformed',
-                'comparisonReports':[str(run/'comparisons'/comparison_name(c)) for c in comparisons]}
+                'comparisonReports':[str(run/'comparisons'/comparison_name(c)) for c in comparisons],
+                **({'pagePath':str(page)} if page else {})}
     finally:
         if hasattr(model,'steerlab_kernel_selection'):model.steerlab_kernel_selection.close()
+
+
+def write_page(run, document, log=print):
+    """The readable page beside the report: the same stored bytes, drawn for a person.
+
+    The JSON is the evidence and the page is a view of it. A page that cannot
+    be drawn must not cost a finished comparison, so the failure is logged and
+    the run completes; `science report <run directory>` draws the page later.
+    """
+    target = run/'assessment-report.html'
+    try:
+        from ..client.reports import jlens_assessment as page
+        target.write_bytes(page.render(document).encode('utf-8'))
+        return target
+    except Exception as exc:
+        target.unlink(missing_ok=True)
+        log(f'[jlens-assess] the report page was not written ({type(exc).__name__}: {exc}). '
+            'The comparison is complete; draw the page later with: science report <run directory>')
+        return None

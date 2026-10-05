@@ -5,7 +5,7 @@ import Foundation
 /// Release builds read the bundled ServerPayload; only the interpreter and
 /// client dependencies live outside the signed bundle.
 public enum DiagnosticWorkspace {
-    public static let actions = ["evidence-analyze", "policy-list", "policy-inspect", "policy-review", "policy-publish", "policy-attach-review", "policy-attach", "measurements-review", "measurements-save", "probe-list", "probe-inspect", "staged-request", "corpus-preview", "corpus-publish", "artifact-plan", "artifact-import", "setup-start", "setup-inspect", "sae-check", "sae-show", "sae-pin-plan", "sae-pin", "interview", "draft", "publish", "input-plan", "package", "import", "custody", "verify-custody", "results-export"]
+    public static let actions = ["evidence-analyze", "policy-list", "policy-inspect", "policy-review", "policy-publish", "policy-attach-review", "policy-attach", "measurements-review", "measurements-save", "probe-list", "probe-inspect", "staged-request", "corpus-preview", "corpus-publish", "artifact-plan", "artifact-import", "setup-start", "setup-inspect", "sae-check", "sae-show", "sae-pin-plan", "sae-pin", "interview", "draft", "publish", "input-plan", "package", "import", "custody", "verify-custody", "results-export", "report"]
 
     /// Asks the Python client only to confirm that its files are the source
     /// this build was compiled against: nothing is imported, read, or
@@ -177,6 +177,8 @@ struct DiagnosticArguments {
 enum DiagnosticWorkspaceCLI {
     static func run(_ invocation: ExperimentCLIInvocation, sink: ExperimentCLISink) async throws -> ExperimentCLIResult {
         let arguments = try DiagnosticArguments(invocation.args, namespace: "science", takesValue: !["custody", "probe-list", "policy-list"].contains(invocation.verb ?? ""))
+        // `science report` owns its `--out` (the page) and its own result sentence.
+        if arguments.verb == ScienceReport.action { return try await ScienceReport.run(arguments, root: ExperimentStore.workspaceRoot, sink: sink) }
         var payload: [String: JSONValue] = ["workspaceRoot": .string(ExperimentStore.workspaceRoot.path)]
         if let value = arguments.positional {
             let key = ["policy-inspect", "evidence-analyze"].contains(arguments.verb) ? "path" : arguments.verb.hasPrefix("policy-") ? "settingsText" : arguments.verb.hasPrefix("measurements-") ? "experiment" : arguments.verb == "corpus-preview" ? "specText" : arguments.verb == "corpus-publish" ? "previewID" : arguments.verb.hasPrefix("artifact-") ? "descriptionFile" : (arguments.verb.hasPrefix("sae-") || arguments.verb == "probe-inspect") ? "path" : ["interview", "draft", "publish"].contains(arguments.verb) ? "operation" : (["input-plan", "package"].contains(arguments.verb) ? "requestFile" : (arguments.verb == "import" ? "archivePath" : "receiptSHA256"))
