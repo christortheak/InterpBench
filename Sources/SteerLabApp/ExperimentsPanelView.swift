@@ -283,8 +283,8 @@ struct ExperimentsPanelView: View {
                         Text(
                             "read-only provenance — agents are created from "
                                 + "these cells in Agents → Optimizations, not "
-                                + "here (Studies consumes agents; it does not "
-                                + "mint them)")
+                                + "here (Studies uses agents; it does not "
+                                + "create them)")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }

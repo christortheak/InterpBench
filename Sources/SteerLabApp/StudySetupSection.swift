@@ -191,7 +191,7 @@ struct StudySetupSection: View {
                     "the saved scenario this study runs: its roles, "
                         + "turns and materials. Selecting it does NOT "
                         + "pin it — Save Study Setup compiles the seat "
-                        + "casting below and writes the pin, which is "
+                        + "assignments below and writes the pin, which is "
                         + "what Data & Prompts checks")
                 if panel.draft.selectedMultiAgentScenarioID != nil,
                     manifest.multiAgentScenarioPath == nil
@@ -403,7 +403,7 @@ private struct StudyBaseModelPicker: View {
 
     private var helpText: String {
         if panel.draft.studyKind == .multiAgent {
-            return "the model a seat runs on when its cast agent names no base "
+            return "the model a seat runs on when its assigned agent names no base "
                 + "model of its own, and the model every eligible agent must be "
                 + "built on. Seats may each carry a different model; every turn "
                 + "records the one it ran on"

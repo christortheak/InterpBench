@@ -134,11 +134,11 @@ struct DiagnosticLifecycleSheet: View {
                         .lineLimit(1).truncationMode(.middle)
                         .textSelection(.enabled)
                         .help(requestFile.isEmpty
-                            ? "a request JSON prepared with the method guide or your agent"
+                            ? "a request JSON prepared with the method guide or your coding assistant"
                             : requestFile)
                     Button("Choose request…") { choosingRequest = true; showingImporter = true }
                         .help("pick the request JSON prepared with the method guide "
-                            + "or your agent — choosing one starts the steps over")
+                            + "or your coding assistant — choosing one starts the steps over")
                 }
             }
             LabeledContent("On this Mac") {

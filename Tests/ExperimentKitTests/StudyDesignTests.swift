@@ -169,14 +169,14 @@ import Testing
             let panel = makePanel(root: root)
             let clean = try #require(
                 panel.management.designs.templateLineage(try ExperimentStore.load(name: minted.name), experiments: panel.management.experiments))
-            #expect(clean.hasPrefix("from design '\(design.name)'"))
+            #expect(clean.hasPrefix("from template '\(design.name)'"))
 
             minted.maxTokens = 4096
             try ExperimentStore.save(minted)  // edits are never blocked
             panel.refresh()
             let reloaded = try ExperimentStore.load(name: minted.name)
             let line = try #require(panel.management.designs.templateLineage(reloaded, experiments: panel.management.experiments))
-            #expect(line.hasPrefix("diverged from design '\(design.name)'"))
+            #expect(line.hasPrefix("diverged from template '\(design.name)'"))
             #expect(line.contains("edits are allowed"))
         }
     }
@@ -252,9 +252,9 @@ import Testing
             #expect(after.designRevised)
 
             let line = try #require(panel.management.designs.templateLineage(minted, experiments: panel.management.experiments))
-            #expect(line.hasPrefix("from design '\(design.name)'"))
-            #expect(line.contains("matches its design as minted"))
-            #expect(line.contains("the design has since been revised"))
+            #expect(line.hasPrefix("from template '\(design.name)'"))
+            #expect(line.contains("matches its template as created"))
+            #expect(line.contains("the template has since been revised"))
             #expect(!line.contains("diverged"))
         }
     }
@@ -280,8 +280,8 @@ import Testing
 
             let line = try #require(
                 panel.management.designs.templateLineage(try ExperimentStore.load(name: minted.name), experiments: panel.management.experiments))
-            #expect(line.hasPrefix("diverged from design '\(design.name)'"))
-            #expect(line.contains("the design has since been revised too"))
+            #expect(line.hasPrefix("diverged from template '\(design.name)'"))
+            #expect(line.contains("the template has since been revised too"))
             #expect(line.contains("edits are allowed"))
         }
     }
@@ -322,7 +322,7 @@ import Testing
             let panel = makePanel(root: root)
             panel.management.newDesignFromStudy(reviewedSource: try panel.management.reviewDesignSource(named: minted.name))
             let status = try #require(panel.status)
-            #expect(status.hasPrefix("created design"))
+            #expect(status.hasPrefix("created template"))
             #expect(status.contains("had diverged from '\(design.name)'"))
             #expect(StudyTemplateStore.list().count == 2)
             #expect(panel.management.designs.selectedTemplateName != design.name)

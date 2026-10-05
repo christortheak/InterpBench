@@ -104,7 +104,7 @@ struct StudyTypeSection: View {
                 .help(
                     "import a study JSON (hand-written or LLM-drafted) as a "
                         + "NEW DRAFT: freeze metadata is stripped — pasted "
-                        + "text cannot mint a preregistered study — and "
+                        + "text cannot create a preregistered study — and "
                         + "verification runs immediately")
                 CopyButton(
                     "Copy LLM Prompt", systemImage: "text.bubble",

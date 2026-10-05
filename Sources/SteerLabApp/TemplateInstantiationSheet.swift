@@ -188,7 +188,7 @@ struct TemplateInstantiationSheet: View {
                 Toggle("pad with baseline", isOn: $model.permutationPadsWithBaseline)
                     .help(
                         "fills the remaining seats with the unsteered model, so "
-                            + "a two-agent set still casts a three-seat panel")
+                            + "a two-agent set can still fill a three-seat panel")
                 Button("Add all permutations") { model.addAllPermutations() }
                     .disabled(model.permutationRefusal != nil)
                     .help(
@@ -203,7 +203,7 @@ struct TemplateInstantiationSheet: View {
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("\(model.permutationCount) distinct casting(s) — swapping "
+                Text("\(model.permutationCount) distinct seat assignment(s) — swapping "
                     + "two identical occupants gives the same panel, so those "
                     + "are deduped rather than run (and double-counted) twice")
                     .font(.caption2)
@@ -244,7 +244,7 @@ struct TemplateInstantiationSheet: View {
                 Label("Add Study", systemImage: "plus")
             }
             .disabled(model.isWorking)
-            .help("one more study from this design, with its own casting")
+            .help("one more study from this template, with its own agents")
         }
     }
 
@@ -255,7 +255,7 @@ struct TemplateInstantiationSheet: View {
                 TextField(model.defaultName(for: row), text: nameBinding(row: row.id))
                     .font(.caption.monospaced())
                     .help(
-                        "the study directory this casting mints; empty takes the "
+                        "the study directory this row creates; empty takes the "
                             + "template's own naming, and a collision resolves "
                             + "with the usual -2 suffix")
                 Spacer()
@@ -438,11 +438,11 @@ struct TemplateInstantiationSheet: View {
     private var footer: some View {
         HStack {
             if model.isWorking { ProgressView().controlSize(.small) }
-            Button("Discard casting edits and reload design") { model.discardAndReload() }
+            Button("Discard row edits and reload template") { model.discardAndReload() }
                 .disabled(model.isWorking)
                 .help(
                     "throws away every row edited here and rebuilds the table "
-                        + "from the saved design — nothing has been written to "
+                        + "from the saved template — nothing has been written to "
                         + "the workspace yet, so nothing is lost but these edits")
             Spacer()
             Button("Close", role: .cancel) { dismiss() }
@@ -477,7 +477,7 @@ struct TemplateInstantiationSheet: View {
                 "creates one ordinary draft per row (shared batch id) and opens "
                     + "the first one in the Studies editor. Agents optional — a "
                     + "zero-agent draft is legal, and the study's readiness "
-                    + "check surfaces the missing casting")
+                    + "check surfaces the missing agents")
             Button("Create and Submit") {
                 Task {
                     await model.mint(submit: { study in
@@ -515,7 +515,7 @@ struct TemplateInstantiationSheet: View {
                 + " Or choose Create Studies and run each one from the study list."
         }
         guard model.readyToSubmit else {
-            return "every study needs a runnable casting before the batch can "
+            return "every study needs runnable agents before the batch can "
                 + "be queued — submitting a baseline-only arm spends cluster "
                 + "time measuring nothing against nothing"
         }

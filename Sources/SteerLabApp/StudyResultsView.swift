@@ -361,7 +361,10 @@ struct StudyResultsView<JudgeControls: View>: View {
                 .foregroundStyle(.secondary)
                 ForEach(report.coherenceItems.filter { $0.judge != nil }, id: \.index) { item in
                     if let judge = item.judge {
-                        DisclosureGroup("Judge \(item.index): \(item.judgeResult ?? judge.winner)")
+                        DisclosureGroup(
+                            "Judge \(item.index): "
+                                + VariantRobustnessReadout.armLabel(
+                                    item.judgeResult ?? judge.winner))
                         {
                             Text(judge.briefReason)
                                 .font(.caption)

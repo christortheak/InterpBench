@@ -43,7 +43,9 @@ struct StudyOperationEnvironmentTests {
         #expect(connections == 0)
         #expect(notes.count == 2)
         #expect(notes[0].contains("select a study"))
-        #expect(notes[1].contains("no server workspace"))
+        // Names the compute choice in use and the engine it needs.
+        #expect(notes[1].contains("needs the Python engine"))
+        #expect(notes[1].contains(ComputeChoice.macQuickStart.title))
     }
 
     @Test func draftSyncAdmissionDoesNotResolveCredentialsForFrozenOrLocalStudy() async {

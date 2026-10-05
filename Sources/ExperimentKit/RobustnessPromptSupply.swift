@@ -76,4 +76,17 @@ public enum VariantRobustnessReadout {
         guard let provider, !provider.isEmpty else { return "\(model) (\(kind))" }
         return "\(model) (\(kind) · \(provider))"
     }
+
+    /// The name a researcher reads for one side of a robustness comparison.
+    /// The report, its events, and the judge record the agent's side as
+    /// "variant" (a stored value, unchanged); on screen it is the agent.
+    /// Any other value — "baseline", "tie", a kind — passes through.
+    public static func armLabel(_ side: String) -> String {
+        switch side {
+        case "variant": "agent"
+        case "Variant": "Agent"
+        case "VARIANT": "AGENT"
+        default: side
+        }
+    }
 }

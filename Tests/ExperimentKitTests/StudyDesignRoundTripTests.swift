@@ -324,7 +324,7 @@ import Testing
             #expect(panel.management.selectedName == opened)
             #expect(panel.management.experiments.contains { $0.name == opened })
             let status = try #require(panel.status)
-            #expect(status.contains("Save back to design"))
+            #expect(status.contains("Save back to template"))
             #expect(panel.draft.formErrors[.template] == nil)
         }
     }
@@ -360,7 +360,7 @@ import Testing
             let source = try ExperimentStore.load(name: "vignette")
             #expect(panel.management.designs.saveBackToDesignTarget(for: source) == nil)
             let noLineage = try #require(panel.management.designs.saveBackToDesignRefusal(for: source))
-            #expect(noLineage.contains("Save as new design"))
+            #expect(noLineage.contains("Save as new template"))
 
             // Frozen and complete are offered too.
             for status in [ExperimentManifest.Status.frozen, .complete] {
@@ -447,7 +447,7 @@ import Testing
             #expect(panel.management.designs.templates.first?.study.maxTokens == 4096)
             #expect(panel.management.designs.selectedTemplateName == design.name)
             let status = try #require(panel.status)
-            #expect(status.hasPrefix("updated design '\(design.name)' in place"))
+            #expect(status.hasPrefix("updated template '\(design.name)' in place"))
             #expect(status.contains("keep their original lineage stamps"))
             // And the claim the message makes is true: the earlier instance
             // still reads as matching the design it was minted from.

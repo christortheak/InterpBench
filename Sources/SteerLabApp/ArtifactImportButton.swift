@@ -41,13 +41,13 @@ private struct ArtifactImportSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
             GroupBox("1. Choose source files") {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Choose an import description (.json) supplied with the artifact or prepared with your coding agent. It identifies the model, layer mapping, tensor file, and source. Keep the tensor and any source configuration beside it, at the relative paths it names.")
+                    Text("Choose an import description (.json) supplied with the artifact or prepared with your coding assistant. It identifies the model, layer mapping, tensor file, and source. Keep the tensor and any source configuration beside it, at the relative paths it names.")
                         .fixedSize(horizontal: false, vertical: true)
                     HStack {
                         Button("Choose description…", action: choose).disabled(busy)
                         Text(selection?.description.lastPathComponent ?? "No description selected").foregroundStyle(.secondary)
                     }
-                    Button("Copy instructions for my coding agent", action: copyInstructions)
+                    Button("Copy instructions for my coding assistant", action: copyInstructions)
                     if let selection {
                         Text("Declared model: \(selection.modelID)")
                         ForEach(selection.files, id: \.relativePath) { file in
@@ -171,7 +171,7 @@ private struct ArtifactImportSheet: View {
         """
         let guide = (try? ScienceCatalog.guide(isLens ? "jlens" : "sae").text) ?? ""
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text + "\n\n" + guide, forType: .string)
-        status = "Instructions copied. Give them to your coding agent with the artifact files and source documentation."
+        status = "Instructions copied. Give them to your coding assistant with the artifact files and source documentation."
     }
 
     private func detailLabel(_ key: String) -> String {

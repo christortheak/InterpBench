@@ -60,7 +60,7 @@ public struct TemplateBatchTotals: Sendable, Equatable {
     /// carry two multiplications by one that make the reader hunt for the
     /// number that matters.
     public var summary: String {
-        guard studies > 0 else { return "no rows yet — add a casting below" }
+        guard studies > 0 else { return "no rows yet — add a row below" }
         var factors = ["\(studies) \(studies == 1 ? String(rowNoun.dropLast()) : rowNoun)"]
         // Arms are reported as an AVERAGE-free total when they vary across
         // rows: "6 castings × 2 arms" is only honest if every row has two.
@@ -100,7 +100,7 @@ public struct TemplateBatchTotals: Sendable, Equatable {
             items: panel ? 1 : max(1, taskItemCount),
             shardsPerStudy: max(1, shardsPerStudy),
             unitNoun: panel ? "transcripts" : "generations",
-            rowNoun: panel ? "castings" : "studies",
+            rowNoun: panel ? "seat assignments" : "studies",
             jobNoun: jobNoun)
     }
 
@@ -464,7 +464,7 @@ public final class TemplateInstantiation {
             if agents.isEmpty {
                 advisories.append(
                     "no saved agents use this template's base model "
-                        + "(\(template.study.modelID)) — every casting can only "
+                        + "(\(template.study.modelID)) — every seat can only "
                         + "be baseline until one exists")
             }
             if rows.isEmpty { addRow() }
@@ -542,7 +542,7 @@ public final class TemplateInstantiation {
         let pool = permutationOccupants
         guard pool.count == seatIDs.count else {
             return "\(pool.count) agent(s) for \(seatIDs.count) seat(s) — a "
-                + "casting fills every seat exactly once"
+                + "seat assignment fills every seat exactly once"
         }
         return nil
     }
@@ -573,9 +573,9 @@ public final class TemplateInstantiation {
         }
         guard occupants.count == seatIDs.count else {
             advisories.append(
-                "the study's casting fills \(occupants.count) seat(s) but this "
-                    + "design's scenario has \(seatIDs.count) — cast the rows "
-                    + "below by hand, or check that the design declares the "
+                "the study's seat assignments fill \(occupants.count) seat(s) "
+                    + "but this template's scenario has \(seatIDs.count) — assign "
+                    + "the rows below by hand, or check that the template declares the "
                     + "scenario you meant")
             return
         }
@@ -644,7 +644,7 @@ public final class TemplateInstantiation {
             guard uncast.isEmpty else {
                 return "no agent assigned to seat(s): "
                     + uncast.joined(separator: ", ")
-                    + " — every seat runs, so every seat must be cast "
+                    + " — every seat runs, so every seat needs an agent "
                     + "(use baseline for an unsteered seat)"
             }
             return nil
@@ -655,7 +655,7 @@ public final class TemplateInstantiation {
             }
             guard record.artifact.baseModelID == template.study.modelID else {
                 return "agent '\(record.artifact.name)' uses "
-                    + "\(record.artifact.baseModelID), not this design's base "
+                    + "\(record.artifact.baseModelID), not this template's base "
                     + "model \(template.study.modelID)"
             }
         }
@@ -669,7 +669,7 @@ public final class TemplateInstantiation {
     public func advisory(for row: TemplateCellRow) -> String? {
         guard let template, template.intent != .multiAgent else { return nil }
         guard row.agentIDs.isEmpty else { return nil }
-        return "no agents cast — this mints a legal draft whose only arm is "
+        return "no agents chosen — this creates a legal draft whose only arm is "
             + "the baseline; add agents here or in the study before running"
     }
 
@@ -749,7 +749,7 @@ public final class TemplateInstantiation {
         guard !isWorking, readyToMint, let reviewedDesign else { return lastSummary ?? "" }
         guard let activeRoot = try? ManifestFileTransaction.canonicalPath(ExperimentStore.workspaceRoot),
             let reviewedRoot = try? ManifestFileTransaction.canonicalPath(workspaceRoot), activeRoot == reviewedRoot else {
-            lastSummary = "The active workspace changed. Reopen the design in its workspace before minting or submitting."
+            lastSummary = "The active workspace changed. Reopen the template in its workspace before creating or submitting studies."
             lastMintWasClean = false
             return lastSummary!
         }
@@ -776,7 +776,7 @@ public final class TemplateInstantiation {
             }
         }
 
-        var summary = "minted \(mint.minted.count) of \(castings.count) "
+        var summary = "created \(mint.minted.count) of \(castings.count) "
             + "draft(s) in batch \(mint.batchGroup)"
         for failure in mint.failures {
             summary += " — row \(failure.row + 1): \(failure.failure ?? "")"

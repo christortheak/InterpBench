@@ -69,8 +69,9 @@ public final class FineTuningPanel {
         public var output: String
         public var isComplete: Bool
 
+        /// On screen: the agent's side is "Agent", not the stored "Variant".
         public var title: String {
-            "\(kind) \(index)/\(total) · \(side)"
+            "\(kind) \(index)/\(total) · \(VariantRobustnessReadout.armLabel(side))"
         }
     }
 
@@ -1405,12 +1406,12 @@ public final class FineTuningPanel {
 
     public func captureVariant() async {
         guard let host else {
-            note("load app state before capturing a variant", severity: .info)
+            note("load app state before saving an agent", severity: .info)
             return
         }
         let name = variantName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else {
-            note("name the model variant first", severity: .info)
+            note("name the agent first", severity: .info)
             return
         }
         // Server workspace: the definition is composed from the SAME control
@@ -1445,17 +1446,17 @@ public final class FineTuningPanel {
                     name: name,
                     loadedServerModelID: host.cluster.remoteState?.loadedModel)
             else {
-                note("select (or load) a server model before capturing a variant", severity: .info)
+                note("select (or load) a server model before saving an agent", severity: .info)
                 return
             }
             do {
                 let record = try ModelVariantStore.save(variant)
                 refresh()
                 selectedVariantID = record.id
-                note("captured model variant \(record.artifact.name) "
+                note("saved agent \(record.artifact.name) "
                     + "(server base \(record.artifact.baseModelID))", severity: .success)
             } catch {
-                note("could not capture model variant: \(error)", severity: .error)
+                note("could not save the agent: \(error)", severity: .error)
             }
             return
         }
@@ -1501,9 +1502,9 @@ public final class FineTuningPanel {
             let record = try ModelVariantStore.save(variant)
             refresh()
             selectedVariantID = record.id
-            note("captured model variant \(record.artifact.name)", severity: .success)
+            note("saved agent \(record.artifact.name)", severity: .success)
         } catch {
-            note("could not capture model variant: \(error)", severity: .error)
+            note("could not save the agent: \(error)", severity: .error)
         }
     }
 
@@ -2027,7 +2028,8 @@ public final class FineTuningPanel {
                     output: "",
                     isComplete: false))
             // Per-item progress echo — deliberately NOT a notice (A15).
-            status = "robustness \(kind.lowercased()) \(side.lowercased()) \(index)/\(total)…"
+            status = "robustness \(kind.lowercased()) "
+                + "\(VariantRobustnessReadout.armLabel(side).lowercased()) \(index)/\(total)…"
         case .outputChunk(let kind, let index, let side, let output):
             if let position = liveRobustnessOutputs.firstIndex(where: {
                 $0.kind == kind && $0.index == index && $0.side == side
@@ -2053,7 +2055,8 @@ public final class FineTuningPanel {
         case .judgeCompleted(let index, let prompt, let result, let response):
             upsertLiveRobustnessJudgment(
                 .init(index: index, prompt: prompt, result: result, response: response))
-            liveRobustnessJudgeStatus = "judged coherence \(index): \(result)"
+            liveRobustnessJudgeStatus =
+                "judged coherence \(index): \(VariantRobustnessReadout.armLabel(result))"
             status = liveRobustnessJudgeStatus
         }
     }

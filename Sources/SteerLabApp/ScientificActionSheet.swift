@@ -16,7 +16,7 @@ struct ScientificActionSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(operation.title).font(.title2)
             Text(client.profile.baseURL.absoluteString).font(.caption).textSelection(.enabled)
-            Text("Use the method guide and your agent to prepare this action's request. The existing server owner validates it; running an action does not establish scientific qualification.")
+            Text("Use the method guide and your coding assistant to prepare this action's request. The existing server owner validates it; running an action does not establish scientific qualification.")
             Picker("Action", selection: $actionID) {
                 ForEach(operation.actions) { item in Text(item.method + " " + item.path).tag(item.id) }
             }.disabled(busy)

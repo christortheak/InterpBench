@@ -290,8 +290,8 @@ struct GeometryPanelView: View {
     private var logitLensSectionContent: some View {
         if isServerWorkspace {
             Text(
-                "Logit Lens runs on the local substrate only (it reads "
-                    + "the vector through the locally loaded model's "
+                "Logit Lens runs only on the engine built into this app (it "
+                    + "reads the vector through the locally loaded model's "
                     + "unembed) — switch Compute to "
                     + "\(ComputeChoice.macQuickStart.title).")
                 .font(.caption)
@@ -1361,7 +1361,7 @@ private struct RemoteGemmaScopeReportView: View {
 
         Text(
             "server report — carries no local artifact sidecar; Import on "
-                + "Server mints the raw decoder direction as a vector in the "
+                + "Server saves the raw decoder direction as a vector in the "
                 + "SERVER catalog (not rescaled to the analyzed vector's norm, "
                 + "unlike local import)")
             .font(.caption2)

@@ -1293,12 +1293,12 @@ struct ChatView: View {
             lines.append("")
         }
         for judgment in panel.liveRobustnessJudgments {
-            lines.append("## Judge \(judgment.index): \(judgment.result)")
+            lines.append("## Judge \(judgment.index): \(VariantRobustnessReadout.armLabel(judgment.result))")
             lines.append("")
             lines.append("Prompt:")
             lines.append(judgment.prompt)
             lines.append("")
-            lines.append("Winner: \(judgment.response.winner)")
+            lines.append("Winner: \(VariantRobustnessReadout.armLabel(judgment.response.winner))")
             lines.append("Confidence: \(judgment.response.confidence)")
             lines.append("Reason: \(judgment.response.briefReason)")
             lines.append("")
@@ -1306,8 +1306,8 @@ struct ChatView: View {
         if let report = panel.robustnessReport {
             lines.append("## Summary")
             lines.append("")
-            lines.append("Capability: \(percent(report.variantBatteryAccuracy)) variant · \(percent(report.baselineBatteryAccuracy)) baseline")
-            lines.append("Distinct-2: \(report.meanVariantDistinct2) variant · \(report.meanBaselineDistinct2) baseline")
+            lines.append("Capability: \(percent(report.variantBatteryAccuracy)) agent · \(percent(report.baselineBatteryAccuracy)) baseline")
+            lines.append("Distinct-2: \(report.meanVariantDistinct2) agent · \(report.meanBaselineDistinct2) baseline")
             if !report.warnings.isEmpty {
                 lines.append("Warnings: \(report.warnings.joined(separator: "; "))")
             }
@@ -1456,7 +1456,7 @@ struct ChatView: View {
                 // middle is exactly what the truncation eats.
                 .help(
                     computeStatusLine + " — the workspace is global; switch "
-                        + "it with the Compute selector in the window toolbar")
+                        + "it with the Compute menu in the window toolbar")
             }
             // A server load that would really be a multi-GB download asks
             // first (field incident 2026-08-29: an uncached 27B silently
@@ -1552,8 +1552,8 @@ struct ChatView: View {
                             + "locally) recording the server base model and server "
                             + "vector/adapter refs"
                         : "save the Playground's current configuration as an "
-                            + "agent definition (stored locally as a variant "
-                            + "artifact); it appears in Agents › Library")
+                            + "agent definition (stored in this workspace); it "
+                            + "appears in Agents › Library")
                 // The gate, visible rather than only in the tooltip.
                 if !service.workspaceHasRunnableModel {
                     Text(
@@ -3008,26 +3008,26 @@ private struct VariantRobustnessSummaryCard: View {
             LabeledContent(
                 "Capability",
                 value:
-                    percent(report.variantBatteryAccuracy) + " variant · "
+                    percent(report.variantBatteryAccuracy) + " agent · "
                     + percent(report.baselineBatteryAccuracy) + " baseline")
             LabeledContent(
                 "Distinct-2",
                 value:
                     report.meanVariantDistinct2.formatted(.number.precision(.fractionLength(3)))
-                    + " variant · "
+                    + " agent · "
                     + report.meanBaselineDistinct2.formatted(.number.precision(.fractionLength(3)))
                     + " baseline")
             if report.judgeModel != nil {
                 let counts = Dictionary(grouping: report.coherenceItems.compactMap(\.judgeResult)) { $0 }
                     .mapValues(\.count)
                 Text(
-                    "Judge: baseline \(counts["baseline"] ?? 0) · variant \(counts["variant"] ?? 0) · ties \(counts["tie"] ?? 0)"
+                    "Judge: baseline \(counts["baseline"] ?? 0) · agent \(counts["variant"] ?? 0) · ties \(counts["tie"] ?? 0)"
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 ForEach(report.coherenceItems.filter { $0.judge != nil }, id: \.index) { item in
                     if let judge = item.judge {
-                        DisclosureGroup("Judge \(item.index): \(item.judgeResult ?? judge.winner)") {
+                        DisclosureGroup("Judge \(item.index): \(VariantRobustnessReadout.armLabel(item.judgeResult ?? judge.winner))") {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("confidence \(judge.confidence.formatted(.number.precision(.fractionLength(2))))")
                                     .font(.caption)
@@ -3090,7 +3090,7 @@ private struct VariantRobustnessJudgeBubble: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Judge \(judgment.index): \(judgment.result)")
+                    Text("Judge \(judgment.index): \(VariantRobustnessReadout.armLabel(judgment.result))")
                         .font(.headline)
                     Text(judgment.prompt)
                         .font(.caption)

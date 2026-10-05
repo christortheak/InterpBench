@@ -447,8 +447,8 @@ private struct SubstrateSelector: View {
                 + "machine. Models, vectors, runs, and jobs belong to the "
                 + "engine that made them, so the lists follow this menu. "
                 + "The folder menu to the left picks the workspace and what "
-                + "it is set to run on. Concepts, example texts, and study "
-                + "designs are shared and visible whichever is selected. "
+                + "it is set to run on. Concepts, example texts, studies, and "
+                + "templates are shared and visible whichever is selected. "
                 + "Connection state lives on the dot to the right")
         // The machine add/edit popover stays reachable from this menu's
         // Add a Machine…/Edit… items; the selector's former duplicate

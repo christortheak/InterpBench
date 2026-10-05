@@ -183,7 +183,7 @@ import Testing
             #expect(totals.jobs == 24)
             #expect(totals.unitNoun == "transcripts")
             #expect(totals.summary
-                == "6 castings × 2 arms × 20 play-throughs = 240 transcripts "
+                == "6 seat assignments × 2 arms × 20 play-throughs = 240 transcripts "
                     + "· 24 Slurm jobs")
         }
     }
@@ -236,7 +236,7 @@ import Testing
             let totals = TemplateBatchTotals.totals(
                 template: template, armsPerRow: [], taskItemCount: 3,
                 shardsPerStudy: 1)
-            #expect(totals.summary == "no rows yet — add a casting below")
+            #expect(totals.summary == "no rows yet — add a row below")
         }
     }
 
@@ -408,7 +408,7 @@ import Testing
             #expect(model.agents.count == 1)
             #expect(model.refusal(for: model.rows[0]) == nil)
             let advisory = try #require(model.advisory(for: model.rows[0]))
-            #expect(advisory.contains("no agents cast"))
+            #expect(advisory.contains("no agents chosen"))
             #expect(model.readyToMint)
             #expect(!model.readyToSubmit)
 
@@ -483,7 +483,7 @@ import Testing
             model.permutationPadsWithBaseline = false
             model.permutationAgentIDs = [a.id]
             let refusal = try #require(model.permutationRefusal)
-            #expect(refusal.contains("fills every seat exactly once"))
+            #expect(refusal.contains("seat assignment fills every seat exactly once"))
         }
     }
 
@@ -508,7 +508,7 @@ import Testing
             let model = TemplateInstantiation(templateName: template.name)
             model.addRow()
             let summary = await model.mint()
-            #expect(summary.contains("minted 2 of 2"))
+            #expect(summary.contains("created 2 of 2"))
             let batch = try #require(model.lastBatchGroup)
             let minted = ExperimentStore.list().filter {
                 $0.templateProvenance?.batchGroup == batch
@@ -623,10 +623,10 @@ import Testing
             panel.refresh()
             let first = try ExperimentStore.load(name: try #require(mint.minted.first))
             let lineage = try #require(panel.management.designs.templateLineage(first, experiments: panel.management.experiments))
-            #expect(lineage.contains("from design '\(template.name)'"))
+            #expect(lineage.contains("from template '\(template.name)'"))
             #expect(!lineage.contains("diverged"))
             #expect(lineage.contains(mint.batchGroup))
-            #expect(lineage.contains("3 studies minted together"))
+            #expect(lineage.contains("3 studies created together"))
             #expect(panel.management.batchSiblings(first).count == 2)
 
             // A hand-authored study has no lineage line at all.
@@ -685,7 +685,7 @@ import Testing
             // while measuring items the template never described.
             try plantTaskPrompts(rows: 5)
             let summary = await model.mint()
-            #expect(summary.contains("minted 0 of 1"))
+            #expect(summary.contains("created 0 of 1"))
             #expect(summary.contains("re-mint the template"))
             guard case .failed(let message) = model.rows[0].state else {
                 Issue.record("the row should carry the refusal")

@@ -57,10 +57,10 @@ struct StudySeatsSection: View {
                         )
                         .font(.caption)
                         .help(
-                            "who is cast in '\(seat.name)' — read-only here; "
+                            "who is assigned to '\(seat.name)' — read-only here; "
                                 + "the advisory or the study's status above "
                                 + "says why, and duplicating as a draft is "
-                                + "how to recast")
+                                + "how to assign seats again")
                     }
                 }
                 if casting.isEditable, panel.availableAgentsForSeats.isEmpty {
@@ -86,7 +86,7 @@ struct StudySeatsSection: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 8) {
-                        Button("Save Casting") { panel.saveSeatCasting() }
+                        Button("Save Seat Assignments") { panel.saveSeatCasting() }
                             .disabled(refusal != nil || casting.seats.isEmpty)
                             .help(refusal ?? StudyControlCopy.saveCastingHelp)
                         Button("Create permuted siblings…") {
@@ -96,8 +96,9 @@ struct StudySeatsSection: View {
                         .help(
                             casting.form == .cast
                                 ? StudyControlCopy.permutedSiblingsHelp
-                                : "save this study's casting first — permuted "
-                                    + "siblings re-seat the cast it is running")
+                                : "save this study's seat assignments first — "
+                                    + "permuted siblings re-seat the assignments "
+                                    + "it is running")
                     }
                     if let refusal {
                         Text(refusal)
@@ -127,11 +128,12 @@ struct StudySeatsSection: View {
     private static func castingStateLine(_ casting: SeatCasting.State) -> String {
         switch casting.form {
         case .uncast:
-            return "not cast yet: this scenario binds no model to any seat, so "
-                + "the study refuses at run start until Save Casting compiles "
+            return "no seats assigned yet: this scenario binds no model to any "
+                + "seat, so the study refuses at run start until Save Seat "
+                + "Assignments compiles "
                 + "it. Save Study Setup does the same compile."
         case .cast:
-            return "cast: the study pins a compiled copy of this scenario with "
+            return "assigned: the study pins a compiled copy of this scenario with "
                 + "every seat bound. Saving again recompiles it at the study's "
                 + "current model and sampling settings."
         case .legacyBound:

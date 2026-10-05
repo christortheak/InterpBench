@@ -194,9 +194,9 @@ struct WorkspaceSelector: View {
         var text =
             "the data workspace: the folder holding prompts/, experiments/, and "
             + "runs/ (Compute picks the engine; Workspace picks the data). "
-            + "Artifacts, installed models, and jobs are per-substrate — they "
-            + "follow the Compute selector — while concepts, recipes, and "
-            + "studies are shared data visible from every substrate. "
+            + "Artifacts, installed models, and jobs belong to one engine — they "
+            + "follow the Compute menu — while concepts, recipes, and "
+            + "studies are shared data visible from every engine. "
             + "Current: \(workspace.rootURL.path)"
         if workspace.isLegacyRepoRoot {
             text += " — the SteerLab code checkout (dev fallback); create a "

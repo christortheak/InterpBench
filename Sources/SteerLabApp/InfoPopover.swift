@@ -80,7 +80,7 @@ enum StudyInfo {
         document: copy it out, work on it by hand or with an LLM (Copy LLM \
         Prompt teaches the format), and paste the result back as a NEW \
         draft. Pasted studies always arrive as drafts and are checked \
-        immediately — pasting can never mint a preregistered study.
+        immediately — pasting can never create a preregistered study.
         """
 
     static let funnelPhase = """
@@ -119,7 +119,7 @@ enum StudyInfo {
         item > 1.
 
         The study's sampling policy governs the baseline AND every saved \
-        agent in the design — an agent's Playground temperature is \
+        agent in the study — an agent's Playground temperature is \
         provenance only, never used in measured runs.
         """
 

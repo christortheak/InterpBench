@@ -43,10 +43,10 @@ struct StudyArmsSection: View {
                 // taken effect when nothing had been written yet.
                 Text(
                     panel.draft.selectedMultiAgentScenarioID == nil
-                        ? "No scenario selected. Choose one in Study Setup, cast "
+                        ? "No scenario selected. Choose one in Study Setup, assign "
                             + "its seats below, then save to pin it."
-                        : "Scenario selected in Study Setup; its seats are cast in "
-                            + "Seats below. Arms:"
+                        : "Scenario selected in Study Setup; its seats are assigned "
+                            + "in Seats below. Arms:"
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -113,7 +113,7 @@ struct StudyArmsSection: View {
                             "an agent that does not exist YET: this study's "
                                 + "own sweep creates it at run time — the "
                                 + "sweep selects the concept's best "
-                                + "layer×strength cell, promote mints the "
+                                + "layer×strength cell, promote creates the "
                                 + "agent, and the chain runs it as this arm, "
                                 + "pinning the resolution as run evidence "
                                 + "(forward-resolutions.json). Freezable "
