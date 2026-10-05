@@ -204,6 +204,10 @@ def test_a_damaged_record_is_refused_rather_than_read_as_empty(tmp_path):
     block = custom_code.notice(document, tmp_path, study="s", program="steerlab",
                                after_write=True)
     assert block["notice"] == NOTICE_LITERAL and "cannot be read" in block["recordProblem"]
+    # A study with no custom code is never held up by the record.
+    assert custom_code.run_refusal({}, tmp_path, study="s", verb="run",
+                                   program="steerlab") is None
+    assert custom_code.status({}, tmp_path) == []
 
 
 def test_only_steps_that_execute_agents_are_held(tmp_path):
@@ -371,6 +375,20 @@ def test_run_refuses_unacknowledged_custom_code_before_packaging(tmp_path, monke
     assert stages["load"]["state"] == client_cli.STAGE_OK, document
     assert stages["package"]["state"] == client_cli.STAGE_OK
     assert _UnreachableRunner.constructed == 1
+
+
+def test_a_damaged_record_holds_only_the_steps_the_gate_holds(tmp_path, monkeypatch, capsys):
+    root = str(tmp_path)
+    name = study_with_code(root)
+    (tmp_path / custom_code.FILENAME).write_text("{not json")
+    monkeypatch.setattr(runner_api, "RunnerClient", _UnreachableRunner)
+    code, document, _ = main(["--root", root, "run", name, "--runner",
+                              "http://127.0.0.1:9"], capsys)
+    assert code == 65 and "cannot be read" in document["error"]["reason"]
+    code, document, _ = main(["--root", root, "run", name, "--runner",
+                              "http://127.0.0.1:9", "--verb", "evaluate"], capsys)
+    stages = {row["stage"]: row for row in document["result"]["stages"]}
+    assert stages["load"]["state"] == client_cli.STAGE_OK, document
 
 
 def test_the_provenance_record_shows_who_acknowledged_the_code_that_ran(

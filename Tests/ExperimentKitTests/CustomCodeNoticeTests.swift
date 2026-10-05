@@ -177,6 +177,8 @@ struct CustomCodeNoticeTests {
             #expect(throws: ExperimentError.self) {
                 try CustomCodeNotice.runRefusal(document: document, study: "s", verb: "run", workspaceRoot: root)
             }
+            // A study with no custom code is never held up by the record.
+            #expect(try CustomCodeNotice.runRefusal(document: .object([:]), study: "s", verb: "run", workspaceRoot: root) == nil)
         }
     }
 

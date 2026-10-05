@@ -4053,7 +4053,14 @@ def _run(invocation: Invocation) -> CLIResult:
                 reason=str(unacknowledged),
                 repair=unacknowledged.repair_action, common=common,
                 facts=unacknowledged.facts, stage_facts={"status": status})
-    carried = custom_code.status(document, workspace_root)
+    try:
+        carried = custom_code.status(document, workspace_root)
+    except custom_code.CustomCodeError as exc:
+        # Reached only by a step the gate does not hold (a dry run, or a step
+        # that runs no agent): a damaged record must not stop it, and the
+        # provenance says the acknowledgement could not be read.
+        carried = [{**provider, "acknowledged": None, "recordProblem": str(exc)}
+                   for provider in custom_code.providers(document, workspace_root)]
     if carried:
         # The provenance record beside the run then shows which custom code
         # ran and who acknowledged it, and when.

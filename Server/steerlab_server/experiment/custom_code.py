@@ -223,9 +223,14 @@ def acknowledged(root) -> dict[str, dict]:
 
 def status(document, root) -> list[dict]:
     """Each provider with whether, when, and by whom it was acknowledged."""
+    found = providers(document, root)
+    if not found:
+        # A study with no custom code never reads the record, so a damaged
+        # record cannot hold up anything that has nothing to acknowledge.
+        return []
     seen = acknowledged(root)
     rows = []
-    for provider in providers(document, root):
+    for provider in found:
         entry = seen.get(provider["sha256"])
         rows.append({**provider, "acknowledged": entry is not None,
                      "acknowledgedAt": entry.get("acknowledgedAt") if entry else None,
