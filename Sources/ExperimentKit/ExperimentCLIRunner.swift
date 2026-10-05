@@ -3055,6 +3055,8 @@ public struct ExperimentCLIRunner: Sendable {
             return try StudyAgentCLI.attach(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
         case "acknowledge-custom-code":
             return try CustomCodeCLI.acknowledge(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
+        case "rename", "delete":
+            return try WorkspaceHousekeepingCLI.run(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
         case "list":
             let manifests = ExperimentStore.list()
             if manifests.isEmpty { sink.out("no experiments") }

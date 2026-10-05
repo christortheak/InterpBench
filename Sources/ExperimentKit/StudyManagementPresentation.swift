@@ -15,6 +15,9 @@ public struct StudyCreationContext: Sendable {
 @MainActor
 struct StudyManagementPresentation {
     var note: (String, PanelNotice.Severity) -> Void = { _, _ in }
+    /// A refusal or failure, already presented: the panel shows its reason,
+    /// what to do, and its command-line repair.
+    var refusal: (RefusalPresentation, PanelNotice.Severity) -> Void = { _, _ in }
     var selectionChanged: () -> Void = {}
     var refreshed: () -> Void = {}
 }

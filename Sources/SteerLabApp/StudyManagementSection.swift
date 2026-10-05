@@ -149,9 +149,8 @@ struct StudyManagementSection: View {
                                 // silent no-op (UI audit 2026-09-06, headline 9).
                                 deleteReview = nil
                                 confirmDeleteDraft = false
-                                panel.note(
-                                    "Reload the study before deleting it. "
-                                        + error.localizedDescription,
+                                panel.noteRefusal(
+                                    "Couldn't review the study before deleting it.", error,
                                     severity: .warning)
                             }
                         }

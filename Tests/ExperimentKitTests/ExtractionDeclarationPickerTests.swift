@@ -263,7 +263,11 @@ import Testing
             let reason = String(
                 refusal[refusal.startIndex ..< (refusal.range(of: " — repair: ")?
                     .lowerBound ?? refusal.endIndex)])
-            #expect(noticeText(panel).contains(reason))
+            // The refusal presentation capitalizes the reason's first letter
+            // and leads with what was being done; the words arrive unchanged,
+            // and so does the repair, as what to do.
+            #expect(noticeText(panel).localizedCaseInsensitiveContains(reason))
+            #expect(noticeText(panel).contains("Re-attach the concept with"))
         }
     }
 

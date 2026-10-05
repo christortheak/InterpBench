@@ -324,6 +324,9 @@ public enum RefusalSiteRegistry {
                 "experiment set-evaluation-sampling",
                 "experiment set-primary-outcome",
                 "experiment set-style-taxonomy", "experiment confirm",
+                // Only a draft can be renamed or deleted; the repair is the
+                // same duplicate a frozen study is iterated by.
+                "experiment rename", "experiment delete",
                 // `panel compile` writes a FILE before it writes the manifest,
                 // so it checks the status itself and refuses before compiling
                 // rather than letting `save` refuse afterwards and leave an

@@ -343,7 +343,20 @@ struct ExperimentsPanelView: View {
 
             if let status = panel.status {
                 Section {
-                    Text(status).font(.caption).foregroundStyle(.secondary)
+                    // A refusal shows its reason, what to do, and the
+                    // command-line repair; anything else is a plain line.
+                    if let refusal = panel.statusRefusal {
+                        RefusalView(
+                            refusal: refusal,
+                            perform: panel.management.selected == nil ? nil : { action in
+                                switch action {
+                                case .duplicateStudy: panel.management.duplicateSelected()
+                                case .reloadStudy: panel.reloadSelectedDraft()
+                                }
+                            })
+                    } else {
+                        Text(status).font(.caption).foregroundStyle(.secondary)
+                    }
                     // A durable server job in flight gets a visible cancel
                     // control right here — not buried in a disclosure.
                     if let job = panel.remoteJobs.activeServerJob {

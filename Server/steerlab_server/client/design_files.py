@@ -87,7 +87,10 @@ def catalog(root: Path) -> dict:
     entries, issues = [], []
     if directory.exists():
         for child in sorted(directory.iterdir()):
-            if child.name == ".DS_Store" or child.name.startswith("._"):
+            # Hidden entries — `.DS_Store`, `._` forks, and the
+            # `.trash-<time>` folders a template delete moves into — are not
+            # templates; a template name can never start with a dot.
+            if child.name.startswith("."):
                 continue
             try:
                 review = read(child.name, root)

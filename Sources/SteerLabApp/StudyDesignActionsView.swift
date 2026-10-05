@@ -76,7 +76,10 @@ struct StudyDesignActionsView: View {
                         saveReview = SaveReview(source: try panel.reviewEditorDesignSource(),
                             design: try panel.designs.reviewedDesign(named: target))
                         confirmSaveBackToDesign = true
-                    } catch { panel.draft.formErrors[.template] = error.localizedDescription }
+                    } catch {
+                        panel.draft.formErrors[.template] = RefusalPresentation(
+                            error, context: "Couldn't review the study and template to save back.").summary
+                    }
                 }
                 .disabled(refusal != nil)
                 .help(refusal ?? StudyControlCopy.saveBackHelp)
@@ -96,7 +99,10 @@ struct StudyDesignActionsView: View {
             }
             Button("Save as new template") {
                 do { panel.newDesignFromStudy(reviewedSource: try panel.reviewEditorDesignSource()) }
-                catch { panel.draft.formErrors[.template] = error.localizedDescription }
+                catch {
+                    panel.draft.formErrors[.template] = RefusalPresentation(
+                        error, context: "Couldn't review the study to save as a template.").summary
+                }
             }
             // `saveAsNewDesignHelp` ends a sentence, so the appended clause
             // has to start one rather than trail a lowercase fragment.

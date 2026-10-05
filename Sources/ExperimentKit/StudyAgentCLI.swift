@@ -13,6 +13,8 @@ enum StudyAgentCLI {
             guard args.count == 2 else { throw usage() }
             let snapshot = try AgentArtifactSnapshot(workspaceRoot: workspaceRoot, path: args[1])
             return try result(AgentArtifactDocument(snapshot), message: "Agent inspected.", sink: sink)
+        case "delete":
+            return try WorkspaceHousekeepingCLI.run(invocation, workspaceRoot: workspaceRoot, sink: sink)
         default: throw usage()
         }
     }
@@ -45,7 +47,7 @@ enum StudyAgentCLI {
     }
 
     private static func usage() -> ExperimentError {
-        .malformed("Use agent list, agent inspect <path>, or experiment attach-agent <study> with both reviewed file digests.",
+        .malformed("Use agent list, agent inspect <path>, agent delete <path>, or experiment attach-agent <study> with both reviewed file digests.",
             repair: "Read agent --help or experiment attach-agent --help.")
     }
 }

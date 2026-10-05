@@ -4,7 +4,7 @@
 
 A **template** is a reusable set of study settings. The `design` verb family
 operates on templates: the commands and JSON fields say "design", and they mean
-the same thing. Both clients carry the same eight verbs.
+the same thing. Both clients carry the same ten verbs.
 
 `{{cli}} design list --json` reports the design library
 and unreadable entries. `{{cli}} design inspect <name> --json` returns the
@@ -43,8 +43,15 @@ failure, and typed issue with a repair. All successful rows share a batch group.
 A partial batch returns a nonzero exit and retains its successful drafts; inspect
 `result.minted` and retry only repaired failed rows. Repeating the whole batch
 creates more studies. Nothing is frozen or submitted. The app casting table uses
-the same per-row publication owner. Renaming and deleting a template have no
-verb yet; do not invent one, and do not edit frozen studies.
+the same per-row publication owner.
+
+To rename or delete a template, use `{{cli}} design rename <name> <new-name> --json`
+or `{{cli}} design delete <name> --json`. Both preview first and change nothing;
+show the researcher the preview, then repeat the command with the reviewed
+`--file-sha256 <digest>` and `--yes` (`result.confirmCommand` is the exact
+command). A delete moves the template into `templates/.trash-<time>/`, where it
+can be recovered. Studies created from a template are ordinary drafts and are
+never changed by either.
 
 `design expand <design> --casting <file> --mode permutations|composition
 --file-sha256 <digest>` previews batch rows without minting or submitting.

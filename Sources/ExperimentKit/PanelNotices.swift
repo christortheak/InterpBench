@@ -30,16 +30,21 @@ public struct PanelNotice: Identifiable, Codable, Sendable, Equatable {
     public var severity: Severity
     /// The legacy status string, verbatim.
     public var message: String
+    /// The structured refusal behind `message`, when the notice is one: its
+    /// reason, what to do, and any command-line repair. Optional and
+    /// additive, so notices written before it still load.
+    public var refusal: RefusalPresentation?
 
     public init(
         id: UUID = UUID(), timestamp: Date = Date(), source: String,
-        severity: Severity, message: String
+        severity: Severity, message: String, refusal: RefusalPresentation? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
         self.source = source
         self.severity = severity
         self.message = message
+        self.refusal = refusal
     }
 }
 
@@ -93,12 +98,13 @@ public final class PanelNotices {
 
     /// Append one notice, trim to capacity, persist best-effort.
     public func record(
-        source: String, severity: PanelNotice.Severity, message: String
+        source: String, severity: PanelNotice.Severity, message: String,
+        refusal: RefusalPresentation? = nil
     ) {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         notices.append(
-            PanelNotice(source: source, severity: severity, message: trimmed))
+            PanelNotice(source: source, severity: severity, message: trimmed, refusal: refusal))
         if notices.count > Self.capacity {
             notices.removeFirst(notices.count - Self.capacity)
         }

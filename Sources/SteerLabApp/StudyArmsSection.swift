@@ -22,7 +22,9 @@ struct StudyArmsSection: View {
         agentReviewMessage = nil
         guard let id, let record = panel.availableVariantsForStudy.first(where: { $0.id == id }) else { return }
         do { agentReview = try AgentArtifactSnapshot(workspaceRoot: ExperimentStore.workspaceRoot, reviewedRecord: record) }
-        catch { agentReviewMessage = error.localizedDescription }
+        catch {
+            agentReviewMessage = RefusalPresentation(error, context: "Couldn't review this agent.").summary
+        }
     }
 
     /// ONE Conditions section, content by study type: the ARMS of the

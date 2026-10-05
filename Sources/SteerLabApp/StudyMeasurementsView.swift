@@ -127,7 +127,7 @@ private struct StudyMeasurementsEditor: View {
                 if case .string(let value) = config["onError"] { onError = value }
             }
             do { probes = try await ProbeLibrary.inventory(root: root).probes.filter { $0.format == "activation-probe-v1" } }
-            catch { status = error.localizedDescription }
+            catch { status = RefusalPresentation(error, context: "Couldn't list the probes.").summary }
         }
     }
     private func entryLabel(_ value: JSONValue) -> String {
@@ -146,7 +146,7 @@ private struct StudyMeasurementsEditor: View {
         busy = true; let captured = settings
         Task { defer { busy = false }
             do { review = try await ProbeMeasurements.request("measurements-review", experiment: manifest.name, settings: captured, root: root); reviewedSettings = captured; status = "Review complete. Check the selected probes and observation schedule above." }
-            catch { review = nil; status = error.localizedDescription }
+            catch { review = nil; status = RefusalPresentation(error, context: "Couldn't review the measurements.").summary }
         }
     }
     private func save() {
@@ -154,7 +154,7 @@ private struct StudyMeasurementsEditor: View {
         busy = true
         Task { defer { busy = false }
             do { _ = try await ProbeMeasurements.request("measurements-save", experiment: manifest.name, settings: reviewedSettings, root: root, planSHA256: hash); didSave(); dismiss() }
-            catch { review = nil; status = error.localizedDescription }
+            catch { review = nil; status = RefusalPresentation(error, context: "Couldn't save the measurements.").summary }
         }
     }
 }

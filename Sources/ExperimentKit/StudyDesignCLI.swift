@@ -12,6 +12,8 @@ enum StudyDesignCLI {
         }
         do {
             switch args.first {
+            case "rename", "delete":
+                return try WorkspaceHousekeepingCLI.run(invocation, workspaceRoot: workspaceRoot, sink: sink)
             case "list":
                 guard args.count == 1 else { throw usage() }
                 let catalog = try StudyDesignAuthoring.list(workspaceRoot: workspaceRoot)
@@ -102,7 +104,7 @@ enum StudyDesignCLI {
     }
 
     private static func usage() -> ExperimentError {
-        .malformed("Use design list, inspect, describe, instantiate, batch, save <study>, or update <design> --study <study> with the required reviewed file digests.",
+        .malformed("Use design list, inspect, describe, instantiate, batch, rename, delete, save <study>, or update <design> --study <study> with the required reviewed file digests.",
             repair: "steerlab-cli design --help")
     }
 }

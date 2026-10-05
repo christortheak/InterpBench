@@ -29,6 +29,22 @@ reconstructing an attachment request.
 
 <!-- client: all -->
 
+**Renaming and deleting:** `{{cli}} experiment rename <name> <new-name>`,
+`{{cli}} experiment delete <name>`, `{{cli}} design rename <name> <new-name>`,
+`{{cli}} design delete <name>` (templates), and `{{cli}} agent delete <path>`
+preview by default: each prints what would change and the reviewed digest, and
+writes nothing. Show the researcher the preview and apply only after they agree,
+by repeating the command with that digest (`--manifest-sha256`, `--file-sha256`,
+or `--artifact-sha256`) and `--yes`; `result.confirmCommand` is the exact
+command. A changed file refuses; preview again. Only a draft study can be renamed
+or deleted: a frozen or complete one refuses with `statusImmutable`, and the
+repair is to duplicate it. A delete moves the item into a `.trash-<time>` folder
+beside it, where it can be recovered. Nothing in `runs/` changes, and a study's
+runs keep the name they recorded. An agent any study uses refuses with
+`agentInUse` and names the studies; an agent a run saved refuses with
+`agentIsRunEvidence`, because run folders are evidence. Never rename or delete
+these by hand.
+
 **Concept-to-draft assembly:** `{{cli}} authoring study conceptStudy --json`
 (or `agentComparison` / `multiAgent`) emits the same study interview used by the
 app. Discuss substantive choices first; use `authoring prompt <kind>` for exact

@@ -45,6 +45,10 @@ struct ServerJobsPanelView: View {
     @State private var selectedJobID: String?
     @State private var logLines: [String] = []
     @State private var status: String?
+    /// The structured refusal behind `status`, kept with the text it was
+    /// shown as, so a later plain status never borrows its details.
+    @State private var statusRefusal: (text: String, refusal: RefusalPresentation)?
+    @State private var showingStatusDetails = false
     @State private var isRefreshing = false
     @State private var isReconciling = false
     @State private var isStreaming = false
@@ -109,15 +113,34 @@ struct ServerJobsPanelView: View {
             // disappears changes this split-view column's minimum height
             // while the data is landing — the 2026-08-05 crash class (see
             // jobsRegion below). A constant slot never moves the layout.
-            Text(status ?? " ")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                // This slot is the ONLY place a refusal or its repair action
-                // renders; selection is what lets the researcher copy one
-                // (UI audit 2026-09-06). It does not change the height.
-                .textSelection(.enabled)
-                .help(status ?? "")
+            HStack(spacing: 4) {
+                Text(status ?? " ")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    // Selection lets the researcher copy a refusal or its
+                    // repair (UI audit 2026-09-06). It does not change the
+                    // height.
+                    .textSelection(.enabled)
+                    .help(status ?? "")
+                Spacer(minLength: 0)
+                // The whole message, readable in full, in a popover: the slot
+                // itself stays one line, because a row whose height follows
+                // its text changes this split-view column's minimum (the
+                // 2026-08-05 crash class, see jobsRegion below).
+                Button {
+                    showingStatusDetails = true
+                } label: {
+                    Image(systemName: "info.circle")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .disabled((status ?? "").trimmingCharacters(in: .whitespaces).isEmpty)
+                .help("show the whole message: what happened, what to do, and the command-line repair")
+                .popover(isPresented: $showingStatusDetails, arrowEdge: .bottom) {
+                    statusDetails
+                }
+            }
 
             jobsRegion
         }
@@ -327,10 +350,10 @@ struct ServerJobsPanelView: View {
                 await refreshJobs(selectFirstWhenEmpty: false)
                 status = "job records reconciled: child records folded in and the shard-merge pass completed"
             } catch let error as ClusterClient.ClientError {
-                status = "reconcile failed: "
-                    + ClusterClient.unwrappingDetail(error).description
+                showRefusal(RefusalPresentation(
+                    ClusterClient.unwrappingDetail(error), context: "Couldn't reconcile the job records."))
             } catch {
-                status = "reconcile failed: \(error.localizedDescription)"
+                showRefusal(RefusalPresentation(error, context: "Couldn't reconcile the job records."))
             }
         }
     }
@@ -850,7 +873,7 @@ struct ServerJobsPanelView: View {
                 + " · as of \(Self.clock.string(from: lastRefreshedAt ?? Date()))"
         } catch {
             guard service.cluster.evidenceImportOrigin == origin else { return }
-            status = "could not list jobs: \(error.localizedDescription)"
+            showRefusal(RefusalPresentation(error, context: "Couldn't list the jobs."))
         }
     }
 
@@ -891,11 +914,11 @@ struct ServerJobsPanelView: View {
                 workspaceRoot: ExperimentStore.workspaceRoot,
                 shell: ProvisionShellRunner())
         } catch let error as WorkspaceRunImport.SetupError {
-            status = "import refused: \(error.reason)"
+            showRefusal(RefusalPresentation(error, context: "The import was refused."))
             importDetail = error.errorDescription
             return
         } catch {
-            status = "import refused: \(error.localizedDescription)"
+            showRefusal(RefusalPresentation(error, context: "The import was refused."))
             return
         }
         // Off the main actor: an import walks a remote tree and rsyncs GBs.
@@ -968,7 +991,9 @@ struct ServerJobsPanelView: View {
                 await MainActor.run {
                     isStreaming = false
                     streamTask = nil
-                    status = "log stream ended: \(error.localizedDescription)"
+                    showRefusal(RefusalPresentation(
+                        error, context: "The log stream ended.",
+                        advice: "Select the job again to reconnect to its log."))
                 }
             }
         }
@@ -1071,7 +1096,7 @@ struct ServerJobsPanelView: View {
                 + "verdicts \(retry.partialRunID) already produced"
             await refreshJobs(selectFirstWhenEmpty: false)
         } catch {
-            status = "retry refused: \(error.localizedDescription)"
+            showRefusal(RefusalPresentation(error, context: "The retry was refused."))
         }
     }
 
@@ -1156,7 +1181,9 @@ struct ServerJobsPanelView: View {
             case .skippedUnbundleable(let note):
                 status = "pipeline \(row.run) skipped — \(note)"
             case .refused(let code, let repair):
-                status = "\(code): \(repair)"
+                showRefusal(RefusalPresentation(
+                    code: code, repair: repair,
+                    context: "The evidence import for pipeline \(row.run) was refused (\(code))."))
             case .failed(let message):
                 status = "pipeline evidence import failed: \(message)"
             case .deferred(let reason):
@@ -1195,7 +1222,9 @@ struct ServerJobsPanelView: View {
             case .skippedUnbundleable(let note):
                 status = "run \(event.runId ?? "?") skipped — \(note)"
             case .refused(let code, let repair):
-                status = "\(code): \(repair)"
+                showRefusal(RefusalPresentation(
+                    code: code, repair: repair,
+                    context: "The evidence import from job \(job.id) was refused (\(code))."))
             case .failed(let message):
                 status = "evidence import failed: \(message)"
             case .deferred(let reason):
@@ -1214,6 +1243,34 @@ struct ServerJobsPanelView: View {
     /// cancelled job the server first confirms the cancelled job has ended.
     /// Refusal details (already resubmitted / still running / not yet
     /// confirmed stopped / nothing kept) surface verbatim.
+    /// Show a refusal in the status slot, keeping its full presentation for
+    /// the details popover.
+    private func showRefusal(_ refusal: RefusalPresentation) {
+        status = refusal.summary
+        statusRefusal = (refusal.summary, refusal)
+    }
+
+    /// The status slot's message in full: the structured refusal when the
+    /// current status is one, otherwise the whole text.
+    @ViewBuilder private var statusDetails: some View {
+        ScrollView {
+            Group {
+                if let current = statusRefusal, current.text == status {
+                    RefusalView(refusal: current.refusal)
+                } else {
+                    Text(status ?? "")
+                        .font(.caption)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+        }
+        .frame(width: 420)
+        .frame(maxHeight: 320)
+    }
+
     private func resubmit(_ jobID: String, origin: EvidenceImportOrigin?) async {
         guard let client = clientForRows(origin: origin) else { return }
         do {
@@ -1223,9 +1280,10 @@ struct ServerJobsPanelView: View {
                 jobID: jobID, result: result)
             await refreshJobs(selectFirstWhenEmpty: false)
         } catch let error as ClusterClient.ClientError {
-            status = "resume failed: \(ClusterClient.unwrappingDetail(error).description)"
+            showRefusal(RefusalPresentation(
+                ClusterClient.unwrappingDetail(error), context: "Couldn't resume job \(jobID)."))
         } catch {
-            status = "resume failed: \(error.localizedDescription)"
+            showRefusal(RefusalPresentation(error, context: "Couldn't resume job \(jobID)."))
         }
     }
 
@@ -1243,9 +1301,11 @@ struct ServerJobsPanelView: View {
             // A 502 here means scancel itself failed — the allocation may
             // still be running; the server's detail says so and names the
             // job. Show its words, not a JSON blob.
-            status = "cancel failed: \(ClusterClient.unwrappingDetail(error).description)"
+            showRefusal(RefusalPresentation(
+                ClusterClient.unwrappingDetail(error), context: "Couldn't cancel job \(jobID).",
+                advice: "The allocation may still be running. Refresh the job list before trying again."))
         } catch {
-            status = "cancel failed: \(error.localizedDescription)"
+            showRefusal(RefusalPresentation(error, context: "Couldn't cancel job \(jobID)."))
         }
     }
 

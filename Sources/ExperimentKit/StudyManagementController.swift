@@ -123,6 +123,21 @@ public final class StudyManagementController {
         note(message, severity: .error)
     }
 
+    /// Refuse because something threw: the inline label shows the reason and
+    /// what to do; the panel's status row shows the whole presentation.
+    private func refuse(
+        _ field: StudyDraftState.FormField, _ context: String, _ error: any Error,
+        advice: String? = nil
+    ) {
+        let refusal = RefusalPresentation(error, context: context, advice: advice)
+        draft.formErrors[field] = refusal.summary
+        presentation.refusal(refusal, .error)
+    }
+
+    private func noteRefusal(_ context: String, _ error: any Error, advice: String? = nil) {
+        presentation.refusal(RefusalPresentation(error, context: context, advice: advice), .error)
+    }
+
     /// What to call this study in lists: its label when one is set, its
     /// canonical name otherwise. The canonical name stays the identity —
     /// directory, run stamps, CLI arguments — so surfaces render it as
@@ -200,10 +215,8 @@ public final class StudyManagementController {
                 severity: .success)
         } catch {
             refuse(
-                .createStudy,
-                "Couldn't create the draft — check the name isn't already in "
-                    + "use and the workspace is writable. Details: "
-                    + error.localizedDescription)
+                .createStudy, "Couldn't create the draft.", error,
+                advice: "Check that the name is not already in use and the workspace is writable.")
         }
     }
 
@@ -232,7 +245,7 @@ public final class StudyManagementController {
             try ManifestFileTransaction.requireCurrent(.sha256(reviewed.file.sha256),
                 at: ExperimentRepository(workspaceRoot: reviewed.workspaceRoot).manifestURL(name))
         } catch {
-            refuse(.rename, "The study changed; reload and review it before renaming. \(error)")
+            refuse(.rename, "Couldn't rename the study.", error)
             return false
         }
         var current = name
@@ -247,7 +260,7 @@ public final class StudyManagementController {
                 messages.append("renamed '\(outcome.oldName)' → '\(outcome.newName)'")
                 if let runsNote = outcome.runsNote { messages.append(runsNote) }
             } catch {
-                refuse(.rename, "Couldn't rename the study — nothing changed. \(error)")
+                refuse(.rename, "Couldn't rename the study; nothing changed.", error)
                 return false
             }
         }
@@ -263,7 +276,9 @@ public final class StudyManagementController {
                 refresh()
                 if selectedName == name { selectedName = current }
                 let published = current == name ? "" : "Renamed '\(name)' to '\(current)', but the label was not saved. "
-                refuse(.rename, published + "Couldn't save the display label: \(error). Close this dialog and review '\(current)' before retrying.")
+                refuse(
+                    .rename, published + "Couldn't save the display label.", error,
+                    advice: "Close this dialog and review '\(current)' before retrying.")
                 return false
             }
         }
@@ -335,10 +350,7 @@ public final class StudyManagementController {
                 note("created template '\(mint.template.name)'", severity: .success)
             }
         } catch {
-            refuse(
-                .template,
-                "Couldn't load '\(name)' as a template — "
-                    + ((error as? ExperimentError)?.reason ?? "\(error)"))
+            refuse(.template, "Couldn't save '\(name)' as a template.", error)
         }
     }
 
@@ -358,10 +370,7 @@ public final class StudyManagementController {
             refreshTemplates()
             return saved
         } catch {
-            refuse(
-                .template,
-                "Couldn't save the description — "
-                    + error.localizedDescription)
+            refuse(.template, "Couldn't save the description.", error)
             return nil
         }
     }
@@ -389,10 +398,7 @@ public final class StudyManagementController {
                 severity: .success)
             return draft.name
         } catch {
-            refuse(
-                .template,
-                "Couldn't open template '\(name)' for editing — "
-                    + ((error as? ExperimentError)?.reason ?? "\(error)"))
+            refuse(.template, "Couldn't open template '\(name)' for editing.", error)
             return nil
         }
     }
@@ -451,10 +457,7 @@ public final class StudyManagementController {
                     + "earlier keep their original lineage stamps",
                 severity: .success)
         } catch {
-            refuse(
-                .template,
-                "Couldn't update the template. "
-                    + ((error as? ExperimentError)?.reason ?? "\(error)"))
+            refuse(.template, "Couldn't update the template.", error)
         }
     }
 
@@ -471,25 +474,24 @@ public final class StudyManagementController {
                     + "minted from it keep the old name in their lineage stamp",
                 severity: .success)
         } catch {
-            refuse(
-                .template,
-                "Couldn't rename the template — nothing changed. "
-                    + ((error as? ExperimentError)?.reason ?? "\(error)"))
+            refuse(.template, "Couldn't rename the template; nothing changed.", error)
         }
     }
 
     public func deleteTemplate(_ name: String) {
         clearFormError(.template)
         do {
-            try StudyTemplateStore.delete(name: name)
+            let moved = try StudyTemplateStore.delete(name: name)
             if designs.selectedTemplateName == name { designs.selectedTemplateName = nil }
             refreshTemplates()
             note(
-                "deleted template '\(name)' — studies minted from it are "
-                    + "untouched ordinary drafts",
+                "moved template '\(name)' to templates/"
+                    + "\(moved.deletingLastPathComponent().lastPathComponent)/ — recover it "
+                    + "from there if needed; studies created from it are untouched "
+                    + "ordinary drafts",
                 severity: .success)
         } catch {
-            refuse(.template, "Couldn't delete the template: \(error)")
+            refuse(.template, "Couldn't delete the template; nothing was deleted.", error)
         }
     }
 
@@ -508,13 +510,12 @@ public final class StudyManagementController {
 
     /// Move the selected DRAFT to a `.trash-<timestamp>` sibling (App gap
     /// A12) — never a destructive delete; frozen/completed studies refuse
-    /// inside the store with the immutability line.
+    /// with the immutability line. The same owner both command lines'
+    /// `experiment delete` use.
     public func deleteDraft(reviewed: DraftAuthoringSnapshot) {
         let name = reviewed.manifest.name
         do {
-            let destination = try DraftAuthoringTransaction.perform(reviewed: reviewed) { name in
-                try ExperimentStore.moveDraftToTrash(name: name)
-            }
+            let destination = try WorkspaceHousekeeping.deleteStudy(reviewed: reviewed)
             if selectedName == name { selectedName = nil }
             refresh()
             note(
@@ -523,11 +524,9 @@ public final class StudyManagementController {
                     + "\(destination.lastPathComponent) — recover it from there if needed",
                 severity: .success)
         } catch {
-            note(
-                "Couldn't move the draft to trash — nothing was deleted; "
-                    + "frozen studies can never be deleted, and the "
-                    + "experiments/ folder must be writable. Details: \(error)",
-                severity: .error)
+            noteRefusal(
+                "Couldn't move the draft to trash; nothing was deleted.", error,
+                advice: "Frozen studies are never deleted, and the experiments/ folder must be writable.")
         }
     }
 
@@ -559,10 +558,9 @@ public final class StudyManagementController {
             beginAuthoringReview(named: copy.name)
             note("created draft '\(copy.name)'", severity: .success)
         } catch {
-            note(
-                "Couldn't duplicate the study — nothing was created; check "
-                    + "the experiments/ folder is writable. Details: \(error)",
-                severity: .error)
+            noteRefusal(
+                "Couldn't duplicate the study; nothing was created.", error,
+                advice: "Check that the experiments/ folder is writable.")
         }
     }
 

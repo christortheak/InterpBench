@@ -14,6 +14,22 @@ condition's pin; never invent one. A changed file refuses, as does a frozen
 study or wrong base model. Inspect and review the changes before
 reconstructing an attachment request.
 
+**Renaming and deleting:** `steerlab experiment rename <name> <new-name>`,
+`steerlab experiment delete <name>`, `steerlab design rename <name> <new-name>`,
+`steerlab design delete <name>` (templates), and `steerlab agent delete <path>`
+preview by default: each prints what would change and the reviewed digest, and
+writes nothing. Show the researcher the preview and apply only after they agree,
+by repeating the command with that digest (`--manifest-sha256`, `--file-sha256`,
+or `--artifact-sha256`) and `--yes`; `result.confirmCommand` is the exact
+command. A changed file refuses; preview again. Only a draft study can be renamed
+or deleted: a frozen or complete one refuses with `statusImmutable`, and the
+repair is to duplicate it. A delete moves the item into a `.trash-<time>` folder
+beside it, where it can be recovered. Nothing in `runs/` changes, and a study's
+runs keep the name they recorded. An agent any study uses refuses with
+`agentInUse` and names the studies; an agent a run saved refuses with
+`agentIsRunEvidence`, because run folders are evidence. Never rename or delete
+these by hand.
+
 **Concept-to-draft assembly:** `steerlab authoring study conceptStudy --json`
 (or `agentComparison` / `multiAgent`) emits the same study interview used by the
 app. Discuss substantive choices first; use `authoring prompt <kind>` for exact
