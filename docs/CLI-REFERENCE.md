@@ -271,9 +271,10 @@ steerlab model plan <modelID> --runner <url> [--ca-bundle <path>] [--revision <c
 steerlab model install <modelID> --plan-sha256 <value> --runner <url> [--ca-bundle <path>] [--revision <commit>] [--timeout <seconds>] [--token-file <path>]
 steerlab model status <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab model cancel <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
+steerlab results export <study> [--out <dir>] [--run <run-dir>]
 ```
 
-All commands accept `--json`; `--out` writes the envelope. Workspace init takes its destination positionally; other commands accept `--root <directory>`.
+All commands accept `--json`; `--out` writes the envelope, except on `results export`, where it names the folder the export is written into. Workspace init takes its destination positionally; other commands accept `--root <directory>`.
 
 <!-- END CLIENT-STUDY-ASSEMBLY -->
 
@@ -892,6 +893,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   setup start | inspect | plan | apply | repair …  First-run readiness and reviewed client setup.
   authoring study <intent> | prompt <kind> …    The study interview (start here), and generation prompts for missing study data.
   experiment <verb> <name> …                    The study lifecycle.
+  results export <study> [--run <run-dir>] [--out <dir>]  Export a run's results as tables, transcripts, a methods summary, and a codebook.
   pack preview | apply | export …               Review and import study packs, or export text inputs and dependency names.
   agent list | inspect <path>                   Inspect local agents for reviewed attachment.
   design list | inspect | describe | instantiate | batch | save | update …  Inspect, save and revise designs, or create studies from reviewed castings.
@@ -1509,6 +1511,7 @@ Python engine.
 steerlab-cli experiment analyze <name> [--allow-unverified-epoch]
 steerlab-cli experiment rescore-style <name> [--allow-unverified-epoch] [--run <run-dir>]
 steerlab-cli experiment evaluate <name> [--allow-unverified-epoch] [--run <run-dir>] [--sample-per-condition <n>] [--sample-seed <hex-or-int>]
+steerlab-cli results export <study> [--out <dir>] [--run <run-dir>]
 ```
 
 | Verb | Purpose |
@@ -1516,6 +1519,7 @@ steerlab-cli experiment evaluate <name> [--allow-unverified-epoch] [--run <run-d
 | `experiment analyze` | Compute paired effect sizes from the newest completed run into a fresh run directory. |
 | `experiment rescore-style` | Re-score reasoning style over a completed run into a fresh run directory. |
 | `experiment evaluate` | Judge a completed run with the pinned rubric and judges. |
+| `results export` | Export a completed run's results into a new folder outside runs/: tables that open in R, Stata, SPSS, or a spreadsheet, transcripts for coding by hand, a methods summary, and a codebook. Runs no model, and recalculates nothing. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:swift-experiment-analysis END -->

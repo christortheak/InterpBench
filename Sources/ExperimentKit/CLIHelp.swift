@@ -155,6 +155,7 @@ public enum CLIFlagVocabulary {
         "experiment set-sampling --reasoning-max-tokens": "<n>",
         "remote fetch --out": "<dir>",
         "remote import --out": "<dir>",
+        "results export --out": "<dir>",
         "docs cli-reference --path": "<file>",
     ]
 
@@ -416,6 +417,13 @@ public enum CLIFlagVocabulary {
             + "(default: the mirrored concept name).",
         "remote fetch --out": "Download into this directory (default `.`).",
         "remote import --out": "Download into this directory (default .steerlab-downloads).",
+        "results export --out":
+            "Write the export into this new or empty folder (default: a new "
+            + "folder under the workspace's exports/). A folder inside runs/ "
+            + "is refused.",
+        "results export --run":
+            "The run directory to export; absent, the newest completed run, "
+            + "with its newest analysis and evaluation.",
         "docs cli-reference --path": "The document to read or rewrite.",
         "cluster controller start --allow-controller-start":
             "Accepted and ignored: typing this verb IS the authorization.",
@@ -644,6 +652,9 @@ public enum ExperimentCLIHelp {
             .init(
                 synopsis: "experiment <verb> <name> …",
                 purpose: "The study lifecycle."),
+            .init(
+                synopsis: "results export <study> [--run <run-dir>] [--out <dir>]",
+                purpose: "Export a run's results as tables, transcripts, a methods summary, and a codebook."),
             .init(synopsis: "pack preview | apply | export …", purpose: "Review and import study packs, or export text inputs and dependency names."),
             .init(synopsis: "agent list | inspect <path>", purpose: "Inspect local agents for reviewed attachment."),
             .init(synopsis: "design list | inspect | describe | instantiate | batch | save | update …", purpose: "Inspect, save and revise designs, or create studies from reviewed castings."),

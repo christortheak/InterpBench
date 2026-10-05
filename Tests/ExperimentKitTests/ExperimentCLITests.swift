@@ -642,6 +642,10 @@ import Testing
                     "experiment", "docs", "install", "panel", "authoring",
                     // The chat-template capability record (2026-09-05).
                     "model", "design", "agent", "pack", "science",
+                    // `results export`: a study's stored results as files a
+                    // researcher can take elsewhere. One verb, reached through
+                    // the local Python client like the science actions.
+                    "results",
                 ])
     }
 
