@@ -61,6 +61,23 @@ import Testing
         #expect(field.help.contains("float32"))
     }
 
+    @Test func costMeasurementShowsItsWorkloadAndAdvisoriesBeforeAnythingRuns() throws {
+        // Two planned configurations, two views, two prompts, and one warm-up plus three measured rounds.
+        let value = try draft(#"{"operationReview":{"generations":32,"prompts":2,"warmupRounds":1,"measuredRounds":3,"generatedTokenBudget":192,"configurations":[{"id":"baseline","status":"planned"},{"id":"probeReadings","status":"planned"},{"id":"fixedPolicy","status":"notRequested","reason":"No fixedPolicy file was given."}],"advisories":["The policy given as conditional declares no rule that depends on a probe score."]}}"#)
+        let lines = FittingReviewSummary.lines(operation: "instrumentation-cost", draft: value)
+        #expect(lines.first?.contains("32 responses: 2 of 6 configurations on 2 prompts") == true)
+        #expect(lines.first?.contains("1 warm-up and 3 measured rounds") == true)
+        #expect(lines.contains { $0.contains("192 generated tokens") && $0.contains("nothing is downloaded") })
+        #expect(lines.contains { $0.contains("declares no rule that depends on a probe score") })
+        #expect(lines.last?.contains("sets no target") == true)
+        // A review without the owner's numbers says so instead of showing zero.
+        let empty = FittingReviewSummary.lines(operation: "instrumentation-cost", draft: try draft(#"{"operationReview":{}}"#))
+        #expect(empty.first?.contains("unavailable responses: unavailable of 6 configurations") == true)
+        let workflow = try #require(ScienceCatalog.workflows().first { $0.id == "instrumentation-cost" })
+        #expect(workflow.fields.filter(\.required).map(\.id) == ["modelID", "revision", "prompts"])
+        #expect(Set(workflow.fields.map(\.kind)).isSubset(of: ["text", "integer", "number", "boolean", "fileRef", "fileRefs", "texts"]))
+    }
+
     @Test func queueCapacityExplainsOtherJobsUsingOwnerSummary() throws {
         let value = try draft(#"{"capacity":{"summary":"Two jobs occupy the controller capacity.","activeJobs":[{"jobID":"first","status":"running","belongsToThisRound":true},{"jobID":"second","status":"submitted","belongsToThisRound":false}]}}"#)
         #expect(FittingReviewSummary.capacityLines(value) == [

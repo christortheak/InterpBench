@@ -50,6 +50,20 @@ public enum FittingReviewSummary {
                 result.append("These are tensor sizes, not peak memory. Allow additional space for model weights, forward activations, vocabulary logits, transfers, and file overhead. Temporary activations are removed when assessment exits normally or with an error.")
             }
             result.append("This compares readouts. It does not prove that the text is independent of fitting data or qualify the lens.")
+        case "instrumentation-cost":
+            var planned = "unavailable"
+            if case .array(let configurations) = review["configurations"] {
+                planned = configurations.filter {
+                    if case .object(let item) = $0 { return item["status"] == .string("planned") }
+                    return false
+                }.count.formatted()
+            }
+            result.append("\(number(review["generations"])) responses: \(planned) of 6 configurations on \(number(review["prompts"])) prompts, each in a fixed workload and in ordinary generation, over \(number(review["warmupRounds"])) warm-up and \(number(review["measuredRounds"])) measured rounds.")
+            result.append("Up to \(number(review["generatedTokenBudget"])) generated tokens in all. The model must already be prepared where this runs; nothing is downloaded.")
+            if case .array(let advisories) = review["advisories"] {
+                for case .string(let advisory) in advisories { result.append(advisory) }
+            }
+            result.append("This reports cost on this model and hardware. It sets no target.")
         default:
             break
         }

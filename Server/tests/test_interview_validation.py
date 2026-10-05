@@ -11,10 +11,14 @@ OPERATIONS = (
     'optvec-campaign', 'jlens-fit',
     'probe-capture', 'probe-train', 'probe-evaluate',
     'jlens-fit-benchmark', 'jlens-fit-round', 'jlens-fit-merge', 'jlens-fit-assess',
+    'instrumentation-cost',
 )
 
 
 def interview_answers(operation, root):
+    if operation == 'instrumentation-cost':
+        from test_instrumentation_cost import answers
+        return answers(root)
     if operation.startswith('probe-'):
         from test_probe_managed_workflow import interview_fields
         return dict(purpose='Predict labels',claim='Readout only',controls='Constant baselines',selection='Fixed in advance',fields=interview_fields(operation,root),advanced={})

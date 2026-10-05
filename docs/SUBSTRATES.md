@@ -108,6 +108,7 @@ measurements; the generator only checks references, not scientific truth.
 | `probe-capture` — Capture labeled activations | [python-model](#python-model) | implemented; comparison unqualified | implemented; comparison unqualified | no native implementation |
 | `probe-train` — Fit a probe | [python-cpu](#python-cpu) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
 | `probe-evaluate` — Evaluate a probe | [python-cpu](#python-cpu) | CPU / no backend execution | CPU / no backend execution | CPU / no backend execution |
+| `instrumentation-cost` — Measure what probes and policies cost | [python-model](#python-model) | implemented; comparison unqualified | implemented; comparison unqualified | no native implementation |
 
 The following profiles explain production and artifact use.
 

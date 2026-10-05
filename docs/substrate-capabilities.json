@@ -189,6 +189,7 @@
     "probe-library": "probe-library",
     "probe-capture": "python-model",
     "probe-train": "python-cpu",
-    "probe-evaluate": "python-cpu"
+    "probe-evaluate": "python-cpu",
+    "instrumentation-cost": "python-model"
   }
 }
