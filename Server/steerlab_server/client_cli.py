@@ -880,6 +880,12 @@ class Invocation:
         #: everywhere else, including in tests that build an Invocation by
         #: hand.
         self.document_stream = None
+        #: The workspace this invocation resolved (``--root`` or
+        #: ``$STEERLAB_WORKSPACE``), or ``None`` when a workspace-optional
+        #: family ran without one. Set by :func:`main`. The runner verbs record
+        #: a submitted job's origin here (``client.job_origins``) only when a
+        #: workspace was actually named — never in an inherited engine root.
+        self.workspace_root = None
 
     @property
     def label(self) -> str:
@@ -3254,6 +3260,14 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
             parallel_jobs=_runner_int(invocation, "--parallel", 1) or 1)
         run_bundle = submission.get("runBundle") or {}
         job_id = submission.get("jobId")
+        # Where the job went, recorded in the named workspace so the Mac app
+        # can import its evidence without a reconnect. Best effort.
+        from .client import job_origins
+        job_origins.record_quietly(
+            invocation.workspace_root, job_id=job_id, endpoint=client.base_url,
+            warn=sys.stderr.write, serving_root=identity.get("root"),
+            experiment=submission.get("experiment"),
+            verb=submission.get("verb"), operation="submit-bundle")
         line = (f"submitted {submission.get('experiment')!r} "
                 f"{submission.get('verb')} to {client.base_url} as job "
                 f"{job_id}"
@@ -4210,6 +4224,15 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
             facts={"runBundle": bundle_facts, "retried": False}) from exc
 
     job_id = submission.get("jobId")
+    # Where the job went, recorded in this workspace so the Mac app can import
+    # its evidence (or act on it) without a reconnect. Best effort: the job
+    # exists whatever happens to this record.
+    from .client import job_origins
+    job_origins.record_quietly(
+        workspace, job_id=job_id, endpoint=client.base_url,
+        warn=sys.stderr.write, serving_root=identity.get("root"),
+        experiment=submission.get("experiment") or name,
+        verb=submission.get("verb") or study_verb, operation="run")
     job_facts = {"id": job_id, "verb": submission.get("verb"),
                  "executor": submission.get("executor"),
                  "dryRun": bool(submission.get("dryRun")),
@@ -4887,7 +4910,7 @@ def _main(argv: list | None = None) -> int:
                 if explicit_root is not None:
                     raise ClientRefusal(code="usage", reason="This bootstrap command takes its destination as a positional argument, not --root.", repair_action="steerlab workspace init <directory> --json")
             else:
-                resolve_workspace(explicit_root)
+                invocation.workspace_root = resolve_workspace(explicit_root)
                 resolved = True
                 _refresh_agent_guide()
         except ClientRefusal as workspace_exc:

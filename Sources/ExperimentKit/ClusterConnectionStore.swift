@@ -770,7 +770,9 @@ public final class ClusterConnectionStore {
             url = tunnelURL
         }
         guard let url else { return nil }
-        return ClusterConnectionProfile(baseURL: url, tokenKey: tokenKey)
+        return ClusterConnectionProfile(
+            baseURL: url, tokenKey: tokenKey,
+            serverIdentity: activeServer.map { Self.registryKey(forEntry: $0) })
     }
 
     public var client: ClusterClient? {

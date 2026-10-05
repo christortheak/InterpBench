@@ -218,6 +218,17 @@ struct SteerLabApp: App {
             // After the window is up, never before: the check is entirely
             // async and off the main actor, so launch time is unaffected.
             .task { await updates.runAutomaticCheckIfDue() }
+            // Work a coding assistant did in a terminal while the researcher
+            // was elsewhere — a new study, template, agent, or imported run —
+            // appears when they come back to the app, without a restart.
+            // Nothing typed into an editor is discarded (see
+            // `reloadWorkspaceListsFromDisk`).
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: NSApplication.didBecomeActiveNotification)
+            ) { _ in
+                service.reloadWorkspaceListsFromDisk()
+            }
             .alert(
                 "Software Update",
                 isPresented: Binding(

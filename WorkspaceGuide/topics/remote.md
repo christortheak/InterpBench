@@ -342,6 +342,15 @@ matched to the study, cannot be resumed; the refusal says why, and then you
 submit the study again. For a run split across jobs, resume the parent.
 Nothing resumes a cancelled job automatically.
 
+**The app sees the jobs you submit.** `remote submit-bundle`, `remote
+resubmit`, and `remote science-submit` record where each new job went in this
+workspace's `.steerlab/job-origins/origins.json`. The app reads that record, so
+the researcher can import the job's evidence there without reconnecting, and
+Compute › Server Jobs marks the job "from the command line". Never edit or
+delete that file; it holds no token. A warning that the origin could not be
+recorded means only that the app will ask for a reconnect by job ID: the job
+was submitted.
+
 <!-- client: python -->
 
 Retain the submission's endpoint, serving root and job ID. Poll
@@ -365,6 +374,15 @@ counted. A run that had completed no response, or whose run folder cannot be
 matched to the study, cannot be resumed; the refusal says why, and then you
 submit the study again. For a run split across jobs, resume the parent.
 Nothing resumes a cancelled job automatically.
+
+**The Mac app sees the jobs you submit.** With a workspace named (`--root` or
+`$STEERLAB_WORKSPACE`), `run`, `runner submit`, `runner resubmit`, and
+`runner science-submit` record where each new job went in the workspace's
+`.steerlab/job-origins/origins.json`. The Mac app reads that record, so the
+researcher can import the job's evidence there without reconnecting. Never
+edit or delete that file; it holds no token. A warning that the origin could
+not be recorded means only that the app will ask for a reconnect by job ID:
+the job was submitted.
 
 <!-- client: all -->
 

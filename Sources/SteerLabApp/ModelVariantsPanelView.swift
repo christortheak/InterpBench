@@ -1816,7 +1816,7 @@ struct ModelVariantsPanelView: View {
 
     @ViewBuilder
     private var agentLibrarySection: some View {
-        Section("Agent Library") {
+        Section {
             if panel.agentIndex.isEmpty {
                 if panel.isScanningAgents || !panel.hasScannedAgents {
                     // The tab is already on screen; the library is still
@@ -1863,6 +1863,22 @@ struct ModelVariantsPanelView: View {
                 libraryFilters
                 agentRoster
                 selectedAgentActions
+            }
+        } header: {
+            HStack {
+                Text("Agent Library")
+                Spacer()
+                // The rescan never touches the definition editor: it reloads
+                // only when the selection changes (`loadEditorForSelection`).
+                LibraryRefreshButton(
+                    help: "re-read the agent library in this workspace — for agents a "
+                        + "coding assistant or a command line saved while the app was "
+                        + "open. Unsaved edits in the editor are kept; the app also "
+                        + "does this whenever you switch back to it"
+                ) {
+                    panel.refreshAgentLibraryAsync()
+                }
+                .disabled(panel.isScanningAgents)
             }
         }
     }

@@ -29,6 +29,21 @@ def run(client, invocation, common):
     else:
         document = client.recover_job(value, invocation.one('--review-token'), invocation.one('--reason'))
     print(json.dumps(document, indent=2, sort_keys=True))
+    if verb in {'science-submit', 'resubmit'} and isinstance(document, dict) \
+            and not (verb == 'science-submit' and document.get('status') == 'parked'):
+        # A new job record on this runner (a diagnostic, or a resumed run's
+        # continuation): record where it went in the named workspace, so the
+        # Mac app can act on it without a reconnect. Best effort.
+        import sys
+        from . import job_origins
+        original = (job_origins.origins_for(invocation.workspace_root, value)
+                    if verb == 'resubmit' and getattr(invocation, 'workspace_root', None) else [])
+        identity = job_origins.server_identity(client.base_url)
+        earlier = next((row for row in original if row.get('serverIdentity') == identity), {})
+        job_origins.record_quietly(
+            getattr(invocation, 'workspace_root', None), job_id=document.get('jobId'),
+            endpoint=client.base_url, warn=sys.stderr.write,
+            experiment=earlier.get('experiment'), verb=earlier.get('verb'), operation=verb)
     if verb == 'science-submit' and document.get('status') == 'parked':
         return CLIResult(state='failed', code='schedulerSubmissionUncertain', changed=True,
             message='Scheduler reply was uncertain; the durable submission record is retained.',

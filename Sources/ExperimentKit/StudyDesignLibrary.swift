@@ -39,10 +39,17 @@ public final class StudyDesignLibrary {
     /// not do. Studies with no lineage are absent from the map.
     public private(set) var designLineage: [String: StudyTemplateStore.DesignLineage] = [:]
 
+    /// Templates whose `template.json` is present but cannot be read, with
+    /// the reason. Listed in the library, never written to.
+    public private(set) var unreadableTemplates: [UnreadableManifest] = []
+
     public func refresh(experiments: [ExperimentManifest]) {
         let root = ExperimentStore.workspaceRoot
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: root.appending(component: "templates").path)) ?? []
-        let snapshots = names.compactMap { try? StudyDesignSnapshot(workspaceRoot: root, name: $0) }
+        let scanned = UnreadableManifest.scan(
+            directory: root.appending(component: "templates"), fileName: "template.json"
+        ) { try StudyDesignSnapshot(workspaceRoot: root, name: $0) }
+        let snapshots = scanned.loaded
+        unreadableTemplates = scanned.unreadable
         reviews = Dictionary(uniqueKeysWithValues: snapshots.map { ($0.template.name, $0) })
         templates = snapshots.map(\.template).sorted { $0.createdAt > $1.createdAt }
         if let selectedTemplateName,

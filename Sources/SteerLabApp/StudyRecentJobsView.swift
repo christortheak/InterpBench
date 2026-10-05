@@ -24,6 +24,13 @@ struct StudyRecentJobsView: View {
                     Text(Self.jobSummary(job))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                    if let source = job.submittedFrom {
+                        Label("command line", systemImage: "terminal")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .help("submitted by \(source) from this workspace — Import "
+                                + "Evidence works here without reconnecting")
+                    }
                     Spacer()
                     // Checkpointed (resumable) jobs get the Resume button
                     // right on the row — the 2026-07-22 incident was this

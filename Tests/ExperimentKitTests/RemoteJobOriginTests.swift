@@ -3,6 +3,11 @@ import Testing
 @testable import ExperimentKit
 
 @MainActor struct RemoteJobOriginTests {
+    /// A workspace with no job-origin record, so these tests read only the
+    /// app's preferences (and never the person's real workspace).
+    static let noWorkspace = FileManager.default.temporaryDirectory
+        .appending(component: "no-job-origins-\(UUID().uuidString)")
+
     @Test func originPersistsAndSelectionCannotRedirectJobActions() throws {
         let suite = "job-origin-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -10,9 +15,9 @@ import Testing
         let first = ClusterClient(profile: .init(name: "First", baseURL: URL(string: "http://first.invalid")!))
         let second = ClusterClient(profile: .init(name: "Second", baseURL: URL(string: "http://second.invalid")!))
         let root = URL(filePath: "/private/tmp/fictional-workspace")
-        let jobs = StudyRemoteJobController(defaults: defaults)
+        let jobs = StudyRemoteJobController(defaults: defaults, workspaceRoot: { Self.noWorkspace })
         jobs.recordOrigin(.init(connection: first.profile, workspaceRoot: root), jobID: "job")
-        let restarted = StudyRemoteJobController(defaults: defaults)
+        let restarted = StudyRemoteJobController(defaults: defaults, workspaceRoot: { Self.noWorkspace })
         #expect(try restarted.origin(for: "job").workspaceRoot == root.standardizedFileURL)
         #expect(try restarted.clientForJob("job", connected: first).profile == first.profile)
         #expect(throws: (any Error).self) { try restarted.clientForJob("job", connected: second) }
@@ -23,7 +28,7 @@ import Testing
         let suite = "job-collision-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let jobs = StudyRemoteJobController(defaults: defaults)
+        let jobs = StudyRemoteJobController(defaults: defaults, workspaceRoot: { Self.noWorkspace })
         for host in ["first.invalid", "second.invalid"] {
             jobs.recordOrigin(.init(connection: .init(baseURL: URL(string: "http://\(host)")!),
                                     workspaceRoot: URL(filePath: "/private/tmp/fictional-workspace")), jobID: "same-id")

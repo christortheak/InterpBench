@@ -122,3 +122,35 @@ def test_resubmit_reports_the_engines_account_of_a_resume_after_a_cancel(
     envelope = json.loads(capsys.readouterr().out)
     assert envelope["message"] == RESUMED
     assert envelope["result"]["response"]["jobId"] == "next-job"
+
+
+def test_a_resumed_runs_continuation_is_recorded_in_the_named_workspace(
+        monkeypatch, capsys, tmp_path):
+    """The continuation is a NEW job record; the Mac app imports its evidence
+    by its own ID, so the workspace records where it went — carrying over the
+    study and verb the original job's record named."""
+    from steerlab_server.client import job_origins
+
+    def respond(request):
+        if request.url.path.endswith("/resubmit"):
+            return httpx.Response(200, json={
+                "ok": True, "jobId": "next-job", "resubmitOf": "example-job",
+                "resumedAfterCancel": True, "completedRecords": 3,
+                "message": RESUMED})
+        return _job_record(request)
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    job_origins.record(str(workspace), job_id="example-job", endpoint=ENDPOINT,
+                       experiment="study-a", verb="run",
+                       operation="submit-bundle")
+    _wire(monkeypatch, respond)
+    assert client_cli.main(["--root", str(workspace), "runner", "resubmit",
+                            "example-job", "--runner", ENDPOINT, "--json"]) == 0
+    capsys.readouterr()
+    rows = job_origins.origins_for(str(workspace), "next-job")
+    assert len(rows) == 1
+    assert rows[0]["serverIdentity"] == "https://runner.example.invalid:443"
+    assert rows[0]["operation"] == "resubmit"
+    assert rows[0]["experiment"] == "study-a"
+    assert rows[0]["verb"] == "run"

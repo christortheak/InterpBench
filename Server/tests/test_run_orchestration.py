@@ -805,6 +805,26 @@ def test_no_wait_detaches_and_prints_the_exact_follow_ups(workspace, script,
     assert script.job_polls == [] and script.cancels == []
 
 
+def test_run_records_where_the_job_went_in_the_workspace(workspace, script,
+                                                         capsys):
+    """The Mac app reads `.steerlab/job-origins/origins.json` before its own
+    preferences, so a job `steerlab run` submitted imports there without a
+    reconnect — even one this client detached from."""
+    from steerlab_server.client import job_origins
+
+    code, document, _ = _run([STUDY_NAME, "--runner", RUNNER_URL, "--no-wait"],
+                             capsys, root=workspace)
+    assert code == 12, document
+    rows = job_origins.origins_for(workspace, "job-0001")
+    assert len(rows) == 1, job_origins.load(workspace)
+    row = rows[0]
+    assert row["serverIdentity"] == job_origins.server_identity(RUNNER_URL)
+    assert row["submittedBy"] == "steerlab"
+    assert row["operation"] == "run"
+    assert row["experiment"] == STUDY_NAME
+    assert row["workspaceRoot"] == os.path.realpath(workspace)
+
+
 def test_the_wait_deadline_stops_watching_and_never_cancels(workspace, script,
                                                             capsys):
     """CONTRACT: ``--timeout`` bounds this client's patience, never the
@@ -1170,8 +1190,18 @@ def test_the_whole_machine_runs_against_a_managed_runner(managed_runner,
     gained = _workspace_runs(workspace) - runs_before
     assert all("bundle-" in name for name in gained), sorted(gained)
     assert not os.path.exists(os.path.join(workspace, ".steelab"))
-    # Authoring may retain external write locks, but no runner state.
-    assert os.listdir(os.path.join(workspace, ".steerlab")) == ["manifest-locks"]
+    # Authoring may retain external write locks, and the client records where
+    # the job went (so the Mac app can act on it), but no runner state — and
+    # the record carries no credential.
+    assert sorted(os.listdir(os.path.join(workspace, ".steerlab"))) == [
+        "job-origins", "manifest-locks"]
+    origins = os.path.join(workspace, ".steerlab", "job-origins")
+    assert sorted(os.listdir(origins)) == [".gitignore", "origins.json",
+                                           "origins.lock"]
+    with open(runner.result["tokenFile"], encoding="utf-8") as handle:
+        token = handle.read().strip()
+    with open(os.path.join(origins, "origins.json"), encoding="utf-8") as handle:
+        assert token not in handle.read()
     assert not os.path.exists(os.path.join(
         workspace, client_cli.RUNNER_TOKEN_FILENAME))
     assert _manifest_bytes_named(workspace, MANAGED_STUDY) == before

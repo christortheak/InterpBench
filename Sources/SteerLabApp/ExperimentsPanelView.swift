@@ -57,7 +57,9 @@ struct ExperimentsPanelView: View {
         @Bindable var panel = service.experiments
         Form {
             methodsGuidesSection
-            StudyManagementSection(panel: panel, openTemplates: openTemplates)
+            StudyManagementSection(
+                panel: panel, openTemplates: openTemplates,
+                reloadFromDisk: { service.reloadWorkspaceListsFromDisk() })
 
             if let manifest = panel.management.selected {
                 // THE classifier, FIRST on the page: one "Study type"

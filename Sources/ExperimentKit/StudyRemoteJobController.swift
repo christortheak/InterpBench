@@ -31,12 +31,17 @@ public final class StudyRemoteJobController {
         public let verb: String
         public let study: String
         public var state: String
+        /// The command line that submitted this job, in a researcher's words,
+        /// when the workspace's origin record says one did. Nil for jobs this
+        /// app submitted and for jobs nobody recorded.
+        public var submittedFrom: String?
 
-        public init(id: String, verb: String, study: String, state: String) {
+        public init(id: String, verb: String, study: String, state: String, submittedFrom: String? = nil) {
             self.id = id
             self.verb = verb
             self.study = study
             self.state = state
+            self.submittedFrom = submittedFrom
         }
     }
     public struct ActiveServerJob: Sendable, Equatable {
@@ -49,14 +54,23 @@ public final class StudyRemoteJobController {
     @ObservationIgnored private var streamGeneration = UUID()
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var origins: [String: [RemoteJobOrigin]]
+    /// The workspace whose job-origin record is consulted. A closure, not a
+    /// captured URL: the app can switch workspaces under a living controller.
+    @ObservationIgnored private let workspaceRoot: @MainActor () -> URL
 
-    public init(defaults: UserDefaults = .standard) {
+    public init(
+        defaults: UserDefaults = .standard,
+        workspaceRoot: @escaping @MainActor () -> URL = { ExperimentStore.workspaceRoot }
+    ) {
         self.defaults = defaults
+        self.workspaceRoot = workspaceRoot
         remoteJobID = defaults.string(forKey: "SteerLabRemoteJobID")
         origins = defaults.data(forKey: "SteerLabRemoteJobOrigins")
             .flatMap { try? JSONDecoder().decode([String: [RemoteJobOrigin]].self, from: $0) } ?? [:]
     }
 
+    /// Jobs this app submitted keep going into its preferences, as before:
+    /// an older build reads only those.
     func recordOrigin(_ origin: RemoteJobOrigin?, jobID: String) {
         guard let origin else { return }
         if !(origins[jobID] ?? []).contains(origin) {
@@ -67,8 +81,24 @@ public final class StudyRemoteJobController {
         }
     }
 
+    /// What the workspace's origin record says about a job — written by
+    /// `steerlab-cli` or `steerlab` when either submitted it.
+    public func workspaceOrigins(for jobID: String) -> [WorkspaceJobOrigin] {
+        WorkspaceJobOrigins.origins(forJob: jobID, workspaceRoot: workspaceRoot())
+    }
+
+    /// Every origin known for a job: the workspace's record first, and this
+    /// app's own preferences only when the workspace says nothing.
+    func knownOrigins(for jobID: String) -> [RemoteJobOrigin] {
+        let root = workspaceRoot()
+        let recorded = WorkspaceJobOrigins.origins(forJob: jobID, workspaceRoot: root)
+            .compactMap { RemoteJobOrigin(workspaceRecord: $0, workspaceRoot: root) }
+        return recorded.isEmpty ? (origins[jobID] ?? []) : recorded
+    }
+
     public func origin(for jobID: String) throws -> RemoteJobOrigin {
-        guard let known = origins[jobID], known.count == 1, let origin = known.first else {
+        let known = knownOrigins(for: jobID)
+        guard known.count == 1, let origin = known.first else {
             throw ChatServiceError(reason: "Job \(jobID) has missing or ambiguous origin. "
                 + "Reconnect explicitly to its original server and workspace before acting.")
         }
@@ -88,13 +118,13 @@ public final class StudyRemoteJobController {
     }
     private var status: String? { didSet { presentation.status(status) } }
 
-    func noteRecentServerJob(id: String, verb: String, study: String, state: String) {
+    func noteRecentServerJob(id: String, verb: String, study: String, state: String, submittedFrom: String? = nil) {
         if let index = recentServerJobs.firstIndex(where: { $0.id == id }) {
             recentServerJobs[index].state = state
             return
         }
         recentServerJobs.insert(
-            RecentServerJob(id: id, verb: verb, study: study, state: state), at: 0)
+            RecentServerJob(id: id, verb: verb, study: study, state: state, submittedFrom: submittedFrom), at: 0)
         if recentServerJobs.count > 15 {
             recentServerJobs.removeLast(recentServerJobs.count - 15)
         }
@@ -102,16 +132,48 @@ public final class StudyRemoteJobController {
     public func refreshRecentServerJobs(client: ClusterClient?) async {
         guard let client else { return }
         guard let jobs = try? await client.jobs() else { return }
+        let recorded = WorkspaceJobOrigins.load(workspaceRoot: workspaceRoot())
         for job in jobs
         where job.kind.hasPrefix("experiment:") || job.kind.hasPrefix("study-submit") {
             if let index = recentServerJobs.firstIndex(where: { $0.id == job.id }) {
                 recentServerJobs[index].state = job.status
             } else {
-                let verb = job.kind.split(separator: ":").last.map(String.init) ?? job.kind
-                noteRecentServerJob(id: job.id, verb: verb, study: "—", state: job.status)
+                let fallback = job.kind.split(separator: ":").last.map(String.init) ?? job.kind
+                // A job a command line submitted from THIS workspace is
+                // described by its record: the study it ran, and the verb
+                // label this app gives its own bundle jobs, so the row offers
+                // the same Import Evidence the app's own rows do.
+                let origin = Self.commandLineOrigin(recorded[job.id] ?? [], for: client)
+                let verb = origin.map { Self.recentVerbLabel(kind: job.kind, origin: $0) } ?? fallback
+                noteRecentServerJob(
+                    id: job.id, verb: verb, study: origin?.experiment ?? "—", state: job.status,
+                    submittedFrom: origin?.submitterDescription)
             }
         }
     }
+
+    /// The one command-line origin a job has on `client`'s server, or nil.
+    static func commandLineOrigin(_ rows: [WorkspaceJobOrigin], for client: ClusterClient) -> WorkspaceJobOrigin? {
+        let matching = rows.filter { row in
+            guard row.isCommandLine else { return false }
+            guard let identity = client.profile.serverIdentity else {
+                return URL(string: row.endpoint).map(WorkspaceJobOrigins.serverIdentity(forEndpoint:))
+                    == WorkspaceJobOrigins.serverIdentity(forEndpoint: client.profile.baseURL)
+            }
+            return row.serverIdentity == identity
+        }
+        return matching.count == 1 ? matching[0] : nil
+    }
+
+    /// The verb label for a recorded job — `run (bundle)` for a submitted
+    /// bundle, matching what this app writes for its own submissions.
+    static func recentVerbLabel(kind: String, origin: WorkspaceJobOrigin) -> String {
+        guard let verb = origin.verb, !verb.isEmpty else {
+            return kind.split(separator: ":").last.map(String.init) ?? kind
+        }
+        return kind.hasPrefix("study-submit-bundle") ? "\(verb) (bundle)" : verb
+    }
+
     public func reconnectRemoteJob(_ id: String, client: ClusterClient?) async {
         let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -124,7 +186,7 @@ public final class StudyRemoteJobController {
         }
         let captured: RemoteJobOrigin
         do {
-            if origins[trimmed] != nil {
+            if !knownOrigins(for: trimmed).isEmpty {
                 captured = try origin(for: trimmed)
                 guard captured.matches(client) else {
                     throw ChatServiceError(reason: "This job ID belongs to another server; reconnect its originating server.")

@@ -201,7 +201,11 @@ struct TemplatesPanelView: View {
     private func librarySection(panel: ExperimentPanel) -> some View {
         @Bindable var panel = panel
         @Bindable var designs = panel.management.designs
-        Section("Templates") {
+        Section {
+            // A template whose file cannot be read is listed, not hidden.
+            UnreadableManifestsView(
+                items: panel.management.designs.unreadableTemplates, noun: "template",
+                workspaceRoot: ExperimentStore.workspaceRoot)
             if panel.management.designs.templates.isEmpty {
                 Text("No templates yet. Save a study you intend to repeat — the "
                     + "template keeps its task file and pins, instruments, "
@@ -218,6 +222,19 @@ struct TemplatesPanelView: View {
                     }
                 }
                 .help(selectedDesignHelp)
+            }
+        } header: {
+            HStack {
+                Text("Templates")
+                Spacer()
+                LibraryRefreshButton(
+                    help: "re-read the templates and studies in this workspace — for "
+                        + "work a coding assistant or a command line did while the app "
+                        + "was open. An unsaved description is kept; the app also does "
+                        + "this whenever you switch back to it"
+                ) {
+                    service.reloadWorkspaceListsFromDisk()
+                }
             }
         }
     }
