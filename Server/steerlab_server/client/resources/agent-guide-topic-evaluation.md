@@ -83,8 +83,9 @@ names. Every analysis also writes `outcome-coverage.json`: each outcome that
 reached the effect rows, with its definition in words, and each outcome the
 analysis could not produce, marked `notAvailable` with the reason. Read it
 before you report that a study measured nothing on an outcome. The one case
-today is marker density on a run made by the Python engine, which does not
-record it.
+today is marker density on a run made by an earlier version of the Python
+engine, which did not record it; both engines record it now, so running the
+study again measures it.
 
 ## `evaluate`
 

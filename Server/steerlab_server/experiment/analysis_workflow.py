@@ -100,9 +100,9 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
               "BASELINE records — there is no non-baseline condition to pair "
               "against, so this analysis will produce no effect sizes. Check "
               "the study's conditions before citing it.", file=sys.stderr)
-    # Marker density is the one outcome this engine cannot produce for a
-    # study it ran itself: marker density is the RECORD's value on both
-    # engines, and this engine's run does not record one. Decided here, from
+    # Marker density is the RECORD's value on both engines, so a run made by
+    # an earlier version of this engine, which did not record it, cannot
+    # produce it however it is analyzed. Decided here, from
     # the records as the run wrote them — before exclusions or transcript
     # re-keying touch the list — and SAID in the output below rather than
     # left as a missing row.

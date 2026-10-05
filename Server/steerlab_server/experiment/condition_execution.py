@@ -390,6 +390,27 @@ def reader_scorers(manifest: manifest_module.Manifest, root: str | None) -> list
     return scorers
 
 
+def marker_rubrics(manifest: manifest_module.Manifest,
+                   root: str | None) -> dict[str, "scoring.MarkerRubric | None"]:
+    """Each declared concept's ``markers.json`` rubric, or None for a concept
+    that ships none — read once per condition, from the workspace's concept
+    folders (the Mac engine reads the same folders)."""
+    return {ref.name: scoring.MarkerRubric.from_directory(
+                paths.concept_directory(ref.name, root))
+            for ref in manifest.concepts}
+
+
+def marker_density(rubrics: dict, text: str) -> dict[str, float]:
+    """A sampled response's ``markerDensity`` record field: markers per word
+    for every declared concept, measured as the response is generated (the
+    Mac engine's field and rule, recorded by this engine since 2026-10-05).
+    A concept with no ``markers.json`` reads 0, as on the Mac; a study that
+    declares no concept records an empty object, which says the run measured
+    and there was nothing to measure."""
+    return {concept: (rubric.density(text) if rubric is not None else 0.0)
+            for concept, rubric in rubrics.items()}
+
+
 def _reader_scores(model, scorers: list[tuple[str, object]], text: str) -> dict[str, float]:
     """Per-record reader readout: each pinned reader scores the sampled output
     text through its own template + LAT position + training normalization.
@@ -761,6 +782,7 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
     if eff.variant is not None and eff.variant.intervention_policies and (not wants_sampled or wants_choice):
         raise ValueError('Intervention policies currently execute on sampled responses. Use sampledText without direct choice scoring for this agent study; direct scoring does not yet execute policies.')
     sampling = execution_reporting.sampling_metadata(model, eff.temperature)
+    rubrics = marker_rubrics(manifest, root) if wants_sampled else {}
     # Stop-reason machinery, resolved ONCE per condition. `stop_ids` is what
     # lets a generation that emits EOS on its very last budgeted step be
     # recorded as the natural ending it is instead of as a cap; `tally` is
@@ -974,6 +996,9 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                 **transcript_fields,
                 "output": text, "wordCount": scoring.word_count(text),
                 "distinct2": scoring.distinct_bigram_ratio(text),
+                # Additive (2026-10-05): a record without the key is from an
+                # engine that predates it, and analyze says so.
+                "markerDensity": marker_density(rubrics, text),
                 # The third thing every record says about its text, and the
                 # only one the text itself cannot express: WHY generation
                 # ended. Stamped unconditionally, so a record without the key
