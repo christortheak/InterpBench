@@ -4,20 +4,41 @@ import Foundation
 /// plans, approvals, locks, verification and atomic activation for every client.
 public enum ClientSetup {
     public static func inspect(workspace: URL? = nil, python: URL? = nil, source: URL? = nil) async -> [String: JSONValue] {
+        await inspectReport(workspace: workspace, python: python, source: source).readiness
+    }
+
+    /// The readiness report, and — when the helper could not be confirmed to
+    /// belong to this build — that failure itself, so Research Setup can say
+    /// it in its own words instead of "the helper is not installed". The
+    /// report's keys are the command line's and do not change.
+    public struct ReadinessReport: Sendable {
+        public var readiness: [String: JSONValue]
+        public var identityFailure: ClientIdentityFailure?
+
+        public init(readiness: [String: JSONValue], identityFailure: ClientIdentityFailure? = nil) {
+            self.readiness = readiness
+            self.identityFailure = identityFailure
+        }
+    }
+
+    public static func inspectReport(workspace: URL? = nil, python: URL? = nil, source: URL? = nil) async -> ReadinessReport {
         do {
             let payload: [String: JSONValue] = workspace.map { ["workspaceRoot": .string($0.path)] } ?? [:]
             guard case .object(let value) = try await DiagnosticWorkspace.perform("setup-inspect", payload: payload, python: python, source: source) else {
                 throw ExperimentError(reason: "The readiness owner returned no report.")
             }
-            return value
+            return ReadinessReport(readiness: value)
         } catch {
-            return ["changed": .bool(false), "clientReady": .bool(false), "authoringReady": .bool(false),
+            let identity = (error as? ExperimentError)?.clientIdentityFailure
+            return ReadinessReport(
+                readiness: ["changed": .bool(false), "clientReady": .bool(false), "authoringReady": .bool(false),
                     "reason": .string(String(describing: error)),
                     // A source mismatch carries its own repair; setting up the
                     // helper again cannot change which files these are.
-                    "repairAction": .string((error as? ExperimentError)?.clientIdentityFailure?.repair ?? ScientificPythonRuntime.setupHint),
+                    "repairAction": .string(identity?.repair ?? ScientificPythonRuntime.setupHint),
                     "workspace": workspace.flatMap { try? WorkspaceBootstrap.inspect($0) }.map(JSONValue.object) ?? .null,
-                    "execution": .object(["state": .string("notAssessed"), "requiredForAuthoring": .bool(false)])]
+                    "execution": .object(["state": .string("notAssessed"), "requiredForAuthoring": .bool(false)])],
+                identityFailure: identity)
         }
     }
 

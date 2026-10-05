@@ -27,11 +27,7 @@ struct ResearchSetupSheet: View {
     /// for a developer build standing on its own checkout.
     private var selectedRoot: URL? { workspace.chosenRootURL }
 
-    private var helperTitle: String {
-        if model.clientReady { return ResearchSetupCopy.helperReady }
-        return model.basicClientReady
-            ? ResearchSetupCopy.helperUpdateTitle : ResearchSetupCopy.helperSetupTitle
-    }
+    private var helperTitle: String { model.helperTitle }
 
     private var planButtonTitle: String {
         if model.clientReady { return "Review Repair Plan" }
@@ -61,6 +57,9 @@ struct ResearchSetupSheet: View {
                     // to do about it.
                     if let repair = model.errorRepair {
                         Text(repair).font(.caption).textSelection(.enabled)
+                    }
+                    if let details = model.errorDetails {
+                        detailsDisclosure(details)
                     }
                 }
             }
@@ -163,6 +162,13 @@ struct ResearchSetupSheet: View {
                 // line and are not shown in this sheet.
                 if let guidance = model.helperGuidance {
                     Text(guidance).font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                // The identity failure's own detail — both versions, where
+                // the files are, and what the helper said — for whoever is
+                // asked to help. Hidden until opened.
+                if let failure = model.identityFailure, !model.clientReady {
+                    detailsDisclosure(failure.details)
                 }
                 HStack {
                     Button(planButtonTitle) { Task { await model.preview() } }
@@ -178,6 +184,19 @@ struct ResearchSetupSheet: View {
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// A failure's technical detail, selectable so it can be copied into a
+    /// message to whoever is helping.
+    private func detailsDisclosure(_ details: String) -> some View {
+        DisclosureGroup(ResearchSetupCopy.detailsLabel) {
+            Text(details)
+                .font(.caption.monospaced())
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.caption)
     }
 
     private var beginStep: some View {
