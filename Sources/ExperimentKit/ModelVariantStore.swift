@@ -691,10 +691,10 @@ public enum ModelVariantStore {
         return ModelVariantRecord(url: url, artifact: artifact)
     }
 
-    /// Moves the agent's folder into a `.trash-<time>` folder beside it and
-    /// returns where it landed. Nothing is erased, and every listing skips
-    /// hidden folders, so the agent leaves the library and can be moved back
-    /// by hand.
+    /// Moves the agent's folder into a `.trash-<time>` folder in the agent
+    /// library and returns where it landed. Nothing is erased, and every
+    /// listing skips hidden folders, so the agent leaves the library and can
+    /// be moved back by hand.
     ///
     /// Callers check first that no study uses the agent
     /// (`WorkspaceHousekeeping.deleteAgent(reviewed:)` is the one that does).
@@ -703,19 +703,18 @@ public enum ModelVariantStore {
         _ record: ModelVariantRecord, workspaceRoot: URL = ExperimentStore.workspaceRoot
     ) throws -> URL {
         let folder = try trashableFolder(for: record, workspaceRoot: workspaceRoot)
-        return try WorkspaceHousekeeping.moveToTrash(folder.folder, under: folder.trashParent)
+        return try WorkspaceHousekeeping.moveToTrash(folder, under: folder.deletingLastPathComponent())
     }
 
-    /// The folder deleting this agent moves, and the folder its trash goes in.
+    /// The folder deleting this agent moves: its own entry directly inside
+    /// the agent library (`runs/model-variants/<slug>/`).
     ///
-    /// An agent lives in a folder of its own: either an entry directly inside
-    /// the agent library (`runs/model-variants/<slug>/`) or a run that saved
-    /// it (`runs/<run>/`). Anything else — a file sitting in the library
-    /// itself, a folder nested deeper, or a folder that also holds other
-    /// agents — would take more than this agent with it, so it is refused.
-    static func trashableFolder(
-        for record: ModelVariantRecord, workspaceRoot: URL
-    ) throws -> (folder: URL, trashParent: URL, isLibraryEntry: Bool) {
+    /// An agent saved by a run (`runs/<run>/<name>.json`, how the Python
+    /// engine and imported evidence store them) is refused: a run folder is
+    /// evidence, and `runs/` is append-only. So is anything that would take
+    /// more than this agent with it: a file sitting in the library itself, a
+    /// folder nested deeper, or a folder that also holds other agents.
+    static func trashableFolder(for record: ModelVariantRecord, workspaceRoot: URL) throws -> URL {
         let runsDirectory = VectorCatalog.runsDirectory(root: workspaceRoot)
         let libraryDirectory = runsDirectory.appending(component: "model-variants")
         let folder = record.url.deletingLastPathComponent()
@@ -723,8 +722,16 @@ public enum ModelVariantStore {
         let library = try ManifestFileTransaction.canonicalPath(libraryDirectory)
         let runs = try ManifestFileTransaction.canonicalPath(runsDirectory)
         let folderPath = try ManifestFileTransaction.canonicalPath(folder)
-        let isLibraryEntry = parent == library
-        guard isLibraryEntry || (parent == runs && folderPath != library) else {
+        if parent == runs, folderPath != library {
+            throw WorkspaceHousekeeping.Refusal(
+                code: WorkspaceHousekeeping.agentIsRunEvidenceCode,
+                path: try WorkspaceHousekeeping.relativePath(record.url, in: workspaceRoot),
+                reason: "This agent was saved by a run (\(folder.lastPathComponent)), and run "
+                    + "folders are kept as evidence: they are never moved or deleted.",
+                repairAction: "Nothing needs repairing. An agent no study uses changes "
+                    + "nothing; it stays in the agent list.")
+        }
+        guard parent == library else {
             throw ExperimentError.refusing(
                 .artifactPin,
                 "This agent is not stored in a folder of its own, so deleting it would "
@@ -753,7 +760,7 @@ public enum ModelVariantStore {
                 repair: "Move each agent into a folder of its own under "
                     + "runs/model-variants/, then preview the delete again.")
         }
-        return (folder, isLibraryEntry ? libraryDirectory : runsDirectory, isLibraryEntry)
+        return folder
     }
 
     public static func hash(_ url: URL) throws -> String {

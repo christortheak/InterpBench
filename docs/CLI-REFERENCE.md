@@ -158,7 +158,7 @@ same exit codes, same `error.code` / `error.repairAction`. Verb families:
 `experiment` (create, attach, detach, declare-condition, remove-condition,
 set-sweep-grid, set-protocol, set-system-prompt, set-parser,
 set-instrument-scope, set-evaluation-sampling, pin-revision,
-set-style-taxonomy, pin-sae-candidates, duplicate,
+set-style-taxonomy, pin-sae-candidates, duplicate, rename, delete,
 verify, freeze, list, inspect, import-prompts, inspect-artifact, attach-artifact),
 `pack` (preview, apply, export), `concept import`, `bundle` (package, inspect, import),
 `model` (capabilities — show the chat-template capability record, §4.4;
@@ -268,6 +268,11 @@ steerlab panel inspect <path>
 steerlab panel check <file>
 steerlab panel import <file> --file-sha256 <value>
 steerlab panel compile <path> --casting <value> --experiment <value> --file-sha256 <value> --manifest-sha256 <digest>
+steerlab experiment rename <name> <new-name> [--manifest-sha256 <digest>] [--yes]
+steerlab experiment delete <name> [--manifest-sha256 <digest>] [--yes]
+steerlab design rename <name> <new-name> [--file-sha256 <value>] [--yes]
+steerlab design delete <name> [--file-sha256 <value>] [--yes]
+steerlab agent delete <path> [--artifact-sha256 <digest>] [--yes]
 steerlab model plan <modelID> --runner <url> [--ca-bundle <path>] [--revision <commit>] [--timeout <seconds>] [--token-file <path>]
 steerlab model install <modelID> --plan-sha256 <value> --runner <url> [--ca-bundle <path>] [--revision <commit>] [--timeout <seconds>] [--token-file <path>]
 steerlab model status <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
@@ -1045,6 +1050,8 @@ steerlab-cli experiment set-style-taxonomy <name> <prompts/taxonomies/file.json>
 steerlab-cli experiment verify <name>
 steerlab-cli experiment freeze <name> [--force] [--run-substrate <local|server>]
 steerlab-cli experiment duplicate <name> <new-name>
+steerlab-cli experiment rename <name> <new-name> [--manifest-sha256 <sha256>] [--yes]
+steerlab-cli experiment delete <name> [--manifest-sha256 <sha256>] [--yes]
 ```
 
 | Verb | Purpose |
@@ -1076,6 +1083,8 @@ steerlab-cli experiment duplicate <name> <new-name>
 | `experiment verify` | Re-check every pinned input against the file bytes on disk. |
 | `experiment freeze` | Freeze the manifest one-way, after the evidence gates pass. |
 | `experiment duplicate` | Copy a manifest into a new draft — how a frozen study is iterated. |
+| `experiment rename` | Preview renaming a draft study; repeat with its reviewed --manifest-sha256 and --yes to rename it. Runs keep the name they recorded. |
+| `experiment delete` | Preview deleting a draft study; repeat with its reviewed --manifest-sha256 and --yes to move it into experiments/.trash-<time>/. Nothing in runs/ changes. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:swift-experiment-authoring END -->
@@ -2396,12 +2405,14 @@ of bytes, not scientific validity or cleanup authorization. See
 ```
 steerlab-cli agent list
 steerlab-cli agent inspect <path>
+steerlab-cli agent delete <path> [--artifact-sha256 <sha256>] [--yes]
 ```
 
 | Verb | Purpose |
 |---|---|
 | `agent list` | List discoverable local agent artifacts and their file digests. |
 | `agent inspect` | Inspect a workspace agent artifact before attachment. |
+| `agent delete` | Preview deleting an agent no study uses; repeat with its reviewed --artifact-sha256 and --yes to move it into a .trash folder. Refused while any study uses it. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:swift-agent END -->
@@ -2445,6 +2456,8 @@ steerlab-cli design instantiate <name> --casting <file.json> --file-sha256 <sha2
 steerlab-cli design batch <name> --file-sha256 <sha256> --rows <batch.json>
 steerlab-cli design save <study> [--description <text>] --manifest-sha256 <sha256> [--name <name>]
 steerlab-cli design update <name> --file-sha256 <sha256> --manifest-sha256 <sha256> --study <name>
+steerlab-cli design rename <name> <new-name> [--file-sha256 <sha256>] [--yes]
+steerlab-cli design delete <name> [--file-sha256 <sha256>] [--yes]
 ```
 
 | Verb | Purpose |
@@ -2457,6 +2470,8 @@ steerlab-cli design update <name> --file-sha256 <sha256> --manifest-sha256 <sha2
 | `design batch` | Create one draft per reviewed casting row, reporting every success and refusal without submitting. |
 | `design save` | Save a reusable design from a reviewed study, reusing an unchanged lineage match. |
 | `design update` | Replace a design's scientific settings from a reviewed source study with matching lineage. |
+| `design rename` | Preview renaming a template; repeat with its reviewed --file-sha256 and --yes to rename it. Studies created from it are unchanged. |
+| `design delete` | Preview deleting a template; repeat with its reviewed --file-sha256 and --yes to move it into templates/.trash-<time>/. Studies created from it are unchanged. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:swift-design END -->

@@ -129,7 +129,7 @@ if __name__ == "__main__":
 
 from . import cli_envelope as envelope
 from .client import study_assembly, design_commands, authoring_commands, model_commands, science_commands, bootstrap_commands, setup_commands
-from .client import results_commands
+from .client import results_commands, housekeeping_commands
 from .cli_envelope import (HELP_FLAG, JSON_FLAG, OUT_FLAG, CLIResult,
                            UsageError, VerbSpec)
 
@@ -288,6 +288,7 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
     *study_assembly.VERB_SPECS,
     *design_commands.VERB_SPECS,
     *authoring_commands.VERB_SPECS,
+    *housekeeping_commands.VERB_SPECS,
     *model_commands.specs(_RUNNER_FLAGS),
     VerbSpec("experiment", "create", positional="<name>",
              purpose="Create a draft study in this workspace.",
@@ -1268,6 +1269,8 @@ def _experiment(invocation: Invocation) -> CLIResult:
     ``api/routes.py`` makes; every payload key twins the Mac verb's."""
     if invocation.spec.verb in authoring_commands.EXPERIMENT_VERBS:
         return authoring_commands.run(invocation)
+    if invocation.spec.verb in housekeeping_commands.EXPERIMENT_VERBS:
+        return housekeeping_commands.run(invocation)
     if invocation.spec.verb in study_assembly.EXPERIMENT_VERBS:
         return study_assembly.run(invocation)
     from .experiment import experiment_store as store
@@ -1280,9 +1283,12 @@ def _experiment(invocation: Invocation) -> CLIResult:
 
     if verb == "list":
         directory = experiments_directory()
+        # Hidden entries are not studies: `experiment delete` (and the app's
+        # Delete) move a draft into an `experiments/.trash-<time>/` folder.
         names = sorted(
             n for n in os.listdir(directory)
-            if os.path.isdir(os.path.join(directory, n)) or n.endswith(".json")
+            if not n.startswith(".")
+            and (os.path.isdir(os.path.join(directory, n)) or n.endswith(".json"))
         ) if os.path.isdir(directory) else []
         listed: list = []
         for name in names:
@@ -4557,7 +4563,12 @@ def _iso(value) -> str | None:
 
 
 HANDLERS = {"setup": setup_commands.run, "workspace": bootstrap_commands.run, "science": science_commands.run, "experiment": _experiment, "concept": _concept, "bundle": _bundle,
-            "pack": study_assembly.run, "design": design_commands.run, "agent": lambda i: authoring_commands.run(i) if i.spec.verb == "list" else design_commands.run(i), "panel": authoring_commands.run,
+            "pack": study_assembly.run,
+            "design": lambda i: housekeeping_commands.run(i) if housekeeping_commands.handles(i) else design_commands.run(i),
+            "agent": lambda i: (authoring_commands.run(i) if i.spec.verb == "list"
+                                else housekeeping_commands.run(i) if housekeeping_commands.handles(i)
+                                else design_commands.run(i)),
+            "panel": authoring_commands.run,
             "model": _model,
             "authoring": _authoring_prompt, "runner": _runner, "run": _run,
             "results": results_commands.run}

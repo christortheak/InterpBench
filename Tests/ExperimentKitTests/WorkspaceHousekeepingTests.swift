@@ -237,7 +237,9 @@ import Testing
         }
     }
 
-    @Test func agentSavedAsARunMovesAsAWholeFolder() async throws {
+    /// A run folder is evidence and `runs/` is append-only, so an agent a run
+    /// saved is refused, plainly, and its folder is left exactly as it was.
+    @Test func agentSavedByARunIsRefusedAndItsRunFolderStays() async throws {
         try await withWorkspace { root in
             let runFolder = root.appending(path: "runs/20261005-variant-imported")
             try FileManager.default.createDirectory(at: runFolder, withIntermediateDirectories: true)
@@ -250,19 +252,16 @@ import Testing
             let path = "runs/20261005-variant-imported/imported.json"
             #expect(try StudyAgentAuthoring.list(workspaceRoot: root).agents.map(\.path) == [path])
 
-            let preview = await run("agent", ["delete", path])
-            #expect(preview.envelope.exitCode == 0)
-            let effects = preview.envelope.result?["effects"]
-            #expect("\(String(describing: effects))".contains("saved as a run of its own"))
-            let digest = try #require(string(preview, "artifactFileSHA256"))
-
-            let applied = await run("agent", ["delete", path, "--artifact-sha256", digest, "--yes"])
-            #expect(applied.envelope.exitCode == 0)
-            let destination = try #require(string(applied, "destination"))
-            #expect(destination.hasPrefix("runs/.trash-"))
-            #expect(FileManager.default.fileExists(
-                atPath: root.appending(path: destination).appending(component: "config.json").path))
-            #expect(try StudyAgentAuthoring.list(workspaceRoot: root).agents.isEmpty)
+            let digest = try AgentArtifactSnapshot(workspaceRoot: root, path: path).file.sha256
+            for args in [["delete", path], ["delete", path, "--artifact-sha256", digest, "--yes"]] {
+                let refused = await run("agent", args)
+                #expect(refused.envelope.exitCode == 65)
+                #expect(refused.envelope.error?.code == WorkspaceHousekeeping.agentIsRunEvidenceCode)
+                #expect(refused.envelope.error?.reason.contains("saved by a run") == true)
+            }
+            #expect(FileManager.default.fileExists(atPath: root.appending(path: path).path))
+            #expect(trashFolders(root.appending(component: "runs")).isEmpty)
+            #expect(try StudyAgentAuthoring.list(workspaceRoot: root).agents.map(\.path) == [path])
         }
     }
 

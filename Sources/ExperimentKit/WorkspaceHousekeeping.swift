@@ -18,8 +18,8 @@ import Foundation
 /// Nothing is erased. A deleted study, template, or agent moves into a
 /// `.trash-<time>` folder beside where it lived, which every listing skips and
 /// from which it can be moved back by hand. `runs/` is never rewritten: a
-/// study's runs keep the name they recorded, and an agent that was saved as a
-/// run of its own moves as a whole folder.
+/// study's runs keep the name they recorded, and an agent a run saved is not
+/// deleted (only entries in the agent library, `runs/model-variants/`, are).
 ///
 /// The Python client has a twin of every rule here
 /// (`steerlab_server/client/housekeeping.py`); the two print the same keys.
@@ -65,6 +65,9 @@ public enum WorkspaceHousekeeping {
     /// lifecycle gate: nothing about any study is wrong, the agent is simply
     /// in use.
     public static let agentInUseCode = "agentInUse"
+    /// The refusal code for deleting an agent a run saved: run folders are
+    /// evidence, and `runs/` is append-only.
+    public static let agentIsRunEvidenceCode = "agentIsRunEvidence"
 
     // MARK: - Studies
 
@@ -349,26 +352,20 @@ public enum WorkspaceHousekeeping {
     }
 
     static func reviewAgentDelete(_ agent: AgentArtifactSnapshot) throws -> Review {
-        let usage = try requireUnused(agent)
         let folder = try ModelVariantStore.trashableFolder(
             for: agent.record, workspaceRoot: agent.workspaceRoot)
-        let folderPath = try relativePath(folder.folder, in: agent.workspaceRoot)
-        let trashPath = try relativePath(folder.trashParent, in: agent.workspaceRoot)
-        var effects = [
-            "Moves \(folderPath)/ to \(trashPath)/.trash-<time>/\(folder.folder.lastPathComponent)/. "
-                + "Nothing is erased: move the folder back to restore the agent."
+        let usage = try requireUnused(agent)
+        let folderPath = try relativePath(folder, in: agent.workspaceRoot)
+        let trashPath = try relativePath(folder.deletingLastPathComponent(), in: agent.workspaceRoot)
+        let effects = [
+            "Moves \(folderPath)/ to \(trashPath)/.trash-<time>/\(folder.lastPathComponent)/. "
+                + "Nothing is erased: move the folder back to restore the agent.",
+            "No study uses this agent, so no study changes.",
         ]
-        if !folder.isLibraryEntry {
-            effects.append(
-                "This agent was saved as a run of its own, so its whole run folder "
-                    + "moves. If it came from another machine, its import receipt will "
-                    + "not find it until the folder is moved back.")
-        }
-        effects.append("No study uses this agent, so no study changes.")
         return Review(
             kind: .agent, operation: .delete, applied: false,
             name: agent.record.artifact.name, newName: nil, path: agent.path,
-            destination: "\(trashPath)/.trash-<time>/\(folder.folder.lastPathComponent)",
+            destination: "\(trashPath)/.trash-<time>/\(folder.lastPathComponent)",
             manifestFileSHA256: nil, designFileSHA256: nil,
             artifactFileSHA256: agent.file.sha256, status: nil, runsRecordingName: nil,
             studiesFromTemplate: nil, usedBy: [], effects: effects,
@@ -447,8 +444,8 @@ public enum WorkspaceHousekeeping {
         let usage = studiesUsingAgent(path: agent.path, workspaceRoot: agent.workspaceRoot)
         guard usage.users.isEmpty else {
             let count = usage.users.count
-            throw AgentInUse(
-                path: agent.path, users: usage.users,
+            throw Refusal(
+                code: agentInUseCode, path: agent.path, usedBy: usage.users,
                 reason: "This agent is used by \(count == 1 ? "a study" : "\(count) studies"): "
                     + usage.users.joined(separator: ", ") + ". An agent a study uses "
                     + "cannot be deleted.",
@@ -461,14 +458,24 @@ public enum WorkspaceHousekeeping {
         return usage
     }
 
-    /// Deleting an agent that a study uses. Carries the studies so a caller
-    /// can show them.
-    public struct AgentInUse: Error, LocalizedError, Sendable {
+    /// An agent delete that declined: the agent is in use (`agentInUse`,
+    /// carrying the studies), or a run saved it (`agentIsRunEvidence`).
+    public struct Refusal: Error, LocalizedError, Sendable, Equatable {
+        public let code: String
         public let path: String
-        public let users: [String]
+        public let usedBy: [String]
         public let reason: String
         public let repairAction: String
         public var errorDescription: String? { reason }
+
+        public init(code: String, path: String, usedBy: [String] = [],
+                    reason: String, repairAction: String) {
+            self.code = code
+            self.path = path
+            self.usedBy = usedBy
+            self.reason = reason
+            self.repairAction = repairAction
+        }
     }
 
     // MARK: - Shared

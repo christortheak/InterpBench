@@ -92,11 +92,14 @@ enum WorkspaceHousekeepingCLI {
             throw ExperimentCLIStop(
                 exitCode: malformed ? 64 : 65, state: malformed ? .blocked : .refused,
                 code: error.code, reason: error.reason, repairAction: error.repairAction)
-        } catch let error as WorkspaceHousekeeping.AgentInUse {
+        } catch let error as WorkspaceHousekeeping.Refusal {
+            var payload: [String: JSONValue] = ["path": .string(error.path)]
+            if error.code == WorkspaceHousekeeping.agentInUseCode {
+                payload["usedBy"] = .array(error.usedBy.map { .string($0) })
+            }
             throw ExperimentCLIStop(
-                exitCode: 65, state: .refused, code: WorkspaceHousekeeping.agentInUseCode,
-                reason: error.reason, repairAction: error.repairAction,
-                payload: ["path": .string(error.path), "usedBy": .array(error.users.map { .string($0) })])
+                exitCode: 65, state: .refused, code: error.code,
+                reason: error.reason, repairAction: error.repairAction, payload: payload)
         } catch CocoaError.fileReadNoSuchFile where family == "design" {
             throw ExperimentCLIStop(
                 exitCode: 66, state: .notFound, code: "designNotFound",
