@@ -11,6 +11,22 @@ from .. import client_dependencies
 
 class SetupRefusal(ValueError):
     repair_action = 'Review setup plan from the matching client release; approve setup apply or repair only after reviewing its actions.'
+    #: The installer's own typed code (``noNetwork``, ``diskFull``, ``cancelled``,
+    #: and so on) when the refusal came from it; None for this module's own.
+    installer_code = None
+
+
+#: What the app-free client does and does not do, said wherever it hands a
+#: workspace to a researcher or a coding assistant. The Mac command line runs
+#: studies itself, so this is the Python client's statement only.
+CLIENT_SCOPE = (
+    'This app-free client creates workspaces and authors studies, then submits them to a runner that '
+    'someone has set up: a workstation, a cluster, or a local engine installed separately. It does not '
+    "run models itself. To read results without the app, results export writes a completed run's stored "
+    'tables, transcripts, and methods summary to files. On a Mac, the SteerLab app is the supported route '
+    'to running studies and reading their results.')
+CLIENT_SCOPE_SHORT = ('This client authors studies and submits them to a runner someone has set up; '
+                      'it does not run models itself.')
 
 
 def inspect(root=None):
@@ -59,6 +75,7 @@ def provision(operation, *, release=None, runtime=None, expected=None, approved=
     if result.returncode or not response.get('ok'):
         failure = SetupRefusal(response.get('reason', 'Client setup did not finish.'))
         failure.repair_action = response.get('repairAction', failure.repair_action)
+        failure.installer_code = response.get('code')
         raise failure
     return response
 

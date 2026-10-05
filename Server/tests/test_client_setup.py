@@ -120,3 +120,34 @@ def test_probe_timeout_is_a_readiness_report(monkeypatch):
     report = setup.inspect()
     assert not report['clientReady'] and not report['basicClientReady']
     assert 'Research Setup' in report['repairAction']
+
+
+def test_the_app_free_handoff_says_what_this_client_does(tmp_path):
+    """Release review decision 1: the app-free client authors and submits;
+    the Mac app is the supported route to running and reading results."""
+    root = tmp_path / 'workspace'
+    code, result = cli('setup', 'start', str(root), '--create')
+    assert code == 0, result
+    scope = result['result']['clientScope']
+    assert scope == setup.CLIENT_SCOPE
+    for phrase in ('authors studies', 'submits them to a runner', 'does not run models itself', 'results export', 'Mac'):
+        assert phrase in scope
+    code, result = cli('workspace', 'handoff', '--root', str(root))
+    assert code == 0, result
+    assert setup.CLIENT_SCOPE_SHORT in result['message']
+    # The handoff object itself stays the same on both clients (see
+    # WorkspaceBootstrapParityTests), so the statement is not a new key there.
+    assert 'clientScope' not in result['result']
+
+
+def test_an_installer_refusal_keeps_its_typed_code(tmp_path):
+    release = tmp_path / 'release'
+    release.mkdir()
+    (release / 'install-client.sh').write_text(
+        'printf \'{"ok":false,"changed":false,"code":"noNetwork","reason":"The download server could not be reached.",'
+        '"repairAction":"Check the internet connection, then review a fresh plan and retry."}\\n\'\nexit 70\n')
+    code, report = cli('setup', 'plan', '--release', str(release), '--runtime', str(tmp_path / 'client-runtime'))
+    assert code == 65 and not report['changed']
+    assert report['error']['code'] == 'clientSetupRefused'
+    assert report['result']['installerCode'] == 'noNetwork'
+    assert 'could not be reached' in report['error']['reason']
