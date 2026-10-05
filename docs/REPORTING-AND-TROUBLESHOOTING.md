@@ -209,6 +209,7 @@ On these refusals, `error.code` names the problem directly.
 |---|---|---|
 | `noWorkspace` (Mac) | No workspace is chosen | `steerlab-cli workspace init <folder>`, then name it with `--workspace <folder>` or `STEERLAB_WORKSPACE` |
 | `workspaceNotSet` (client) | No workspace was named | Add `--root <folder>`, or set `STEERLAB_WORKSPACE` |
+| `demoNotCarried` | This copy of SteerLab carries no Demo Workspace for the backend you asked for | Create an ordinary workspace with `workspace init <folder>`, or ask for a backend the message says this copy carries |
 | exit `64` | A command or option was mistyped, or is not on this client | Ask `--help`. Mac commands do not work under `steerlab`, and the reverse |
 | `runnerUnreachable` | The runner did not answer | Check that it is running and reachable; a dropped SSH tunnel looks like this. `steerlab runner capabilities --runner <url>` is the smallest test |
 | `runnerUnauthorized` | The runner wants a token the client did not send | Put the token in a file and pass `--token-file <path>`, or set `STEERLAB_RUNNER_TOKEN`; never type it on the command line |
