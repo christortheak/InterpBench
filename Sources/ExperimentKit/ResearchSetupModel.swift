@@ -7,13 +7,39 @@ import Observation
     public private(set) var readiness: [String: JSONValue] = [:]
     public private(set) var plan: [String: JSONValue] = [:]
     public private(set) var busy = false
+    /// True only while an approved installation runs: the one long step,
+    /// and the one that can be cancelled.
+    public private(set) var installing = false
+    /// A Cancel was asked for and the installer is stopping.
+    public private(set) var cancelling = false
     public private(set) var message: String?
     public private(set) var error: String?
     /// What to do about `error`, in the app's own words. A plan or install
     /// failure carries its repair; it is kept beside the reason, not dropped.
     public private(set) var errorRepair: String?
     public private(set) var handoff: String?
-    public init() {}
+
+    /// Where the installer, the runtime it creates, and the setup logs are.
+    /// The app uses the defaults; a test points all three at a temporary
+    /// folder, so nothing is ever installed into a real home folder.
+    public struct InstallerLocations: Sendable {
+        public var release: URL?
+        public var runtime: URL
+        public var logDirectory: URL?
+        public init(release: URL? = nil, runtime: URL = ScientificPythonRuntime.defaultEnvironment,
+                    logDirectory: URL? = nil) {
+            self.release = release
+            self.runtime = runtime
+            self.logDirectory = logDirectory
+        }
+    }
+
+    private let locations: InstallerLocations
+    @ObservationIgnored private var installTask: Task<[String: JSONValue], any Error>?
+
+    public init(locations: InstallerLocations = InstallerLocations()) {
+        self.locations = locations
+    }
 
     public var clientReady: Bool { readiness["clientReady"] == .bool(true) }
     public var basicClientReady: Bool { readiness["basicClientReady"] == .bool(true) }
@@ -63,21 +89,42 @@ import Observation
     public func preview() async {
         guard !busy else { return }
         busy = true; error = nil; errorRepair = nil; message = nil; plan = [:]
-        do { plan = try await ClientSetup.provision("plan") }
+        do { plan = try await ClientSetup.provision("plan", release: locations.release, runtime: locations.runtime) }
         catch { record(error) }
         busy = false
     }
 
     public func install(workspace: URL?) async {
         guard !busy, let expected = planHash else { return }
-        busy = true; error = nil; errorRepair = nil; message = ResearchSetupCopy.installing
-        defer { busy = false; plan = [:] }
+        busy = true; installing = true; cancelling = false
+        error = nil; errorRepair = nil; message = ResearchSetupCopy.installing
+        defer { busy = false; installing = false; cancelling = false; installTask = nil; plan = [:] }
+        let operation = clientReady ? "repair" : "apply"
+        let locations = self.locations
+        let task = Task {
+            try await ClientSetup.provision(operation, release: locations.release, runtime: locations.runtime,
+                                            expected: expected, approved: true, logDirectory: locations.logDirectory)
+        }
+        installTask = task
         do {
-            let result = try await ClientSetup.provision(clientReady ? "repair" : "apply", expected: expected, approved: true)
+            let result = try await task.value
+            // A Cancel that came after the new helper was switched on is too
+            // late: the installation finished, and is reported as finished.
             readiness = await ClientSetup.inspect(workspace: workspace)
             message = clientReady ? ResearchSetupCopy.installed : ResearchSetupCopy.installedButNotReady
             if case .string(let log) = result["logPath"] { message = (message ?? "") + " Setup log: " + log }
-        } catch { record(error); message = nil }
+        } catch {
+            if cancelling { message = ResearchSetupCopy.installCancelled } else { record(error); message = nil }
+        }
+    }
+
+    /// Stops a running installation. The installer removes what it had
+    /// staged and leaves the helper that was there before, if any, in place.
+    public func cancelInstall() {
+        guard installing, !cancelling else { return }
+        cancelling = true
+        message = ResearchSetupCopy.cancellingInstall
+        installTask?.cancel()
     }
 
     private func record(_ failure: any Error) {
@@ -149,11 +196,21 @@ public enum ResearchSetupCopy {
         + "tools for preparing text collections."
 
     public static let planCaption =
-        "Needs an internet connection. Earlier installs are kept, and none of "
-        + "your study files change."
+        "Needs an internet connection. You can cancel while it installs. "
+        + "Earlier installs are kept, and none of your study files change."
 
     public static let installing =
         "Installing the study-design helper. Downloads may take a few minutes."
+
+    /// The button shown beside the progress while the helper installs.
+    public static let cancelInstallButton = "Cancel Installation"
+
+    public static let cancellingInstall = "Stopping the installation…"
+
+    public static let installCancelled =
+        "Installation cancelled. Nothing was changed, and the helper you had "
+        + "before, if any, is still in place. You can review the plan again "
+        + "at any time."
 
     public static let installed =
         "The helper is ready. You can design studies."

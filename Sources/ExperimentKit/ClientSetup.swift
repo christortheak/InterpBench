@@ -47,7 +47,20 @@ public enum ClientSetup {
         if let expected { arguments += ["--expect", expected] }
         if approved { arguments.append("--yes") }
         let commandArguments = arguments
-        return try await Task.detached {
+        // Cancelling the task that awaits this stops the installer. It is sent
+        // TERM, and its own handler stops the download, removes its staging
+        // folder, releases its lock, and reports the cancellation; the runtime
+        // that was active before is never touched.
+        let control = InstallerProcessControl()
+        return try await withTaskCancellationHandler {
+            try await run(commandArguments, operation: operation, directory: directory,
+                          logDirectory: logDirectory, control: control)
+        } onCancel: { control.cancel() }
+    }
+
+    private static func run(_ commandArguments: [String], operation: String, directory: URL,
+                            logDirectory: URL?, control: InstallerProcessControl) async throws -> [String: JSONValue] {
+        try await Task.detached {
             let logs = logDirectory ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support/SteerLab/client-setup-logs")
             let temporary = FileManager.default.temporaryDirectory.appending(component: "client-setup-" + UUID().uuidString)
             let log = operation == "plan" ? temporary : logs.appending(component: UUID().uuidString + ".log")
@@ -61,7 +74,7 @@ public enum ClientSetup {
             process.arguments = commandArguments
             process.standardOutput = output; process.standardError = stderr
             process.currentDirectoryURL = directory
-            try process.run()
+            try control.launch(process)
             let bytes = output.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
             guard case .object(var result) = try JSONDecoder().decode(JSONValue.self, from: bytes) else { throw ExperimentError(reason: "Client setup returned no structured result. Read " + log.path) }
@@ -73,6 +86,28 @@ public enum ClientSetup {
             if operation != "plan" { result["logPath"] = .string(log.path) }
             return result
         }.value
+    }
+}
+
+/// Lets a cancellation reach an installer process that has not started yet,
+/// is running, or has already finished.
+final class InstallerProcessControl: @unchecked Sendable {
+    private let lock = NSLock()
+    private var process: Process?
+    private var cancelled = false
+
+    /// Starts the installer, unless a cancellation came first.
+    func launch(_ process: Process) throws {
+        lock.lock(); defer { lock.unlock() }
+        if cancelled { throw CancellationError() }
+        try process.run()
+        self.process = process
+    }
+
+    func cancel() {
+        lock.lock(); defer { lock.unlock() }
+        cancelled = true
+        if let process, process.isRunning { process.terminate() }
     }
 }
 
