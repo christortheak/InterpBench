@@ -708,6 +708,10 @@ import Testing
             "init",
             "design list", "design inspect", "design describe", "design instantiate", "design batch", "design save", "design update",
             "agent list", "agent inspect", "experiment attach-agent",
+            // Housekeeping a coding assistant could otherwise only do by
+            // hand-editing protected files: previewed, confirmed rename and
+            // delete for drafts, templates, and unused agents.
+            "experiment rename", "experiment delete", "design rename", "design delete", "agent delete",
             "workspace init", "workspace inspect", "workspace handoff",
             // The agent guide's topics, served on demand: a read of text
             // compiled into this client. New rather than changed — nothing
@@ -847,9 +851,9 @@ import Testing
         // the design lived in a command line rather than in the artifact
         // chain the evidence travels in — and `set-primary-outcome`, which
         // declares the outcome a study is about so that every results
-        // summary leads with it.
+        // summary leads with it — and `rename` and `delete`, for drafts.
         #expect(
-            declared.filter { $0.hasPrefix("experiment ") }.count == 37,
+            declared.filter { $0.hasPrefix("experiment ") }.count == 39,
             "the experiment lifecycle includes reviewed agent/vector attachment and prompt import")
     }
 
