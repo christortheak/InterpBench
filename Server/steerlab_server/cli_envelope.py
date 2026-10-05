@@ -161,6 +161,13 @@ ADVISORY_CODES: tuple[str, ...] = (
     # policies: what an agent's switch cares about is that the frozen study
     # has an arm with no capability control behind it.
     "capabilityControlNotApplied",
+    # The workspace's chosen compute cannot run something the study declares
+    # (probe measurements, agents with intervention policies, SAE latent arms,
+    # a J-lens readout). Said at verify and in the readiness checklist so the
+    # researcher learns while designing, never as a refusal: verify and freeze
+    # stay open, because a study may be authored here and run elsewhere. Which
+    # choice can run what is the shipped catalog's ``whereItRuns``.
+    "computeCannotRun",
 )
 
 

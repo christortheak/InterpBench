@@ -126,7 +126,7 @@ import Testing
             "revisionAdoptionWarning", "siteQualifyWarning", "designDerivationWarning",
             "deprecatedImplicitSelection", "systemPromptNotApplied",
             "singleRegimeCapabilityReading", "modelCapabilities",
-            "capabilityControlNotApplied",
+            "capabilityControlNotApplied", "computeCannotRun",
         ]
         #expect(CLIAdvisory.vocabulary == serverLiteral)
     }

@@ -606,6 +606,10 @@ enum StudyInfo {
             the study's exact model, revision, dtype and quantization, \
             since geometry cannot see numerics.
             """
+        case .compute:
+            // Built from the shipped catalog, so it names the same
+            // declarations the row checks.
+            ComputeGuide.studyDeclarationsHelp
         }
     }
 }

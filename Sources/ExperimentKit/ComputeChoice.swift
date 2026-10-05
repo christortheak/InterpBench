@@ -117,6 +117,12 @@ public enum ComputeChoice: String, CaseIterable, Sendable, Codable, Identifiable
 /// The one compact account of what each choice can run, and what switching
 /// costs. Data rather than view text, so the claims are unit-tested against
 /// the choices they describe and every surface says the same thing.
+///
+/// The table itself is not written here. Its rows, and every yes and no in
+/// them, are the shipped science catalog's `whereItRuns.activities`, which
+/// the generator derives from the per-backend statuses in
+/// `docs/substrate-capabilities.json` — the same declarations that give each
+/// method its execution profile in `science list` on both command lines.
 public enum ComputeGuide {
 
     /// One line of the "what runs where" table.
@@ -124,20 +130,32 @@ public enum ComputeGuide {
         public let id: String
         /// The activity, in the researcher's words.
         public let activity: String
-        /// Runs on the engine built into this app (the quick start).
-        public let quickStart: Bool
-        /// Runs on the Python engine — on this Mac or on another machine.
-        public let pythonEngine: Bool
+        /// Whether each compute choice runs it.
+        public let runsOn: [ComputeChoice: Bool]
 
-        public init(_ id: String, _ activity: String, quickStart: Bool, pythonEngine: Bool = true) {
+        public init(_ id: String, _ activity: String, runsOn: [ComputeChoice: Bool]) {
             self.id = id
             self.activity = activity
-            self.quickStart = quickStart
-            self.pythonEngine = pythonEngine
+            self.runsOn = runsOn
         }
 
-        public func runs(on choice: ComputeChoice) -> Bool {
-            choice == .macQuickStart ? quickStart : pythonEngine
+        /// One row of the catalog's table.
+        init(_ activity: ScienceCatalog.WhereItRuns.Activity) {
+            self.init(
+                activity.id, activity.activity,
+                runsOn: Dictionary(
+                    uniqueKeysWithValues: ComputeChoice.allCases.map {
+                        ($0, activity.runsOn[$0.rawValue] ?? false)
+                    }))
+        }
+
+        public func runs(on choice: ComputeChoice) -> Bool { runsOn[choice] ?? false }
+
+        /// Runs on the engine built into this app (the quick start).
+        public var quickStart: Bool { runs(on: .macQuickStart) }
+        /// Runs on the Python engine — on this Mac and on another machine.
+        public var pythonEngine: Bool {
+            runs(on: .macFullCapabilities) && runs(on: .anotherMachine)
         }
     }
 
@@ -148,25 +166,46 @@ public enum ComputeGuide {
         + "workspace on this Mac; they differ in which methods are available "
         + "and what has to be set up first."
 
-    /// The table. The quick start covers the core of a steering study; the
-    /// Python engine — on this Mac or on another machine — covers every row.
-    public static let rows: [Row] = [
-        Row("chat", "Chat with a model and try a steering vector", quickStart: true),
-        Row("vector", "Build a concept vector from example texts", quickStart: true),
-        Row("study", "Run a study that compares a model with and without steering",
-            quickStart: true),
-        Row("multi-agent", "Run a scenario in which several agents take turns",
-            quickStart: true),
-        Row("optimize", "Search for the best place and strength to steer",
-            quickStart: true),
-        Row("adapter", "Train an adapter", quickStart: true),
-        Row("probes", "Probes and intervention policies", quickStart: false),
-        Row("optvec", "Trained steering vectors (OptVec)", quickStart: false),
-        Row("jlens", "Jacobian lens: import or fit a lens, and derive token directions",
-            quickStart: false),
-        Row("sae", "Import a feature from a sparse autoencoder (SAE)", quickStart: false),
-        Row("battery", "Standalone capability checks", quickStart: false),
-    ]
+    /// The table, from the shipped catalog. The quick start covers the core
+    /// of a steering study; the Python engine covers every row.
+    public static let rows: [Row] = (ComputeLimits.shipped?.activities ?? []).map(Row.init)
+
+    /// A column heading: the catalog's short name for the choice.
+    public static func columnTitle(_ choice: ComputeChoice) -> String {
+        ComputeLimits.shipped?.computeChoices.first { $0.id == choice.rawValue }?.shortTitle
+            ?? choice.title
+    }
+
+    /// Said under the table: what "Yes" claims, and what has been measured.
+    public static var tableNote: String {
+        "\u{201C}Yes\u{201D} means SteerLab implements it there. "
+            + ((ComputeLimits.shipped?.qualifiedAnywhere ?? false)
+                ? "Only some of these have been measured against the same work "
+                    + "on another engine."
+                : "None of these has yet been measured against the same work "
+                    + "on another engine.")
+    }
+
+    /// The help beside the readiness checklist's "where it runs" group:
+    /// which study declarations each choice cannot run, from the catalog.
+    public static var studyDeclarationsHelp: String {
+        let features = ComputeLimits.shipped?.studyFeatures ?? []
+        var sentences = ["Some parts of a study need a particular engine."]
+        for choice in ComputeChoice.allCases {
+            let phrases = features.filter { $0.runsOn[choice.rawValue] == false }.map(\.phrase)
+            guard !phrases.isEmpty else { continue }
+            let list = ComputeLimits.listed(phrases)
+            sentences.append(
+                list.prefix(1).uppercased() + list.dropFirst()
+                    + " cannot run on \u{201C}\(choice.title)\u{201D}.")
+        }
+        sentences.append(
+            "This row says whether the compute choice this workspace runs studies "
+                + "on can run what this study declares. It never blocks designing "
+                + "or freezing. \(guideButton.replacingOccurrences(of: "…", with: "")), "
+                + "in the Compute menu, shows the whole table.")
+        return sentences.joined(separator: " ")
+    }
 
     /// The limits, said up front rather than discovered.
     public static let limits: [String] = [

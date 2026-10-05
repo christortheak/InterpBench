@@ -9,8 +9,11 @@ also inspect a Python report without executing its mathematics through MLX.
 Use `science list` and `science operation <id> --json` through the selected client
 to discover callable paths. The catalog documents routes and outputs; it does not
 grant scientific qualification. This inventory is developer/researcher guidance,
-not a runtime permission list. Its metadata is not yet an additional app/API
-status field: do not tell an agent that the CLI returns the table below.
+not a runtime permission list. Both clients carry it in that catalog: each
+operation's `executionProfile` gives its status per backend, `science list
+--brief` gives one `runs` phrase per operation, and `whereItRuns` holds the
+compute choices, the study declarations below, and the app's What Runs Where
+rows. Verify and the readiness checklist use it only to advise.
 
 ## How to read this inventory
 
@@ -221,6 +224,51 @@ Source: [Sources/ExperimentKit/ExtractStability.swift](../Sources/ExperimentKit/
 Legacy bytes and unknown provenance remain unchanged. Library inspection is not model execution or cross-backend qualification.
 
 Source: [Server/steerlab_server/experiment/probe_library.py](../Server/steerlab_server/experiment/probe_library.py), [Server/steerlab_server/experiment/probe_artifacts.py](../Server/steerlab_server/experiment/probe_artifacts.py), [Sources/ExperimentKit/ProbeLibrary.swift](../Sources/ExperimentKit/ProbeLibrary.swift).
+
+### Study declarations checked before a run
+
+Verify and the readiness checklist advise, without refusing, when the workspace's compute choice cannot run one of these.
+
+| Declaration | Manifest key | CUDA | MPS | MLX | Source |
+| --- | --- | --- | --- | --- | --- |
+| Probe measurements | `probeMeasurements` | implemented; comparison unqualified | implemented; comparison unqualified | no native implementation | [Server/steerlab_server/experiment/probe_measurements.py](../Server/steerlab_server/experiment/probe_measurements.py), [Server/steerlab_server/experiment/probe_observation.py](../Server/steerlab_server/experiment/probe_observation.py), [Sources/ExperimentKit/ExperimentTasks.swift](../Sources/ExperimentKit/ExperimentTasks.swift) |
+| Agents with intervention policies | `variantConditions[].artifact.interventionPolicies` | implemented; comparison unqualified | implemented; comparison unqualified | no native implementation | [Server/steerlab_server/experiment/policy_execution.py](../Server/steerlab_server/experiment/policy_execution.py), [Sources/ExperimentKit/InterventionPolicyLibrary.swift](../Sources/ExperimentKit/InterventionPolicyLibrary.swift) |
+| SAE latent arms | `saeLatentConditions` | implemented; comparison unqualified | implemented; comparison unqualified | no native implementation | [Server/steerlab_server/experiment/sae_latent.py](../Server/steerlab_server/experiment/sae_latent.py), [Sources/ExperimentKit/ExperimentStore.swift](../Sources/ExperimentKit/ExperimentStore.swift) |
+| J-lens readout | `jlensReadout` | implemented; comparison unqualified | implemented; comparison unqualified | no native implementation | [Server/steerlab_server/experiment/run_readouts.py](../Server/steerlab_server/experiment/run_readouts.py), [Server/steerlab_server/jlens/readout.py](../Server/steerlab_server/jlens/readout.py), [Sources/ExperimentKit/ExperimentTasks.swift](../Sources/ExperimentKit/ExperimentTasks.swift) |
+
+### Core lifecycle entries
+
+The basis of the core rows in the app's What Runs Where table.
+
+| Entry | CUDA | MPS | MLX | Notes | Source |
+| --- | --- | --- | --- | --- | --- |
+| `steering` — Chat with a model and steer it with a vector | implemented; comparison unqualified | implemented; comparison unqualified | implemented; comparison unqualified | Additive injection and ablation share mechanics and scope descriptors on both engines. CPU/MPS hooks have a scoped comparison; native cross-backend qualification remains pending. | [Server/steerlab_server/steering/injector.py](../Server/steerlab_server/steering/injector.py), [Sources/SteeringKit/Injection/VectorInjector.swift](../Sources/SteeringKit/Injection/VectorInjector.swift) |
+| `extraction` — Build a concept vector from example texts | implemented; comparison unqualified | implemented; comparison unqualified | implemented; comparison unqualified | Both engines implement the extraction recipes. Three recipes have a scoped CPU/MPS capture comparison, not a full qualification. Vectors do not transfer between engines. | [Server/steerlab_server/experiment/extraction_workflow.py](../Server/steerlab_server/experiment/extraction_workflow.py), [Sources/ExperimentKit/ConceptBuilder.swift](../Sources/ExperimentKit/ConceptBuilder.swift) |
+| `measured-generation` — Run a study's measured generation | implemented; comparison unqualified | implemented; comparison unqualified | implemented; comparison unqualified | Both engines record the effective per-record seed policy. The same surface intent does not establish identical numerical output. | [Server/steerlab_server/experiment/condition_execution.py](../Server/steerlab_server/experiment/condition_execution.py), [Sources/ExperimentKit/ExperimentTasks.swift](../Sources/ExperimentKit/ExperimentTasks.swift) |
+| `multi-agent` — Run a scenario in which several agents take turns | implemented; comparison unqualified | implemented; comparison unqualified | implemented; comparison unqualified | Both engines derive seeds per turn with common streams across conditions. Live full-transcript qualification remains pending. | [Server/steerlab_server/experiment/multi_agent.py](../Server/steerlab_server/experiment/multi_agent.py), [Sources/ExperimentKit/MultiAgent/MultiAgentRunner.swift](../Sources/ExperimentKit/MultiAgent/MultiAgentRunner.swift) |
+| `sweep` — Search layers and strengths with a sweep | implemented; comparison unqualified | implemented; comparison unqualified | implemented; comparison unqualified | Both engines run sweeps through their stage owners. Inspect artifacts and effective configuration; the engines are not numerically interchangeable. | [Server/steerlab_server/experiment/sweep_workflow.py](../Server/steerlab_server/experiment/sweep_workflow.py), [Sources/ExperimentKit/ExperimentTasks.swift](../Sources/ExperimentKit/ExperimentTasks.swift) |
+
+### Compute choices and What Runs Where
+
+| Compute choice | Engine | Backends |
+| --- | --- | --- |
+| This Mac, quick start | the engine built into this app | MLX |
+| This Mac, full capabilities | the Python engine on this Mac | MPS |
+| Another machine | the Python engine on the machine you connect to | CUDA, MPS |
+
+| Activity | Quick start | Full capabilities | Another machine | Basis |
+| --- | --- | --- | --- | --- |
+| Chat with a model and try a steering vector | yes | yes | yes | `core:steering` |
+| Build a concept vector from example texts | yes | yes | yes | `core:extraction` |
+| Run a study that compares a model with and without steering | yes | yes | yes | `core:measured-generation` |
+| Run a scenario in which several agents take turns | yes | yes | yes | `core:multi-agent` |
+| Search for the best place and strength to steer | yes | yes | yes | `core:sweep` |
+| Train an adapter | yes | yes | yes | `operation:finetune` |
+| Probes and intervention policies | no | yes | yes | `operation:probe-capture`, `feature:probeMeasurements`, `feature:interventionPolicies` |
+| Trained steering vectors (OptVec) | no | yes | yes | `operation:optvec-train` |
+| Jacobian lens: import or fit a lens, and derive token directions | no | yes | yes | `operation:jlens`, `operation:jlens-fit`, `feature:jlensReadout` |
+| Import a feature from a sparse autoencoder (SAE) | no | yes | yes | `operation:gemmascope`, `feature:saeLatentArms` |
+| Standalone capability checks | no | yes | yes | `operation:battery` |
 
 <!-- END SUBSTRATE-CATALOG -->
 

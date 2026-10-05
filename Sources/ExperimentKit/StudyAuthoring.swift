@@ -428,6 +428,7 @@ public enum DataCategory: String, CaseIterable, Sendable, Identifiable {
     case scenario
     case style
     case readout
+    case compute
 
     public var id: String { rawValue }
 
@@ -446,6 +447,8 @@ public enum DataCategory: String, CaseIterable, Sendable, Identifiable {
         case .style: "Reasoning style — output taxonomy (Evaluation)"
         case .readout:
             "J-Space readout — what is read from the residual stream"
+        case .compute:
+            "Where it runs — what this workspace's compute choice can run"
         }
     }
 }
@@ -470,6 +473,9 @@ extension DataRequirement.Kind {
         // can be wrong is a freeze refusal met at the end of authoring,
         // or — for retention — only after the run, when it is too late.
         case .jlensReadout: .readout
+        // Not a file either: what the workspace's compute choice can run
+        // of what the study declares, said before freezing (`ComputeLimits`).
+        case .computeChoice: .compute
         }
     }
 }

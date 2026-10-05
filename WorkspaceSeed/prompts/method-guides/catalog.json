@@ -109,6 +109,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "stability",
+        "runs": "Python engine or built-in engine",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mlx": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          }
+        }
       }
     },
     {
@@ -146,6 +164,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "diagnostic-model",
+        "runs": "Python engine only",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mlx": {
+            "status": "unsupported",
+            "label": "no native implementation"
+          }
+        }
       }
     },
     {
@@ -183,6 +219,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-cpu",
+        "runs": "CPU only",
+        "backends": {
+          "cuda": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mps": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mlx": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          }
+        }
       }
     },
     {
@@ -211,6 +265,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-cpu",
+        "runs": "CPU only",
+        "backends": {
+          "cuda": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mps": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mlx": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          }
+        }
       }
     },
     {
@@ -239,6 +311,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-cpu",
+        "runs": "CPU only",
+        "backends": {
+          "cuda": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mps": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mlx": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          }
+        }
       }
     },
     {
@@ -267,6 +357,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "reader",
+        "runs": "Python engine or built-in engine",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mlx": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          }
+        }
       }
     },
     {
@@ -295,6 +403,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "reader",
+        "runs": "Python engine or built-in engine",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mlx": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          }
+        }
       }
     },
     {
@@ -337,6 +463,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "training",
+        "runs": "Python engine or built-in engine",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mlx": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          }
+        }
       }
     },
     {
@@ -449,6 +593,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "jlens",
+        "runs": "Python engine only",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mlx": {
+            "status": "unsupported",
+            "label": "no native implementation"
+          }
+        }
       }
     },
     {
@@ -519,6 +681,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "sae-import",
+        "runs": "Python engine only",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mlx": {
+            "status": "unsupported",
+            "label": "no native implementation"
+          }
+        }
       }
     },
     {
@@ -547,6 +727,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-cpu",
+        "runs": "CPU only",
+        "backends": {
+          "cuda": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mps": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mlx": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          }
+        }
       }
     },
     {
@@ -582,6 +780,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-model",
+        "runs": "Python engine only",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mlx": {
+            "status": "unsupported",
+            "label": "no native implementation"
+          }
+        }
       }
     },
     {
@@ -617,6 +833,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-model",
+        "runs": "Python engine only",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mlx": {
+            "status": "unsupported",
+            "label": "no native implementation"
+          }
+        }
       }
     },
     {
@@ -652,6 +886,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-cpu",
+        "runs": "CPU only",
+        "backends": {
+          "cuda": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mps": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mlx": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          }
+        }
       }
     },
     {
@@ -687,6 +939,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-model",
+        "runs": "Python engine only",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mlx": {
+            "status": "unsupported",
+            "label": "no native implementation"
+          }
+        }
       }
     },
     {
@@ -722,6 +992,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-cpu",
+        "runs": "CPU only",
+        "backends": {
+          "cuda": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mps": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mlx": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          }
+        }
       }
     },
     {
@@ -757,6 +1045,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-cpu",
+        "runs": "CPU only",
+        "backends": {
+          "cuda": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mps": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mlx": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          }
+        }
       }
     },
     {
@@ -799,6 +1105,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "campaign",
+        "runs": "Python engine only, on CUDA; MPS not inventoried",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "notInventoried",
+            "label": "not inventoried; inspect owner"
+          },
+          "mlx": {
+            "status": "unsupported",
+            "label": "no native implementation"
+          }
+        }
       }
     },
     {
@@ -834,6 +1158,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "jspace",
+        "runs": "Python engine only",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mlx": {
+            "status": "unsupported",
+            "label": "no native implementation"
+          }
+        }
       }
     },
     {
@@ -869,6 +1211,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-model",
+        "runs": "Python engine only",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mlx": {
+            "status": "unsupported",
+            "label": "no native implementation"
+          }
+        }
       }
     },
     {
@@ -904,6 +1264,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-cpu",
+        "runs": "CPU only",
+        "backends": {
+          "cuda": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mps": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mlx": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          }
+        }
       }
     },
     {
@@ -939,6 +1317,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-cpu",
+        "runs": "CPU only",
+        "backends": {
+          "cuda": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mps": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mlx": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          }
+        }
       }
     },
     {
@@ -974,6 +1370,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-cpu",
+        "runs": "CPU only",
+        "backends": {
+          "cuda": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mps": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mlx": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          }
+        }
       }
     },
     {
@@ -1002,6 +1416,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-cpu",
+        "runs": "CPU only",
+        "backends": {
+          "cuda": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mps": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mlx": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          }
+        }
       }
     },
     {
@@ -1037,6 +1469,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-model",
+        "runs": "Python engine only",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mlx": {
+            "status": "unsupported",
+            "label": "no native implementation"
+          }
+        }
       }
     },
     {
@@ -1072,6 +1522,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-model",
+        "runs": "Python engine only",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mlx": {
+            "status": "unsupported",
+            "label": "no native implementation"
+          }
+        }
       }
     },
     {
@@ -1114,6 +1582,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-cpu",
+        "runs": "CPU only",
+        "backends": {
+          "cuda": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mps": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mlx": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          }
+        }
       }
     },
     {
@@ -1149,6 +1635,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-cpu",
+        "runs": "CPU only",
+        "backends": {
+          "cuda": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mps": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mlx": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          }
+        }
       }
     },
     {
@@ -1184,6 +1688,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-model",
+        "runs": "Python engine only",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mlx": {
+            "status": "unsupported",
+            "label": "no native implementation"
+          }
+        }
       }
     },
     {
@@ -1213,6 +1735,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "probe-library",
+        "runs": "CPU only",
+        "backends": {
+          "cuda": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mps": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mlx": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          }
+        }
       }
     },
     {
@@ -1248,6 +1788,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-model",
+        "runs": "Python engine only",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mlx": {
+            "status": "unsupported",
+            "label": "no native implementation"
+          }
+        }
       }
     },
     {
@@ -1283,6 +1841,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-cpu",
+        "runs": "CPU only",
+        "backends": {
+          "cuda": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mps": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mlx": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          }
+        }
       }
     },
     {
@@ -1318,6 +1894,24 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-cpu",
+        "runs": "CPU only",
+        "backends": {
+          "cuda": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mps": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          },
+          "mlx": {
+            "status": "notApplicable",
+            "label": "CPU / no backend execution"
+          }
+        }
       }
     },
     {
@@ -1353,7 +1947,255 @@
         "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
         "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
         "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-model",
+        "runs": "Python engine only",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mlx": {
+            "status": "unsupported",
+            "label": "no native implementation"
+          }
+        }
       }
     }
-  ]
+  ],
+  "whereItRuns": {
+    "source": "docs/substrate-capabilities.json",
+    "statuses": {
+      "implementedUnqualified": "implemented; comparison unqualified",
+      "partialUnqualified": "partial; comparison unqualified",
+      "notApplicable": "CPU / no backend execution",
+      "unsupported": "no native implementation",
+      "notInventoried": "not inventoried; inspect owner",
+      "qualified": "qualified only within linked evidence"
+    },
+    "computeChoices": [
+      {
+        "id": "mac-quick-start",
+        "title": "This Mac, quick start",
+        "shortTitle": "Quick start",
+        "engine": "the engine built into this app",
+        "backends": [
+          "mlx"
+        ],
+        "computeSubstrate": "local-mlx"
+      },
+      {
+        "id": "mac-full-capabilities",
+        "title": "This Mac, full capabilities",
+        "shortTitle": "Full capabilities",
+        "engine": "the Python engine on this Mac",
+        "backends": [
+          "mps"
+        ],
+        "computeSubstrate": "cluster",
+        "computeLocation": "this-mac"
+      },
+      {
+        "id": "another-machine",
+        "title": "Another machine",
+        "shortTitle": "Another machine",
+        "engine": "the Python engine on the machine you connect to",
+        "backends": [
+          "cuda",
+          "mps"
+        ],
+        "computeSubstrate": "cluster",
+        "computeLocation": "another-machine"
+      }
+    ],
+    "studyFeatures": [
+      {
+        "id": "probeMeasurements",
+        "label": "Probe measurements",
+        "phrase": "probe measurements",
+        "plural": true,
+        "manifestKey": "probeMeasurements",
+        "backends": {
+          "cuda": "implementedUnqualified",
+          "mps": "implementedUnqualified",
+          "mlx": "unsupported"
+        },
+        "runsOn": {
+          "mac-quick-start": false,
+          "mac-full-capabilities": true,
+          "another-machine": true
+        },
+        "advisories": {
+          "mac-quick-start": "This study declares probe measurements. This workspace runs studies on “This Mac, quick start”, and the engine built into this app has no native implementation of them, so a run there will stop. Designing and freezing the study are not affected. “This Mac, full capabilities” or “Another machine” can run them."
+        }
+      },
+      {
+        "id": "interventionPolicies",
+        "label": "Agents with intervention policies",
+        "phrase": "agents with intervention policies",
+        "plural": true,
+        "manifestKey": "variantConditions[].artifact.interventionPolicies",
+        "backends": {
+          "cuda": "implementedUnqualified",
+          "mps": "implementedUnqualified",
+          "mlx": "unsupported"
+        },
+        "runsOn": {
+          "mac-quick-start": false,
+          "mac-full-capabilities": true,
+          "another-machine": true
+        },
+        "advisories": {
+          "mac-quick-start": "This study declares agents with intervention policies. This workspace runs studies on “This Mac, quick start”, and the engine built into this app has no native implementation of them, so a run there will stop. Designing and freezing the study are not affected. “This Mac, full capabilities” or “Another machine” can run them."
+        }
+      },
+      {
+        "id": "saeLatentArms",
+        "label": "SAE latent arms",
+        "phrase": "SAE latent arms",
+        "plural": true,
+        "manifestKey": "saeLatentConditions",
+        "backends": {
+          "cuda": "implementedUnqualified",
+          "mps": "implementedUnqualified",
+          "mlx": "unsupported"
+        },
+        "runsOn": {
+          "mac-quick-start": false,
+          "mac-full-capabilities": true,
+          "another-machine": true
+        },
+        "advisories": {
+          "mac-quick-start": "This study declares SAE latent arms. This workspace runs studies on “This Mac, quick start”, and the engine built into this app has no native implementation of them, so a run there will stop. Designing and freezing the study are not affected. “This Mac, full capabilities” or “Another machine” can run them."
+        }
+      },
+      {
+        "id": "jlensReadout",
+        "label": "J-lens readout",
+        "phrase": "a J-lens readout",
+        "plural": false,
+        "manifestKey": "jlensReadout",
+        "backends": {
+          "cuda": "implementedUnqualified",
+          "mps": "implementedUnqualified",
+          "mlx": "unsupported"
+        },
+        "runsOn": {
+          "mac-quick-start": false,
+          "mac-full-capabilities": true,
+          "another-machine": true
+        },
+        "advisories": {
+          "mac-quick-start": "This study declares a J-lens readout. This workspace runs studies on “This Mac, quick start”, and the engine built into this app has no native implementation of it, so a run there will stop. Designing and freezing the study are not affected. “This Mac, full capabilities” or “Another machine” can run it."
+        }
+      }
+    ],
+    "activities": [
+      {
+        "id": "chat",
+        "activity": "Chat with a model and try a steering vector",
+        "runsOn": {
+          "mac-quick-start": true,
+          "mac-full-capabilities": true,
+          "another-machine": true
+        }
+      },
+      {
+        "id": "vector",
+        "activity": "Build a concept vector from example texts",
+        "runsOn": {
+          "mac-quick-start": true,
+          "mac-full-capabilities": true,
+          "another-machine": true
+        }
+      },
+      {
+        "id": "study",
+        "activity": "Run a study that compares a model with and without steering",
+        "runsOn": {
+          "mac-quick-start": true,
+          "mac-full-capabilities": true,
+          "another-machine": true
+        }
+      },
+      {
+        "id": "multi-agent",
+        "activity": "Run a scenario in which several agents take turns",
+        "runsOn": {
+          "mac-quick-start": true,
+          "mac-full-capabilities": true,
+          "another-machine": true
+        }
+      },
+      {
+        "id": "optimize",
+        "activity": "Search for the best place and strength to steer",
+        "runsOn": {
+          "mac-quick-start": true,
+          "mac-full-capabilities": true,
+          "another-machine": true
+        }
+      },
+      {
+        "id": "adapter",
+        "activity": "Train an adapter",
+        "runsOn": {
+          "mac-quick-start": true,
+          "mac-full-capabilities": true,
+          "another-machine": true
+        }
+      },
+      {
+        "id": "probes",
+        "activity": "Probes and intervention policies",
+        "runsOn": {
+          "mac-quick-start": false,
+          "mac-full-capabilities": true,
+          "another-machine": true
+        }
+      },
+      {
+        "id": "optvec",
+        "activity": "Trained steering vectors (OptVec)",
+        "runsOn": {
+          "mac-quick-start": false,
+          "mac-full-capabilities": true,
+          "another-machine": true
+        }
+      },
+      {
+        "id": "jlens",
+        "activity": "Jacobian lens: import or fit a lens, and derive token directions",
+        "runsOn": {
+          "mac-quick-start": false,
+          "mac-full-capabilities": true,
+          "another-machine": true
+        }
+      },
+      {
+        "id": "sae",
+        "activity": "Import a feature from a sparse autoencoder (SAE)",
+        "runsOn": {
+          "mac-quick-start": false,
+          "mac-full-capabilities": true,
+          "another-machine": true
+        }
+      },
+      {
+        "id": "battery",
+        "activity": "Standalone capability checks",
+        "runsOn": {
+          "mac-quick-start": false,
+          "mac-full-capabilities": true,
+          "another-machine": true
+        }
+      }
+    ],
+    "qualifiedAnywhere": false
+  }
 }

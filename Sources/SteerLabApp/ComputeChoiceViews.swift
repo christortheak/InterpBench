@@ -92,23 +92,35 @@ struct ComputeGuideSheet: View {
         }
     }
 
+    /// One column per choice. The rows and every mark come from the shipped
+    /// science catalog (`ComputeGuide.rows`), the same declarations behind
+    /// `science list` on both command lines; this view only lays them out.
     private var table: some View {
         GroupBox("What each one can do") {
-            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
-                GridRow {
-                    Text("").gridColumnAlignment(.leading)
-                    Text("Quick start").font(.caption.weight(.semibold))
-                    Text("Python engine").font(.caption.weight(.semibold))
-                }
-                ForEach(ComputeGuide.rows) { row in
+            VStack(alignment: .leading, spacing: 8) {
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
                     GridRow {
-                        Text(row.activity)
-                            .font(.callout)
-                            .fixedSize(horizontal: false, vertical: true)
-                        mark(row.quickStart)
-                        mark(row.pythonEngine)
+                        Text("").gridColumnAlignment(.leading)
+                        ForEach(ComputeChoice.allCases) { choice in
+                            Text(ComputeGuide.columnTitle(choice))
+                                .font(.caption.weight(.semibold))
+                        }
+                    }
+                    ForEach(ComputeGuide.rows) { row in
+                        GridRow {
+                            Text(row.activity)
+                                .font(.callout)
+                                .fixedSize(horizontal: false, vertical: true)
+                            ForEach(ComputeChoice.allCases) { choice in
+                                mark(row.runs(on: choice))
+                            }
+                        }
                     }
                 }
+                Text(ComputeGuide.tableNote)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(6)
             .frame(maxWidth: .infinity, alignment: .leading)

@@ -2958,9 +2958,9 @@ steerlab-cli science report <run-folder-or-report.json> [--out <file>]
 |---|---|
 | `authoring prompt` | Emit the generation prompt for one kind of missing study data, with its audit battery as numbers. |
 | `authoring study` | Emit the study interview for one intent (conceptStudy, agentComparison, or multiAgent): what to ask the researcher, and how the answers become a reviewed study pack. The app uses the same interview. |
-| `science list` | List shipped methods, supported operation interfaces and engine restrictions; does not execute. With --brief, return a short index instead: ids, titles, and one line of purpose each. |
+| `science list` | List shipped methods, supported operation interfaces and engine restrictions; does not execute. With --brief, return a short index instead: ids, titles, one line of purpose each, and where each operation runs. |
 | `science guide` | Read the shared method guide, dataset schemas and coworker/reviewer instructions. |
-| `science operation` | Inspect exact public execution paths, outputs and restrictions for one operation. |
+| `science operation` | Inspect exact public execution paths, outputs, restrictions, and where it runs on each backend for one operation. |
 | `science evidence-analyze` | Compare retained probe readings and requested/applied policy actions in a run. |
 | `science policy-list` | List saved intervention policies. |
 | `science policy-inspect` | Inspect a policy and its exact input bindings. |

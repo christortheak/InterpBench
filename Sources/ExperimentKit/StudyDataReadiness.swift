@@ -25,6 +25,9 @@ public struct DataRequirement: Identifiable, Sendable, Equatable {
         case numericParser
         case exclusionRules
         case jlensReadout
+        /// Not a file: whether the workspace's compute choice can run what
+        /// the study declares (`ComputeLimits`). Never a blocker.
+        case computeChoice
     }
 
     public enum Status: String, Sendable, Codable {
@@ -662,6 +665,17 @@ public enum StudyDataReadiness {
                 manifest: manifest,
                 runsOnBuiltInEngine:
                     WorkspaceCompute.resolved(root: workspaceRoot) == .localMLX))
+
+        // Whether the workspace's compute choice can run what the study
+        // declares (probe measurements, agents with intervention policies,
+        // SAE latent arms, a J-lens readout), from the shipped catalog. Only
+        // for a study that declares one, and never a blocker: said here so
+        // the researcher learns while designing, not when a run stops.
+        if let compute = ComputeLimits.requirement(
+            for: manifest, choice: ComputeLimits.workspaceChoice(root: workspaceRoot))
+        {
+            rows.append(compute)
+        }
 
         return rows
     }

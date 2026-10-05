@@ -19,6 +19,25 @@ researcher. Ask about unresolved scientific decisions; obtain pins through
 inspection/import operations. When delegation is approved, give independent coworkers the method guide and
 author/reviewer prompts. A valid file is not scientific validation.
 
+## Where a method runs
+
+Every catalog operation carries an `executionProfile`: its status on each
+backend (`cuda`, `mps`, `mlx`), such as implemented, no native implementation,
+or CPU only, and a short `runs` phrase that `science list --brief` repeats.
+Implemented is not measured: a status of `qualified` is the only one backed by
+a cross-engine measurement. The full catalog's `whereItRuns` lists the three
+compute choices, the study declarations each can run, and the rows of the
+app's What Runs Where table.
+
+When a study declares something the workspace's compute choice cannot run
+(probe measurements, agents with intervention policies, SAE latent arms, or a
+J-lens readout on This Mac, quick start), `experiment verify` still verifies
+and adds a `computeCannotRun` advisory naming the choices that can. It is
+never a refusal. Tell the researcher, and let them decide where the study runs.
+
+This client advises only when the workspace has declared the quick start; its
+own runs go to the Python engine (`steerlab run <name> --runner <url>`).
+
 ## Reviewed remote submission
 
 The catalog distinguishes engine-only execution from an absent interface:

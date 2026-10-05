@@ -3698,6 +3698,16 @@ public struct ExperimentCLIRunner: Sendable {
                     sink.err("ADVISORY: \(note)\n")
                     capabilityAdvisories.append(.init(CLIAdvisory.modelCapabilities, note))
                 }
+                // Something the study declares that the workspace's compute
+                // choice cannot run: said now, while designing, and never a
+                // refusal (the run path keeps its own). Server twin: the
+                // client's `verify`.
+                for note in ComputeLimits.workspaceAdvisories(
+                    for: manifest, root: ExperimentStore.workspaceRoot)
+                {
+                    sink.err("ADVISORY: \(note)\n")
+                    capabilityAdvisories.append(.init(CLIAdvisory.computeCannotRun, note))
+                }
                 return ExperimentCLIResult(
                     message: "OK [\(manifest.status.rawValue)] — all pinned "
                         + "inputs verified",
