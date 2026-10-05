@@ -543,8 +543,28 @@ def test_an_old_mac_response_level_interval_is_shown_with_what_it_is_not(root):
     assert (row["n_pairs"], row["unit_of_analysis"]) == ("8", "response")
     page = study_results.render(results_export.read_results(str(root), STUDY))
     assert "across 8 paired responses from 4 items" in page
-    assert "is not a finding about items" in page and "(interval 1.5 to 2.5)" in page
+    assert "are not findings about items" in page and "(interval 1.5 to 2.5)" in page
     assert "too few" not in page.split("Headline outcome", 1)[1].split("</section>", 1)[0]
+
+
+def test_a_study_of_instrument_readouts_alone_is_item_level(root):
+    """A deterministic choice study records readouts and no generated
+    responses. Its items are the readouts' items, so its rows are item-level,
+    not "not established"."""
+    manifest = _manifest()
+    _write_study(root, manifest)
+    records = [{"experiment": STUDY, "condition": condition, "promptIndex": index, "promptID": item,
+                "prompt": "Pick one.", "target": "B", "targetSource": "declared",
+                "instrument": "answerTokenLogprob", "options": ["A", "B"],
+                "choiceProbability": {"A": 0.25, "B": 0.75}, "logOdds": {"A": -1.5, "B": 1.5},
+                "selected": "B", "margin": 3.0, "temperature": 0.0}
+               for condition in ("baseline", "formal") for index, item in enumerate(ITEMS)]
+    _write_run(root, manifest, records)
+    _write_mac_analysis(root, manifest, [{**_pooled("formal", len(ITEMS), 0.5, 1.5), "metric": "choiceLogOdds"}])
+    result = _export(root)
+    [row] = _table(result, "effects.csv")
+    assert (row["unit_of_analysis"], row["unit_of_analysis_source"]) == ("item", "engine_default")
+    assert "not established" not in _read(result, "methods.md")
 
 
 def test_a_row_the_records_cannot_place_has_an_unknown_unit(root):

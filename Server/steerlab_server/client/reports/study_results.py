@@ -192,7 +192,7 @@ class Page:
             items = row['paired_items']
             parts.append(f' from {_plural(items, "item", "items")}. These are responses, not items: the analysis '
                          'paired each response with the baseline response to the same item and seed, so its interval '
-                         'treats responses to the same item as independent and is not a finding about items')
+                         'and test treat responses to the same item as independent and are not findings about items')
         elif row['unit_resolved'] == 'unknown':
             parts.append('. The unit of these pairs is not established')
         if self.too_few(row):
@@ -505,8 +505,8 @@ class Page:
                 said = join(join(*[code(unit) for unit in units], sep=', '), ', as the analysis recorded.')
             elif how == 'engine_default':
                 said = ('the item, with an item’s samples averaged within each condition. This is the engines’ '
-                        'documented default; the analysis did not stamp the unit itself. The run’s records agree: no '
-                        'such row counts more pairs than the items paired in the run.')
+                        'documented default; the analysis did not stamp the unit itself. The run’s records are '
+                        'consistent with it: no such row counts more pairs than the items paired in the run.')
             elif how == 'inferred_from_records':
                 said = 'the response, not the item. ' + source.RESPONSE_UNIT_EXPLANATION
             else:

@@ -29,6 +29,11 @@ struct DiagnosticLifecycleSheet: View {
     /// as a readable page instead of being read as JSON below.
     @State private var evidenceDirectory: URL?
     @State private var sourcePlan: String?
+    /// Custom code the reviewed inputs carry, and whether the researcher said
+    /// they trust it; packaging waits for that.
+    @State private var customCode: CustomCodeNotice.DiagnosticReview?
+    @State private var trustsCustomCode = false
+    @State private var showCustomCode = false
     @State private var stagedRequest: JSONValue?
     @State private var gpuOptions: ScientificGPUPlacement?
     @State private var gpuType = ""
@@ -107,7 +112,7 @@ struct DiagnosticLifecycleSheet: View {
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: choosingRequest ? [.json] : [.data]) { result in
             do {
                 let url = try result.get(); if url.startAccessingSecurityScopedResource() { scopedURLs.append(url) }
-                if choosingRequest { requestFile = url.path; sourcePlan = nil; inputArchiveFile = ""; inputArchiveHash = ""; stagedRequest = nil; executionPlan = nil }
+                if choosingRequest { requestFile = url.path; sourcePlan = nil; customCode = nil; trustsCustomCode = false; inputArchiveFile = ""; inputArchiveHash = ""; stagedRequest = nil; executionPlan = nil }
                 else { archiveFile = url.path; archiveHash = "" }
             } catch { output = error.localizedDescription }
         }
@@ -145,19 +150,23 @@ struct DiagnosticLifecycleSheet: View {
                 HStack(spacing: 8) {
                     Button("Review inputs") { perform {
                         let result = try await workspace("input-plan", ["requestFile": .string(requestFile)])
-                        sourcePlan = string(result, "planSHA256"); show(result)
+                        sourcePlan = string(result, "planSHA256"); customCode = CustomCodeNotice.DiagnosticReview(plan: result)
+                        trustsCustomCode = false; show(result)
                     } }.disabled(requestFile.isEmpty)
                         .help("hash every input the request names and show the plan")
                     Button("Package reviewed inputs") { perform {
                         guard let sourcePlan else { return }
                         let path = root.appending(path: ".steerlab/diagnostic-outgoing/" + UUID().uuidString + ".tar.gz").path
-                        let result = try await workspace("package", ["requestFile": .string(requestFile), "planSHA256": .string(sourcePlan), "archivePath": .string(path)])
+                        var payload: [String: JSONValue] = ["requestFile": .string(requestFile), "planSHA256": .string(sourcePlan), "archivePath": .string(path)]
+                        if let customCode, trustsCustomCode { payload["customCodeSHA256"] = .string(customCode.acknowledgement) }
+                        let result = try await workspace("package", payload)
                         inputArchiveFile = path; inputArchiveHash = string(result, "bundleSha256") ?? ""; stagedRequest = nil; executionPlan = nil; show(result)
-                    } }.disabled(sourcePlan == nil)
+                    } }.disabled(sourcePlan == nil || (customCode != nil && !trustsCustomCode))
                         .help("write the reviewed inputs into one archive under "
                             + ".steerlab/diagnostic-outgoing/, pinned to the plan hash")
                 }
             }
+            if let customCode { customCodeNotice(customCode) }
             if let client {
                 LabeledContent("On the server") {
                     HStack(spacing: 8) {
@@ -383,6 +392,32 @@ struct DiagnosticLifecycleSheet: View {
     }
 
     /// A wrapping caption row: never truncated, never clipped.
+    /// The custom code the reviewed inputs carry: the notice, each policy and
+    /// its SHA-256, the code itself, and the researcher's own decision. The
+    /// study page's notice (`CustomCodeNoticeSection`), for a diagnostic.
+    private func customCodeNotice(_ review: CustomCodeNotice.DiagnosticReview) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(review.notice, systemImage: "exclamationmark.shield").foregroundStyle(.orange)
+            ForEach(review.pending, id: \.sha256) { row in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(row.policyNames.isEmpty ? "Policy without a name" : row.policyNames.joined(separator: ", "))
+                    Text("SHA-256 \(row.sha256)").font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+            }
+            DisclosureGroup("Show the code", isExpanded: $showCustomCode) {
+                ForEach(review.pending, id: \.sha256) { row in
+                    ScrollView(.horizontal) {
+                        Text(row.sourceText).font(.caption.monospaced()).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            Toggle("I have read this code and trust its source", isOn: $trustsCustomCode)
+                .help("Packaging then records your account name, each SHA-256, and the time in "
+                    + "\(CustomCodeNotice.fileName) in this workspace, as acknowledging a study's code does.")
+        }
+    }
+
     private func caption(_ text: String) -> some View {
         Text(text).font(.caption).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)

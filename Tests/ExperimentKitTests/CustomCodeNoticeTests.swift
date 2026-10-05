@@ -344,4 +344,25 @@ struct CustomCodeNoticeTests {
             #expect(packaged == 2)
         }
     }
+
+    /// The app's diagnostic sheet reads the plan's `customCode` block: the
+    /// notice, the providers still to acknowledge, and the value that
+    /// acknowledges them when the inputs are packaged.
+    @Test func aDiagnosticPlanNamesTheCodeStillToAcknowledge() throws {
+        func row(_ sha256: String, acknowledged: Bool) -> JSONValue {
+            .object(["sha256": .string(sha256), "policyNames": .array([.string("expert")]),
+                     "sourceText": .string("def decide(context):\n    return []\n"), "acknowledged": .bool(acknowledged)])
+        }
+        let plan: JSONValue = .object(["planSHA256": .string("p"), "customCode": .object([
+            "notice": .string("This diagnostic's inputs contain custom code."),
+            "providers": .array([row("a", acknowledged: false), row("b", acknowledged: true), row("c", acknowledged: false)])])])
+        let review = try #require(CustomCodeNotice.DiagnosticReview(plan: plan))
+        #expect(review.notice == "This diagnostic's inputs contain custom code.")
+        #expect(review.pending.map(\.sha256) == ["a", "c"] && review.acknowledgement == "a,c")
+        #expect(review.pending.first?.policyNames == ["expert"])
+        #expect(CustomCodeNotice.DiagnosticReview(plan: .object(["planSHA256": .string("p")])) == nil)
+        // Once everything is acknowledged the plan's notice is null: nothing to ask.
+        let done: JSONValue = .object(["customCode": .object(["notice": .null, "providers": .array([row("a", acknowledged: true)])])])
+        #expect(CustomCodeNotice.DiagnosticReview(plan: done) == nil)
+    }
 }

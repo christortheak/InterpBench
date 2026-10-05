@@ -400,3 +400,38 @@ public enum CustomCodeNotice {
                               workspaceRoot: workspaceRoot, action: action)
     }
 }
+
+extension CustomCodeNotice {
+    /// The custom code a diagnostic input plan reports (`customCode` in the
+    /// plan `science input-plan` returns; Python owner: `diagnostic_inputs`),
+    /// as the app's diagnostic sheet shows it. Nil when the inputs carry none,
+    /// or when everything they carry is already acknowledged.
+    public struct DiagnosticReview: Sendable, Equatable {
+        public let notice: String
+        public let pending: [Status]
+
+        /// The `--custom-code-sha256` value (and `customCodeSHA256` field) that
+        /// acknowledges every pending provider when the inputs are packaged.
+        public var acknowledgement: String { pending.map(\.sha256).joined(separator: ",") }
+
+        public init?(plan: JSONValue) {
+            guard case .object(let object) = plan, case .object(let block)? = object["customCode"],
+                  case .string(let notice)? = block["notice"], case .array(let rows)? = block["providers"]
+            else { return nil }
+            let pending: [Status] = rows.compactMap { row in
+                guard case .object(let row) = row, case .string(let sha256)? = row["sha256"],
+                      case .string(let source)? = row["sourceText"], row["acknowledged"] != .bool(true)
+                else { return nil }
+                var names: [String] = []
+                if case .array(let values)? = row["policyNames"] {
+                    names = values.compactMap { if case .string(let name) = $0 { return name } else { return nil } }
+                }
+                return Status(sha256: sha256, policyNames: names, sourceText: source,
+                              acknowledgedAt: nil, acknowledgedBy: nil)
+            }
+            guard !pending.isEmpty else { return nil }
+            self.notice = notice
+            self.pending = pending
+        }
+    }
+}

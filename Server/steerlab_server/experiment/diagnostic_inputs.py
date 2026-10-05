@@ -3,9 +3,11 @@ from pathlib import Path
 import json
 from . import diagnostic_archives as archives
 
-#: A JSON input larger than this is not read for custom code: agents and
-#: policies are small, and a large JSON file is data (a corpus, a lens table).
-_CODE_SCAN_BYTES = 16 * 1024 * 1024
+#: Every provider holds its code under ``sourceText``, so a file without those
+#: bytes carries none. Searched in every input that starts as JSON, whatever
+#: its name; parsed only where found, up to this size, and refused above it.
+_PROVIDER_MARK = b'sourceText'
+_CODE_PARSE_BYTES = 256 * 1024 * 1024
 
 
 class CustomCodeRefusal(archives.Refusal):
@@ -18,23 +20,68 @@ class CustomCodeRefusal(archives.Refusal):
         self.repair_action = repair_action
 
 
+def _may_carry_code(path):
+    """Whether a file could hold a provider a JSON reader would load: it starts
+    as JSON (after whitespace or a byte-order mark) and contains the mark. A
+    streaming search, so a large input is read once and never held."""
+    size = 1024 * 1024
+    with open(path, 'rb') as handle:
+        chunk = handle.read(size)
+        body = chunk.removeprefix(b'\xef\xbb\xbf')
+        while not (body := body.lstrip(b' \t\r\n')) and chunk:   # any amount of leading whitespace
+            body = chunk = handle.read(size)
+        if body[:1] not in (b'{', b'['):
+            return False
+        tail = b''
+        while chunk:
+            if _PROVIDER_MARK in tail + chunk:
+                return True
+            tail = chunk[-len(_PROVIDER_MARK):]
+            chunk = handle.read(size)
+    return False
+
+
+def _documents(raw):
+    """The JSON documents in a file: the whole file, or else each line that
+    could hold a provider (a JSON Lines file)."""
+    try:
+        return [json.loads(raw)]
+    except ValueError:
+        pass
+    documents = []
+    for line in raw.splitlines():
+        if _PROVIDER_MARK in line:
+            try:
+                documents.append(json.loads(line))
+            except ValueError:
+                continue
+    return documents
+
+
 def _carried_code(files, root):
-    """Every expert provider in the plan's JSON input files, as
-    ``(providers, sources)`` in :func:`custom_code.providers` shape: the code
-    an execution copy of these inputs would run."""
+    """Every expert provider in the plan's input files, as ``(providers,
+    sources)`` in :func:`custom_code.providers` shape: the code an execution
+    copy of these inputs could run. Any file that starts as JSON is checked,
+    whatever its name; one too large to check is refused, never skipped."""
     from . import custom_code
     root = Path(root).resolve()
     names, sources = {}, {}
     for entry in files:
-        if not entry['path'].endswith('.json') or entry.get('bytes', 0) > _CODE_SCAN_BYTES:
-            continue
+        path = root / entry['path']
         try:
-            document = json.loads((root / entry['path']).read_bytes())
-        except (OSError, ValueError):
+            if not _may_carry_code(path):
+                continue
+        except OSError:
             continue
-        for provider in custom_code.providers(document):
-            names.setdefault(provider['sha256'], set()).update(provider['policyNames'])
-        sources.update(custom_code.provider_sources(document))
+        if entry.get('bytes', 0) > _CODE_PARSE_BYTES:
+            raise CustomCodeRefusal(
+                f"The diagnostic was not packaged: {entry['path']} may hold custom code, and at "
+                f"{entry['bytes']} bytes it is too large to check.",
+                'Prepare a smaller input, or split the policy or agent out into its own file, then review the input plan again.')
+        for document in _documents(path.read_bytes()):
+            for provider in custom_code.providers(document):
+                names.setdefault(provider['sha256'], set()).update(provider['policyNames'])
+            sources.update(custom_code.provider_sources(document))
     return [{'sha256': digest, 'policyNames': sorted(names[digest])} for digest in sorted(names)], sources
 
 
@@ -49,7 +96,9 @@ def _custom_code_block(reviewed, root):
     try:
         seen = custom_code.acknowledged(root)
     except custom_code.CustomCodeError as exc:   # a damaged record is refused, never read as empty
-        raise CustomCodeRefusal(str(exc), exc.repair_action) from exc
+        raise CustomCodeRefusal(
+            str(exc), f'Restore {custom_code.FILENAME} from the workspace history (it is an ordinary tracked '
+            'file), or move it aside; then review the input plan again and acknowledge the code it shows.') from exc
     rows = [{**row, 'sourceText': sources[row['sha256']], 'acknowledged': row['sha256'] in seen,
              'acknowledgedAt': seen.get(row['sha256'], {}).get('acknowledgedAt'),
              'acknowledgedBy': seen.get(row['sha256'], {}).get('acknowledgedBy')} for row in carried]
@@ -133,11 +182,17 @@ def package(request, root, destination, expected, acknowledge=None):
     block = reviewed.get('customCode')
     named = [part.strip() for part in (acknowledge or '').split(',') if part.strip()]
     if named and not block:
-        raise archives.Refusal('These inputs carry no custom code, so there is nothing to acknowledge; package without --custom-code-sha256.')
+        raise CustomCodeRefusal('These inputs carry no custom code, so there is nothing to acknowledge.',
+                                'Package without --custom-code-sha256.')
+    carried = [row['sha256'] for row in block['providers']] if block else []
+    unknown = [digest for digest in named if digest not in carried]
+    if unknown and block['acknowledged']:
+        # A typo must never read as acknowledging code nobody looked at, even
+        # when everything these inputs carry is acknowledged already.
+        raise CustomCodeRefusal('The inputs carry no custom code with SHA-256 ' + ', '.join(unknown) + '.',
+                                'Package without --custom-code-sha256: every provider these inputs carry is acknowledged.')
     if block and not block['acknowledged']:
-        carried = [row['sha256'] for row in block['providers']]
         pending = [row for row in block['providers'] if not row['acknowledged']]
-        unknown = [digest for digest in named if digest not in carried]
         if unknown or any(row['sha256'] not in named for row in pending):
             listed = '; '.join(f"SHA-256 {row['sha256']} (policy: {', '.join(row['policyNames']) or 'unnamed'})"
                                for row in pending)

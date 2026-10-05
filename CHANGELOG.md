@@ -25,15 +25,17 @@ migration that rewrites frozen bytes.
   expert provider. `science input-plan` now shows the notice and the code,
   and `science package` packages such inputs only once the code is
   acknowledged, earlier or with `--custom-code-sha256` and the SHA-256 the
-  plan shows.
+  plan shows. In the app, the diagnostic sheet shows the code and asks before
+  packaging.
 - **Large numbers in settings an older app does not know are kept exactly.**
   A draft saved by an older app used to round integers above 2^53 in settings
   added by a newer version, such as a 64-bit seed.
-- **The client installer never deletes a running setup's work.** In a sandbox
-  that refuses process inspection, a second setup used to take the first
-  one's lock and delete its staging folder. A lock is now reclaimed only when
-  its owner is shown to be gone; otherwise the setup stops and says how to
-  clear the lock if no setup is running.
+- **The client installer no longer takes a running setup's lock when it
+  cannot check it.** In a sandbox that refuses process inspection, a second
+  setup used to take the first one's lock and delete its staging folder. A
+  lock is now reclaimed only when its owner is shown to be gone, or shown to
+  be some other program; when the owner cannot be checked, the setup stops
+  and says how to clear the lock if no setup is running.
 - **A quick card for coding assistants.** `workspace guide verbs`, on either
   command line, gives one line per task: the command, and the rule that
   applies. It is about 5 KB, where the topics an assistant used to load for a

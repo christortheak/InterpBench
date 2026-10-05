@@ -902,12 +902,13 @@ def _read_effects(text):
     return rows, source
 
 
-def _paired_items(responses):
-    """Condition -> how many distinct items have a response under both that
-    condition and the baseline in the run's records: the most pairs an
-    item-level row of that condition can count."""
+def _paired_items(records):
+    """Condition -> how many distinct items have a record (a generated response
+    or an instrument readout) under both that condition and the baseline in
+    the run: the most pairs an item-level row of that condition can count. A
+    deterministic choice study records readouts and no responses at all."""
     items = {}
-    for record in responses:
+    for record in records:
         items.setdefault(str(record.get("condition", "")), set()).add(str(record.get("promptID", "")))
     baseline = items.get("baseline", set())
     return {condition: len(ids & baseline) for condition, ids in items.items() if condition != "baseline"}
@@ -984,7 +985,7 @@ def _effects_tables(study, run_name, analysis_label, rows, source, stamped_unit)
                   "responses to the same item are not independent), or unknown.", unit)
         table.add("unit_of_analysis_source", "Where the unit comes from: recorded "
                   "when the analysis stamped it; engine_default when it did not "
-                  "and the run's records agree with the engines' rule, the item; "
+                  "and the run's records are consistent with the engines' rule, the item; "
                   "inferred_from_records when the row counts more pairs than the "
                   "items paired in the run, so it paired responses; and "
                   "not_established when the records cannot tell.", unit_source)
@@ -1365,12 +1366,12 @@ def _describe_condition(name, snapshot):
 #: the run's records show to be responses (``resolve_units``).
 RESPONSE_UNIT_EXPLANATION = (
     "These rows count more pairs than the run has paired items, so the analysis "
-    "paired each response with the baseline response to the same item and seed. "
-    "The Mac engine did this before SteerLab 0.9.7 when an item was sampled more "
-    "than once, and stamped no unit. Responses to the same item are not "
-    "independent, so these intervals are narrower than item-level intervals and "
-    "are not findings about items. The stored numbers are copied unchanged; "
-    "analyzing the run again computes item-level rows.")
+    "paired responses, not items: each response with the baseline response to the "
+    "same item and seed. That is how the Mac engine paired a study with several "
+    "samples per item before SteerLab 0.9.7, and it stamped no unit. Responses to "
+    "the same item are not independent, so these intervals and tests are likely to "
+    "understate the uncertainty, and they are not findings about items. The stored "
+    "numbers are copied unchanged; analyzing the run again computes item-level rows.")
 
 
 def unit_groups(context):
@@ -1397,8 +1398,8 @@ def unit_lines(context):
         elif source == "engine_default":
             lines.append(f"- Unit of analysis{marked}: the item, with an item's samples averaged within each "
                          "condition. This is the engines' documented default; the analysis did not stamp the "
-                         "unit itself. The run's records agree: no such row counts more pairs than the items "
-                         "paired in the run.")
+                         "unit itself. The run's records are consistent with it: no such row counts more pairs "
+                         "than the items paired in the run.")
         elif source == "inferred_from_records":
             lines.append(f"- Unit of analysis{marked}: the response, not the item. " + RESPONSE_UNIT_EXPLANATION)
         else:
@@ -2093,7 +2094,7 @@ def _collect(root, study, run_name, steps, now):
             exclusions.append(("The run's own analysis", report.get("exclusions")))
         if not isinstance(stamped_unit, str) or not stamped_unit:
             stamped_unit = None
-        resolve_units(rows, stamped_unit, _paired_items(loaded["responses"]))
+        resolve_units(rows, stamped_unit, _paired_items(loaded["responses"] + loaded["readouts"]))
         pooled, strata = _effects_tables(
             study, run_name, os.path.basename(effects_directory), rows,
             effects_source, stamped_unit)

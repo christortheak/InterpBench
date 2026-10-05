@@ -544,6 +544,41 @@ def test_inputs_carrying_custom_code_are_packaged_only_once_it_is_acknowledged(t
     assert archive.is_file()
 
 
+def test_custom_code_is_found_whatever_the_file_is_called_and_however_it_is_padded(tmp_path, monkeypatch):
+    """A reader loads a policy by its content, not its name, and up to its own
+    size limit: so the check reads every input that starts as JSON, and an
+    input it cannot check is refused rather than passed over."""
+    from steerlab_server.experiment import diagnostic_inputs
+    text = json.dumps({'name': 'expert', 'provider': {'sourceText': PROVIDER, 'sourceSHA256': PROVIDER_SHA256, 'assets': {}}})
+    (tmp_path / 'policy.txt').write_text(text)
+    (tmp_path / 'padded.json').write_text(' ' * (3 * 1024 * 1024) + text)     # past any first-bytes peek
+    (tmp_path / 'rows.jsonl').write_text('{"id": "a"}\n' + text + '\n')
+    (tmp_path / 'weights.bin').write_bytes(b'\x00' * 64 + b'sourceText')      # not JSON: no reader loads it
+    (tmp_path / 'notes.json').write_text('{"sourceText": 1}')                 # names the key, holds no provider
+    entries = [{'path': path.name, 'bytes': path.stat().st_size} for path in sorted(tmp_path.iterdir())]
+    carried, sources = diagnostic_inputs._carried_code(entries, tmp_path)
+    assert carried == [{'sha256': PROVIDER_SHA256, 'policyNames': ['expert']}]
+    assert sources == {PROVIDER_SHA256: PROVIDER}
+    for name in ('policy.txt', 'padded.json', 'rows.jsonl'):
+        found, _ = diagnostic_inputs._carried_code([e for e in entries if e['path'] == name], tmp_path)
+        assert [row['sha256'] for row in found] == [PROVIDER_SHA256], name
+    monkeypatch.setattr(diagnostic_inputs, '_CODE_PARSE_BYTES', 1024)
+    with pytest.raises(diagnostic_inputs.CustomCodeRefusal, match='too large to check'):
+        diagnostic_inputs._carried_code([e for e in entries if e['path'] == 'padded.json'], tmp_path)
+
+
+def test_a_wrong_hash_is_refused_even_once_everything_is_acknowledged(tmp_path, model):
+    from steerlab_server.experiment import diagnostic_inputs
+    draft = method_authoring.draft('instrumentation-cost', answers(tmp_path, model, provider=PROVIDER), tmp_path)
+    plan = diagnostic_inputs.plan(draft['request'], tmp_path)
+    archive = tmp_path / 'runs/cost.tar.gz'
+    diagnostic_inputs.package(draft['request'], tmp_path, archive, plan['planSHA256'], acknowledge=PROVIDER_SHA256)
+    archive.unlink()
+    with pytest.raises(diagnostic_inputs.CustomCodeRefusal, match='no custom code with SHA-256 ' + '0' * 64):
+        diagnostic_inputs.package(draft['request'], tmp_path, archive, plan['planSHA256'], acknowledge='0' * 64)
+    assert not archive.exists()
+
+
 def test_the_client_carries_the_acknowledgement_flag_and_refuses_without_it(tmp_path, model, capsys):
     from steerlab_server.experiment import diagnostic_inputs
     reviewed = answers(tmp_path, model, provider=PROVIDER)

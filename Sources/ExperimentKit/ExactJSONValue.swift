@@ -6,10 +6,11 @@ import Foundation
 /// `JSONValue` holds every number as a `Double`, which cannot represent an
 /// integer above 2^53 exactly: a 64-bit seed of 9007199254740993 written by a
 /// newer client came back from an older app's draft save as 9007199254740992.
-/// Here an integer stays an integer: `Int64` when it fits, `UInt64` above that,
-/// and only a number with a fraction or an exponent, or an integer beyond
-/// 64 bits, is a `Double`. Values are preserved, not their spelling: key order
-/// and whitespace follow the manifest writer, and `3.0` may be written `3`.
+/// Here an integer stays an integer: `Int64` when it fits, `UInt64` above that.
+/// Any other number, and an integer beyond 64 bits, is a `Double`. Values are
+/// preserved, not their spelling: key order and whitespace follow the manifest
+/// writer, a whole number written `3.0` or `1e3` is read as the integer 3 or
+/// 1000, and `-0.0` as 0.
 public enum ExactJSONValue: Codable, Sendable, Equatable {
     case string(String)
     case integer(Int64)

@@ -564,12 +564,14 @@ def _hold_lock(tmp_path, pid):
 
 
 @pytest.mark.parametrize('shell', SHELLS)
-@pytest.mark.parametrize('ps', ['exit 1\n', 'exit 0\n'], ids=['ps-refused', 'ps-silent'])
+@pytest.mark.parametrize('ps', ['exit 1\n', 'exit 0\n', 'echo "(sh)"\n'], ids=['ps-refused', 'ps-silent', 'ps-name-only'])
 def test_a_live_setup_that_cannot_be_inspected_keeps_its_lock_and_its_work(tmp_path, shell, ps):
     """A sandbox may refuse `ps`, or it may answer with nothing. Neither is
     evidence that the lock's owner is gone: the lock and the running setup's
     staging folder stay, nothing is downloaded, and the refusal says how to
-    clear the lock if no setup is running."""
+    clear the lock if no setup is running. A ps that may list a process but
+    not read its arguments prints only a bracketed name, which is no evidence
+    either."""
     folder = release(tmp_path)
     runtime, old = managed_runtime(tmp_path)
     holder = subprocess.Popen(['sleep', '60'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -578,7 +580,7 @@ def test_a_live_setup_that_cannot_be_inspected_keeps_its_lock_and_its_work(tmp_p
         result, response = install(folder, runtime, tools(tmp_path, curl=FAILING_CURL.format(status=22), ps=ps), shell)
         assert result.returncode == 65 and response['code'] == 'setupInProgress', response
         assert str(holder.pid) in response['reason'] and 'does not allow checking' in response['reason']
-        assert f'remove the folder {lock}' in response['repairAction']
+        assert f'remove the folder {lock} and its staging folder {stage}' in response['repairAction']
         assert (lock / 'owner').read_text() == record, 'a running setup lost its lock'
         assert (stage / 'partial').read_text() == 'work in progress', "a running setup's work was deleted"
         assert not (tmp_path / 'tools/curl-arguments').exists()
@@ -594,6 +596,8 @@ def test_a_lock_whose_process_number_now_belongs_to_something_else_is_reclaimed(
     in use, by a program that `ps` shows is not this installer. Process 1 runs
     under another account, so `kill -0` answers "not permitted"; that means
     running, not gone, and the inspection decides."""
+    if owner == 'another-account' and os.geteuid() == 0:
+        pytest.skip('as root every process can be signalled, so "not permitted" cannot arise')
     folder = release(tmp_path)
     runtime, old = managed_runtime(tmp_path)
     other = subprocess.Popen(['sleep', '60']) if owner == 'another-program' else None
