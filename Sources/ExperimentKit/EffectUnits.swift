@@ -96,9 +96,10 @@ extension RunResults {
             guard !text.isEmpty else { return }
             let data = Data(text.utf8)
             // Python's reader also accepts NaN, Infinity and -Infinity, which a
-            // strict JSON reader refuses, and nothing else beyond JSON: the
-            // fallback reads those three as null (the TypeScript copy's
-            // `withoutNonFinite`), never JSON5's comments or trailing commas.
+            // strict JSON reader refuses: the fallback reads those three as
+            // null (the TypeScript copy's `withoutNonFinite`), never JSON5.
+            // Foundation's reader itself is slightly laxer than Python's (a
+            // trailing comma, -NaN); the engines never write either.
             guard
                 let object = (try? JSONSerialization.jsonObject(with: data))
                     ?? (try? JSONSerialization.jsonObject(with: Data(Self.withoutNonFinite(text).utf8))),
@@ -113,21 +114,25 @@ extension RunResults {
         /// `text` with each NaN, Infinity and -Infinity outside a string read
         /// as null, so a strict reader takes the lines Python's reader takes.
         static func withoutNonFinite(_ text: String) -> String {
-            var out = "", inString = false, escaped = false
-            var rest = Substring(text)
-            while let character = rest.first {
+            // Unicode scalars, not Characters: a combining mark that opens a
+            // string would otherwise merge with its quote and invert the
+            // in-string tracking.
+            var out = String.UnicodeScalarView(), inString = false, escaped = false
+            var rest = Substring(text).unicodeScalars[...]
+            let tokens = ["-Infinity", "Infinity", "NaN"].map { Array($0.unicodeScalars) }
+            while let scalar = rest.first {
                 if inString {
-                    out.append(character); rest = rest.dropFirst()
-                    if escaped { escaped = false } else if character == "\\" { escaped = true } else if character == "\"" { inString = false }
+                    out.append(scalar); rest = rest.dropFirst()
+                    if escaped { escaped = false } else if scalar == "\\" { escaped = true } else if scalar == "\"" { inString = false }
                     continue
                 }
-                if character == "\"" { inString = true; out.append(character); rest = rest.dropFirst(); continue }
-                if let token = ["-Infinity", "Infinity", "NaN"].first(where: { rest.hasPrefix($0) }) {
-                    out += "null"; rest = rest.dropFirst(token.count); continue
+                if scalar == "\"" { inString = true; out.append(scalar); rest = rest.dropFirst(); continue }
+                if let token = tokens.first(where: { rest.starts(with: $0) }) {
+                    out.append(contentsOf: "null".unicodeScalars); rest = rest.dropFirst(token.count); continue
                 }
-                out.append(character); rest = rest.dropFirst()
+                out.append(scalar); rest = rest.dropFirst()
             }
-            return out
+            return String(out)
         }
 
         public var counts: [String: Int] {
@@ -206,6 +211,17 @@ extension RunResults {
         condition: String, n: Int, recordedUnit: String?, stampedUnit: String?,
         pairedItems: PairedItems?
     ) -> EffectUnit {
+        effectUnit(condition: condition, storedN: Double(n), recordedUnit: recordedUnit,
+                   stampedUnit: stampedUnit, pairedItems: pairedItems)
+    }
+
+    /// `effectUnit` over the pair count as the file stored it, compared with
+    /// the paired items as the Python reader compares it (8.5 pairs of 8
+    /// items are more pairs than items).
+    public static func effectUnit(
+        condition: String, storedN n: Double, recordedUnit: String?, stampedUnit: String?,
+        pairedItems: PairedItems?
+    ) -> EffectUnit {
         let items = pairedItems?.counts[condition]
         if let unit = recordedUnit ?? stampedUnit {
             return EffectUnit(unit: unit, source: .recorded, pairedItems: items)
@@ -213,7 +229,7 @@ extension RunResults {
         guard let items, items > 0, let pairedItems else {
             return EffectUnit(unit: "unknown", source: .notEstablished, pairedItems: items)
         }
-        if n <= items {
+        if n <= Double(items) {
             return EffectUnit(unit: "item", source: .engineDefault, pairedItems: items)
         }
         guard pairedItems.complete else {
@@ -235,7 +251,7 @@ extension RunResults {
         let settled = rows.map { row in
             var row = row
             row.unit = effectUnit(
-                condition: row.condition, n: row.n, recordedUnit: row.recordedUnit,
+                condition: row.condition, storedN: row.storedN ?? Double(row.n), recordedUnit: row.recordedUnit,
                 stampedUnit: stampedUnit, pairedItems: pairedItems)
             return row
         }
@@ -292,7 +308,7 @@ extension RunResults {
     }
 
     static func cachedPairedItems(generationsAt url: URL) -> [String: Int]? {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.resolvingSymlinksInPath().path),
               let size = attributes[.size] as? NSNumber, let modified = attributes[.modificationDate] as? Date
         else { return pairedItems(generationsAt: url) }
         let key = "\(url.standardizedFileURL.path)\u{1F}\(size)\u{1F}\(modified.timeIntervalSince1970)"

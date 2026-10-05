@@ -2246,6 +2246,9 @@ private struct RemoteRunDetailView: View {
         // ONE fetch pass feeds both the previews and the semantic model —
         // no double download; failures surface via remoteResultsStatus.
         let detail = await service.experiments.loadRemoteRunDetail(run: run)
+        // Another run was selected while this one loaded: its own task shows
+        // it, and this result must not land under its title.
+        guard !Task.isCancelled else { return }
         var shown = detail.previewed
         shown.sort { runFilePreviewPriority($0.file.name) < runFilePreviewPriority($1.file.name) }
         previewed = shown

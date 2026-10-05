@@ -316,6 +316,7 @@ public final class StudyResultsState {
         // for this alone. A head is a lower bound on the items, so a row it
         // cannot settle stays "not established", never guessed.
         if artifacts.generationsText == nil, artifacts.effectSizesText != nil || artifacts.reportData != nil,
+            artifacts.unitOfAnalysisData == nil,  // a stamped unit needs no records
             let fetchFromRun,
             let source = RunResults.analyzedRunName(
                 sourceRunText: fetched["source-run.txt"].map { String(decoding: $0.head.data, as: UTF8.self) },

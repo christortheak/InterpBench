@@ -53,22 +53,24 @@ const columns: ExportColumn<Effect>[] = [
   { header: "pairedItems", kind: "derived", value: (row) => unitOf(row).pairedItems, description: "How many distinct items the run's records answer under both this row's condition and the baseline, counted by the explorer from generations.jsonl. Empty when the records were not read or hold none for the condition." },
 ];
 
-/// The p-value pair for one row. A DIAGNOSTIC row (a single item's own
-/// samples) is never shown a corrected p — the engine writes none, and this
-/// says why rather than printing a bare dash next to confirmatory rows.
 /// The stored interval, or why there is none to show: one or two pairs (for
 /// paired responses, one or two items) cannot carry an interval or a test.
 /// The same rule as the headline card, the app, and the Python results page.
 const intervalText = (effect: Effect) =>
   hasTooFewIndependentPairs(effect) ? `too few ${tooFewNoun(effect)}` : `[${fmt(effect.low)}, ${fmt(effect.high)}]`;
 
+/// The p-value pair for one row. A DIAGNOSTIC row (a single item's own
+/// samples) is never shown a corrected p — the engine writes none, and this
+/// says why rather than printing a bare dash next to confirmatory rows. A row
+/// with too few independent pairs shows the stored corrected p, as the app and
+/// the Python page do, marked as not a test rather than as surviving.
 function PValues({ effect }: { effect: Effect }) {
   const diagnostic = isDiagnostic(effect);
   const tooFew = hasTooFewIndependentPairs(effect);
   return (
     <>
       <div className="numeric"><strong>{effect.p == null ? "—" : effect.p.toFixed(3)}</strong><span>{effect.p == null ? "not reported" : diagnostic ? "Wilcoxon · locator" : "Wilcoxon"}</span></div>
-      <div className="numeric"><strong>{diagnostic || tooFew || effect.q == null ? "—" : effect.q.toFixed(3)}</strong><span>{diagnostic ? "not corrected" : tooFew ? "not a test" : effect.q == null ? "not reported" : effect.q < .05 ? "survives" : "n.s."}</span></div>
+      <div className="numeric"><strong>{diagnostic || effect.q == null ? "—" : effect.q.toFixed(3)}</strong><span>{diagnostic ? "not corrected" : tooFew ? "not a test" : effect.q == null ? "not reported" : effect.q < .05 ? "survives" : "n.s."}</span></div>
     </>
   );
 }

@@ -428,4 +428,28 @@ struct EffectUnitTests {
         #expect(RunResults.pairedItems(generationsAt: file) == ["formal": 1_000])
         #expect(RunResults.pairedItems(fromJSONL: text) == ["formal": 1_000])
     }
+
+    /// The unit rule compares the stored count, as the Python reader does
+    /// (8.5 pairs of 8 items are paired responses); the minimum-pairs rule
+    /// reads its whole number toward zero, as the Python page reads the stored
+    /// value (2.5 is fewer than three, 0.5 is fewer than one).
+    @Test func aFractionalCountIsComparedAsStoredAndCountedTowardZero() {
+        let records = RunResults.PairedItems(counts: ["formal": 8], complete: true)
+        let unit = RunResults.effectUnit(condition: "formal", storedN: 8.5, recordedUnit: nil, stampedUnit: nil, pairedItems: records)
+        #expect(unit.unit == "response")
+        #expect(pairCount(2.5) == 2 && pairCount(0.5) == 0 && pairCount(3) == 3)
+        #expect(pairCount(.nan) == 0 && pairCount(-4) == 0 && pairCount(1e300) == Int.max)
+    }
+
+    /// A string that opens with a combining mark beside a NaN elsewhere on the
+    /// line: Python reads the line, so the count does too.
+    @Test func aCombiningMarkAtAStringsStartDoesNotHideTheLine() {
+        let lines = [
+            #"{"condition": "baseline", "promptID": "i", "output": "a"}"#,
+            "{\"condition\": \"formal\", \"promptID\": \"i\", \"output\": \"\u{0301}x\", \"v\": NaN}",
+        ].joined(separator: "\n")
+        #expect(RunResults.pairedItems(fromJSONL: lines) == ["formal": 1])
+        #expect(RunResults.PairedItemCounter.withoutNonFinite("{\"a\": \"\u{0301}NaN\", \"b\": NaN}")
+            == "{\"a\": \"\u{0301}NaN\", \"b\": null}")
+    }
 }

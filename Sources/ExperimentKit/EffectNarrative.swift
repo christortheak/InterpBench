@@ -562,8 +562,10 @@ public enum EffectNarrative {
                 DosePoint(
                     alpha: slot.alpha,
                     effect: row.meanDiff,
-                    ciLower: row.ciLower.isFinite ? row.ciLower : nil,
-                    ciUpper: row.ciUpper.isFinite ? row.ciUpper : nil))
+                    // One or two pairs (for paired responses, one or two
+                    // items) carry no interval: no whisker on the ladder.
+                    ciLower: hasReportableInterval(row) ? row.ciLower : nil,
+                    ciUpper: hasReportableInterval(row) ? row.ciUpper : nil))
         }
         return grouped
             .filter { Set($0.value.map(\.alpha)).count >= 2 }

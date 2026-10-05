@@ -19,6 +19,11 @@ extension RunResults {
         /// Swift calls it `metric`, the server `endpoint` — one field.
         public var metric: String
         public var n: Int
+        /// The pair count exactly as the file stored it, for the unit rule's
+        /// comparison with the paired items (the Python reader compares the
+        /// stored value). `n` is its whole number, for display and the
+        /// minimum-pairs rule. nil when the file gave none.
+        public var storedN: Double? = nil
         /// Paired mean difference vs the same-item baseline (`meanDiff` /
         /// `deltaMean`).
         public var meanDiff: Double
@@ -89,6 +94,7 @@ extension RunResults {
                 condition: condition,
                 metric: metric,
                 n: index["n"].flatMap { double(row, $0) }.map(pairCount) ?? 0,
+                storedN: index["n"].flatMap { double(row, $0) },
                 meanDiff: mean,
                 ciLower: lower,
                 ciUpper: upper,
@@ -116,7 +122,8 @@ extension RunResults {
         return EffectSizeRow(
             condition: condition,
             metric: metric,
-            n: (entry["n"] as? NSNumber)?.intValue ?? 0,
+            n: (entry["n"] as? NSNumber).map { pairCount($0.doubleValue) } ?? 0,
+            storedN: (entry["n"] as? NSNumber)?.doubleValue,
             meanDiff: mean,
             ciLower: lower,
             ciUpper: upper,
@@ -382,12 +389,12 @@ extension RunResults {
     }
 }
 
-/// A stored pair count as a whole number, never a crash. A fraction rounds up,
-/// so "more pairs than items" (against a whole number of items) reads the
-/// same as the Python reader's comparison of the stored value; a value that
-/// is not a positive finite number is no count (0); an absurdly large one is
-/// `Int.max`.
+/// A stored pair count as a whole number, never a crash: toward zero, as the
+/// minimum-pairs rule reads the stored value (2.5 is fewer than three, 0.5 is
+/// fewer than one); a value that is not a positive finite number is no count
+/// (0); an absurdly large one is `Int.max`. The unit rule compares the stored
+/// value itself (`EffectSizeRow.storedN`).
 func pairCount(_ value: Double) -> Int {
     guard value.isFinite, value > 0 else { return 0 }
-    return value >= Double(Int.max) ? Int.max : Int(value.rounded(.up))
+    return value >= Double(Int.max) ? Int.max : Int(value)
 }

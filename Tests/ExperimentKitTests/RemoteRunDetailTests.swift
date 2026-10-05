@@ -364,4 +364,37 @@ struct RemoteRunDetailTests {
         // More pairs than the source run has items: paired responses.
         #expect(units["distinct2"]?.unit == "response" && units["distinct2"]?.pairedItems == 4)
     }
+
+    /// A head of the analyzed run's records is a lower bound on its items: a
+    /// row within it is item-level, but a row beyond it is not established,
+    /// never guessed to be paired responses.
+    @Test func aTruncatedSourceRunHeadSettlesOnlyWhatItCan() async throws {
+        let effects = "condition,metric,n,meanDiff,ciLower,ciUpper,wilcoxonW,wilcoxonP,adjustedP,"
+            + "correction,stratifyBy,stratum,unit,estimand,inference\n"
+            + "formal,wordCount,4,1.0,0.5,1.5,,,,,pooled,,,,\n"
+            + "formal,distinct2,9,0.1,0.0,0.2,,,,,pooled,,,,\n"
+        let head = ["baseline", "formal"].flatMap { condition in
+            (1...4).map { #"{"condition": "\#(condition)", "promptID": "item-\#($0)", "output": "An answer."}"# }
+        }.joined(separator: "\n") + "\n"
+        let run = RemoteStampedRunRecord(
+            id: "analysis", path: "/server/analysis", files: ["effect-sizes.csv", "analysis.json"],
+            fileEntries: [RemoteRunFileEntry(name: "effect-sizes.csv", size: effects.utf8.count),
+                          RemoteRunFileEntry(name: "analysis.json", size: 30)])
+        let payload = await StudyResultsState().loadRemoteRunDetail(
+            run: run, client: nil,
+            fetcher: { name, _ in
+                switch name {
+                case "effect-sizes.csv": return RemoteRunFileHead(data: Data(effects.utf8), fileSize: effects.utf8.count, truncated: false)
+                case "analysis.json": return RemoteRunFileHead(data: Data(#"{"sourceRun": "source"}"#.utf8), truncated: false)
+                default: throw CocoaError(.fileReadNoSuchFile)
+                }
+            },
+            analyzedRunFetcher: { runID, _, _ in
+                #expect(runID == "source")  // named by analysis.json when there is no source-run.txt
+                return RemoteRunFileHead(data: Data(head.utf8), fileSize: 10 * head.utf8.count, truncated: true)
+            })
+        let units = Dictionary(uniqueKeysWithValues: try #require(payload.model?.effectSizes).map { ($0.metric, $0.unit) })
+        #expect(units["wordCount"]?.unit == "item")
+        #expect(units["distinct2"]?.unit == "unknown" && units["distinct2"]?.source == .notEstablished)
+    }
 }

@@ -5,7 +5,7 @@ import { FreezeNotice, TruncationCard } from "../components/stamps";
 import { Badge, ForestRow, NoRunSelected } from "../components/ui";
 import { DemoOverview, demoPreviewEnabled } from "../demo";
 import { findFile, runKindOf, runStatusOf } from "../lib/discovery";
-import { unitCaveat } from "../lib/effectUnits";
+import { unitCaveat, hasTooFewIndependentPairs } from "../lib/effectUnits";
 import { fmt } from "../lib/format";
 import { freezeLabel, freezeOf } from "../lib/freeze";
 import {
@@ -261,7 +261,7 @@ export function LocalOverview({ run, onNavigate }: { run: WorkspaceRun; onNaviga
           {hasConceptEvidence ? <div className="concept-preview-grid">{run.validationConcepts.slice(0, 6).map((row) => <div key={`${row.name}-${row.layer}`}><span>{row.layer == null ? "Layer —" : `Layer ${row.layer}`}</span><strong>{row.name}</strong><b>{row.calibratedAccuracy != null ? `${(row.calibratedAccuracy * 100).toFixed(0)}%` : row.accuracy != null ? `${(row.accuracy * 100).toFixed(0)}%` : "not run"}</b><small>{row.calibratedAccuracy != null ? "calibrated accuracy" : "transfer accuracy"}</small></div>)}</div> : shownEffects.length > 0 ? <>
             <div className="axis-hint"><span>Negative</span><span>No difference</span><span>Positive</span></div>
             <div className="forest">{shownEffects.map((effect) => <ForestRow key={effect.key} effect={effect} compact />)}</div>
-            <div className="legend"><span><i className="legend-dot" /> Estimate</span><span><i className="legend-line" /> Reported 95% CI</span><span>● adjusted p &lt; .05</span></div>
+            <div className="legend"><span><i className="legend-dot" /> Estimate</span><span><i className="legend-line" /> Reported 95% CI</span><span>● adjusted p &lt; .05</span>{shownEffects.some(hasTooFewIndependentPairs) && <span>No whisker: too few pairs (for paired responses, items) for an interval</span>}</div>
           </> : <div className="artifact-empty"><span>∅</span><p>This run has no readable <code>effect-sizes.csv</code>. Generation and provenance views are still available.</p></div>}
         </div>
         <aside className="card local-contents-card">
