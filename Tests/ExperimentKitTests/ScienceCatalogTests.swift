@@ -91,9 +91,12 @@ import Testing
         #expect(workflows["battery"] == nil)
         #expect(purposes["battery"] == full.methods.first { $0.id == "batteries" }?.purpose)
 
-        // The size bound: the whole document an assistant reads.
+        // The size bound: the whole document an assistant reads. It carries
+        // the workspace path, whose length varies by machine, and since wave 3
+        // a short `runs` phrase per operation saying where it runs; the
+        // relative bound below is the one that keeps it a short index.
         let document = try outcome.envelope.jsonText()
-        #expect(document.utf8.count < 12_000, "\(document.utf8.count) bytes")
+        #expect(document.utf8.count < 14_000, "\(document.utf8.count) bytes")
         let whole = await ExperimentCLIRunner(sink: .discarding).run(namespace: "science", ["list", "--json"])
         #expect(document.utf8.count * 5 < (try whole.envelope.jsonText()).utf8.count)
         // It says where to read next.

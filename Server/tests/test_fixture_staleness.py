@@ -380,6 +380,12 @@ def test_every_committed_fixture_has_a_staleness_test():
         # re-run with one agent failing to load; the written evidence file is
         # compared with the committed one). Read by BatteryEvidenceRowTests.
         "validation-evidence-error-row.json",
+        # Checked inline in test_marker_scoring.py (both engines' tokenization
+        # against the committed cases) and ScoringTests.swift.
+        "marker-scoring.json",
+        # Checked inline in test_panel_transcript_analysis.py (analyze re-run
+        # over the committed panel records) and PanelTranscriptAnalysisTests.swift.
+        "panel-transcript-analysis.json",
         # Hand-authored contract (not regenerated from either engine — it
         # states the INTENDED verdicts, SCI-04, 2026-09-05), checked inline on
         # both sides: test_study_stats.py

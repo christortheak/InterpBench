@@ -3459,8 +3459,12 @@ public enum SweepSpecForm {
         probe.objective = .init(metric: SweepSelectionRule.implementedMetrics[0])
         do {
             _ = try SweepSelectionRule.resolve(probe)
+        } catch let error as ExperimentError {
+            // The engine's own validation text, word for word: it names
+            // fields such as `logprobShift`, which sentence casing would mangle.
+            return .invalid(error.reason)
         } catch {
-            return .invalid(RefusalPresentation.plainReason(error))
+            return .invalid("\(error)")
         }
         return SweepSelectionRule.implementedMetrics.contains(metric)
             ? .valid
@@ -3508,8 +3512,10 @@ public enum SweepSpecForm {
                     criterion: criterion, spec: selection, manifest: manifest,
                     hasClaudeCredential: true, hasOpenRouterCredential: true,
                     root: root)
+            } catch let error as ExperimentError {
+                return error.reason
             } catch {
-                return RefusalPresentation.plainReason(error)
+                return "\(error)"
             }
         default:
             break
@@ -3624,8 +3630,10 @@ public enum SweepSpecForm {
                     maxOptions: optionCounts.max() ?? 0,
                     explicitTargetRows: explicit,
                     defaultedTargetRows: rows.count - explicit))
+        } catch let error as ExperimentError {
+            return .problem(error.reason)
         } catch {
-            return .problem(RefusalPresentation.plainReason(error))
+            return .problem("\(error)")
         }
     }
 
