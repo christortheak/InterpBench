@@ -20,8 +20,59 @@ VERB_SPECS = (
              value_flags=frozenset({"--artifact", "--artifact-sha256", "--sidecar-sha256",
                                     "--manifest-sha256", "--source-concept", "--eval-run"}),
              required_flags=frozenset({"--artifact", "--artifact-sha256", "--sidecar-sha256", "--manifest-sha256"})),
+    # The Mac verb's shape, plus the reviewed-draft digest every client edit
+    # carries. The rubric's SHA-256 is computed from its bytes, never typed.
+    VerbSpec("experiment", "pin-rubric", positional="<name> <rubric>",
+             purpose="Pin a judge rubric file (a workspace path, usually under prompts/rubrics/) into a reviewed draft, "
+                     "computing its SHA-256 from the file; with --judges, declare the judge panel "
+                     "(<name>:<kind>[:<model>[:<provider>]][,…]) and with --judge-pin a local judge's "
+                     "<judge-name>=<revision>[:<dtype>].",
+             value_flags=frozenset({"--judges", "--judge-pin", "--manifest-sha256"}),
+             required_flags=frozenset({"--manifest-sha256"})),
 )
 EXPERIMENT_VERBS = frozenset(s.verb for s in VERB_SPECS if s.family == "experiment")
+
+
+def _pin_rubric(invocation) -> CLIResult:
+    """``experiment pin-rubric``: the one verb here whose flag repeats
+    (``--judge-pin``, once per local judge, as on the Mac)."""
+    from ..cli_envelope import advisory
+    from ..client_cli import ClientRefusal
+    from ..experiment import manifest_declaration_policy as policy
+    from . import authoring_files as files, judge_rubrics
+
+    args = invocation.positionals
+    repeated = sorted(flag for flag, values in invocation.flags.items()
+                      if flag != "--judge-pin" and len(values) != 1)
+    if len(args) != 2 or invocation.one("--manifest-sha256") is None or repeated:
+        raise ClientRefusal(
+            code="usage", reason="experiment pin-rubric needs <name> <rubric> and --manifest-sha256, each once.",
+            repair_action="steerlab experiment pin-rubric <name> prompts/rubrics/<file>.md "
+                          "[--judges <name>:<kind>[,…]] --manifest-sha256 <manifestFileSHA256 from: "
+                          "steerlab experiment inspect <name>>")
+    name, rubric = args
+    try:
+        judges = (judge_rubrics.parse_judges(invocation.one("--judges"), name)
+                  if invocation.one("--judges") is not None else None)
+        pins = [judge_rubrics.parse_judge_pin(raw, name) for raw in invocation.all("--judge-pin")]
+        payload = judge_rubrics.pin(name, rubric, judges=judges, judge_pins=pins,
+                                    expected=invocation.one("--manifest-sha256"), root=files.root_path())
+    except judge_rubrics.JudgeSpecError as exc:
+        raise ClientRefusal(code="usage", reason=exc.reason, repair_action=exc.repair_action) from exc
+    lines = [f"pinned judge rubric {payload['judgeRubricFile']} @ {payload['judgeRubricHash'][:12]}…"]
+    if payload["judges"]:
+        lines.append("judges: " + ", ".join(
+            f"{j['name']} ({j['kind']})" + (f" @ {j['revision'][:12]}…" if j.get("revision") else "")
+            + (f" {j['dtype']}" if j.get("dtype") else "") for j in payload["judges"]))
+    notes = payload.get("inheritedFromExistingDeclaration") or []
+    if notes:
+        lines.append("kept from the panel already declared: " + "; ".join(notes))
+    print("\n".join(lines))
+    # A one-judge panel is a legal design; the advisory says what it costs.
+    advisories = ([advisory("judgePanelTooSmall", policy.SINGLE_JUDGE_PANEL_ADVISORY)]
+                  if len(payload["judges"]) == 1 else [])
+    return CLIResult(message=lines[0], changed=payload["changed"], payload=payload,
+                     state="okWithAdvisories" if advisories else "ready", advisories=advisories)
 
 
 def run(invocation) -> CLIResult:
@@ -29,6 +80,8 @@ def run(invocation) -> CLIResult:
     from . import authoring_files as files, study_inputs, study_packs
 
     spec = invocation.spec
+    if spec.verb == "pin-rubric":
+        return _pin_rubric(invocation)
     args = invocation.positionals
     one = invocation.one
     count = 2 if spec.verb == "attach-artifact" else 1

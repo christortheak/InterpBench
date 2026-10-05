@@ -149,9 +149,8 @@ def authoring_place() -> str:
 def protocol_field(name: str, mac: str, *assignments: str) -> tuple[str, str]:
     """A declaration that has its own verb on the Mac command line and is a
     protocol FIELD on the cross-platform client (``set-instruments``,
-    ``set-sampling``, ``set-exclusions``, ``set-sweep-selection``,
-    ``pin-rubric``). ``assignments`` are the client's ``--set key=<json>``
-    arguments."""
+    ``set-sampling``, ``set-exclusions``, ``set-sweep-selection``).
+    ``assignments`` are the client's ``--set key=<json>`` arguments."""
     sets = " ".join(f"--set {assignment}" for assignment in assignments)
     return mac, f"experiment set-protocol {name} {sets}"
 
@@ -168,18 +167,15 @@ def pin_prompts(name: str, relative: str) -> tuple[str, str]:
 
 
 def pin_rubric(name: str, relative: str, judges: str = "") -> tuple[str, str]:
-    """Pinning a judge rubric (and, with ``judges``, the panel). On the
-    cross-platform client the rubric is two protocol fields — the file, and
-    the SHA-256 of its bytes — and the panel is a third."""
+    """Pinning a judge rubric (and, with ``judges``, the panel). The same verb
+    on both clients, and both compute the rubric's SHA-256 from the file; the
+    cross-platform client edits a reviewed draft, so it also takes the
+    manifest digest its ``experiment inspect`` prints."""
     mac = f"experiment pin-rubric {name} {relative}"
-    assignments = [f"judgeRubricFile='\"{relative}\"'",
-                   "judgeRubricHash='\"<sha256 of that file>\"'"]
     if judges:
         mac += f" --judges {judges}"
-        assignments.append(
-            "judges='[{\"name\": \"<label>\", \"kind\": "
-            "\"<claude|local|openrouter>\"}]'")
-    return protocol_field(name, mac, *assignments)
+    return (mac, f"{mac} --manifest-sha256 <manifestFileSHA256 from: "
+                 f"{CLIENT_PROGRAM} experiment inspect {name}>")
 
 
 def set_instruments(name: str, instruments: str) -> tuple[str, str]:

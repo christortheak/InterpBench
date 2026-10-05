@@ -159,7 +159,8 @@ same exit codes, same `error.code` / `error.repairAction`. Verb families:
 set-sweep-grid, set-protocol, set-system-prompt, set-parser,
 set-instrument-scope, set-evaluation-sampling, pin-revision,
 set-style-taxonomy, pin-sae-candidates, duplicate,
-verify, freeze, list, inspect, import-prompts, inspect-artifact, attach-artifact),
+verify, freeze, list, inspect, import-prompts, inspect-artifact, attach-artifact,
+pin-rubric),
 `pack` (preview, apply, export), `concept import`, `bundle` (package, inspect, import),
 `model` (capabilities — show the chat-template capability record, §4.4;
 set-capability — override one detected field with a reason; this client holds
@@ -250,6 +251,7 @@ steerlab experiment inspect <name>
 steerlab experiment import-prompts <name> --file <path> --manifest-sha256 <digest>
 steerlab experiment inspect-artifact <path>
 steerlab experiment attach-artifact <name> <concept> --artifact <runs/<run>/<name>> --artifact-sha256 <digest> --manifest-sha256 <digest> --sidecar-sha256 <digest> [--eval-run <run-dir>] [--source-concept <concept>]
+steerlab experiment pin-rubric <name> <rubric> --manifest-sha256 <digest> [--judge-pin <value>] [--judges <value>]
 steerlab design expand <name> --casting <value> --file-sha256 <value> --mode <value>
 steerlab authoring study <intent>
 steerlab design list

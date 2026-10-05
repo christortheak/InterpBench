@@ -187,8 +187,7 @@ def test_the_validate_evidence_gate_repair_names_this_engine():
     judge = freeze_policy.freeze_gate_repair("judgeValidity", "demo")
     assert judge.startswith(
         "on your authoring client: steerlab-cli experiment pin-rubric demo ")
-    assert "or steerlab experiment set-protocol demo --set judgeRubricFile=" \
-        in judge
+    assert "or steerlab experiment pin-rubric demo " in judge
     # And every gate id in the closed vocabulary has one.
     for gate in experiment_store.FORCED_GATE_IDS:
         assert freeze_policy.freeze_gate_repair(gate, "demo")

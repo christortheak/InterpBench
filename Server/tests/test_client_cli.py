@@ -853,7 +853,6 @@ def test_every_client_verb_has_a_purpose_and_a_synopsis():
 #: exclusion cannot go on claiming a route that was renamed away.
 _REDIRECTED_AS_PROTOCOL_FIELDS: dict = {
     "pin-prompts": ("taskPromptsFile", "taskPromptsHash"),
-    "pin-rubric": ("judgeRubricFile", "judgeRubricHash", "judges"),
     "set-instruments": ("outcomeInstruments",),
     "set-sampling": ("temperature", "maxTokens", "promptMode",
                      "samplesPerItem", "seedPolicy"),
