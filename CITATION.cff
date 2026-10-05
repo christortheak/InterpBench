@@ -6,28 +6,32 @@ abstract: >-
   concept directions from a model's residual stream, inject them during
   generation at a measured strength, and measure how the outputs move. Two
   independent engines — Swift/MLX on Apple silicon and Python/PyTorch on CUDA
-  — share one artifact model, with a hash-pinned, one-way freeze lifecycle so
-  that experimental settings are fixed before behavior is measured.
+  or Apple silicon — share one artifact model, with a hash-pinned, one-way
+  freeze lifecycle so that experimental settings are fixed before behavior is
+  measured.
 type: software
 authors:
   # Named authors can be added here as `- family-names: … / given-names: …`.
   - name: "The SteerLab Authors"
 license: Apache-2.0
+repository-code: "https://github.com/christortheak/InterpBench"
+url: "https://github.com/christortheak/InterpBench"
+# The latest tagged release. Update both lines with each release.
+version: "0.9.6"
+date-released: 2026-09-07
 keywords:
   - activation steering
   - interpretability
   - representation engineering
   - large language models
   - reproducibility
-# Fill these in when the repository is public and the first version is tagged:
-# repository-code: "https://…"
-# url: "https://…"
-# version: "…"
-# date-released: 2026-01-01
 preferred-citation:
   type: software
   title: SteerLab
   authors:
     - name: "The SteerLab Authors"
+  version: "0.9.6"
   year: 2026
+  repository-code: "https://github.com/christortheak/InterpBench"
+  url: "https://github.com/christortheak/InterpBench"
   license: Apache-2.0
