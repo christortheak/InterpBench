@@ -140,6 +140,14 @@ analyze a run on the runner that produced it.
 Zero effect-size entries is reported as an `emptyAnalysis` advisory, not a
 failure. It means the source run had no non-baseline condition. Check for it.
 
+Both engines pair the same outcomes from the same records, under the same
+names. Every analysis also writes `outcome-coverage.json`: each outcome that
+reached the effect rows, with its definition in words, and each outcome the
+analysis could not produce, marked `notAvailable` with the reason. Read it
+before you report that a study measured nothing on an outcome. The one case
+today is marker density on a run made by the Python engine, which does not
+record it.
+
 ## `evaluate`
 
 <!-- client: mac -->
