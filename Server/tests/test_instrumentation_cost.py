@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from steerlab_server import client_cli
 from steerlab_server.experiment import diagnostic_archives as archives, instrumentation_cost as owner
 from steerlab_server.experiment import managed_inputs, managed_methods, method_authoring, policy_authoring
 from steerlab_server.experiment.probe_artifacts import ProbeError
@@ -36,8 +37,9 @@ def tiny_model():
     return SteeredModel(model=lm, tokenizer=tokenizer, hooked=HookedModel(lm), model_id=MODEL, revision=REVISION)
 
 
-def workspace(root, model, prompts=None):
-    """Prompts, one probe that reads embedding dimension 0, and three published policies, all pinned by hash."""
+def workspace(root, model, prompts=None, provider=None):
+    """Prompts, one probe that reads embedding dimension 0, and three published policies, all pinned by hash.
+    With ``provider``, the conditional policy carries that expert-provider source instead of its rule."""
     from steerlab_server.experiment import probe_capture
     identity = probe_capture.tokenizer_identity(model.tokenizer)
     (root / 'runs/fit').mkdir(parents=True, exist_ok=True)
@@ -67,6 +69,9 @@ def workspace(root, model, prompts=None):
         'conditionalPolicy': {**early, 'name': 'acts-on-odd', 'probes': [reader], 'actions': [{'id': 'shift', 'kind': 'add', 'bounds': [0, 1], 'vector': [0, 1, 0, 0, 0, 0, 0, 0]}],
                               'rules': [{'action': 'shift', 'kind': 'threshold', 'weights': {'reader': 1}, 'threshold': 0, 'below': 0, 'above': 0.5}]},
     }
+    if provider is not None:
+        settings['conditionalPolicy'] = {**settings['conditionalPolicy'], 'rules': [], 'provider': {
+            'sourceText': provider, 'sourceSHA256': hashlib.sha256(provider.encode()).hexdigest(), 'assets': {}}}
     refs = {'prompts': {'path': 'prompts.jsonl', 'sha256': archives.file_hash(root / 'prompts.jsonl')},
             'probes': [{'path': reader['path'], 'sha256': archives.file_hash(root / reader['path'])}]}
     for name, document in settings.items():
@@ -459,17 +464,17 @@ def test_a_model_that_is_not_prepared_is_refused_and_never_downloaded(tmp_path, 
     assert owner.load(config, lambda _: None) == 'loaded' and calls == [((MODEL, REVISION), {'dtype': 'float32', 'device': 'cpu'})]
 
 
-def interview_fields(root, model=None):
-    refs = workspace(root, model or tiny_model())
+def interview_fields(root, model=None, provider=None):
+    refs = workspace(root, model or tiny_model(), provider=provider)
     return {'modelID': MODEL, 'revision': REVISION, 'prompts': refs['prompts']['path'], 'probes': refs['probes'][0]['path'],
             **{name: refs[name]['path'] for name in owner.POLICIES}, 'retainActivations': 'true', 'rendering': 'raw',
             'maxTokens': '4', 'repeats': '2', 'warmups': '1', 'device': 'cpu', 'dtype': 'float32'}
 
 
-def answers(root, model=None):
+def answers(root, model=None, provider=None):
     return dict(purpose='Report what readings and policies cost', claim='Measured cost on this model and hardware only',
                 controls='A baseline with no instrumentation in every round', selection='Does not apply: nothing is fitted or selected',
-                fields=interview_fields(root, model), advanced={})
+                fields=interview_fields(root, model, provider), advanced={})
 
 
 def test_interview_draft_reviews_the_plan_and_pins_every_input(tmp_path, model):
@@ -495,6 +500,75 @@ def test_interview_draft_reviews_the_plan_and_pins_every_input(tmp_path, model):
         method_authoring.publish('instrumentation-cost', reviewed, tmp_path, 'requests/changed', draft['planSHA256'])
     # A managed model operation needs its pinned revision.
     with pytest.raises(ValueError): managed_methods.validate('instrumentation-cost', {**config, 'revision': 'main'}, tmp_path)
+
+
+#: An expert provider's source. These tests review and package it; nothing runs it.
+PROVIDER = "def decide(context):\n    return []\n"
+PROVIDER_SHA256 = hashlib.sha256(PROVIDER.encode()).hexdigest()
+
+
+def test_inputs_carrying_custom_code_are_packaged_only_once_it_is_acknowledged(tmp_path, model):
+    """The instrument runs a policy's expert provider exactly as a study does,
+    so its review states the notice, its input plan shows the code, and
+    packaging waits for the code to be acknowledged in this workspace, by the
+    SHA-256 the plan shows. The acknowledgement goes in the same record the
+    study gate reads, so it is not asked for again."""
+    from steerlab_server.experiment import custom_code, diagnostic_inputs
+    reviewed = answers(tmp_path, model, provider=PROVIDER)
+    draft = method_authoring.draft('instrumentation-cost', reviewed, tmp_path)
+    request = draft['request']
+    assert draft['operationReview']['customCode'] == {
+        'notice': custom_code.DIAGNOSTIC_NOTICE, 'providers': [{'sha256': PROVIDER_SHA256, 'roles': ['conditionalPolicy']}]}
+    plan = diagnostic_inputs.plan(request, tmp_path)
+    block = plan['customCode']
+    assert block['notice'] == custom_code.DIAGNOSTIC_NOTICE and block['acknowledged'] is False
+    assert [(row['sha256'], row['sourceText'], row['policyNames'], row['acknowledged']) for row in block['providers']] == [
+        (PROVIDER_SHA256, PROVIDER, ['acts-on-odd'], False)]
+    assert block['acknowledgeFlag'] == f'--custom-code-sha256 {PROVIDER_SHA256}'
+    archive = tmp_path / 'runs/cost-inputs.tar.gz'
+    for named in (None, '0' * 64):
+        with pytest.raises(diagnostic_inputs.CustomCodeRefusal, match='nobody has acknowledged') as refused:
+            diagnostic_inputs.package(request, tmp_path, archive, plan['planSHA256'], acknowledge=named)
+        assert refused.value.code == 'missingPrerequisite' and block['acknowledgeFlag'] in refused.value.repair_action
+        assert not archive.exists() and not (tmp_path / custom_code.FILENAME).exists()
+    diagnostic_inputs.package(request, tmp_path, archive, plan['planSHA256'], acknowledge=PROVIDER_SHA256)
+    assert archive.is_file()
+    [entry] = custom_code.records(tmp_path)
+    assert (entry['providerSHA256'], entry['operation'], entry['policyNames']) == (
+        PROVIDER_SHA256, 'instrumentation-cost', ['acts-on-odd'])
+    again = diagnostic_inputs.plan(request, tmp_path)
+    assert again['planSHA256'] == plan['planSHA256']   # acknowledging changes no input
+    assert again['customCode']['acknowledged'] is True and again['customCode']['notice'] is None
+    archive.unlink()
+    diagnostic_inputs.package(request, tmp_path, archive, plan['planSHA256'])   # no flag needed any more
+    assert archive.is_file()
+
+
+def test_the_client_carries_the_acknowledgement_flag_and_refuses_without_it(tmp_path, model, capsys):
+    from steerlab_server.experiment import diagnostic_inputs
+    reviewed = answers(tmp_path, model, provider=PROVIDER)
+    draft = method_authoring.draft('instrumentation-cost', reviewed, tmp_path)
+    published = method_authoring.publish('instrumentation-cost', reviewed, tmp_path, 'requests/cost', draft['planSHA256'])
+    plan = diagnostic_inputs.plan(json.loads(Path(published['requestFile']).read_text()), tmp_path)
+    command = ['science', 'package', published['requestFile'], '--archive', str(tmp_path / 'runs/cost.tar.gz'),
+               '--plan-sha256', plan['planSHA256'], '--root', str(tmp_path), '--json']
+    assert client_cli.main(command) == 65
+    refused = json.loads(capsys.readouterr().out)
+    assert refused['state'] == 'refused' and refused['error']['code'] == 'missingPrerequisite'
+    assert f'--custom-code-sha256 {PROVIDER_SHA256}' in refused['error']['repairAction']
+    assert client_cli.main(command + ['--custom-code-sha256', PROVIDER_SHA256]) == 0
+    assert (tmp_path / 'runs/cost.tar.gz').is_file()
+
+
+def test_inputs_without_custom_code_have_nothing_to_acknowledge(tmp_path, model):
+    from steerlab_server.experiment import diagnostic_inputs
+    draft = method_authoring.draft('instrumentation-cost', answers(tmp_path, model), tmp_path)
+    assert 'customCode' not in draft['operationReview']
+    plan = diagnostic_inputs.plan(draft['request'], tmp_path)
+    assert 'customCode' not in plan
+    with pytest.raises(archives.Refusal, match='nothing to acknowledge'):
+        diagnostic_inputs.package(draft['request'], tmp_path, tmp_path / 'runs/x.tar.gz', plan['planSHA256'],
+                                  acknowledge=PROVIDER_SHA256)
 
 
 def test_packaged_request_runs_on_an_isolated_copy_and_its_report_comes_home_in_custody(tmp_path, monkeypatch, model):

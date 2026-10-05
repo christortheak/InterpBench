@@ -87,6 +87,19 @@ import Testing
         #expect(decoded == ["inputBundleSHA256": digest])
     }
 
+    /// Packaging inputs that carry custom code takes the acknowledgement on
+    /// the command line: the Mac declares the flag and carries it to the
+    /// Python action under the field that action allows.
+    @Test func packagingCarriesTheCustomCodeAcknowledgement() throws {
+        let spec = try #require(ExperimentCLIParser.specs.first { $0.namespace == "science" && $0.verb == "package" })
+        #expect(spec.valueFlags.contains("--custom-code-sha256"))
+        #expect(!spec.requiredFlags.contains("--custom-code-sha256"))
+        #expect(DiagnosticWorkspaceCLI.flagFields.contains { $0.flag == "--custom-code-sha256" && $0.key == "customCodeSHA256" })
+        // Every carried flag is one some science verb declares.
+        let declared = Set(ExperimentCLIParser.specs.filter { $0.namespace == "science" }.flatMap(\.valueFlags))
+        #expect(DiagnosticWorkspaceCLI.flagFields.allSatisfy { declared.contains($0.flag) })
+    }
+
     @Test func controllerBuildDriftIsAdvisoryAndVisible() {
         var observed = ClusterObservedState(siteID: "fixture", siteName: "Fixture")
         observed.serverHTTP = .reachable(build: "steerlab-server 0.9+aaaaaaaa", role: "controller", root: "/runs")

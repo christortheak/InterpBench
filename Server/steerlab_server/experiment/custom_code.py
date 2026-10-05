@@ -47,6 +47,13 @@ NOTICE = ("This study contains custom code from its author. It runs with your "
           "permissions when the study runs. Run it only if you trust the "
           "source.")
 
+#: The notice for a standalone diagnostic (a battery, the cost instrument)
+#: whose input files carry custom code. Python only: both clients reach the
+#: diagnostic input plan through ``diagnostic_inputs``.
+DIAGNOSTIC_NOTICE = ("This diagnostic's inputs contain custom code from a policy's "
+                     "author. It runs with your permissions when the diagnostic "
+                     "runs. Run it only if you trust the source.")
+
 #: Study steps that can generate text with the study's agents, and therefore
 #: execute an expert provider. Every other step (extract, validate, evaluate,
 #: analyze, verify) runs no agent policy and is never held by this gate.
@@ -359,6 +366,28 @@ def acknowledge(root, document, hashes, *, study: str, client: str,
             "alreadyAcknowledged": [d for d in requested if d in seen],
             "recordFile": FILENAME,
             "providers": status(document, root)}
+
+
+def acknowledge_inputs(root, carried, hashes, *, operation: str,
+                       account: str | None = None, now: str | None = None) -> list[str]:
+    """Record an acknowledgement for each named source hash a diagnostic's
+    input files carry (``carried``: rows from :func:`providers`), and return
+    the hashes newly recorded. The caller has already refused a hash the
+    inputs do not carry. Entries name the ``operation`` where a study's name
+    the study; both clients read only the hash, the time, and the person."""
+    names = {row["sha256"]: row["policyNames"] for row in carried}
+    path = record_path(root)
+    with manifest_files.transaction(str(path), workspace_root=str(root)):
+        existing = records(root)
+        seen = {entry["providerSHA256"] for entry in existing}
+        stamp, who = now or _now(), account or _account()
+        added = [{"providerSHA256": digest, "acknowledgedAt": stamp, "acknowledgedBy": who,
+                  "operation": operation, "acknowledgedThrough": "science package",
+                  "policyNames": names.get(digest, [])}
+                 for digest in dict.fromkeys(hashes) if digest not in seen]
+        if added:
+            _write(path, existing + added)
+    return [entry["providerSHA256"] for entry in added]
 
 
 def _write(path: Path, entries: list[dict]) -> None:

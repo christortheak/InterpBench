@@ -220,7 +220,26 @@ def declared_roles(policies):
     return notes
 
 
+def custom_code_notice(policies):
+    """The notice for policies that carry custom code (an expert provider), or
+    None. The code runs while the instrument measures, exactly as in a study."""
+    from . import custom_code
+    carried = {}
+    for name, entry in policies.items():
+        for provider in custom_code.providers(entry['document']):
+            carried.setdefault(provider['sha256'], set()).add(name)
+    if not carried:
+        return None
+    return {'notice': custom_code.DIAGNOSTIC_NOTICE,
+            'providers': [{'sha256': digest, 'roles': sorted(roles)} for digest, roles in sorted(carried.items())]}
+
+
 def review(config, material):
+    notice = custom_code_notice(material['policies'])
+    return {**_review(config, material), **({'customCode': notice} if notice else {})}
+
+
+def _review(config, material):
     planned = configurations(config)
     active = [item['id'] for item in planned if item['status'] == 'planned']
     rounds = config.warmups + config.repeats

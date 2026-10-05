@@ -239,7 +239,7 @@ steerlab science interview <operation>
 steerlab science draft <operation> --answers <value>
 steerlab science publish <operation> --answers <value> --destination <value> --plan-sha256 <value>
 steerlab science input-plan <request.json>
-steerlab science package <request.json> --archive <value> --plan-sha256 <value>
+steerlab science package <request.json> --archive <value> --plan-sha256 <value> [--custom-code-sha256 <value>]
 steerlab science import <archive.tar.gz> --sha256 <digest>
 steerlab science custody
 steerlab science verify-custody <receipt-sha256>
@@ -2973,7 +2973,7 @@ steerlab-cli science interview <operation>
 steerlab-cli science draft <operation> --answers <value>
 steerlab-cli science publish <operation> --answers <value> --destination <value> --plan-sha256 <value>
 steerlab-cli science input-plan <request.json>
-steerlab-cli science package <request.json> --archive <value> --plan-sha256 <value>
+steerlab-cli science package <request.json> --archive <value> [--custom-code-sha256 <value>] --plan-sha256 <value>
 steerlab-cli science import <archive.tar.gz> --sha256 <hex>
 steerlab-cli science custody
 steerlab-cli science verify-custody <receipt-sha256>
@@ -3010,7 +3010,7 @@ steerlab-cli science report <run-folder-or-report.json> [--out <file>]
 | `science draft` | Review conceptual answers, a machine request and its input hashes. |
 | `science publish` | Publish the reviewed request and rationale in a new requests directory. |
 | `science input-plan` | Discover and hash local diagnostic inputs using the portable archive owner. |
-| `science package` | Package exactly the reviewed diagnostic inputs for permitted transfer. |
+| `science package` | Package exactly the reviewed diagnostic inputs for permitted transfer. Inputs that carry custom code need each SHA-256 the input plan shows, in --custom-code-sha256. |
 | `science import` | Verify and import diagnostic evidence into this workspace without replacing outputs. |
 | `science custody` | Reverify and list local diagnostic evidence receipts for offline inspection. |
 | `science verify-custody` | Verify the retained diagnostic archive and every expanded output file. |

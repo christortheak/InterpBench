@@ -199,6 +199,13 @@ struct DiagnosticArguments {
 }
 
 enum DiagnosticWorkspaceCLI {
+    /// The value flags carried to the Python action as request fields. Python
+    /// twin: `diagnostic_commands.local`; its `workspace_action` allows each field.
+    static let flagFields: [(flag: String, key: String)] = [
+        ("--experiment", "experiment"), ("--destination", "destination"), ("--archive", "archivePath"),
+        ("--sha256", "archiveSHA256"), ("--plan-sha256", "planSHA256"), ("--custom-code-sha256", "customCodeSHA256"),
+    ]
+
     static func run(_ invocation: ExperimentCLIInvocation, sink: ExperimentCLISink) async throws -> ExperimentCLIResult {
         let arguments = try DiagnosticArguments(invocation.args, namespace: "science", takesValue: !["custody", "probe-list", "policy-list"].contains(invocation.verb ?? ""))
         // `science report` owns its `--out` (the page) and its own result sentence.
@@ -210,7 +217,7 @@ enum DiagnosticWorkspaceCLI {
         }
         if let path = arguments.flags["--settings"] { payload["settingsText"] = .string(try String(contentsOfFile: path, encoding: .utf8)) }
         if let path = arguments.flags["--answers"] { payload["answersText"] = .string(try String(contentsOfFile: path, encoding: .utf8)) }
-        for (flag, key) in [("--experiment", "experiment"), ("--destination", "destination"), ("--archive", "archivePath"), ("--sha256", "archiveSHA256"), ("--plan-sha256", "planSHA256")] {
+        for (flag, key) in flagFields {
             if let value = arguments.flags[flag] { payload[key] = .string(value) }
         }
         let result = try await DiagnosticWorkspace.perform(arguments.verb, payload: payload)

@@ -95,6 +95,12 @@ before it runs:
   not held. The refusal names the code and gives the acknowledgement command.
   A run's provenance record, written by `steerlab run`, lists each provider
   and who acknowledged it.
+- **Standalone diagnostics.** A diagnostic packaged for a runner (the cost
+  instrument, or a battery whose agents carry policies) can run the same code.
+  `science input-plan` shows the notice and each provider's source, the cost
+  instrument's review states it, and `science package` packages such inputs
+  only once each provider is acknowledged, earlier or by naming its SHA-256 in
+  `--custom-code-sha256`. That records the acknowledgement in the same file.
 
 What this is not: the acknowledgement is a record of your decision, not a
 safety check on the code. SteerLab does not inspect, restrict, or sandbox

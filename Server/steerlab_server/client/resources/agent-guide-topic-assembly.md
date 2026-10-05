@@ -61,6 +61,13 @@ study's agents (`run`, `pipeline`, or `sweep`) is refused with
 `missingPrerequisite`. Never acknowledge on the researcher's behalf to get past
 that refusal.
 
+A standalone diagnostic (the cost instrument, or a battery whose agents carry
+policies) can run the same code. `steerlab science input-plan <request.json>`
+shows it under `customCode`, and `science package` is refused with
+`missingPrerequisite` until each provider is acknowledged. Once the researcher
+has read the code and trusts it, repeat `science package` with the
+`--custom-code-sha256` value the plan gives.
+
 `pack export <study> --json` returns a pack plus external artifact dependencies;
 it is not a model/vector execution bundle. Full-record prompt updates use
 `experiment import-prompts <study> --file <jsonl> --manifest-sha256 <digest> --json`:
