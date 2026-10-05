@@ -1,6 +1,7 @@
 // Shared types for the Results Explorer. Every view, loader, and the app
 // shell import from here so no module re-declares a shape.
 
+import type { AnalysisStamps } from "./analysisStamps";
 import type { FreezeStamp } from "./freeze";
 import type { RunKind, RunKindSource } from "./runKind";
 import type { StatusInfo } from "./status";
@@ -57,6 +58,12 @@ export type Effect = {
   /// Stable row identity for keying and selection: condition, endpoint, and
   /// — for stratified rows — the family and stratum.
   key: string;
+  /// The RUN's unit of analysis, as the run stamps it ("transcript",
+  /// "item"), joined onto each row when the run is loaded; "" or absent when
+  /// the run stamps none. A pooled row leaves its own `unit` column empty
+  /// because its unit is the run's, so without this a pooled row over
+  /// transcripts was labelled "paired items". See lib/analysisStamps.ts.
+  analysisUnit?: string;
 };
 
 export type Generation = {
@@ -250,6 +257,10 @@ export type WorkspaceRun = {
   /// exemption, from the run's own `experiment.json` snapshot. Absent until
   /// the run is activated; read it with `freezeOf`. See lib/freeze.ts.
   freeze?: FreezeStamp;
+  /// What the analysis did to the records before estimating: exclusions,
+  /// endpoint rescue, adjudication, and the unit of analysis. Read it with
+  /// `analysisStampsOf`. See lib/analysisStamps.ts.
+  analysisStamps?: AnalysisStamps;
 };
 
 export type FilePreview = {

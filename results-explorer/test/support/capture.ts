@@ -68,7 +68,11 @@ export type Rendered = {
   click: (label: string) => Promise<void>;
 };
 
+// Emphasis tags sit INSIDE a sentence ("<strong>rule</strong>: what it
+// does"), so they vanish; every other tag separates pieces of the page, so
+// it becomes a space.
 const decode = (html: string) => html
+  .replace(/<\/?(?:strong|em|b|i|code|sub|sup)(?:\s[^>]*)?>/g, "")
   .replace(/<[^>]*>/g, " ")
   .replaceAll("&amp;", "&").replaceAll("&lt;", "<").replaceAll("&gt;", ">")
   .replaceAll("&quot;", "\"").replaceAll("&#x27;", "'")

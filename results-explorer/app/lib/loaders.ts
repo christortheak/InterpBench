@@ -2,6 +2,7 @@
 // parsed here, and only here. Missing artifacts return empty results —
 // nothing is inferred or substituted.
 
+import { parseAnalysisStamps, type AnalysisStamps } from "./analysisStamps";
 import { splitCSV, strictNumber } from "./csv";
 import { findFile, recordValue } from "./discovery";
 import { effectKey } from "./effects";
@@ -282,7 +283,31 @@ export const readRunJSON = async (run: WorkspaceRun, name: string): Promise<Reco
 export const loadFreezeStamp = async (run: WorkspaceRun): Promise<FreezeStamp> =>
   parseFreezeStamp(await readRunJSON(run, "experiment.json"), run.report);
 
+/// The stamps an analysis leaves beside its effect table: exclusions,
+/// endpoint rescue, adjudication, and the unit of analysis. Each is its own
+/// small file at the top of the run directory; a file the run does not
+/// carry is a stamp the run does not record.
+export const loadAnalysisStamps = async (run: WorkspaceRun): Promise<AnalysisStamps> => {
+  const [exclusions, reparse, adjudication, unit, epochUnverified, measurementDrift, analysis] = await Promise.all([
+    readRunJSON(run, "exclusions.json"),
+    readRunJSON(run, "endpoint-reparse.json"),
+    readRunJSON(run, "adjudicated-endpoint.json"),
+    readRunJSON(run, "unit-of-analysis.json"),
+    readRunJSON(run, "epoch-unverified.json"),
+    readRunJSON(run, "measurement-drift.json"),
+    readRunJSON(run, "analysis.json"),
+  ]);
+  // `run.report` falls back to analysis.json when there is no report.json;
+  // report.json itself is read here so the two are never confused.
+  const report = await readRunJSON(run, "report.json");
+  return parseAnalysisStamps({ exclusions, reparse, adjudication, unit, epochUnverified, measurementDrift, analysis, report, config: run.config });
+};
+
 export const hydrateRun = async (run: WorkspaceRun): Promise<WorkspaceRun> => {
-  const [effectRows, generationData, cosineMatrices, sweepRows, sweepRecommendations, panelEffects, freeze] = await Promise.all([loadEffects(run), loadGenerations(run), loadCosineMatrices(run), loadSweepRows(run), loadSweepRecommendations(run), loadPanelEffects(run), loadFreezeStamp(run)]);
-  return { ...run, effectRows, generationRows: generationData.rows, generationFile: generationData.handle, previewTruncated: generationData.truncated, skippedGenerationLines: generationData.skipped, cosineMatrices, validationConcepts: validationRows(run.validationReport), sweepRows, sweepRecommendations, panelEffects, freeze };
+  const [effects, generationData, cosineMatrices, sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps] = await Promise.all([loadEffects(run), loadGenerations(run), loadCosineMatrices(run), loadSweepRows(run), loadSweepRecommendations(run), loadPanelEffects(run), loadFreezeStamp(run), loadAnalysisStamps(run)]);
+  // The run's unit of analysis travels ON each row, so every surface that
+  // prints a row's count prints it in the right unit (lib/effects.ts).
+  const analysisUnit = analysisStamps.unit?.unit ?? "";
+  const effectRows = analysisUnit ? effects.map((effect) => ({ ...effect, analysisUnit })) : effects;
+  return { ...run, effectRows, generationRows: generationData.rows, generationFile: generationData.handle, previewTruncated: generationData.truncated, skippedGenerationLines: generationData.skipped, cosineMatrices, validationConcepts: validationRows(run.validationReport), sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps };
 };

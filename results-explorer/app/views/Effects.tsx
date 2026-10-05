@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { AnalysisStampsCard } from "../components/stamps";
 import { Badge, ExportButton, ForestRow, NoRunSelected } from "../components/ui";
+import { analysisStampsOf } from "../lib/analysisStamps";
 import { demoPreviewEnabled, effects } from "../lib/demo";
 import { findFile } from "../lib/discovery";
 import { effectConditions, effectEndpoints, estimandLabel, groupEffects, isDiagnostic, pairedCountLabel, stratumLabel } from "../lib/effects";
@@ -39,6 +41,9 @@ const columns: ExportColumn<Effect>[] = [
   { header: "adjustedP", kind: "stored", value: (row) => row.q, description: "The p-value after the correction named in the correction column. Empty when the file gave none." },
   { header: "correction", kind: "stored", value: (row) => row.correction, description: "The multiple-comparison correction the engine applied, as the file names it." },
   { header: "unit", kind: "derived", value: (row) => row.unit, description: "A display unit the explorer chose from the endpoint's name. It is a label for reading, not a measured unit." },
+  // The run's own stamp, repeated on every row so the table still says what
+  // `n` counts once it has left the run directory.
+  { header: "unitOfAnalysis", kind: "stored", value: (row) => row.analysisUnit ?? "", description: "The run's unit of analysis as the run stamps it, such as transcript: what n counts on a pooled row. Empty when the run stamps none, in which case the engines pair by prompt item." },
 ];
 
 /// The p-value pair for one row. A DIAGNOSTIC row (a single item's own
@@ -81,10 +86,14 @@ export function EffectsView({ run, onOpenFile }: { run: WorkspaceRun | null; onO
   // and an empty stamp from them must not blank the label for the rest.
   const corrections = [...new Set(availableEffects.filter((effect) => !isDiagnostic(effect)).map((effect) => effect.correction).filter(Boolean))];
   const correctionLabel = corrections.length === 1 ? `${corrections[0]} p` : "Adjusted p";
+  const transcriptUnit = run ? analysisStampsOf(run).unit?.unit === "transcript" : false;
   return (
     <div className="view-enter inner-view">
       <header className="page-title">
-        <div><span className="section-number">{run ? `${pooledCount} POOLED ROW${pooledCount === 1 ? "" : "S"}${stratifiedCount ? ` · ${stratifiedCount} STRATIFIED` : ""} · LOCAL RUN` : "CONFIRMATORY FAMILY · 5 ENDPOINTS"}</span><h1>Effects &amp; robustness</h1><p>Paired intervention-minus-baseline estimates, one row per condition × endpoint. The item—not the generation—is the unit of analysis, except where a stratum says otherwise.</p></div>
+        {/* What one paired difference IS comes from the run's own stamp. A
+            multi-agent run pairs whole transcripts, and saying "the item"
+            there described a different analysis than the one on screen. */}
+        <div><span className="section-number">{run ? `${pooledCount} POOLED ROW${pooledCount === 1 ? "" : "S"}${stratifiedCount ? ` · ${stratifiedCount} STRATIFIED` : ""} · LOCAL RUN` : "CONFIRMATORY FAMILY · 5 ENDPOINTS"}</span><h1>Effects &amp; robustness</h1><p>Paired intervention-minus-baseline estimates, one row per condition × endpoint. {transcriptUnit ? "Each transcript—not each turn—is the unit of analysis." : "The item—not the generation—is the unit of analysis, except where a stratum says otherwise."}</p></div>
         <div className="title-actions"><button className="secondary" onClick={() => document.querySelector(run ? ".local-method-note" : ".table-note")?.scrollIntoView({ behavior: "smooth" })}>Method notes</button><ExportButton filename={csvFilename(run?.name ?? "synthetic-preview", "effect-sizes")} columns={columns} rows={visible} /><button className="primary" disabled={!run || !findFile(run.files, "effect-sizes.csv")} onClick={() => { const file = run && findFile(run.files, "effect-sizes.csv"); if (file) onOpenFile(file); }}>{run ? "Open table" : "Preview table"} <span>→</span></button></div>
       </header>
       <section className="filterbar" aria-label="Effect filters">
@@ -94,6 +103,9 @@ export function EffectsView({ run, onOpenFile }: { run: WorkspaceRun | null; onO
         <label>Endpoint<select value={endpoint} onChange={(event) => setEndpoint(event.target.value)}><option>{ALL_ENDPOINTS}</option>{effectEndpoints(availableEffects).map((name) => <option key={name}>{name}</option>)}</select></label>
         <div className="filter-summary"><span>Correction</span><strong>{corrections.length === 1 ? corrections[0] : corrections.length ? corrections.join(" / ") : "Not stamped in this table"}</strong></div>
       </section>
+      {/* The stamps that say what the estimates below were measured on:
+          the unit of analysis, exclusions, endpoint rescue, adjudication. */}
+      {run && <AnalysisStampsCard run={run} onOpenFile={onOpenFile} />}
       <section className="card effect-table-card">
         <div className="effect-table-head"><span>Condition · endpoint</span><span>Effect with 95% CI</span><span>Estimate</span><span>Raw p</span><span>{correctionLabel}</span><span>Read</span></div>
         {groups.map((group) => {

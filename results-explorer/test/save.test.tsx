@@ -217,7 +217,7 @@ describe("export controls inside their views (embedded)", () => {
     expect(host.posted[0]).toMatchObject({ kind: "text", filename: `${RUN}-effect-sizes.csv` });
     const lines = (host.posted[0] as { text: string }).text.split("\n");
     // A plain header row first, then the row on screen.
-    expect(lines[0]).toBe("condition,endpoint,stratifyBy,stratum,pairedUnit,estimand,inference,n,estimate,ciLower,ciUpper,wilcoxonP,adjustedP,correction,unit");
+    expect(lines[0]).toBe("condition,endpoint,stratifyBy,stratum,pairedUnit,estimand,inference,n,estimate,ciLower,ciUpper,wilcoxonP,adjustedP,correction,unit,unitOfAnalysis");
     expect(lines[1].startsWith("steered,choiceRate,pooled,,,,,12,0.25,0.05,0.45,0.02,0.04,holm,")).toBe(true);
     expect(lines.some((line) => line.startsWith("#"))).toBe(false);
   });
@@ -231,7 +231,7 @@ describe("export controls inside their views (embedded)", () => {
     expect(host.posted[0]).toMatchObject({ kind: "text", filename: `${RUN}-effect-sizes-columns.csv` });
     const notes = (host.posted[0] as { text: string }).text.split("\n").filter(Boolean).map(splitCSV);
     expect(notes[0]).toEqual(["column", "kind", "kindMeaning", "description"]);
-    expect(notes.slice(1).map((row) => row[0])).toEqual(["condition", "endpoint", "stratifyBy", "stratum", "pairedUnit", "estimand", "inference", "n", "estimate", "ciLower", "ciUpper", "wilcoxonP", "adjustedP", "correction", "unit"]);
+    expect(notes.slice(1).map((row) => row[0])).toEqual(["condition", "endpoint", "stratifyBy", "stratum", "pairedUnit", "estimand", "inference", "n", "estimate", "ciLower", "ciUpper", "wilcoxonP", "adjustedP", "correction", "unit", "unitOfAnalysis"]);
     // Every column of the table a methodologist opens says what it holds.
     for (const row of notes.slice(1)) expect(row[3]).not.toBe("");
   });
