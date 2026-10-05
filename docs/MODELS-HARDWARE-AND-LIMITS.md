@@ -34,7 +34,7 @@ What each one runs, from the app's **What Runs Where…** view:
 | Import a feature from a sparse autoencoder (SAE) | no | yes |
 | Standalone capability checks | no | yes |
 
-Three limits apply to every choice:
+Three limits to keep in mind:
 
 - **Directions and results do not carry between engines.** If you switch
   between the quick start and the Python engine, build your directions again
@@ -55,10 +55,9 @@ The app needs an Apple Silicon Mac on macOS 26.4 or later. On such a laptop:
 
 - **The quick start** runs models stored in the MLX format, usually compressed
   to 4-bit or 8-bit precision. Its engine supports two model families, Qwen3
-  and Gemma 3.
-  As a rough guide, a 4-bit model with 4 billion parameters needs a few
-  gigabytes of memory, and a 12 to 14 billion parameter model needs low tens of
-  gigabytes, before the working memory that grows with prompt length.
+  and Gemma 3. As a rough guide, a 4-bit model with 4 billion parameters needs
+  a few gigabytes of memory, and a 12 to 14 billion parameter model needs low
+  tens of gigabytes, before the working memory that grows with prompt length.
 - **Full capabilities** runs the Python engine on the same graphics processor.
   It reads standard model files rather than the MLX format, at 16-bit
   precision by default on a Mac, which is about 2 bytes per parameter: a
