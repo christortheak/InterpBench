@@ -12,6 +12,9 @@ def validate(invocation, count):
 
 
 def workspace_action(action, payload):
+    if action == 'results-export':
+        from .results_commands import bridge
+        return bridge(payload)
     if action == 'setup-start':
         if not isinstance(payload, dict) or set(payload) != {'workspaceRoot', 'create'} or not isinstance(payload['workspaceRoot'], str) or not payload['workspaceRoot'] or type(payload['create']) is not bool:
             raise archives.Refusal('First run requires workspaceRoot and an explicit create boolean.')

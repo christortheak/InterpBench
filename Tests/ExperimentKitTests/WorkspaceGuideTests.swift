@@ -226,7 +226,7 @@ import Testing
     static let families: Set<String> = [
         "workspace", "setup", "science", "experiment", "concept", "bundle", "pack",
         "design", "agent", "model", "authoring", "runner", "run", "panel", "data",
-        "vectors", "remote", "cluster", "docs", "install", "init",
+        "vectors", "remote", "cluster", "docs", "install", "init", "results",
     ]
 
     static func isWord(_ token: Substring) -> Bool {

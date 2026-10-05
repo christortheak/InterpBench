@@ -110,6 +110,7 @@ public struct ExperimentCLIRunner: Sendable {
     public static let namespaces: Set<String> = [
         "init", "workspace", "setup", "data", "vectors", "remote", "experiment", "docs",
         "install", "panel", "authoring", "model", "design", "agent", "pack", "science",
+        "results",
     ]
 
     /// The top-level spelling of `install version`. `--version` is what a
@@ -267,6 +268,9 @@ public struct ExperimentCLIRunner: Sendable {
                 if DiagnosticWorkspace.actions.contains(invocation.verb ?? "") {
                     result = try await DiagnosticWorkspaceCLI.run(invocation, sink: sink)
                 } else { result = try ScienceCatalog.run(invocation, sink: sink) }
+            case "results":
+                result = try await ResultsExportCLI.run(
+                    invocation, sink: sink, workspaceRoot: ExperimentStore.workspaceRoot)
             case "authoring": result = try runAuthoringCommand(invocation)
             case "install": result = try runInstallCommand(invocation)
             case "panel": result = try runPanelCommand(invocation)

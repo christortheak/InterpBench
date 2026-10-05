@@ -298,6 +298,16 @@ public enum ExperimentCLIParser {
         .init(namespace: "science", verb: "list", purpose: "List shipped methods, supported operation interfaces and engine restrictions; does not execute. With --brief, return a short index instead: ids, titles, and one line of purpose each.", booleanFlags: ["--brief"]),
         .init(namespace: "science", verb: "guide", positional: "<method>", purpose: "Read the shared method guide, dataset schemas and coworker/reviewer instructions."),
         .init(namespace: "science", verb: "operation", positional: "<operation>", purpose: "Inspect exact public execution paths, outputs and restrictions for one operation."),
+        // results — take a study's stored results elsewhere. The export is
+        // the Python client's (`ResultsExport`); `--out` here is the folder
+        // the export is written into, so the verb owns the flag.
+        .init(
+            namespace: "results", verb: "export", positional: "<study>",
+            purpose: "Export a completed run's results into a new folder outside "
+                + "runs/: tables that open in R, Stata, SPSS, or a spreadsheet, "
+                + "transcripts for coding by hand, a methods summary, and a "
+                + "codebook. Runs no model, and recalculates nothing.",
+            valueFlags: ["--run", "--out"], ownsOutFlag: true),
         // init — the home layout (GENERAL-DISTRIBUTION-WORK-PLAN decision 8,
         // work item (a)). The one BARE verb: a git repository cannot ship its
         // own parent directory, so the home folder that holds `Workspaces/`,
