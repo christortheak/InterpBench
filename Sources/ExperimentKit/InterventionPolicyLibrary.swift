@@ -4,7 +4,7 @@ import Foundation
 /// The portable Python owner validates and publishes policies. Swift preserves
 /// their exact text, and supplies guided authoring without duplicating rule math.
 public enum InterventionPolicyLibrary {
-    public static let executionHint = "This agent has intervention policies. Run it in a study using Python Compute, or through the Python agent chat API. Playground’s editable steering controls cannot represent policies yet."
+    public static let executionHint = "This agent has intervention policies. Run it in a study on the Python engine (\(PythonEngineNotice.pythonChoices) in the Workspace menu), or through the Python engine’s agent chat. Playground’s editable steering controls cannot represent policies yet."
 
     public static func requireNativeExecution(_ agent: ModelVariantArtifact) throws {
         guard (agent.interventionPolicies ?? []).isEmpty else { throw ExperimentError(reason: executionHint) }

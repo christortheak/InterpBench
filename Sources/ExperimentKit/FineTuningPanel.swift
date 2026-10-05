@@ -792,9 +792,10 @@ public final class FineTuningPanel {
         guard !serverCancelInFlight else { return }
         guard let client = host?.cluster.client else {
             note(
-                "cancel failed: no server connection — job \(jobID) may still "
-                    + "be running on the cluster; reconnect and cancel it from "
-                    + "Compute",
+                "cancel failed: the app is not connected to the Python engine, "
+                    + "so job \(jobID) may still be running there. Choose "
+                    + "Connect in the connection menu in the toolbar, then "
+                    + "cancel it from Compute",
                 severity: .error)
             return
         }

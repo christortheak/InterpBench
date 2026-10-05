@@ -3392,6 +3392,22 @@ public enum ExperimentTasks {
             repair: ExperimentStore.jlensReadoutRunRepair(experiment: manifest.name))
     }
 
+    /// The run-start refusal for declared probe measurements, which this
+    /// engine does not take. It used to end "Select Python Compute", a name
+    /// the app no longer shows; it now names the two compute choices that
+    /// run the Python engine, as the readout refusal above does. Kept the
+    /// same kind of error, so nothing about the exit code moves.
+    static func refuseProbeMeasurements(_ manifest: ExperimentManifest) throws {
+        guard manifest.probeMeasurements != nil else { return }
+        throw ExperimentError(reason: probeMeasurementsNotExecutableProblem)
+    }
+
+    static let probeMeasurementsNotExecutableProblem =
+        "This study records probe measurements, and the engine built into this "
+        + "app (\u{201C}\(ComputeChoice.macQuickStart.title)\u{201D}) does not "
+        + "take them. Nothing was run, and no model was loaded. "
+        + PythonEngineNotice.whereToRun("records probe measurements")
+
     private static func runImpl(
         experimentName: String,
         promptsFile: String?,
@@ -3399,9 +3415,7 @@ public enum ExperimentTasks {
         progress: StudyTaskProgressHandler?
     ) async throws -> URL {
         var manifest = try loadVerified(experimentName)
-        if manifest.probeMeasurements != nil {
-            throw ExperimentError(reason: "This study records portable probes through the Python engine. Select Python Compute and submit the study there; native MLX measurement execution is not implemented.")
-        }
+        try refuseProbeMeasurements(manifest)
         // A declared J-lens readout is the same kind of measurement: this
         // engine carries the declaration and never takes it. Refused here,
         // before anything is read or loaded, because the run it would

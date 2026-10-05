@@ -1496,8 +1496,10 @@ struct ModelVariantsPanelView: View {
             else { continue }
             guard let client = service.cluster.client else {
                 panel.setStatus(
-                    "could not save agent: no server connection to fetch "
-                        + "vector '\(record.concept)' into the workspace")
+                    "could not save the agent. "
+                        + PythonEngineNotice.notConnected(
+                            "Copying the vector '\(record.concept)' into this "
+                                + "workspace", plural: false, buttonHere: false))
                 return
             }
             do {

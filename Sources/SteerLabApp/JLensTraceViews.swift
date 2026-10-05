@@ -117,11 +117,16 @@ struct JLensTraceSection: View {
                 .disabled(isLoading || trimmedRunID.isEmpty || service.cluster.client == nil)
                 .help(
                     service.cluster.client == nil
-                        ? "needs a server connection — the readout lives in the "
-                            + "server's runs/"
+                        ? PythonEngineNotice.notConnectedBriefly
+                            + " — the readout is kept with that engine's runs"
                         : "fetch and parse that run's jlens-readout.jsonl; "
                             + "unparseable lines are counted, never dropped")
             if isLoading { ProgressView().controlSize(.small) }
+        }
+
+        // Said in the pane, with the way out, not only on hover.
+        if service.cluster.client == nil {
+            PythonEngineNeeded(subject: "Readout traces")
         }
 
         if runs.isEmpty, !isLoadingRuns, service.cluster.client != nil {

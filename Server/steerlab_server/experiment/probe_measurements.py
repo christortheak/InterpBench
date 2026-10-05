@@ -45,7 +45,7 @@ def review(experiment, settings, root):
     loaded = load(config, root)
     result = {'experiment': experiment, 'manifestSHA256': document.source_digest, 'measurements': config,
               'probes': [{'id': item['id'], 'sha256': item['probe']['sha256'], 'label': probe['label'], 'input': probe['input']} for item, probe in loaded],
-              'advisories': ['Study measurements currently execute on the Python engine. Select Python Compute in the app.',
+              'advisories': ['Study measurements currently execute on the Python engine. In the app, choose “This Mac, full capabilities” or “Another machine” as where the workspace runs studies.',
                             'Scores are predictive readings, not causal evidence or calibrated probabilities. Decode readings may differ from the training population.',
                             'The final emitted token has no activation reading unless a subsequent forward pass naturally consumes it. No extra pass is added.'], 'changed': False}
     return {**result, 'planSHA256': archives.digest(result)}

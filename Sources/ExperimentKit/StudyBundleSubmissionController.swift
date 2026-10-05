@@ -58,8 +58,9 @@ public final class StudyBundleSubmissionController {
         }
         guard let client = environment.connect() else {
             jobs.remoteStatus = "invalid server URL"
-            let refusal = "remote submit refused: no server connection — connect a "
-                + "server in the substrate selector first"
+            let refusal = "remote submit refused: "
+                + PythonEngineNotice.notConnected(
+                    "Submitting a study", plural: false, buttonHere: false)
             note(refusal, severity: .error)
             return .failure(.init(reason: refusal))
         }

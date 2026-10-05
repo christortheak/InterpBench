@@ -3516,7 +3516,13 @@ extension ConceptsPanelView {
         // Same local projection `body` uses: `builder` is a computed property,
         // so the $-binding has to be made where it is needed.
         @Bindable var builder = service.concepts
-        if let lens = builder.jlensLens {
+        // The recipe stays selected when the app moves to the quick start
+        // (the picker keeps the current choice listed), and nothing below
+        // can run there: say so with the switch, instead of a lens import
+        // that would fail.
+        if service.cluster.computeTarget == .local {
+            PythonEngineNeeded(subject: "The J-lens token direction", plural: false)
+        } else if let lens = builder.jlensLens {
             jlensLensProvenance(lens)
         } else {
             jlensMissingLensNotice

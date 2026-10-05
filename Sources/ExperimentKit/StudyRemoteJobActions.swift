@@ -8,8 +8,9 @@ extension StudyRemoteJobController {
     public func resume(_ id: String, client: ClusterClient?) async {
         guard let client else {
             actionNote(
-                "remote resume refused: no server connection — connect a "
-                    + "server in the substrate selector first",
+                "remote resume refused: "
+                    + PythonEngineNotice.notConnected(
+                        "Resuming a job", plural: false, buttonHere: false),
                 severity: .error)
             return
         }

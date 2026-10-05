@@ -311,8 +311,9 @@ public enum FreezeRouting {
         } else if inputs.serverHasSelectedStudy == false {
             blocked = "study is not in \(label)'s workspace — freeze stamps the "
                 + "server-resident copy only. Pair the server to this workspace "
-                + "(serve --root <workspace>), or switch Compute to Local (MLX) "
-                + "to freeze the local copy"
+                + "(serve --root <workspace>), or choose "
+                + "\(ComputeChoice.macQuickStart.title) in the Compute menu to "
+                + "freeze the copy in this workspace"
         }
         return Decision(
             target: .server,

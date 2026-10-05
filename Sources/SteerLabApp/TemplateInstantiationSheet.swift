@@ -37,7 +37,21 @@ struct TemplateInstantiationSheet: View {
     let panel: ExperimentPanel
 
     @Environment(\.dismiss) private var dismiss
+    /// Which compute the app is using, for "Create and Submit" and the offer.
+    @Environment(ComputeChoiceCoordinator.self) private var compute:
+        ComputeChoiceCoordinator?
     @State private var model: TemplateInstantiation
+
+    /// Submitting queues jobs on the Python engine. The request says whether
+    /// a connection existed when the sheet opened; the quick start always
+    /// has a client object (it falls back to an address), so it is ruled out
+    /// here, and a switch made from the offer below enables the button
+    /// without reopening the sheet.
+    private var canSubmit: Bool {
+        guard let compute else { return request.canSubmit }
+        return PythonEngineNotice(
+            inUse: compute.inUse, connected: compute.cluster.client != nil) == .none
+    }
 
     /// Tag for the baseline entry in a seat picker. Not "": an empty tag reads
     /// as "nothing selected", and an all-baseline casting is a real condition
@@ -68,6 +82,17 @@ struct TemplateInstantiationSheet: View {
                     .textSelection(.enabled)
             } else {
                 Form {
+                    // Inside the scrolling form, so the sheet's minimum size
+                    // does not change when the notice comes or goes.
+                    if !canSubmit {
+                        Section {
+                            PythonEngineNeeded(
+                                subject: "Submitting the new studies to run", plural: false)
+                            Text("Create Studies works on any compute; run each new study from the study list.")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                     ForEach(model.advisories, id: \.self) { advisory in
                         Label(advisory, systemImage: "exclamationmark.triangle")
                             .font(.caption)
@@ -89,6 +114,8 @@ struct TemplateInstantiationSheet: View {
         // screen is fatal on this macOS beta (see the split-view minimum-size
         // note) — the table scrolls inside instead.
         .frame(minWidth: 720, idealWidth: 860, minHeight: 520, idealHeight: 640)
+        // The offer above can open the engine setup: on this sheet.
+        .hostsComputeSheets()
     }
 
     // MARK: Header
@@ -465,7 +492,7 @@ struct TemplateInstantiationSheet: View {
                     if model.lastMintWasClean { dismiss() }
                 }
             }
-            .disabled(!model.readyToSubmit || model.isWorking || !request.canSubmit)
+            .disabled(!model.readyToSubmit || model.isWorking || !canSubmit)
             .help(submitHelp)
         }
     }
@@ -482,9 +509,10 @@ struct TemplateInstantiationSheet: View {
     /// blocker matters: "disabled" alone sends the researcher hunting between
     /// a missing server connection and a row with no agents cast.
     private var submitHelp: String {
-        guard request.canSubmit else {
-            return "no server connection — connect one in Compute, or Create "
-                + "Studies and submit from the study list"
+        guard canSubmit else {
+            return PythonEngineNotice.needsPythonEngineBriefly(
+                "Submitting", plural: false)
+                + " Or choose Create Studies and run each one from the study list."
         }
         guard model.readyToSubmit else {
             return "every study needs a runnable casting before the batch can "

@@ -193,13 +193,18 @@ struct SteerLabApp: App {
             // capabilities" without every layer above it carrying a
             // parameter for it.
             .environment(compute)
+            // For a sheet that offers the switch and presents the engine
+            // setup on itself (`HostsComputeSheets`).
+            .environment(localServer)
             // The engine setup and the "what runs where" view, for every
-            // entry point in the main window. While Research Setup is up it
-            // presents them itself, on its own sheet.
+            // entry point in the main window. While Research Setup, or
+            // another sheet offering the switch, is up, that sheet presents
+            // them itself.
             .modifier(
                 ComputeSheets(
                     compute: compute, service: service, localServer: localServer,
-                    isActive: !workspaceActions.showingResearchSetup))
+                    isActive: !workspaceActions.showingResearchSetup
+                        && compute.sheetHosts.isEmpty))
             // A setup the researcher started from a compute choice: when it
             // finishes, switch the app to the engine without a second click.
             .onChange(of: localEngine.phase) { _, _ in

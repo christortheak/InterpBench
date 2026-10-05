@@ -176,7 +176,7 @@ public final class ConceptBuilder {
                     "It reads no activations: no stimuli, no reading position, no pooling, and no loaded model — it slices the token's embedding row and the final-norm gain out of the checkpoint.",
                     "Workflow: pick the model, confirm its lens is imported, type a word, then SELECT AN EXACT TOKEN. A word that is not a single token shows its components; choosing one derives a direction for that component, not the word.",
                     "The token id is the durable identity, not the word, so it stays in the saved name.",
-                    "Server-only: lens artifacts are PyTorch/HF-native and activations do not transfer across substrates.",
+                    "Needs the Python engine (\(PythonEngineNotice.pythonChoices) in the Workspace menu): lens files belong to that engine, and directions do not carry over to \(ComputeChoice.macQuickStart.title).",
                     "This is an instrument primitive and a positive control for the readout — not evidence on its own that the token names a psychological concept.",
                 ]
             }
