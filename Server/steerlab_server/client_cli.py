@@ -130,6 +130,7 @@ if __name__ == "__main__":
 from . import cli_envelope as envelope
 from .client import study_assembly, design_commands, authoring_commands, model_commands, science_commands, bootstrap_commands, setup_commands
 from .client import results_commands
+from .client import custom_code_commands
 from .cli_envelope import (HELP_FLAG, JSON_FLAG, OUT_FLAG, CLIResult,
                            UsageError, VerbSpec)
 
@@ -288,6 +289,7 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
     *study_assembly.VERB_SPECS,
     *design_commands.VERB_SPECS,
     *authoring_commands.VERB_SPECS,
+    *custom_code_commands.VERB_SPECS,
     *model_commands.specs(_RUNNER_FLAGS),
     VerbSpec("experiment", "create", positional="<name>",
              purpose="Create a draft study in this workspace.",
@@ -1270,6 +1272,8 @@ def _experiment(invocation: Invocation) -> CLIResult:
         return authoring_commands.run(invocation)
     if invocation.spec.verb in study_assembly.EXPERIMENT_VERBS:
         return study_assembly.run(invocation)
+    if invocation.spec.verb in custom_code_commands.EXPERIMENT_VERBS:
+        return custom_code_commands.run(invocation)
     from .experiment import experiment_store as store
     from .experiment.manifest import Manifest
     from .experiment.paths import experiments_directory
@@ -2369,6 +2373,9 @@ def _bundle(invocation: Invocation) -> CLIResult:
                 f"{len(result.get('extracted') or [])} file(s) into "
                 f"{result.get('targetRoot')}")
         print(line)
+        # A study that carries custom code says so on arrival, with its
+        # hashes and the command that records an acknowledgement.
+        custom_code_commands.attach_bundle_notice(result)
         return CLIResult(message=line, changed=True, payload=result)
 
     raise ClientRefusal(                       # pragma: no cover - unreachable
@@ -4026,6 +4033,31 @@ def _run(invocation: Invocation) -> CLIResult:
             gate=lifecycle_gates.MISSING_PREREQUISITE, reason=str(missing),
             repair=lifecycle_gates.repair_of(missing), common=common,
             stage_facts={"status": status})
+
+    # Custom code: an intervention policy's expert provider is Python the
+    # engine runs with the researcher's permissions. A step that can execute
+    # the study's agents does not leave the workspace until someone has
+    # acknowledged each provider's source hash here. Narrow on purpose:
+    # providers only, executing steps only, and never a dry run, which
+    # executes nothing.
+    from .experiment import custom_code
+    from .experiment import paths as workspace_paths
+    workspace_root = workspace_paths.project_root()
+    if not dry_run:
+        unacknowledged = custom_code.run_refusal(
+            document, workspace_root, study=name, verb=study_verb,
+            program=PROGRAM)
+        if unacknowledged is not None:
+            raise _die(
+                stages, "load", code=custom_code.GATE, gate=custom_code.GATE,
+                reason=str(unacknowledged),
+                repair=unacknowledged.repair_action, common=common,
+                facts=unacknowledged.facts, stage_facts={"status": status})
+    carried = custom_code.status(document, workspace_root)
+    if carried:
+        # The provenance record beside the run then shows which custom code
+        # ran and who acknowledged it, and when.
+        manifest_facts["customCode"] = carried
 
     _record(stages, "load", STAGE_OK, experiment=name, status=status,
             experimentContentHash=manifest_facts["contentHash"],
