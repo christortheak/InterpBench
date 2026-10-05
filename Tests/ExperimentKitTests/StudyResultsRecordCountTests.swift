@@ -209,6 +209,12 @@ import Testing
         let root = FileManager.default.temporaryDirectory
             .appending(component: "mac-evaluation-\(UUID().uuidString)")
         ExperimentStore.rootOverride = root
+        // The concept files live under the WORKSPACE root, a second
+        // process-global seam. Point it here too and give the study its own
+        // copy of the example concept, so the test never depends on whatever
+        // another test left that root resolving to.
+        let previousWorkspace = WorkspaceRoot.programmaticOverride
+        WorkspaceRoot.programmaticOverride = root
         ExperimentTasks.judgeOverrideForTesting = { judge, prompt, _, _ in
             if prompt.contains("room 3"), judge == "judge-a" {
                 // Not A, B, or tie, on both attempts: noncompliant.
@@ -227,9 +233,16 @@ import Testing
         defer {
             ExperimentTasks.judgeOverrideForTesting = nil
             ExperimentStore.rootOverride = nil
+            WorkspaceRoot.programmaticOverride = previousWorkspace
             try? FileManager.default.removeItem(at: root)
             ExperimentRootOverrideLock.release()
         }
+        let conceptCopy = VectorCatalog.conceptsDirectory.appending(component: "french")
+        try FileManager.default.createDirectory(
+            at: conceptCopy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(
+            at: CodeResources.compiledCheckoutPath.appending(path: "prompts/concepts/french"),
+            to: conceptCopy)
 
         let study = "tone-study"
         var manifest = try ExperimentStore.create(
