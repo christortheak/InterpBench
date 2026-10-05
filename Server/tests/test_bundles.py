@@ -122,6 +122,111 @@ def test_package_evidence(tmp_path):
     assert bundles.inspect_bundle(meta["bundlePath"])["kind"] == "evidenceBundle"
 
 
+# --- a partial bundle's failure names no machine -----------------------------
+#
+# 2026-10-05: every partial evidence bundle archived its failure verbatim. The
+# traceback named every frame's source file, which is the server's install in a
+# home folder, and the error named the run's own files by absolute path. The
+# archived copy now spells them `<steerlab_server>/…`, `runs/<run ID>/…`, and
+# so on; the receipt, which stays on the packaging machine, keeps them.
+#
+# Home folders here are assembled at run time: a committed file must not
+# contain one (`scripts/ci/public_scan.py`).
+
+def _failure_from_inside_the_server(run):
+    import traceback
+    try:
+        # Raised by a server frame, with a message naming a run path.
+        bundles.package_evidence(str(run / "missing"))
+    except bundles.BundleError as exc:
+        return {"error": f"{type(exc).__name__}: {exc}",
+                "errorType": type(exc).__name__, "verb": "run",
+                "traceback": traceback.format_exc()}
+    raise AssertionError("expected a refusal")
+
+
+def test_a_partial_bundle_archives_its_failure_without_absolute_paths(tmp_path):
+    from steerlab_server.experiment import path_redaction
+    run = tmp_path / "runs" / "20260701T000000-exp-demo-run"
+    run.mkdir(parents=True)
+    (run / "report.json").write_text('{"ok":true}', encoding="utf-8")
+    failure = _failure_from_inside_the_server(run)
+    meta = bundles.package_evidence(str(run), failure=failure)
+
+    archived = bundles.inspect_bundle(meta["bundlePath"])["failure"]
+    document = json.dumps(archived)
+    server = os.path.dirname(os.path.dirname(path_redaction.__file__))
+    for spelling in {str(tmp_path), os.path.realpath(tmp_path), server,
+                     os.path.realpath(server), os.path.expanduser("~")}:
+        assert spelling not in document
+    # Still a usable traceback: the module and line, and the run file.
+    assert 'File "<steerlab_server>/experiment/bundles.py", line ' in \
+        archived["traceback"]
+    assert archived["error"] == ("BundleError: run directory not found: "
+                                 "runs/20260701T000000-exp-demo-run/missing")
+    assert {key: archived[key] for key in ("errorType", "verb")} == {
+        "errorType": "BundleError", "verb": "run"}
+    # The receipt is for this machine (the job record, the server's log).
+    assert meta["failure"] == failure
+    assert str(run) in meta["failure"]["error"]
+
+
+def test_redaction_names_the_run_its_siblings_and_its_workspace(
+        tmp_path, monkeypatch):
+    from steerlab_server.experiment.path_redaction import redact_paths
+    workspace = os.path.realpath(tmp_path)
+    run = os.path.join(workspace, "runs", "R")
+    text = (f"{run}/a.json {run}2/b.json {workspace}/runs/S/c.json "
+            f"{workspace}/experiments/x/experiment.json")
+    expected = ("runs/R/a.json runs/R2/b.json runs/S/c.json "
+                "<workspace>/experiments/x/experiment.json")
+    assert redact_paths(text, run_directory=run) == expected
+    # A workspace that IS the home folder is still named as the workspace.
+    monkeypatch.setenv("HOME", workspace)
+    assert redact_paths(text, run_directory=run) == expected
+    # A run outside a `runs` folder is still named by its own ID, and a
+    # neighbour that merely shares its prefix is not mistaken for it.
+    loose = os.path.join(workspace, "elsewhere", "R")
+    out = redact_paths(f"{loose}/a.json {loose}2/b.json", run_directory=loose)
+    assert out.startswith("runs/R/a.json ")
+    assert "runs/R2" not in out
+
+
+def test_redaction_covers_paths_from_another_install(monkeypatch):
+    from steerlab_server.experiment import path_redaction
+    users, home = "/" + "Users", "/" + "home"
+    monkeypatch.setattr(path_redaction.getpass, "getuser",
+                        lambda: "researcher7")
+    text = "\n".join([
+        f'File "{users}/someone/venv/lib/python3.12/site-packages/torch/x.py"',
+        f'File "{home}/someone/.venv/lib64/python3.11/dist-packages/y.py"',
+        f"open {users}/someone/SteerLab/Workspaces/s/model.bin",
+        f"open {home}/someone/hf/model.bin",
+        "tmp /private/var/folders/ab/cd123/T/tmpx/a.json",
+        "tmp /var/folders/ab/cd123/T/tmpy",
+        "scratch /scratch/researcher7/hf and /scratch/researcher77/hf",
+    ])
+    assert path_redaction.redact_paths(text).split("\n") == [
+        'File "<site-packages>/torch/x.py"',
+        'File "<site-packages>/y.py"',
+        "open <home>/SteerLab/Workspaces/s/model.bin",
+        "open <home>/hf/model.bin",
+        "tmp <tmp>/T/tmpx/a.json",
+        "tmp <tmp>/T/tmpy",
+        "scratch /scratch/<user>/hf and /scratch/researcher77/hf",
+    ]
+
+
+def test_redaction_keeps_keys_and_values_that_are_not_text():
+    from steerlab_server.experiment.path_redaction import redact_value
+    users = "/" + "Users"
+    value = {"jobID": 7, "nested": [f"{users}/someone/a", None, True],
+             f"{users}/someone/key": "kept as a key"}
+    assert redact_value(value) == {
+        "jobID": 7, "nested": ["<home>/a", None, True],
+        f"{users}/someone/key": "kept as a key"}
+
+
 # --- ledger-only failure records skip, never fail ---------------------------
 #
 # The 2026-08-11 factorial-memo-study import: a refused pipeline continuation left
