@@ -12,6 +12,60 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **Results lead with the outcome the study is about.** The app, both
+  analysis envelopes, and the results explorer lead with the outcome the study
+  declared (`experiment set-primary-outcome`, or the Studies page), else a
+  judged outcome, else a choice or numeric outcome, a reader score, reasoning
+  style, marker density, and surface measures last, and say which rule chose
+  it. An effect is said to survive correction only when more than one
+  comparison was corrected, and a row with fewer than three pairs shows no
+  interval.
+- **Both engines pair the same outcomes from the same records.** The Mac
+  engine gains choice, parsed-number, and reader-score effects, and the Python
+  engine pairs marker density where the records carry it. Every analysis
+  writes `outcome-coverage.json`, saying what was computed and what was not
+  available, and why.
+- **`results export <study>`** on both command lines, and Export Results… in
+  the app, write a run's stored results to a new folder outside `runs/`:
+  tables for R, Stata, SPSS, or a spreadsheet, transcripts, a methods summary,
+  a codebook, and a manifest of hashes. Nothing is recalculated.
+- **The study Results view reviews every response and judge row**, in pages
+  with exact counts. It labels cut-off, failed, and noncompliant rows, reads
+  judge reports from server and cluster runs, shows the agreement and stamp
+  figures each report holds, and lists judge evaluations that stopped.
+- **Results explorer.** Export and Download work inside the app through a save
+  panel. Exported CSV files start with a plain header row, and the column
+  descriptions are a separate "Column notes" file. The explorer shows the
+  study's freeze state, what the analysis did to the records, failed
+  conditions, cut-off generations, and judge rows with no verdict. Invented
+  demo results are no longer in the app.
+- **`science report <run folder or report.json>`** on both command lines turns
+  a J-lens assessment report into one self-contained HTML page: a plain
+  summary, every comparison with its hashes, charts and tables by layer, each
+  lens's fitting texts, and every omission. New assessment runs hold the page
+  as `assessment-report.html`; older runs get it under `reports/`, and run
+  folders are never written to. The app's Open Report shows the same file, and
+  a mixed lens lists each text it was fitted on.
+- **Demo Workspaces.** SteerLab can carry Demo Workspaces, one per compute
+  backend. Open a verified copy with `workspace init <folder> --demo
+  <backend>` on either command line, or with Open Demo Workspace… in Research
+  Setup. New workspaces no longer include example task prompts. The command
+  line reports 7/7 resource families.
+- **The cross-platform client reaches a freeze without `--force`.**
+  `run --verb validate` and `--verb extract` accept a draft and report whether
+  freeze will accept the evidence. Refusals on each command line name only
+  that command line's commands; the engine names both clients.
+- **"The Mac and Python sources differ"** now names both versions and where
+  the helper files are, and suggests starting again; no server is involved. A
+  remote stage checks this before uploading work.
+- **A study that declares a J-lens readout** stops before running on the
+  built-in engine and says where it can run. One agent that fails to load no
+  longer hides a study's validation evidence.
+- **`instrumentation-cost`**, a managed operation, measures what probe
+  readings and intervention policies add to generation: prompt time, decode
+  throughput, wall time, peak memory, and evidence bytes, with warm-up,
+  repeats, a shuffled order, and dispersion. It reports numbers and sets no
+  target.
 - **Effect sizes on the Mac engine are computed per item.** When a study
   samples several responses per item, the responses are averaged within each
   condition and paired with the same item's baseline, as the Python engine
@@ -30,8 +84,10 @@ migration that rewrites frozen bytes.
   `remote resubmit`, `runner resubmit`, or Resume in Server Jobs, and keeps
   every completed response. The engine first confirms with the scheduler that
   the cancelled job has ended. Automatic resume still never revives a
-  cancelled job. A run that was stopped before it could save its place cannot
-  be resumed yet; the cancel answer says which case applies.
+  cancelled job. A run cancelled in the middle of a long response, before it
+  could save its place, resumes from the response records it had completed; the
+  answer says how many were kept, and that the response in progress is
+  generated again. A run that completed no response is still refused.
 - **Panel studies name the seat that spoke.** Each turn in `generations.jsonl`
   carries `speakerAgentID`; older runs without it still open. A seat ID or
   turn ID used twice in a panel is refused, by name, when the panel is

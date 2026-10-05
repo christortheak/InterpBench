@@ -113,8 +113,8 @@ are counted separately from budget omissions. Missing readings never become zero
 scores or negative labels.
 
 Results → Generations presents scores, stages, token positions/IDs, and missing
-reasons next to the response, with a measurement-ID filter. It retains the existing
-bounded generation-preview scope (first 80 responses); full files remain evidence.
+reasons next to the response, with a measurement-ID filter. The review pages
+through every response in the run; full files remain the evidence.
 A dedicated aggregate probe-analysis dashboard is not introduced here.
 
 ## Verification and remaining program

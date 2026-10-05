@@ -871,7 +871,7 @@ public enum RemoteJobStatusClass: Sendable, Equatable {
         "continue this cancelled run from the responses it already "
         + "completed — the server first checks that the cancelled job has "
         + "fully stopped, then starts a new job from the same script. "
-        + "Nothing is generated twice, and this job's record stays cancelled"
+        + "No completed response is generated twice, and this job's record stays cancelled"
 
     /// The Resume action's success report, whichever kind of resume it was.
     /// A resume after a cancel shows the server's own sentence (what was

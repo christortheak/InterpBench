@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guide version: 2
+Guide version: 3
 
 You are a coding assistant working inside a **SteerLab data workspace**. This
 file is the core contract: read it before running anything. It is short on
@@ -111,6 +111,10 @@ Never guess a verb or a flag. Ask the installed client, in this order:
 4. **The topic guides.** `workspace guide` lists them, and `workspace guide
    <topic>` prints one. The list is at the end of this file.
 
+To show a researcher a finished study first, open a copy of a Demo
+Workspace: `workspace init <new-folder> --demo <backend>` (the `workspace`
+topic).
+
 Method IDs: `extraction`, `readers`, `optimization`, `finetuning`, `jlens`,
 `jspace`, `sae`, `stability`, `batteries`, `judging`, `style`, `multi-agent`.
 Choose the method, comparison, split roles, model/revision and claim with the
@@ -149,11 +153,11 @@ Where each file lives, and its exact shape, is the `workspace` topic.
 | Create a draft and attach concepts | Pin each input by its hash, so the recipe is fixed | `lifecycle` |
 | Declare what is measured | Task prompts, conditions (the arms), and generation settings | `lifecycle`, `settings` |
 | Declare how it is judged | The rubric file and the judges | `evaluation` |
-| Extract and validate | Derive each direction and check it on held-out examples; loads a model | `lifecycle` |
+| Extract and validate | Derive each direction and check it on held-out examples; loads a model. On the cross-platform client, validate a draft on a runner with `run <name> --runner <url> --verb validate`; `--force` is not the route | `lifecycle` |
 | Sweep and promote (optional) | Try a planned range of layers and strengths, then choose one | `sweep` |
 | Verify and freeze | Fix the settings before behavior is measured; one-way | `freeze` |
 | Run | Generate under every condition into an immutable run directory | `lifecycle`, `remote` |
-| Evaluate and analyze | Judge the responses and compute effect sizes | `evaluation` |
+| Evaluate and analyze | Judge the responses and compute effect sizes. Lead a summary with the outcome the study is about, and say how it was chosen. `results export <study>` writes tables, transcripts, and a methods summary | `evaluation` |
 | Keep the evidence | Verify what came home, and what it proves | `custody` |
 
 Study packs and attaching existing agents or vectors are the `assembly` topic.

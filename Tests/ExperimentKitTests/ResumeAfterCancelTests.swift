@@ -159,7 +159,7 @@ import Testing
         let help = RemoteJobStatusClass.resumeAfterCancelHelp
         #expect(help.contains("responses it already completed"))
         #expect(help.contains("fully stopped"))
-        #expect(help.contains("Nothing is generated twice"))
+        #expect(help.contains("No completed response is generated twice"))
         #expect(help.contains("stays cancelled"))
     }
 
