@@ -159,7 +159,11 @@ same exit codes, same `error.code` / `error.repairAction`. Verb families:
 set-sweep-grid, set-protocol, set-system-prompt, set-parser,
 set-instrument-scope, set-evaluation-sampling, pin-revision,
 set-style-taxonomy, pin-sae-candidates, duplicate,
-verify, freeze, list, inspect, import-prompts, inspect-artifact, attach-artifact),
+verify, freeze, list, inspect, import-prompts, inspect-artifact, attach-artifact,
+acknowledge-custom-code — show a study's intervention-policy custom code and,
+with `--sha256`, record that you trust it; `pack apply`, `bundle import` and
+`attach-agent` print the notice, and `run` will not send a step that executes
+the study's agents until the code is acknowledged),
 `pack` (preview, apply, export), `concept import`, `bundle` (package, inspect, import),
 `model` (capabilities — show the chat-template capability record, §4.4;
 set-capability — override one detected field with a reason; this client holds
@@ -1024,6 +1028,7 @@ steerlab-cli experiment create <name> [--description <text>] --model <id> [--rev
 steerlab-cli experiment attach <name> <concept>… [--corpus <a,b,c>] [--extraction-rendering <json>] [--method <name>] [--pool-from <k>] [--project-neutral <k>] [--reading-position <label>] [--reference <concept>]
 steerlab-cli experiment detach <name> <concept>…
 steerlab-cli experiment attach-agent <name> --artifact <value> --artifact-sha256 <sha256> --manifest-sha256 <sha256>
+steerlab-cli experiment acknowledge-custom-code <name> [--sha256 <hex>]
 steerlab-cli experiment inspect-artifact <path>
 steerlab-cli experiment attach-artifact <study> <concept> --artifact <value> --artifact-sha256 <sha256> [--eval-run <run>] --manifest-sha256 <sha256> --sidecar-sha256 <sha256> [--source-concept <concept>]
 steerlab-cli experiment import-prompts <study> --file <value> --manifest-sha256 <sha256>
@@ -1055,6 +1060,7 @@ steerlab-cli experiment duplicate <name> <new-name>
 | `experiment attach` | Pin each named concept's stimulus hash and extraction options. |
 | `experiment detach` | Remove each named concept's pin from a draft — refused while a declaration still names one. |
 | `experiment attach-agent` | Attach an agent using the reviewed study and artifact file versions. |
+| `experiment acknowledge-custom-code` | Show the custom code (intervention-policy expert providers) a study carries; with --sha256, record that you trust it, so the study can run. The code runs with your permissions; it is not sandboxed. |
 | `experiment inspect-artifact` | Inspect a vector pair's exact digests and scientific sidecar before attaching. |
 | `experiment attach-artifact` | Attach reviewed vector bytes through scientific admission, preserving their provenance. |
 | `experiment import-prompts` | Import full JSONL records into an immutable input version and pin it to the reviewed draft. |

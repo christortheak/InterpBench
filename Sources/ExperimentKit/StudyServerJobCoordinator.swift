@@ -60,6 +60,15 @@ public final class StudyServerJobCoordinator {
                 }
             }
             guard isCurrent(), !Task.isCancelled else { return }
+            // Custom code: a server copy paired to this workspace is this
+            // workspace's study, so the same acknowledgement applies.
+            if let refusal = CustomCodeNotice.submissionRefusalText(
+                study: name, verb: verb, dryRun: false,
+                workspaceRoot: transport.origin?.workspaceRoot)
+            {
+                note(refusal, severity: .error)
+                return
+            }
             note("submitting \(verb) for '\(name)' to \(substrate)…", severity: .info)
             let jobID = try await transport.submit(name, verb)
             jobs.recordOrigin(transport.origin, jobID: jobID)

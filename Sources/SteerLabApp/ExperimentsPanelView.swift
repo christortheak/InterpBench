@@ -68,6 +68,10 @@ struct ExperimentsPanelView: View {
                 // appear/disappear BELOW the control that toggles them).
                 StudyTypeSection(manifest: manifest, panel: panel)
 
+                // Custom code the study carries (an intervention policy's
+                // expert provider), until someone acknowledges it here.
+                CustomCodeNoticeSection(manifest: manifest, panel: panel)
+
                 StudySetupSection(
                     manifest: manifest, panel: panel,
                     substrateLabel: service.cluster.substrateLabel)
