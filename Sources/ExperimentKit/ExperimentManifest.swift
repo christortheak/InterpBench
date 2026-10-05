@@ -2006,6 +2006,14 @@ public struct ExperimentError: Error, CustomStringConvertible {
     /// carries no new state or gate vocabulary — `blocked`/64 and the `usage`
     /// code both predate it; only the CLASSIFICATION of this throw moves.
     public let malformedInvocation: MalformedInvocation?
+    /// Why the local Python client could not be confirmed to match this
+    /// build, when that is what this error is (`ClientIdentityFailure`).
+    /// Additive on the same terms as the three above: `reason` and the
+    /// malformed-invocation repair carry the command-line wording, so every
+    /// catch site, exit code, and envelope is unchanged; the app reads this
+    /// to say the same thing in a researcher's words. nil for every other
+    /// error.
+    public let clientIdentityFailure: ClientIdentityFailure?
     public var description: String { reason }
 
     /// The repair for a malformed invocation: the legal values, as text a
@@ -2020,6 +2028,7 @@ public struct ExperimentError: Error, CustomStringConvertible {
         self.freezeRefusal = nil
         self.lifecycleRefusal = nil
         self.malformedInvocation = nil
+        self.clientIdentityFailure = nil
     }
 
     public init(refusal: FreezeRefusal) {
@@ -2027,6 +2036,7 @@ public struct ExperimentError: Error, CustomStringConvertible {
         self.freezeRefusal = refusal
         self.lifecycleRefusal = nil
         self.malformedInvocation = nil
+        self.clientIdentityFailure = nil
     }
 
     public init(refusal: LifecycleRefusal) {
@@ -2034,6 +2044,16 @@ public struct ExperimentError: Error, CustomStringConvertible {
         self.freezeRefusal = nil
         self.lifecycleRefusal = refusal
         self.malformedInvocation = nil
+        self.clientIdentityFailure = nil
+    }
+
+    /// See `ExperimentError.clientIdentity(_:)`.
+    init(clientIdentityFailure failure: ClientIdentityFailure) {
+        self.reason = failure.reason
+        self.freezeRefusal = nil
+        self.lifecycleRefusal = nil
+        self.malformedInvocation = .init(repairAction: failure.repair)
+        self.clientIdentityFailure = failure
     }
 
     /// A value the verb's own vocabulary does not contain. `reason` is the
@@ -2047,6 +2067,7 @@ public struct ExperimentError: Error, CustomStringConvertible {
         self.freezeRefusal = nil
         self.lifecycleRefusal = nil
         self.malformedInvocation = malformed
+        self.clientIdentityFailure = nil
     }
 }
 
@@ -2062,9 +2083,19 @@ public struct ExperimentError: Error, CustomStringConvertible {
 /// today only because its agent carries an intervention policy — is
 /// {"condition", "batteryHash", "notApplicable": "<reason>"} with NO score
 /// keys, on both engines. It decodes here with zero scores that mean
-/// nothing: read `notApplicable` before reading `accuracy`. A row with
-/// neither the score keys nor `notApplicable` (the server's `error` row for
-/// an agent that failed to load) fails to decode exactly as it always has.
+/// nothing: read `notApplicable` before reading `accuracy`.
+///
+/// An ERROR row — the server's record that the battery could not run for a
+/// condition, because its agent failed to load — is
+/// {"condition", "batteryHash", "error": "<what went wrong>"}, again with no
+/// score keys. It decodes the same way: placeholder scores, and `error`
+/// says why there is no reading. One such row used to fail the whole
+/// evidence file here, so a study with one broken agent appeared to have no
+/// validation evidence at all; now the row is kept as what it is and every
+/// other row is still read. Ask `isScored` before reading `accuracy`.
+///
+/// A row with none of the score keys, `notApplicable`, or `error` is
+/// malformed and fails to decode exactly as it always has.
 public struct CapabilityBatteryConditionResult: Codable, Sendable, Equatable {
     public var condition: String
     public var batteryHash: String
@@ -2082,6 +2113,15 @@ public struct CapabilityBatteryConditionResult: Codable, Sendable, Equatable {
     /// nil on every scored row. When set, `total`/`correct`/`accuracy` are
     /// placeholders and are not written.
     public var notApplicable: String?
+    /// Why the battery could not run for this condition, when it could not
+    /// (the server's words for an agent that failed to load); nil on every
+    /// other row. When set, `total`/`correct`/`accuracy` are placeholders
+    /// and are not written.
+    public var error: String?
+
+    /// Whether this row is a reading. False for a not-applicable row and for
+    /// an error row, whose score fields are placeholders.
+    public var isScored: Bool { notApplicable == nil && error == nil }
 
     public init(
         condition: String, batteryHash: String, total: Int, correct: Int,
@@ -2096,6 +2136,7 @@ public struct CapabilityBatteryConditionResult: Codable, Sendable, Equatable {
         self.batteryFormat = batteryFormat
         self.armingIsolated = armingIsolated
         self.notApplicable = nil
+        self.error = nil
     }
 
     /// The explicit not-applicable row for a condition the battery cannot be
@@ -2109,11 +2150,25 @@ public struct CapabilityBatteryConditionResult: Codable, Sendable, Equatable {
         self.batteryFormat = nil
         self.armingIsolated = nil
         self.notApplicable = reason
+        self.error = nil
+    }
+
+    /// The error row for a condition the battery could not run for.
+    public init(condition: String, batteryHash: String, error message: String) {
+        self.condition = condition
+        self.batteryHash = batteryHash
+        self.total = 0
+        self.correct = 0
+        self.accuracy = 0
+        self.batteryFormat = nil
+        self.armingIsolated = nil
+        self.notApplicable = nil
+        self.error = message
     }
 
     enum CodingKeys: String, CodingKey {
         case condition, batteryHash, total, correct, accuracy
-        case batteryFormat, armingIsolated, notApplicable
+        case batteryFormat, armingIsolated, notApplicable, error
     }
 
     public init(from decoder: Decoder) throws {
@@ -2122,8 +2177,10 @@ public struct CapabilityBatteryConditionResult: Codable, Sendable, Equatable {
         batteryHash = try container.decode(String.self, forKey: .batteryHash)
         notApplicable = try container.decodeIfPresent(
             String.self, forKey: .notApplicable)
-        if notApplicable != nil {
-            // The score keys are absent by contract on a not-applicable row.
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+        if notApplicable != nil || error != nil {
+            // The score keys are absent by contract on a not-applicable row
+            // and on an error row.
             total = try container.decodeIfPresent(Int.self, forKey: .total) ?? 0
             correct = try container.decodeIfPresent(Int.self, forKey: .correct) ?? 0
             accuracy = try container.decodeIfPresent(
@@ -2147,6 +2204,9 @@ public struct CapabilityBatteryConditionResult: Codable, Sendable, Equatable {
             // No score keys: a zero accuracy would read as a measured failure
             // on either engine.
             try container.encode(notApplicable, forKey: .notApplicable)
+        } else if let error {
+            // No score keys here either, for the same reason.
+            try container.encode(error, forKey: .error)
         } else {
             try container.encode(total, forKey: .total)
             try container.encode(correct, forKey: .correct)

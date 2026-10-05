@@ -39,7 +39,16 @@ extension DemoWorkspace.Refusal: LocalizedError {
 }
 
 extension ExperimentError: LocalizedError {
-    public var errorDescription: String? { description }
+    /// What the app shows (its sheets read `localizedDescription`). A client
+    /// identity failure is said in a researcher's words there; the command
+    /// line reads `reason` and its repair, which name both identities and
+    /// the files' path.
+    public var errorDescription: String? {
+        if let failure = clientIdentityFailure {
+            return failure.appSummary + " " + failure.appNextStep
+        }
+        return description
+    }
 }
 
 extension ExperimentTasks.ContextBudgetError: LocalizedError {

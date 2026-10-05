@@ -101,6 +101,11 @@ extension RunResults {
         public var summariesText: String?
         public var summariesTruncated = false
         public var validationReportData: Data?
+        /// A validate run's `validation-evidence.json`. Read for one thing:
+        /// the server writes its capability-battery rows here and not into
+        /// its validation report, so this is where a server run's rows —
+        /// scores, not-applicable rows, and error rows — come from.
+        public var validationEvidenceData: Data?
         public var effectSizesText: String?
         public var alienResidualsText: String?
         public var promotedMoversData: Data?
@@ -129,7 +134,8 @@ extension RunResults {
         /// the bytes here by name.
         public static let fileNames: Set<String> = [
             "generations.jsonl", "report.json", "experiment.json",
-            "summaries.csv", "validation-report.json", "effect-sizes.csv",
+            "summaries.csv", "validation-report.json",
+            "validation-evidence.json", "effect-sizes.csv",
             "alien-residuals.csv", "promoted-movers.json",
             "cosine-matrix.csv", "panel-effects.csv",
         ]
@@ -151,6 +157,8 @@ extension RunResults {
                 summariesTruncated = truncated
             case "validation-report.json":
                 validationReportData = data
+            case "validation-evidence.json":
+                validationEvidenceData = data
             case "effect-sizes.csv":
                 effectSizesText = String(decoding: data, as: UTF8.self)
             case "alien-residuals.csv":
@@ -201,8 +209,17 @@ extension RunResults {
         // A validate run's structured report (canonical filename first, then
         // the legacy byte-identical report.json copy).
         for data in [artifacts.validationReportData, artifacts.reportData] {
-            guard let data, let parsed = validationReport(fromJSON: data)
+            guard let data, var parsed = validationReport(fromJSON: data)
             else { continue }
+            // The server's report carries no battery rows; its evidence file
+            // does. Without this a server validate run showed no battery
+            // section at all, so a condition the battery could not run for
+            // had nowhere to be shown.
+            if parsed.capabilityBattery.isEmpty,
+                let evidence = artifacts.validationEvidenceData
+            {
+                parsed.capabilityBattery = batteryRows(fromEvidenceJSON: evidence)
+            }
             model.validationReport = parsed
             break
         }
@@ -289,6 +306,8 @@ extension RunResults {
         }
         artifacts.validationReportData = try? Data(
             contentsOf: runDirectory.appending(component: "validation-report.json"))
+        artifacts.validationEvidenceData = try? Data(
+            contentsOf: runDirectory.appending(component: "validation-evidence.json"))
         artifacts.effectSizesText = RunBrowser.readHead(
             of: runDirectory.appending(component: "effect-sizes.csv"),
             maxBytes: RunBrowser.jsonPreviewByteLimit)?.text

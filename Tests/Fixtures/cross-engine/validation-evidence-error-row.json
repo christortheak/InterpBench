@@ -1,0 +1,34 @@
+{
+  "batteryResults": [
+    {
+      "accuracy": 1.0,
+      "armingIsolated": false,
+      "batteryFormat": 1,
+      "batteryHash": "d4167d6a465c561cf2b1764139ed05a362fb3b961821764825139001025de985",
+      "condition": "baseline",
+      "correct": 2,
+      "total": 2
+    },
+    {
+      "accuracy": 1.0,
+      "armingIsolated": false,
+      "batteryFormat": 1,
+      "batteryHash": "d4167d6a465c561cf2b1764139ed05a362fb3b961821764825139001025de985",
+      "condition": "agent-ok",
+      "correct": 2,
+      "total": 2
+    },
+    {
+      "batteryHash": "d4167d6a465c561cf2b1764139ed05a362fb3b961821764825139001025de985",
+      "condition": "agent-broken",
+      "error": "variant adapters need peft: pip install -e .[lora]"
+    }
+  ],
+  "experiment": "one-broken-agent",
+  "reportFile": "validation-report.json",
+  "schemaVersion": 1,
+  "substrate": "python-hf-transformers",
+  "task": "validate",
+  "vacuousConcepts": [],
+  "validationScopeHash": "166f78836116426f6dbcba3cbf020e08d8cdb786e36d41482132c5f749cba2de"
+}

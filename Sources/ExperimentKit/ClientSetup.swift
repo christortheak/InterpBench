@@ -12,7 +12,10 @@ public enum ClientSetup {
             return value
         } catch {
             return ["changed": .bool(false), "clientReady": .bool(false), "authoringReady": .bool(false),
-                    "reason": .string(String(describing: error)), "repairAction": .string(ScientificPythonRuntime.setupHint),
+                    "reason": .string(String(describing: error)),
+                    // A source mismatch carries its own repair; setting up the
+                    // helper again cannot change which files these are.
+                    "repairAction": .string((error as? ExperimentError)?.clientIdentityFailure?.repair ?? ScientificPythonRuntime.setupHint),
                     "workspace": workspace.flatMap { try? WorkspaceBootstrap.inspect($0) }.map(JSONValue.object) ?? .null,
                     "execution": .object(["state": .string("notAssessed"), "requiredForAuthoring": .bool(false)])]
         }

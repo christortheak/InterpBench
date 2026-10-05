@@ -3882,6 +3882,73 @@ public enum ExperimentStore {
             + "happened. Submit this study to a server instead"
     }
 
+    /// The fourth road to a silently incomplete run (release review
+    /// 2026-10-04, F1): a declared J-lens readout. The manifest, the store,
+    /// and the readiness checklist all carry and grade the block, but no run
+    /// path on this engine reads it; the Python engine is the one that takes
+    /// the measurement.
+    ///
+    /// Observed, not inferred: before this refusal a study declaring a
+    /// readout was run on this engine. It verified clean, ran to completion,
+    /// wrote every response, reported itself complete — and left no readout
+    /// trace, and nothing in its results to say one was owed.
+    ///
+    /// Run-path only, for the same reason as the latent arms above: a study
+    /// authored on a Mac and run on the Python engine is legitimate, so
+    /// `verify` and freeze stay open. The notice a researcher gets while
+    /// still authoring is `jlensReadoutEngineAdvisory`.
+    ///
+    /// A multi-agent study never arms a readout — it may carry a block from
+    /// before a kind switch (the never-delete rule) — so it is not refused.
+    static func jlensReadoutNotExecutableProblem(
+        _ manifest: ExperimentManifest
+    ) -> String? {
+        guard manifest.studyKind == .modelOutput, manifest.jlensReadout != nil
+        else { return nil }
+        return "This study declares a J-lens readout, and the engine built "
+            + "into this app does not take that measurement. A run here would "
+            + "finish and record every response, but no readout. Nothing was "
+            + "run, and no model was loaded. "
+            + jlensReadoutWhereToRun
+    }
+
+    /// Where a study with a declared readout runs, in the words of the
+    /// workspace's three compute choices.
+    static let jlensReadoutWhereToRun =
+        "The Python engine records the readout: in the Workspace menu, choose "
+        + "\u{201C}\(ComputeChoice.macFullCapabilities.title)\u{201D} or "
+        + "\u{201C}\(ComputeChoice.anotherMachine.title)\u{201D} as where "
+        + "this workspace runs studies, and run the study there."
+
+    /// The command-line route to the same place, as the repair a refusal
+    /// carries.
+    static func jlensReadoutRunRepair(experiment: String) -> String {
+        "steerlab-cli remote package \(experiment) && steerlab-cli remote "
+            + "submit-bundle <bundle> --verb run (--site <id> | --url <server>)"
+            + "  — the Python engine records the readout; in the app, change "
+            + "where this workspace runs studies in the Workspace menu"
+    }
+
+    /// The same fact while the study is still being authored, and only where
+    /// it applies: the study declares a readout, and it is headed for the
+    /// engine built into this app (`runSubstrate` is this engine's). Never a
+    /// gate — verify and freeze stay open — so the researcher learns before
+    /// freezing rather than when the run stops.
+    static func jlensReadoutEngineAdvisory(
+        _ manifest: ExperimentManifest,
+        runSubstrate: String = ExperimentStore.evidenceSubstrate
+    ) -> String? {
+        guard manifest.studyKind == .modelOutput, manifest.jlensReadout != nil,
+            runSubstrate == evidenceSubstrate
+        else { return nil }
+        return "This study declares a J-lens readout, and this workspace runs "
+            + "studies on the engine built into this app "
+            + "(\u{201C}\(ComputeChoice.macQuickStart.title)\u{201D}), which "
+            + "does not take that measurement. Designing and freezing the "
+            + "study are not affected; a run here will stop before it "
+            + "starts. " + jlensReadoutWhereToRun
+    }
+
     /// One-line record of INERT carried concept machinery, for the runs
     /// that legally proceed (agent arms exist, so `inertConditionsProblem`
     /// does not refuse): a declared agent comparison whose manifest still
@@ -6257,6 +6324,13 @@ public enum ExperimentStore {
         runSubstrate: String = ExperimentStore.evidenceSubstrate
     ) -> [String] {
         var advisories: [String] = []
+        // A declared J-lens readout headed for the engine built into this
+        // app: said here, before freezing, because the run would refuse.
+        if let readout = jlensReadoutEngineAdvisory(
+            manifest, runSubstrate: runSubstrate)
+        {
+            advisories.append(readout)
+        }
         // A one-judge panel freezes cleanly (the gate asks for a judge, not
         // for two) — and says what it costs, at the moment of freezing.
         if let singleCoder = singleJudgePanelAdvisory(manifest) {

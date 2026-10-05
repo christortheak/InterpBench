@@ -7,9 +7,25 @@ import Foundation
 public enum DiagnosticWorkspace {
     public static let actions = ["evidence-analyze", "policy-list", "policy-inspect", "policy-review", "policy-publish", "policy-attach-review", "policy-attach", "measurements-review", "measurements-save", "probe-list", "probe-inspect", "staged-request", "corpus-preview", "corpus-publish", "artifact-plan", "artifact-import", "setup-start", "setup-inspect", "sae-check", "sae-show", "sae-pin-plan", "sae-pin", "interview", "draft", "publish", "input-plan", "package", "import", "custody", "verify-custody", "results-export"]
 
+    /// Asks the Python client only to confirm that its files are the source
+    /// this build was compiled against: nothing is imported, read, or
+    /// written. Internal to the bridge, so not one of the `actions` the
+    /// command line routes.
+    static let identityCheckAction = "client-identity"
+
+    /// Confirms, locally, that the Python client files match this build, and
+    /// throws the same typed failure `perform` would. A remote step that
+    /// ends in a local one calls this first, so a mismatch is found before
+    /// the server has done any work.
+    public static func confirmClientIdentity(python: URL? = nil, source: URL? = nil) async throws {
+        _ = try await perform(identityCheckAction, payload: [:], python: python, source: source)
+    }
+
     public static func perform(_ action: String, payload: [String: JSONValue],
                                python: URL? = nil, source: URL? = nil) async throws -> JSONValue {
-        guard actions.contains(action) else { throw ExperimentError(reason: "Unknown diagnostic workspace action.") }
+        guard actions.contains(action) || action == identityCheckAction else {
+            throw ExperimentError(reason: "Unknown diagnostic workspace action.")
+        }
         let source = try source ?? CodeResources.serverPayload()
         guard FileManager.default.fileExists(atPath: source.appending(path: "steerlab_server/__init__.py").path),
               FileManager.default.fileExists(atPath: source.appending(path: "steerlab_server/client/diagnostic_workspace.py").path) else {
@@ -19,7 +35,8 @@ public enum DiagnosticWorkspace {
               FileManager.default.isExecutableFile(atPath: interpreter.path) else {
             throw ExperimentError.malformed("Scientific workspace actions require a local Python client environment.", repair: ScientificPythonRuntime.setupHint)
         }
-        let input = try JSONEncoder().encode(JSONValue.object(["action": .string(action), "payload": .object(payload), "clientSHA256": .string(PythonClientIdentity.sourceSHA256)]))
+        let expected = PythonClientIdentity.sourceSHA256
+        let input = try JSONEncoder().encode(JSONValue.object(["action": .string(action), "payload": .object(payload), "clientSHA256": .string(expected)]))
         return try await Task.detached {
             let temporary = FileManager.default.temporaryDirectory.appending(component: UUID().uuidString)
             try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -43,11 +60,16 @@ public enum DiagnosticWorkspace {
             try process.run()
             let bytes = output.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
-            guard let value = try? JSONDecoder().decode(JSONValue.self, from: bytes), case .object(let object) = value else {
-                throw ExperimentError.malformed("The local Python client returned no result.", repair: ScientificPythonRuntime.setupHint)
+            let answer = try? JSONDecoder().decode(JSONValue.self, from: bytes)
+            if let failure = identityFailure(
+                answer: answer, expected: expected, source: source,
+                interpreter: interpreter, exitStatus: process.terminationStatus,
+                errorOutput: { errorTail(errorsURL) })
+            {
+                throw ExperimentError.clientIdentity(failure)
             }
-            guard object["clientSHA256"] == .string(PythonClientIdentity.sourceSHA256) else {
-                throw ExperimentError.malformed("The Mac and Python sources differ, or the runtime is too old to confirm compatibility.", repair: ScientificPythonRuntime.setupHint)
+            guard case .object(let object) = answer else {
+                throw ExperimentError(reason: "The local Python client returned no result.")
             }
             guard process.terminationStatus == 0, object["ok"] == .bool(true), let result = object["result"] else {
                 let reason: String = if case .string(let text) = object["reason"] { text } else { "Diagnostic workspace operation refused." }
@@ -56,6 +78,56 @@ public enum DiagnosticWorkspace {
             }
             return result
         }.value
+    }
+
+    /// The identity failure an answer from the Python client amounts to, or
+    /// nil when it confirmed this build's identity. One cause per shape of
+    /// answer (`ClientIdentityFailure.Cause`): no answer at all, an answer
+    /// that stopped before it named an identity, or an identity that is not
+    /// this build's.
+    static func identityFailure(
+        answer: JSONValue?, expected: String, source: URL, interpreter: URL,
+        exitStatus: Int32, errorOutput: () -> String?
+    ) -> ClientIdentityFailure? {
+        let (layout, installation) = ClientIdentityFailure.classify(payload: source)
+        func failure(_ cause: ClientIdentityFailure.Cause, actual: String? = nil,
+                     reported: String? = nil, reason: String? = nil,
+                     withOutput: Bool) -> ClientIdentityFailure {
+            ClientIdentityFailure(
+                cause: cause, expected: expected, actual: actual,
+                payloadPath: reported ?? source.path, layout: layout,
+                replacedWhileRunning: cause == .sourcesDiffer
+                    && ClientIdentityFailure.replacedSinceLaunch(
+                        payload: source, layout: layout, installation: installation),
+                pythonReason: reason, errorOutput: withOutput ? errorOutput() : nil,
+                exitStatus: cause == .sourcesDiffer ? nil : exitStatus,
+                interpreterPath: interpreter.path)
+        }
+        guard case .object(let object) = answer else {
+            return failure(.noAnswer, withOutput: true)
+        }
+        let reported: String? = if case .string(let path) = object["clientRoot"] { path } else { nil }
+        let reason: String? = if case .string(let text) = object["reason"] { text } else { nil }
+        guard case .string(let actual) = object["clientSHA256"] else {
+            return failure(.identityNotReported, reported: reported, reason: reason,
+                           withOutput: true)
+        }
+        guard actual == expected else {
+            return failure(.sourcesDiffer, actual: actual, reported: reported,
+                           reason: reason, withOutput: false)
+        }
+        return nil
+    }
+
+    /// The last few lines the Python client wrote to its error stream, for a
+    /// failure that has nothing better to show.
+    static func errorTail(_ url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url), !data.isEmpty else { return nil }
+        let text = String(decoding: data.suffix(600), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: true).suffix(3)
+        let tail = lines.joined(separator: " | ")
+        return tail.isEmpty ? nil : tail
     }
 
     static func http(_ action: String, body: Data, root: URL) async -> StudyAuthoringHTTP.Response {

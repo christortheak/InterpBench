@@ -1708,17 +1708,34 @@ struct ValidationReportSectionView: View {
             Text("Capability battery (evidence)")
                 .font(.caption.weight(.semibold))
             ForEach(report.capabilityBattery) { row in
-                HStack(spacing: 6) {
-                    Text(row.condition)
-                        .font(.caption2.monospaced())
-                    if let accuracy = row.accuracy {
-                        Text(String(format: "%.0f%%", accuracy * 100))
-                            .font(.caption2.monospacedDigit())
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        Text(row.condition)
+                            .font(.caption2.monospaced())
+                        if let label = row.unscoredLabel {
+                            // No score to show: say which kind of row this
+                            // is, where the number would have been.
+                            Text(label)
+                                .font(.caption2)
+                                .foregroundStyle(row.error == nil ? Color.secondary : Color.orange)
+                        } else {
+                            if let accuracy = row.accuracy {
+                                Text(String(format: "%.0f%%", accuracy * 100))
+                                    .font(.caption2.monospacedDigit())
+                            }
+                            if let correct = row.correct, let total = row.total {
+                                Text("(\(correct)/\(total))")
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
-                    if let correct = row.correct, let total = row.total {
-                        Text("(\(correct)/\(total))")
-                            .font(.caption2.monospacedDigit())
+                    if let explanation = row.unscoredExplanation {
+                        Text(explanation)
+                            .font(.caption2)
                             .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
