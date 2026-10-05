@@ -5,6 +5,7 @@ choice of verb and must retain the guard's returned provenance in their output.
 """
 from __future__ import annotations
 import os
+from . import command_vocabulary as vocabulary
 from . import lifecycle_gates, run_epoch
 from .manifest import Manifest
 
@@ -47,7 +48,8 @@ def verify_or_warn(manifest: Manifest, root: str | None) -> None:
             repair=(f"steerlab-server experiment verify {manifest.name} "
                     "(names every drifted pin) ; then restore the named files "
                     "to their pinned bytes — a frozen pin is never re-pinned: "
-                    f"duplicate {manifest.name} on the Mac to change it"))
+                    f"duplicate {manifest.name} "
+                    f"{vocabulary.authoring_place()} to change it"))
 
 
 

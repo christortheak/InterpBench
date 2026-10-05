@@ -458,7 +458,7 @@ is authoritative.
 
 | # | stage | what it does | typical refusal |
 |---|---|---|---|
-| 1 | `load` | loads the study, checks it is **frozen**, re-verifies every pin | `experimentNotFrozen` (65) · `pinDrift` (65, with `error.gate`) |
+| 1 | `load` | loads the study, checks it is **frozen** (a draft is accepted for `--verb validate` and `--verb extract`, the steps before freeze), re-verifies every pin, and for the measured run checks that task prompts are pinned | `experimentNotFrozen` (65) · `pinDrift` (65, with `error.gate`) · `missingPrerequisite` (65) |
 | 2 | `package` | packages the run bundle locally, records its sha256 | `bundleRefused` (65) |
 | 3 | `capabilities` | asks the runner whether it can execute **this verb on this executor** — *before* anything is uploaded | `runnerCannotExecute` (65), with `result.runnerOffers` |
 | 4 | `upload` | streams the archive; the digest must agree across the socket | `uploadDigestMismatch` (65) |

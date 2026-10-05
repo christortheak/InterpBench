@@ -42,13 +42,18 @@ def _rule_refusal(message: str) -> "lifecycle_gates.LifecycleValueError":
     What is new is that an agent can tell this apart from the genuine
     ``ValueError`` a defect raises, and gets a runnable repair.
 
-    The repair names the Swift verb because ``sweep.selection`` is authored on
-    the Mac (audit §3.2, Mac-authority).
+    The repair is an authoring act — ``sweep.selection`` is declared on an
+    authoring client, never on this engine — so it is spelled for whoever
+    shows the refusal (:mod:`command_vocabulary`).
     """
+    from . import command_vocabulary as vocabulary
     return lifecycle_gates.refusing_value(
         lifecycle_gates.SWEEP_SELECTION_RULE, message,
-        repair=("steerlab-cli experiment set-sweep-selection <name> "
-                "--objective markerDensity|judgeScore|logprobShift …"))
+        repair=vocabulary.authoring(vocabulary.protocol_field(
+            "<name>",
+            "experiment set-sweep-selection <name> "
+            "--objective markerDensity|judgeScore|logprobShift …",
+            "sweep=<the sweep block as JSON, with its selection>")))
 
 DEFAULT_CAPABILITY_TOLERANCE = 0.15
 #: The LEGACY absolute distinct-2 floor. Still the resolved value for every

@@ -4,30 +4,39 @@ This owner never imports the task compatibility facade.
 """
 from __future__ import annotations
 import hashlib
+from . import command_vocabulary as vocabulary
 from . import lifecycle_gates, paths
 from . import manifest as manifest_module
 
+DEFAULT_RUBRIC = "prompts/rubrics/default-paired-v1.md"
+
+
+def _pin_rubric(name: str, relative: str) -> str:
+    """Pinning a rubric file, as the reader's authoring client spells it
+    (:func:`command_vocabulary.pin_rubric`)."""
+    return vocabulary.authoring(vocabulary.pin_rubric(name, relative))
+
 
 def no_rubric_refusal(name: str) -> str:
-    """The refusal both engines give an evaluation with no rubric at all.
+    """The refusal an evaluation with no rubric at all gets.
 
-    Byte-identical to Swift's ``JudgeRubricStore.noRubricRefusal``, and it
-    names ``steerlab-cli`` on BOTH engines on purpose: authoring is
-    Mac-authority (WP0 §10.x), and this CLI has no ``pin-rubric`` verb to
-    name."""
-    return (f"study '{name}' has no judge rubric — pin one: "
-            f"'steerlab-cli experiment pin-rubric {name} "
-            "prompts/rubrics/default-paired-v1.md' (any file under "
-            "prompts/rubrics/; inline draft text is draft-only and cannot "
-            "freeze)")
+    Pinning a rubric is an authoring act, and this engine never authors, so
+    the sentence says WHERE it happens and the repair
+    (:func:`no_rubric_repair`) carries the command for both authoring
+    clients. The Swift twin (``JudgeRubricStore.noRubricRefusal``) is the Mac
+    command line speaking for itself, so it names its own verb in the
+    sentence."""
+    return (f"study '{name}' has no judge rubric — pin one "
+            f"{vocabulary.authoring_place()} (any file under "
+            f"prompts/rubrics/, for example {DEFAULT_RUBRIC}; inline draft "
+            "text is draft-only and cannot freeze)")
 
 
 def no_rubric_repair(name: str) -> str:
-    """The repair for :func:`no_rubric_refusal` on THIS engine: pin on the
-    Mac (the only CLI with a ``pin-rubric`` verb), then re-run here."""
-    return (f"steerlab-cli experiment pin-rubric {name} "
-            "prompts/rubrics/default-paired-v1.md  (authoring is "
-            f"Mac-authority) ; then steerlab-server experiment evaluate {name}")
+    """The repair for :func:`no_rubric_refusal`: pin the rubric on the
+    authoring client, then evaluate again."""
+    return (f"{_pin_rubric(name, DEFAULT_RUBRIC)} ; then "
+            f"{vocabulary.study_verb('evaluate', name)}")
 
 
 def missing_rubric_refusal(path: str) -> str:
@@ -41,21 +50,19 @@ def missing_rubric_refusal(path: str) -> str:
 
 
 def missing_rubric_repair(name: str, relative: str) -> str:
-    """The repair on THIS engine: author the file under the convention
-    directory, pin it on the Mac (authoring is Mac-authority — this CLI has no
-    ``pin-rubric`` verb), then re-run here. The Swift twin
-    (``JudgeRubricStore.missingRubricRepair``) is the same sentence without the
-    Mac-authority note and the server re-run, exactly as
-    :func:`no_rubric_repair` differs from Swift's."""
-    default = "prompts/rubrics/default-paired-v1.md"
+    """The repair: author the file under the convention directory, pin it on
+    the authoring client (this engine has no ``pin-rubric`` verb and never
+    authors), then evaluate again. The Swift twin
+    (``JudgeRubricStore.missingRubricRepair``) is the Mac command line's own
+    sentence: its verb alone, and no second step."""
+    default = DEFAULT_RUBRIC
     # When the ABSENT path IS the shipped default, naming it as an example
     # would be the repair pointing at itself (Swift does the same).
     example = (f" (a seeded workspace ships {default})" if relative == default
                else f" (the shipped {default} is one)")
     return (f"author {relative} under prompts/rubrics/{example}, then "
-            f"steerlab-cli experiment pin-rubric {name} {relative}  "
-            f"(authoring is Mac-authority) ; then steerlab-server experiment "
-            f"evaluate {name}")
+            f"{_pin_rubric(name, relative)} ; then "
+            f"{vocabulary.study_verb('evaluate', name)}")
 
 
 def resolve_rubric(manifest: manifest_module.Manifest, root, _log) -> tuple[str, str | None, str | None]:

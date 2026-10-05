@@ -63,5 +63,14 @@ def main():
         return 65
 
 
+def main_for_the_mac():
+    """This adapter serves the Mac app and its command line, and nothing else:
+    any repair composed while it runs is shown there, so it names that command
+    line's verbs and no other client's."""
+    from ..experiment import command_vocabulary as vocabulary
+    with vocabulary.speaking_as(vocabulary.MAC):
+        return main()
+
+
 if __name__ == '__main__':
-    raise SystemExit(main())
+    raise SystemExit(main_for_the_mac())

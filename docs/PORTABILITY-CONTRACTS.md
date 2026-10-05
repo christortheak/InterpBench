@@ -1175,7 +1175,7 @@ modes — under `--json` stdout carries exactly one document).
 
 | # | stage | what it does | what it composes | refuses with |
 |---|---|---|---|---|
-| 1 | `load` | load the local study, check it is **frozen**, re-verify every pin | `Manifest.load`, `experiment_store.load_raw`, `Manifest.verify` | `experimentNotFrozen` (65); `pinDrift` (65, **the store's own gate**, `error.gate` present) |
+| 1 | `load` | load the local study, check it is **frozen** (a draft is accepted for `--verb validate` and `--verb extract` only, the steps before freeze), re-verify every pin, and for the measured run check that task prompts are pinned | `Manifest.load`, `experiment_store.load_raw`, `Manifest.verify` | `experimentNotFrozen` (65); `pinDrift` (65, **the store's own gate**, `error.gate` present); `missingPrerequisite` (65) |
 | 2 | `package` | package the run bundle here, record its sha256 | `bundles.package_experiment` | `bundleRefused` (65) |
 | 3 | `capabilities` | ask the runner who it is and whether it can execute **this verb on this executor** | `RunnerClient.info` / `.capabilities` / `.identity` | `runnerCannotExecute` (65), naming what the runner offers |
 | 4 | `upload` | stage the archive; the cross-socket digest agreement is the adapter's | `RunnerClient.upload_run_bundle` | `uploadDigestMismatch` (65) and the adapter's HTTP vocabulary |
@@ -1222,7 +1222,7 @@ find out what they should have typed.
 | Contract | Guarantees | Pinned by |
 |---|---|---|
 | **capability-refusal-precedes-upload** | An unsupported verb/executor combination is refused with **nothing uploaded** — the fake adapter saw exactly one `GET /api/info` and zero uploads and zero submits. | `test_a_capability_refusal_happens_before_any_upload`, `test_an_unknown_study_verb_is_refused_before_any_upload`, `test_a_dry_run_may_name_slurm_on_any_runner` |
-| **unfrozen-refuses-locally** | A draft refuses at stage 1 with the runner never addressed at all (`script.info_calls == 0`). | `test_an_unfrozen_study_is_refused_before_the_runner_is_addressed` |
+| **unfrozen-refuses-locally** | A draft refuses at stage 1 with the runner never addressed at all (`script.info_calls == 0`), for every verb except the two before freeze, `validate` and `extract`; the refusal names those verbs and the route to a frozen study. | `test_an_unfrozen_study_is_refused_before_the_runner_is_addressed`, `test_client_draft_to_freeze.py` |
 | **drift-keeps-the-stores-gate** | A drifted pin refuses as `pinDrift` with `error.gate` present — the vocabulary `experiment verify` already answers in, not a composite's paraphrase. | `test_a_drifted_pin_is_refused_with_the_stores_own_gate` |
 
 ### 10.4 The retry table

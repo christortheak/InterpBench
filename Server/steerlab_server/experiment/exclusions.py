@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 
+from . import command_vocabulary as vocabulary
 from . import scoring
 from .battery import GRADING_MODES
 
@@ -88,15 +89,17 @@ PIN_REQUIRED_MESSAGE = (
     "(taskPromptsFile + taskPromptsHash) so analysis grades the same items "
     "the run saw — pin the prompt set first")
 
-#: The RUNNABLE repair for that refusal (WP0 step 8). Byte-identical to the
-#: Swift twin ``ExclusionEngine.pinRequiredRepair``, and it names the Swift
-#: verb on BOTH engines because pinning is Mac-authority (audit §3.2) — a
-#: repair that named a verb this engine does not have would send an agent in a
-#: circle, which is exactly what gate-5 dry run #1 measured.
-PIN_REQUIRED_REPAIR = (
-    "steerlab-cli experiment pin-prompts <name> <the prompt file the run "
-    "used> — analysis grades the items the run saw, so the pin must name that "
-    "exact file")
+def pin_required_repair() -> str:
+    """The RUNNABLE repair for that refusal (WP0 step 8). Pinning is an
+    authoring act, so the command is spelled for whoever shows the refusal
+    (:mod:`command_vocabulary`): a repair that named a verb its reader does
+    not have would send an agent in a circle, which is exactly what gate-5
+    dry run #1 measured. Swift twin, the Mac command line's own sentence:
+    ``ExclusionEngine.pinRequiredRepair``."""
+    pin = vocabulary.authoring(vocabulary.pin_prompts(
+        "<name>", "<the prompt file the run used>"))
+    return (f"{pin} — analysis grades the items the run saw, so the pin must "
+            "name that exact file")
 
 NO_CHECKS_MESSAGE = (
     "exclusion rule failedAttentionCheck is declared but no task-prompt "

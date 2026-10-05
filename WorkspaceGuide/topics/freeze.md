@@ -78,17 +78,18 @@ Two classes of check, and the difference matters:
 
 | Gate id | What it demands | Repair |
 |---|---|---|
-| `revision` | a pinned, immutable model commit — not absent, not symbolic | `steerlab experiment pin-revision <name> <commit>`, or `experiment create --revision <commit>` |
+| `revision` | a pinned, immutable model commit — not absent, not symbolic | `steerlab experiment pin-revision <name> <commit>`, or validate on a runner, which pins the commit it resolved |
 | `measurementPins` | pins that determine *what is measured* are present and valid (e.g. a loadable study dtype) | repoint the invalid pin at a loadable value |
-| `validateEvidence` | a validation run matching the exact pins on the run substrate, **and** that evidence is not vacuous (`workspace guide lifecycle`) | author the named `validation.jsonl` files, **re-attach** their concepts, then validate on a runner and import the evidence (`workspace guide lifecycle`, step 7) |
+| `validateEvidence` | a validation run matching the exact pins on the run substrate, **and** that evidence is not vacuous (`workspace guide lifecycle`) | author the named `validation.jsonl` files, **re-attach** their concepts, then `steerlab run <name> --runner <url> --verb validate` (a draft is accepted for this step) |
 | `variantValidity` | attached variants carry hashed adapter weights and a pinnable dataset manifest | re-save the variant with hashed weights and re-attach it |
-| `batteryEvidence` | baseline and each agent condition have scope-matched capability-battery evidence. A condition whose agent uses an intervention policy is exempt, because the battery cannot run a policy; the frozen study records it in `capabilityBatteryNotApplied` and is not forced | validate again on a runner (each agent condition the battery can run is scored) |
+| `batteryEvidence` | baseline and each agent condition have scope-matched capability-battery evidence. A condition whose agent uses an intervention policy is exempt, because the battery cannot run a policy; the frozen study records it in `capabilityBatteryNotApplied` and is not forced | `steerlab run <name> --runner <url> --verb validate` again (each agent condition the battery can run is scored) |
 | `judgeValidity` | a rubric **file** and at least one judge the pipeline can actually run (a panel of two or more must be distinct) | declare the rubric file and judges (`workspace guide evaluation`) |
 | `gitClean` | every pinned input is committed in the workspace git repo | commit the pinned inputs |
 
-A refusal's own `error.repairAction` may spell its command for the engine or
-for the Mac command line. Carry out the same act with this client's verbs
-above; never type another client's command here.
+Every refusal this client shows names this client's commands, and the
+freeze repairs above are the ones its `error.repairAction` carries. The route
+from a draft to a frozen study without `--force` is: validate on a runner,
+read `result.validateEvidence`, then freeze.
 
 <!-- client: all -->
 

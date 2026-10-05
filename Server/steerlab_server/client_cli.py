@@ -52,6 +52,14 @@ the commands that re-attach. The provenance it writes is ADDITIVE and lands
 inside the imported run directory: the frozen study, its manifest and every
 hash in them are untouched.
 
+**A draft may take the two steps that come before freeze.** ``run <draft>
+--verb validate`` (and ``--verb extract``) hands a DRAFT to the runner, because
+this client loads no model and the validation evidence freeze asks for can only
+be produced on one. The evidence comes home through the same verified import,
+and the document says whether freeze's ``validateEvidence`` gate is now
+satisfied. The measured run and everything after it stay frozen-only
+(:data:`DRAFT_STUDY_VERBS`).
+
 **The token discipline, because it is the part that is easy to get wrong.**
 A runner in token mode wants a bearer token. This client takes it from
 ``$STEERLAB_RUNNER_TOKEN`` or ``--token-file <path>`` and from nowhere else —
@@ -182,6 +190,21 @@ RUN_EXECUTORS: tuple[str, ...] = ("local", "slurm")
 #: submit paths already hold (``CLI-REFERENCE`` §7.1) — stated here so the
 #: composite does not become a third opinion about it.
 DEFAULT_STUDY_VERB = "run"
+
+#: The study verbs ``run`` will hand to a runner while the study is still a
+#: DRAFT: the two that come BEFORE freeze. This client loads no model, so the
+#: validation evidence freeze asks for can only be produced on a runner — and
+#: a rule that let nothing but a frozen study leave the workspace made
+#: ``freeze --force`` the only route to a frozen study. ``validate`` produces
+#: that evidence; ``extract`` derives the vectors alone, for a study that needs
+#: them before it can finish declaring (a sweep grid's layers, a vector
+#: artifact to attach).
+#:
+#: Everything else stays frozen-only, deliberately: the measured ``run`` and
+#: every verb after it stamp their output with the study's freeze hash, and a
+#: draft has none. ``sweep`` is not here either — a sweep's recommendations
+#: become a condition through promotion, which this client does not have.
+DRAFT_STUDY_VERBS: tuple[str, ...] = ("extract", "validate")
 
 #: Job statuses that mean "this job has stopped moving". Twin literal of
 #: ``api/jobs.TERMINAL`` (sorted), for the same FastAPI reason as above.
@@ -531,8 +554,11 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
     # per-request budget keeps its own spelling here (`--request-timeout`) so
     # neither meaning has to be guessed from context.
     VerbSpec("run", "run", positional="<experiment>",
-             purpose="Take a frozen study to a runner and bring its verified "
-                     "evidence home.",
+             purpose="Take a study to a runner and bring its verified "
+                     "evidence home. The measured run and every step after it "
+                     "need a frozen study; a draft is accepted for the two "
+                     "steps that come before freeze, --verb validate and "
+                     "--verb extract.",
              boolean_flags=frozenset({"--dry-run", "--no-evidence",
                                       "--no-wait"}),
              value_flags=frozenset({
@@ -745,9 +771,11 @@ RUNNER_START_FAILED_CODE = "runnerStartFailed"
 #: affected: authoring locally and submitting to a REMOTE runner both work on
 #: Windows, and the refusal names that path.
 RUNNER_PLATFORM_UNSUPPORTED_CODE = "runnerPlatformUnsupported"
-#: ``run`` was pointed at a study that is not frozen. The composite hands a
-#: bundle to a machine that will execute it and cite the result; a draft has no
-#: freeze hash for that citation to rest on, and the repair is one verb.
+#: ``run`` was asked for a step that needs a frozen study, on one that is not.
+#: The measured run hands a bundle to a machine that will execute it and cite
+#: the result, and a draft has no freeze hash for that citation to rest on.
+#: The refusal names the steps a draft IS accepted for
+#: (:data:`DRAFT_STUDY_VERBS`) and the route from this draft to a frozen one.
 NOT_FROZEN_CODE = "experimentNotFrozen"
 #: The runner cannot execute what ``run`` was asked to submit — an unknown
 #: study verb, an unknown executor, or ``--executor slurm`` against a runner
@@ -2140,9 +2168,16 @@ def _model(invocation: Invocation) -> CLIResult:
                         + (f" at revision {revision}" if revision else "")
                         + f" under {mc.DIRECTORY}/ — an override sits beside a "
                         "DETECTED value, so the template has to be probed first"),
-                repair_action=(f"steerlab-server model capabilities {model_id} "
-                               "--probe (or steerlab-cli model capabilities "
-                               f"{model_id} --probe on the Mac), then re-run"))
+                # This client has no tokenizer, so it cannot probe; an ENGINE
+                # does, and its command line is named because that is the one
+                # command that produces the record. No other client's verb is
+                # named here: a repair is a command its reader can run.
+                repair_action=(f"probe the template on an engine, which can "
+                               "load the tokenizer: steerlab-server model "
+                               f"capabilities {model_id} --probe on the "
+                               "machine that runs the model. The record it "
+                               f"writes under {mc.DIRECTORY}/ belongs in this "
+                               "workspace; then re-run"))
         # The workspace `main` resolved is exported as STEERLAB_ROOT, which
         # is what every store path reads — the same tree `mc.lookup` searched.
         from .experiment import paths as _paths
@@ -3682,6 +3717,188 @@ def _write_provenance(run_directory: str, document: dict) -> str | None:
     return path
 
 
+def _spoken_list(words) -> str:
+    """``a``, ``a and b``, ``a, b, and c`` — the Oxford comma, once."""
+    words = list(words)
+    if len(words) < 3:
+        return " and ".join(words)
+    return ", ".join(words[:-1]) + f", and {words[-1]}"
+
+
+def _validate_step(name: str, runner_url: str) -> str:
+    """The one command that validates a draft on a runner. Written once,
+    because three refusals and the guide all name it."""
+    return f"{PROGRAM} run {name} --runner {runner_url} --verb validate"
+
+
+def _route_to_frozen(name: str, runner_url: str, study_verb: str) -> str:
+    """The commands that take THIS draft to the step that was refused.
+
+    Read from the draft, not recited: a study with a concept or a condition
+    owes validation evidence before it can freeze, and this client can only
+    get that from a runner — so when the evidence is not in the workspace yet,
+    the first command is the validation, on the runner the caller already
+    named. A study that owes none goes straight to freeze.
+    """
+    from .experiment import experiment_store as store
+
+    measured = f"{PROGRAM} run {name} --runner {runner_url}" + (
+        "" if study_verb == DEFAULT_STUDY_VERB else f" --verb {study_verb}")
+    freeze = f"{PROGRAM} experiment freeze {name}"
+    try:
+        readiness = store.validate_evidence_readiness(name)
+    except Exception:   # noqa: BLE001 — a repair sentence must never be why a
+        # refusal fails to print; the general route below is still true.
+        readiness = {"needed": False}
+    if readiness.get("needed") and not readiness.get("satisfied"):
+        return (f"{_validate_step(name, runner_url)}  (a draft is accepted "
+                "for this step; the validation evidence comes home into this "
+                f"workspace and is what freeze checks), then {freeze}, then "
+                f"{measured}")
+    return (f"{PROGRAM} experiment verify {name}, then {freeze}  (the gates "
+            "it must clear are named in the refusal if it declines), then "
+            f"{measured}")
+
+
+def _adoption_advisory(adoption: dict | None) -> dict | None:
+    """The advisory for what importing a run did to the local draft's model
+    revision, or ``None`` when it did nothing worth saying.
+
+    A runner that loads a model for a draft with no pinned revision pins the
+    commit it resolved into ITS copy and stamps the evidence with it; the
+    importer offers that pin to the same-named local draft
+    (``experiment_store.adopt_evidence_revision``). Adopting changes the
+    manifest, so it is said out loud; a conflict is a warning, because the
+    evidence then certifies a different commit from the one this draft pins.
+    Same two codes the Mac command line uses for the same event.
+    """
+    if not isinstance(adoption, dict):
+        return None
+    outcome = adoption.get("outcome")
+    name = adoption.get("experiment")
+    if outcome == "adopted":
+        return envelope.advisory(
+            "revisionAdoption",
+            f"pinned model revision {adoption.get('revision')} into the draft "
+            f"'{name}': the commit the runner resolved when it loaded the "
+            "model, read from the run that came home")
+    if outcome == "conflict":
+        return envelope.advisory(
+            "revisionAdoptionWarning",
+            f"'{name}' pins model revision {adoption.get('localRevision')}, "
+            f"but this run used {adoption.get('evidenceRevision')}. Nothing "
+            "was changed; the run is evidence about the other commit")
+    if outcome == "modelMismatch":
+        return envelope.advisory(
+            "revisionAdoptionWarning",
+            f"'{name}' declares model {adoption.get('localModel')}, but this "
+            f"run used {adoption.get('evidenceModel')}. Nothing was changed")
+    if outcome == "saveFailed":
+        return envelope.advisory(
+            "revisionAdoptionWarning",
+            f"could not pin the runner's model revision into '{name}': "
+            f"{adoption.get('message')}")
+    return None
+
+
+def _draft_step_report(name: str, study_verb: str, *,
+                       run_directory: str | None, runner_url: str) -> dict:
+    """What a draft's pre-freeze step brought home, and what comes next.
+
+    Returns ``{"facts", "advisories", "nextAction"}``. Only called for a
+    study that was a draft when it was handed over and whose evidence was
+    imported.
+
+    For ``validate`` the facts are the ones the engine's own ``experiment
+    validate`` reports, under the same keys (``validation[]``, ``vacuous``,
+    ``vacuousConcepts[]`` — read back out of the run directory by the same
+    reader), plus ``validateEvidence``: whether freeze's gate of that name is
+    now satisfied, asked of the store that owns the gate. A validation that
+    scored no held-out probe exits 0 on the runner and looks the same on the
+    surface; saying so here is the difference between finding out now and
+    finding out from the freeze refusal.
+    """
+    from . import cli_payloads
+    from .experiment import experiment_store as store
+
+    facts: dict = {}
+    advisories: list = []
+    if study_verb != "validate" or not run_directory:
+        return {"facts": facts, "advisories": advisories,
+                "nextAction": envelope.next_action(
+                    f"run {name} --runner {runner_url} --verb validate",
+                    detail=("the extracted vectors are in the imported run "
+                            "directory. Validation is the step whose evidence "
+                            "freeze checks; the study is still a draft"))}
+
+    report = cli_payloads.validation_payload(name, run_directory)
+    facts["vacuous"] = bool(report.get("vacuous"))
+    if "vacuousConcepts" in report:
+        facts["vacuousConcepts"] = report["vacuousConcepts"]
+    if report.get("validation"):
+        facts["validation"] = report["validation"]
+    for concept in report.get("vacuousConcepts") or []:
+        advisories.append(envelope.advisory(
+            "vacuousValidation",
+            f"no held-out probe was scored for '{concept}' — this evidence "
+            "will NOT satisfy freeze's validateEvidence gate"))
+    for score in report.get("validation") or []:
+        if score.get("atOrBelowChance"):
+            advisories.append(envelope.advisory(
+                "probeAtChanceFloor",
+                cli_payloads.probe_advisory_detail(score)))
+
+    readiness = store.validate_evidence_readiness(name)
+    facts["validateEvidence"] = readiness
+    document = store.load_raw(name)
+    needs_prompts = (
+        (document.get("studyKind") or "modelOutput") != "multiAgent"
+        and not document.get("taskPromptsFile"))
+    if readiness.get("satisfied") and needs_prompts:
+        # Freeze would succeed — and leave a study that cannot be measured:
+        # the run reads its items from pinned task prompts, freeze does not
+        # ask for them, and a frozen study cannot gain them. Said now, while
+        # the study is still a draft. Pinning prompts does not disturb the
+        # validation evidence; its scope does not include them.
+        facts["taskPromptsPinned"] = False
+        next_action = envelope.next_action(
+            f"experiment inspect {name}",
+            detail=("the validation evidence satisfies freeze's "
+                    "validateEvidence gate, but this draft pins no task "
+                    "prompts, and the measured run reads its items from "
+                    "them. Freeze does not check for them and a frozen study "
+                    "cannot gain them, so pin them first: inspect prints the "
+                    f"manifest digest for {PROGRAM} experiment import-prompts "
+                    f"{name} --file <items.jsonl> --manifest-sha256 <digest>. "
+                    f"Then {PROGRAM} experiment freeze {name}"))
+    elif readiness.get("satisfied"):
+        next_action = envelope.next_action(
+            f"experiment freeze {name}",
+            detail=("the validation evidence is in this workspace and matches "
+                    "the draft's pins, so freeze's validateEvidence gate is "
+                    "satisfied. Freezing is one-way. The measured run comes "
+                    f"after it: {PROGRAM} run {name} --runner {runner_url}"))
+    elif readiness.get("present"):
+        next_action = envelope.next_action(
+            f"run {name} --runner {runner_url} --verb validate",
+            requires_human=True,
+            detail=("the validation that came home scored no held-out probe "
+                    "for at least one concept, so it will not satisfy freeze "
+                    "(result.validateEvidence.problem names the files). "
+                    "Author them, attach those concepts again, then validate "
+                    "again — validating without them repeats this result"))
+    else:
+        next_action = envelope.next_action(
+            f"experiment verify {name}",
+            detail=("the validation that came home does not match this "
+                    "draft's pins — a pin changed after the bundle was "
+                    "packaged, or the runner used a different model revision "
+                    "(result.revisionAdoption). Check the pins, then validate "
+                    f"again: {_validate_step(name, runner_url)}"))
+    return {"facts": facts, "advisories": advisories,
+            "nextAction": next_action}
+
+
 def _run(invocation: Invocation) -> CLIResult:
     """``steerlab run <experiment> --runner <url>`` — the whole machine.
 
@@ -3752,17 +3969,24 @@ def _run(invocation: Invocation) -> CLIResult:
     common = {"experiment": name, "runner": base_url,
               "studyVerb": study_verb, "executor": executor}
 
-    if status != "frozen":
+    # A DRAFT may leave the workspace for the two steps that come before
+    # freeze (:data:`DRAFT_STUDY_VERBS`), and for nothing else. The rule is
+    # asked of the VERB, not of a flag: there is no `--allow-draft`, because
+    # the measured run of a draft is never what anybody means.
+    drafted = status == "draft" and study_verb in DRAFT_STUDY_VERBS
+    if status != "frozen" and not drafted:
         raise _die(
             stages, "load", code=NOT_FROZEN_CODE,
-            reason=(f"'{name}' is {status!r}, not frozen — this verb hands a "
+            reason=(f"'{name}' is {status!r}, not frozen, and the "
+                    f"'{study_verb}' step needs a frozen study: it hands the "
                     "study to a machine that will execute it and stamp the "
                     "result with its identity, and a draft has no freeze hash "
-                    "for that citation to rest on"),
-            repair=(f"{PROGRAM} experiment verify {name}, then {PROGRAM} "
-                    f"experiment freeze {name}  (the gates it must clear are "
-                    "named in the refusal if it declines)"),
-            common=common, stage_facts={"status": status})
+                    "for that citation to rest on. A draft can go to a runner "
+                    "for the steps that come before freeze: "
+                    f"{_spoken_list(DRAFT_STUDY_VERBS)}"),
+            repair=_route_to_frozen(name, base_url, study_verb),
+            common=common, facts={"draftVerbs": list(DRAFT_STUDY_VERBS)},
+            stage_facts={"status": status})
 
     violations = manifest.verify(None)
     if violations:
@@ -3786,10 +4010,30 @@ def _run(invocation: Invocation) -> CLIResult:
             common=common, facts={"violations": list(violations)},
             stage_facts={"status": status})
 
+    # The measured run reads its items from the pinned task prompts, and this
+    # client's submission carries no other prompt file. Freeze does not ask
+    # for task prompts (a multi-agent study has none), so a study can freeze
+    # without them — and the runner then refuses the run after the bundle has
+    # been uploaded and scheduled. Checked here instead, with the engine's
+    # own sentence and repair.
+    if (study_verb == DEFAULT_STUDY_VERB
+            and manifest.study_kind != "multiAgent"
+            and not manifest.task_prompts_file):
+        from .experiment import task_inputs
+        missing = task_inputs.no_task_prompts_refusal(manifest)
+        raise _die(
+            stages, "load", code=lifecycle_gates.MISSING_PREREQUISITE,
+            gate=lifecycle_gates.MISSING_PREREQUISITE, reason=str(missing),
+            repair=lifecycle_gates.repair_of(missing), common=common,
+            stage_facts={"status": status})
+
     _record(stages, "load", STAGE_OK, experiment=name, status=status,
             experimentContentHash=manifest_facts["contentHash"],
             freezeHash=manifest_facts["freezeHash"])
-    _note("load", f"{name!r} is frozen and every pin verifies")
+    _note("load", f"{name!r} is frozen and every pin verifies"
+          if not drafted else
+          f"{name!r} is a draft and every pin verifies; {study_verb} is a "
+          "step that comes before freeze, so a draft is accepted")
 
     try:
         return _run_machine(
@@ -4190,6 +4434,18 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
                "provenancePath": provenance_path,
                "stages": _stage_table(stages)}
 
+    # What the import did to the local draft's model revision (an unpinned
+    # draft adopts the commit the runner resolved). Said for every study, in
+    # the document and as an advisory, because it changes a manifest.
+    advisories: list = []
+    adoption = (imported or {}).get("revisionAdoption")
+    if adoption is not None:
+        payload["revisionAdoption"] = adoption
+        adoption_note = _adoption_advisory(adoption)
+        if adoption_note is not None:
+            advisories.append(adoption_note)
+            _note("import", adoption_note["detail"])
+
     if not succeeded:
         # The evidence came home; the RUN still failed, and saying so quietly
         # is how a partial becomes a citation.
@@ -4215,19 +4471,74 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
             + (f"{status}, evidence imported into {run_directory}"
                if imported is not None
                else f"{status}, no evidence requested"))
+
+    if manifest_facts["status"] == "draft" and imported is not None:
+        # A draft's pre-freeze step. The document says what came home and
+        # whether freeze will accept it, and the next action is the freeze —
+        # not an inspection of a run, which is what a measured run ends on.
+        report = _draft_step_report(name, study_verb,
+                                    run_directory=run_directory,
+                                    runner_url=client.base_url)
+        payload.update(report["facts"])
+        advisories.extend(report["advisories"])
+        line += " — the study is still a draft"
+        print(line)
+        for entry in advisories:
+            print(f"  advisory [{entry['code']}]: {entry['detail']}")
+        return CLIResult(message=line, changed=True, payload=payload,
+                         advisories=advisories,
+                         next_action=report["nextAction"])
+
     print(line)
     return CLIResult(
-        message=line, changed=True, payload=payload,
-        next_action=envelope.next_action(
-            f"experiment list  (--root {workspace})"
-            if imported is None else
-            f"bundle inspect {run_directory}",
-            detail=("the evidence is in the workspace and the run carries its "
-                    f"{PROVENANCE_FILENAME} provenance stamp; the frozen study "
-                    "was not modified"
-                    if imported is not None else
-                    "nothing was imported — this invocation asked for no "
-                    "evidence")))
+        message=line, changed=True, payload=payload, advisories=advisories,
+        next_action=(
+            _after_frozen_step(name, study_verb, run_directory=run_directory,
+                               runner_url=client.base_url)
+            if imported is not None else
+            envelope.next_action(
+                "experiment list",
+                detail=("nothing was imported — this invocation asked for no "
+                        "evidence"))))
+
+
+def _after_frozen_step(name: str, study_verb: str, *, run_directory: str | None,
+                       runner_url: str) -> dict:
+    """The next command after a frozen study's step came home.
+
+    A measured run is read by ``analyze`` — or by ``evaluate`` first, when the
+    study declares judges — and both are submissions on this client. Judging
+    spends compute or provider credit, so that step asks for a person. Any
+    other step ends the round trip; the detail says where its output is.
+
+    (This used to name ``bundle inspect <run directory>``, a verb that reads
+    an archive and fails on a directory.)
+    """
+    from .experiment import experiment_store as store
+
+    home = ("the evidence is in the workspace and the run carries its "
+            f"{PROVENANCE_FILENAME} provenance stamp ({run_directory}); the "
+            "frozen study was not modified")
+    if study_verb != DEFAULT_STUDY_VERB:
+        return envelope.next_action("experiment list", detail=home)
+    try:
+        document = store.load_raw(name)
+    except Exception:   # noqa: BLE001 — a hint must never fail the verb
+        document = {}
+    judged = bool(document.get("judges")) or (
+        (document.get("evaluation") or {}).get("kind") == "pairedJudge")
+    if judged:
+        return envelope.next_action(
+            f"run {name} --runner {runner_url} --verb evaluate",
+            requires_human=True,
+            detail=(f"{home}. This study declares judges: evaluate codes the "
+                    "run through them, which spends compute or provider "
+                    "credit, so ask the researcher first. Effect sizes follow "
+                    "with --verb analyze"))
+    return envelope.next_action(
+        f"run {name} --runner {runner_url} --verb analyze",
+        detail=(f"{home}. analyze computes the paired effect sizes on the "
+                "runner that holds the run; it loads no model"))
 
 
 def _iso(value) -> str | None:
@@ -4456,6 +4767,22 @@ def _version_result() -> CLIResult:
 
 
 def main(argv: list | None = None) -> int:
+    """One invocation, speaking as the CLIENT from first byte to last.
+
+    The store and policy modules this client shares with the engine compose
+    their repairs for whoever is showing them
+    (:mod:`steerlab_server.experiment.command_vocabulary`). Declaring the
+    speaker here, around the whole invocation, is what makes every refusal
+    that leaves this binary name ``steerlab`` verbs — the ones its reader can
+    run — and never another client's. It is scoped to the call, so an
+    in-process caller is left as it was found.
+    """
+    from .experiment import command_vocabulary as vocabulary
+    with vocabulary.speaking_as(vocabulary.CLIENT):
+        return _main(argv)
+
+
+def _main(argv: list | None = None) -> int:
     """One invocation: parse strictly, resolve the workspace, run the verb, and
     answer in the shared envelope.
 

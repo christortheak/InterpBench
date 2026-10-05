@@ -15,7 +15,7 @@ that advisory as a stop sign. Submit it with `--verb sweep`: through
 `steerlab run <name> --runner <url> --verb sweep` on a frozen study, where it
 records recommendations only (`sweepRecommendationsOnly` advisory), or step by
 step with `steerlab runner submit … --verb sweep` on a draft
-(`workspace guide lifecycle`, step 7, shows the steps). It loads the model on
+(`workspace guide remote`, "The steps, one at a time"). It loads the model on
 the runner.
 
 This client has no verb of its own for the selection rule. The rule arrives in

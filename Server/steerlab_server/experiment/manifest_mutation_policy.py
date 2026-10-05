@@ -1,5 +1,6 @@
 """Manifest save and draft admission over supplied values, without filesystem IO."""
 from __future__ import annotations
+from . import command_vocabulary as vocabulary
 from . import lifecycle_gates
 from .manifest_errors import ExperimentStoreError
 
@@ -45,24 +46,29 @@ def admit_save(d: dict, existing: dict | None, *, freeze_transition: bool = Fals
             "write by accident",
             gate=lifecycle_gates.ARMS_CLEARED,
             repair=(
-                f"steerlab-cli experiment verify {name}  "
-                "# the manifest on disk still holds its arms; re-attach "
-                "what the caller dropped (steerlab-cli experiment attach "
-                f"{name} <concept>… ; steerlab-cli experiment "
-                f"declare-condition {name} …), or author the cleared "
-                "study as its own draft with steerlab-cli experiment "
-                f"create {name}-v2 --model <id>"))
+                "the manifest on disk still holds its arms. Check it: "
+                f"{vocabulary.authoring(f'experiment verify {name}')}. Then "
+                "put back what the caller dropped: "
+                + vocabulary.authoring(
+                    f"experiment attach {name} <concept>…",
+                    f"experiment declare-condition {name} <condition> …",
+                    joiner=" ; ")
+                + ". Or author the cleared study as its own draft: "
+                + vocabulary.authoring(
+                    f"experiment create {name}-v2 --model <id>")))
     if existing.get("status") == "frozen":
         # WP0 step 8: typed `statusImmutable`. `gate` here names a
         # LIFECYCLE gate, not a freeze gate — the two vocabularies are
         # disjoint by test, so the CLI's classifier reads it correctly and
         # an agent's `switch` over freeze gates cannot absorb it.
+        duplicate = vocabulary.authoring(
+            f"experiment duplicate {name} {name}-v2")
         raise ExperimentStoreError(
             f"'{name}' is frozen and read-only — duplicate it to iterate",
             gate=lifecycle_gates.STATUS_IMMUTABLE,
-            repair=(f"steerlab-cli experiment duplicate {name} {name}-v2 "
-                    "&& re-apply the change to the duplicate  "
-                    "(authoring is Mac-authority)"))
+            repair=(f"{duplicate}, then apply the change to the duplicate  "
+                    "(a frozen study is immutable; the duplicate is a draft "
+                    "again)"))
 
 
 def admit_freeze(name: str, d: dict) -> None:
@@ -75,10 +81,11 @@ def admit_freeze(name: str, d: dict) -> None:
         raise ExperimentStoreError(
             f"'{name}' is already {d.get('status')}",
             gate=lifecycle_gates.STATUS_IMMUTABLE,
-            repair=(f"steerlab-cli experiment duplicate {name} {name}-v2 && "
-                    f"steerlab-cli experiment freeze {name}-v2  "
-                    "(a frozen study is immutable; the duplicate is a draft "
-                    "again, and authoring is Mac-authority)"))
+            repair=(vocabulary.authoring(
+                        f"experiment duplicate {name} {name}-v2",
+                        f"experiment freeze {name}-v2")
+                    + "  (a frozen study is immutable; the duplicate is a "
+                      "draft again)"))
 
 
 def admit_draft_document(name: str, document: object) -> None:

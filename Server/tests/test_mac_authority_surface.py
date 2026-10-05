@@ -73,9 +73,33 @@ def test_every_mac_authority_verb_answers_the_redirect(
         # NOT a gate: the closed vocabularies describe a study, this describes
         # the engine, and an agent switching on `error.gate` must not absorb it.
         assert "gate" not in document["error"]
+        # The engine cannot know which authoring client its reader has, so it
+        # says where authoring happens and names the Mac's spelling first.
+        assert "happens on your authoring client" in \
+            document["error"]["reason"]
         repair = document["error"]["repairAction"]
-        assert repair.startswith("steerlab-cli experiment ")
+        assert repair.startswith(
+            "on your authoring client: steerlab-cli experiment ")
         assert verb in repair
+        # …and every one of these acts exists on the cross-platform client,
+        # under its own verb or as a protocol field, so the repair names it.
+        assert "(Mac command line), or steerlab experiment " in repair
+        assert repair.endswith("  (cross-platform client)")
+
+
+def test_every_client_route_names_a_client_verb():
+    """The redirect never claims a verb the cross-platform client does not
+    have: each route for an act the client spells differently starts with one
+    of the client's declared verbs, and no route shadows a verb the client
+    has under the Mac's own name."""
+    from steerlab_server import client_cli
+
+    labels = {spec.label for spec in client_cli.CLIENT_VERB_SPECS}
+    for mac_label, route in cli.CLIENT_ROUTES.items():
+        assert mac_label not in labels, mac_label
+        assert " ".join(route.split()[:2]) in labels, (mac_label, route)
+        assert mac_label in {f"experiment {verb}" for verb in
+                             cli_envelope.MAC_AUTHORITY_VERBS["experiment"]}
 
 
 def test_the_redirect_is_a_document_even_though_the_verb_is_unrecognised(
@@ -111,7 +135,11 @@ def test_data_check_on_an_experiment_name_redirects_to_the_mac(
     assert _run(monkeypatch, tmp_path, ["data", "check", "my-study", "--json"]) == 65
     document = _document(capsys)
     assert document["error"]["code"] == cli_envelope.MAC_AUTHORITY_CODE
-    assert document["error"]["repairAction"] == "steerlab-cli data check my-study"
+    # The cross-platform client has no readiness checklist verb, and the
+    # repair says so rather than claiming one.
+    assert document["error"]["repairAction"] == (
+        "on your authoring client: steerlab-cli data check my-study  (Mac "
+        "command line; the cross-platform client has no verb for this)")
     # The reason still names what THIS engine's data check accepts.
     for template in cli._DATA_TEMPLATES:
         assert template in document["error"]["reason"]
@@ -133,8 +161,12 @@ def test_refreezing_a_frozen_manifest_is_status_immutable(tmp_path):
     # Prose byte-stable; the structure is what moved.
     assert str(caught.value) == "'done' is already frozen"
     assert caught.value.gate == lifecycle_gates.STATUS_IMMUTABLE
+    # Duplicating is an authoring act: this engine names it for both clients.
     assert caught.value.repair_action.startswith(
-        "steerlab-cli experiment duplicate done done-v2")
+        "on your authoring client: steerlab-cli experiment duplicate done "
+        "done-v2 && steerlab-cli experiment freeze done-v2  (Mac command "
+        "line), or steerlab experiment duplicate done done-v2 && steerlab "
+        "experiment freeze done-v2  (cross-platform client)")
 
 
 def test_the_validate_evidence_gate_repair_names_this_engine():
@@ -145,9 +177,18 @@ def test_the_validate_evidence_gate_repair_names_this_engine():
     repair = freeze_policy.freeze_gate_repair("validateEvidence", "demo")
     assert repair.startswith("steerlab-server experiment validate demo")
     assert "python-hf-transformers" in repair
-    # Authoring gates still name the Mac.
-    assert freeze_policy.freeze_gate_repair(
-        "judgeValidity", "demo").startswith("steerlab-cli experiment pin-rubric")
+    # The freeze that follows is authoring, which this engine never does: it
+    # says where, and gives the command for both clients.
+    assert repair.endswith(
+        "then on your authoring client: steerlab-cli experiment freeze demo  "
+        "(Mac command line), or steerlab experiment freeze demo  "
+        "(cross-platform client)")
+    # Authoring gates name both clients too, each with its own verb.
+    judge = freeze_policy.freeze_gate_repair("judgeValidity", "demo")
+    assert judge.startswith(
+        "on your authoring client: steerlab-cli experiment pin-rubric demo ")
+    assert "or steerlab experiment set-protocol demo --set judgeRubricFile=" \
+        in judge
     # And every gate id in the closed vocabulary has one.
     for gate in experiment_store.FORCED_GATE_IDS:
         assert freeze_policy.freeze_gate_repair(gate, "demo")

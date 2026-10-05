@@ -28,6 +28,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from . import command_vocabulary as vocabulary
 from . import lifecycle_gates, paths, prompt_render, manifest_files
 from . import manifest_mutation_policy, freeze_policy, headline_outcome
 from ..build_identity import engine_version
@@ -1081,22 +1082,26 @@ def concept_dependents(d: dict, concept: str) -> list[str]:
     return found
 
 
-#: THE repair for :data:`lifecycle_gates.CONCEPT_IN_USE`, on both engines.
-#: Authoring is Mac-authority (audit §10.x), so the server's copy names that
-#: binary too. Swift twin: ``ExperimentStore.conceptInUseRepair``.
+#: THE repair for :data:`lifecycle_gates.CONCEPT_IN_USE`. Both steps are
+#: authoring, so they are spelled for whoever shows the refusal
+#: (:mod:`command_vocabulary`). Swift twin, the Mac command line's own
+#: sentence: ``ExperimentStore.conceptInUseRepair``.
 def concept_in_use_repair(name: str) -> str:
-    return (f"remove or re-declare those conditions first: steerlab-cli "
-            f"experiment declare-condition {name} <condition> … (re-declare "
-            f"onto a concept that stays), then steerlab-cli experiment detach "
-            f"{name} <concept>…")
+    redeclare = vocabulary.authoring(
+        f"experiment declare-condition {name} <condition> …")
+    detach_again = vocabulary.authoring(f"experiment detach {name} <concept>…")
+    return (f"remove or re-declare those conditions first: {redeclare} "
+            f"(re-declare onto a concept that stays), then {detach_again}")
 
 
 #: THE repair for detaching a concept the manifest never pinned. Swift twin:
 #: ``ExperimentStore.conceptNotPinnedRepair``.
 def concept_not_pinned_repair(name: str) -> str:
-    return (f"steerlab-cli experiment list  (result.experiments[].concepts "
-            f"names what '{name}' pins), then steerlab-cli experiment detach "
-            f"{name} <one of those>")
+    listing = vocabulary.authoring("experiment list")
+    detach_one = vocabulary.authoring(
+        f"experiment detach {name} <one of those>")
+    return (f"{listing}  (result.experiments[].concepts names what '{name}' "
+            f"pins), then {detach_one}")
 
 
 def detach(name: str, concepts: list[str], root: str | None = None) -> dict:
@@ -1145,10 +1150,11 @@ def detach(name: str, concepts: list[str], root: str | None = None) -> dict:
         raise ExperimentStoreError(
             f"'{name}' is {status} and read-only — duplicate it to iterate",
             gate=lifecycle_gates.STATUS_IMMUTABLE,
-            repair=(f"steerlab-cli experiment duplicate {name} {name}-v2 && "
-                    f"steerlab-cli experiment detach {name} <concept>…  "
-                    "(frozen studies are immutable; the duplicate is a draft "
-                    "again)"))
+            repair=(vocabulary.authoring(
+                        f"experiment duplicate {name} {name}-v2",
+                        f"experiment detach {name}-v2 <concept>…")
+                    + "  (frozen studies are immutable; the duplicate is a "
+                      "draft again)"))
     pinned = [str(c.get("name") or "") for c in (d.get("concepts") or [])]
     for concept in wanted:
         if concept not in pinned:
@@ -1247,8 +1253,14 @@ def sweep_selection_owns_repair(name: str, flag: str) -> str:
     """THE pointer for asking ``set-sweep-grid`` to write a field
     ``set-sweep-selection`` owns. Swift twin:
     ``ExperimentStore.sweepSelectionOwnsRepair``."""
-    return (f"steerlab-cli experiment set-sweep-selection {name} {flag} "
-            "<value>  (the selection RULE is that verb's; set-sweep-grid "
+    selection = vocabulary.authoring(vocabulary.protocol_field(
+        name, f"experiment set-sweep-selection {name} {flag} <value>",
+        "sweep=<the sweep block as JSON, with its selection>"))
+    # The cross-platform client has no verb for the rule: it is the
+    # `selection` inside the sweep block, which `set-protocol` writes whole.
+    owner = ("is part of that block" if vocabulary.is_client()
+             else "is that verb's")
+    return (f"{selection}  (the selection RULE {owner}; set-sweep-grid "
             "writes the layer × alpha grid the rule then picks a winner from)")
 
 
@@ -1445,41 +1457,54 @@ def conflicting_depth_repair(name: str) -> str:
     """THE repair for that disagreement. Fractions come first because they need
     no stored depth at all. Swift twin:
     ``ExperimentStore.conflictingDepthRepair``."""
-    return (f"steerlab-cli experiment set-sweep-grid {name} "
-            "--layer-fractions 0.5,0.7,0.85  (fractions resolve against the "
-            "model the sweep actually loads, so no stored depth is needed); or "
-            "remove the artifact whose depth is wrong for this model, then "
-            f"steerlab-cli experiment set-sweep-grid {name} --layers <L>,…")
+    fractions = vocabulary.authoring(
+        f"experiment set-sweep-grid {name} --layer-fractions 0.5,0.7,0.85")
+    layers = vocabulary.authoring(
+        f"experiment set-sweep-grid {name} --layers <L>,…")
+    return (f"{fractions}  (fractions resolve against the model the sweep "
+            "actually loads, so no stored depth is needed); or remove the "
+            f"artifact whose depth is wrong for this model, then {layers}")
 
 
 def sweep_grid_repair(name: str) -> str:
     """THE repair for a grid no engine could sweep. Swift twin:
     ``ExperimentStore.sweepGridRepair``."""
-    return (f"steerlab-cli experiment set-sweep-grid {name} "
-            "--layer-fractions 0.5,0.7,0.85 --alphas 0.05,0.08,0.1,0.13  "
-            "(both axes ascend, each value once; alphas are residual-norm "
-            "units above 0)")
+    grid = vocabulary.authoring(
+        f"experiment set-sweep-grid {name} --layer-fractions 0.5,0.7,0.85 "
+        "--alphas 0.05,0.08,0.1,0.13")
+    return (f"{grid}  (both axes ascend, each value once; alphas are "
+            "residual-norm units above 0)")
 
 
 def absolute_layers_need_depth_repair(name: str) -> str:
     """THE repair for absolute layers with no depth to read them against.
     Extraction is named first because it makes the ORIGINAL request
-    answerable; fractions are the answer that needs no model at all. Swift
+    answerable; fractions are the answer that needs no model at all.
+
+    Extraction is an executing step, so it is named as its reader can start
+    it (:func:`command_vocabulary.study_verb`): the engine's and the Mac's
+    own verb, and on the cross-platform client — which loads no model — a
+    submission to a runner, which accepts a draft for exactly this. Swift
     twin: ``ExperimentStore.absoluteLayersNeedDepthRepair``."""
-    return (f"steerlab-cli experiment extract {name}  (any vector for the "
-            f"pinned model states its depth) && steerlab-cli experiment "
-            f"set-sweep-grid {name} --layers <L>,…  ; or declare the grid in "
-            "depth fractions, which need no model: steerlab-cli experiment "
-            f"set-sweep-grid {name} --layer-fractions 0.5,0.7,0.85")
+    extract = vocabulary.study_verb("extract", name)
+    layers = vocabulary.authoring(
+        f"experiment set-sweep-grid {name} --layers <L>,…")
+    fractions = vocabulary.authoring(
+        f"experiment set-sweep-grid {name} --layer-fractions 0.5,0.7,0.85")
+    return (f"{extract}  (any vector for the pinned model states its depth) "
+            f"&& {layers}  ; or declare the grid in depth fractions, which "
+            f"need no model: {fractions}")
 
 
 def absolute_layers_out_of_range_repair(name: str, depth: int) -> str:
     """THE repair for an absolute layer outside the pinned model. Swift twin:
     ``ExperimentStore.absoluteLayersOutOfRangeRepair``."""
-    return (f"steerlab-cli experiment set-sweep-grid {name} "
-            f"--layers <0…{depth - 1}>,…  ; or declare depths instead, which "
-            "survive a change of model: steerlab-cli experiment set-sweep-grid "
-            f"{name} --layer-fractions 0.5,0.7,0.85")
+    layers = vocabulary.authoring(
+        f"experiment set-sweep-grid {name} --layers <0…{depth - 1}>,…")
+    fractions = vocabulary.authoring(
+        f"experiment set-sweep-grid {name} --layer-fractions 0.5,0.7,0.85")
+    return (f"{layers}  ; or declare depths instead, which survive a change "
+            f"of model: {fractions}")
 
 
 def set_sweep_grid(name: str, *, layer_fractions=None, layers=None,
@@ -1521,10 +1546,11 @@ def set_sweep_grid(name: str, *, layer_fractions=None, layers=None,
         raise ExperimentStoreError(
             f"'{name}' is {status} and read-only — duplicate it to iterate",
             gate=lifecycle_gates.STATUS_IMMUTABLE,
-            repair=(f"steerlab-cli experiment duplicate {name} {name}-v2 && "
-                    f"steerlab-cli experiment set-sweep-grid {name}-v2 …  "
-                    "(frozen studies are immutable; the duplicate is a draft "
-                    "again)"))
+            repair=(vocabulary.authoring(
+                        f"experiment duplicate {name} {name}-v2",
+                        f"experiment set-sweep-grid {name}-v2 …")
+                    + "  (frozen studies are immutable; the duplicate is a "
+                      "draft again)"))
     spec = dict(d.get("sweep") or {})
     for key, value in _DEFAULT_SWEEP_BLOCK.items():
         spec.setdefault(key, list(value) if isinstance(value, list) else value)
@@ -1774,8 +1800,8 @@ class MeasurementDeclarationError(ExperimentStoreError):
 #: setters are reached from the cross-platform CLIENT (the engine redirects the
 #: verbs), so its spelling is the default; ``program=`` renders the Mac's for
 #: the parity tests that hold these sentences equal to the Swift twins'.
-CLIENT_PROGRAM = "steerlab"
-MAC_PROGRAM = "steerlab-cli"
+CLIENT_PROGRAM = vocabulary.CLIENT_PROGRAM
+MAC_PROGRAM = vocabulary.MAC_PROGRAM
 
 
 def numeric_parser_repair(name: str, root: str | None = None,
@@ -2274,19 +2300,36 @@ def system_prompt_not_applied_detail(replaced: int, total: int,
             "keep them and say in METHODS that the frame is per-item.")
 
 
-#: The repair for a NEW condition declaration that names no ``alphaInNormUnits``
-#: — in BOTH spellings a caller can write it in, because the two authoring
-#: surfaces are the manifest document (this API, and the ``/api/authoring/
-#: {name}/condition`` route that fronts it) and the Mac CLI verb. Swift twin:
-#: ``ExperimentManifest.alphaUnitsRepairAction``
-#: (``Sources/ExperimentKit/ExperimentStore.swift``) — the same two spellings,
-#: written out independently so neither engine can quietly follow the other.
-ALPHA_UNITS_REPAIR = (
-    'declare the α units explicitly: add "alphaInNormUnits": true '
-    "(α in residual-stream-norm units — the project convention) or "
-    "false (raw α) to the condition, or declare the arm with "
-    "`steerlab-cli experiment declare-condition <study> <condition> "
-    "--slots <concept>:<layer>:<alpha> --alpha-units norm|raw`")
+def alpha_units_repair() -> str:
+    """The repair for a NEW condition declaration that names no
+    ``alphaInNormUnits`` — in BOTH forms a caller can write it in, because the
+    two authoring surfaces are the manifest document (this API, and the
+    ``/api/authoring/{name}/condition`` route that fronts it) and a client's
+    ``declare-condition`` verb.
+
+    One sentence, with the program that carries the verb: the cross-platform
+    client names itself, and everywhere else it is the sentence the Swift twin
+    writes (``ExperimentManifest.alphaUnitsRepairAction``,
+    ``Sources/ExperimentKit/ExperimentStore.swift``). That equality is a
+    CROSS-ENGINE CONTRACT with a committed fixture behind it
+    (``Tests/Fixtures/cross-engine/manifest-interop.json``, read by the Swift
+    suite), which is why this repair does not take the engine's usual "on
+    your authoring client" form."""
+    program = (vocabulary.CLIENT_PROGRAM if vocabulary.is_client()
+               else vocabulary.MAC_PROGRAM)
+    return ('declare the α units explicitly: add "alphaInNormUnits": true '
+            "(α in residual-stream-norm units — the project convention) or "
+            "false (raw α) to the condition, or declare the arm with "
+            f"`{program} experiment declare-condition <study> <condition> "
+            "--slots <concept>:<layer>:<alpha> --alpha-units norm|raw`")
+
+
+#: :func:`alpha_units_repair` as the engine and the Swift twin say it. Kept as
+#: a name because callers and the cross-engine contract compare against it.
+#: Rendered explicitly as the engine, because this module is sometimes first
+#: imported from inside a client invocation.
+with vocabulary.speaking_as(vocabulary.ENGINE):
+    ALPHA_UNITS_REPAIR = alpha_units_repair()
 
 
 #: The condition control vocabulary, as the manifest spells it. Not a
@@ -2343,12 +2386,13 @@ def _condition_entry(condition: dict) -> dict:
     thing this repair must not do.
     """
     if "alphaInNormUnits" not in condition:
+        repair = alpha_units_repair()
         raise ExperimentStoreError(
             f"condition {condition.get('name', '?')!r} declares no "
             "'alphaInNormUnits', so the α it names has no unit — this engine "
             "would read raw α and the Mac engine residual-norm units for the "
-            f"same document. {ALPHA_UNITS_REPAIR}",
-            repair=ALPHA_UNITS_REPAIR)
+            f"same document. {repair}",
+            repair=repair)
     name = condition["name"]
     slots = []
     for s in condition.get("slots", []):
@@ -2402,7 +2446,7 @@ def _condition_entry(condition: dict) -> dict:
             raise ExperimentStoreError(
                 f"condition {name!r} pairs controlType 'randomMatchedNorm' "
                 "with an ablating slot: the matched-norm substitution is the "
-                "steering control, and on the Mac engine it never fires for "
+                "steering control, and the Mac's engine never applies it to "
                 "an ablation, so the cell would ablate the concept itself and "
                 f"duplicate the treatment. {repair}", repair=repair)
         if control_type == "randomDirectionAblation" and not ablating:
@@ -2699,7 +2743,7 @@ def vacuous_validate_evidence_problem(name: str, manifest: Manifest,
         f"probe for concept(s) {', '.join(vacuous)} — it is VACUOUS evidence, "
         "not validation. Author the never-named scenarios "
         f"({', '.join(paths_)}) as {{\"text\": …, \"expresses\": true|false}} "
-        f"rows and re-run 'steerlab-server experiment validate {name}', or "
+        f"rows and re-run '{vocabulary.study_verb('validate', name)}', or "
         "force-freeze to record an unvalidated experiment")
 
 
@@ -3072,7 +3116,7 @@ def freeze_advisories(d: dict, root: str | None = None) -> list[str]:
             "Mac engine cannot read the manifest at all until the key is "
             "present. Re-declare the arm to state the units — a frozen study "
             "keeps whatever reading it was measured under, so this is worth "
-            "settling BEFORE the freeze, not after. " + ALPHA_UNITS_REPAIR)
+            "settling BEFORE the freeze, not after. " + alpha_units_repair())
     # F1: panel-script authoring problems that fail SILENTLY at run time —
     # duplicate output labels, and {{outputs.X}} references no earlier turn
     # produces. Advisory, not a gate: they make prompts quietly wrong rather
@@ -3406,6 +3450,63 @@ def _evaluate_freeze_gates(name: str, d: dict, manifest: Manifest,
 from .freeze_policy import freeze_gate_repair
 
 
+def _pin_default_battery_when_unpinned(d: dict, root: str | None) -> None:
+    """Name the default capability battery in an unpinned variant study.
+
+    The validation scope hash composes this pin, so it has to be in the
+    document BEFORE the scope is computed. ``freeze`` applies it to the
+    document it is about to stamp; :func:`validate_evidence_readiness` applies
+    it to a copy, so the question "would this evidence satisfy the gate" is
+    asked of the same scope the gate will compute. One function for both, so
+    the two cannot drift."""
+    if not (model_output_surfaces_operative(d) and d.get("variantConditions")
+            and not d.get("capabilityBatteryHash")):
+        return
+    from . import battery as battery_mod
+    digest = battery_mod.live_hash(battery_mod.DEFAULT_BATTERY_FILE, root)
+    if digest is not None:
+        d.setdefault("capabilityBatteryFile", battery_mod.DEFAULT_BATTERY_FILE)
+        d["capabilityBatteryHash"] = digest
+
+
+def validate_evidence_readiness(name: str, root: str | None = None) -> dict:
+    """What freeze's ``validateEvidence`` gate would say about this study NOW.
+
+    READ-ONLY, and not a second opinion: it asks the same three questions the
+    gate asks, of the same functions, in the same order — does this study need
+    validation at all (:func:`freeze_policy.needs_validation`), is there a
+    complete validate run in this workspace whose scope hash matches its pins
+    (:func:`_matching_validate_evidence`), and did that run actually score a
+    held-out probe for every pinned concept
+    (:func:`vacuous_validate_evidence_problem`). It writes nothing and gates
+    nothing; ``freeze`` still decides.
+
+    It exists for a client that validates on OTHER hardware: when the evidence
+    comes home, the client can say at once whether it is the evidence freeze
+    is waiting for, instead of leaving the researcher to find out from a
+    refusal. Returns ``{"needed", "present", "satisfied",
+    "validationScopeHash"}`` plus ``"problem"`` (the gate's own sentence) when
+    the evidence is present but vacuous."""
+    import copy
+    root = root or paths.project_root()
+    d = copy.deepcopy(load_raw(name, root))
+    _pin_default_battery_when_unpinned(d, root)
+    manifest = Manifest.from_dict(d)
+    scope = manifest.validation_scope_hash()
+    if not freeze_policy.needs_validation(d):
+        return {"needed": False, "present": False, "satisfied": True,
+                "validationScopeHash": scope}
+    evidence = _matching_validate_evidence(scope, root)
+    problem = (vacuous_validate_evidence_problem(name, manifest, evidence)
+               if evidence is not None else None)
+    status = {"needed": True, "present": evidence is not None,
+              "satisfied": evidence is not None and problem is None,
+              "validationScopeHash": scope}
+    if problem:
+        status["problem"] = problem
+    return status
+
+
 def freeze(name: str, *, force: bool = False, cached_revision=None,
            root: str | None = None) -> dict:
     """Gate then stamp a draft as frozen (parallel to Swift ``freeze``).
@@ -3456,12 +3557,7 @@ def freeze(name: str, *, force: bool = False, cached_revision=None,
         # review round 14). The predicate governs the whole freeze transaction,
         # not just gate evaluation.
         model_output = model_output_surfaces_operative(d)
-        if model_output and d.get("variantConditions") and not d.get("capabilityBatteryHash"):
-            from . import battery as battery_mod
-            digest = battery_mod.live_hash(battery_mod.DEFAULT_BATTERY_FILE, root)
-            if digest is not None:
-                d.setdefault("capabilityBatteryFile", battery_mod.DEFAULT_BATTERY_FILE)
-                d["capabilityBatteryHash"] = digest
+        _pin_default_battery_when_unpinned(d, root)
         # Local-judge revision pin (cross-engine contract key
         # "judges[].revision", 2026-07-23): a local judge resolving to the STUDY
         # model inherits the study's pinned revision when its own is blank —

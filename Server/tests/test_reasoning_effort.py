@@ -668,12 +668,29 @@ def test_the_tally_and_the_refusal_helpers_distinguish_the_caps():
                            reasoning_max_tokens=64)
     assert "1 inside the reasoning block at the 64-token reasoning cap" in both
     assert "1 in the answer at the 8-token answer cap" in both
-    assert tg.repair_action("s", 8) == (
-        "steerlab-cli experiment set-sampling s --max-tokens <n>  (n above 8), "
-        "then re-run; a frozen study is iterated by duplicating first: "
-        "steerlab-cli experiment duplicate s s-v2")
-    assert "--reasoning-max-tokens <m>" in tg.repair_action(
-        "s", 8, reasoning_max_tokens=64)
+    # Raising a cap is authoring, so the repair is spelled for its reader:
+    # the Mac command line's flag, or the cross-platform client's field.
+    from steerlab_server.experiment import command_vocabulary as vocabulary
+    with vocabulary.speaking_as(vocabulary.MAC):
+        assert tg.repair_action("s", 8) == (
+            "steerlab-cli experiment set-sampling s --max-tokens <n>  (n "
+            "above 8), then re-run; a frozen study is iterated by "
+            "duplicating first: steerlab-cli experiment duplicate s s-v2")
+        assert "--reasoning-max-tokens <m>" in tg.repair_action(
+            "s", 8, reasoning_max_tokens=64)
+    with vocabulary.speaking_as(vocabulary.CLIENT):
+        assert tg.repair_action("s", 8, reasoning_max_tokens=64) == (
+            "steerlab experiment set-protocol s --set maxTokens=<n> --set "
+            "reasoningMaxTokens=<m>  (n above 8, m above 64, whichever cap "
+            "the refusal names), then re-run; a frozen study is iterated by "
+            "duplicating first: steerlab experiment duplicate s s-v2")
+    # The engine, which is where this gate fires, gives both.
+    engine = tg.repair_action("s", 8)
+    assert engine.startswith(
+        "on your authoring client: steerlab-cli experiment set-sampling s "
+        "--max-tokens <n>  (Mac command line), or steerlab experiment "
+        "set-protocol s --set maxTokens=<n>  (cross-platform client)  (n "
+        "above 8), then re-run")
 
 
 # --- 6. the preregistration line ----------------------------------------------

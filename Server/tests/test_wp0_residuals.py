@@ -70,9 +70,14 @@ def test_the_near_miss_typo_refuses_at_run_start():
     # zero records" (the zero-item rules, 2026-08-06).
     assert lifecycle_gates.gate_of(exc) == lifecycle_gates.RESPONSE_FORMAT
     repair = lifecycle_gates.repair_of(exc)
-    # Authoring is Mac-authority, so this engine's repair names the Mac
-    # binary — exactly like the no-rubric sentence (audit §12.1).
-    assert repair.startswith("steerlab-cli experiment set-instruments typo")
+    # Declaring instruments is authoring, which this engine never does: its
+    # repair says where, and names the command on both authoring clients —
+    # the Mac's verb, and the cross-platform client's protocol field.
+    assert repair.startswith(
+        "on your authoring client: steerlab-cli experiment set-instruments "
+        "typo ")
+    assert "or steerlab experiment set-protocol typo --set " \
+        "outcomeInstruments=" in repair
     for instrument in es.KNOWN_OUTCOME_INSTRUMENTS:
         assert instrument in repair
         assert instrument in str(exc)

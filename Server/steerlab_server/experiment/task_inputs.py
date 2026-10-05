@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+from . import command_vocabulary as vocabulary
 from . import lifecycle_gates, paths, prompt_render, response_format
 from .manifest import Manifest
 
@@ -16,12 +17,45 @@ def missing_task_prompts_refusal(path: str) -> str:
     return f"task prompt file not found: {path}"
 
 
+def _duplicate_and_repin(name: str, relative: str, *, freeze: bool) -> str:
+    """A frozen study's prompts are never re-pinned: the route is a duplicate,
+    which is a draft again."""
+    copy = f"{name}-v2"
+    steps = [f"experiment duplicate {name} {copy}",
+             vocabulary.pin_prompts(copy, relative)]
+    if freeze:
+        steps.append(f"experiment freeze {copy}")
+    return vocabulary.authoring(*steps)
+
 
 def missing_task_prompts_repair(name: str, relative: str) -> str:
+    pin = vocabulary.authoring(vocabulary.pin_prompts(name, relative))
     return (f"author {relative} as {{\"id\": …, \"prompt\": …}} JSONL rows, "
-            f"then steerlab-cli experiment pin-prompts {name} {relative}  "
-            f"(authoring is Mac-authority) ; then steerlab-server experiment "
-            f"run {name}")
+            f"then {pin} ; then {vocabulary.study_verb('run', name)}")
+
+
+def no_task_prompts_refusal(manifest: Manifest):
+    """The refusal for a measured run of a study that names no prompt set.
+
+    This used to be a bare ``RuntimeError`` with no repair, and it is the first
+    thing a study frozen without task prompts meets — after it has been
+    uploaded and scheduled. Freeze does not ask for task prompts (a multi-agent
+    study has none), so nothing earlier says it."""
+    name = manifest.name
+    if manifest.status == "frozen":
+        repair = (_duplicate_and_repin(name, "prompts/tasks/<file>.jsonl",
+                                       freeze=True)
+                  + "  (a frozen study is immutable; the duplicate is a "
+                    "draft again)")
+    else:
+        pin = vocabulary.authoring(
+            vocabulary.pin_prompts(name, "prompts/tasks/<file>.jsonl"))
+        repair = f"{pin} ; then {vocabulary.study_verb('run', name)}"
+    return lifecycle_gates.refusing(
+        lifecycle_gates.MISSING_PREREQUISITE,
+        f"study '{name}' pins no task prompts, and the measured run reads "
+        "its items from them — no task prompts file specified",
+        repair=repair)
 
 
 
@@ -35,7 +69,7 @@ def load_prompts(manifest: Manifest, prompts_file: str | None, root: str | None)
     """
     path = prompts_file or manifest.task_prompts_file
     if not path:
-        raise RuntimeError("no task prompts file specified")
+        raise no_task_prompts_refusal(manifest)
     if not os.path.isabs(path):
         path = os.path.join(paths.project_root() if root is None else root, path)
     try:
@@ -62,26 +96,22 @@ def load_prompts(manifest: Manifest, prompts_file: str | None, root: str | None)
                 f"{manifest.task_prompts_hash[:12]}…)",
                 repair=(f"restore {manifest.task_prompts_file} to its pinned "
                         "bytes ; then re-run this verb (a frozen pin is never "
-                        "re-pinned: duplicate the study on the Mac to change "
-                        "it)"))
+                        "re-pinned: duplicate the study "
+                        f"{vocabulary.authoring_place()} to change it)"))
         if frozen and not manifest.task_prompts_hash:
             raise lifecycle_gates.refusing(
                 lifecycle_gates.MISSING_PREREQUISITE,
                 "frozen study has no pinned task prompts — duplicate, pin a "
                 "prompt set, and re-freeze",
-                repair=(f"steerlab-cli experiment duplicate {manifest.name} "
-                        f"{manifest.name}-v2 && steerlab-cli experiment "
-                        f"pin-prompts {manifest.name}-v2 prompts/…/file.jsonl "
-                        f"&& steerlab-cli experiment freeze {manifest.name}-v2 "
-                        "(authoring is Mac-authority)"))
+                repair=_duplicate_and_repin(
+                    manifest.name, "prompts/…/file.jsonl", freeze=True))
     elif frozen and live_hash != manifest.task_prompts_hash:
         raise lifecycle_gates.refusing(
             lifecycle_gates.PIN_DRIFT,
             "prompt override on a FROZEN study must match the pinned prompt "
             "set byte-for-byte — duplicate the experiment to iterate",
-            repair=(f"steerlab-cli experiment duplicate {manifest.name} "
-                    f"{manifest.name}-v2 && steerlab-cli experiment "
-                    f"pin-prompts {manifest.name}-v2 <the override file>"))
+            repair=_duplicate_and_repin(
+                manifest.name, "<the override file>", freeze=False))
     with open(path, encoding="utf-8") as handle:
         return parse_prompts(handle.read())
 
@@ -236,19 +266,27 @@ def check_response_formats(manifest, prompts: list[dict]) -> None:
         # WP0 step 8: typed `responseFormat` (same prose, same exit code).
         raise lifecycle_gates.refusing(
             lifecycle_gates.RESPONSE_FORMAT, drift,
-            repair=("steerlab-cli experiment set-instruments <name> "
-                    "sampledText, or re-author the items so the pinned scope "
-                    "selects them again and re-pin with steerlab-cli "
-                    "experiment pin-prompts <name> <file>"))
+            repair=(f"{_sampled_text_only()}; or re-author the items so the "
+                    "pinned scope selects them again and pin them again: "
+                    f"{_repin_prompts()}"))
     refusal = response_format.refusal(
         items, manifest.raw.get("outcomeInstruments"), scope)
     if refusal:
         raise lifecycle_gates.refusing(
             lifecycle_gates.RESPONSE_FORMAT, refusal,
-            repair=("steerlab-cli experiment set-instruments <name> "
-                    "sampledText, or re-author the items with "
-                    '"responseFormat": "label" and re-pin with steerlab-cli '
-                    "experiment pin-prompts <name> <file>"))
+            repair=(f"{_sampled_text_only()}; or re-author the items with "
+                    '"responseFormat": "label" and pin them again: '
+                    f"{_repin_prompts()}"))
+
+
+def _sampled_text_only() -> str:
+    """Declaring the one instrument that reads no options."""
+    return vocabulary.authoring(
+        vocabulary.set_instruments("<name>", "sampledText"))
+
+
+def _repin_prompts() -> str:
+    return vocabulary.authoring(vocabulary.pin_prompts("<name>", "<file>"))
 
 
 

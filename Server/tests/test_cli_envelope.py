@@ -153,15 +153,35 @@ def test_the_two_gate_vocabularies_are_disjoint():
 def test_exclusion_pin_required_message_and_repair_match_the_swift_literals():
     """The deferred cross-engine-twinned message from c86ce53, now with its
     gate id on both engines. Swift twins: ``ExclusionEngine.pinRequiredMessage``
-    and ``ExclusionEngine.pinRequiredRepair``."""
+    and ``ExclusionEngine.pinRequiredRepair``.
+
+    The MESSAGE is the shared literal. The REPAIR is an authoring command, so
+    each speaker spells it for its own reader: the Mac command line's sentence
+    is the Swift twin's, the cross-platform client names its own verb, and the
+    engine — which cannot know which client its reader has — gives both."""
+    from steerlab_server.experiment import command_vocabulary as vocabulary
+
     assert exclusions.PIN_REQUIRED_MESSAGE == (
         "exclusion rule failedAttentionCheck needs the task prompts pinned "
         "(taskPromptsFile + taskPromptsHash) so analysis grades the same items "
         "the run saw — pin the prompt set first")
-    assert exclusions.PIN_REQUIRED_REPAIR == (
-        "steerlab-cli experiment pin-prompts <name> <the prompt file the run "
-        "used> — analysis grades the items the run saw, so the pin must name "
-        "that exact file")
+    tail = (" — analysis grades the items the run saw, so the pin must name "
+            "that exact file")
+    with vocabulary.speaking_as(vocabulary.MAC):
+        assert exclusions.pin_required_repair() == (
+            "steerlab-cli experiment pin-prompts <name> <the prompt file the "
+            "run used>" + tail)
+    with vocabulary.speaking_as(vocabulary.CLIENT):
+        assert exclusions.pin_required_repair() == (
+            "steerlab experiment import-prompts <name> --file <the prompt "
+            "file the run used> --manifest-sha256 <manifestFileSHA256 from: "
+            "steerlab experiment inspect <name>>" + tail)
+    engine = exclusions.pin_required_repair()
+    assert engine.startswith("on your authoring client: steerlab-cli "
+                             "experiment pin-prompts <name> ")
+    assert "(Mac command line), or steerlab experiment import-prompts " \
+        in engine
+    assert engine.endswith("(cross-platform client)" + tail)
 
 
 def test_defaulted_selection_advisory_matches_the_swift_literal():

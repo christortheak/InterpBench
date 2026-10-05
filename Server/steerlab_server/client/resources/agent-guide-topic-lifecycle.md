@@ -185,25 +185,40 @@ pinned neutral corpus — that is what makes α comparable across concepts. Use
 
 ## 7. `validate`
 
-This client loads no model, so validation runs on a runner, from a packaged
-bundle. `steerlab run` needs a frozen study, so a draft takes the steps one at
-a time:
+This client loads no model, so validation runs on a runner. `steerlab run`
+accepts a **draft** for the two steps that come before freeze, validation and
+extraction:
 
 ```bash
-steerlab bundle package <name>
-steerlab runner upload <bundle.tar.gz> --runner <url>
-steerlab runner submit --runner <url> --bundle-path <printed-path> \
-  --bundle-sha <printed-digest> --verb validate
-steerlab runner jobs <job-id> --runner <url>
-steerlab runner evidence <job-id> --out <file.tar.gz> --runner <url>
-steerlab bundle import <file.tar.gz> --sha256 <digest>
+steerlab run <name> --runner <url> --verb validate
 ```
 
-The runner extracts (or reuses) the vectors and scores the held-out probes; the
-run directory comes home in the evidence bundle. This is the evidence `freeze`
-looks for, and it must match the manifest's *exact* pins — model + revision,
-concepts and their options, neutral corpus, and the run substrate. Change any
-pin and the evidence stops matching; validate again.
+It packages the draft, hands it to the runner, waits, and imports the verified
+evidence into this workspace. The runner extracts (or reuses) the vectors and
+scores the held-out probes. Read three things in the result:
+
+- `result.validateEvidence.satisfied` says whether `freeze`'s
+  `validateEvidence` gate will now accept the evidence. It is the store's own
+  answer, not a guess.
+- `result.vacuous`, `result.vacuousConcepts[]`, and the `vacuousValidation`
+  advisory say a concept had no scored held-out probe (step 4). Such evidence
+  does not satisfy the gate.
+- `result.revisionAdoption` says whether the draft had no model revision and
+  took the commit the runner resolved, with a `revisionAdoption` advisory.
+
+`nextAction` names the next step: `experiment freeze <name>` when the gate is
+satisfied, or pinning task prompts first when the draft has none (a frozen
+study cannot gain them, and the measured run reads its items from them).
+
+This is the evidence `freeze` looks for, and it must match the manifest's
+*exact* pins — model + revision, concepts and their options, neutral corpus,
+and the run substrate. Change any pin and the evidence stops matching;
+validate again.
+
+The same route one step at a time, for a caller who detached with
+`--no-wait` or wants each step separately (`workspace guide remote`):
+`bundle package`, `runner upload`, `runner submit … --verb validate`,
+`runner jobs`, `runner evidence`, then `bundle import`.
 
 Those pins *are* the evidence's key; the experiment's name is not among them,
 so evidence is shared across the workspace — a `duplicate`, or any fresh
@@ -211,10 +226,12 @@ experiment with matching model, revision, concepts, options and neutral corpus,
 freezes on validation it never ran. A passing `validateEvidence` gate is not by
 itself proof that *this* experiment produced the evidence.
 
-`--verb extract` runs the derivation alone if you want it separately. Both
-load the model on the runner. `runner submit` is not idempotent: after a
-timeout, look with `steerlab runner jobs --runner <url>` before submitting
-again.
+`--verb extract` runs the derivation alone if you want it separately; it also
+accepts a draft. Both load the model on the runner. Every other step, the
+measured run included, needs a frozen study; asked of a draft, `run` refuses
+with `experimentNotFrozen` and its repair names this route. `runner submit` is
+not idempotent: after a timeout, look with `steerlab runner jobs --runner
+<url>` before submitting again.
 
 ## 8. Verify and freeze
 
@@ -232,7 +249,8 @@ it packages the bundle, uploads it, submits, waits, downloads the evidence,
 verifies it, and imports it into this workspace. The runner generates under
 every declared condition and writes an immutable run directory containing the
 manifest snapshot + content hash, `generations.jsonl`, `battery.jsonl`,
-computed metrics, and a canonical `config.json`. A local runner is
+computed metrics, and a canonical `config.json`. A study that pins no task
+prompts is refused before anything is uploaded. A local runner is
 `steerlab runner serve`; see `steerlab workspace guide remote` for both.
 
 `run` refuses, before the model loads, a concept-bearing manifest with no

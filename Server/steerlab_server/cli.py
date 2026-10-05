@@ -263,8 +263,40 @@ def _client_spelling(label: str) -> str:
     spec = next((s for s in client_cli.CLIENT_VERB_SPECS
                  if s.family == family and s.verb == verb), None)
     if spec is None:
-        return ""
+        other = CLIENT_ROUTES.get(label)
+        return (f"{client_cli.PROGRAM} {other} {client_cli.ROOT_FLAG} "
+                "<workspace-dir>") if other else ""
     return f"{client_cli.synopsis(spec)} {client_cli.ROOT_FLAG} <workspace-dir>"
+
+
+#: The redirected acts the cross-platform client performs with a DIFFERENT
+#: verb: the Mac's declaration verbs are protocol fields there, and it pins
+#: task prompts by importing them as a new input. Each value starts with a
+#: verb the client really has
+#: (``test_mac_authority_surface.py::test_every_client_route_names_a_client_verb``).
+CLIENT_ROUTES: dict = {
+    "experiment pin-prompts": "experiment import-prompts <name> --file "
+                              "<file>.jsonl --manifest-sha256 <digest>",
+    "experiment pin-rubric": "experiment set-protocol <name> --set "
+                             "judgeRubricFile=<json> --set "
+                             "judgeRubricHash=<json> --set judges=<json>",
+    "experiment set-instruments": "experiment set-protocol <name> --set "
+                                  "outcomeInstruments=<json list>",
+    "experiment set-sampling": "experiment set-protocol <name> --set "
+                               "temperature=<t> --set maxTokens=<n> …",
+    "experiment set-exclusions": "experiment set-protocol <name> --set "
+                                 "exclusionRules=<json list>",
+    "experiment set-sweep-selection": "experiment set-protocol <name> --set "
+                                      "sweep=<json, with its selection>",
+}
+
+
+def _authoring_command(command: str) -> str:
+    """One authoring command, as this engine names it: "on your authoring
+    client", with both clients' spellings (:mod:`command_vocabulary`). This
+    engine never authors and cannot know which client its reader has."""
+    from .experiment import command_vocabulary as vocabulary
+    return vocabulary.authoring(command)
 
 
 def _mac_authority_refusal(label: str, repair: str, *, note: str = "",
@@ -305,17 +337,23 @@ def _mac_authority_refusal(label: str, repair: str, *, note: str = "",
     reason = (
         f"'{label}' is not a verb of this engine and will not become one — "
         "authoring (create/attach, the pin-*/declare-*/set-* verbs, freeze, "
-        "duplicate) belongs to an authoring CLIENT: the client's workspace is "
-        "the source of truth and this engine is a runner and a cache")
+        "duplicate) happens on your authoring client: its workspace is the "
+        "source of truth and this engine is a runner and a cache")
     if note:
         reason += f". {note}"
-    # The Mac spelling stays FIRST — it is the table's value, the one an agent
-    # has always read, and the one the Mac lifecycle continues from. The
-    # client's is appended, not substituted, because a caller on Linux or
-    # Windows has no `steerlab-cli` and a repair they cannot run is not one.
+    # Both spellings, because this engine cannot know which authoring client
+    # its reader has — the same form every other authoring repair on this
+    # engine takes (`command_vocabulary.authoring`). The Mac spelling stays
+    # FIRST: it is the table's value, the one an agent has always read. The
+    # client's is read from the client's own verb table, so a verb the client
+    # does not have is never claimed — and the repair says so instead.
     client = _client_spelling(label)
     if client:
-        repair = f"{repair}  (off the Mac: {client})"
+        repair = (f"on your authoring client: {repair}  (Mac command line), "
+                  f"or {client}  (cross-platform client)")
+    else:
+        repair = (f"on your authoring client: {repair}  (Mac command line; "
+                  "the cross-platform client has no verb for this)")
     sys.stderr.write(f"{reason}\n  {repair}\n")
     return CLIResult(state="refused", exit_code=exit_code,
                      code=MAC_AUTHORITY_CODE, message=reason,
@@ -589,7 +627,8 @@ def _exception_envelope(invocation, exc: BaseException):
                 gates=freeze_gates, reason=reason,
                 repair_action=lifecycle_gates.repair_of(exc) or (
                     f"satisfy the '{freeze_gate}' gate  (this engine has no "
-                    "freeze verb — freezing, forced or not, is Mac-authority)"))
+                    "freeze verb — freezing, forced or not, happens on your "
+                    "authoring client)"))
     if isinstance(exc, FileNotFoundError):
         missing = getattr(exc, "filename", None)
         # Gate-5 dry run #2 (P3): the commonest instance by far is a MISTYPED
@@ -599,14 +638,15 @@ def _exception_envelope(invocation, exc: BaseException):
         # actually typed nowhere in the document. Say what is missing.
         experiment = _experiment_name_in_missing_path(missing)
         if experiment:
+            author_it = _authoring_command(
+                "experiment create <name> --model <id>")
             return envelope.refusal(
                 label, code="notFound", state="notFound",
                 reason=f"experiment '{experiment}' not found in this workspace",
                 repair_action=(
                     "steerlab-server experiment list  (the experiments this "
                     "workspace holds), then re-run with a name from it — or "
-                    "author it on the Mac: steerlab-cli experiment create "
-                    "<name> --model <id>"))
+                    f"author it {author_it}"))
         return envelope.refusal(
             label, code="notFound", reason=reason, state="notFound",
             repair_action=(f"no file at {missing}" if missing else
@@ -1134,8 +1174,8 @@ def _panel(args: list[str]) -> int:
             note="casting a panel binds a study's model and sampling settings "
                  "to a seat assignment, writes the compiled scenario as a "
                  "workspace input, and pins it into a draft manifest — all "
-                 "authoring. Cast and freeze on the Mac, then submit the "
-                 "frozen study here")
+                 "authoring. Cast and freeze on your authoring client, then "
+                 "submit the frozen study here")
         return refusal.exit_code
 
     if verb == "list":
@@ -2346,9 +2386,10 @@ def _experiment(args: list[str]):
             repair_action=(
                 f"steerlab-server experiment verify {manifest.name} "
                 "(names every drifted pin) ; then restore the named files, or "
-                "author the manifest's replacement on the Mac "
-                f"(steerlab-cli experiment duplicate {manifest.name} "
-                f"{manifest.name}-v2) and re-pin"),
+                "author the manifest's replacement and re-pin — "
+                + _authoring_command(
+                    f"experiment duplicate {manifest.name} "
+                    f"{manifest.name}-v2")),
             payload={"experiment": manifest.name, "status": manifest.status,
                      "verified": False, "violations": list(violations)})
     if verb == "attach-artifact":
@@ -2429,8 +2470,8 @@ def _experiment(args: list[str]):
             next_action=(
                 next_action(
                     f"experiment freeze {name}",
-                    detail="run it on the Mac (steerlab-cli) — authoring is "
-                           "Mac-authority and this engine has no freeze verb")
+                    detail="this engine has no freeze verb — run it "
+                           + _authoring_command(f"experiment freeze {name}"))
                 if not vacuous else
                 next_action(
                     f"experiment validate {name}", requires_human=True,
@@ -2901,8 +2942,8 @@ def _experiment(args: list[str]):
             # part of the command (gate-5 dry run #2, P3).
             next_action=next_action(
                 f"experiment run {name}",
-                detail="freeze it on the Mac first (steerlab-cli experiment "
-                       f"freeze {name}) — authoring is Mac-authority"))
+                detail="freeze it first — "
+                       + _authoring_command(f"experiment freeze {name}")))
 
     sys.stderr.write(
         _EXPERIMENT_VERB_LINE

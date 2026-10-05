@@ -135,9 +135,12 @@ inconsistent.
 
 <!-- client: python -->
 
-Some repairs from the engine's shared rules spell their command for
-`steerlab-server` or for the Mac command line. Carry out the same act with
-this client's verb; never type another client's command here.
+Every repair this client shows is spelled with this client's verbs. Where a
+step needs a model, the repair names the runner route (`steerlab run <name>
+--runner <url> --verb …`); `<url>` is the runner the researcher gave you. The
+one other program a repair may name is `steerlab-server`, for an act only an
+engine can do, such as probing a chat template. Never type a `steerlab-cli`
+command here: that is the Mac command line.
 
 <!-- client: all -->
 

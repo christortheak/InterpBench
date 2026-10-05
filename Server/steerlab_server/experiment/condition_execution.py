@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from .. import memory_diagnostic
 from ..steering import vector_math as vm
 from ..steering import residual_norm_convention as norm_convention
+from . import command_vocabulary as vocabulary
 from . import judicial, lifecycle_gates, paths, prompt_render
 from . import response_format
 from . import resume as resume_mod
@@ -576,9 +577,9 @@ def effective_variant_condition(vc, manifest, model, root, *,
             f"variant '{vc.name}' enables thinking mode but the study declares "
             "an answer-token instrument — disable thinking on the variant or "
             "drop the instrument",
-            repair=("steerlab-cli experiment set-instruments <name> "
-                    "sampledText, or re-promote the agent with thinking "
-                    "disabled"))
+            repair=(vocabulary.authoring(
+                        vocabulary.set_instruments("<name>", "sampledText"))
+                    + "; or re-promote the agent with thinking disabled"))
     return EffectiveCondition(
         name=vc.name,
         injections=model_variant.variant_injections(variant, **({'allow_policies': True} if variant.intervention_policies else {})),

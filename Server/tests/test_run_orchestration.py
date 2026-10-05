@@ -292,9 +292,22 @@ def workspace(tmp_path, monkeypatch):
              "--revision", "0" * 40],
             ["experiment", "attach", STUDY_NAME, CONCEPT],
             ["experiment", "declare-condition", STUDY_NAME, "baseline",
-             "--baseline", "--alpha-units", "norm"],
-            ["experiment", "freeze", STUDY_NAME, "--force"]):
+             "--baseline", "--alpha-units", "norm"]):
         _quiet_client(["--root", root, *argv])
+    # The measured run reads its items from pinned task prompts, and `run`
+    # refuses a study without them before anything is uploaded — so the
+    # fixture pins one item, with the verb a person would use. The digest is
+    # the one `experiment inspect` prints: the manifest file's SHA-256.
+    items = str(tmp_path / "items.jsonl")
+    with open(items, "w", encoding="utf-8") as handle:
+        handle.write('{"id": "item-1", "prompt": "Describe the room."}\n')
+    with open(os.path.join(root, "experiments", STUDY_NAME,
+                           "experiment.json"), "rb") as handle:
+        manifest_digest = hashlib.sha256(handle.read()).hexdigest()
+    _quiet_client(["--root", root, "experiment", "import-prompts", STUDY_NAME,
+                   "--file", items, "--manifest-sha256", manifest_digest])
+    _quiet_client(["--root", root, "experiment", "freeze", STUDY_NAME,
+                   "--force"])
     return root
 
 
@@ -1321,9 +1334,13 @@ step(["experiment", "create", "probe", "--model", "org/tiny",
       "--revision", "0" * 40], 0)
 step(["experiment", "attach", "probe", "signal"], 0)
 step(["experiment", "freeze", "probe", "--force"], 0)
+# The measured run of a study that pins no task prompts is refused at load,
+# before anything is packaged; that refusal path is held to the light set too.
+step(["run", "probe", "--runner", "http://127.0.0.1:1",
+      "--request-timeout", "2"], 65)
 # 127.0.0.1:1 refuses instantly: the whole machine runs — load, package, and
 # a real request attempt — without a runner or a network.
-step(["run", "probe", "--runner", "http://127.0.0.1:1",
+step(["run", "probe", "--runner", "http://127.0.0.1:1", "--verb", "verify",
       "--request-timeout", "2"], 70)
 
 sys.__stderr__.write(json.dumps({

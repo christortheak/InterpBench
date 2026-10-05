@@ -22,6 +22,7 @@ import json
 import os
 from datetime import datetime, timezone
 
+from . import command_vocabulary as vocabulary
 from . import lifecycle_gates, model_variant, paths
 from .experiment_store import load_raw, save_raw
 
@@ -122,9 +123,10 @@ def attach_perturbations(name: str, agent: str, deltas=(0.2,),
             f"cannot attach perturbations: '{name}' is {d.get('status')} — "
             "duplicate first",
             gate=lifecycle_gates.STATUS_IMMUTABLE,
-            repair=(f"steerlab-cli experiment duplicate {name} {name}-v2 && "
-                    f"steerlab-server experiment confirm {name}-v2 --agent "
-                    "<agent>  (duplication is Mac-authority)"))
+            repair=(vocabulary.authoring(
+                        f"experiment duplicate {name} {name}-v2")
+                    + f" ; then steerlab-server experiment confirm {name}-v2 "
+                      "--agent <agent>"))
 
     normalized = sorted({float(delta) for delta in deltas})
     if not normalized:
@@ -172,9 +174,10 @@ def attach_perturbations(name: str, agent: str, deltas=(0.2,),
         raise ConfirmationError(
             f"attach concept '{concept}' to '{name}' first",
             gate=lifecycle_gates.MISSING_PREREQUISITE,
-            repair=(f"steerlab-cli experiment attach {name} {concept} && "
-                    f"steerlab-server experiment confirm {name} --agent "
-                    f"{agent_name}  (attaching is Mac-authority)"))
+            repair=(vocabulary.authoring(
+                        f"experiment attach {name} {concept}")
+                    + f" ; then steerlab-server experiment confirm {name} "
+                      f"--agent {agent_name}"))
 
     base = paths.project_root() if root is None else root
     rel_path = os.path.relpath(path, base) if os.path.isabs(path) else path

@@ -230,7 +230,7 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
                 raise lifecycle_gates.refusing(
                     lifecycle_gates.MISSING_PREREQUISITE,
                     exclusions_mod.PIN_REQUIRED_MESSAGE,
-                    repair=exclusions_mod.PIN_REQUIRED_REPAIR)
+                    repair=exclusions_mod.pin_required_repair())
             checks = exclusions_mod.attention_checks(
                 _load_prompts(manifest, None, root))
             if not checks:
