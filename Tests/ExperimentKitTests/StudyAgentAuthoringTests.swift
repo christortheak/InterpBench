@@ -102,7 +102,13 @@ struct StudyAgentAuthoringTests {
     @Test func capturedRootDoesNotFollowTheGlobalWorkspace() throws {
         try fixture { study, agent in
             let otherRoot = study.workspaceRoot.appending(component: "other")
+            // Restored before the lock is released. This test used to leave
+            // the override pointing into its own temporary root, which is
+            // deleted when the fixture ends, so a later test resolved concept
+            // files under a folder that no longer existed.
+            let previous = WorkspaceRoot.programmaticOverride
             WorkspaceRoot.programmaticOverride = otherRoot
+            defer { WorkspaceRoot.programmaticOverride = previous }
             let saved = try StudyAgentAuthoring.attach(agent, reviewed: study)
             #expect(saved.workspaceRoot == study.workspaceRoot)
             #expect(saved.manifest.variantConditions.first?.artifactPath == agent.path)
