@@ -67,7 +67,13 @@ export const rawIntegerField = (line: string, key: string): string => {
   return match ? match[1] : "";
 };
 
-export type JudgmentOutcome = "baseline" | "variant" | "tie" | "unknown";
+/// "noncompliant" is a row the engines write when a judge ANSWERED but would
+/// not give a usable verdict for that pair: `outcome` is null,
+/// `noncompliant` is true, and the judge's words are kept in
+/// `noncomplianceReason`. It is a recorded hole, kept for review and left
+/// out of every tally and agreement figure. It is NOT "unknown": unknown
+/// means the row stamped no outcome key at all.
+export type JudgmentOutcome = "baseline" | "variant" | "tie" | "noncompliant" | "unknown";
 
 /// Swift's vocabulary calls the non-baseline arm "condition"; the server
 /// calls it "variant". One word wins in the viewer: variant.
@@ -76,8 +82,24 @@ export const normalizeOutcome = (raw: unknown): JudgmentOutcome => {
   if (value === "variant" || value === "condition") return "variant";
   if (value === "baseline") return "baseline";
   if (value === "tie") return "tie";
+  if (value === "noncompliant") return "noncompliant";
   return "unknown";
 };
+
+/// What each outcome is called on screen. A noncompliant row used to fall
+/// through to "Not stamped", which said the engine had recorded nothing when
+/// it had recorded exactly what happened.
+export const OUTCOME_LABEL: Record<JudgmentOutcome, string> = {
+  variant: "Variant",
+  baseline: "Baseline",
+  tie: "Tie",
+  noncompliant: "No verdict",
+  unknown: "Not stamped",
+};
+
+/// One sentence for a row with no verdict, for a tooltip or a caption.
+export const NO_VERDICT_MEANING =
+  "The judge answered, but not with a verdict the engine could use. The row is kept for review and is left out of every tally and agreement figure.";
 
 export type JudgmentRow = {
   judge: string;
@@ -102,6 +124,11 @@ export type JudgmentRow = {
   baselineSeed: string;
   variantSeed: string;
   dialect: "server" | "swift";
+  /// The row's `noncompliant` flag: the judge answered without a usable
+  /// verdict. `outcome` is then "noncompliant".
+  noncompliant: boolean;
+  /// The judge's refusal as the engine kept it, verbatim; "" otherwise.
+  noncomplianceReason: string;
 };
 
 const scoreMap = (value: unknown): Record<string, number> => Object.fromEntries(Object.entries(record(value)).flatMap(([key, entry]) => typeof entry === "number" && Number.isFinite(entry) ? [[key, entry] as [string, number]] : []));
@@ -120,6 +147,9 @@ export const parseJudgmentRows = (text: string, truncated = false): { rows: Judg
     // anything; counting it would inflate every tally on screen.
     if (!condition && !promptID) { skipped += 1; return []; }
     const swift = "conditionResult" in raw || "sourceRunDirectory" in raw;
+    // The flag decides, not the null outcome beside it: both engines write
+    // `noncompliant: true` on these rows.
+    const noncompliant = raw.noncompliant === true;
     return [{
       judge: str(raw.judge) || "Unnamed judge",
       judgeKind: str(raw.judgeKind),
@@ -129,7 +159,7 @@ export const parseJudgmentRows = (text: string, truncated = false): { rows: Judg
       condition,
       promptID,
       sampleIndex: num(raw.sampleIndex) ?? 0,
-      outcome: normalizeOutcome("outcome" in raw ? raw.outcome : raw.conditionResult),
+      outcome: noncompliant ? "noncompliant" : normalizeOutcome("outcome" in raw ? raw.outcome : raw.conditionResult),
       winner: str(judgment.winner),
       baselineWas: str(raw.baselineWas),
       conditionWas: str(raw.conditionWas),
@@ -143,6 +173,8 @@ export const parseJudgmentRows = (text: string, truncated = false): { rows: Judg
       baselineSeed: rawIntegerField(line, "baselineSeed"),
       variantSeed: rawIntegerField(line, "variantSeed"),
       dialect: swift ? "swift" : "server",
+      noncompliant,
+      noncomplianceReason: str(raw.noncomplianceReason),
     }];
   });
   return { rows, skipped };
@@ -207,6 +239,9 @@ export type JudgeReport = {
   reusedJudgments: number | null;
   freshJudgments: number | null;
   judgedOn: string;
+  /// The report's own count of rows with no verdict (`noncompliantJudgments`,
+  /// written only when nonzero). null = the report stamps none.
+  noncompliantJudgments: number | null;
 };
 
 const conditionTally = (condition: string, raw: unknown): ConditionTally => {
@@ -290,6 +325,7 @@ export const parseJudgeReport = (loaded: LoadedJSON): JudgeReport => {
     reusedJudgments: num(raw.reusedJudgments),
     freshJudgments: num(raw.freshJudgments),
     judgedOn: str(raw.judgedOn),
+    noncompliantJudgments: num(raw.noncompliantJudgments),
   };
 };
 
@@ -406,7 +442,9 @@ export type JudgmentCell = {
 /// DIFFERENT judges recorded two different known outcomes — so tie-vs-win
 /// counts, and a single judge's repeated rows never do. Rows whose outcome
 /// is unknown (neither engine key present) are shown but cannot create a
-/// disagreement.
+/// disagreement. Neither can a row with no verdict: a judge that gave none
+/// did not disagree with anyone, and the engines leave those rows out of
+/// their own agreement figures.
 export const judgmentCells = (rows: JudgmentRow[]): JudgmentCell[] => {
   const cells = new Map<string, JudgmentCell>();
   for (const row of rows) {
@@ -419,7 +457,7 @@ export const judgmentCells = (rows: JudgmentRow[]): JudgmentCell[] => {
     const byJudge = new Map<string, JudgmentOutcome>();
     for (const row of cell.rows) byJudge.set(row.judge, row.outcome);
     cell.verdicts = [...byJudge.entries()].map(([judge, outcome]) => ({ judge, outcome }));
-    const known = cell.verdicts.filter((verdict) => verdict.outcome !== "unknown");
+    const known = cell.verdicts.filter((verdict) => verdict.outcome !== "unknown" && verdict.outcome !== "noncompliant");
     cell.disagrees = known.length > 1 && new Set(known.map((verdict) => verdict.outcome)).size > 1;
   }
   return [...cells.values()].sort((left, right) => left.condition.localeCompare(right.condition) || left.promptID.localeCompare(right.promptID) || left.sampleIndex - right.sampleIndex);
@@ -427,7 +465,10 @@ export const judgmentCells = (rows: JudgmentRow[]): JudgmentCell[] => {
 
 export const disagreementCells = (rows: JudgmentRow[]): JudgmentCell[] => judgmentCells(rows).filter((cell) => cell.disagrees);
 
-export type JudgeTally = { judge: string; condition: string; variantWins: number; baselineWins: number; ties: number; unknown: number; n: number; meanConfidence: number | null };
+/// `n` counts the rows that carry a verdict slot (wins, ties, and rows that
+/// stamped no outcome). Rows with NO VERDICT are counted beside it in
+/// `noncompliant`, not inside it — as the engines count them.
+export type JudgeTally = { judge: string; condition: string; variantWins: number; baselineWins: number; ties: number; unknown: number; noncompliant: number; n: number; meanConfidence: number | null };
 
 /// Per-judge × condition splits counted from the judgment rows — the split
 /// the server's report carries per judge and Swift's does not.
@@ -435,27 +476,33 @@ export const judgeTallies = (rows: JudgmentRow[]): JudgeTally[] => {
   const tallies = new Map<string, JudgeTally & { confidenceSum: number; confidenceN: number }>();
   for (const row of rows) {
     const key = `${row.judge}${row.condition}`;
-    const tally = tallies.get(key) ?? { judge: row.judge, condition: row.condition, variantWins: 0, baselineWins: 0, ties: 0, unknown: 0, n: 0, meanConfidence: null, confidenceSum: 0, confidenceN: 0 };
+    const tally = tallies.get(key) ?? { judge: row.judge, condition: row.condition, variantWins: 0, baselineWins: 0, ties: 0, unknown: 0, noncompliant: 0, n: 0, meanConfidence: null, confidenceSum: 0, confidenceN: 0 };
+    tallies.set(key, tally);
+    if (row.outcome === "noncompliant") { tally.noncompliant += 1; continue; }
     if (row.outcome === "variant") tally.variantWins += 1;
     else if (row.outcome === "baseline") tally.baselineWins += 1;
     else if (row.outcome === "tie") tally.ties += 1;
     else tally.unknown += 1;
     tally.n += 1;
     if (row.confidence != null) { tally.confidenceSum += row.confidence; tally.confidenceN += 1; }
-    tallies.set(key, tally);
   }
   return [...tallies.values()].map(({ confidenceSum, confidenceN, ...tally }) => ({ ...tally, meanConfidence: confidenceN ? confidenceSum / confidenceN : null })).sort((left, right) => left.condition.localeCompare(right.condition) || left.judge.localeCompare(right.judge));
 };
 
+/// The rows with no verdict, in file order — what a reader reviews.
+export const noncompliantRows = (rows: JudgmentRow[]): JudgmentRow[] => rows.filter((row) => row.noncompliant);
+
 export type ConfidenceBin = { from: number; to: number; count: number };
 
 /// Ten fixed 0.1-wide bins over [0, 1]. Rows with no stamped confidence are
-/// excluded and reported separately by the caller.
+/// excluded and reported separately by the caller. A row with no verdict
+/// has no confidence to be missing, so it is in neither count.
 export const confidenceHistogram = (rows: JudgmentRow[]): { bins: ConfidenceBin[]; counted: number; missing: number } => {
   const bins: ConfidenceBin[] = Array.from({ length: 10 }, (_, index) => ({ from: index / 10, to: (index + 1) / 10, count: 0 }));
   let counted = 0;
   let missing = 0;
   for (const row of rows) {
+    if (row.noncompliant) continue;
     if (row.confidence == null) { missing += 1; continue; }
     const clamped = Math.min(0.999999, Math.max(0, row.confidence));
     bins[Math.floor(clamped * 10)].count += 1;

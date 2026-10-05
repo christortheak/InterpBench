@@ -45,6 +45,13 @@ export type CodingRow = {
   judgeModel: string;
   judgeProvider: string;
   judgeRevision: string;
+  /// The row's `noncompliant` flag: the coder ANSWERED, but not with codes
+  /// the engine could use. The engines write `codes: null` on such a row and
+  /// keep the coder's words in `noncomplianceReason`; `codes` is then `{}`
+  /// here. It is a recorded hole, left out of every aggregate — not the same
+  /// thing as a row that simply stamped no codes.
+  noncompliant: boolean;
+  noncomplianceReason: string;
 };
 
 export const parseCodingRows = (text: string, truncated = false): { rows: CodingRow[]; skipped: number } => {
@@ -72,10 +79,22 @@ export const parseCodingRows = (text: string, truncated = false): { rows: Coding
       judgeModel: str(raw.judgeModel),
       judgeProvider: str(raw.judgeProvider),
       judgeRevision: str(raw.judgeRevision),
+      noncompliant: raw.noncompliant === true,
+      noncomplianceReason: str(raw.noncomplianceReason),
     }];
   });
   return { rows, skipped };
 };
+
+/// What the reader's row list shows in place of a row's codes.
+export const codesSummary = (row: CodingRow): string => {
+  if (row.noncompliant) return "No codes: the coder's answer could not be used.";
+  return Object.entries(row.codes).map(([field, value]) => `${field} = ${formatCode(value)}`).join(" · ") || "No codes recorded.";
+};
+
+/// One sentence for a row with no codes, for a caption.
+export const NO_CODES_MEANING =
+  "The coder answered, but not with codes the engine could use. The row is kept for review and is left out of every aggregate and agreement figure.";
 
 export const loadCodings = async (run: WorkspaceRun) => {
   const file = findFile(run.files, "codings.jsonl");
@@ -140,6 +159,9 @@ export type CodingReport = {
   epochUnverified: boolean;
   measurementDrift: string;
   exclusions: Record<string, unknown> | null;
+  /// The report's own count of rows with no codes (`noncompliantCodings`,
+  /// written only when nonzero). null = the report stamps none.
+  noncompliantCodings: number | null;
 };
 
 const fieldAggregate = (raw: unknown): FieldAggregate => {
@@ -201,6 +223,7 @@ export const parseCodingReport = (loaded: LoadedJSON): CodingReport => {
     epochUnverified: raw.epochUnverified === true,
     measurementDrift: str(raw.measurementDrift),
     exclusions: Object.keys(record(raw.exclusions)).length ? record(raw.exclusions) : null,
+    noncompliantCodings: num(raw.noncompliantCodings),
   };
 };
 

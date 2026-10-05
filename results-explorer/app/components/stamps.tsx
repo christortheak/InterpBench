@@ -43,6 +43,54 @@ export function FreezeNotice({ run }: { run: WorkspaceRun }) {
   );
 }
 
+export type NoncompliantItem = { judge: string; condition: string; promptID: string; sampleIndex: number; reason: string };
+
+/// Rows where a judge (or coder) ANSWERED but gave nothing the engine could
+/// use. The engines keep each one as a row, with the judge's words, and
+/// leave it out of every tally. The explorer used to show such a row as
+/// "Not stamped" (judging) or "No codes recorded" (coding), which read as a
+/// gap in the file rather than as something that happened.
+///
+/// `stamped` is the report's own count when it gives one; `items` are the
+/// rows found in the loaded file. Renders nothing when both are empty.
+export function NoncompliantNotice({ items, stamped, kind }: { items: NoncompliantItem[]; stamped: number | null; kind: "judgment" | "coding" }) {
+  const found = items.length;
+  const total = stamped ?? found;
+  if (!total) return null;
+  const judging = kind === "judgment";
+  const headline = judging
+    ? `${total} judgment${total === 1 ? " has" : "s have"} no verdict.`
+    : `${total} coding${total === 1 ? " has" : "s have"} no codes.`;
+  return (
+    <div className="card judged-alert alert-warn noncompliant-notice">
+      <span>!</span>
+      <div>
+        <strong>{headline}</strong>
+        <p>
+          {judging
+            ? "The judge answered, but not with a verdict the engine could use. Each of these is kept as a row for review, with what the judge said, and is left out of every tally and agreement figure."
+            : "The coder answered, but not with codes the engine could use. Each of these is kept as a row for review, with what the coder said, and is left out of every aggregate and agreement figure."}
+          {stamped !== null && stamped !== found ? ` The report counts ${stamped}; ${found} ${found === 1 ? "is" : "are"} among the rows loaded here.` : ""}
+        </p>
+        {found > 0 && (
+          <details>
+            <summary>Show {found === 1 ? "it" : `the ${found} rows`}</summary>
+            <ul>
+              {items.slice(0, 200).map((item, index) => (
+                <li key={`${item.judge}-${item.condition}-${item.promptID}-${item.sampleIndex}-${index}`}>
+                  <strong>{item.judge}</strong> · {item.condition} · {item.promptID} · sample {item.sampleIndex}
+                  {item.reason ? <>: <q>{item.reason}</q></> : ": no reason was recorded."}
+                </li>
+              ))}
+            </ul>
+            {found > 200 && <p>Showing the first 200 of {found}. The rest are in the run&rsquo;s file.</p>}
+          </details>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /// What the analysis did to the records before it estimated anything, shown
 /// BESIDE the effects it produced: the unit of analysis, declared exclusions,
 /// endpoint rescue, and adjudication. Each row is one stamp file from the

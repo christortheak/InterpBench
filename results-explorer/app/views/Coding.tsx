@@ -13,16 +13,19 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { DerivedBadge, ProvenanceLegend } from "../components/provenance";
+import { NoncompliantNotice } from "../components/stamps";
 import { Badge, CopyLinkButton, ExportButton } from "../components/ui";
 import { codingRecordKey, splitRecordKey, takePendingRecord, updateDeepLink } from "../lib/deeplink";
 import { findFile } from "../lib/discovery";
 import { csvFilename, type ExportColumn } from "../lib/export";
 import { shortHash } from "../lib/format";
 import {
+  codesSummary,
   codingDisagreements,
   fieldsFromRows,
   formatCode,
   loadCodings,
+  NO_CODES_MEANING,
   parseCodingReport,
   wordCountProfiles,
   type CodingConditionRow,
@@ -92,6 +95,8 @@ const codingRowColumns = (fields: CodingFieldSpec[]): ExportColumn<CodingRow>[] 
     value: (row) => field.name in row.codes ? formatCode(row.codes[field.name]) : null,
   })),
   { header: "briefReason", kind: "stored", value: (row) => row.briefReason },
+  { header: "noncompliant", kind: "stored", value: (row) => row.noncompliant, description: "True when the coder answered without usable codes. Every field column is then empty." },
+  { header: "noncomplianceReason", kind: "stored", value: (row) => row.noncomplianceReason, description: "What the coder said instead of codes, as the engine kept it." },
 ];
 
 export function CodingView({ run, workspaceRuns, onActivateRun, onNavigate, onOpenFile }: {
@@ -244,6 +249,14 @@ export function CodingView({ run, workspaceRuns, onActivateRun, onNavigate, onOp
       {codingReport.measurementDrift && <div className="card judged-alert alert-warn"><span>⚠</span><div><strong>Measurement drift tolerated.</strong><p>Measurement-side fields differed from the source run&rsquo;s epoch: <code>{codingReport.measurementDrift}</code>.</p></div></div>}
       {codingReport.exclusions && <div className="card judged-alert alert-note"><span>i</span><div><strong>Declared exclusions applied before coding.</strong><p>{Object.entries(codingReport.exclusions).map(([key, value]) => `${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`).join(" · ")}</p></div></div>}
       {codingReport.present && codingReport.mode !== "perResponseCoding" && <div className="card judged-alert alert-warn"><span>⚠</span><div><strong>Unexpected report mode.</strong><p>coding-report.json stamps <code>mode: {codingReport.mode || "(absent)"}</code>; this reader renders the per-response coding contract.</p></div></div>}
+      {/* Rows where a coder answered without usable codes: named as that
+          and listed with what the coder said. They used to read "No codes
+          recorded", which looked like a gap in the file. */}
+      <NoncompliantNotice
+        items={rows.filter((row) => row.noncompliant).map((row) => ({ judge: row.judge, condition: row.condition, promptID: row.promptID, sampleIndex: row.sampleIndex, reason: row.noncomplianceReason }))}
+        stamped={codingReport.noncompliantCodings}
+        kind="coding"
+      />
 
       <section className="card judged-pins">
         <header className="section-header"><div><span className="section-number">MEASUREMENT PINS</span><h2>What coded what</h2></div>{codingReport.mode && <Badge tone="blue">{codingReport.mode}</Badge>}</header>
@@ -353,7 +366,7 @@ export function CodingView({ run, workspaceRuns, onActivateRun, onNavigate, onOp
               <div className="records">
                 {filtered.slice(0, 500).map((row, index) => <button key={`${row.judge}-${row.condition}-${row.promptID}-${row.sampleIndex}-${index}`} onClick={() => setSelectedIndex(index)} className={selected === row ? "selected" : ""}>
                   <div><strong>{row.promptID}</strong><Badge tone={row.condition === "baseline" ? "neutral" : "blue"}>{row.condition}</Badge></div>
-                  <p>{Object.entries(row.codes).map(([field, value]) => `${field} = ${formatCode(value)}`).join(" · ") || "No codes recorded."}</p>
+                  <p>{codesSummary(row)}</p>
                   <footer><span>{row.judge}</span><span>{row.wordCount == null ? "words not stamped" : `${row.wordCount} words`}</span></footer>
                 </button>)}
                 {!filtered.length && <div className="empty-state">No coding rows match those filters.</div>}
@@ -371,10 +384,14 @@ export function CodingView({ run, workspaceRuns, onActivateRun, onNavigate, onOp
               </div>
               <section className="codes-block">
                 <span className="section-number">CODES</span>
-                <div className="code-chips">
-                  {fields.map((field) => field.name in selected.codes ? <span key={field.name} className={`chip chip-${selected.codes[field.name] === null ? "null" : typeof selected.codes[field.name]}`}><b>{field.name}</b>{formatCode(selected.codes[field.name])}</span> : <span key={field.name} className="chip chip-missing"><b>{field.name}</b>not coded</span>)}
-                </div>
-                <p className="brief-reason">{selected.briefReason || "No brief reason recorded."}</p>
+                {selected.noncompliant
+                  ? <p className="brief-reason">{NO_CODES_MEANING} {selected.noncomplianceReason ? <>What the coder said: <q>{selected.noncomplianceReason}</q></> : "No reason was recorded."}</p>
+                  : <>
+                    <div className="code-chips">
+                      {fields.map((field) => field.name in selected.codes ? <span key={field.name} className={`chip chip-${selected.codes[field.name] === null ? "null" : typeof selected.codes[field.name]}`}><b>{field.name}</b>{formatCode(selected.codes[field.name])}</span> : <span key={field.name} className="chip chip-missing"><b>{field.name}</b>not coded</span>)}
+                    </div>
+                    <p className="brief-reason">{selected.briefReason || "No brief reason recorded."}</p>
+                  </>}
               </section>
               <section className="text-block output-block">
                 <span>CODED RESPONSE</span>
