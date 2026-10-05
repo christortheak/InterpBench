@@ -67,12 +67,24 @@ def provision(operation, *, release=None, runtime=None, expected=None, approved=
     if runtime is not None: command += ['--runtime', str(runtime)]
     if expected is not None: command += ['--expect', expected]
     if approved: command += ['--yes']
-    result = subprocess.run(command, stdout=subprocess.PIPE, text=True)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, text=True)
     try:
-        response = json.loads(result.stdout)
+        stdout, _ = process.communicate()
+    except KeyboardInterrupt:
+        # A Ctrl-C reached the installer too, and it is stopping its download,
+        # removing its staging folder, and releasing its lock. Let it finish
+        # and report, instead of killing it a moment later as subprocess.run
+        # would; an installer that does not finish in time is stopped.
+        try:
+            stdout, _ = process.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            raise KeyboardInterrupt from None
+    try:
+        response = json.loads(stdout)
     except ValueError as exc:
         raise SetupRefusal('Setup returned no structured result; inspect its stderr diagnostics.') from exc
-    if result.returncode or not response.get('ok'):
+    if process.returncode or not response.get('ok'):
         failure = SetupRefusal(response.get('reason', 'Client setup did not finish.'))
         failure.repair_action = response.get('repairAction', failure.repair_action)
         failure.installer_code = response.get('code')

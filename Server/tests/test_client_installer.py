@@ -397,6 +397,34 @@ def test_cancel_stops_a_stalled_download_and_keeps_the_previous_runtime(tmp_path
     assert_nothing_changed(tmp_path, runtime, old)
 
 
+def test_ctrl_c_on_the_python_client_lets_the_installer_clean_up(tmp_path):
+    """In a terminal, Ctrl-C reaches the client and the installer together.
+    The client waits for the installer's cleanup and reports its typed
+    cancellation, instead of killing it a moment later."""
+    import sys
+    folder = release(tmp_path)
+    runtime, old = managed_runtime(tmp_path)
+    _, plan = call(folder, 'plan', '--runtime', str(runtime))
+    env = tools(tmp_path, curl=STALLED_CURL)
+    env.pop('STEERLAB_WORKSPACE', None)
+    process = subprocess.Popen([sys.executable, '-m', 'steerlab_server.client_cli', 'setup', 'repair', '--release', str(folder),
+                                '--runtime', str(runtime), '--expect', plan['planSHA256'], '--yes', '--json'],
+                               text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+                               cwd=Path(__file__).parents[1], start_new_session=True)
+    try:
+        curl = wait_for(tmp_path / 'tools/curl-pid', seconds=60)
+        os.killpg(process.pid, signal.SIGINT)   # the whole terminal group, as Ctrl-C does
+        stdout, stderr = process.communicate(timeout=30)
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+    report = json.loads(stdout)
+    assert process.returncode == 65, stderr
+    assert report['result']['installerCode'] == 'cancelled'
+    assert gone(curl)
+    assert_nothing_changed(tmp_path, runtime, old)
+
+
 @pytest.mark.parametrize('shell', SHELLS)
 def test_a_rerun_after_a_killed_setup_needs_no_cleanup(tmp_path, shell):
     """A setup killed outright (no handler runs) leaves its lock and staging
