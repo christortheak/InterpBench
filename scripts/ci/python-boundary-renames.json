@@ -1,5 +1,6 @@
 {
   "baseline": "f6f746f",
+  "candidate": "a7536f9",
   "renames": {
     "steerlab_server.experiment.analysis_endpoints._condition_modalities": "steerlab_server.experiment.analysis_endpoints.condition_modalities",
     "steerlab_server.experiment.analysis_endpoints._endpoint_values": "steerlab_server.experiment.analysis_endpoints.endpoint_values",

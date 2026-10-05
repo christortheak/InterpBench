@@ -243,7 +243,7 @@ regions use the Python script above. Do not use a stale installed executable.
 | `audit-stability-preflight.py` | Stability extraction and battery publication hook vs `73bfbd7` | Checkpoint proof; adapt only with explicit reviewed semantics, never change the pin just to make green. |
 | `audit-task-prompt-parser.py` | Parser extraction vs `ef3dec8` | Same rule; preserve negative controls. |
 | `audit-design-lazy-imports.py` | Variant/panel import extraction vs `82da781` | Same rule; keep portable validation independent of execution packages. |
-| `audit-python-boundaries.py` | Historical refactor renames from `python-boundary-renames.json` | Historical candidate audit (`--candidate`), not a general gate for new algorithms. |
+| `audit-python-boundaries.py` | Historical refactor renames from `python-boundary-renames.json`, at its recorded candidate `a7536f9` | Historical proof, run by `--audits`; not a general gate for new algorithms, and never pointed at today's tree. |
 | `check-swift-bridge-retirement.py` | Current bridge/caller inventory; also run `--release` | Retire the migration; do not add compatibility bridges to pass tests. |
 | `public_scan.py` | Public repository vocabulary and tracked content | Follow repository hygiene; do not add private data to exceptions. |
 | `qualify-client-release.py` | Installed app-free client, optional `--repair` | Use a disposable release/environment when packaging or dependencies change. |
@@ -254,9 +254,10 @@ Swift syntax audits (`audit-panel-owner-access.swift`, `audit-study-management.s
 `audit-exclusion-policy.swift`, `audit-authoring-http-results.swift`) preserve
 specific historical migrations, not arbitrary future algorithm changes. They
 take current/baseline checkout paths; the panel audit also accepts `design`.
-Use the exact checkpoint and Xcode host-library compile commands in
-[BRIDGE-RETIREMENT.md](BRIDGE-RETIREMENT.md) and the exclusion/HTTP entries in
-[RESEARCHER-WORKFLOW-VALIDATION-HISTORY.md](RESEARCHER-WORKFLOW-VALIDATION-HISTORY.md).
+`scripts/ci/run-swift-checkpoint-audits.py` records each audit's commit pair,
+compiles it against the selected Xcode's SwiftSyntax host libraries, and runs
+it on snapshots read from git history (`--list` shows the pairs);
+`check-generated.py --audits` calls it, so it needs a Mac with full history.
 Do not point historical comparisons at today's changed tree and then weaken them.
 
 ## 8. Acceptance and handoff
