@@ -164,11 +164,6 @@ public enum StudyDesignSummary {
         let samples = max(1, study.samplesPerItem ?? 1)
         var line = "\(samples) sample(s) × temperature \(number(study.temperature))"
         line += " × up to \(study.maxTokens) tokens"
-        if study.temperature > 0 {
-            // The substrate rule, stated where the number is read: a local MLX
-            // run refuses a non-zero temperature outright.
-            line += "  ·  server substrate only"
-        }
         return line
     }
 

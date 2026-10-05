@@ -4457,11 +4457,6 @@ public struct ExperimentCLIRunner: Sendable {
             if let policy = sampling.seedPolicy {
                 samplingLine += "  ·  seed policy \(policy)"
             }
-            if sampling.temperature > 0 {
-                // The substrate rule, stated where the number is written: a
-                // local MLX run refuses a non-zero temperature outright.
-                samplingLine += "  ·  server substrate only"
-            }
             sink.out(samplingLine)
             var samplingAdvisories: [SteerLabCLIEnvelope.Advisory] = []
             // A declared value nothing will read is a design mistake worth

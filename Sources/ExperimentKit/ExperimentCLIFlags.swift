@@ -511,9 +511,9 @@ public enum ExperimentCLIParser {
             valueFlags: remoteConnection),
         .init(
             namespace: "remote", verb: "resubmit", positional: "<job-id>",
-            purpose: "Resume a checkpointed job: the server re-submits the "
-                + "job's own rendered sbatch script byte-for-byte, "
-                + "optionally under a longer walltime.",
+            purpose: "Resume a checkpointed or cancelled job: the server "
+                + "re-submits the job's own rendered sbatch script "
+                + "byte-for-byte, optionally under a longer walltime.",
             valueFlags: remoteConnection.union(["--walltime"])),
         .init(
             namespace: "remote", verb: "fetch", positional: "<artifact-path>",

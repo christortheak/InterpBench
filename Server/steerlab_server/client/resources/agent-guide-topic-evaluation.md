@@ -44,7 +44,10 @@ steerlab run <name> --runner <url> --verb analyze
 
 Pure CPU, no model load. Paired-to-baseline effect sizes — bootstrap CIs and
 Wilcoxon — over the newest completed run the runner holds for the study;
-writes `effect-sizes.csv` and folds `effectSizes` into `report.json`.
+writes `effect-sizes.csv` and folds `effectSizes` into `report.json`. `n` counts items: an item sampled several
+times contributes one difference, its responses averaged within each
+condition. Rows marked `withinItemSamples` describe one item's samples and
+are not tests.
 
 Guarded by the **epoch guard**: the run's stamped experiment hash must equal
 the manifest's content hash, or the verb refuses. The guard is per-engine —

@@ -432,7 +432,10 @@ import Testing
                 StudyDesignSummary.rows(for: design)
                     .first { $0.label == "Sampling" }?.value)
             #expect(sampling.contains("temperature 0.7"))
-            #expect(sampling.contains("server substrate only"))
+            // Sampling runs on either engine since seeded generation landed
+            // on the Mac engine; the summary must not send the reader to a
+            // server for it.
+            #expect(!sampling.contains("server substrate only"))
         }
     }
 

@@ -184,8 +184,9 @@ export STEERLAB_WORKSPACE=~/SteerLab/Workspaces/<study-name>
 ```
 
 The new workspace contains its own `AGENTS.md`. **Read it and follow it from
-here** — the study lifecycle (create → attach → extract → validate → sweep →
-promote → freeze → run → analyze) is documented there and in
+here** — it is a short core guide, and the study lifecycle (create → attach →
+extract → validate → sweep → promote → freeze → run → analyze) is in its
+topics (`workspace guide lifecycle` on either client) and in
 `docs/CLI-REFERENCE.md`.
 
 For the app-free client, `steerlab setup start <directory> --create --json`

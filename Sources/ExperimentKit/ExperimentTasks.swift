@@ -8154,7 +8154,7 @@ public enum ExperimentTasks {
             conditions: conditionReports,
             // Declared exclusions apply to the PAIRED statistics: excluded
             // rows drop here (their baseline partners drop with them —
-            // pairwise deletion via the (seed, promptID) join), and so do
+            // pairwise deletion via the per-item join), and so do
             // excluded instrument readouts (scope allRecordTypes — the
             // ordinal pairing by promptID loses its baseline partner the
             // same way), while the per-condition descriptive blocks above
@@ -8196,7 +8196,8 @@ public enum ExperimentTasks {
     /// Paired-to-baseline effect sizes over the run's per-item metrics: for
     /// each non-baseline condition × numeric metric (wordCount, distinct2,
     /// each concept's marker density), the per-item differences against the
-    /// SAME (seed, promptID) baseline row feed a percentile bootstrap CI and
+    /// SAME item's baseline (each item averaged over its samples within a
+    /// condition, then paired by promptID) feed a percentile bootstrap CI and
     /// a Wilcoxon signed-rank test. When the run carried the ordinalScale
     /// instrument, its per-item ladder positions join as one more numeric
     /// metric ("ordinalPosition" — cross-engine endpoint name) through the

@@ -70,7 +70,7 @@ The server re-submits the job's **own rendered sbatch script byte-for-byte**
 pick up where the shard parked), with `--walltime` applied on the scheduler's
 command line so a shard that parked AT its limit gets a longer one. The verb
 refuses any record that is not resumable — running, succeeded, hard-failed,
-cancelled, or already resubmitted — and **read the `walltime` echo in the
+or already resubmitted — and **read the `walltime` echo in the
 response**: an older server ignores the override silently, and the echo is
 the proof it was applied. The sharded parent needs nothing from you; it
 merges when its shards finish.
@@ -185,7 +185,7 @@ The server re-submits the job's **own rendered sbatch script byte-for-byte**
 pick up where the shard parked), with `--walltime` applied on the scheduler's
 command line so a shard that parked AT its limit gets a longer one. The verb
 refuses any record that is not resumable — running, succeeded, hard-failed,
-cancelled, or already resubmitted — and **read the `walltime` echo in the
+or already resubmitted — and **read the `walltime` echo in the
 response**: an older server ignores the override silently, and the echo is
 the proof it was applied. The sharded parent needs nothing from you; it
 merges when its shards finish.
@@ -322,7 +322,18 @@ Retain the submission's endpoint, serving root and job ID. Poll
 stops observation, not execution. Use `steerlab-cli remote cancel <job-id>`
 when cancellation is intended. `steerlab-cli remote resubmit <job-id>
 [--walltime <hh:mm:ss>] --json` and the app's Resume button continue eligible
-checkpointed jobs.
+checkpointed or cancelled jobs.
+
+**A cancelled run can be resumed, by a person.** Cancelling a managed run
+keeps every response it completed. To continue it, resume the cancelled job:
+`steerlab-cli remote resubmit <job-id> --json`, or Resume in Compute › Server
+Jobs. If the engine says to wait, wait a minute and retry; do not submit the
+study again meanwhile. A new job continues the run and is named in the
+cancelled record's `result.resubmittedAs`; import evidence from it. A run that
+was stopped before it could save its place cannot be resumed: the cancel
+answer's `cancelResume` field says which it is, and then you submit the study
+again. For a run split across jobs, resume the parent. Nothing resumes a
+cancelled job automatically.
 
 <!-- client: python -->
 
@@ -330,7 +341,18 @@ Retain the submission's endpoint, serving root and job ID. Poll
 `steerlab runner jobs <id> --runner <url> --json`; streaming or client timeout
 stops observation, not execution. Use `steerlab runner jobs <id> --cancel`
 when cancellation is intended. `steerlab runner resubmit <job-id> --runner
-<url> [--walltime <hh:mm:ss>] --json` continues eligible checkpointed jobs.
+<url> [--walltime <hh:mm:ss>] --json` continues eligible checkpointed or
+cancelled jobs.
+
+**A cancelled run can be resumed, by a person.** Cancelling a managed run
+keeps every response it completed. To continue it, resume the cancelled job:
+`steerlab runner resubmit <job-id> --runner <url> --json`. If the engine says to wait, wait a minute and retry; do not submit the
+study again meanwhile. A new job continues the run and is named in the
+cancelled record's `result.resubmittedAs`; import evidence from it. A run that
+was stopped before it could save its place cannot be resumed: the cancel
+answer's `cancelResume` field says which it is, and then you submit the study
+again. For a run split across jobs, resume the parent. Nothing resumes a
+cancelled job automatically.
 
 <!-- client: all -->
 

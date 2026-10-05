@@ -32,7 +32,10 @@ it.
 
 Resolution order, exactly: (1) `STEERLAB_WORKSPACE`; (2) `--workspace <dir>`,
 or the app's in-process override; (3) the app's persisted choice, honored only
-while that directory still exists; (4) a compiled-in development fallback.
+while that directory still exists; (4) in a developer build only, the source
+checkout it was built from. With none of these, the command refuses with
+`noWorkspace` (exit 65): run `steerlab-cli workspace init <dir>`, then pass
+`--workspace <dir>` or set `STEERLAB_WORKSPACE`.
 
 **Set the environment variable once at the start of your session** rather than
 passing `--workspace` on every call:

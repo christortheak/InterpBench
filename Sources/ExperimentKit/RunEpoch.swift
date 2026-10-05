@@ -225,10 +225,10 @@ public enum RunEpoch {
     ///   foreign — so it must accept a foreign run whose manifest snapshot
     ///   re-hashes to this engine's live hash. It passes `false`.
     /// - `analyze`/`evaluate`/`rescore-style` read the run's RECORDS, whose
-    ///   schema and pairing keys are per-engine (Swift pairs on
-    ///   `(seed, promptID)`, the server on `(promptID, sampleIndex)` with a
-    ///   seed derived per condition) — so a foreign run read here silently
-    ///   produces no pairs and reports the empty result as a success. They
+    ///   schema is per-engine (both engines pair by item, but they record
+    ///   different fields and outcomes) — so a foreign run read here can
+    ///   silently produce an empty or partial result and report it as a
+    ///   success. They
     ///   pass `true`, and the snapshot rescue never gets to speak for them.
     public static func check(
         verb: String,

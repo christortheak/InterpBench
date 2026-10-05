@@ -13,9 +13,8 @@ below was read out of the dispatch code, not remembered:
   `experiment/sharding.py` for the behavior behind the flags.
 
 A **third** command line, the cross-platform `steerlab` **client**, is §1.4. It
-is a different product from the Swift `steerlab-cli` — a smaller verb surface,
-no model loading, and no `workspace init` — and the generated regions below do
-not cover it.
+is a different product from the Swift `steerlab-cli` — a smaller verb surface
+and no model loading — and the generated regions below do not cover it.
 
 **Both CLIs have `--help`** (2026-08-18): `steerlab-cli experiment freeze
 --help`, `steerlab-server study submit --help`, `steerlab-cli cluster ensure
@@ -200,6 +199,7 @@ steerlab setup repair --expect <value> --yes [--release <value>] [--runtime <val
 steerlab workspace init <directory> [--no-git]
 steerlab workspace inspect
 steerlab workspace handoff
+steerlab workspace guide [<topic>]
 steerlab runner science-call <operation> --action <value> --request <value> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner science-stage <server-archive-path> --runner <url> --sha256 <digest> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab runner science-export <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
@@ -940,6 +940,7 @@ steerlab-cli init [--home <dir>]
 steerlab-cli workspace init <path>
 steerlab-cli workspace inspect
 steerlab-cli workspace handoff
+steerlab-cli workspace guide [<topic>]
 steerlab-cli setup inspect
 steerlab-cli setup plan [--release <value>] [--runtime <value>]
 steerlab-cli setup apply --expect <value> [--release <value>] [--runtime <value>] --yes
@@ -953,6 +954,7 @@ steerlab-cli setup start <directory> [--create]
 | `workspace init` | Create and seed a data workspace, and git-init it. |
 | `workspace inspect` | Inspect an existing workspace without modifying it. |
 | `workspace handoff` | Return the first steps for a coding assistant: the study interview, the short method index, and how to work with the researcher. |
+| `workspace guide` | List the agent guide topics, or print one topic with this client's commands. |
 | `setup inspect` | Inspect client and workspace readiness; execution is assessed separately. |
 | `setup plan` | Review client setup without downloading anything. |
 | `setup apply` | Install the lightweight client from an approved current plan. |
@@ -2245,7 +2247,7 @@ steerlab-cli remote chat [--hash <sha256>] [--max-tokens <n>] --prompt <text> [-
 | `remote jobs` | List the server's jobs. |
 | `remote logs` | Stream one job's log. |
 | `remote cancel` | Request cancellation of one job. |
-| `remote resubmit` | Resume a checkpointed job: the server re-submits the job's own rendered sbatch script byte-for-byte, optionally under a longer walltime. |
+| `remote resubmit` | Resume a checkpointed or cancelled job: the server re-submits the job's own rendered sbatch script byte-for-byte, optionally under a longer walltime. |
 | `remote fetch` | Download one server artifact without importing it. |
 | `remote import` | Download, hash-verify, and import an evidence bundle into runs/. |
 | `remote import-chain` | Import a whole pipeline chain, verifying existing evidence without overwriting it. |

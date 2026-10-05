@@ -20,6 +20,13 @@ declares the study multi-agent, because a panel scenario is read only by that
 run path. Seats you leave as null stay **baseline**, and an all-baseline
 casting is the control composition, not an absence.
 
+**Every seat and every turn needs its own `id`.** A seat is an entry in the
+panel file's `agents`. `panel check` refuses a repeated seat or turn ID by
+name (`missingPrerequisite`, exit 65): give one a different ID, check again,
+and pin the corrected file. To attribute a turn in `generations.jsonl`, read
+`speakerAgentID`; `speakerName` is a display name and may be shared. Runs
+made before that key existed lack it; join `turns.jsonl` for those.
+
 ## Reviewed casting, on either client
 
 **Complete local authoring.** Both clients offer `agent list`, `agent inspect`,

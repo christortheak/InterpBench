@@ -90,10 +90,16 @@ what a study means.
 
 Refusals are typed everywhere, not only at freeze: a lifecycle refusal
 carries `error.code == error.gate` from a second closed vocabulary
-(`statusImmutable`, `pinDrift`, `missingPrerequisite`,
-`promotionEvidence`, …), while freeze refusals keep
+(`statusImmutable`, `pinDrift`, `emptyStudy`, `studyDeclaration`,
+`missingPrerequisite`, `promotionEvidence`, …), while freeze refusals keep
 `code: "freezeGateFailed"` with the gate id in `error.gate`. Either way,
 `error.repairAction` is an executable command sequence — run it, then retry.
+
+Three of these describe a study that does not verify. `pinDrift` means a
+pinned file changed, is missing, or appeared. `emptyStudy` means nothing is
+attached yet: attach a concept, attach an agent, or start from a template.
+`studyDeclaration` means the study's own settings are incomplete or
+inconsistent.
 
 Some repairs from the engine's shared rules spell their command for
 `steerlab-server` or for the Mac command line. Carry out the same act with

@@ -70,7 +70,7 @@ Two classes of check, and the difference matters:
 | `measurementPins` | pins that determine *what is measured* are present and valid (e.g. a loadable study dtype) | repoint the invalid pin at a loadable value |
 | `validateEvidence` | a `validate` run matching the exact pins on the run substrate, **and** that evidence is not vacuous (`workspace guide lifecycle`) | author the named `validation.jsonl` files, **re-attach** their concepts, then `experiment validate <name>` (the refusal's own `repairAction` names this full sequence) |
 | `variantValidity` | attached variants carry hashed adapter weights and a pinnable dataset manifest | re-save the variant with hashed weights and re-attach it |
-| `batteryEvidence` | each variant condition has scope-matched capability-battery evidence | re-run `experiment validate <name>` (each variant condition runs the pinned battery) |
+| `batteryEvidence` | baseline and each agent condition have scope-matched capability-battery evidence. A condition whose agent uses an intervention policy is exempt, because the battery cannot run a policy; the frozen study records it in `capabilityBatteryNotApplied` and is not forced | re-run `experiment validate <name>` (each agent condition the battery can run is scored) |
 | `judgeValidity` | a rubric **file** and at least one judge the pipeline can actually run (a panel of two or more must be distinct) | `experiment pin-rubric <name> prompts/rubrics/default-paired-v1.md --judges a:local[,b:claude]` |
 | `gitClean` | every pinned input is committed in the workspace git repo | commit the pinned inputs (freeze auto-commits in most workspaces; this gate speaks when it could not) |
 
@@ -82,7 +82,7 @@ Two classes of check, and the difference matters:
 | `measurementPins` | pins that determine *what is measured* are present and valid (e.g. a loadable study dtype) | repoint the invalid pin at a loadable value |
 | `validateEvidence` | a validation run matching the exact pins on the run substrate, **and** that evidence is not vacuous (`workspace guide lifecycle`) | author the named `validation.jsonl` files, **re-attach** their concepts, then validate on a runner and import the evidence (`workspace guide lifecycle`, step 7) |
 | `variantValidity` | attached variants carry hashed adapter weights and a pinnable dataset manifest | re-save the variant with hashed weights and re-attach it |
-| `batteryEvidence` | each variant condition has scope-matched capability-battery evidence | validate again on a runner (each variant condition runs the pinned battery) |
+| `batteryEvidence` | baseline and each agent condition have scope-matched capability-battery evidence. A condition whose agent uses an intervention policy is exempt, because the battery cannot run a policy; the frozen study records it in `capabilityBatteryNotApplied` and is not forced | validate again on a runner (each agent condition the battery can run is scored) |
 | `judgeValidity` | a rubric **file** and at least one judge the pipeline can actually run (a panel of two or more must be distinct) | declare the rubric file and judges (`workspace guide evaluation`) |
 | `gitClean` | every pinned input is committed in the workspace git repo | commit the pinned inputs |
 

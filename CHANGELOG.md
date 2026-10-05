@@ -12,6 +12,58 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **Effect sizes on the Mac engine are computed per item.** When a study
+  samples several responses per item, the responses are averaged within each
+  condition and paired with the same item's baseline, as the Python engine
+  already did. Sampled studies with derived seeds previously reported no
+  effect sizes at all, and studies with several shared seeds counted every
+  seed as a separate item, which overstated significance. Re-run
+  `experiment analyze` on such runs. Studies with one response per item are
+  unchanged.
+- **A study whose agent uses an intervention policy freezes without
+  `--force`.** The capability battery cannot run a policy, so that condition
+  is exempt from the battery gate alone. The frozen study records it in
+  `capabilityBatteryNotApplied`, says so in its settings summary, and is not
+  marked forced. Every other condition and every other gate is checked as
+  before.
+- **A cancelled managed run can be resumed by a person**, from
+  `remote resubmit`, `runner resubmit`, or Resume in Server Jobs, and keeps
+  every completed response. The engine first confirms with the scheduler that
+  the cancelled job has ended. Automatic resume still never revives a
+  cancelled job. A run that was stopped before it could save its place cannot
+  be resumed yet; the cancel answer says which case applies.
+- **Panel studies name the seat that spoke.** Each turn in `generations.jsonl`
+  carries `speakerAgentID`; older runs without it still open. A seat ID or
+  turn ID used twice in a panel is refused, by name, when the panel is
+  checked, imported, compiled, frozen, or run.
+- **First launch.** With no workspace chosen, the app shows a welcome with
+  Create and Open, and Research Setup reopens until a workspace exists. A
+  packaged build no longer falls back to a source path, and the Mac command
+  line refuses with `noWorkspace` and a repair.
+- **Compute is three plainly named choices**: "This Mac, quick start" (the
+  built-in engine), "This Mac, full capabilities" (the Python engine on this
+  Mac's GPU, which runs every method), and "Another machine". New workspaces
+  default to the quick start. The workspace file keeps its format, with one
+  optional `computeLocation` key.
+- **A workspace's `AGENTS.md` is a short core guide**, the same from both
+  clients. The detail moved to topics: `workspace guide` lists them, and
+  `workspace guide <topic>` prints one with the commands of the client in
+  use. Unedited guides in existing workspaces refresh themselves and only
+  ever upgrade; an edited guide is never touched.
+- **First steps for a coding assistant.** Freezing, verifying, or validating
+  an empty draft is a typed `emptyStudy` refusal on both clients, with a
+  repair that says what to attach; `pinDrift` is reported only for real
+  drift. `science list --brief` returns a short method index. The handoff
+  leads with the study interview. `steerlab --help` lists every family.
+- The Mac command line no longer labels a non-zero temperature "server
+  substrate only"; sampled runs work on either engine.
+- **Release builds.** The app is compiled from a neutral build folder, so its
+  binaries no longer embed the build machine's paths, and every built
+  artifact is scanned for identifying strings before it is signed. The app
+  and the client release carry `LICENSE`, `NOTICE`, and third-party notices.
+  The Results Explorer is always built from source. `build-app.sh --package`
+  packages the bundle that was just built, and refuses an ad-hoc or untagged
+  build unless told otherwise.
 - Managed science jobs take a per-request scheduler walltime, shaped like the
   per-request GPU type: `walltime` (`HH:MM:SS` or `D-HH:MM:SS`) beside the
   request on `/api/science/plan` and `/api/science/submit`, `--walltime` on
