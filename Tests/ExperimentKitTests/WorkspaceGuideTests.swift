@@ -338,4 +338,67 @@ import Testing
                 table: table
             ).isEmpty)
     }
+
+    // MARK: - The verbs card: the first stop, short, and true to the parser
+
+    /// The rendered card's budget. It exists to be cheaper than any topic it
+    /// points to; grow a topic instead of the card.
+    static let verbsMaxBytes = 6500
+
+    @Test func theVerbsCardIsTheFirstStopAndStaysShort() throws {
+        let card = try #require(WorkspaceGuide.topics.first)
+        #expect(card.name == "verbs")
+        #expect(card.text.utf8.count <= Self.verbsMaxBytes, "\(card.text.utf8.count) bytes")
+        // The core sends an assistant to it before help, the catalog, or a topic.
+        let body = AgentContract.body
+        let discover = try #require(body.range(of: "## Discover what the client can do"))
+        let rest = body[discover.upperBound...]
+        let cardAt = try #require(rest.range(of: "`workspace guide verbs`"))
+        let helpAt = try #require(rest.range(of: "**Help.**"))
+        #expect(cardAt.lowerBound < helpAt.lowerBound)
+    }
+
+    /// The verb a command span names, or nil when the span is not a command
+    /// the Mac parser declares (`cluster` verbs have their own table).
+    static func spec(for span: String) -> ExperimentCLIVerbSpec? {
+        var tokens = span.split(separator: " ")[...]
+        if tokens.first == "steerlab-cli" { tokens = tokens.dropFirst() }
+        guard tokens.count > 1, let family = tokens.first, families.contains(String(family))
+        else { return nil }
+        let verb = tokens[tokens.startIndex + 1]
+        guard isWord(verb) else { return nil }
+        return ExperimentCLIParser.specs.first {
+            $0.namespace == String(family) && $0.verb == String(verb)
+        }
+    }
+
+    /// Every `--flag` a command span shows that its verb does not declare.
+    static func undeclaredFlags(in text: String) -> [String] {
+        var found: [String] = []
+        for span in codeSpans(in: text) {
+            guard let spec = spec(for: span) else { continue }
+            let declared = Set(spec.declaredFlags).union(["--workspace"])
+            for token in span.split(separator: " ") where token.hasPrefix("--") {
+                let flag = String(token.split(separator: "=", maxSplits: 1)[0])
+                if !declared.contains(flag) { found.append("\(spec.label): \(flag)") }
+            }
+        }
+        return found
+    }
+
+    @Test func everyFlagOnTheVerbsCardIsDeclaredByItsVerb() throws {
+        let card = try #require(WorkspaceGuide.topics.first { $0.name == "verbs" })
+        let undeclared = Self.undeclaredFlags(in: card.text)
+        #expect(undeclared.isEmpty, "\(undeclared)")
+        let commands = Self.codeSpans(in: card.text).filter { Self.spec(for: $0) != nil }
+        #expect(commands.count >= 30, "\(commands.count) commands checked")
+        // The check has teeth, and does not cry wolf at a real flag.
+        #expect(
+            Self.undeclaredFlags(in: "`steerlab-cli experiment freeze <name> --teleport`")
+                == ["experiment freeze: --teleport"])
+        #expect(
+            Self.undeclaredFlags(
+                in: "`steerlab-cli experiment freeze <name> --force` and `--made-up`"
+            ).isEmpty)
+    }
 }

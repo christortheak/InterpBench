@@ -12,6 +12,15 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **A quick card for coding assistants.** `workspace guide verbs`, on either
+  command line, gives one line per task: the command, and the rule that
+  applies. It is about 5 KB, where the topics an assistant used to load for a
+  routine command run 17 to 22 KB, so less of the assistant's working context
+  goes to instructions. The workspace's `AGENTS.md` (guide version 5) sends an
+  assistant to the card first, and the workspace handoff's first steps now end
+  with it instead of `--help`. Both test suites check every command and flag
+  on the card against the client's own verb table.
+
 ## [0.9.7] — 2026-10-05
 
 - **Home guides a first study.** A seven-step checklist, from a workspace to

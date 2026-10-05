@@ -72,7 +72,7 @@ struct WorkspaceBootstrapParityTests {
         #expect(mac["discovery"] == .array([
             .array((["steerlab-cli", "authoring", "study", "<intent>"] + here).map(JSONValue.string)),
             .array((["steerlab-cli", "science", "list", "--brief"] + here).map(JSONValue.string)),
-            .array(["steerlab-cli", "--help"].map(JSONValue.string)),
+            .array(["steerlab-cli", "workspace", "guide", "verbs"].map(JSONValue.string)),
         ]))
         #expect(WorkspaceBootstrap.studyIntents.map(\.id) == StudyIntent.allCases.map(\.rawValue))
         #expect(WorkspaceBootstrap.studyIntents.allSatisfy { $0.purpose.hasSuffix(".") })
@@ -107,7 +107,7 @@ struct WorkspaceBootstrapParityTests {
         #expect(tails == [
             ["authoring", "study", "<intent>", "--root", pythonRoot, "--json"].map(JSONValue.string),
             ["science", "list", "--brief", "--root", pythonRoot, "--json"].map(JSONValue.string),
-            ["--help"].map(JSONValue.string),
+            ["workspace", "guide", "verbs"].map(JSONValue.string),
         ])
 
         // After `workspace init`, both clients point at the interview first,

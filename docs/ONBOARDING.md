@@ -892,7 +892,10 @@ the lens's qualification for the study's exact model, revision and dtype.
 
 Every workspace gets an `AGENTS.md`, generated at creation: a short core guide
 for a coding assistant, with the detail served one topic at a time by
-`workspace guide <topic>`. Point an assistant at the workspace and it has what
+`workspace guide <topic>`. The first topic, `workspace guide verbs`, is a
+short card with one line per task: the command, and the rule that applies. An
+assistant reads it before loading a longer topic, which keeps most of its
+working context for the study. Point an assistant at the workspace and it has what
 it needs; you do not have to explain SteerLab to it. How to hand it over, what
 to ask first, and what it asks you before spending compute or money are in
 [WORKING-WITH-A-CODING-ASSISTANT.md](WORKING-WITH-A-CODING-ASSISTANT.md); the

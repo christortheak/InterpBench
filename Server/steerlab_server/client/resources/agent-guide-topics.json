@@ -2,6 +2,10 @@
   "schemaVersion": 1,
   "topics": [
     {
+      "name": "verbs",
+      "summary": "The quick card: one line per task, with the command and the rule that applies. Start here."
+    },
+    {
       "name": "workspace",
       "summary": "The folder layout, where each file lives and its shape, and how the client finds the workspace."
     },

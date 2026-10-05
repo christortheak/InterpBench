@@ -69,13 +69,14 @@ public enum WorkspaceBootstrap {
     }
 
     /// The first commands, in the order to run them: the study interview, the
-    /// short method index, then the verb list. Each is a complete argument list.
+    /// short method index, then the verb card (one line per task, with its
+    /// command). Each is a complete argument list.
     static func discovery(executable: String, root: URL) -> [[String]] {
         let here = ["--workspace", root.path, "--json"]
         return [
             [executable, "authoring", "study", intentPlaceholder] + here,
             [executable, "science", "list", "--brief"] + here,
-            [executable, "--help"],
+            [executable, "workspace", "guide", "verbs"],
         ]
     }
 

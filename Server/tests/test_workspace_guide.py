@@ -260,6 +260,68 @@ def test_the_guide_names_every_verb_this_client_has():
     assert not re.search(r'\bteleport\b', code)
 
 
+# --- the verbs card: the first stop, short, and true to the parser -------------
+
+#: The rendered card's budget. It exists to be cheaper than any topic it points
+#: to; grow a topic instead of the card.
+VERBS_MAX_BYTES = 6500
+
+
+def test_the_verbs_card_is_the_first_stop_and_stays_short():
+    card = owner.guide_topic('verbs')
+    assert owner.guide_topics()[0]['name'] == 'verbs'
+    assert len(card.encode()) <= VERBS_MAX_BYTES, f'the verbs card is {len(card.encode())} bytes; move depth into a topic'
+    # The core sends an assistant to it before help, the catalog, or a topic.
+    discover = CORE.split('## Discover what the client can do', 1)[1].split('\n## ', 1)[0]
+    assert discover.index('`workspace guide verbs`') < discover.index('**Help.**')
+    # Each section names the topic that carries its depth, and the topic exists.
+    names = {topic['name'] for topic in owner.guide_topics()}
+    headings = re.findall(r'^## .*$', card, re.M)
+    assert len(headings) >= 8
+    for heading in headings:
+        cited = re.findall(r'`([a-z-]+)`', heading)
+        assert cited and set(cited) <= names, heading
+
+
+def _spec_for(tokens):
+    """The verb a command span names, or None when the span is not a command."""
+    if tokens and tokens[0] == 'steerlab':
+        tokens = tokens[1:]
+    if not tokens or tokens[0] not in FAMILIES:
+        return None
+    family = tokens[0]
+    verb = tokens[1] if len(tokens) > 1 and WORD.fullmatch(tokens[1]) else family
+    return next((spec for spec in client_cli.CLIENT_VERB_SPECS
+                 if spec.family == family and spec.verb == verb), None)
+
+
+def undeclared_flags(text):
+    """Every `--flag` a command span shows that its verb does not declare."""
+    shared = {client_cli.HELP_FLAG, client_cli.JSON_FLAG, client_cli.OUT_FLAG, client_cli.ROOT_FLAG}
+    found = []
+    for span in code_spans(text):
+        tokens = span.split()
+        spec = _spec_for(tokens)
+        if spec is None:
+            continue
+        declared = set(spec.boolean_flags) | set(spec.value_flags) | shared
+        for token in tokens:
+            flag = token.split('=', 1)[0]
+            if flag.startswith('--') and flag not in declared:
+                found.append(f'{spec.label}: {flag}')
+    return found
+
+
+def test_every_flag_on_the_verbs_card_is_declared_by_its_verb():
+    card = owner.guide_topic('verbs')
+    assert not undeclared_flags(card)
+    commands = [span for span in code_spans(card) if _spec_for(span.split())]
+    assert len(commands) >= 30, len(commands)
+    # The check has teeth, and does not cry wolf at a real flag.
+    assert undeclared_flags('`steerlab experiment freeze <name> --teleport`') == ['experiment freeze: --teleport']
+    assert undeclared_flags('`steerlab run <name> --runner <url> --verb validate` and `--made-up`') == []
+
+
 # --- refresh: an unedited, older guide is upgraded; nothing else is touched ----
 
 

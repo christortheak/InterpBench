@@ -218,11 +218,12 @@ INTENT_PLACEHOLDER = '<intent>'
 
 def discovery(command, root, *, workspace_flag='--root'):
     """The first commands, in the order to run them: the study interview, the
-    short method index, then the verb list. Each is a complete argument list."""
+    short method index, then the verb card (one line per task, with its
+    command). Each is a complete argument list."""
     where = [workspace_flag, root, '--json']
     return [command + ['authoring', 'study', INTENT_PLACEHOLDER] + where,
             command + ['science', 'list', '--brief'] + where,
-            command + ['--help']]
+            command + ['workspace', 'guide', 'verbs']]
 
 
 def handoff(directory, *, executable=None):

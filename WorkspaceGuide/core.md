@@ -1,7 +1,7 @@
 # AGENTS.md
 <!-- Source of the core workspace guide. scripts/ci/check-workspace-bootstrap.py generates both clients' copies from this directory. Keep this file client-neutral and within its size budget; depth belongs in topics/. Raise "Guide version" whenever this text changes, so a refresh only ever upgrades. -->
 
-Guide version: 4
+Guide version: 5
 
 You are a coding assistant working inside a **SteerLab data workspace**. This
 file is the core contract: read it before running anything. It is short on
@@ -102,19 +102,22 @@ approves the displayed installation. Do not install a GPU stack to author a stud
 
 Never guess a verb or a flag. Ask the installed client, in this order:
 
-1. **Help.** `--help` works at three levels — the client, a verb family, and
+1. **The verb card.** `workspace guide verbs` gives one line per task: the
+   command and the rule that applies. Read it first, and load a full topic
+   only when it does not answer.
+2. **Help.** `--help` works at three levels — the client, a verb family, and
    one verb. It runs nothing and exits 0, and with `--json` the page comes back
    as data.
-2. **The study interview.** `authoring study <intent> --json`, with the intent
+3. **The study interview.** `authoring study <intent> --json`, with the intent
    `conceptStudy`, `agentComparison`, or `multiAgent`, returns the same
    questions the app asks. Discuss the substantive choices with the researcher
    before authoring anything.
-3. **The method catalog.** `science list --brief --json` names the methods and
+4. **The method catalog.** `science list --brief --json` names the methods and
    operations, and says where each operation runs (drop `--brief` for the full
    catalog).
    `science guide <method> --json` returns one method's dataset shapes, author
    prompt, and independent review prompt. These commands only read guidance.
-4. **The topic guides.** `workspace guide` lists them, and `workspace guide
+5. **The topic guides.** `workspace guide` lists them, and `workspace guide
    <topic>` prints one. The list is at the end of this file.
 
 To show a researcher a finished study first, open a copy of a Demo
@@ -163,7 +166,7 @@ Where each file lives, and its exact shape, is the `workspace` topic.
 | Sweep and promote (optional) | Try a planned range of layers and strengths, then choose one | `sweep` |
 | Verify and freeze | Fix the settings before behavior is measured; one-way | `freeze` |
 | Run | Generate under every condition into an immutable run directory | `lifecycle`, `remote` |
-| Evaluate and analyze | Judge the responses and compute effect sizes. Lead a summary with the outcome the study is about, and say how it was chosen. `results export <study>` writes tables, transcripts, and a methods summary; `results report <study>` writes one page to open or send | `evaluation` |
+| Evaluate and analyze | Judge the responses and compute effect sizes. Lead a summary with the outcome the study is about, and say how it was chosen; the `verbs` card names the export and report commands | `evaluation` |
 | Keep the evidence | Verify what came home, and what it proves | `custody` |
 
 Study packs and attaching existing agents or vectors are the `assembly` topic.
@@ -254,6 +257,7 @@ or `steerlab workspace guide lifecycle` with the Python client. With `--json`,
 `result` carries `topic`, `text`, and `topics`. The topics ship inside the
 installed client, so they always describe the client you are using.
 
+- `verbs` — The quick card: one line per task, with the command and the rule that applies. Start here.
 - `workspace` — The folder layout, where each file lives and its shape, and how the client finds the workspace.
 - `lifecycle` — The study lifecycle step by step, from a new draft to a measured run.
 - `settings` — Generation settings, exclusions, the system prompt, parsers, and other declarations on a draft.

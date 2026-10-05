@@ -197,10 +197,11 @@ a release that carries none says so, and a plain `workspace init` is the
 repair.
 
 The new workspace contains its own `AGENTS.md`. **Read it and follow it from
-here** — it is a short core guide, and the study lifecycle (create → attach →
-extract → validate → sweep → promote → freeze → run → analyze) is in its
-topics (`workspace guide lifecycle` on either client) and in
-`docs/CLI-REFERENCE.md`.
+here** — it is a short core guide. `workspace guide verbs` is the quick card:
+one line per task, with the command and the rule that applies. The study
+lifecycle (create → attach → extract → validate → sweep → promote → freeze →
+run → analyze) is in its topics (`workspace guide lifecycle` on either client)
+and in `docs/CLI-REFERENCE.md`.
 
 For the app-free client, `steerlab setup start <directory> --create --json`
 combines readiness, workspace creation and handoff. `setup inspect --root <dir>`

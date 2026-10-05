@@ -46,7 +46,7 @@ def test_handoff_leads_with_the_interview_then_the_brief_catalog(tmp_path, capsy
     assert report['discovery'] == [
         command + ['authoring', 'study', '<intent>'] + where,
         command + ['science', 'list', '--brief'] + where,
-        command + ['--help']]
+        command + ['workspace', 'guide', 'verbs']]
     assert [intent['id'] for intent in report['studyIntents']] == ['conceptStudy', 'agentComparison', 'multiAgent']
     assert all(intent['purpose'].endswith('.') for intent in report['studyIntents'])
     instructions = report['instructions']
