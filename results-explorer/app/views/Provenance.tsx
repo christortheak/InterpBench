@@ -4,11 +4,16 @@ import { useState } from "react";
 import { Badge, NoRunSelected } from "../components/ui";
 import { demoPreviewEnabled } from "../lib/demo";
 import { textValue } from "../lib/discovery";
+import { freezeLabel, freezeOf, gateLabel } from "../lib/freeze";
 import type { RunFile, WorkspaceRun } from "../lib/types";
 
 export function LocalProvenanceView({ run, onOpenFile }: { run: WorkspaceRun; onOpenFile: (file: RunFile) => void }) {
   const [fileSearch, setFileSearch] = useState("");
   const visibleFiles = run.files.filter((file) => file.path.toLowerCase().includes(fileSearch.toLowerCase()));
+  // The study's freeze state, from the manifest snapshot this run carries
+  // (lib/freeze.ts). A forced freeze names the checks it skipped; a plain
+  // one says none were.
+  const freeze = freezeOf(run);
   const entries = [
     ["Experiment", run.experiment],
     ["Model", run.model],
@@ -18,6 +23,14 @@ export function LocalProvenanceView({ run, onOpenFile }: { run: WorkspaceRun; on
     ["Condition count", run.conditionCount || "Not stamped"],
     ["Experiment hash", textValue(run.report, "experimentHash") || textValue(run.config, "experimentHash") || "Not stamped"],
     ["Model revision", textValue(run.config, "modelRevision", "revision") || "Not stamped"],
+    ["Study state", freezeLabel(freeze)],
+    ...(freeze.frozen ? [
+      ["Frozen at", freeze.frozenAt || "Not stamped"],
+      ["Checks skipped by force", freeze.forced ? freeze.forcedGates.map(gateLabel).join("; ") || "Forced, but none listed" : "None"],
+    ] : []),
+    ...(freeze.present ? [
+      ["Capability check not applied to", freeze.batteryNotApplied.map((entry) => `${entry.condition}${entry.reason ? ` (${entry.reason})` : ""}`).join("; ") || "None recorded"],
+    ] : []),
   ];
   return (
     <div className="view-enter inner-view provenance-view">

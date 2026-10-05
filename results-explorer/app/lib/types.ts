@@ -1,6 +1,7 @@
 // Shared types for the Results Explorer. Every view, loader, and the app
 // shell import from here so no module re-declares a shape.
 
+import type { FreezeStamp } from "./freeze";
 import type { RunKind, RunKindSource } from "./runKind";
 import type { StatusInfo } from "./status";
 
@@ -242,6 +243,13 @@ export type WorkspaceRun = {
   /// Sortable directory-name timestamp prefix (`YYYYMMDDTHHMMSSmmm`), or ""
   /// when the name carries none.
   timestampKey?: string;
+  // --- appended for the 1.0 release. Read when a run is ACTIVATED
+  // (`hydrateRun`), not at discovery: each is one more file per run, and a
+  // workspace lists hundreds of runs.
+  /// Whether the study was frozen, forced, or carries a capability-check
+  /// exemption, from the run's own `experiment.json` snapshot. Absent until
+  /// the run is activated; read it with `freezeOf`. See lib/freeze.ts.
+  freeze?: FreezeStamp;
 };
 
 export type FilePreview = {

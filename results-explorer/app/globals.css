@@ -674,6 +674,11 @@ main { grid-column: 2; min-width: 0; }
 .section-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
 .section-actions .secondary { padding: 9px 12px; font-size: 10px; }
 
+/* The study's freeze state beside the run's status (components/stamps.tsx).
+   The wrapper only carries the tooltip; the notice reuses `.notice`. */
+.freeze-badge { display: inline-flex; }
+.freeze-notice { align-items: flex-start; }
+
 /* One export control: the button, and the line that says what happened to
    the save. A single flex child wherever a bare button used to sit. */
 .export-group { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }

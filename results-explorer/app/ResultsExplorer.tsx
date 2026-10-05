@@ -9,6 +9,7 @@ import {
   embeddedWorkspaceName,
   isEmbedded,
 } from "./embedded-workspace";
+import { FreezeBadge } from "./components/stamps";
 import { Badge, FilePreviewModal, Mark } from "./components/ui";
 import { asView, setPendingRecord, updateDeepLink } from "./lib/deeplink";
 import { demoPreviewEnabled } from "./lib/demo";
@@ -300,7 +301,11 @@ export default function Home() {
             {/* Status truth, not `status === "complete"`: run-status.json +
                 FAILED.md + cancelled.txt, with "not stamped" as the honest
                 fallback (upgrade plan Phase 0). */}
-            <Badge tone={selectedRun ? statusTone(runStatusOf(selectedRun).state) : "neutral"}>{selectedRun ? statusLabel(runStatusOf(selectedRun)) : "—"}</Badge></div>
+            <Badge tone={selectedRun ? statusTone(runStatusOf(selectedRun).state) : "neutral"}>{selectedRun ? statusLabel(runStatusOf(selectedRun)) : "—"}</Badge>
+            {/* Beside "did it finish": was the study frozen, was the freeze
+                forced, was the capability check left off a condition. Read
+                from the run's own experiment.json; shown on every section. */}
+            {selectedRun && <FreezeBadge run={selectedRun} />}</div>
           <div className="top-actions"><span className={selectedRun ? "local-epoch" : "epoch"}>{selectedRun ? "Local read" : demoPreviewEnabled() ? "Synthetic preview" : "No run selected"}</span>{workspaceRuns.length > 0 && <button className="icon-button" aria-label="Change selected run" onClick={() => setRunPickerOpen(true)}>⌄</button>}</div>
         </header>
         <div className="content">

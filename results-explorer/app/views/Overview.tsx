@@ -1,9 +1,11 @@
 "use client";
 
+import { FreezeNotice } from "../components/stamps";
 import { Badge, ForestRow, NoRunSelected } from "../components/ui";
 import { demoPreviewEnabled, effects } from "../lib/demo";
 import { runKindOf, runStatusOf } from "../lib/discovery";
 import { fmt } from "../lib/format";
+import { freezeLabel, freezeOf } from "../lib/freeze";
 import { runKindLabel } from "../lib/runKind";
 import { statusLabel, statusTone } from "../lib/status";
 import type { View, WorkspaceRun } from "../lib/types";
@@ -126,6 +128,7 @@ export function LocalOverview({ run, onNavigate }: { run: WorkspaceRun; onNaviga
           <div className="kicker">
             <span>{runKindLabel(kind)}</span><span>·</span><span>{statusLabel(status)}</span>
             {status.stage ? <><span>·</span><span>stage {status.stage}</span></> : null}
+            <span>·</span><span>{freezeLabel(freezeOf(run))}</span>
           </div>
           <h1>{run.experiment}</h1>
           <p>Loaded directly from <code>{run.path}</code>. Its artifacts remain on this device and are read-only in the explorer.</p>
@@ -141,6 +144,8 @@ export function LocalOverview({ run, onNavigate }: { run: WorkspaceRun; onNaviga
           <footer><span>{run.model}</span><Badge tone={statusTone(status.state)}>{statusLabel(status)}</Badge></footer>
         </div>
       </section>
+
+      <FreezeNotice run={run} />
 
       <div className="notice local-notice" role="note">
         <span className="notice-icon">✓</span>

@@ -5,6 +5,7 @@
 import { splitCSV, strictNumber } from "./csv";
 import { findFile, recordValue } from "./discovery";
 import { effectKey } from "./effects";
+import { parseFreezeStamp, type FreezeStamp } from "./freeze";
 import { GENERATION_INSTRUMENT_OUTPUT_PREFIX } from "./instruments";
 import type {
   CosineMatrix,
@@ -265,7 +266,23 @@ export const loadPanelEffects = async (run: WorkspaceRun): Promise<PanelEffect[]
   }] : []);
 };
 
+/// One JSON file at the TOP of the run directory, parsed; `{}` when it is
+/// absent or unreadable. By exact path, not by name: a nested folder may
+/// carry a file of the same name that says nothing about this run.
+export const readRunJSON = async (run: WorkspaceRun, name: string): Promise<Record<string, unknown>> => {
+  const runFile = run.files.find((file) => file.path === name);
+  if (!runFile) return {};
+  try {
+    const parsed: unknown = JSON.parse(await (await runFile.handle.getFile()).text());
+    return recordValue(parsed);
+  } catch { return {}; }
+};
+
+/// The study's freeze state, from the manifest snapshot the run carries.
+export const loadFreezeStamp = async (run: WorkspaceRun): Promise<FreezeStamp> =>
+  parseFreezeStamp(await readRunJSON(run, "experiment.json"), run.report);
+
 export const hydrateRun = async (run: WorkspaceRun): Promise<WorkspaceRun> => {
-  const [effectRows, generationData, cosineMatrices, sweepRows, sweepRecommendations, panelEffects] = await Promise.all([loadEffects(run), loadGenerations(run), loadCosineMatrices(run), loadSweepRows(run), loadSweepRecommendations(run), loadPanelEffects(run)]);
-  return { ...run, effectRows, generationRows: generationData.rows, generationFile: generationData.handle, previewTruncated: generationData.truncated, skippedGenerationLines: generationData.skipped, cosineMatrices, validationConcepts: validationRows(run.validationReport), sweepRows, sweepRecommendations, panelEffects };
+  const [effectRows, generationData, cosineMatrices, sweepRows, sweepRecommendations, panelEffects, freeze] = await Promise.all([loadEffects(run), loadGenerations(run), loadCosineMatrices(run), loadSweepRows(run), loadSweepRecommendations(run), loadPanelEffects(run), loadFreezeStamp(run)]);
+  return { ...run, effectRows, generationRows: generationData.rows, generationFile: generationData.handle, previewTruncated: generationData.truncated, skippedGenerationLines: generationData.skipped, cosineMatrices, validationConcepts: validationRows(run.validationReport), sweepRows, sweepRecommendations, panelEffects, freeze };
 };
