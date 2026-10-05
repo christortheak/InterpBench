@@ -32,7 +32,7 @@ def qualify(scratch):
         ['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
         cwd=ROOT).decode().split('\0')
     for relative in sorted(set(paths)):
-        if relative != 'Package.resolved' and not relative.startswith(('Server/', 'WorkspaceSeed/', 'WorkspaceGuide/', 'Sources/', 'Tests/', 'scripts/ci/', 'docs/')):
+        if relative != 'Package.resolved' and not relative.startswith(('Server/', 'WorkspaceSeed/', 'WorkspaceGuide/', 'Sources/', 'Tests/', 'scripts/ci/', 'docs/', 'results-explorer/app/lib/')):
             continue
         source = ROOT / relative
         if source.is_file():
