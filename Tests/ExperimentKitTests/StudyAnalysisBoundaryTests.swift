@@ -70,7 +70,11 @@ struct StudyAnalysisBoundaryTests {
             ExperimentTasks.AnalyzeReport.self, from: #require(artifacts.files["analysis.json"]))
         #expect(report.sourceRunExperimentHash == ExperimentStore.manifestHash(manifest))
         #expect(report.sourceRun == source.lastPathComponent)
-        #expect(Set(artifacts.files.keys) == ["analysis.json", "effect-sizes.csv"])
+        // Every analysis also names the outcomes it paired, each with its
+        // definition in words (`outcome-coverage.json`).
+        #expect(
+            Set(artifacts.files.keys)
+                == ["analysis.json", "effect-sizes.csv", "outcome-coverage.json"])
     }
 
     @Test func writerPreservesSourceBytesAndPublishesDistinctProvenanceStampedDirectories() throws {

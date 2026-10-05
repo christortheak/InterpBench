@@ -47,6 +47,15 @@ enum StudyAnalysisRendering {
             try artifacts.add("exclusions.json", json: exclusionStamp)
         }
         artifacts.add("effect-sizes.csv", text: effectSizesCSV(entries))
+        // Which outcomes reached the effect rows, each with its definition
+        // in words, and which this analysis could not produce and why —
+        // written on every analysis, so a reader never has to infer either
+        // from the rows (cross-engine artifact; the Python engine writes the
+        // same shape).
+        try artifacts.add("outcome-coverage.json", json: result.outcomes)
+        for outcome in result.outcomes.notAvailable {
+            artifacts.log("\(outcome.name): \(outcome.reason ?? "not available")")
+        }
         // Per-item choice deltas (server twin: choice-deltas.csv +
         // choice-deltas.json). Absence over empty artifacts: a run with no
         // non-baseline choice readouts grows no table implying it had some.

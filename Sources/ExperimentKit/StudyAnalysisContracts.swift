@@ -42,6 +42,43 @@ struct AnalysisGeneration: Decodable {
     let arm: String?
     let caseID: String?
     let factors: [String: String]?
+    /// The sampled record's outcome readings beyond the surface measures:
+    /// the number the study's numeric parser read (`parsedMonths`, whatever
+    /// its unit), the parsed choice, and the reader scores by concept. Each
+    /// is `LenientlyDecoded`: a value of an unexpected type reads as absent
+    /// instead of costing the record its other measures.
+    let parsedMonths: LenientlyDecoded<Double>?
+    let parsedChoice: LenientlyDecoded<String>?
+    let readerScores: LenientlyDecoded<[String: Double]>?
+}
+
+/// A record field the analysis reads when it can and treats as absent when
+/// it cannot. A plain optional would fail the WHOLE record on a value of the
+/// wrong type, and a record that analyzed before these fields were read must
+/// keep analyzing.
+struct LenientlyDecoded<Value: Decodable>: Decodable {
+    let value: Value?
+
+    init(from decoder: Decoder) throws {
+        value = try? Value(from: decoder)
+    }
+}
+
+/// What `analyze` knows about the study's declared numeric parser. Only its
+/// KIND matters here — whether the parsed numbers are months — because the
+/// analysis pairs the values the run recorded and re-parses nothing.
+enum AnalysisNumericParser: Equatable {
+    /// The study names no parser.
+    case undeclared
+    case resolved(name: String, kind: String)
+    /// Declared, but its registry entry cannot be read (or the registry
+    /// changed since the study pinned it), in the reader's own words.
+    case unreadable(name: String, reason: String)
+
+    var kind: String? {
+        if case .resolved(_, let kind) = self { return kind }
+        return nil
+    }
 }
 
 extension ExperimentTasks {
@@ -101,6 +138,7 @@ struct StudyAnalysisInput {
     let style: PinnedReasoningStyle?
     var exclusionChecks: [String: AttentionCheck] = [:]
     var declaredTargets: [String: Bool]? = nil
+    var numericParser: AnalysisNumericParser = .undeclared
 }
 
 struct StudyAnalysisDiagnostic {
@@ -116,6 +154,8 @@ struct StudyAnalysisResult {
     let exclusions: ExclusionStamp?
     let choiceDeltas: (rows: [[String]], summary: ChoiceDeltas.Summary)
     let margins: [String: ChoiceMarginDiagnostics.Report]
+    /// Which outcomes reached `entries`, and which could not be produced.
+    let outcomes: StudyAnalysisOutcomes.Coverage
     let diagnostics: [StudyAnalysisDiagnostic]
 }
 

@@ -145,6 +145,16 @@ enum StudyAnalysisCalculator {
                 } else {
                     [:]
                 }
+            // The record's own outcome readings, as the run wrote them:
+            // nothing is re-parsed or re-scored here. A parse that failed
+            // (`null`) and a reading the study never took (key absent) are
+            // both "no reading" for the paired effects.
+            let choseTarget: Bool? =
+                if let choice = record.parsedChoice?.value, let target = record.target {
+                    choice == target
+                } else {
+                    nil
+                }
             rows.append(
                 MetricRow(
                     condition: record.condition,
@@ -155,7 +165,10 @@ enum StudyAnalysisCalculator {
                     distinct2: record.distinct2 ?? 0,
                     markerDensity: markerDensity,
                     reasoningStyle: reasoningStyle,
-                    sampleIndex: record.sampleIndex))
+                    sampleIndex: record.sampleIndex,
+                    parsedValue: record.parsedMonths?.value,
+                    choseTarget: choseTarget,
+                    readerScores: record.readerScores?.value ?? [:]))
         }
         // Choice readouts count as analyzable material alongside sampled
         // generations and ordinal readouts: a study whose whole instrument is
@@ -212,10 +225,24 @@ enum StudyAnalysisCalculator {
                     .map { "\($0.key)=\($0.value)" }
                     .joined(separator: ", "))
         }
+        // `choiceLogOdds`: the target option's log-odds, one value per
+        // (condition, item), from the SAME readouts the choice-delta table
+        // reads — so an undeclared target or an excluded readout is out of
+        // both. A readout with no log-odds entry for its own target has no
+        // value (Python twin: the `choiceLogOdds` endpoint).
+        let targetLogOdds = choiceReadouts.compactMap { readout in
+            readout.logOdds[readout.target].map {
+                StudyAnalysisStatistics.ItemReadout(
+                    condition: readout.condition, promptID: readout.promptID,
+                    value: $0)
+            }
+        }
         let pooledEntries = StudyAnalysisStatistics.effectSizes(
             rows: rows, concepts: conceptSet.sorted(),
             styleFeatureIDs: style?.taxonomy.featureIDs ?? [],
             choiceReadouts: ordinalReadouts,
+            targetLogOdds: targetLogOdds,
+            numericParserKind: input.numericParser.kind,
             phase: manifest.phase)
         // Per-cell strata beside the pooled rows (same file, extra rows):
         // pooling across items has both hidden a real single-cell effect
@@ -229,8 +256,29 @@ enum StudyAnalysisCalculator {
                 rows: rows, concepts: conceptSet.sorted(),
                 styleFeatureIDs: style?.taxonomy.featureIDs ?? [],
                 choiceReadouts: ordinalReadouts,
+                targetLogOdds: targetLogOdds,
+                numericParserKind: input.numericParser.kind,
                 factorsByItem: factorsByItem,
                 phase: manifest.phase)
+
+        // Which outcomes reached the rows, and which this analysis could
+        // not produce — said, never left as a silently absent row. The one
+        // case on this engine: the study declares a numeric parser whose
+        // registry entry cannot be read, so the parsed numbers are reported
+        // under the months names only.
+        var notAvailable: [(name: String, family: String, reason: String)] = []
+        if case .unreadable(let name, let reason) = input.numericParser,
+            rows.contains(where: { $0.parsedValue != nil })
+        {
+            let text = StudyAnalysisOutcomes.numericParserUnreadableReason(
+                name: name, reason: reason)
+            notAvailable = ["parsedValueMean", "parsedValueSpread"].map {
+                (name: $0, family: $0, reason: text)
+            }
+        }
+        let outcomes = StudyAnalysisOutcomes.coverage(
+            outcomeNames: entries.map(\.metric), markerConcepts: conceptSet,
+            notAvailable: notAvailable)
 
         var marginReports: [String: ChoiceMarginDiagnostics.Report] = [:]
         for (condition, logprobs) in optionLogprobsByCondition {
@@ -242,7 +290,7 @@ enum StudyAnalysisCalculator {
             entries: entries, pooledCount: pooledEntries.count,
             sampledCount: rows.count, ordinalCount: ordinalReadouts.count,
             exclusions: exclusionStamp, choiceDeltas: ChoiceDeltas.table(choiceReadouts),
-            margins: marginReports, diagnostics: diagnostics)
+            margins: marginReports, outcomes: outcomes, diagnostics: diagnostics)
     }
 
     static func rescoreStyle(_ input: StudyAnalysisInput) throws -> StudyStyleResult {

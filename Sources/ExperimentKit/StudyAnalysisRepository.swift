@@ -182,7 +182,45 @@ struct StudyAnalysisRepository {
             manifest: manifest, sourceRunName: sourceRun.lastPathComponent,
             sourceRunExperimentHash: RunEpoch.stampedExperimentHash(sourceRun),
             epoch: epoch, generations: text, style: style,
-            exclusionChecks: exclusionChecks, declaredTargets: declaredTargets)
+            exclusionChecks: exclusionChecks, declaredTargets: declaredTargets,
+            numericParser: numericParser(for: manifest))
+    }
+
+    /// The declared numeric parser, as far as `analyze` needs it: its KIND,
+    /// which decides whether the parsed numbers are also reported under the
+    /// neutral `parsedValue…` names (any kind but `durationMonths`).
+    ///
+    /// Never a refusal. The analysis pairs the numbers the run recorded and
+    /// re-parses nothing, so a registry that is missing, malformed, or
+    /// changed since the study pinned it costs only those two names — and
+    /// the analysis says so (`StudyAnalysisOutcomes
+    /// .numericParserUnreadableReason`). The Python engine, which DOES
+    /// re-parse unread responses under the registry's grammar, refuses in
+    /// the same state.
+    func numericParser(for manifest: ExperimentManifest) -> AnalysisNumericParser {
+        let name =
+            manifest.numericParser?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !name.isEmpty else { return .undeclared }
+        let registry = ExperimentStore.resolveProjectPath(
+            ParserRegistry.registryFile, root: workspaceRoot)
+        do {
+            let spec = try ParserRegistry.spec(named: name, at: registry)
+            if let pinned = manifest.parserRegistryHash,
+                let live = ParserRegistry.liveHash(at: registry), live != pinned
+            {
+                return .unreadable(
+                    name: name,
+                    reason: "the parser registry changed since the study "
+                        + "pinned it (have \(live.prefix(12))…, pinned "
+                        + "\(pinned.prefix(12))…)")
+            }
+            return .resolved(name: name, kind: spec.kind ?? "")
+        } catch {
+            return .unreadable(
+                name: name,
+                reason: (error as? ExperimentError)?.reason ?? "\(error)")
+        }
     }
 
     func loadRescore(

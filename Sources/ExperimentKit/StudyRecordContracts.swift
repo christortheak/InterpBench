@@ -335,6 +335,23 @@ extension ExperimentTasks {
         /// stamp, which fall back to the seed (shared across conditions on
         /// every such run).
         var sampleIndex: Int? = nil
+        /// The record's outcome readings beyond the surface measures, for
+        /// the paired effects `analyze` computes (`StudyAnalysisOutcomes`
+        /// defines each outcome in words). Only `analyze` fills these, from
+        /// the record as the run wrote it; a row a run builds while it
+        /// generates leaves all three empty, so the run's own report gains
+        /// no rows from them.
+        ///
+        /// The number the study's numeric parser read from the response
+        /// (the record's `parsedMonths`, whatever its unit). nil when the
+        /// response could not be read, or the study parses no number.
+        var parsedValue: Double? = nil
+        /// Whether the response's parsed choice is the item's target. nil
+        /// when the response has no readable choice, or the item no target.
+        var choseTarget: Bool? = nil
+        /// The record's reader scores, by concept. Empty when it carries
+        /// none.
+        var readerScores: [String: Double] = [:]
     }
 
     /// Minimal categorical readout retained while assembling report.json.

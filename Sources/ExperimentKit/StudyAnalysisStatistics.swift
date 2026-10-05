@@ -11,16 +11,141 @@ enum StudyAnalysisStatistics {
     typealias ReasoningStyleFeatureStat = ExperimentTasks.ReasoningStyleFeatureStat
     typealias ReasoningStyleConditionReport = ExperimentTasks.ReasoningStyleConditionReport
 
+    /// One deterministic answer-token value for a (condition, item): the
+    /// input of an outcome that has no sample axis. `analyze` builds these
+    /// for `choiceLogOdds`, from the readouts whose target the item
+    /// declared.
+    struct ItemReadout: Equatable {
+        let condition: String
+        let promptID: String
+        let value: Double
+    }
+
+    /// One paired outcome built from the sampled responses: how a response
+    /// is read, and how a cell's readings become the item's value.
+    /// `StudyAnalysisOutcomes` holds the same rules in words.
+    struct SampledOutcome {
+        enum Reduction {
+            /// The mean of the cell's readings.
+            case mean
+            /// The mean of the cell's parsed numbers, summed in ascending
+            /// order (the Python engine's `judicial.summarize`).
+            case parsedMean
+            /// The sample standard deviation (n − 1) of the cell's parsed
+            /// numbers; no value with fewer than two.
+            case parsedSpread
+        }
+
+        let name: String
+        /// One response's reading; nil when the response carries none.
+        let reading: (MetricRow) -> Double?
+        var reduction: Reduction = .mean
+        /// Whether a stratum in which one item pairs may drop to that
+        /// item's sample axis. False for a spread (it is a property of the
+        /// whole cell) and for the neutral parsed-value names, which the
+        /// Python engine has never read sample by sample.
+        var pairsWithinItem = true
+
+        /// The item's value in one condition; nil when the cell has no
+        /// reading to form one from.
+        func itemValue(_ cell: [MetricRow]) -> Double? {
+            let readings = cell.compactMap(reading)
+            switch reduction {
+            case .mean:
+                guard !readings.isEmpty else { return nil }
+                return readings.reduce(0, +) / Double(readings.count)
+            case .parsedMean, .parsedSpread:
+                let parsed = readings.filter { !$0.isNaN }.sorted()
+                guard !parsed.isEmpty else { return nil }
+                let mean = parsed.reduce(0, +) / Double(parsed.count)
+                if reduction == .parsedMean { return mean }
+                guard parsed.count > 1 else { return nil }
+                let squares = parsed.reduce(0) { $0 + ($1 - mean) * ($1 - mean) }
+                return (squares / Double(parsed.count - 1)).squareRoot()
+            }
+        }
+    }
+
+    /// The outcomes the sampled responses can support, in emission order:
+    /// the surface measures, each concept's marker density, the
+    /// reasoning-style features (declared taxonomy order), then the outcomes
+    /// a record carries only when the study measured them — reader scores,
+    /// the parsed number and its spread, and the target-choice rate. An
+    /// outcome no response carries a reading for produces no row.
+    ///
+    /// `numericParserKind` is the declared numeric parser's kind, nil when
+    /// the study declares none: any kind but `durationMonths` reports the
+    /// parsed number under the neutral `parsedValue…` names as well (Python
+    /// twin: `analysis_endpoints.endpoint_values`).
+    static func sampledOutcomes(
+        rows: [MetricRow], concepts: [String], styleFeatureIDs: [String],
+        numericParserKind: String?
+    ) -> [SampledOutcome] {
+        var outcomes: [SampledOutcome] = [
+            SampledOutcome(name: "wordCount", reading: { Double($0.wordCount) }),
+            SampledOutcome(name: "distinct2", reading: { Double($0.distinct2) }),
+        ]
+        for concept in concepts.sorted() {
+            outcomes.append(
+                SampledOutcome(
+                    name: "\(concept)\(StudyAnalysisOutcomes.markerDensitySuffix)",
+                    reading: { Double($0.markerDensity[concept] ?? 0) }))
+        }
+        // Reasoning-style features join the same paired machinery, one
+        // numeric metric per feature (declared taxonomy order).
+        for id in styleFeatureIDs {
+            outcomes.append(
+                SampledOutcome(
+                    name: "\(StudyAnalysisOutcomes.reasoningStylePrefix)\(id)",
+                    reading: { $0.reasoningStyle[id] ?? 0 }))
+        }
+        for concept in Set(rows.flatMap { $0.readerScores.keys }).sorted() {
+            outcomes.append(
+                SampledOutcome(
+                    name: "\(StudyAnalysisOutcomes.readerScorePrefix)\(concept)",
+                    reading: { $0.readerScores[concept] }))
+        }
+        outcomes.append(
+            SampledOutcome(
+                name: "meanMonths", reading: \.parsedValue, reduction: .parsedMean))
+        outcomes.append(
+            SampledOutcome(
+                name: "monthsSpread", reading: \.parsedValue,
+                reduction: .parsedSpread, pairsWithinItem: false))
+        if let numericParserKind, numericParserKind != "durationMonths" {
+            outcomes.append(
+                SampledOutcome(
+                    name: "parsedValueMean", reading: \.parsedValue,
+                    reduction: .parsedMean, pairsWithinItem: false))
+            outcomes.append(
+                SampledOutcome(
+                    name: "parsedValueSpread", reading: \.parsedValue,
+                    reduction: .parsedSpread, pairsWithinItem: false))
+        }
+        outcomes.append(
+            SampledOutcome(
+                name: "choiceRate", reading: { $0.choseTarget.map { $0 ? 1 : 0 } }))
+        return outcomes
+    }
+
     static func effectSizes(
         rows: [MetricRow], concepts: [String], styleFeatureIDs: [String] = [],
         choiceReadouts: [ReportChoiceReadout] = [],
+        targetLogOdds: [ItemReadout] = [], numericParserKind: String? = nil,
         replicates: Int = 10_000, phase: String? = nil
     ) -> [EffectSizeEntry] {
         applyCorrection(
             sampledEffectSizes(
-                rows: rows, concepts: concepts,
-                styleFeatureIDs: styleFeatureIDs, replicates: replicates)
-                + ordinalEffectSizes(choiceReadouts, replicates: replicates),
+                rows: rows,
+                outcomes: sampledOutcomes(
+                    rows: rows, concepts: concepts,
+                    styleFeatureIDs: styleFeatureIDs,
+                    numericParserKind: numericParserKind),
+                replicates: replicates)
+                + ordinalEffectSizes(choiceReadouts, replicates: replicates)
+                + readoutEffectSizes(
+                    metric: "choiceLogOdds", readouts: targetLogOdds,
+                    replicates: replicates),
             phase: phase)
     }
 
@@ -92,34 +217,20 @@ enum StudyAnalysisStatistics {
     /// sample k): `unit` is then "sample", and the row is a within-item
     /// diagnostic rather than an item-level effect. Server twin:
     /// `analysis_endpoints.stratified_effect_rows`.
+    ///
+    /// Pairing is per OUTCOME: an item pairs for an outcome when both arms
+    /// have a value for it. Every response has a word count, so the surface
+    /// measures pair every item both arms measured; a response the numeric
+    /// parser could not read has no parsed number, so an item whose baseline
+    /// cell holds no readable response is left out of `meanMonths` alone.
     private static func sampledEffectSizes(
-        rows: [MetricRow], concepts: [String], styleFeatureIDs: [String],
+        rows: [MetricRow], outcomes: [SampledOutcome],
         replicates: Int, stratum: (family: String, label: String)? = nil
     ) -> [EffectSizeEntry] {
         let baselineByItem = Dictionary(
             grouping: inRunOrder(rows.filter { $0.condition == "baseline" }),
             by: \.promptID)
         guard !baselineByItem.isEmpty else { return [] }
-
-        var metrics: [(name: String, value: (MetricRow) -> Double)] = [
-            ("wordCount", { Double($0.wordCount) }),
-            ("distinct2", { Double($0.distinct2) }),
-        ]
-        for concept in concepts.sorted() {
-            metrics.append(
-                ("\(concept)MarkerDensity", { Double($0.markerDensity[concept] ?? 0) }))
-        }
-        // Reasoning-style features join the same paired machinery, one
-        // numeric metric per feature (declared taxonomy order).
-        for id in styleFeatureIDs {
-            metrics.append(("rs_\(id)", { $0.reasoningStyle[id] ?? 0 }))
-        }
-
-        func cellMean(
-            _ cell: [MetricRow], _ value: (MetricRow) -> Double
-        ) -> Double {
-            cell.reduce(0) { $0 + value($1) } / Double(cell.count)
-        }
 
         // Conditions in first-appearance order; items in the order they
         // first appear among the condition's rows in run order, so the
@@ -139,24 +250,36 @@ enum StudyAnalysisStatistics {
                 if rowsByItem[row.promptID] == nil { itemOrder.append(row.promptID) }
                 rowsByItem[row.promptID, default: []].append(row)
             }
-            // An item pairs when both arms measured it at least once.
-            let pairedItems = itemOrder.filter { baselineByItem[$0] != nil }
-            guard !pairedItems.isEmpty else { continue }
-            for metric in metrics {
-                var diffs = pairedItems.map { item in
-                    cellMean(rowsByItem[item] ?? [], metric.value)
-                        - cellMean(baselineByItem[item] ?? [], metric.value)
+            for outcome in outcomes {
+                // An item pairs when both arms have a value for this
+                // outcome — for the surface measures, whenever both arms
+                // measured the item at least once.
+                var pairedItems: [String] = []
+                var diffs: [Double] = []
+                for item in itemOrder {
+                    guard let baselineCell = baselineByItem[item],
+                        let value = outcome.itemValue(rowsByItem[item] ?? []),
+                        let baseline = outcome.itemValue(baselineCell)
+                    else { continue }
+                    pairedItems.append(item)
+                    diffs.append(value - baseline)
                 }
+                guard !diffs.isEmpty else { continue }
                 var withinItem = false
-                if stratum != nil, pairedItems.count == 1, let item = pairedItems.first {
-                    var baselineBySample: [String: MetricRow] = [:]
+                if stratum != nil, outcome.pairsWithinItem, pairedItems.count == 1,
+                    let item = pairedItems.first
+                {
+                    var baselineBySample: [String: Double] = [:]
                     for row in baselineByItem[item] ?? [] {
-                        baselineBySample[sampleKey(row)] = row
-                    }
-                    let sampleDiffs = (rowsByItem[item] ?? []).compactMap { row in
-                        baselineBySample[sampleKey(row)].map {
-                            metric.value(row) - metric.value($0)
+                        if let reading = outcome.reading(row) {
+                            baselineBySample[sampleKey(row)] = reading
                         }
+                    }
+                    let sampleDiffs = (rowsByItem[item] ?? []).compactMap { row -> Double? in
+                        guard let reading = outcome.reading(row),
+                            let baseline = baselineBySample[sampleKey(row)]
+                        else { return nil }
+                        return reading - baseline
                     }
                     if sampleDiffs.count >= 2 {
                         diffs = sampleDiffs
@@ -169,7 +292,7 @@ enum StudyAnalysisStatistics {
                 entries.append(
                     EffectSizeEntry(
                         condition: condition,
-                        metric: metric.name,
+                        metric: outcome.name,
                         n: ci.n,
                         meanDiff: ci.mean,
                         ciLower: ci.ciLower,
@@ -264,6 +387,59 @@ enum StudyAnalysisStatistics {
         return entries
     }
 
+    /// Paired effects for an outcome with ONE deterministic value per
+    /// (condition, item) — `choiceLogOdds`, the target option's log-odds
+    /// from the answer-token readout. The item's value in a condition pairs
+    /// with the same item's baseline value by promptID, through the same
+    /// bootstrap CI + Wilcoxon as every other outcome. Python twin: the
+    /// `choiceLogOdds` endpoint of `analysis_endpoints.endpoint_values`.
+    ///
+    /// A (condition, item) read twice keeps its last readout, as on the
+    /// Python engine. There is no sample axis, so a stratified row is
+    /// always item-level and always a member of its correction family.
+    private static func readoutEffectSizes(
+        metric: String, readouts: [ItemReadout], replicates: Int,
+        stratum: (family: String, label: String)? = nil
+    ) -> [EffectSizeEntry] {
+        var conditionOrder: [String] = []
+        var valuesByCondition: [String: [String: Double]] = [:]
+        for readout in readouts {
+            if valuesByCondition[readout.condition] == nil, readout.condition != "baseline" {
+                conditionOrder.append(readout.condition)
+            }
+            valuesByCondition[readout.condition, default: [:]][readout.promptID] = readout.value
+        }
+        guard let baseline = valuesByCondition["baseline"], !baseline.isEmpty else { return [] }
+        var entries: [EffectSizeEntry] = []
+        for condition in conditionOrder {
+            let values = valuesByCondition[condition] ?? [:]
+            let diffs: [Double] = values.keys.sorted().compactMap { item in
+                guard let value = values[item], let base = baseline[item] else { return nil }
+                return value - base
+            }
+            guard !diffs.isEmpty else { continue }
+            let ci = StudyStatistics.pairedBootstrapCI(
+                diffs, replicates: replicates, seed: 0)
+            let wilcoxon = StudyStatistics.wilcoxonSignedRank(diffs)
+            entries.append(
+                EffectSizeEntry(
+                    condition: condition,
+                    metric: metric,
+                    n: ci.n,
+                    meanDiff: ci.mean,
+                    ciLower: ci.ciLower,
+                    ciUpper: ci.ciUpper,
+                    wilcoxonW: wilcoxon.w.isNaN ? nil : wilcoxon.w,
+                    wilcoxonP: wilcoxon.p.isNaN ? nil : wilcoxon.p,
+                    stratifyBy: stratum?.family,
+                    stratum: stratum?.label,
+                    unit: stratum.map { _ in "item" },
+                    estimand: stratum.map { _ in EffectSizeEstimand.itemLevel },
+                    inference: stratum.map { _ in EffectSizeInference.corrected }))
+        }
+        return entries
+    }
+
     static func stratificationFamilies(
         factorsByItem: [String: [String: String]], items: Set<String>
     ) -> [(name: String, strata: [(label: String, items: Set<String>)])] {
@@ -313,6 +489,7 @@ enum StudyAnalysisStatistics {
     static func stratifiedEffectSizes(
         rows: [MetricRow], concepts: [String], styleFeatureIDs: [String] = [],
         choiceReadouts: [ReportChoiceReadout] = [],
+        targetLogOdds: [ItemReadout] = [], numericParserKind: String? = nil,
         factorsByItem: [String: [String: String]],
         replicates: Int = 10_000, phase: String? = nil
     ) -> [EffectSizeEntry] {
@@ -321,7 +498,13 @@ enum StudyAnalysisStatistics {
         where readout.source == "instrument" && readout.ordinalPosition != nil {
             items.insert(readout.promptID)
         }
+        items.formUnion(targetLogOdds.map(\.promptID))
         guard !items.isEmpty else { return [] }
+        // One outcome list for every stratum, built from ALL the rows: the
+        // same outcomes the pooled rows report.
+        let outcomes = sampledOutcomes(
+            rows: rows, concepts: concepts, styleFeatureIDs: styleFeatureIDs,
+            numericParserKind: numericParserKind)
         var entries: [EffectSizeEntry] = []
         for family in stratificationFamilies(
             factorsByItem: factorsByItem, items: items)
@@ -331,10 +514,14 @@ enum StudyAnalysisStatistics {
                 let stratum = (family: family.name, label: label)
                 familyEntries += sampledEffectSizes(
                     rows: rows.filter { members.contains($0.promptID) },
-                    concepts: concepts, styleFeatureIDs: styleFeatureIDs,
+                    outcomes: outcomes,
                     replicates: replicates, stratum: stratum)
                 familyEntries += ordinalEffectSizes(
                     choiceReadouts.filter { members.contains($0.promptID) },
+                    replicates: replicates, stratum: stratum)
+                familyEntries += readoutEffectSizes(
+                    metric: "choiceLogOdds",
+                    readouts: targetLogOdds.filter { members.contains($0.promptID) },
                     replicates: replicates, stratum: stratum)
             }
             // The phase's correction, per metric WITHIN this family —
