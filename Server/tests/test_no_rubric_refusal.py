@@ -12,10 +12,12 @@ Two faults, both measured against a scratch workspace before the fix:
    exited 0 ("state": "ready"). Swift has always refused that input.
 
 Both are now ``missingPrerequisite`` — the verb needs something the study
-never declared — and the no-rubric sentence is byte-identical to Swift's
-``JudgeRubricStore.noRubricRefusal``. It names ``steerlab-cli`` on BOTH
-engines on purpose: authoring is Mac-authority (audit §10.x) and this CLI has
-no ``pin-rubric`` verb to point at.
+never declared. Pinning a rubric is authoring, which this engine never does
+and has no verb for: its sentence says the pin happens on your authoring
+client, and its repair names the command on both (the Mac command line's
+``pin-rubric``, the cross-platform client's ``set-protocol`` fields). Swift's
+``JudgeRubricStore.noRubricRefusal`` is the Mac command line speaking for
+itself, so it names its own verb.
 """
 
 import pytest

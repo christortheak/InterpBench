@@ -932,18 +932,27 @@ def test_the_redirect_names_the_client_spelling_off_the_mac():
     stays first (it is the table's value and the one the Mac lifecycle
     continues from); the client's is appended for every redirected verb the
     client implements, read from the client's own table so it cannot claim a
-    verb that does not exist."""
+    verb that does not exist — and, for an act the client performs under a
+    DIFFERENT verb (a protocol field, or ``import-prompts``), that verb, from
+    ``cli.CLIENT_ROUTES``."""
     from steerlab_server import cli
 
+    client_verbs = {spec.verb for spec in client_cli.CLIENT_VERB_SPECS
+                    if spec.family == "experiment"}
     for verb, mac in cli_envelope.MAC_AUTHORITY_VERBS["experiment"].items():
-        spelling = cli._client_spelling(f"experiment {verb}")
-        implemented = verb in {spec.verb
-                               for spec in client_cli.CLIENT_VERB_SPECS
-                               if spec.family == "experiment"}
-        assert bool(spelling) is implemented, verb
-        if implemented:
+        label = f"experiment {verb}"
+        spelling = cli._client_spelling(label)
+        if verb in client_verbs:
             assert spelling.startswith(f"{client_cli.PROGRAM} experiment "
                                        f"{verb} ")
+        elif label in cli.CLIENT_ROUTES:
+            route_verb = cli.CLIENT_ROUTES[label].split()[1]
+            assert route_verb in client_verbs, label
+            assert spelling.startswith(f"{client_cli.PROGRAM} experiment "
+                                       f"{route_verb} ")
+        else:
+            assert spelling == "", label
+        if spelling:
             assert spelling.endswith(f"{client_cli.ROOT_FLAG} "
                                      "<workspace-dir>")
         assert mac.startswith("steerlab-cli experiment ")
