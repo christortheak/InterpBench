@@ -530,8 +530,8 @@ def test_a_live_setup_lock_is_never_taken(tmp_path):
     runtime, old = managed_runtime(tmp_path)
     holder_script = tmp_path / 'holder' / 'install-client.sh'
     holder_script.parent.mkdir()
-    holder_script.write_text('trap "exit 0" TERM\nsleep 60 & wait\n')
-    holder = subprocess.Popen(['/bin/sh', str(holder_script)])
+    holder_script.write_text('sleep 60 & child=$!\ntrap \'kill "$child"; exit 0\' TERM\nwait "$child"\n')
+    holder = subprocess.Popen(['/bin/sh', str(holder_script)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         lock = tmp_path / 'client-runtime.setup-lock'
         lock.mkdir()
