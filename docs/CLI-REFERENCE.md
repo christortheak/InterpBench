@@ -239,6 +239,7 @@ steerlab science package <request.json> --archive <value> --plan-sha256 <value>
 steerlab science import <archive.tar.gz> --sha256 <digest>
 steerlab science custody
 steerlab science verify-custody <receipt-sha256>
+steerlab science report <run-folder-or-report.json> [--out <file>]
 steerlab science list [--brief]
 steerlab science guide <method>
 steerlab science operation <operation>
@@ -2944,6 +2945,7 @@ steerlab-cli science package <request.json> --archive <value> --plan-sha256 <val
 steerlab-cli science import <archive.tar.gz> --sha256 <hex>
 steerlab-cli science custody
 steerlab-cli science verify-custody <receipt-sha256>
+steerlab-cli science report <run-folder-or-report.json> [--out <file>]
 ```
 
 | Verb | Purpose |
@@ -2980,6 +2982,7 @@ steerlab-cli science verify-custody <receipt-sha256>
 | `science import` | Verify and import diagnostic evidence into this workspace without replacing outputs. |
 | `science custody` | Reverify and list local diagnostic evidence receipts for offline inspection. |
 | `science verify-custody` | Verify the retained diagnostic archive and every expanded output file. |
+| `science report` | Turn a stored J-lens assessment report into one self-contained HTML page a person can read. Give the run folder or its assessment-report.json. A run folder is never written to: the page goes to reports/ in the workspace, or to --out (read from the workspace unless absolute). |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:swift-authoring END -->
