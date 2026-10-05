@@ -3379,17 +3379,40 @@ public enum ExperimentTasks {
         }
     }
 
+    /// The run-start refusal for a declared J-lens readout, which this
+    /// engine cannot record. Its own function so the refusal can be tested
+    /// without a model: `runImpl` calls it before reading prompts or loading
+    /// anything.
+    static func refuseUnrecordableReadout(_ manifest: ExperimentManifest) throws {
+        guard
+            let problem = ExperimentStore.jlensReadoutNotExecutableProblem(manifest)
+        else { return }
+        throw ExperimentError.refusing(
+            .inertConditions, problem,
+            repair: ExperimentStore.jlensReadoutRunRepair(experiment: manifest.name))
+    }
+
     private static func runImpl(
         experimentName: String,
         promptsFile: String?,
         shouldCancel: (@Sendable () async -> Bool)?,
         progress: StudyTaskProgressHandler?
     ) async throws -> URL {
-        MLX.Memory.cacheLimit = 2 * 1024 * 1024 * 1024
         var manifest = try loadVerified(experimentName)
         if manifest.probeMeasurements != nil {
             throw ExperimentError(reason: "This study records portable probes through the Python engine. Select Python Compute and submit the study there; native MLX measurement execution is not implemented.")
         }
+        // A declared J-lens readout is the same kind of measurement: this
+        // engine carries the declaration and never takes it. Refused here,
+        // before anything is read or loaded, because the run it would
+        // otherwise produce looks complete and says nothing about the
+        // readout it did not record (release review 2026-10-04, F1). Only
+        // the run path refuses; verify and freeze stay open.
+        try refuseUnrecordableReadout(manifest)
+        // Set only once the run is going ahead: the two refusals above are
+        // about measurements this engine does not take, and a refused run
+        // has no business touching the GPU runtime at all.
+        MLX.Memory.cacheLimit = 2 * 1024 * 1024 * 1024
         let cancel = CancelPoller(shouldCancel)
         if manifest.studyKind == .multiAgent {
             return try await runMultiAgentStudy(

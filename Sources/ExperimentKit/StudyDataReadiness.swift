@@ -657,7 +657,11 @@ public enum StudyDataReadiness {
                         : "no concepts attached yet — needed once a concept's α is "
                             + "reported in residual-norm units"))
 
-        rows.append(jlensReadoutRequirement(manifest: manifest))
+        rows.append(
+            jlensReadoutRequirement(
+                manifest: manifest,
+                runsOnBuiltInEngine:
+                    WorkspaceCompute.resolved(root: workspaceRoot) == .localMLX))
 
         return rows
     }
@@ -1098,6 +1102,37 @@ public enum StudyDataReadiness {
     /// duplicated rather than shared because the two engines cannot import
     /// each other; a cross-engine test pins the key list so the copies cannot
     /// drift silently.
+    /// The readout row as THIS workspace will meet it: the pin grading
+    /// below, plus one fact the pins cannot show. A workspace that runs
+    /// studies on the engine built into this app will not record a declared
+    /// readout — the run refuses before it starts — and the place to learn
+    /// that is here, while the study is still being designed.
+    ///
+    /// Never a blocker: a study authored here and run on the Python engine
+    /// is legitimate, so the status the pins earned is kept. Only a row that
+    /// would have read as fully present is shown as partial instead, because
+    /// on this workspace's engine "present" would promise a measurement that
+    /// will not be taken.
+    static func jlensReadoutRequirement(
+        manifest: ExperimentManifest, runsOnBuiltInEngine: Bool
+    ) -> DataRequirement {
+        var row = jlensReadoutRequirement(manifest: manifest)
+        guard runsOnBuiltInEngine,
+            let advisory = ExperimentStore.jlensReadoutEngineAdvisory(manifest)
+        else { return row }
+        switch row.status {
+        case .missing, .invalid:
+            // The pins are the blocker; say that first.
+            row.detail += " " + advisory
+        case .present:
+            row.status = .partial
+            row.detail = advisory + " The declaration itself: " + row.detail
+        case .partial, .optional, .notApplicable:
+            row.detail = advisory + " The declaration itself: " + row.detail
+        }
+        return row
+    }
+
     static func jlensReadoutRequirement(
         manifest: ExperimentManifest
     ) -> DataRequirement {

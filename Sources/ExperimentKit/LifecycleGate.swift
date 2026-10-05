@@ -414,7 +414,8 @@ public enum RefusalSiteRegistry {
             verbs: ["experiment run"],
             origin: "ExperimentStore.inertConditionsProblem / "
                 + "noMeasuredConditionsProblem / "
-                + "latentArmsNotExecutableProblem",
+                + "latentArmsNotExecutableProblem / "
+                + "jlensReadoutNotExecutableProblem",
             repairAction: "steerlab-cli experiment declare-condition <name> "
                 + "<arm> --slots <concept>:<layer>:<alpha>"),
         .init(
