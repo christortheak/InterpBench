@@ -30,6 +30,13 @@ with tempfile.TemporaryDirectory(prefix='steerlab-client-build-', dir=args.outpu
     shutil.copytree(ROOT / 'Server', source, ignore=shutil.ignore_patterns('.venv*', '__pycache__', '*.egg-info', '.pytest_cache', 'build', 'dist'))
     release = stage / 'release'
     release.mkdir()
+    # The terms travel with the artifact, twice over: beside the installer in the
+    # release directory, and inside the wheel (setuptools packs a LICENSE and a
+    # NOTICE it finds at the project root into <dist-info>/licenses/). The two
+    # files live once, at the repository root; the copies are made here.
+    for name in ('LICENSE', 'NOTICE'):
+        shutil.copyfile(ROOT / name, source / name)
+        shutil.copyfile(ROOT / name, release / name)
     subprocess.run([args.uv, 'build', '--wheel', '--out-dir', str(release), str(source)], check=True)
     (release / '.gitignore').unlink(missing_ok=True)  # uv marks its out-dir; the release is not a checkout
     resources = source / 'steerlab_server/client/resources'
@@ -92,6 +99,14 @@ Models, servers and cluster access are separate choices the person makes
 later; do not download models or start servers on your own initiative.
 ''')
     (release / 'SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\n' for p in sorted(release.iterdir()) if p.is_file()))
+    # Read what was BUILT, the wheel's members included, for a home-folder path
+    # or a private name before it becomes the release (scripts/ci/artifact_scan.py).
+    # A machine with no private-name list has nothing to leak and checks paths
+    # only; STEERLAB_REQUIRE_PRIVATE_NAMES=1 (a release gate, the main
+    # repository's CI) makes a missing list a failure.
+    scan = subprocess.run([sys.executable, str(ROOT / 'scripts/ci/artifact_scan.py'), '--allow-missing-list', str(release)])
+    if scan.returncode != 0:
+        sys.exit('The client release was not written: it carries identifying strings, or could not be scanned (see above).')
     os.rename(release, args.output)
 print(args.output)
 if args.archive:

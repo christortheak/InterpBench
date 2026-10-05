@@ -40,12 +40,9 @@ enum ResearchTreeFixtures {
     /// stays so the drift gate reports honestly if the source is ever absent.
     static var hasAgentContractDraft: Bool { exists("WorkspaceGuide/core.md") }
 
-    /// `scripts/export-denylist.txt` — the private-name list. It must NEVER
-    /// ship (it carries the very identifiers the release must not contain),
-    /// so the help-text neutrality gate is research-tree-only by design.
-    /// The release tree's neutrality is proved instead by the public-tier
-    /// scan in CI and by `AgentContractTests`' literal denylist.
-    static var hasExportDenylist: Bool { exists("scripts/export-denylist.txt") }
+    // The private-name list is deliberately NOT one of these fixtures: it
+    // never lives in a checkout at all. The neutrality gates read it through
+    // `PrivateNames`, from a file outside the repository.
 
     /// `docs/examples/starter-study-pack.json` — the paste-ready worked
     /// example pack. `SampleWorkspace/` ships; the pack and its walkthrough
@@ -63,13 +60,9 @@ enum ResearchTreeFixtures {
         exists("prompts/panels/templates/deliberative-appellate-panel-v1.json")
     }
 
-    // MARK: - Build-output fixtures
-
-    /// `web/results-explorer/` — the embedded Results Explorer bundle. It is
-    /// a committed BUILD OUTPUT in the research tree and is built from
-    /// source (`results-explorer/`, `npm run build:embed`) in the release
-    /// tree, so a cold clone has `web/` only after that build runs. Tests
-    /// that assert the developer-checkout resource layout skip until it is
-    /// there.
-    static var hasBuiltWebAssets: Bool { exists("web/results-explorer/index.html") }
+    // `web/results-explorer/` — the embedded Results Explorer bundle — is
+    // deliberately NOT a fixture either. It is untracked build output
+    // (`scripts/build-results-explorer.sh`), and no test may depend on
+    // whether someone has built it: `web/` itself always resolves, because
+    // `web/index.html` beside the bundle is tracked source.
 }

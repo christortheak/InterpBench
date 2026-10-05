@@ -5,12 +5,9 @@
 # real leak (added 2026-08-19 after a real username crossed through a
 # printing-but-not-gating scan).
 #
-# In-test negative assertions and guard vocabularies (each deliberately
-# carries denylist terms so the neutrality gates cannot pass vacuously):
-Server/tests/test_bootstrap_script.py :: denylist
-Tests/ExperimentKitTests/AgentContractTests.swift :: denylist
-Tests/ExperimentKitTests/ClusterEnvironmentRendererTests.swift :: denylist
-Tests/ExperimentKitTests/ClusterSiteProfileTests.swift :: denylist
+# No test carries a private name any more: the neutrality gates read the
+# list from a file outside the repository (scripts/ci/private_names.py), so
+# the four `denylist` entries that used to sit here are gone.
 #
 # The three fake sk- tokens the secret-hygiene tests use as fixtures:
 Tests/ExperimentKitTests/ClusterCLITests.swift :: secret

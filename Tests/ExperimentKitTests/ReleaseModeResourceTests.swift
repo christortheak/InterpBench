@@ -570,16 +570,15 @@ import Testing
         // guess with what the provisioner actually rsyncs).
         #expect(try CodeResources.clusterPayload() == root)
         #expect(try CodeResources.analysisTools().path == root.appending(path: "scripts").path)
-        // `web/` is a committed BUILD OUTPUT here and is built from source
-        // (`results-explorer/`, `npm run build:embed`) in the released tree,
-        // so a cold clone has no `web/` until that build runs — and
-        // `webAssets()` fails closed, by design, when a family is missing.
-        // Asserting it unconditionally made this test a proxy for "has
-        // someone run npm yet". Every other family is checkout content and
-        // stays unconditional.
-        if ResearchTreeFixtures.hasBuiltWebAssets {
-            #expect(try CodeResources.webAssets().path == root.appending(path: "web").path)
-        }
+        // `web/` resolves on a cold clone: `web/index.html` is tracked source.
+        // Only `web/results-explorer/` inside it is build output (untracked,
+        // produced by `scripts/build-results-explorer.sh`), and this
+        // assertion does not depend on whether anyone has built it.
+        #expect(try CodeResources.webAssets().path == root.appending(path: "web").path)
+        #expect(
+            FileManager.default.fileExists(
+                atPath: root.appending(path: "web/index.html").path),
+            "web/index.html is tracked source and must be in every checkout")
         // The checkout ships no packaging manifest — honest absence.
         #expect(try CodeResources.buildManifest() == nil)
     }

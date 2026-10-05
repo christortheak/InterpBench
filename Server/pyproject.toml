@@ -1,5 +1,7 @@
 [build-system]
-requires = ["setuptools>=68"]
+# 77 is the first setuptools that reads `license` as an SPDX expression
+# (PEP 639), which is the form below.
+requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,6 +10,13 @@ version = "0.9.6"
 description = "PyTorch/HF parallel to SteerLab's MLX steering engine, for remote-cluster activation-steering experiments."
 readme = "README.md"
 requires-python = ">=3.10"
+# The repository's LICENSE and NOTICE live at its root, one level above this
+# project, and are not duplicated here. scripts/build-client-release.py copies
+# them beside this file in its disposable build copy, where setuptools' default
+# license-file patterns pick them up, so a released wheel carries both in
+# <dist-info>/licenses/. An editable install from a checkout has no copies to
+# find and simply records the expression.
+license = "Apache-2.0"
 # Concept-agnostic steering core + experiment orchestration + a thin HTTP service.
 # Mirrors the on-disk artifact contracts of the Swift/MLX app so vectors,
 # manifests, and run directories interoperate. See README.md.

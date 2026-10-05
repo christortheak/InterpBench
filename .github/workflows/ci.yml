@@ -51,6 +51,15 @@ jobs:
         run: |
           python scripts/ci/check-generated.py
           python scripts/ci/qualify-technique-example.py
+      - name: Private-name list (from a repository secret, when one is set)
+        # The neutrality guards check that one researcher's site, study, and
+        # account names stay out of what ships. The names are not in the
+        # repository: this repository keeps them in the secret named below,
+        # and with it the guards are REQUIRED for the rest of the job. A fork
+        # has no secret, so its guards skip and say why — they do not fail.
+        env:
+          STEERLAB_PRIVATE_NAMES: ${{ secrets.STEERLAB_PRIVATE_NAMES }}
+        run: python scripts/ci/private_names.py --from-ci-secret
       - name: Run the server suite
         working-directory: Server
         env:
@@ -58,9 +67,10 @@ jobs:
         run: python -m pytest -q
 
   results-explorer:
-    # The canonical results surface builds from source in the release tree —
-    # its committed `web/results-explorer/` build output does NOT ship, so
-    # "can a cold clone produce it?" is a release-boundary question, not a
+    # The canonical results surface builds from source — its build output,
+    # `web/results-explorer/`, is not tracked, and the app build produces it
+    # every time (scripts/build-results-explorer.sh). So "can a cold clone
+    # produce it?" is a release-boundary question, not a
     # convenience. Lint + unit tests + build: the standing lint findings were
     # cleaned up (2026-08-19), so the lane now holds that line rather than
     # letting errors creep back in. `--max-warnings` is deliberately NOT set:

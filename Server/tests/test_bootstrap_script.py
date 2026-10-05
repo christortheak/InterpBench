@@ -13,6 +13,9 @@ import subprocess
 
 import pytest
 
+from private_name_guard import (
+    assert_names_nothing_private, own_paths, private_names)
+
 SCRIPTS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        "scripts")
 BOOTSTRAP = os.path.join(SCRIPTS, "bootstrap.sh")
@@ -903,8 +906,18 @@ def test_bootstrap_guard_falls_back_to_its_built_in_rule_without_a_profile(tmp_p
     # verb is one institution's, and a site that has one declares it.
     assert "'^ss-sub'" in proc.stderr
     assert "get an allocation with your site's command" in proc.stderr
-    for identifier in ("sapelo", "gacrc", "uga.edu"):
-        assert identifier not in proc.stderr.lower(), identifier
+
+
+def test_the_built_in_guard_refusal_names_no_private_site(tmp_path):
+    """The same hand-run refusal, read for one institution's names. They are
+    private, so they come from the private-name list (outside the repository)
+    rather than being written here; with no list this guard is skipped."""
+    names = private_names()
+    proc = _policy_guard_run(tmp_path, "ss-sub2.example.edu", SLURM_JOB_ID="4242")
+    assert proc.returncode == 64
+    assert_names_nothing_private(
+        proc.stderr, names, "the built-in login-node refusal",
+        ignoring=own_paths(tmp_path))
 
 
 def test_the_committed_v1_render_reproduces_the_historical_guard(tmp_path):
@@ -1253,9 +1266,8 @@ def test_prestage_floor_comes_from_the_render_when_the_site_declares_one(tmp_pat
     assert "constraints.storage.prestageMinFreeGB" in proc.stdout
     assert "from the pushed render" in proc.stdout
     # A declared refusal speaks generically — it names the SITE's key, never
-    # some other institution's filesystem.
-    for identifier in ("sapelo", "gacrc", "uga.edu"):
-        assert identifier not in proc.stdout.lower(), identifier
+    # some other institution's filesystem (checked by name in
+    # test_prestage_refusals_name_no_private_site below).
 
     # A floor the filesystem clears lets the step proceed to acquisition.
     ok = _run_stage_jlens(tmp_path / "b", declared_gb=1)
@@ -1271,8 +1283,24 @@ def test_prestage_floor_falls_back_to_the_scripts_own_and_says_so(tmp_path):
     assert "FAIL jlensStage" in proc.stdout
     assert "GROUP quota" in proc.stdout
     assert "constraints.storage.prestageMinFreeGB" not in proc.stdout
-    for identifier in ("sapelo", "gacrc", "uga.edu"):
-        assert identifier not in proc.stdout.lower(), identifier
+
+
+def test_prestage_refusals_name_no_private_site(tmp_path):
+    """Both refusals above — the site-declared floor and the script's own
+    fallback — read for one institution's names. The names are private, so
+    they come from the private-name list (outside the repository); with no
+    list this guard is skipped."""
+    names = private_names()
+    declared = _run_stage_jlens(tmp_path / "declared", declared_gb=10_000_000)
+    assert "FAIL jlensStage" in declared.stdout
+    assert_names_nothing_private(
+        declared.stdout, names, "the site-declared pre-stage refusal",
+        ignoring=own_paths(tmp_path))
+    fallback = _run_stage_jlens(tmp_path / "fallback", free_floor_gb=10_000_000)
+    assert "FAIL jlensStage" in fallback.stdout
+    assert_names_nothing_private(
+        fallback.stdout, names, "the built-in pre-stage refusal",
+        ignoring=own_paths(tmp_path))
 
 
 def test_prestage_floor_reads_a_sourced_site_environment_too(tmp_path):

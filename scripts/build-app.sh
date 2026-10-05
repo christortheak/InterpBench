@@ -11,8 +11,14 @@
 #                         For a shippable build pass the Developer ID, e.g.
 #                           --identity "Developer ID Application: … (TEAMID)"
 #     --bundle-id ID      CFBundleIdentifier (default: org.steerlab.SteerLab)
+#     --build-root DIR    the NEUTRAL directory the Release build runs in. The
+#                         package sources are staged to DIR/src and compiled
+#                         there, so no binary embeds this checkout's path —
+#                         see "IDENTIFYING STRINGS" below. Must not sit under
+#                         a home folder and must not contain whitespace
+#                         (default: /private/var/tmp/steerlab-build)
 #     --derived-data DIR  xcodebuild -derivedDataPath
-#                         (default: <repo>/.dd-app.nosync)
+#                         (default: <build-root>/dd)
 #     --no-build          reuse an existing products directory
 #     --no-verify         skip the post-assembly launch/codesign checks (the
 #                         launch check is OFFLINE — STEERLAB_LAUNCH_CHECK=1,
@@ -21,17 +27,31 @@
 #                          beside the executable (see "Metal" below)
 #     --install           move the finished bundle to ~/SteerLab/SteerLab.app
 #     --force             replace an existing output or install target
-#     --package           zip an already-built SteerLab.app (installed copy
-#                         first, then the build dir) into a signature-
-#                         preserving, version-named release artifact and exit.
-#                         Run it AFTER stapling for the artifact you attach to
-#                         a GitHub Release — stapling modifies the bundle, so
-#                         a pre-staple zip is not the one to ship.
+#     --package           zip the SteerLab.app in --output — the bundle a build
+#                         wrote there, and the one you stapled — into a
+#                         signature-preserving, version-named release artifact,
+#                         write its checksum beside it (<zip>.sha256), and
+#                         exit. Never the installed copy. Run it AFTER
+#                         stapling for the artifact you attach to a GitHub
+#                         Release — stapling modifies the bundle, so a
+#                         pre-staple zip is not the one to ship. It refuses:
+#                           * an ad-hoc signature (the zip would not open on
+#                             another Mac) unless --allow-adhoc;
+#                           * a checkout that is not the release — uncommitted
+#                             or untracked changes, no `v<version>` tag on
+#                             HEAD, or a bundle built from another commit —
+#                             unless --allow-unreleased.
+#     --allow-adhoc       with --package: zip an ad-hoc-signed bundle anyway
+#                         (an archive, not a release asset)
+#     --allow-unreleased  with --package: zip from a dirty, untagged, or
+#                         moved-on checkout anyway (not a release asset)
 #     --notarize          print the notarization commands and exit (a STUB:
 #                         it runs nothing and needs no credentials)
 #
 # Exit codes: 0 ok · 2 usage · 3 build failed · 4 products incomplete ·
-#             5 assembly failed · 6 signing or verification failed
+#             5 assembly failed · 6 signing or verification failed ·
+#             7 the assembled bundle carries identifying strings ·
+#             8 --package refused: the checkout is not a clean, tagged release
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # WHY A SCRIPT AND NOT AN .xcodeproj
@@ -63,6 +83,49 @@
 # entitlements file to codesign ONLY when that file declares at least one
 # key. While it stays empty, the signature carries no entitlement blob at
 # all — the strongest posture, and the one that notarizes most cleanly.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# IDENTIFYING STRINGS: WHY THE BUILD DOES NOT RUN IN THE CHECKOUT
+#
+# A compiler writes source-file paths into the binary it produces. Built in
+# place, both shipped executables carried the build machine's home folder —
+# and so the account name — dozens of times: C and C++ `__FILE__` in the
+# package checkouts under the derived-data directory, Swift `#file` in the
+# dependencies still in Swift 5 mode, and this project's own `#filePath`
+# (`CodeResources.compiledCheckoutPath`, which is deliberate).
+#
+# What was measured with Xcode 27 on a Swift package scheme, and what this
+# script therefore does:
+#
+#   * clang's `-ffile-prefix-map=<old>=<new>` DOES rewrite `__FILE__`, and it
+#     reaches package targets from the xcodebuild command line when the value
+#     starts with `$(inherited)`. Passed below for C, C++ and Objective-C.
+#   * Swift's `-file-prefix-map` rewrites debug, coverage and index paths
+#     ONLY. A `#filePath` or Swift-5 `#file` literal is compiled in exactly as
+#     the path was handed to the compiler, and xcodebuild hands over absolute
+#     paths. No build setting changes that (a symlinked working directory is
+#     resolved before the compiler sees it). It is still passed, so that the
+#     debug information is location-independent too.
+#   * So the build itself runs from a NEUTRAL location: `--build-root`.
+#     `Package.swift`, `Package.resolved`, `Sources/` and `Tests/` are staged
+#     to `<build-root>/src` (rsync, so an unchanged file keeps its identity
+#     and incremental builds stay incremental), xcodebuild runs there, and
+#     derived data defaults to `<build-root>/dd`. Every compiled-in path then
+#     begins with the build root, which names nobody.
+#
+# Consequence, stated because it is observable: in a build made this way
+# `CodeResources.compiledCheckoutPath` is `<build-root>/src`, not the
+# developer's checkout. A bundled build asserts release mode and never
+# resolves resources through it.
+#
+# None of that is taken on trust. After assembly `ci/artifact_scan.py` reads
+# every byte of the bundle — both executables, every bundled resource, and
+# the wheel inside the client release — for a home-folder path or a term
+# from the private-name list (`~/.steerlab/private-names.txt`, or the file
+# `$STEERLAB_PRIVATE_NAMES_FILE` names), and the build stops, before anything
+# is signed, on a finding. An ad-hoc build runs the same scan but tolerates a
+# machine that has no list (it has nothing to leak); a build signed for
+# distribution requires one.
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # iCloud
@@ -179,7 +242,11 @@ python3 "$SCRIPT_DIR/ci/check-python-client-identity.py" || exit 1
 OUTPUT="$HOME/SteerLab/build"
 IDENTITY="-"
 BUNDLE_ID="org.steerlab.SteerLab"
-DERIVED="$REPO/.dd-app.nosync"
+# The neutral build location — see "IDENTIFYING STRINGS" in the header. /var/tmp
+# rather than /tmp so the derived data survives a restart; neither names a
+# person. DERIVED is resolved after flag parsing (it defaults under this).
+BUILD_ROOT="/private/var/tmp/steerlab-build"
+DERIVED=""
 DO_BUILD=1
 DO_VERIFY=1
 COLOCATE=0
@@ -187,6 +254,8 @@ DO_INSTALL=0
 FORCE=0
 NOTARIZE_ONLY=0
 PACKAGE_ONLY=0
+ALLOW_ADHOC=0
+ALLOW_UNRELEASED=0
 
 SCHEME="SteerLabApp"
 EXECUTABLE="SteerLabApp"
@@ -207,6 +276,7 @@ while [ $# -gt 0 ]; do
     --output)        OUTPUT="$2"; shift 2 ;;
     --identity)      IDENTITY="$2"; shift 2 ;;
     --bundle-id)     BUNDLE_ID="$2"; shift 2 ;;
+    --build-root)    BUILD_ROOT="$2"; shift 2 ;;
     --derived-data)  DERIVED="$2"; shift 2 ;;
     --no-build)      DO_BUILD=0; shift ;;
     --no-verify)     DO_VERIFY=0; shift ;;
@@ -215,15 +285,30 @@ while [ $# -gt 0 ]; do
     --force)         FORCE=1; shift ;;
     --notarize)      NOTARIZE_ONLY=1; shift ;;
     --package)       PACKAGE_ONLY=1; shift ;;
+    --allow-adhoc)   ALLOW_ADHOC=1; shift ;;
+    --allow-unreleased) ALLOW_UNRELEASED=1; shift ;;
     -h|--help)       usage; exit 0 ;;
     *) echo "build-app.sh: unknown flag: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
+[ -n "$DERIVED" ] || DERIVED="$BUILD_ROOT/dd"
+
 APP_FINAL="$OUTPUT/$APP_NAME"
 # Everything is assembled and signed in APP (a staging path) and only then
 # moved to APP_FINAL — see the staging note below.
 APP="$APP_FINAL"
+
+# One exit handler for the whole script: the assembly staging directory and
+# the build-root lock are both released however the script ends.
+STAGE=""
+BUILD_LOCK=""
+cleanup() {
+  [ -n "$STAGE" ] && rm -rf "$STAGE"
+  [ -n "$BUILD_LOCK" ] && rmdir "$BUILD_LOCK" 2>/dev/null
+  return 0
+}
+trap cleanup EXIT
 
 # ── --package: zip an existing bundle for release, and exit ──────────────────
 # The artifact is the SAME shape notarytool submits (ditto -c -k --keepParent,
@@ -233,24 +318,59 @@ APP="$APP_FINAL"
 # Run it after `stapler staple` for the shippable zip — the ticket is stapled
 # INTO the bundle, so only a post-staple zip opens promptless on a fresh Mac.
 if [ "$PACKAGE_ONLY" -eq 1 ]; then
-  PKG_APP=""
-  for candidate in "$INSTALL_DIR/$APP_NAME" "$OUTPUT/$APP_NAME"; do
-    if [ -d "$candidate" ]; then PKG_APP="$candidate"; break; fi
-  done
-  [ -n "$PKG_APP" ] || die "no $APP_NAME found in $INSTALL_DIR or $OUTPUT — build one first"
+  # THE BUILD OUTPUT, and only that. This used to prefer the installed copy
+  # (~/SteerLab/SteerLab.app) whenever one existed, so the zip could hold a
+  # different bundle from the one that was just built, notarized, and
+  # stapled — an older install, or one signed some other way.
+  PKG_APP="$OUTPUT/$APP_NAME"
+  [ -d "$PKG_APP" ] || die "no $APP_NAME in $OUTPUT. Build one first (scripts/build-app.sh --identity …), or pass --output <the directory it was built into>. The installed copy is never packaged: the release is the bundle a build wrote and you stapled."
   # A broken signature must fail HERE, not on a stranger's Mac.
   codesign --verify --deep --strict "$PKG_APP" \
-    || die "$PKG_APP fails signature verification — rebuild/re-sign before packaging"
-  if codesign -dv "$PKG_APP" 2>&1 | grep -q "flags=.*adhoc"; then
-    echo "build-app.sh: WARNING — $PKG_APP is ad-hoc signed; this zip will" >&2
-    echo "  not open on other Macs. Fine for archiving, wrong for a release." >&2
-  fi
+    || die "$PKG_APP fails signature verification — rebuild/re-sign before packaging" 6
+  # Captured, not piped into grep: under pipefail a reader that stops early
+  # can turn a match into a failed pipeline, and "ad-hoc" would read as "not".
+  SIGN_INFO="$(codesign -dv "$PKG_APP" 2>&1 || true)"
+  case "$SIGN_INFO" in
+    *flags=*adhoc*)
+      [ "$ALLOW_ADHOC" -eq 1 ] || die "$PKG_APP is ad-hoc signed, so this zip would not open on another Mac. Rebuild with --identity \"Developer ID Application: … (TEAMID)\" for a release, or pass --allow-adhoc to archive this bundle anyway." 6
+      echo "build-app.sh: NOTE — packaging an ad-hoc-signed bundle (--allow-adhoc). An archive, not a release asset." >&2
+      ;;
+  esac
   PKG_VERSION="$(plutil -extract SLFullVersionString raw "$PKG_APP/Contents/Info.plist" 2>/dev/null || echo unknown)"
   PKG_REV="$(plutil -extract SLSourceRevision raw "$PKG_APP/Contents/Info.plist" 2>/dev/null || echo unknown)"
+
+  # A release asset has to be traceable to one clean, tagged commit: the
+  # checkout it is packaged from is that commit, unmodified, tagged with the
+  # version the bundle reports, and the bundle was built from it.
+  UNRELEASED=""
+  HEAD_REV="$(git -C "$REPO" rev-parse --short=8 HEAD 2>/dev/null || true)"
+  if [ -z "$HEAD_REV" ]; then
+    UNRELEASED="this checkout has no git history to tie the bundle to"
+  else
+    if [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]; then
+      UNRELEASED="the checkout has uncommitted or untracked changes"
+    fi
+    HEAD_TAGS="$(git -C "$REPO" tag --points-at HEAD 2>/dev/null | tr '\n' ' ')"
+    case " $HEAD_TAGS" in
+      *" v$PKG_VERSION "*) ;;
+      *) UNRELEASED="${UNRELEASED:+$UNRELEASED; }the commit $HEAD_REV is not tagged v$PKG_VERSION (tags on it: ${HEAD_TAGS:-none})" ;;
+    esac
+    if [ "$PKG_REV" != "$HEAD_REV" ]; then
+      UNRELEASED="${UNRELEASED:+$UNRELEASED; }the bundle was built from $PKG_REV, but the checkout is at $HEAD_REV"
+    fi
+  fi
+  if [ -n "$UNRELEASED" ]; then
+    [ "$ALLOW_UNRELEASED" -eq 1 ] || die "not packaging: $UNRELEASED. A release asset comes from one clean commit tagged v$PKG_VERSION: commit your changes, tag that commit, build from it, then package. To zip this bundle anyway — as an archive, not a release asset — pass --allow-unreleased." 8
+    echo "build-app.sh: NOTE — $UNRELEASED (--allow-unreleased). An archive, not a release asset." >&2
+  fi
+
   PKG_ZIP="$OUTPUT/SteerLab-$PKG_VERSION+$PKG_REV.zip"
-  mkdir -p "$OUTPUT" || die "could not create $OUTPUT"
-  rm -f "$PKG_ZIP"
+  rm -f "$PKG_ZIP" "$PKG_ZIP.sha256"
   ditto -c -k --keepParent "$PKG_APP" "$PKG_ZIP" || die "ditto failed"
+  # The checksum file, in the form `shasum -a 256 -c` reads, naming the zip by
+  # its file name so the pair can be moved or downloaded together.
+  ( cd "$OUTPUT" && shasum -a 256 "$(basename "$PKG_ZIP")" > "$(basename "$PKG_ZIP").sha256" ) \
+    || die "could not write $PKG_ZIP.sha256"
   if xcrun stapler validate "$PKG_APP" >/dev/null 2>&1; then
     STAPLE_NOTE="stapled — ships promptless"
   else
@@ -258,8 +378,9 @@ if [ "$PACKAGE_ONLY" -eq 1 ]; then
   fi
   echo "packaged: $PKG_ZIP"
   echo "  from:   $PKG_APP ($STAPLE_NOTE)"
-  echo "  $(du -sh "$PKG_ZIP" | cut -f1), sha256 $(shasum -a 256 "$PKG_ZIP" | cut -d' ' -f1)"
-  echo "  release: gh release upload <tag> \"$PKG_ZIP\""
+  echo "  $(du -sh "$PKG_ZIP" | cut -f1), sha256 $(cut -d' ' -f1 "$PKG_ZIP.sha256")"
+  echo "  checksum file: $PKG_ZIP.sha256"
+  echo "  release: gh release upload <tag> \"$PKG_ZIP\" \"$PKG_ZIP.sha256\""
   exit 0
 fi
 
@@ -290,7 +411,11 @@ Prerequisites
 Submit, staple, confirm
        scripts/build-app.sh --package
        # prints the versioned zip path — the SAME artifact shape notarytool
-       # takes (ditto -c -k --keepParent under the hood):
+       # takes (ditto -c -k --keepParent under the hood). It zips the bundle
+       # in --output, never the installed copy, and it refuses a checkout
+       # that is not one clean commit tagged v<version>: tag the release
+       # commit before this step (or pass --allow-unreleased for a
+       # submission you do not intend to publish).
 
        xcrun notarytool submit "<the printed .zip>" \\
          --keychain-profile "steerlab-notary" --wait
@@ -308,8 +433,9 @@ Submit, staple, confirm
 
 Distribute the STAPLED .app: re-run  scripts/build-app.sh --package  AFTER
 stapling — the ticket lives in the bundle, so only the post-staple zip opens
-promptless on a fresh Mac. That zip (version+revision in its name, sha256
-printed) is the GitHub Release asset:  gh release upload <tag> <zip>.
+promptless on a fresh Mac. That zip (version+revision in its name) and the
+<zip>.sha256 written beside it are the GitHub Release assets:
+gh release upload <tag> <zip> <zip>.sha256.
 NOTARIZE
   exit 0
 fi
@@ -339,6 +465,81 @@ fi
 
 # ── Build ────────────────────────────────────────────────────────────────────
 if [ "$DO_BUILD" -eq 1 ]; then
+  # ── Stage the package at the neutral build root ────────────────────────────
+  # See "IDENTIFYING STRINGS" in the header for why the compiler must not see
+  # this checkout's own path.
+  step "Staging the package sources at the neutral build root ($BUILD_ROOT)"
+  case "$BUILD_ROOT" in
+    /*) ;;
+    *) die "--build-root must be an absolute path (got '$BUILD_ROOT')" 2 ;;
+  esac
+  # A build setting's value is split on whitespace, so a path carrying any
+  # could not be written into the prefix maps below.
+  case "$BUILD_ROOT$DERIVED" in
+    *[[:space:]]*) die "--build-root and --derived-data must not contain whitespace" 2 ;;
+  esac
+  # (`[U]sers` so this script never spells a home-folder prefix itself.)
+  case "$BUILD_ROOT/" in
+    "$HOME"/*|/[U]sers/*|/home/*)
+      echo "build-app.sh: WARNING — the build root $BUILD_ROOT is under a home folder," >&2
+      echo "  so the binaries will embed it and the artifact scan will stop the build." >&2
+      echo "  Drop --build-root to use the neutral default." >&2
+      ;;
+  esac
+  mkdir -p "$BUILD_ROOT" "$DERIVED" || die "could not create $BUILD_ROOT or $DERIVED" 3
+  # One build at a time per build root: two checkouts staging into the same
+  # directory would compile a mixture of both.
+  BUILD_LOCK="$BUILD_ROOT/.build-app.lock"
+  if ! mkdir "$BUILD_LOCK" 2>/dev/null; then
+    held="$BUILD_LOCK"
+    BUILD_LOCK=""          # not ours — the exit handler must leave it alone
+    die "another build-app.sh is using $BUILD_ROOT, or an earlier one was interrupted. If no build is running, remove $held and retry. To build two checkouts at once, give each its own --build-root outside your home folder." 3
+  fi
+  SRC_STAGE="$BUILD_ROOT/src"
+  mkdir -p "$SRC_STAGE" || die "could not create $SRC_STAGE" 3
+  # rsync, not a fresh copy: an unchanged file keeps its inode and
+  # modification time, which is what lets the next build stay incremental.
+  # `Tests/` travels because the package manifest declares test targets and
+  # the package does not load without their directories.
+  rsync -a --delete --exclude ".DS_Store" \
+    "$REPO/Sources" "$REPO/Tests" "$SRC_STAGE/" \
+    || die "could not stage Sources/ and Tests/ at $SRC_STAGE" 3
+  rsync -a "$REPO/Package.swift" "$REPO/Package.resolved" "$SRC_STAGE/" \
+    || die "could not stage the package manifest at $SRC_STAGE" 3
+
+  # Every spelling of a directory a compiler may be handed: as given, with
+  # symlinks resolved, and that physical path without its /private prefix
+  # (Xcode standardizes /private/var and /private/tmp away for Swift inputs,
+  # while clang is handed the physical path — both were observed).
+  path_spellings() {
+    local given="$1" physical
+    physical="$(cd "$given" 2>/dev/null && pwd -P)" || physical="$given"
+    printf '%s\n' "$given"
+    [ "$physical" = "$given" ] || printf '%s\n' "$physical"
+    case "$physical" in
+      /private/*) [ "${physical#/private}" = "$given" ] || printf '%s\n' "${physical#/private}" ;;
+    esac
+  }
+  # Derived data first: when it sits inside the build root's own tree a later
+  # map must not shadow it.
+  REMAP_CLANG=""
+  REMAP_SWIFT=""
+  for spelling in $(path_spellings "$DERIVED"); do
+    REMAP_CLANG="$REMAP_CLANG -ffile-prefix-map=$spelling=/steerlab/build"
+    REMAP_SWIFT="$REMAP_SWIFT -file-prefix-map $spelling=/steerlab/build"
+  done
+  for spelling in $(path_spellings "$SRC_STAGE"); do
+    REMAP_CLANG="$REMAP_CLANG -ffile-prefix-map=$spelling=/steerlab/src"
+    REMAP_SWIFT="$REMAP_SWIFT -file-prefix-map $spelling=/steerlab/src"
+  done
+  # `$(inherited)` keeps each package target's own flags: a command-line
+  # setting replaces a target's value outright without it.
+  REMAP_SETTINGS=(
+    "OTHER_CFLAGS=\$(inherited)$REMAP_CLANG"
+    "OTHER_CPLUSPLUSFLAGS=\$(inherited)$REMAP_CLANG"
+    "OTHER_SWIFT_FLAGS=\$(inherited)$REMAP_SWIFT"
+  )
+
   step "Building $SCHEME (Release) — only Xcode can build the Metal shaders"
   # CLANG_COVERAGE_MAPPING=NO: the package has test targets, so Xcode's
   # auto-generated scheme turns on gather-coverage, and that instruments even
@@ -346,20 +547,20 @@ if [ "$DO_BUILD" -eq 1 ]; then
   # sections (megabytes of them) and write default.profraw into whatever cwd
   # they run from. A command-line setting outranks the scheme; the test lane
   # (`xcodebuild test`) is a different invocation and keeps its coverage.
-  xcodebuild build -skipMacroValidation -scheme "$SCHEME" \
-    -destination 'platform=macOS' -configuration Release \
-    CLANG_COVERAGE_MAPPING=NO \
-    -derivedDataPath "$DERIVED" >/dev/null \
-    || die "the build failed — rerun the xcodebuild line without >/dev/null to see why" 3
+  ( cd "$SRC_STAGE" && xcodebuild build -skipMacroValidation -scheme "$SCHEME" \
+      -destination 'platform=macOS' -configuration Release \
+      CLANG_COVERAGE_MAPPING=NO "${REMAP_SETTINGS[@]}" \
+      -derivedDataPath "$DERIVED" >/dev/null ) \
+    || die "the build failed — rerun the xcodebuild line from $SRC_STAGE without >/dev/null to see why" 3
 
   # The same derived-data directory, so the CLI links the module graph the app
   # build already produced — this is a link step, not a second full build.
   step "Building $CLI_SCHEME (Release) — the CLI the bundle carries"
-  xcodebuild build -skipMacroValidation -scheme "$CLI_SCHEME" \
-    -destination 'platform=macOS' -configuration Release \
-    CLANG_COVERAGE_MAPPING=NO \
-    -derivedDataPath "$DERIVED" >/dev/null \
-    || die "the $CLI_SCHEME build failed — rerun the xcodebuild line without >/dev/null to see why" 3
+  ( cd "$SRC_STAGE" && xcodebuild build -skipMacroValidation -scheme "$CLI_SCHEME" \
+      -destination 'platform=macOS' -configuration Release \
+      CLANG_COVERAGE_MAPPING=NO "${REMAP_SETTINGS[@]}" \
+      -derivedDataPath "$DERIVED" >/dev/null ) \
+    || die "the $CLI_SCHEME build failed — rerun the xcodebuild line from $SRC_STAGE without >/dev/null to see why" 3
 fi
 
 PRODUCTS="$DERIVED/Build/Products/Release"
@@ -409,9 +610,7 @@ fi
 # entirely, and only the finished, signed bundle is moved to the output path.
 # That also buys the atomicity install-cli.sh has: nothing live is touched
 # until the whole thing is built, signed, and sealed.
-STAGE="${TMPDIR:-/tmp}/steerlab-app-build.$$"
-cleanup() { rm -rf "$STAGE"; }
-trap cleanup EXIT
+STAGE="${TMPDIR:-/tmp}/steerlab-app-build.$$"   # removed by `cleanup` on exit
 rm -rf "$STAGE"
 mkdir -p "$STAGE" || die "could not create the staging directory $STAGE"
 APP="$STAGE/$APP_NAME"
@@ -460,20 +659,37 @@ printf '  %-16s %s\n' "$HELPERS_DIR_NAME" "$(du -sh "$HELPERS" | cut -f1)"
 step "Staging CodeResources families"
 cp -R "$REPO/WorkspaceSeed" "$RES/WorkspaceSeed" || die "could not stage WorkspaceSeed"
 # web/ splits by nature: index.html is hand-written SOURCE and ships in
-# the repo; results-explorer/ is BUILD OUTPUT the repo deliberately does
-# not carry (the CI lane's rule — a cold clone must produce it), so the
-# app build produces it here when absent. First caught building from a
-# fresh clone (2026-08-20): every earlier build ran from a tree that
-# happened to carry both.
+# the repo; results-explorer/ is BUILD OUTPUT, which the repo does not
+# carry. It is produced HERE, from source, on every build, and written
+# straight into the bundle — never copied from the checkout's own
+# web/results-explorer. That copy is a development convenience
+# (run-app.sh makes it), and copying it is how the app came to ship a
+# bundle that was three days older than its source: the build used
+# whatever directory happened to exist.
 mkdir -p "$RES/web"
 cp "$REPO/web/index.html" "$RES/web/index.html" || die "web/index.html missing — it is checked-in source"
-if [ ! -d "$REPO/web/results-explorer" ]; then
-  step "Building the embedded results explorer (web/results-explorer is not checked in)"
-  command -v npm >/dev/null 2>&1 || die "npm is required to build the results explorer (web/results-explorer is build output, produced from results-explorer/)"
-  ( cd "$REPO/results-explorer" && npm ci --silent && npm run --silent build:embed ) || die "results-explorer build failed"
-fi
-cp -R "$REPO/web/results-explorer" "$RES/web/results-explorer" || die "could not stage the results explorer build"
+step "Building the embedded results explorer from source"
+"$SCRIPT_DIR/build-results-explorer.sh" --locked --output "$RES/web/results-explorer" 2>&1 | sed 's/^/  /' \
+  || die "the results explorer build failed (see the lines above). It is built from results-explorer/ with npm, which needs Node.js 22.13 or later."
 cp "$SUPPORT/SteerLab.icns" "$RES/SteerLab.icns" || die "could not stage the app icon"
+
+# ── Licenses ─────────────────────────────────────────────────────────────────
+# The app is distributed as a binary, so the terms it is offered under have
+# to travel INSIDE it: SteerLab's own LICENSE and NOTICE, and the license
+# texts of what the build linked in or embedded. Those are collected from
+# what this build actually used — every package pinned in Package.resolved,
+# read from its checkout in the derived data, and the npm packages the web
+# bundle just reported it contains — and the step refuses rather than omits.
+step "Staging the license, the notice, and third-party notices"
+cp "$REPO/LICENSE" "$RES/LICENSE" || die "LICENSE is missing from the checkout"
+cp "$REPO/NOTICE" "$RES/NOTICE" || die "NOTICE is missing from the checkout"
+python3 "$SCRIPT_DIR/generate-third-party-notices.py" \
+  --output "$RES/THIRD-PARTY-NOTICES.txt" \
+  --package-resolved "$REPO/Package.resolved" \
+  --checkouts "$DERIVED/SourcePackages/checkouts" \
+  --web-bundle "$RES/web/results-explorer" \
+  --web-node-modules "$REPO/results-explorer/node_modules" 2>&1 | sed 's/^/  /' \
+  || die "could not collect the third-party license notices (see the line above)"
 
 # AnalysisTools = the checkout's scripts/, minus generated caches.
 rsync -a --exclude "__pycache__" --exclude "*.pyc" --exclude ".DS_Store" \
@@ -574,6 +790,20 @@ with open(out, "w", encoding="utf-8") as handle:
     json.dump(manifest, handle, sort_keys=True, indent=2)
 print(f"  {len(files)} file(s) hashed")
 PY
+
+# ── Scan what was assembled ──────────────────────────────────────────────────
+# The source scan reads tracked source; this reads the BUILT thing, which is
+# what a stranger downloads — see "IDENTIFYING STRINGS" in the header. Before
+# signing, so a bundle with a finding is never sealed, placed, or packaged.
+step "Scanning the assembled bundle for identifying strings"
+SCAN_ARGS=()
+if [ "$IDENTITY" = "-" ]; then
+  # An ad-hoc build cannot be distributed. On a machine with no private-name
+  # list it still checks home-folder paths; with a list it checks both.
+  SCAN_ARGS+=(--allow-missing-list)
+fi
+python3 "$SCRIPT_DIR/ci/artifact_scan.py" ${SCAN_ARGS[@]+"${SCAN_ARGS[@]}"} "$APP" 2>&1 | sed 's/^/  /' \
+  || die "the assembled bundle carries identifying strings, or could not be scanned (see the lines above) — nothing was signed or placed. A home-folder path means a binary was not built at the neutral build root: drop --derived-data and --build-root, or point them outside your home folder." 7
 
 # ── Sign ─────────────────────────────────────────────────────────────────────
 # Staging in TMPDIR is what actually keeps the iCloud fileprovider's

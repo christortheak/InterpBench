@@ -774,11 +774,12 @@ extension CheckoutDependency {
         #expect(manifestRow.problem == nil)
         #expect(manifestRow.resolvedPath == nil)
         #expect(try #require(check.executableCheckout).origin == .compiledCheckout)
-        // `web/` is a committed BUILD OUTPUT (results-explorer → npm run
-        // build:embed), so a cold clone legitimately lacks it; every other
-        // family is checkout content and must resolve.
-        let expectedProblems: Set<CodeResources.Family> =
-            ResearchTreeFixtures.hasBuiltWebAssets ? [] : [.webAssets]
-        #expect(Set(check.problems.map(\.family)) == expectedProblems)
+        // Every family is checkout content and must resolve — `web/` included:
+        // `web/index.html` is tracked source, so the family is there on a
+        // cold clone. Only the Results Explorer bundle inside it
+        // (`web/results-explorer/`) is build output, and its absence is not
+        // a family-level problem: the app's Results Explorer sheet says so
+        // itself, and `scripts/run-app.sh` builds it on demand.
+        #expect(check.problems.isEmpty, "unexpected: \(check.problems)")
     }
 }

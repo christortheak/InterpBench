@@ -7,6 +7,12 @@ cd "$(dirname "$0")/.."
 if [[ -d /Applications/Xcode-beta.app ]]; then
   export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
 fi
+# The embedded Results Explorer (web/results-explorer) is build output and is
+# not tracked, so a fresh clone has none. Build it when it is missing or older
+# than its source. Never fatal: without it the app still runs, and its Results
+# Explorer sheet says the bundle is not in this build.
+scripts/build-results-explorer.sh --if-stale \
+  || echo "run-app.sh: the Results Explorer was not built (see above); the app will run without it."
 # CLANG_COVERAGE_MAPPING=NO: the auto-generated scheme gathers coverage even
 # for plain builds (the package has test targets) — an instrumented app drops
 # default.profraw into its cwd, which is how a 6 MB one ended up at the repo

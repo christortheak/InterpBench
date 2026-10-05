@@ -1054,15 +1054,20 @@ struct ClusterEnvironmentRendererTests {
         // A v1 file keeps its stamp through decode — that is what selects the
         // legacy default set (commit 84a6a60).
         #expect(try fixtureProfile("v1-maximal").schemaVersion == 1)
-        // No institutional identifiers ship in the public tree (WP5 §4.2,
-        // DECIDED 2026-08-17: the real preset lives in the private companion).
+    }
+
+    /// No institutional identifiers ship in the public tree (WP5 §4.2,
+    /// DECIDED 2026-08-17: the real preset lives in the private companion).
+    /// The identifiers come from the private-name list, which is not in the
+    /// repository — see `PrivateNames`.
+    @Test(.needsPrivateNames) func crossEngineFixturesNameNoPrivateSite() throws {
+        let names = try PrivateNames.required()
         for fixture in Self.crossEngineFixtures {
             let text = try String(
                 contentsOf: Self.fixtureDirectory.appending(component: "\(fixture).json"),
                 encoding: .utf8)
-            #expect(!text.lowercased().contains("gacrc"))
-            #expect(!text.lowercased().contains("uga.edu"))
-            #expect(!text.lowercased().contains("sapelo"))
+            let hits = names.hits(in: text)
+            #expect(hits.isEmpty, "\(fixture).json carries: \(hits.joined(separator: ", "))")
         }
     }
 
