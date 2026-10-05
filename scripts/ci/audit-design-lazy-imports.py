@@ -29,6 +29,38 @@ def audit(module, before, after):
     assert ast.dump(old) == ast.dump(new), f'{module}: runtime or validation body changed'
 
 
+PANEL_IDENTITY_HELPERS = {'DUPLICATE_ID_REPAIR', '_first_shared_id', 'duplicate_agent_id_problem',
+                          'duplicate_turn_id_problem', 'duplicate_identifier_problem',
+                          'pinned_panel_identity_problem'}
+
+
+def admit_panel_identity(tree):
+    """Remove exactly the reviewed panel-identity change (a repeated seat or turn
+    ID is refused by name; approved by the maintainer 2026-10-04) from the
+    current multi_agent tree, asserting its form, so every other body is still
+    compared. The helpers have their own behavior tests
+    (test_panel_identifier_uniqueness.py)."""
+    imports = [n for n in tree.body if isinstance(n, ast.ImportFrom) and n.level == 1 and n.module is None
+               and any(a.name == 'lifecycle_gates' for a in n.names)]
+    assert len(imports) == 1 and [a.name for a in imports[0].names][0] == 'lifecycle_gates'
+    imports[0].names = imports[0].names[1:]
+    error = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'ScenarioError')
+    init = [n for n in error.body if isinstance(n, ast.FunctionDef)]
+    assert len(init) == 1 and init[0].name == '__init__' and len(error.body) == 2
+    assert [ast.dump(s) for s in init[0].body] == [ast.dump(s) for s in ast.parse(
+        'super().__init__(message)\nself.gate = gate\nself.repair_action = repair').body]
+    error.body = [ast.Pass()]
+    tree.body = [n for n in tree.body if getattr(n, 'name', None) not in PANEL_IDENTITY_HELPERS
+                 and not (isinstance(n, ast.Assign) and any(getattr(t, 'id', None) in PANEL_IDENTITY_HELPERS
+                                                            for t in n.targets))]
+    validate = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'validate')
+    check = [ast.dump(s) for s in ast.parse(
+        'duplicate = duplicate_identifier_problem(scenario)\nif duplicate is not None:\n    raise duplicate').body]
+    dumps = [ast.dump(s) for s in validate.body]
+    at = next(i for i in range(len(dumps)) if dumps[i:i + 2] == check)
+    del validate.body[at:at + 2]
+
+
 for module in ('model_variant', 'multi_agent'):
     path = f'Server/steerlab_server/experiment/{module}.py'
     before = subprocess.check_output(['git','show',f'{BASE}:{path}'],cwd=ROOT,text=True)
@@ -46,6 +78,8 @@ for module in ('model_variant', 'multi_agent'):
         else:
             expected = expected.replace('model_variant.variant_injections(variant)', "model_variant.variant_injections(variant, **({'allow_policies': True} if variant.intervention_policies else {}))")
         old_tree, current_tree = ast.parse(expected), ast.parse(after)
+        if module == 'multi_agent':
+            admit_panel_identity(current_tree)
         for tree in (old_tree, current_tree):
             tree.body = [n for n in tree.body if not (isinstance(n, ast.FunctionDef) and n.name == 'run_scenario') and not (module == 'model_variant' and isinstance(n, ast.ClassDef) and n.name == 'ModelVariant')]
         assert ast.dump(old_tree) == ast.dump(current_tree), 'Unreviewed changes outside the intentional agent schema, scenario executor, and explicit policy admission changes'
