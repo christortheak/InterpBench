@@ -5,7 +5,7 @@ import Foundation
 /// Release builds read the bundled ServerPayload; only the interpreter and
 /// client dependencies live outside the signed bundle.
 public enum DiagnosticWorkspace {
-    public static let actions = ["evidence-analyze", "policy-list", "policy-inspect", "policy-review", "policy-publish", "policy-attach-review", "policy-attach", "measurements-review", "measurements-save", "probe-list", "probe-inspect", "staged-request", "corpus-preview", "corpus-publish", "artifact-plan", "artifact-import", "setup-start", "setup-inspect", "sae-check", "sae-show", "sae-pin-plan", "sae-pin", "interview", "draft", "publish", "input-plan", "package", "import", "custody", "verify-custody", "results-export", "report"]
+    public static let actions = ["evidence-analyze", "policy-list", "policy-inspect", "policy-review", "policy-publish", "policy-attach-review", "policy-attach", "measurements-review", "measurements-save", "probe-list", "probe-inspect", "staged-request", "corpus-preview", "corpus-publish", "artifact-plan", "artifact-import", "setup-start", "setup-inspect", "sae-check", "sae-show", "sae-pin-plan", "sae-pin", "interview", "draft", "publish", "input-plan", "package", "import", "custody", "verify-custody", "results-export", "report", "results-report"]
 
     /// Asks the Python client only to confirm that its files are the source
     /// this build was compiled against: nothing is imported, read, or

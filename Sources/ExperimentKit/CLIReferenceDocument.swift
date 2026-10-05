@@ -86,11 +86,11 @@ public enum CLIReferenceDocument {
             verbLabels: [
                 "experiment analyze", "experiment rescore-style",
                 "experiment evaluate",
-                // The one verb of the `results` family shares this region:
-                // exporting follows analysis and evaluation in the document's
-                // reading order, and a region of its own would need a new
-                // marked section for one synopsis.
-                "results export",
+                // The `results` family's verbs share this region: exporting
+                // and the results page follow analysis and evaluation in the
+                // document's reading order, and a region of their own would
+                // need a new marked section for two synopses.
+                "results export", "results report",
             ]),
         .init(
             id: "swift-experiment-promotion",

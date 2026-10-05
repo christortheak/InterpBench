@@ -812,7 +812,9 @@ import Testing
             "authoring prompt", "authoring study", "pack preview", "pack apply", "pack export",
             // A study's stored results as files a researcher can take
             // elsewhere. It writes a new folder outside runs/ and no manifest.
-            "results export",
+            // `results report` writes the same results as one page, also
+            // outside runs/.
+            "results export", "results report",
             "experiment import-prompts", "experiment inspect-artifact", "experiment attach-artifact",
             "science evidence-analyze", "science policy-list", "science policy-inspect", "science policy-review", "science policy-publish", "science policy-attach-review", "science policy-attach", "science measurements-review", "science measurements-save", "science probe-list", "science probe-inspect", "science corpus-preview", "science corpus-publish", "science list", "science guide", "science operation", "science interview", "science draft", "science publish", "science artifact-plan", "science artifact-import", "science sae-check", "science sae-show", "science sae-pin-plan", "science sae-pin", "science input-plan", "science package", "science import", "science custody", "science verify-custody",
             "science report",

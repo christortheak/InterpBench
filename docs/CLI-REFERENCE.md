@@ -896,6 +896,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   authoring study <intent> | prompt <kind> …    The study interview (start here), and generation prompts for missing study data.
   experiment <verb> <name> …                    The study lifecycle.
   results export <study> [--run <run-dir>] [--out <dir>]  Export a run's results as tables, transcripts, a methods summary, and a codebook.
+  results report <study> [--run <run-dir>] [--out <file>]  Write a run's results as one readable page to open in a browser or send.
   pack preview | apply | export …               Review and import study packs, or export text inputs and dependency names.
   agent list | inspect <path>                   Inspect local agents for reviewed attachment.
   design list | inspect | describe | instantiate | batch | save | update …  Inspect, save and revise designs, or create studies from reviewed castings.
@@ -1516,6 +1517,7 @@ steerlab-cli experiment analyze <name> [--allow-unverified-epoch]
 steerlab-cli experiment rescore-style <name> [--allow-unverified-epoch] [--run <run-dir>]
 steerlab-cli experiment evaluate <name> [--allow-unverified-epoch] [--run <run-dir>] [--sample-per-condition <n>] [--sample-seed <hex-or-int>]
 steerlab-cli results export <study> [--out <dir>] [--run <run-dir>]
+steerlab-cli results report <study> [--out <file>] [--run <run-dir>]
 ```
 
 | Verb | Purpose |
@@ -1524,6 +1526,7 @@ steerlab-cli results export <study> [--out <dir>] [--run <run-dir>]
 | `experiment rescore-style` | Re-score reasoning style over a completed run into a fresh run directory. |
 | `experiment evaluate` | Judge a completed run with the pinned rubric and judges. |
 | `results export` | Export a completed run's results into a new folder outside runs/: tables that open in R, Stata, SPSS, or a spreadsheet, transcripts for coding by hand, a methods summary, and a codebook. Runs no model, and recalculates nothing. |
+| `results report` | Write a completed run's results as one readable page (HTML) outside runs/: the headline outcome with its interval, every stored effect, each condition, controls, the judges' agreement, exclusions, and how the study was frozen. The page goes under reports/ in the workspace unless --out names the file. Runs no model, and recalculates nothing. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:swift-experiment-analysis END -->
