@@ -8,7 +8,25 @@ from ..experiment import diagnostic_archives as archives, paths, science_catalog
 def validate(invocation, count):
     if (len(invocation.positionals) != count or any(flag not in invocation.flags for flag in invocation.spec.required_flags)
         or any(len(values) != 1 for values in invocation.flags.values())):
-        raise archives.Refusal('Supply exactly the declared positionals and required flags once, including explicit removal confirmation.')
+        raise archives.MalformedRequest('Supply exactly the declared positionals and required flags once, including explicit removal confirmation.')
+
+
+def refusal_fields(exc):
+    """How a declined local workspace action is reported, on BOTH clients: the
+    Python client's ``science`` verbs below, and the Mac command line and app
+    through the bridge (``diagnostic_workspace``), which carries these fields
+    to the Mac. The one place the classification is made.
+
+    A request in the wrong shape — :class:`~..experiment.diagnostic_archives.MalformedRequest`,
+    or an unknown method or operation name — is ``blocked`` (64): nothing
+    ran, and the repair is to retype it. Anything else an action declines is
+    ``refused`` (65): the request was well formed, and what it names (a run
+    folder with no report, an archive that fails custody, a changed plan)
+    needs repairing first."""
+    malformed = isinstance(exc, (archives.MalformedRequest, science_catalog.ScienceRefusal))
+    code = (getattr(exc, 'code', None) or getattr(exc, 'gate', None)
+            or ('usage' if malformed else archives.Refusal.code))
+    return {'code': code, 'state': 'blocked' if malformed else 'refused'}
 
 
 def workspace_action(action, payload):
@@ -20,12 +38,12 @@ def workspace_action(action, payload):
         return report_bridge(payload)
     if action == 'setup-start':
         if not isinstance(payload, dict) or set(payload) != {'workspaceRoot', 'create'} or not isinstance(payload['workspaceRoot'], str) or not payload['workspaceRoot'] or type(payload['create']) is not bool:
-            raise archives.Refusal('First run requires workspaceRoot and an explicit create boolean.')
+            raise archives.MalformedRequest('First run requires workspaceRoot and an explicit create boolean.')
         from . import setup
         return setup.start(payload['workspaceRoot'], create=payload['create'])
     if action == 'setup-inspect':
         if not isinstance(payload, dict) or payload.keys() - {'workspaceRoot'} or ('workspaceRoot' in payload and (not isinstance(payload['workspaceRoot'], str) or not payload['workspaceRoot'])):
-            raise archives.Refusal('Readiness accepts only an optional workspaceRoot string.')
+            raise archives.MalformedRequest('Readiness accepts only an optional workspaceRoot string.')
         from . import setup
         return setup.inspect(payload.get('workspaceRoot'))
     required = {
@@ -46,11 +64,11 @@ def workspace_action(action, payload):
         'import': {'archivePath', 'archiveSHA256'}, 'verify-custody': {'receiptSHA256'}, 'custody': set(),
         'report': {'path'},
     }
-    if action not in required or not isinstance(payload, dict): raise archives.Refusal('Unknown diagnostic workspace operation.')
+    if action not in required or not isinstance(payload, dict): raise archives.MalformedRequest('Unknown diagnostic workspace operation.')
     fields = required[action] | {'workspaceRoot'}
     optional = {'import': {'expectedContext'}, 'report': {'out'}}.get(action, set())
     if not fields <= payload.keys() or payload.keys() - fields - optional or any(not isinstance(payload[k], str) or not payload[k] for k in fields):
-        raise archives.Refusal('Supply exactly the declared action fields as nonempty strings.')
+        raise archives.MalformedRequest('Supply exactly the declared action fields as nonempty strings.')
     root = str(Path(payload['workspaceRoot']).resolve())
     if action == 'report':
         # Reads stored JSON and writes one page outside any run folder; no model, no statistics.
@@ -109,7 +127,7 @@ def workspace_action(action, payload):
     if action == 'import': return archives.import_evidence(payload['archivePath'], payload['archiveSHA256'], root, expected_context=payload.get('expectedContext'))
     if action == 'verify-custody': return {'verified': True, 'receipt': archives.verify(payload['receiptSHA256'], root), 'receiptSHA256': payload['receiptSHA256']}
     if action == 'custody': return archives.inventory(root)
-    raise archives.Refusal('Unknown diagnostic workspace operation.')
+    raise archives.MalformedRequest('Unknown diagnostic workspace operation.')
 
 
 def local(invocation):
@@ -155,10 +173,10 @@ def local(invocation):
         raise ClientRefusal(code=exc.code, reason=str(exc), repair_action=exc.repair_action, state='refused') from exc
     except ImportRefusal as exc:
         raise ClientRefusal(code='artifactImportRefused', reason=str(exc), repair_action=exc.repair_action, state='refused') from exc
-    except science_catalog.ScienceRefusal as exc:
-        raise ClientRefusal(code=exc.code, reason=str(exc), repair_action=exc.repair_action) from exc
     except (ValueError, OSError, KeyError) as exc:
-        raise ClientRefusal(code=getattr(exc, 'code', 'diagnosticTransportRefused'), reason=str(exc), repair_action=getattr(exc, 'repair_action', archives.Refusal.repair_action)) from exc
+        # ScienceRefusal is a ValueError, and classified with the rest.
+        raise ClientRefusal(reason=str(exc), repair_action=getattr(exc, 'repair_action', archives.Refusal.repair_action),
+                            **refusal_fields(exc)) from exc
 
 
 def remote(client, invocation, common):

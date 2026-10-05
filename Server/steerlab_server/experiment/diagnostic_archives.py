@@ -30,6 +30,15 @@ class Refusal(ValueError):
     repair_action = 'Review the diagnostic archive, originating job and exact local workspace; retain remote originals until custody verifies.'
 
 
+class MalformedRequest(Refusal):
+    """A local workspace action asked for in the wrong shape: missing or extra
+    fields, a missing argument, an unknown action. Nothing ran, and retyping
+    the request is the repair, so both clients answer ``blocked`` (64) where
+    every other refusal of a well-formed request is ``refused`` (65)."""
+
+    code = 'usage'
+
+
 class PathRefusal(Refusal):
     """A missing or nonordinary input path, distinct from scientific validation."""
 

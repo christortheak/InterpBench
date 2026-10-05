@@ -277,9 +277,6 @@ def _client_spelling(label: str) -> str:
 CLIENT_ROUTES: dict = {
     "experiment pin-prompts": "experiment import-prompts <name> --file "
                               "<file>.jsonl --manifest-sha256 <digest>",
-    "experiment pin-rubric": "experiment set-protocol <name> --set "
-                             "judgeRubricFile=<json> --set "
-                             "judgeRubricHash=<json> --set judges=<json>",
     "experiment set-instruments": "experiment set-protocol <name> --set "
                                   "outcomeInstruments=<json list>",
     "experiment set-sampling": "experiment set-protocol <name> --set "

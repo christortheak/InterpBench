@@ -421,12 +421,13 @@ Two setters `experiment_store` exposes are deliberately **not** client verbs:
 `replace_draft_manifest` (the server's draft-sync remedy — it installs a
 document *into a server's* copy, which is the opposite of what this client
 does) and `attach_artifact` (reachable as `attach --artifact`, which is the
-spelling the store itself dispatches). The Mac's `pin-prompts`, `pin-rubric`,
+spelling the store itself dispatches). The Mac's `pin-prompts`,
 `set-instruments` and `set-sweep-selection` are protocol *fields* here,
 reachable through `set-protocol --set <key>=<json>` — `taskPromptsFile` +
-`taskPromptsHash`, `judgeRubricFile` + `judgeRubricHash`,
-`outcomeInstruments`, and `sweep` respectively — because that is the shape
-`set_protocol` actually has. The same shape covers the Mac's `set-sampling`
+`taskPromptsHash`, `outcomeInstruments`, and `sweep` respectively — because
+that is the shape `set_protocol` actually has. `pin-rubric` is a verb on both
+clients: it takes the rubric's path and computes `judgeRubricHash` from the
+file, and here it edits a reviewed draft (`--manifest-sha256`). The same shape covers the Mac's `set-sampling`
 and `set-exclusions`: the generation protocol (`temperature`, `maxTokens`,
 `promptMode`, `samplesPerItem`, `seedPolicy`, `reasoningEffort`,
 `reasoningMaxTokens`) and the declared

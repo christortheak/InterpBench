@@ -56,12 +56,13 @@ def message(result):
 
 
 def _checked(payload, what):
-    from ..experiment.diagnostic_archives import Refusal
+    from ..experiment.diagnostic_archives import MalformedRequest
     allowed = {'workspaceRoot', 'study', 'run', 'out', 'client'}
     if (not isinstance(payload, dict) or payload.keys() - allowed
             or not {'workspaceRoot', 'study'} <= payload.keys()
             or any(not isinstance(payload[key], str) or not payload[key] for key in payload)):
-        raise Refusal(f'{what} takes workspaceRoot and study, with optional run, out, and client, '
+        # A request in the wrong shape is malformed (blocked/64), not a refusal.
+        raise MalformedRequest(f'{what} takes workspaceRoot and study, with optional run, out, and client, '
                       'each a nonempty string.')
     return payload
 

@@ -50,6 +50,10 @@ struct AnalysisGeneration: Decodable {
     let parsedMonths: LenientlyDecoded<Double>?
     let parsedChoice: LenientlyDecoded<String>?
     let readerScores: LenientlyDecoded<[String: Double]>?
+    /// Which play-through a multi-agent turn belongs to — the transcript a
+    /// multi-agent analysis aggregates over. Read only for a multi-agent
+    /// study; absent everywhere else.
+    let replicateIndex: Int?
 }
 
 /// A record field the analysis reads when it can and treats as absent when
@@ -156,6 +160,9 @@ struct StudyAnalysisResult {
     let margins: [String: ChoiceMarginDiagnostics.Report]
     /// Which outcomes reached `entries`, and which could not be produced.
     let outcomes: StudyAnalysisOutcomes.Coverage
+    /// A multi-agent study's unit of analysis (`unit-of-analysis.json`);
+    /// nil for every other study kind, whose unit is the item.
+    var transcriptUnit: StudyAnalysisStatistics.TranscriptUnit? = nil
     let diagnostics: [StudyAnalysisDiagnostic]
 }
 

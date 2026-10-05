@@ -64,9 +64,12 @@ struct ScienceReportTests {
             _ = try await ScienceReport.render(path: "runs/jlens-assessment-example", out: "runs/jlens-assessment-example/page.html",
                                                root: root, python: python(), source: repository.appending(path: "Server"))
             Issue.record("A page inside a run folder must be refused.")
-        } catch let error as ExperimentError {
-            #expect(error.reason.contains("never written inside runs/"))
-            #expect(error.malformedInvocation?.repairAction.contains("reports/") == true)
+        } catch let refusal as DiagnosticWorkspace.Refusal {
+            // A refusal of a well-formed request, not a malformed one: the
+            // command line answers it `refused` (65).
+            #expect(refusal.code == "reportRefused")
+            #expect(refusal.reason.contains("never written inside runs/"))
+            #expect(refusal.repairAction.contains("reports/"))
         }
         #expect(try names(in: run) == before)
     }

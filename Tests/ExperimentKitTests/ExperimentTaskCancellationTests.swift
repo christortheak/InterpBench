@@ -11,27 +11,77 @@ import Testing
 /// suite-level `.serialized` protects only within a suite, and interleaved
 /// override windows were observed corrupting unrelated suites (2026-07-13).
 /// NOT reentrant: never nest two locked helpers inside one test.
+///
+/// THE GUARD: outside a held lock, `WorkspaceRoot.programmaticOverride` is
+/// nil. Every window restores what it set before it releases, and the lock
+/// checks both ends of every window: at release (the window just closing
+/// left it set — the test that is running is the leaker) and at acquire
+/// (something set it without holding the lock). Either way the issue is
+/// recorded and the override cleared, so one leak fails one test instead of
+/// sending every later test's workspace lookups into a deleted folder.
 enum ExperimentRootOverrideLock {
     static let semaphore = DispatchSemaphore(value: 1)
 
     /// Sync wrappers so an async test can hold the override window too
     /// (tests are short; the blocked thread is acceptable in a test target).
-    static func acquire() { semaphore.wait() }
-    static func release() { semaphore.signal() }
+    static func acquire() {
+        semaphore.wait()
+        requireNoWorkspaceOverride(
+            "when the lock was acquired: an earlier test set it without "
+                + "holding ExperimentRootOverrideLock")
+    }
+
+    static func release() {
+        requireNoWorkspaceOverride(
+            "when this test released the lock: restore it (to the value it "
+                + "had, which is nil) before the window closes")
+        semaphore.signal()
+    }
 
     static func withTempRoot<T>(
         prefix: String, _ body: (URL) throws -> T
     ) rethrows -> T {
-        semaphore.wait()
+        acquire()
         let temp = FileManager.default.temporaryDirectory
             .appending(component: "\(prefix)-\(UUID().uuidString)")
         ExperimentStore.rootOverride = temp
         defer {
             ExperimentStore.rootOverride = nil
             try? FileManager.default.removeItem(at: temp)
-            semaphore.signal()
+            release()
         }
         return try body(temp)
+    }
+
+    /// Records an issue, and clears the override, when it is set.
+    static func requireNoWorkspaceOverride(_ moment: String) {
+        guard let leaked = WorkspaceRoot.programmaticOverride else { return }
+        WorkspaceRoot.programmaticOverride = nil
+        Issue.record(
+            "WorkspaceRoot.programmaticOverride was still set to \(leaked.path) \(moment)")
+    }
+}
+
+/// The guard itself, held to a deliberate leak.
+@Suite(.serialized) struct ExperimentRootOverrideGuardTests {
+
+    @Test func aWindowThatLeavesTheOverrideSetIsReportedAndCleared() {
+        withKnownIssue("the deliberate leak below") {
+            ExperimentRootOverrideLock.withTempRoot(prefix: "override-guard") { root in
+                WorkspaceRoot.programmaticOverride = root.appending(component: "other")
+            }
+        }
+        #expect(WorkspaceRoot.programmaticOverride == nil)
+    }
+
+    @Test func aWindowThatRestoresTheOverrideIsQuiet() {
+        ExperimentRootOverrideLock.withTempRoot(prefix: "override-guard") { root in
+            let previous = WorkspaceRoot.programmaticOverride
+            WorkspaceRoot.programmaticOverride = root
+            defer { WorkspaceRoot.programmaticOverride = previous }
+            #expect(WorkspaceRoot.programmaticOverride == root)
+        }
+        #expect(WorkspaceRoot.programmaticOverride == nil)
     }
 }
 

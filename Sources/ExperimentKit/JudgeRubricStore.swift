@@ -16,10 +16,10 @@ public enum JudgeRubricStore {
     /// The default paired-judge rubric file (shared cross-engine constant).
     public static let defaultRubricFile = "prompts/rubrics/default-paired-v1.md"
 
-    /// The refusal both engines give an evaluation with no rubric at all.
-    /// Byte-identical to the server's `tasks.NO_RUBRIC_REFUSAL`, and it names
-    /// `steerlab-cli` on BOTH engines on purpose: authoring is Mac-authority
-    /// (WP0 §10.x), and the Python CLI has no `pin-rubric` verb to name.
+    /// The refusal this engine gives an evaluation with no rubric at all. The
+    /// Mac command line names its own verb; the Python engine, which never
+    /// authors, says "on your authoring client" and gives both clients'
+    /// `pin-rubric` (`rubric_inputs.no_rubric_refusal`).
     public static func noRubricRefusal(_ name: String) -> String {
         "study '\(name)' has no judge rubric — pin one: "
             + "'steerlab-cli experiment pin-rubric \(name) "

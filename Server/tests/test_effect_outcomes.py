@@ -357,11 +357,13 @@ def test_marker_density_is_read_at_the_mac_engines_precision():
     assert value != 0.1
 
 
-def test_a_run_of_this_engine_says_marker_density_is_not_available(tmp_path):
-    """This engine's own run records no marker density. The study below
-    declares the concept "warm" and its records carry no ``markerDensity``:
-    the analysis must SAY the outcome is not available — in the coverage
-    file and in its log — and never leave a silently missing row."""
+def test_an_older_run_of_this_engine_says_marker_density_is_not_available(
+        tmp_path):
+    """A run made before this engine recorded marker density has none. The
+    study below declares the concept "warm" and its records carry no
+    ``markerDensity``: the analysis must SAY the outcome is not available —
+    in the coverage file and in its log — and never leave a silently missing
+    row."""
     fixture = _fixture()
     records = [{key: value for key, value in record.items()
                 if key != "markerDensity"} for record in fixture["records"]]
@@ -384,7 +386,8 @@ def test_a_run_of_this_engine_says_marker_density_is_not_available(tmp_path):
                            if family["id"] == "markerDensity"),
         "reason": analysis_endpoints.MARKER_DENSITY_NOT_RECORDED,
     }
-    assert missing["reason"].startswith("Not available on this engine: ")
+    assert missing["reason"].startswith("Not available for this run: ")
+    assert "earlier version" in missing["reason"]
     assert ("warmMarkerDensity: "
             + analysis_endpoints.MARKER_DENSITY_NOT_RECORDED) in lines
 

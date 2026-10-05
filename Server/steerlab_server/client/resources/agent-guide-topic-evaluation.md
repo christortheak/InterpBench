@@ -2,13 +2,21 @@
 
 ## Declare the judging instrument
 
-This client has no dedicated rubric verb. The rubric and the judge panel are
-protocol fields — `judgeRubricFile`, `judgeRubricHash`, `judges`, and
-`evaluation` — written with `steerlab experiment set-protocol <name> --set
-<key>=<json>`, or delivered already pinned by a study pack
-(`steerlab workspace guide assembly`). Prefer the pack: it pins the rubric
-file's real bytes, so no hash is typed by hand. The rules are the same on
-every client:
+```bash
+steerlab experiment inspect <name>        # prints manifestFileSHA256
+steerlab experiment pin-rubric <name> prompts/rubrics/default-paired-v1.md \
+  --judges <name>:<kind>[:<model>[:<provider>]][,…] \
+  [--judge-pin <judge-name>=<revision>[:<dtype>]] \
+  --manifest-sha256 <manifestFileSHA256>
+```
+
+Pins `judgeRubricFile` and `judgeRubricHash`, computing the hash from the
+file's bytes so no hash is typed by hand, optionally replaces the judge panel,
+and writes the `evaluation` declaration the pair implies. It edits only the
+reviewed draft: a draft that changed since `inspect` is refused. `--judge-pin`
+and the way pins carry over when a panel is declared again work as on the Mac
+command line. A study pack (`steerlab workspace guide assembly`) can also
+deliver the rubric already pinned. The rules are the same on every client:
 
 - The judge **name is a label, never a model id.** Kinds are `claude`,
   `local`, `openrouter`. A blank model field is *absent*, not empty: a local
@@ -83,8 +91,17 @@ names. Every analysis also writes `outcome-coverage.json`: each outcome that
 reached the effect rows, with its definition in words, and each outcome the
 analysis could not produce, marked `notAvailable` with the reason. Read it
 before you report that a study measured nothing on an outcome. The one case
-today is marker density on a run made by the Python engine, which does not
-record it.
+today is marker density on a run made by an earlier version of the Python
+engine, which did not record it; both engines record it now, so running the
+study again measures it.
+
+A multi-agent study is analyzed per conversation on both engines. Each turn
+is paired with the baseline's same turn in the same play-through, the
+differences are averaged within each conversation, and `n` counts
+conversations, not turns, because a turn depends on the turns before it.
+`unit-of-analysis.json` says so. With one conversation per arm there are no
+effect rows, since one conversation supports no interval; run the study with
+`samplesPerItem` of 2 or more.
 
 ## `evaluate`
 

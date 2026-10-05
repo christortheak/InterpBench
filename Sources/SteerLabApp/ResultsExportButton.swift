@@ -128,6 +128,8 @@ struct ResultsExportButton: View {
             NSWorkspace.shared.activateFileViewerSelecting([exported.directory])
         } catch let declined as ResultsExport.Refusal {
             refusal = ExportProblem(reason: declined.reason, repair: declined.repairAction)
+        } catch let declined as DiagnosticWorkspace.Refusal {
+            refusal = ExportProblem(reason: declined.reason, repair: declined.repairAction)
         } catch let error as ExperimentError {
             // The local Python client could not run at all: the bridge's own
             // error names the repair (Research Setup).

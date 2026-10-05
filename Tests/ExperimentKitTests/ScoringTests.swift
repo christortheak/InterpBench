@@ -26,6 +26,78 @@ import Testing
         #expect(MarkerRubric(directory: dir.appending(component: "missing")) == nil)
     }
 
+    /// Hand-computed from the shared rules (marker words against runs of
+    /// letters and marks in NFC, case-folded spelling; characters per code
+    /// point in the NFC text, with case). Python twin:
+    /// `Server/tests/test_marker_scoring.py`.
+    @Test func markerTokenizationIsUnicodeAware() {
+        // l / été / est / très / chaud: five words, three markers.
+        let french = MarkerRubric(words: ["été", "très", "chaud"])
+        #expect(
+            MarkerRubric.tokens(of: "L'été est très CHAUD.")
+                == ["l", "été", "est", "très", "chaud"])
+        #expect(french.count(in: "L'été est très CHAUD.") == 3)
+        #expect(abs(french.density(in: "L'été est très CHAUD.") - 0.6) < 1e-6)
+        // straße folds to strasse: all three spellings are the marker.
+        #expect(MarkerRubric(words: ["straße"]).count(in: "STRASSE straße Strasse") == 3)
+        // A decomposed upper-case marker word reads as the precomposed word.
+        #expect(MarkerRubric(words: ["E\u{301}TE\u{301}"]).words == ["été"])
+        // Characters are code points: a thumbs-up with a skin-tone modifier
+        // contains the thumbs-up (a grapheme cluster would not match it), and
+        // É is not é.
+        #expect(
+            MarkerRubric(words: [], characters: ["\u{1F44D}"])
+                .count(in: "great \u{1F44D}\u{1F3FD}") == 1)
+        #expect(MarkerRubric(words: [], characters: ["é"]).count(in: "ÉTÉ été") == 2)
+        // A text without words has zero density, whatever its markers.
+        let bang = MarkerRubric(words: [], characters: ["!"])
+        #expect(bang.count(in: "...!!!") == 3)
+        #expect(bang.density(in: "...!!!") == 0)
+    }
+
+    private struct MarkerFixture: Decodable {
+        struct Case: Decodable {
+            let label: String
+            let words: [String]
+            let characters: String
+            let text: String
+            let tokens: [String]
+            let count: Int
+            let density: Double
+        }
+        let cases: [Case]
+    }
+
+    /// Both engines read every case of
+    /// `Tests/Fixtures/cross-engine/marker-scoring.json` the same way. The
+    /// fixture is the Python engine's reading
+    /// (`scripts/regenerate-cross-engine-fixtures.py`); each rubric is loaded
+    /// through this engine's own `markers.json` loader.
+    @Test func markerScoringMatchesThePythonEngine() throws {
+        let url = CodeResources.compiledCheckoutPath.appending(
+            components: "Tests", "Fixtures", "cross-engine", "marker-scoring.json")
+        let fixture = try JSONDecoder().decode(MarkerFixture.self, from: Data(contentsOf: url))
+        #expect(fixture.cases.count >= 17)
+        let dir = FileManager.default.temporaryDirectory
+            .appending(component: "marker-fixture-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        for item in fixture.cases {
+            let markers = try JSONSerialization.data(
+                withJSONObject: ["words": item.words, "characters": item.characters])
+            try markers.write(to: dir.appending(component: "markers.json"))
+            let rubric = try #require(MarkerRubric(directory: dir), "\(item.label)")
+            // Exact code points, not Swift's canonical-equivalence equality.
+            #expect(
+                MarkerRubric.tokens(of: item.text).map { Array($0.unicodeScalars) }
+                    == item.tokens.map { Array($0.unicodeScalars) }, "\(item.label)")
+            #expect(rubric.count(in: item.text) == item.count, "\(item.label)")
+            #expect(
+                abs(Double(rubric.density(in: item.text)) - item.density) < 1e-6,
+                "\(item.label)")
+        }
+    }
+
     @Test func batteryScoring() {
         #expect(CapabilityBattery.isCorrect(response: "The answer is 43.", answer: "43"))
         #expect(!CapabilityBattery.isCorrect(response: "I am not sure.", answer: "43"))

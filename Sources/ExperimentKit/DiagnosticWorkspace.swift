@@ -13,6 +13,32 @@ public enum DiagnosticWorkspace {
     /// command line routes.
     static let identityCheckAction = "client-identity"
 
+    /// A well-formed action the Python client declined — a run folder with no
+    /// report, an archive that fails custody, a plan that changed. The command
+    /// line answers it `refused` (65) with this code and repair, as the Python
+    /// client's own `science` verbs do. A request in the wrong shape is not
+    /// one of these: it stays the `blocked` (64) malformed invocation it has
+    /// always been. The Python client decides which is which, in one place
+    /// (`diagnostic_commands.refusal_fields`), and says so in its answer.
+    public struct Refusal: Error, Sendable, Equatable, CustomStringConvertible {
+        public let code: String
+        public let reason: String
+        public let repairAction: String
+
+        public var description: String { reason }
+    }
+
+    /// The error a declined answer from the Python client amounts to.
+    static func failure(from object: [String: JSONValue]) -> any Error {
+        let reason: String = if case .string(let text) = object["reason"] { text } else { "Diagnostic workspace operation refused." }
+        let repair: String = if case .string(let text) = object["repairAction"] { text } else { ScientificPythonRuntime.setupHint }
+        guard case .string("refused") = object["state"] else {
+            return ExperimentError.malformed(reason, repair: repair)
+        }
+        let code: String = if case .string(let text) = object["code"], !text.isEmpty { text } else { "refused" }
+        return Refusal(code: code, reason: reason, repairAction: repair)
+    }
+
     /// Confirms, locally, that the Python client files match this build, and
     /// throws the same typed failure `perform` would. A remote step that
     /// ends in a local one calls this first, so a mismatch is found before
@@ -72,9 +98,7 @@ public enum DiagnosticWorkspace {
                 throw ExperimentError(reason: "The local Python client returned no result.")
             }
             guard process.terminationStatus == 0, object["ok"] == .bool(true), let result = object["result"] else {
-                let reason: String = if case .string(let text) = object["reason"] { text } else { "Diagnostic workspace operation refused." }
-                let repair: String = if case .string(let text) = object["repairAction"] { text } else { ScientificPythonRuntime.setupHint }
-                throw ExperimentError.malformed(reason, repair: repair)
+                throw failure(from: object)
             }
             return result
         }.value

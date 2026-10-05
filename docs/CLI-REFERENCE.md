@@ -160,7 +160,7 @@ set-sweep-grid, set-protocol, set-system-prompt, set-parser,
 set-instrument-scope, set-evaluation-sampling, pin-revision,
 set-style-taxonomy, pin-sae-candidates, duplicate, rename, delete,
 verify, freeze, list, inspect, import-prompts, inspect-artifact, attach-artifact,
-acknowledge-custom-code — show a study's intervention-policy custom code and,
+pin-rubric, acknowledge-custom-code — show a study's intervention-policy custom code and,
 with `--sha256`, record that you trust it; `pack apply`, `bundle import` and
 `attach-agent` print the notice, and `run` will not send a step that executes
 the study's agents until the code is acknowledged),
@@ -254,6 +254,7 @@ steerlab experiment inspect <name>
 steerlab experiment import-prompts <name> --file <path> --manifest-sha256 <digest>
 steerlab experiment inspect-artifact <path>
 steerlab experiment attach-artifact <name> <concept> --artifact <runs/<run>/<name>> --artifact-sha256 <digest> --manifest-sha256 <digest> --sidecar-sha256 <digest> [--eval-run <run-dir>] [--source-concept <concept>]
+steerlab experiment pin-rubric <name> <rubric> --manifest-sha256 <digest> [--judge-pin <value>] [--judges <value>]
 steerlab design expand <name> --casting <value> --file-sha256 <value> --mode <value>
 steerlab authoring study <intent>
 steerlab design list

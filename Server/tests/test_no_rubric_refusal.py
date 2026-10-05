@@ -48,10 +48,10 @@ def test_the_no_rubric_sentence_says_where_and_the_repair_says_how():
     assert rubric_inputs.no_rubric_repair("s") == (
         "on your authoring client: steerlab-cli experiment pin-rubric s "
         "prompts/rubrics/default-paired-v1.md  (Mac command line), or "
-        "steerlab experiment set-protocol s --set "
-        "judgeRubricFile='\"prompts/rubrics/default-paired-v1.md\"' --set "
-        "judgeRubricHash='\"<sha256 of that file>\"'  (cross-platform client)"
-        " ; then steerlab-server experiment evaluate s")
+        "steerlab experiment pin-rubric s "
+        "prompts/rubrics/default-paired-v1.md --manifest-sha256 "
+        "<manifestFileSHA256 from: steerlab experiment inspect s>  "
+        "(cross-platform client) ; then steerlab-server experiment evaluate s")
 
 
 def test_an_empty_inline_rubric_refuses_instead_of_judging_on_nothing(tmp_path):
@@ -101,9 +101,8 @@ def test_a_pinned_rubric_file_that_is_gone_refuses_typed(tmp_path):
     assert "on your authoring client: " in error.repair_action
     assert ("steerlab-cli experiment pin-rubric no-rubric "
             "prompts/rubrics/nope.md") in error.repair_action
-    assert ("steerlab experiment set-protocol no-rubric --set "
-            "judgeRubricFile='\"prompts/rubrics/nope.md\"'") \
-        in error.repair_action
+    assert ("steerlab experiment pin-rubric no-rubric "
+            "prompts/rubrics/nope.md --manifest-sha256") in error.repair_action
     assert "steerlab-server experiment evaluate no-rubric" in \
         error.repair_action
 

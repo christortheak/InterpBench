@@ -324,6 +324,9 @@ public struct ExperimentCLIRunner: Sendable {
                 namespace: namespace, verb: verb, exitCode: stop.exitCode,
                 envelope: envelope)
 
+        } catch let refusal as DiagnosticWorkspace.Refusal {
+            return outcome(for: refusal, namespace: namespace, verb: verb)
+
         } catch let usage as ExperimentCLIUsageError {
             return usageOutcome(
                 namespace: namespace, args: invocation.args, error: usage)
@@ -670,6 +673,21 @@ public struct ExperimentCLIRunner: Sendable {
             + "study run that kept the responses it completed. A succeeded "
             + "or failed job, or a cancelled one that kept nothing, is "
             + "re-run by submitting the study again"
+    }
+
+    /// A well-formed local workspace action the Python client declined
+    /// (`science report` on a folder with no report, say): `refused`, 65 in
+    /// JSON mode, with the client's own code and repair — the answer the
+    /// Python client's `science` verbs give the same request. Human mode keeps
+    /// exit 1, like every other refusal. A request in the wrong shape never
+    /// arrives here: it is the `blocked` malformed invocation.
+    func outcome(
+        for refusal: DiagnosticWorkspace.Refusal, namespace: String, verb: String
+    ) -> ExperimentCLIOutcome {
+        outcome(
+            namespace: namespace, verb: verb, state: .refused, exitCode: 1,
+            failure: .init(reason: refusal.reason, repairAction: refusal.repairAction),
+            code: refusal.code, repairAction: refusal.repairAction)
     }
 
     /// `envelopeReason` overrides the human `failure.reason` in the DOCUMENT

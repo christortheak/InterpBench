@@ -46,6 +46,10 @@ enum StudyAuthoringHTTP {
     }
 
     static func failure(_ error: Error) -> Response {
+        if let refusal = error as? DiagnosticWorkspace.Refusal {
+            return .failure(refusal.code, refusal.reason, repair: refusal.repairAction,
+                            status: "409 Conflict")
+        }
         if let error = error as? ExperimentError {
             if let refusal = error.lifecycleRefusal {
                 return .failure(refusal.gate.rawValue, refusal.reason, repair: refusal.repairAction,

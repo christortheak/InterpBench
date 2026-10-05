@@ -102,14 +102,17 @@ _EXACT_OUTCOME_NAMES = frozenset(
     family["id"] for family in OUTCOME_FAMILIES
     if family["name"] == family["id"])
 
-#: Why this engine has no marker density for a study it ran itself. Said in
-#: the analysis output (``outcome-coverage.json`` and the log) for every
-#: concept the study declares — never left as a silently absent row.
+#: Why a run has no marker density: its records were written by an earlier
+#: version of this engine, which did not record the field. Said in the
+#: analysis output (``outcome-coverage.json`` and the log) for every concept
+#: the study declares — never left as a silently absent row. Both engines
+#: record it for the studies they run now.
 MARKER_DENSITY_NOT_RECORDED = (
-    "Not available on this engine: marker density is measured when a "
-    "response is generated, and the Python engine's study run does not "
-    "record it, so these records carry no markerDensity values. The Mac "
-    "engine records it for the studies it runs.")
+    "Not available for this run: marker density is measured when a "
+    "response is generated, and none of this run's records carries a "
+    "markerDensity value. The run was made by an earlier version of the "
+    "Python engine, which did not record it; running the study again "
+    "measures it.")
 
 
 def outcome_family(name: str, marker_concepts=()) -> str:
@@ -144,8 +147,8 @@ def _is_sampled_response(record: dict) -> bool:
 def marker_density_concepts(records: list[dict]) -> list[str]:
     """The concepts whose marker density the run recorded: every key of
     every sampled response's ``markerDensity`` object, sorted. Empty when no
-    record carries one — which is every run of this engine today (see
-    ``MARKER_DENSITY_NOT_RECORDED``)."""
+    record carries one — a run made by an earlier version of this engine
+    (see ``MARKER_DENSITY_NOT_RECORDED``), or a study with no concept."""
     concepts: set[str] = set()
     for record in records:
         if not _is_sampled_response(record):
@@ -355,8 +358,8 @@ def endpoint_values(records: list[dict], style=None,
     # is the record's own: nothing is re-measured here. Every sampled
     # response of a run that measured ANY concept counts toward every
     # concept, zero where its record names none, which is the Mac engine's
-    # rule. No record carries the key on a run of this engine, so its own
-    # runs gain no rows — `analyze` says so instead (`outcome_coverage`).
+    # rule. A run made before this engine recorded the key gains no rows —
+    # `analyze` says so instead (`outcome_coverage`).
     marker_concepts = marker_density_concepts(records)
     if marker_concepts:
         for (condition, prompt_id), items in cells.items():
