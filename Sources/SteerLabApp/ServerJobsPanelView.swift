@@ -37,6 +37,10 @@ struct ServerJobsPanelView: View {
     @State private var diagnosticTarget: DiagnosticTarget?
     @State private var jobs: [RemoteJobRecord] = []
     @State private var jobsOrigin: EvidenceImportOrigin?
+    /// Jobs on this server that a command line (`steerlab-cli` or
+    /// `steerlab`) submitted from this workspace, read from the workspace's
+    /// job-origin record at each refresh.
+    @State private var commandLineOrigins: [String: WorkspaceJobOrigin] = [:]
     @State private var pipelines: [ClusterClient.PipelineRunSummary] = []
     @State private var selectedJobID: String?
     @State private var logLines: [String] = []
@@ -152,6 +156,7 @@ struct ServerJobsPanelView: View {
             isStreaming = false
             jobsOrigin = nil
             jobs = []
+            commandLineOrigins = [:]
             pipelines = []
             selectedJobID = nil
             logLines = []
@@ -423,6 +428,13 @@ struct ServerJobsPanelView: View {
                                 .lineLimit(1)
                                 .help("the scheduler's own id for this job: "
                                     + executorJobID)
+                        }
+                        if let source = commandLineOrigins[job.id] {
+                            Label("from the command line", systemImage: "terminal")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .help(Self.commandLineHelp(source))
                         }
                     }
                     Text(jobTimeSummary(job))
@@ -802,6 +814,11 @@ struct ServerJobsPanelView: View {
             jobsOrigin = origin
             jobs = fetched
             pipelines = fetchedPipelines
+            // Which of these jobs a command line submitted from this
+            // workspace (its origin record), so the row can say so.
+            commandLineOrigins = WorkspaceJobOrigins.commandLineOrigins(
+                workspaceRoot: origin.workspaceRoot, serverIdentity: origin.serverIdentity,
+                servingRoot: origin.remoteRoot)
             lastRefreshedAt = Date()
             if !(selectedJobID.map { id in fetched.contains { $0.id == id } } ?? false) {
                 selectedJobID = selectFirstWhenEmpty ? fetched.first?.id : nil
@@ -933,6 +950,11 @@ struct ServerJobsPanelView: View {
                 }
             }
         }
+    }
+
+    /// The tooltip on a job row's "from the command line" mark.
+    static func commandLineHelp(_ origin: WorkspaceJobOrigin) -> String {
+        origin.commandLineSummary
     }
 
     /// Help text for the failed-job retrieval action. Built here rather
