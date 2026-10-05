@@ -119,9 +119,15 @@ def _without_self_projected(manifest, run_name: str):
 #: to be here for the house's own flow to work — judged re-measurement runs on
 #: a never-frozen DUPLICATE, and a duplicate that declares the coding design
 #: differs from the original run's snapshot by exactly this key.
+#:
+#: ``primaryOutcome`` joined with the headline rule: it names which outcome
+#: LEADS a summary of the results, so it cannot have moved a byte of any run.
+#: A researcher who declares it on a draft after a pilot run can still
+#: analyze that run; the analysis says, as always, which field differed.
 MEASUREMENT_FIELDS = ("judges", "evaluation", "pipeline",
                       "judgeRubricFile", "judgeRubricHash",
-                      "humanValidation", "evaluationSampling")
+                      "humanValidation", "evaluationSampling",
+                      "primaryOutcome")
 
 #: Keys a Swift struct round-trip materializes at their default even when the
 #: donor's bytes never carried them (`experiment duplicate` decodes and
