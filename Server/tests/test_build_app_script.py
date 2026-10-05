@@ -315,6 +315,39 @@ def test_the_bundle_carries_its_license_its_notice_and_third_party_notices(tmp_p
     assert {"LICENSE", "NOTICE", "THIRD-PARTY-NOTICES.txt"} <= set(manifest)
 
 
+def _analysis_tools_the_app_reads() -> set:
+    """Every script name the Swift sources resolve through
+    `CodeResources.analysisTools()` — the only readers of the family."""
+    import re
+    reader = re.compile(
+        r'analysisTools\(\)\s*\.appending\(\s*component:\s*"([^"]+)"\s*\)')
+    names = set()
+    for source in (ROOT / "Sources").rglob("*.swift"):
+        names.update(reader.findall(source.read_text(encoding="utf-8")))
+    return names
+
+
+def test_analysis_tools_carries_only_the_scripts_the_app_runs(tmp_path):
+    """The bundle once shipped all of scripts/ as AnalysisTools: CI audits,
+    scan baselines, and build and install tooling the app never runs. It now
+    carries exactly the scripts the app resolves through the family, as they
+    are in the checkout."""
+    import json
+    result, _, app = _assemble(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    tools = app / "Contents/Resources/AnalysisTools"
+    shipped = {path.relative_to(tools).as_posix()
+               for path in tools.rglob("*") if path.is_file()}
+    read = _analysis_tools_the_app_reads()
+    assert read == {"gemmascope_analyze.py"}       # the reader this test knows of
+    assert shipped == read
+    for name in shipped:
+        assert (tools / name).read_bytes() == (ROOT / "scripts" / name).read_bytes()
+    manifest = json.loads((app / "Contents/Resources/resource-manifest.json").read_text())
+    assert {path for path in manifest["files"] if path.startswith("AnalysisTools/")} == {
+        f"AnalysisTools/{name}" for name in read}
+
+
 def test_a_package_with_no_license_stops_the_build(tmp_path):
     """Refuse rather than omit: a notices file that silently left a linked
     package out would be worse than none."""

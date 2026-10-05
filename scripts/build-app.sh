@@ -703,9 +703,18 @@ python3 "$SCRIPT_DIR/generate-third-party-notices.py" \
   --web-node-modules "$REPO/results-explorer/node_modules" 2>&1 | sed 's/^/  /' \
   || die "could not collect the third-party license notices (see the line above)"
 
-# AnalysisTools = the checkout's scripts/, minus generated caches.
-rsync -a --exclude "__pycache__" --exclude "*.pyc" --exclude ".DS_Store" \
-  "$REPO/scripts/" "$RES/AnalysisTools/" || die "could not stage AnalysisTools"
+# AnalysisTools = the scripts the app RUNS, and nothing else. The family is
+# read in one place: GemmaScopeAnalysis resolves `gemmascope_analyze.py`
+# through CodeResources.analysisTools(). It used to be the whole of scripts/
+# (CI audits, scan baselines, build and install tooling), none of which the
+# app runs. A script the app starts running belongs in this list, and
+# Server/tests/test_build_app_script.py holds the list to the Swift readers.
+ANALYSIS_TOOLS=(gemmascope_analyze.py)
+mkdir -p "$RES/AnalysisTools" || die "could not stage AnalysisTools"
+for tool in "${ANALYSIS_TOOLS[@]}"; do
+  cp "$REPO/scripts/$tool" "$RES/AnalysisTools/$tool" \
+    || die "could not stage AnalysisTools/$tool (scripts/$tool is missing from the checkout)"
+done
 
 # ClusterPayload = exactly what ClusterProvisioner pushes (filtered Server/ +
 # prompts/fixtures/) plus deployment-manifest.json. Reuse the existing staging
