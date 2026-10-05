@@ -228,7 +228,7 @@ SteerLab:
 - Download each file and verify it: `shasum -a 256 -c <file>.sha256`.
 - Unzip the app and open it. It must open without a Gatekeeper warning.
   `SteerLab.app/Contents/Helpers/steerlab-cli --version` must report the new
-  version and 6/6 resource families.
+  version and 7/7 resource families.
 - Extract the client archive and follow its `README.md`. `steerlab --version`
   must report `steerlab <version> (client)`.
 - An older installed app's update check should offer the new release.

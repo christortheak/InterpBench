@@ -12,7 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
-- **Version 0.9.7.**
+## [0.9.7] — 2026-10-05
+
 - **Home guides a first study.** A seven-step checklist, from a workspace to
   exported results, marks each step from what the workspace holds and offers
   Open Demo Workspace. The sidebar groups Probes, Multi-Agent, and Analysis

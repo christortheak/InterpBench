@@ -17,8 +17,8 @@ license: Apache-2.0
 repository-code: "https://github.com/christortheak/InterpBench"
 url: "https://github.com/christortheak/InterpBench"
 # The latest tagged release. Update both lines with each release.
-version: "0.9.6"
-date-released: 2026-09-07
+version: "0.9.7"
+date-released: 2026-10-05
 keywords:
   - activation steering
   - interpretability
@@ -30,7 +30,7 @@ preferred-citation:
   title: SteerLab
   authors:
     - name: "The SteerLab Authors"
-  version: "0.9.6"
+  version: "0.9.7"
   year: 2026
   repository-code: "https://github.com/christortheak/InterpBench"
   url: "https://github.com/christortheak/InterpBench"
