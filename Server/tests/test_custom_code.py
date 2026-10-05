@@ -199,6 +199,11 @@ def test_a_damaged_record_is_refused_rather_than_read_as_empty(tmp_path):
         custom_code.run_refusal(document, tmp_path, study="s", verb="run",
                                 program="steerlab")
     assert custom_code.FILENAME in raised.value.repair_action
+    # After an import has already written its study, the notice still shows
+    # and names the problem instead of reporting the import as failed.
+    block = custom_code.notice(document, tmp_path, study="s", program="steerlab",
+                               after_write=True)
+    assert block["notice"] == NOTICE_LITERAL and "cannot be read" in block["recordProblem"]
 
 
 def test_only_steps_that_execute_agents_are_held(tmp_path):

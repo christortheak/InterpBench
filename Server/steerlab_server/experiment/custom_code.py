@@ -242,17 +242,39 @@ def review_command(study: str, *, program: str) -> str:
     return f"{program} experiment acknowledge-custom-code {study}"
 
 
-def notice(document, root, *, study: str, program: str) -> dict | None:
+def notice(document, root, *, study: str, program: str,
+           after_write: bool = False) -> dict | None:
     """The ``customCode`` block a surface attaches when ``document`` carries
     custom code, or ``None`` when it carries none.
 
     ``notice`` is the sentence while any provider is unacknowledged and
     ``None`` once all are, which is what keeps the notice from repeating for
-    code someone already acknowledged."""
-    rows = status(document, root)
+    code someone already acknowledged.
+
+    ``after_write``: the caller has already written the study (an import or
+    an attachment), so a damaged acknowledgement record must not turn that
+    success into a reported failure. The notice is shown for every provider
+    and the problem rides along as ``recordProblem``; the run gate, which
+    passes ``False``, still refuses on it."""
+    problem = None
+    try:
+        rows = status(document, root)
+    except CustomCodeError as exc:
+        if not after_write:
+            raise
+        problem = str(exc)
+        rows = [{**provider, "acknowledged": False, "acknowledgedAt": None,
+                 "acknowledgedBy": None} for provider in providers(document, root)]
     if not rows:
         return None
     pending = [row["sha256"] for row in rows if not row["acknowledged"]]
+    block = notice_block(rows, pending, study=study, program=program)
+    if problem is not None:
+        block["recordProblem"] = problem
+    return block
+
+
+def notice_block(rows, pending, *, study: str, program: str) -> dict:
     return {"notice": NOTICE if pending else None,
             "providers": rows,
             "acknowledged": not pending,

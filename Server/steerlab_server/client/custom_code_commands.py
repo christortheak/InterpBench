@@ -32,7 +32,8 @@ def attach_notice(payload: dict, document, root, *, study: str) -> dict:
     custom code, and print the notice in human mode (stdout carries nothing
     else under ``--json``, where the block is the notice)."""
     from ..experiment import custom_code
-    block = custom_code.notice(document, root, study=study, program=PROGRAM)
+    block = custom_code.notice(document, root, study=study, program=PROGRAM,
+                               after_write=True)
     if block is not None:
         payload["customCode"] = block
         for line in custom_code.notice_lines(block):
@@ -65,7 +66,8 @@ def attach_bundle_notice(result: dict) -> dict:
     from ..experiment import custom_code
     blocks = {}
     for study, document, root in imported_studies(result):
-        block = custom_code.notice(document, root, study=study, program=PROGRAM)
+        block = custom_code.notice(document, root, study=study, program=PROGRAM,
+                                   after_write=True)
         if block is not None:
             blocks[study] = block
             for line in custom_code.notice_lines(block):
@@ -97,7 +99,7 @@ def run(invocation) -> CLIResult:
         sources = custom_code.provider_sources(document, root)
         payload = {"study": name, "providers": [{**row, "sourceText": sources.get(row["sha256"])}
                                                 for row in rows],
-                   "recordFile": custom_code.FILENAME, "changed": False}
+                   "recordFile": custom_code.FILENAME}
         pending = [row["sha256"] for row in rows if not row["acknowledged"]]
         if not rows:
             line = f"'{name}' carries no custom code; nothing to acknowledge."
