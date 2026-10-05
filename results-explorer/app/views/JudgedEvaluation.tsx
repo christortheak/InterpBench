@@ -16,6 +16,7 @@ import { useEffect, useMemo, useState } from "react";
 import { DerivedBadge, ProvenanceLegend } from "../components/provenance";
 import { NoncompliantNotice } from "../components/stamps";
 import { Badge, CopyLinkButton, ExportButton } from "../components/ui";
+import { skippedLinesNote } from "../lib/csv";
 import { responseRecordKey, splitRecordKey, takePendingRecord, updateDeepLink } from "../lib/deeplink";
 import { findFile } from "../lib/discovery";
 import { csvFilename, type ExportColumn } from "../lib/export";
@@ -298,7 +299,7 @@ export function JudgedEvaluationView({ run, workspaceRuns, onActivateRun, onNavi
     <div className="view-enter inner-view judged-view">
       <header className="page-title">
         <div>
-          <span className="section-number">{rows.length} JUDGMENT ROWS · {judgeCards.length} JUDGE{judgeCards.length === 1 ? "" : "S"} · {cells.length} SPLIT CELL{cells.length === 1 ? "" : "S"}{data.truncated ? " · BOUNDED PREVIEW" : ""}</span>
+          <span className="section-number">{rows.length} JUDGMENT ROWS · {judgeCards.length} JUDGE{judgeCards.length === 1 ? "" : "S"} · {cells.length} SPLIT CELL{cells.length === 1 ? "" : "S"}{data.truncated ? " · BOUNDED PREVIEW" : ""}{data.skipped ? ` · ${data.skipped} LINE${data.skipped === 1 ? "" : "S"} SKIPPED` : ""}</span>
           <h1>Judged evaluation</h1>
           <p>Which arm each judge preferred, how far the judges agreed, and every pair they read differently — with the two responses unblinded side by side.</p>
         </div>
@@ -423,7 +424,7 @@ export function JudgedEvaluationView({ run, workspaceRuns, onActivateRun, onNavi
 
       <section className="card disagreement-card">
         <header className="section-header">
-          <div><span className="section-number">DISAGREEMENT BROWSER <DerivedBadge formula="cells where two judges recorded different outcomes for the same (condition, promptID, sampleIndex); selection computed in the viewer from judgments.jsonl" /></span><h2>Where the judges split</h2><p>{cells.length} of {new Set(rows.map((row) => cellKey(row.condition, row.promptID, row.sampleIndex))).size} judged cells drew different verdicts. Ties count as a verdict.</p></div>
+          <div><span className="section-number">DISAGREEMENT BROWSER <DerivedBadge formula="cells where two judges recorded different outcomes for the same (condition, promptID, sampleIndex); selection computed in the viewer from judgments.jsonl" /></span><h2>Where the judges split</h2><p>{cells.length} of {new Set(rows.map((row) => cellKey(row.condition, row.promptID, row.sampleIndex))).size} judged cells drew different verdicts. Ties count as a verdict.{data.skipped ? ` ${skippedLinesNote(data.skipped, "judgments.jsonl", "judgment rows")}` : ""}</p></div>
           {rows.length > 0 && <div className="disagree-filters">
             <select value={conditionFilter} onChange={(event) => { setConditionFilter(event.target.value); setSelectedKey(""); }} aria-label="Filter split cells by condition"><option>All conditions</option>{conditions.map((name) => <option key={name}>{name}</option>)}</select>
             <select value={judgeFilter} onChange={(event) => { setJudgeFilter(event.target.value); setSelectedKey(""); }} aria-label="Filter split cells by judge"><option>All judges</option>{judgeNames.map((name) => <option key={name}>{name}</option>)}</select>

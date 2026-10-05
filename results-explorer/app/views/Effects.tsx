@@ -4,6 +4,7 @@ import { useState } from "react";
 import { AnalysisStampsCard } from "../components/stamps";
 import { Badge, ExportButton, ForestRow, NoRunSelected } from "../components/ui";
 import { analysisStampsOf } from "../lib/analysisStamps";
+import { skippedLinesNote } from "../lib/csv";
 import { demoPreviewEnabled, effects } from "../lib/demo";
 import { findFile } from "../lib/discovery";
 import { effectConditions, effectEndpoints, estimandLabel, groupEffects, isDiagnostic, pairedCountLabel, stratumLabel } from "../lib/effects";
@@ -150,6 +151,9 @@ export function EffectsView({ run, onOpenFile }: { run: WorkspaceRun | null; onO
           );
         })}
         {groups.length === 0 && <div className="artifact-empty"><span>∅</span><p>No readable effect rows were found for this run.</p></div>}
+        {/* A line with no readable estimate or interval is left out, never
+            patched up — and the table says it is short. */}
+        {run && (run.skippedEffectRows ?? 0) > 0 && <div className="preview-warning skipped-note" role="status">{skippedLinesNote(run.skippedEffectRows ?? 0, "effect-sizes.csv", "effect rows (a row needs an endpoint, an estimate, and both ends of its interval)")}</div>}
         <footer className="table-note"><strong>Interpretation.</strong> {run ? "Values are read directly from effect-sizes.csv; absent fields remain absent. Stratified rows are the engine’s per-cell companions to the pooled row above them: an “itemLevel” stratum is the pooled estimate restricted to that cell, while a “withinItemSamples” stratum compares one prompt’s own generations — a prompt-specific quantity that supports no cross-prompt claim, so the engine leaves it out of every correction family and it is shown here as a diagnostic locator only." : "CIs are percentile bootstrap intervals over paired item-level differences (10,000 resamples; seed 0). Two-sided Wilcoxon signed-rank p-values are a robustness companion, adjusted over the five-endpoint confirmatory family with Holm’s method."}</footer>
       </section>
 

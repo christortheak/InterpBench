@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { DerivedBadge } from "../components/provenance";
 import { Badge, CopyLinkButton, NoRunSelected, SaveStatus, useSave } from "../components/ui";
+import { skippedLinesNote } from "../lib/csv";
 import { responseRecordKey, splitRecordKey, takePendingRecord, updateDeepLink } from "../lib/deeplink";
 import { demoPreviewEnabled, generations } from "../lib/demo";
 import { exportFilename } from "../lib/export";
@@ -196,6 +197,9 @@ export function GenerationsView({ run }: { run: WorkspaceRun | null }) {
         <div><span className="section-number">{run ? `${records.length} LOADED RECORDS${run.previewTruncated ? " · BOUNDED PREVIEW" : ""}${instrumentRecords.length ? ` · ${instrumentRecords.length} INSTRUMENT READOUTS` : ""}` : "384 RECORDS · 0 DECODE ERRORS"}</span><h1>Generation reader</h1><p>Inspect outputs, paired conditions, parser results, and record-level provenance without leaving the study.</p></div>
         <div className="title-actions"><SaveStatus status={save.status} /><button className="primary" onClick={downloadGenerations} disabled={!run?.generationFile}>{run ? "Download JSONL" : "Preview only"} <span>↓</span></button></div>
       </header>
+      {/* Said whenever ANY line was skipped. It used to be said only when
+          every line was, so a file that lost a few records looked whole. */}
+      {run && run.skippedGenerationLines > 0 && <div className="preview-warning skipped-note" role="status">{skippedLinesNote(run.skippedGenerationLines, "generations.jsonl", "generation records")}</div>}
       <div className="reader-shell">
         <aside className="record-list">
           <div className="reader-filters">

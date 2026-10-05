@@ -261,6 +261,10 @@ export type WorkspaceRun = {
   /// endpoint rescue, adjudication, and the unit of analysis. Read it with
   /// `analysisStampsOf`. See lib/analysisStamps.ts.
   analysisStamps?: AnalysisStamps;
+  /// Lines of effect-sizes.csv that had no readable endpoint, estimate, or
+  /// interval, and so are not among `effectRows`. Absent or 0 when every
+  /// line was read.
+  skippedEffectRows?: number;
 };
 
 export type FilePreview = {

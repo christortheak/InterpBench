@@ -5,7 +5,7 @@
 
 import { useState } from "react";
 import { deepLinkHref, deepLinksAvailable } from "../lib/deeplink";
-import { splitCSV } from "../lib/csv";
+import { csvPreview, csvPreviewNotice } from "../lib/csv";
 import { pairedCountLabel } from "../lib/effects";
 import { exportCSV, exportColumnNotes, type ExportColumn } from "../lib/export";
 import { fmt } from "../lib/format";
@@ -150,7 +150,11 @@ export const NoRunSelected = ({ title }: { title: string }) => (
 export function FilePreviewModal({ preview, onClose }: { preview: FilePreview; onClose: () => void }) {
   const extension = preview.file.name.split(".").pop()?.toLowerCase() ?? "";
   const isCSV = extension === "csv";
-  const csvRows = isCSV && preview.text ? preview.text.split(/\r?\n/).filter(Boolean).slice(0, 250).map(splitCSV) : [];
+  // The table is a bounded head of the file. When rows are left out the
+  // modal says so, with the count (lib/csv.ts).
+  const table = isCSV && preview.text ? csvPreview(preview.text, preview.truncated) : null;
+  const csvRows = table?.lines ?? [];
+  const cutNotice = table ? csvPreviewNotice(table) : "";
   const save = useSave();
   // A copy of the file itself, byte for byte. In the app the native host
   // copies it to the place the reader picks; the bytes never pass through
@@ -160,6 +164,7 @@ export function FilePreviewModal({ preview, onClose }: { preview: FilePreview; o
     <section className="file-preview-modal" role="dialog" aria-modal="true" aria-labelledby="file-preview-title" onMouseDown={(event) => event.stopPropagation()}>
       <header><div><span className="section-number">RUN FILE · READ ONLY</span><h2 id="file-preview-title">{preview.file.name}</h2><p>{preview.file.path} · {preview.file.size < 1024 * 1024 ? `${(preview.file.size / 1024).toFixed(1)} KB` : `${(preview.file.size / 1024 / 1024).toFixed(1)} MB`}</p></div><div><SaveStatus status={save.status} /><button className="secondary" onClick={download}>Download</button><button className="close-file" onClick={onClose} aria-label="Close file preview">×</button></div></header>
       {preview.truncated && <div className="preview-warning">Showing the first 1 MB. Download the file to inspect every byte.</div>}
+      {cutNotice && <div className="preview-warning">{cutNotice}</div>}
       <div className="file-preview-body">
         {preview.loading ? <div className="empty-state">Reading local file…</div> : preview.error ? <div className="empty-state">{preview.error}</div> : isCSV && csvRows.length ? <div className="raw-table-scroll"><table className="raw-table"><thead><tr>{csvRows[0].map((cell, index) => <th key={index}>{cell}</th>)}</tr></thead><tbody>{csvRows.slice(1).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table></div> : <pre>{preview.text || "This file is binary or has no text preview. Use Download to open it in its native application."}</pre>}
       </div>

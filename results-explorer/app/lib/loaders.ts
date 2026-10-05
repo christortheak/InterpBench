@@ -19,14 +19,18 @@ import type {
   WorkspaceRun,
 } from "./types";
 
-export const loadEffects = async (run: WorkspaceRun): Promise<Effect[]> => {
+/// effect-sizes.csv as rows, plus how many of its lines could not be shown.
+/// A line is left out when it has no endpoint, estimate, or interval the
+/// viewer can read — it is never patched up. The count travels with the
+/// rows so the effects page can say that the table on screen is short.
+export const loadEffectTable = async (run: WorkspaceRun): Promise<{ rows: Effect[]; skipped: number }> => {
   const runFile = findFile(run.files, "effect-sizes.csv");
-  if (!runFile) return [];
+  if (!runFile) return { rows: [], skipped: 0 };
   const lines = (await (await runFile.handle.getFile()).text()).split(/\r?\n/).filter(Boolean);
-  if (lines.length < 2) return [];
+  if (lines.length < 2) return { rows: [], skipped: 0 };
   const headers = splitCSV(lines[0]).map((value) => value.toLowerCase());
   const cell = (row: string[], ...keys: string[]) => row[headers.findIndex((header) => keys.includes(header))] ?? "";
-  return lines.slice(1).map(splitCSV).flatMap((row) => {
+  const rows = lines.slice(1).map(splitCSV).flatMap((row) => {
     // Both engines append per-stratum companion rows (stratifyBy ≠ "pooled",
     // 2026-08-06). ALL of them are read here — the view nests them under
     // their pooled parent rather than hiding them, so a saturated-cell
@@ -66,7 +70,10 @@ export const loadEffects = async (run: WorkspaceRun): Promise<Effect[]> => {
       key: effectKey({ condition, endpoint, stratifyBy, stratum }),
     }];
   });
+  return { rows, skipped: lines.length - 1 - rows.length };
 };
+
+export const loadEffects = async (run: WorkspaceRun): Promise<Effect[]> => (await loadEffectTable(run)).rows;
 
 export const loadGenerations = async (run: WorkspaceRun) => {
   const runFile = findFile(run.files, "generations.jsonl");
@@ -304,10 +311,10 @@ export const loadAnalysisStamps = async (run: WorkspaceRun): Promise<AnalysisSta
 };
 
 export const hydrateRun = async (run: WorkspaceRun): Promise<WorkspaceRun> => {
-  const [effects, generationData, cosineMatrices, sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps] = await Promise.all([loadEffects(run), loadGenerations(run), loadCosineMatrices(run), loadSweepRows(run), loadSweepRecommendations(run), loadPanelEffects(run), loadFreezeStamp(run), loadAnalysisStamps(run)]);
+  const [effectTable, generationData, cosineMatrices, sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps] = await Promise.all([loadEffectTable(run), loadGenerations(run), loadCosineMatrices(run), loadSweepRows(run), loadSweepRecommendations(run), loadPanelEffects(run), loadFreezeStamp(run), loadAnalysisStamps(run)]);
   // The run's unit of analysis travels ON each row, so every surface that
   // prints a row's count prints it in the right unit (lib/effects.ts).
   const analysisUnit = analysisStamps.unit?.unit ?? "";
-  const effectRows = analysisUnit ? effects.map((effect) => ({ ...effect, analysisUnit })) : effects;
-  return { ...run, effectRows, generationRows: generationData.rows, generationFile: generationData.handle, previewTruncated: generationData.truncated, skippedGenerationLines: generationData.skipped, cosineMatrices, validationConcepts: validationRows(run.validationReport), sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps };
+  const effectRows = analysisUnit ? effectTable.rows.map((effect) => ({ ...effect, analysisUnit })) : effectTable.rows;
+  return { ...run, effectRows, skippedEffectRows: effectTable.skipped, generationRows: generationData.rows, generationFile: generationData.handle, previewTruncated: generationData.truncated, skippedGenerationLines: generationData.skipped, cosineMatrices, validationConcepts: validationRows(run.validationReport), sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps };
 };
