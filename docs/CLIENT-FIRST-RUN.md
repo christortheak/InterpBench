@@ -21,10 +21,20 @@ an `AGENTS.md` written for a coding agent that has been pointed at the folder:
 plan before installing, install only with the approved hash, use the returned
 executable, and create the research workspace somewhere else. No repository,
 preinstalled Python, administrator privileges or GPU is required. Supported
-installer platforms are Apple Silicon macOS and x86_64 Linux with glibc.
+installer platforms are Apple Silicon macOS and x86_64 Linux with glibc 2.28
+or newer.
+
+The app-free client is a preview. It creates workspaces and authors studies,
+then submits them to a runner that someone has set up (a workstation, a
+cluster, or a local engine installed separately). It does not run models
+itself. On a Mac, the app is the supported route to running studies and
+reading their results.
 
 1. `sh install-client.sh plan` changes nothing and reports the destination,
-   the actions and a plan hash.
+   the actions, the approximate download size and disk space, and a plan
+   hash. It first checks for curl, tar, a SHA-256 tool, a writable
+   destination, enough free disk, and on Linux glibc, and refuses early with
+   a typed `code` if one is missing.
 2. `sh install-client.sh install --expect <planSHA256> --yes` downloads a
    verified uv and managed CPython 3.12.14, installs the hashed client lock
    from wheels only, verifies imports and source identity, and activates the
@@ -59,8 +69,14 @@ Managed upgrades and `repair` require a new plan and approval. Each creates a
 new environment, verifies it and atomically changes the public runtime link.
 An unsuccessful download or verification preserves the prior runtime. Old managed
 environments are retained; setup does not delete study data or clean up models.
-A concurrent setup refuses until its lock is released. After an interrupted
-process, inspect the setup log before removing the empty setup-lock directory.
+Downloads give up on a stalled connection and retry a few times. Each failure
+carries a `code` (such as `noNetwork`, `downloadStalled`, `tlsFailure`,
+`checksumMismatch`, `diskFull`, or `missingTools`), a plain reason, and a
+repair. Ctrl-C, or Cancel in Research Setup, stops an installation cleanly.
+A concurrent setup refuses while another is running. The setup lock records
+its process, machine, and start time; a lock left by a setup that is no longer
+running is reclaimed on the next attempt, together with that setup's
+unfinished staging folder, so a re-run needs no manual cleanup.
 
 The installer does not edit shell startup files. Use the returned executable
 path, or add its bin directory to PATH. It does not start services, download

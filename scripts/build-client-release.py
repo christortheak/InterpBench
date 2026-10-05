@@ -61,11 +61,12 @@ research workspace: your studies live in a separate folder you create below.
 
 ## What this client does, and what it does not
 
-The client creates research workspaces and authors studies: prompts, study
-designs, templates, and the checks that make a study ready to run. It then
-submits a study to a runner that someone has set up (a workstation, a
-cluster, or a local engine installed separately) and brings the verified
-evidence back into your workspace. It does not run models itself. To read
+This client is a preview. It creates research workspaces and authors studies:
+prompts, study designs, templates, and the checks that make a study ready to
+run. It then submits a study to a runner that someone has set up (a
+workstation, a cluster, or a local engine installed separately) and brings
+the verified evidence back into your workspace. It does not run models
+itself. To read
 results without the app, `results export` writes a completed run's stored
 tables, transcripts, and methods summary to files. On a Mac, the SteerLab app
 is the supported route to running studies and reading their results.

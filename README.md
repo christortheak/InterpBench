@@ -83,6 +83,14 @@ below, a different product with a different verb surface.
 
 ### Let your coding agent set it up, without the Mac app
 
+The app-free client is a preview. It creates workspaces and authors
+studies, then submits them to a runner that someone has set up: a
+workstation, a cluster, or a local engine installed separately. It does not
+run models itself. To read results without the app, `results export` writes
+a completed run's stored tables, transcripts, and methods summary to files.
+On a Mac, the app is the supported route to running studies and reading
+their results.
+
 1. **Download `steerlab-client-<version>+<revision>.tar.gz`** from the
    Releases page and extract it into a folder.
 2. **Open that folder in your coding-agent tool.** It needs permission to
@@ -98,9 +106,12 @@ below, a different product with a different verb surface.
 The folder's own AGENTS.md walks the agent through it: plan first, install
 only with the approved hash, use the returned executable, keep the research
 in a separate workspace. The installer provisions Python for you; no
-repository, preinstalled Python or GPU is needed for authoring. It needs
-internet access and the usual shell tools. Supported: Apple Silicon macOS
-and x86_64 Linux with glibc. Windows is not supported.
+repository, preinstalled Python, or GPU is needed for authoring. It needs
+internet access, plus curl, tar, and a SHA-256 tool, and its plan checks for
+them and states the download size before anything is downloaded. A failed or
+interrupted install leaves the previous one in place, and running it again
+needs no cleanup. Supported: Apple Silicon macOS, and x86_64 Linux with
+glibc 2.28 or newer. Windows is not supported.
 
 <details>
 <summary>Prefer to run the installer yourself?</summary>
