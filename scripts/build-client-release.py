@@ -59,12 +59,27 @@ with tempfile.TemporaryDirectory(prefix='steerlab-client-build-', dir=args.outpu
 This folder is the installer for the app-free SteerLab client. It is not a
 research workspace: your studies live in a separate folder you create below.
 
-Supported: Apple Silicon macOS and x86_64 Linux with glibc. No app, repository,
-preinstalled Python, administrator privileges or GPU is required. Installation
-needs internet access plus curl, tar and a SHA-256 utility.
+## What this client does, and what it does not
+
+The client creates research workspaces and authors studies: prompts, study
+designs, templates, and the checks that make a study ready to run. It then
+submits a study to a runner that someone has set up (a workstation, a
+cluster, or a local engine installed separately) and brings the verified
+evidence back into your workspace. It does not run models itself. To read
+results without the app, `results export` writes a completed run's stored
+tables, transcripts, and methods summary to files. On a Mac, the SteerLab app
+is the supported route to running studies and reading their results.
+
+## Install
+
+Supported: Apple Silicon macOS, and x86_64 Linux with glibc 2.28 or newer.
+No app, repository, preinstalled Python, administrator privileges, or GPU is
+required. Installation needs internet access, plus curl, tar, and a SHA-256
+utility; the plan checks for these, and for free disk space, before anything
+is downloaded.
 
 1. `sh install-client.sh plan` — changes nothing; shows the destination, the
-   actions and a plan hash.
+   actions, the approximate download size and disk space, and a plan hash.
 2. `sh install-client.sh install --expect <planSHA256> --yes` — downloads a
    verified Python and the client's small dependency set into an isolated
    environment and activates it. The result names an absolute `steerlab`
@@ -76,25 +91,43 @@ needs internet access plus curl, tar and a SHA-256 utility.
    handoff again whenever you need it. Read the workspace's `AGENTS.md` before
    study work; it is the contract for everything that follows.
 
+## If an installation fails or is interrupted
+
+A failure is reported with a `code`, a plain reason, and a repair, and the
+environment you had before stays in place. Downloads give up on a stalled
+connection and retry a few times. Ctrl-C stops an installation cleanly. If an
+installation was stopped some other way, run the plan and the install again:
+the installer recognizes the lock of a setup that is no longer running,
+reclaims it, and removes that setup's unfinished staging folder.
+
 `--runtime <absolute-path>` chooses a different environment location on every
 installer call. `repair` follows the same reviewed plan and activates a fresh
 environment; earlier managed environments are kept. Existing folders you made
 yourself are never replaced. The installer does not edit shell startup files;
 add the returned `bin` directory to `PATH` yourself if you want to. Models,
-servers and cluster execution are separate, optional steps you choose later.
+servers, and cluster execution are separate, optional steps you choose later.
 ''')
     (release / 'AGENTS.md').write_text('''# AGENTS.md — this folder is an installer, not a workspace
 
 You are a coding agent and a person has pointed you at an extracted SteerLab
 client release. Read this file, then `README.md`. Nothing here is a study.
 
+**What this client is for.** It creates workspaces and authors studies, then
+submits them to a runner that someone has set up: a workstation, a cluster,
+or a local engine installed separately. It does not run models itself. On a
+Mac, the SteerLab app is the supported route to running studies and reading
+their results. Say this to the person before you install, so they know what
+they are getting.
+
 1. **Plan before installing.** Run `sh install-client.sh plan` and show the
-   person the destination, the actions and the plan hash. Do not install
-   until they approve; installation downloads tools and creates an
-   environment on their machine.
+   person the destination, the actions, the approximate download size, and
+   the plan hash. Do not install until they approve; installation downloads
+   tools and creates an environment on their machine.
 2. **Install only with the approved hash.**
    `sh install-client.sh install --expect <planSHA256> --yes`. If the plan
-   changes, plan again. Never bypass a refusal; follow its `repairAction`.
+   changes, plan again. Never bypass a refusal; read its `code` and follow
+   its `repairAction`. Do not remove a setup lock or a staging folder by hand
+   unless a repair says to: a re-run reclaims what an interrupted setup left.
 3. **Use the returned executable.** The installer prints an absolute path to
    `steerlab`. Use that path; do not assume `steerlab` is on `PATH`.
 4. **Create the workspace somewhere else.** Ask where the research should
@@ -106,7 +139,7 @@ client release. Read this file, then `README.md`. Nothing here is a study.
 
 Every study-path verb speaks `--json`: one envelope on stdout, diagnostics on
 stderr, exit codes 0 ok, 64 malformed, 65 refused, 66 not found, 70 failed.
-Models, servers and cluster access are separate choices the person makes
+Models, servers, and cluster access are separate choices the person makes
 later; do not download models or start servers on your own initiative.
 ''')
     (release / 'SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\n' for p in sorted(release.iterdir()) if p.is_file()))

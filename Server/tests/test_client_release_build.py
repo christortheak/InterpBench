@@ -67,6 +67,26 @@ def test_a_clean_release_is_scanned_and_written(tmp_path):
     assert (output / "steerlab_server-0.0.0-py3-none-any.whl").is_file()
 
 
+def test_the_release_says_what_the_app_free_client_does(tmp_path):
+    """Release review decision 1: the archive's own README and AGENTS.md say
+    plainly that this client authors studies and submits them to a runner,
+    and that the Mac app is the supported route to running and reading
+    results. They also say how a failed or interrupted install recovers."""
+    result, output = _build(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    # One line per paragraph, so a phrase is found wherever the text wraps.
+    readme = " ".join((output / "README.md").read_text().split())
+    agents = " ".join((output / "AGENTS.md").read_text().split())
+    for text in (readme, agents):
+        assert "authors studies" in text
+        assert "runner that someone has set up" in text
+        assert "does not run models itself" in text
+        assert "SteerLab app is the supported route" in text
+    assert "download size" in readme and "glibc 2.28" in readme
+    assert "reclaims" in readme and "Ctrl-C" in readme
+    assert "download size" in agents and "repairAction" in agents and "reclaims" in agents
+
+
 def test_the_release_and_its_wheel_carry_the_license_and_the_notice(tmp_path):
     """A release directory is downloaded on its own, and its wheel is
     installed far from the repository: both must carry the terms."""
