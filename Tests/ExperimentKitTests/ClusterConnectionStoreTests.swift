@@ -38,7 +38,8 @@ struct ClusterConnectionStoreTests {
         #expect(store.activeWorkspace == .local)
         #expect(store.computeTarget == .local)
         #expect(store.serverURL == ClusterConnectionStore.defaultServerURL)
-        #expect(store.substrateLabel == "Local (MLX)")
+        #expect(store.substrateLabel == "This Mac, quick start")
+        #expect(store.activeComputeChoice == .macQuickStart)
     }
 
     @Test func registryRoundTripsAcrossInstances() throws {

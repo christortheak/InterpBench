@@ -22,6 +22,10 @@ struct SteerLabApp: App {
     /// the Compute substrate switcher. Created before the catalogs so their
     /// first scans already resolve against the persisted workspace choice.
     @State private var workspace: WorkspaceStore
+    /// Create/open a workspace, shared by the toolbar's Workspace menu,
+    /// Research Setup, and the "no workspace yet" prompt every section shows
+    /// on a first launch.
+    @State private var workspaceActions: WorkspaceActions
     /// One-click local Python server lifecycle (venv setup + loopback serve
     /// of the current workspace) — owned here so a running server survives
     /// toolbar view churn; the connection dot renders and drives it.
@@ -31,7 +35,11 @@ struct SteerLabApp: App {
     /// same reason as `localServer`: a materialization or a multi-gigabyte
     /// wheel install must survive toolbar view churn. It provisions;
     /// `localServer` keeps owning the running server's lifecycle.
-    @State private var localEngine = LocalEngineProvisioner()
+    @State private var localEngine: LocalEngineProvisioner
+    /// The three compute choices — "This Mac, quick start", "This Mac, full
+    /// capabilities", and "Another machine" — and the actions behind picking
+    /// one, shared by every surface that offers them.
+    @State private var compute: ComputeChoiceCoordinator
     /// Update SIGNPOST — the once-a-day "a newer release exists" check and
     /// its menu item. Never downloads or installs; see UpdateSignpost.swift.
     @State private var updates = UpdateSignpostModel()
@@ -78,7 +86,21 @@ struct SteerLabApp: App {
         _cluster = State(initialValue: cluster)
         _tunnel = State(initialValue: ClusterTunnel())
         _catalog = State(initialValue: catalog)
-        _service = State(initialValue: ChatService(cluster: cluster, catalog: catalog))
+        let service = ChatService(cluster: cluster, catalog: catalog)
+        _service = State(initialValue: service)
+        let workspaceActions = WorkspaceActions(
+            workspace: workspace, service: service, catalog: catalog)
+        _workspaceActions = State(initialValue: workspaceActions)
+        let localEngine = LocalEngineProvisioner()
+        _localEngine = State(initialValue: localEngine)
+        let compute = ComputeChoiceCoordinator(
+            workspace: workspace, cluster: cluster, service: service,
+            localEngine: localEngine, actions: workspaceActions)
+        _compute = State(initialValue: compute)
+        // A workspace created with a compute choice switches the app to it.
+        workspaceActions.onWorkspaceCreated = { [weak compute] choice in
+            compute?.applyToNewWorkspace(choice)
+        }
         cluster.attachTunnel(_tunnel.wrappedValue)  // WS3: the client + health card read tunnel state through the store
         // F4: same-machine server auto-switch is policy on the cluster store,
         // triggered from the ONE workspace-root-change seam — picker New/Open,
@@ -162,7 +184,26 @@ struct SteerLabApp: App {
         WindowGroup("SteerLab") {
             VStack(spacing: 0) {
                 UpdateBanner(model: updates)
-                ChatView(service: service, workspace: workspace)
+                ChatView(
+                    service: service, workspace: workspace,
+                    actions: workspaceActions)
+            }
+            // Sections reach the compute choices through the environment, so
+            // a view several layers down can offer "switch to full
+            // capabilities" without every layer above it carrying a
+            // parameter for it.
+            .environment(compute)
+            // The engine setup and the "what runs where" view, for every
+            // entry point in the main window. While Research Setup is up it
+            // presents them itself, on its own sheet.
+            .modifier(
+                ComputeSheets(
+                    compute: compute, service: service, localServer: localServer,
+                    isActive: !workspaceActions.showingResearchSetup))
+            // A setup the researcher started from a compute choice: when it
+            // finishes, switch the app to the engine without a second click.
+            .onChange(of: localEngine.phase) { _, _ in
+                compute.engineStateChanged()
             }
             // Floor: sidebar + section controls (≥560 for the dense panels)
             // + viewer (≥420). Below this the sidebar collapses and section
@@ -196,8 +237,11 @@ struct SteerLabApp: App {
             .toolbar {
                 ToolbarItemGroup {
                     WorkspaceSelector(
-                        workspace: workspace, service: service, catalog: catalog)
-                    SubstrateSelector(cluster: cluster, service: service)
+                        workspace: workspace, service: service,
+                        actions: workspaceActions, compute: compute,
+                        localServer: localServer)
+                    SubstrateSelector(
+                        cluster: cluster, service: service, compute: compute)
                     // Item 1 (cluster-testing): GPU session start/stop at
                     // a glance, beside the connection dot — visible only
                     // on server workspaces whose profile supports GPU
@@ -206,7 +250,8 @@ struct SteerLabApp: App {
                     GPUSessionToolbarControl(service: service)
                     ClusterConnectionDot(
                         cluster: cluster, tunnel: tunnel, service: service,
-                        localServer: localServer, localEngine: localEngine)
+                        localServer: localServer, localEngine: localEngine,
+                        compute: compute)
                 }
             }
         }
@@ -234,44 +279,95 @@ struct SteerLabApp: App {
     }
 }
 
-/// Compact window-toolbar workspace switch: Local (MLX) plus every saved
-/// server, a connection-status dot, and a popover for adding/editing servers
-/// (name, URL, bearer token) and — on server workspaces — installing models.
+/// The window toolbar's Compute menu: where the app is running things right
+/// now, as the three plainly named choices — this Mac's quick start, this
+/// Mac's full capabilities, and another machine (every saved one, by name) —
+/// plus the "what runs where" view and a popover for adding or editing a
+/// machine (name, address, token).
+///
+/// This menu says what the app is USING. What a workspace is SET to is the
+/// Workspace menu's "This workspace runs on"; picking here re-declares a
+/// workspace only when it has declared nothing yet (see
+/// `ComputeChoiceCoordinator.use`).
 private struct SubstrateSelector: View {
     @Bindable var cluster: ClusterConnectionStore
     let service: ChatService
+    let compute: ComputeChoiceCoordinator
     @State private var showingServerEditor = false
     /// nil while the editor is adding a new server; otherwise the entry being
     /// edited.
     @State private var editingServerID: ClusterConnectionStore.ServerEntry.ID?
 
+    /// Saved engines on this Mac other than the one the setup manages — a
+    /// second local server on another port, for instance. Listed by name so
+    /// none becomes unreachable behind the single "full capabilities" row.
+    private var otherEnginesOnThisMac: [ClusterConnectionStore.ServerEntry] {
+        let managed = "127.0.0.1:\(compute.localEngine.port)"
+        return cluster.servers.filter {
+            cluster.runsOnThisMac($0) && $0.hostLabel != managed
+        }
+    }
+
     var body: some View {
         // The "Compute:" prefix on the collapsed menu keeps it self-describing
         // in the toolbar (discoverability finding): it reads
-        // "Compute: Local (MLX)" / "Compute: <server name>".
+        // "Compute: This Mac, quick start" / "Compute: <machine name>".
         Menu {
-            // "Compute target", never "Workspace": the toolbar's OTHER menu
-            // is the data workspace, and this one used to borrow its name
-            // from the internal type (`ClusterConnectionStore.Workspace`),
-            // so the two menus contradicted each other on what "workspace"
-            // meant (2026-09-06 audit, headline 18).
-            Picker("Compute target", selection: workspaceSelection) {
-                Text("Local (MLX)").tag(ClusterConnectionStore.Workspace.local)
-                ForEach(cluster.servers) { server in
-                    serverMenuItem(server)
-                        .tag(ClusterConnectionStore.Workspace.server(server.id))
+            // "Compute", never "Workspace": the toolbar's OTHER menu is the
+            // data workspace, and this one used to borrow its name from the
+            // internal type (`ClusterConnectionStore.Workspace`), so the two
+            // menus contradicted each other on what "workspace" meant
+            // (2026-09-06 audit, headline 18).
+            Section("This Mac") {
+                Toggle(isOn: using(.macQuickStart)) {
+                    Text(ComputeChoice.macQuickStart.title)
+                    Text(ComputeChoice.macQuickStart.menuCaption)
+                }
+                .help(ComputeChoice.macQuickStart.summary)
+                Toggle(isOn: using(.macFullCapabilities)) {
+                    Text(ComputeChoice.macFullCapabilities.title)
+                    Text(ComputeChoice.macFullCapabilities.menuCaption)
+                }
+                .help(
+                    ComputeChoice.macFullCapabilities.summary + " "
+                        + ComputeChoice.fullCapabilitiesSetup)
+                ForEach(otherEnginesOnThisMac) { server in
+                    Toggle(isOn: usingMachine(server)) { Text(machineTitle(server)) }
+                        .help("another Python engine saved for this Mac")
                 }
             }
-            .pickerStyle(.inline)
-            .help(
-                "which engine this app computes on — the MLX engine in the "
-                    + "app, or one of the saved Python SteerLab servers")
-            Divider()
-            Button("Add Server…") {
-                editingServerID = nil
-                showingServerEditor = true
+            Section(ComputeChoice.anotherMachine.title) {
+                ForEach(cluster.otherMachines) { server in
+                    Toggle(isOn: usingMachine(server)) { Text(machineTitle(server)) }
+                        .help(
+                            "run on this machine — connecting does not move "
+                                + "your study files, which stay on this Mac")
+                }
+                if cluster.otherMachines.isEmpty {
+                    Text(ComputeChoice.anotherMachine.menuCaption)
+                }
+                Button("Add a Machine by Address…") {
+                    editingServerID = nil
+                    showingServerEditor = true
+                }
+                .help(
+                    "save a workstation or server that is already running "
+                        + "SteerLab's Python engine (name, address, token) and "
+                        + "connect to it")
+                Button("Set Up a Cluster…") { compute.showingClusterWizard = true }
+                    .help(
+                        "opens the step-by-step wizard for a cluster: pick a "
+                            + "site, sign in, install the engine there, check "
+                            + "it, and connect")
             }
-            .help("save another Python SteerLab server (name, URL, token) and connect to it")
+            if let note = shortMismatchNote {
+                Text(note)
+            }
+            Divider()
+            Button(ComputeGuide.guideButton) { compute.showingGuide = true }
+                .help(
+                    "what each of the three choices can run, and what "
+                        + "switching between them costs")
             if let active = cluster.activeServer {
                 Button("Edit “\(active.name)”…") {
                     editingServerID = active.id
@@ -336,20 +432,21 @@ private struct SubstrateSelector: View {
                 }
             }
         } label: {
-            Label("Compute: \(cluster.substrateLabel)", systemImage: "cpu")
+            Label("Compute: \(cluster.activeComputeTitle)", systemImage: "cpu")
         }
         .labelStyle(.titleAndIcon)
         .help(
-            "which engine the app computes on: the MLX engine in this app, or "
-                + "a saved Python SteerLab server (its installed models, "
-                + "artifacts, runs, and jobs — everything it lists lives under "
-                + "its serving root, shown in this menu). The folder menu to "
-                + "the left picks the DATA workspace; this one picks the "
-                + "engine. Recipes — concepts, stimuli, manifests — are "
-                + "git-versioned and visible whichever engine is selected. "
+            "where the app is running things right now: this Mac's quick "
+                + "start (the engine built into the app), this Mac's full "
+                + "capabilities (the Python engine on this Mac), or another "
+                + "machine. Models, vectors, runs, and jobs belong to the "
+                + "engine that made them, so the lists follow this menu. "
+                + "The folder menu to the left picks the workspace and what "
+                + "it is set to run on. Concepts, example texts, and study "
+                + "designs are shared and visible whichever is selected. "
                 + "Connection state lives on the dot to the right")
-        // The server add/edit popover stays reachable from this menu's
-        // Add Server…/Edit… items; the selector's former duplicate
+        // The machine add/edit popover stays reachable from this menu's
+        // Add a Machine…/Edit… items; the selector's former duplicate
         // connection dot is gone — ClusterConnectionDot (right) is the ONE
         // connection affordance (tunnel state, auth, sites, setup wizard).
         .popover(isPresented: $showingServerEditor, arrowEdge: .bottom) {
@@ -379,34 +476,42 @@ private struct SubstrateSelector: View {
             ?? "server root differs from the active workspace"
     }
 
-    /// Menu row for one saved server: a dot marks the active one, and the
-    /// last-known running-job count badges entries where it is known
-    /// ("gpu-a · 2 jobs" — a memory of the last check, not live polling).
-    private func serverMenuItem(_ server: ClusterConnectionStore.ServerEntry) -> some View {
+    /// Checked for the choice the app is using. Picking a machine connects
+    /// to it; switching away is non-destructive (a machine's jobs persist in
+    /// its own durable store). For the engine on this Mac, picking checks
+    /// what is set up and opens the setup if it is needed — nothing is
+    /// installed without the researcher's click there.
+    private func using(_ choice: ComputeChoice) -> Binding<Bool> {
+        Binding(
+            get: { cluster.activeComputeChoice == choice },
+            set: { _ in compute.use(choice) })
+    }
+
+    private func usingMachine(
+        _ server: ClusterConnectionStore.ServerEntry
+    ) -> Binding<Bool> {
+        Binding(
+            get: { cluster.activeWorkspace == .server(server.id) },
+            set: { _ in compute.useMachine(server) })
+    }
+
+    /// A saved machine's name, with its last-known running-job count where
+    /// one is known ("gpu-a · 2 jobs" — a memory of the last check, not live
+    /// polling).
+    private func machineTitle(_ server: ClusterConnectionStore.ServerEntry) -> String {
         var title = server.name
         if let badge = cluster.runningJobsBadge(for: server.id) {
             title += " · \(badge)"
         }
-        return Group {
-            if cluster.activeWorkspace == .server(server.id) {
-                Label(title, systemImage: "circle.fill")
-            } else {
-                Text(title)
-            }
-        }
+        return title
     }
 
-    /// Selecting a server workspace connects to it; switching away is
-    /// non-destructive (server jobs persist in the server's durable store).
-    private var workspaceSelection: Binding<ClusterConnectionStore.Workspace> {
-        Binding(
-            get: { cluster.activeWorkspace },
-            set: { workspace in
-                cluster.activeWorkspace = workspace
-                if case .server = workspace {
-                    Task { await service.connectCluster() }
-                }
-            })
+    /// One short line for the menu when the workspace is set to one engine
+    /// and the app is using the other. The full sentence is on Home.
+    private var shortMismatchNote: String? {
+        compute.mismatchNote == nil
+            ? nil
+            : "This workspace is set to \(compute.workspaceChoice.title)"
     }
 
 }
@@ -459,8 +564,16 @@ private struct ServerEditorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(existing == nil ? "Add Server" : "Edit Server")
+            Text(existing == nil ? "Add a Machine" : "Edit Machine")
                 .font(.headline)
+            Text(
+                "A workstation or server that is already running SteerLab's "
+                    + "Python engine. For a cluster, use Set Up a Cluster… in "
+                    + "the Compute menu instead.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 320, alignment: .leading)
             TextField("name (defaults to host:port)", text: $name)
                 .textFieldStyle(.roundedBorder)
                 .help("label shown for this server in the Compute menu")

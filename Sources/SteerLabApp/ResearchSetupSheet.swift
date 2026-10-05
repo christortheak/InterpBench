@@ -2,90 +2,183 @@ import AppKit
 import ExperimentKit
 import SwiftUI
 
+/// The first-run sheet. Its sentences live in `ResearchSetupCopy`
+/// (ExperimentKit), where they are unit-tested to stay free of commands,
+/// flags, environment variables, and build instructions — this view only
+/// lays them out.
 struct ResearchSetupSheet: View {
     @Bindable var model: ResearchSetupModel
     @Bindable var workspace: WorkspaceStore
+    /// The three compute choices and the actions behind picking one.
+    let compute: ComputeChoiceCoordinator
+    let service: ChatService
+    let localServer: LocalServerController
     let createWorkspace: () -> Void
     let openWorkspace: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var copied = false
 
-    private var selectedRoot: URL? { workspace.isLegacyRepoRoot ? nil : workspace.rootURL }
+    /// The folder the researcher chose — nil with no workspace yet, and nil
+    /// for a developer build standing on its own checkout.
+    private var selectedRoot: URL? { workspace.chosenRootURL }
+
+    private var helperTitle: String {
+        if model.clientReady { return ResearchSetupCopy.helperReady }
+        return model.basicClientReady
+            ? ResearchSetupCopy.helperUpdateTitle : ResearchSetupCopy.helperSetupTitle
+    }
+
+    private var planButtonTitle: String {
+        if model.clientReady { return "Review Repair Plan" }
+        return model.basicClientReady ? "Review Update Plan" : "Review Setup Plan"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Start your research workspace").font(.title2.bold())
-            Text("Bring a research question. SteerLab and your agent help turn it into a study you can review, run and inspect.")
+            Text(ResearchSetupCopy.title).font(.title2.bold())
+            Text(ResearchSetupCopy.introduction)
                 .foregroundStyle(.secondary)
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    GroupBox("1. Choose where your study lives") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(selectedRoot?.path ?? "Choose a local folder for your prompts, study designs and results.")
-                                .textSelection(.enabled)
-                            HStack {
-                                Button("New Workspace…", action: createWorkspace)
-                                Button("Open Workspace…", action: openWorkspace)
-                            }.disabled(model.busy || workspace.isEnvironmentPinned)
-                            Text("The same workspace can be opened by the app and your agent. Execution copies can be sent to a server later.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }.frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    GroupBox("2. Prepare study authoring") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label(model.clientReady ? "Client ready" : model.basicClientReady ? "Client update needed for corpus tools" : "Client setup needed", systemImage: model.clientReady ? "checkmark.circle" : "arrow.down.circle")
-                            Text("This CPU setup supplies Python and the tools for study interviews, evidence import, and corpus preparation. Model downloads and server setup are separate.")
-                            if model.basicClientReady && !model.clientReady {
-                                Text("Basic study authoring is available. Update the client to enable all corpus tools.").font(.caption)
-                            }
-                            HStack {
-                                Button(model.clientReady ? "Review Repair Plan" : model.basicClientReady ? "Review Update Plan" : "Review Setup Plan") { Task { await model.preview() } }
-                                Button("Check Again") { Task { await model.refresh(workspace: selectedRoot) } }
-                            }.disabled(model.busy)
-                            if model.planHash != nil {
-                                Text("Install location: " + model.planDestination).font(.caption).textSelection(.enabled)
-                                ForEach(model.planActions, id: \.self) { Text("• " + $0).font(.callout) }
-                                Text("Requires internet access. Existing managed environments are retained; no study files are changed.")
-                                    .font(.caption).foregroundStyle(.secondary)
-                                Button("Approve and Install Client") { Task { await model.install(workspace: selectedRoot) } }
-                                    .buttonStyle(.borderedProminent).disabled(model.busy)
-                            }
-                            if !model.clientReady, case .string(let repair) = model.readiness["repairAction"] {
-                                Text(repair).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                            }
-                            if !model.clientReady, case .string(let reason) = model.readiness["reason"] {
-                                Text(reason).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                            }
-                        }.frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    GroupBox("3. Begin with your question") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Give your agent the workspace instructions and describe what you want to understand. It can discover the methods, help prepare datasets and propose a study for your review.")
-                            Button(copied ? "Agent Handoff Copied" : "Copy Agent Handoff") {
-                                if let handoff = model.handoff {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(handoff, forType: .string)
-                                    copied = true
-                                }
-                            }.disabled(model.handoff == nil || model.busy)
-                            Text("To work directly in the app, open Studies or Templates after closing this screen. When you are ready to run, use Compute to select and check local or remote hardware, then prepare your model.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }.frame(maxWidth: .infinity, alignment: .leading)
-                    }
+                    workspaceStep
+                    computeStep
+                    helperStep
+                    beginStep
                 }
             }
             if model.busy { HStack { ProgressView().controlSize(.small); Text(model.message ?? "Checking setup…").font(.caption) } }
             else if let message = model.message { Text(message).font(.caption).textSelection(.enabled) }
-            if let error = model.error { Text(error).foregroundStyle(.red).font(.caption).textSelection(.enabled) }
+            if let error = model.error {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(error).foregroundStyle(.red).font(.caption).textSelection(.enabled)
+                    // The repair travels with the reason: a failure that only
+                    // says what went wrong leaves the researcher with nothing
+                    // to do about it.
+                    if let repair = model.errorRepair {
+                        Text(repair).font(.caption).textSelection(.enabled)
+                    }
+                }
+            }
             HStack {
-                Text(model.authoringReady ? "Ready to author studies" : "You can return here from Workspace → Research Setup.")
+                Text(model.authoringReady ? ResearchSetupCopy.readyFooter : ResearchSetupCopy.returnFooter)
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("Done") { dismiss() }.disabled(model.busy).keyboardShortcut(.defaultAction)
+                // Return dismisses only once there is a workspace to return
+                // to. Before that, Return creates one (see `workspaceStep`).
+                Button("Done") { dismiss() }.disabled(model.busy)
+                    .keyboardShortcut(selectedRoot == nil ? nil : .defaultAction)
             }
         }
         .padding(24).frame(width: 660, height: 700)
         .interactiveDismissDisabled(model.busy)
         .task(id: selectedRoot) { copied = false; await model.refresh(workspace: selectedRoot) }
+        // This sheet is itself a sheet, so the engine setup and the "what
+        // runs where" view it can ask for are presented ON it.
+        .modifier(
+            ComputeSheets(
+                compute: compute, service: service, localServer: localServer,
+                isActive: true))
+    }
+
+    /// The three plainly named choices. Picking one records it for the
+    /// workspace and switches the app to it; for the engine on this Mac that
+    /// opens its setup, where nothing is installed until it is approved.
+    private var computeStep: some View {
+        GroupBox(ResearchSetupCopy.computeStepTitle) {
+            VStack(alignment: .leading, spacing: 8) {
+                // Offered for the folder the researcher chose — not for a
+                // developer build standing on its own checkout.
+                if selectedRoot != nil {
+                    ComputeChoiceList(
+                        selection: workspace.isComputeDeclared
+                            ? compute.workspaceChoice : nil,
+                        choose: { compute.choose($0) })
+                    if !workspace.isComputeDeclared {
+                        Text(ComputeChoice.undeclaredNote(treatingAs: compute.workspaceChoice))
+                            .font(.caption)
+                    } else if compute.workspaceChoice == .macFullCapabilities {
+                        Text(ComputeChoice.fullCapabilitiesSetup).font(.caption)
+                    } else if compute.workspaceChoice == .anotherMachine,
+                        compute.cluster.otherMachines.isEmpty
+                    {
+                        Text(ComputeChoice.connectAnotherMachine).font(.caption)
+                    }
+                    Button(ComputeGuide.guideButton) { compute.showingGuide = true }
+                        .controlSize(.small)
+                    Text(ResearchSetupCopy.computeCaption)
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text(ResearchSetupCopy.computeNeedsWorkspace)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .disabled(model.busy)
+        }
+    }
+
+    private var workspaceStep: some View {
+        GroupBox(ResearchSetupCopy.workspaceStepTitle) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(selectedRoot?.path ?? ResearchSetupCopy.workspacePrompt)
+                    .textSelection(.enabled)
+                HStack {
+                    if selectedRoot == nil {
+                        Button("New Workspace…", action: createWorkspace)
+                            .buttonStyle(.borderedProminent)
+                            .keyboardShortcut(.defaultAction)
+                    } else {
+                        Button("New Workspace…", action: createWorkspace)
+                    }
+                    Button("Open Workspace…", action: openWorkspace)
+                }.disabled(model.busy || workspace.isEnvironmentPinned)
+                Text(ResearchSetupCopy.workspaceCaption)
+                    .font(.caption).foregroundStyle(.secondary)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var helperStep: some View {
+        GroupBox(ResearchSetupCopy.helperStepTitle) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(helperTitle, systemImage: model.clientReady ? "checkmark.circle" : "arrow.down.circle")
+                Text(ResearchSetupCopy.helperExplanation)
+                // One plain step the researcher can take here. The readiness
+                // report's own reason and repair are written for the command
+                // line and are not shown in this sheet.
+                if let guidance = model.helperGuidance {
+                    Text(guidance).font(.caption)
+                }
+                HStack {
+                    Button(planButtonTitle) { Task { await model.preview() } }
+                    Button("Check Again") { Task { await model.refresh(workspace: selectedRoot) } }
+                }.disabled(model.busy)
+                if model.planHash != nil {
+                    Text("Install location: " + model.planDestination).font(.caption).textSelection(.enabled)
+                    ForEach(model.planActions, id: \.self) { Text("• " + $0).font(.callout) }
+                    Text(ResearchSetupCopy.planCaption)
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Approve and Install") { Task { await model.install(workspace: selectedRoot) } }
+                        .buttonStyle(.borderedProminent).disabled(model.busy)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var beginStep: some View {
+        GroupBox(ResearchSetupCopy.beginStepTitle) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(ResearchSetupCopy.beginExplanation)
+                Button(copied ? ResearchSetupCopy.instructionsCopied : ResearchSetupCopy.copyInstructions) {
+                    if let handoff = model.handoff {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(handoff, forType: .string)
+                        copied = true
+                    }
+                }.disabled(model.handoff == nil || model.busy)
+                Text(ResearchSetupCopy.workInTheApp)
+                    .font(.caption).foregroundStyle(.secondary)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }

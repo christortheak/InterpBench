@@ -292,7 +292,8 @@ struct GeometryPanelView: View {
             Text(
                 "Logit Lens runs on the local substrate only (it reads "
                     + "the vector through the locally loaded model's "
-                    + "unembed) — switch Compute to Local (MLX).")
+                    + "unembed) — switch Compute to "
+                    + "\(ComputeChoice.macQuickStart.title).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } else if service.state != .ready {
@@ -778,7 +779,7 @@ struct GeometryPanelView: View {
 
     private static let noClientReason =
         "no server connection — pick a site in the Compute selector, or "
-        + "switch Compute to Local (MLX)"
+        + "switch Compute to \(ComputeChoice.macQuickStart.title)"
 
     /// A disabled server button says why in the pane, not only on hover.
     private var noClientCaption: some View {

@@ -1041,7 +1041,8 @@ struct OptimizationRunsView: View {
             return "No sweep run found for '\(optimization.name)' in this "
                 + "workspace's runs/ — submit the sweep to \(substrate) via "
                 + "Submit Bundle in Studies (button above), or switch the "
-                + "compute target to Local (MLX) to run it here."
+                + "Compute menu to \(ComputeChoice.macQuickStart.title) to run "
+                + "it with the engine built into this app."
         case .local:
             return "No sweep run found for '\(optimization.name)' in this "
                 + "workspace's runs/ — use Optimize above (equivalent to "

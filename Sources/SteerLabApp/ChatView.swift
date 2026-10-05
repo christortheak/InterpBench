@@ -7,6 +7,8 @@ import UniformTypeIdentifiers
 struct ChatView: View {
     @Bindable var service: ChatService
     let workspace: WorkspaceStore
+    /// Create/open a workspace — what every section offers before one exists.
+    let actions: WorkspaceActions
     @State private var draft = ""
     @State private var stagedLongPrompt: String?
     /// The selected sidebar section. Launches to Home (design brief: the app
@@ -134,8 +136,21 @@ struct ChatView: View {
         .id(section.minimumContentWidth)
     }
 
+    /// The section's controls — or, before any workspace exists, the one
+    /// prompt every section shares. The swap is made HERE, above the section
+    /// views, so none of them is built in that state: their appearance tasks
+    /// scan and write a workspace, and there is none to scan or write.
     @ViewBuilder
     private var sectionContent: some View {
+        if workspace.hasWorkspace {
+            workspaceSectionContent
+        } else {
+            NoWorkspaceView(actions: actions, section: section)
+        }
+    }
+
+    @ViewBuilder
+    private var workspaceSectionContent: some View {
         switch section {
         case .home:
             HomeDashboardView(
@@ -243,8 +258,18 @@ struct ChatView: View {
         }
     }
 
+    /// Same rule as `sectionContent`: no workspace, no section viewer.
     @ViewBuilder
     private var viewerContent: some View {
+        if workspace.hasWorkspace {
+            workspaceViewerContent
+        } else {
+            NoWorkspaceViewerPlaceholder()
+        }
+    }
+
+    @ViewBuilder
+    private var workspaceViewerContent: some View {
         switch effectiveViewerMode {
         case .chat:
             chatColumn
@@ -332,7 +357,7 @@ struct ChatView: View {
     private var subtitle: String {
         switch service.cluster.computeTarget {
         case .local:
-            return "Local (MLX) — " + localSubtitleDetail
+            return ComputeChoice.macQuickStart.title + " — " + localSubtitleDetail
         case .server:
             // Connection line ONLY: activity is a full sentence and lives
             // in the transcript status card + the Model section, where it
@@ -1559,9 +1584,7 @@ struct ChatView: View {
                                 + "selected model. Extract one in Data (it runs as "
                                 + "a server job), then Refresh artifacts."
                             : service.state == .ready
-                                ? "No vectors for this model in runs/. Extract one with:\n"
-                                    + "steerlab-cli --config prompts/configs/toy-french.json\n"
-                                    + "then Refresh artifacts."
+                                ? StudyControlCopy.playgroundNoVectors
                                 : "Load a model to see its vectors."
                     )
                     .font(.caption)
@@ -1982,7 +2005,8 @@ struct ChatView: View {
                 case .loading(let percent): "loading… \(percent)%"
                 case .ready: service.loadedModelID ?? "ready"
                 }
-            return "Compute: Local (MLX) — \(state) · change in toolbar"
+            return "Compute: \(ComputeChoice.macQuickStart.title) — \(state) · "
+                + "change in toolbar"
         case .server:
             return "Compute: Server (\(service.cluster.serverHostLabel)) — "
                 + "\(service.cluster.status ?? "not connected") · change in toolbar"

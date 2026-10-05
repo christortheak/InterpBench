@@ -16,6 +16,9 @@ struct OptVecPanelView: View {
                     .font(.callout)
                 Text("Supply training examples, preservation controls and separate evaluation data. You can use your files or ask an authoring tool for data after agreeing its scope and cost. Review the training request before running it.")
                     .font(.caption).foregroundStyle(.secondary)
+                // Training and evaluation run on the Python engine. On the
+                // quick start, offer the switch before the form is filled in.
+                PythonEngineOffer(subject: "Trained steering vectors (OptVec)")
                 TrainVectorButton(service: service)
                 TrainVectorButton(service: service, operation: "optvec-eval", title: "Evaluate a trained vector…")
                 TrainVectorButton(service: service, operation: "optvec-campaign", title: "Plan a campaign…")

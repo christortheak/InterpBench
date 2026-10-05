@@ -20,14 +20,64 @@ import Observation
 ///    workspace manager)
 /// 3. UserDefaults key `"SteerLabWorkspaceRoot"` (the app's persisted choice
 ///    — honored only while the directory actually exists, so a deleted
-///    workspace degrades to the dev fallback instead of a dangling root)
-/// 4. the legacy repo root (the compiled-in checkout path,
-///    `CodeResources.compiledCheckoutPath` via its `bundledSeedRoot` alias) —
-///    the dev/test fallback, so every existing test and dev flow is
+///    workspace degrades to the next rule instead of a dangling root)
+/// 4. the developer checkout, in a developer build only
+///    (`CodeResources.workspaceFallbackCheckout` — the compiled-in checkout
+///    path, `CodeResources.compiledCheckoutPath` via its `bundledSeedRoot`
+///    alias, when it exists on disk and carries the package marker) — the
+///    dev/test fallback, so every existing test and dev flow is
 ///    byte-identical when nothing is configured.
+/// 5. NO WORKSPACE YET (`Source.none`). A distributed build with nothing
+///    chosen has no workspace, and says so: the app shows "create or open a
+///    workspace", the command line refuses with a repair, and the root is a
+///    placeholder that cannot exist and cannot be written beneath — never
+///    the source path of the machine that built the binary.
 public enum WorkspaceRoot {
     public static let environmentKey = "STEERLAB_WORKSPACE"
     public static let defaultsKey = "SteerLabWorkspaceRoot"
+
+    /// Which rule answered. `none` is the explicit "no workspace yet" state.
+    public enum Source: String, Sendable, Equatable, CaseIterable {
+        /// `STEERLAB_WORKSPACE`.
+        case environment
+        /// The command line's `--workspace`, or the app's workspace manager.
+        case programmaticOverride
+        /// The app's saved choice, while that folder still exists.
+        case persistedChoice
+        /// A developer build running against its own checkout.
+        case developerCheckout
+        /// Nothing chosen, nothing saved, and no developer checkout.
+        case none
+    }
+
+    /// A resolved root and the rule that produced it.
+    public struct Resolution: Sendable, Equatable {
+        public let source: Source
+        /// The root to use. In the `none` state this is
+        /// `noWorkspacePlaceholder`: reads find nothing and writes fail.
+        public let url: URL
+
+        public init(source: Source, url: URL) {
+            self.source = source
+            self.url = url
+        }
+
+        /// False only in the "no workspace yet" state.
+        public var hasWorkspace: Bool { source != .none }
+    }
+
+    /// The root in the "no workspace yet" state. Beneath `/dev/null`, a
+    /// device file, so no directory can ever be created there by any user: a
+    /// code path that forgets to ask `hasWorkspace` reads nothing and fails to
+    /// write, instead of minting a stray tree. Never shown to a researcher.
+    public static let noWorkspacePlaceholder =
+        URL(filePath: "/dev/null/SteerLab-no-workspace")
+
+    /// The plain-language refusal every surface shares when a workspace is
+    /// needed and none is resolved.
+    public static let noWorkspaceReason =
+        "No workspace is selected. A workspace is the folder that holds your "
+        + "prompts, studies, and results, and this action needs one."
 
     /// Precedence #2. nonisolated(unsafe) is justified the same way as
     /// `ExperimentStore.rootOverride`: written once at CLI startup (before
@@ -45,6 +95,38 @@ public enum WorkspaceRoot {
         !(environmentValue ?? "").trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    /// Rules 1–3, shared by both resolvers below: an explicit or saved choice,
+    /// or nil when there is none.
+    private static func chosen(
+        environment: [String: String],
+        programmaticOverride: URL?,
+        persistedPath: String?
+    ) -> Resolution? {
+        if let env = environment[environmentKey]?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !env.isEmpty
+        {
+            return Resolution(
+                source: .environment, url: URL(filePath: env).standardizedFileURL)
+        }
+        if let programmaticOverride {
+            return Resolution(
+                source: .programmaticOverride,
+                url: programmaticOverride.standardizedFileURL)
+        }
+        if let persistedPath, !persistedPath.isEmpty {
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(
+                atPath: persistedPath, isDirectory: &isDirectory),
+                isDirectory.boolValue
+            {
+                return Resolution(
+                    source: .persistedChoice,
+                    url: URL(filePath: persistedPath).standardizedFileURL)
+            }
+        }
+        return nil
+    }
+
     /// Pure, injectable resolution (the testable seam: environment dict +
     /// persisted-defaults value arrive as data; no process state).
     public static func resolve(
@@ -53,35 +135,49 @@ public enum WorkspaceRoot {
         persistedPath: String?,
         fallback: URL
     ) -> URL {
-        if let env = environment[environmentKey]?
-            .trimmingCharacters(in: .whitespacesAndNewlines), !env.isEmpty
-        {
-            return URL(filePath: env).standardizedFileURL
-        }
-        if let programmaticOverride {
-            return programmaticOverride.standardizedFileURL
-        }
-        if let persistedPath, !persistedPath.isEmpty {
-            var isDirectory: ObjCBool = false
-            if FileManager.default.fileExists(
-                atPath: persistedPath, isDirectory: &isDirectory),
-                isDirectory.boolValue
-            {
-                return URL(filePath: persistedPath).standardizedFileURL
-            }
-        }
-        return fallback
+        chosen(
+            environment: environment, programmaticOverride: programmaticOverride,
+            persistedPath: persistedPath)?.url ?? fallback
     }
 
-    /// The live workspace root. UserDefaults is read per call (cheap, and the
-    /// app can change it); the environment is cached.
-    public static var current: URL {
-        resolve(
+    /// The same precedence, answering WHICH rule won — including the
+    /// explicit "no workspace yet" state when nothing is chosen and there is
+    /// no developer checkout. `developerCheckout` is evaluated only when
+    /// rules 1–3 found nothing.
+    public static func resolution(
+        environment: [String: String],
+        programmaticOverride: URL?,
+        persistedPath: String?,
+        developerCheckout: @autoclosure () -> URL?
+    ) -> Resolution {
+        if let chosen = chosen(
+            environment: environment, programmaticOverride: programmaticOverride,
+            persistedPath: persistedPath)
+        {
+            return chosen
+        }
+        if let checkout = developerCheckout() {
+            return Resolution(source: .developerCheckout, url: checkout)
+        }
+        return Resolution(source: .none, url: noWorkspacePlaceholder)
+    }
+
+    /// The live resolution. UserDefaults is read per call (cheap, and the app
+    /// can change it); the environment is cached.
+    public static var currentResolution: Resolution {
+        resolution(
             environment: environmentValue.map { [environmentKey: $0] } ?? [:],
             programmaticOverride: programmaticOverride,
             persistedPath: UserDefaults.standard.string(forKey: defaultsKey),
-            fallback: VectorCatalog.bundledSeedRoot)
+            developerCheckout: CodeResources.workspaceFallbackCheckout)
     }
+
+    /// The live workspace root — `noWorkspacePlaceholder` in the "no
+    /// workspace yet" state, never a compiled source path.
+    public static var current: URL { currentResolution.url }
+
+    /// False only in the "no workspace yet" state.
+    public static var hasWorkspace: Bool { currentResolution.hasWorkspace }
 }
 
 /// Workspace lifecycle: create (make dirs + seed from the code repo + git
@@ -522,21 +618,59 @@ public final class WorkspaceStore {
     // MARK: App-facing observable state
 
     /// The workspace root as currently resolved; refreshed after a switch.
+    /// In the "no workspace yet" state this is
+    /// `WorkspaceRoot.noWorkspacePlaceholder` — ask `hasWorkspace` before
+    /// showing it or acting on it.
     public private(set) var rootURL: URL
 
-    public init() {
-        rootURL = WorkspaceRoot.current
+    /// Which resolution rule produced `rootURL`; refreshed with it.
+    public private(set) var rootSource: WorkspaceRoot.Source
+
+    public convenience init() {
+        self.init(resolution: WorkspaceRoot.currentResolution)
     }
 
+    /// Starts from a given resolution — the seam that lets a test stand in
+    /// the "no workspace yet" state without touching process-global state.
+    public init(resolution: WorkspaceRoot.Resolution) {
+        rootURL = resolution.url
+        rootSource = resolution.source
+    }
+
+    /// False in the "no workspace yet" state: nothing chosen, nothing saved,
+    /// and no developer checkout. The app then offers "create or open a
+    /// workspace" and no section reads or writes study data.
+    public var hasWorkspace: Bool { rootSource != .none }
+
+    /// The folder the researcher chose, or nil when there is none to act on:
+    /// the "no workspace yet" state, and a developer build standing on its
+    /// own checkout. Research Setup and the handoff use this so neither ever
+    /// treats a source tree — or a placeholder — as the researcher's data.
+    public var chosenRootURL: URL? {
+        hasWorkspace && !isLegacyRepoRoot ? rootURL : nil
+    }
+
+    /// The name shown when there is no workspace.
+    public nonisolated static let noWorkspaceDisplayName = "No Workspace"
+
     /// Folder name for the toolbar label; help text shows the full path.
-    public var displayName: String { rootURL.lastPathComponent }
+    public var displayName: String {
+        hasWorkspace ? rootURL.lastPathComponent : Self.noWorkspaceDisplayName
+    }
 
     /// True while running against the legacy code-checkout fallback (#4) —
     /// the switcher labels this honestly instead of pretending it's a
     /// managed workspace.
     public var isLegacyRepoRoot: Bool {
-        rootURL.standardizedFileURL.path
-            == VectorCatalog.bundledSeedRoot.standardizedFileURL.path
+        hasWorkspace
+            && rootURL.standardizedFileURL.path
+                == VectorCatalog.bundledSeedRoot.standardizedFileURL.path
+    }
+
+    private func adoptCurrentResolution() {
+        let resolution = WorkspaceRoot.currentResolution
+        rootURL = resolution.url
+        rootSource = resolution.source
     }
 
     /// True when `STEERLAB_WORKSPACE` pins the root — switching in the UI
@@ -583,6 +717,9 @@ public final class WorkspaceStore {
     /// the check at a fixture without moving the process's workspace.
     @discardableResult
     public func noteAgentContractUpkeep(at root: URL? = nil) -> String? {
+        // No workspace yet: there is no contract to keep, and nothing here
+        // may attempt a write.
+        guard root != nil || hasWorkspace else { return nil }
         let root = root ?? rootURL
         return record(Self.upkeepAgentContract(at: root), at: root)
     }
@@ -600,7 +737,7 @@ public final class WorkspaceStore {
 
     public func switchTo(_ url: URL) throws {
         let upkeep = try Self.open(at: url)
-        rootURL = WorkspaceRoot.current
+        adoptCurrentResolution()
         record(upkeep, at: rootURL)
         onRootChange?(rootURL)
     }
@@ -614,6 +751,16 @@ public final class WorkspaceStore {
     ) throws {
         _ = try Self.create(at: url)
         if let compute { try WorkspaceCompute.declare(compute, root: url) }
+        try switchTo(url)
+    }
+
+    /// The same, declaring one of the three plainly named choices — what the
+    /// app's own entry points use. The binding written is the choice's
+    /// `binding`; the two choices that share `cluster` also record which of
+    /// them it was.
+    public func createAndSwitch(to url: URL, choosing choice: ComputeChoice) throws {
+        _ = try Self.create(at: url)
+        try WorkspaceCompute.declare(choice, root: url)
         try switchTo(url)
     }
 
@@ -634,9 +781,35 @@ public final class WorkspaceStore {
     }
 
     public func declareCompute(_ compute: WorkspaceCompute) throws {
+        guard hasWorkspace else {
+            throw ExperimentError(
+                reason: WorkspaceRoot.noWorkspaceReason
+                    + " Create or open a workspace first.")
+        }
         try WorkspaceCompute.declare(compute, root: rootURL)
         // Republish: `compute`/`isComputeDeclared` are derived from disk, so
         // Observation has nothing to notice without a stored-property touch.
+        rootURL = rootURL
+    }
+
+    // MARK: The three named choices
+
+    /// Which of the three choices this workspace is set to. A `cluster`
+    /// binding that recorded no location is settled by what the caller can
+    /// see: whether the engine in use right now is this Mac's own.
+    public func computeChoice(activeEngineIsThisMac: Bool) -> ComputeChoice {
+        WorkspaceCompute.resolvedChoice(
+            root: rootURL, activeEngineIsThisMac: activeEngineIsThisMac)
+    }
+
+    /// Declare one of the three choices for this workspace.
+    public func declareComputeChoice(_ choice: ComputeChoice) throws {
+        guard hasWorkspace else {
+            throw ExperimentError(
+                reason: WorkspaceRoot.noWorkspaceReason
+                    + " Create or open a workspace first.")
+        }
+        try WorkspaceCompute.declare(choice, root: rootURL)
         rootURL = rootURL
     }
 }

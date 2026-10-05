@@ -134,8 +134,23 @@ func emitAgentPathOutcome(
     exit(outcome.exitCode(json: json))
 }
 
+/// The rungs below this point (`serve`, `artifacts`, `--config`) read and
+/// write a workspace and are dispatched here rather than through
+/// `ExperimentCLIRunner`, so they share its "no workspace" refusal by hand:
+/// the same sentence, the same repair, the same exit code. Without it, a
+/// build with nothing resolved would run against a placeholder root.
+func requireWorkspace(for family: String) {
+    guard !ExperimentCLIRunner.liveWorkspaceIsResolved else { return }
+    FileHandle.standardError.write(
+        Data(
+            ("steerlab-cli \(family): \(ExperimentCLIRunner.noWorkspaceReason)\n"
+                + "  \(ExperimentCLIRunner.noWorkspaceRepair)\n").utf8))
+    exit(SteerLabCLIState.refused.exitCode)
+}
+
 // Web front end for remote/cluster use: same engine, browser client.
 if arguments.count >= 2, arguments[1] == "serve" {
+    requireWorkspace(for: "serve")
     let port: UInt16 =
         if let flagIndex = arguments.firstIndex(of: "--port"),
             arguments.count > flagIndex + 1,
@@ -153,6 +168,7 @@ if arguments.count >= 2, arguments[1] == "serve" {
 // Artifact audit: reports legacy/ambiguous vector sidecars without mutating
 // immutable run directories.
 if arguments.count >= 2, arguments[1] == "artifacts" {
+    requireWorkspace(for: "artifacts")
     do {
         try runArtifactsCommand(Array(arguments.dropFirst(2)))
     } catch {
@@ -279,6 +295,7 @@ guard arguments.count >= 3, arguments[1] == "--config" else {
     exit(64)  // EX_USAGE
 }
 
+requireWorkspace(for: "--config")
 let configURL = URL(filePath: arguments[2])
 
 struct TaskPeek: Decodable {

@@ -30,8 +30,12 @@ struct ClusterConnectionDot: View {
     /// view churn. It PROVISIONS; `localServer` still owns the running
     /// server's lifecycle once there is one.
     var localEngine: LocalEngineProvisioner
+    /// The three compute choices' coordinator. It owns the engine-setup
+    /// sheet and the cluster wizard's presentation, so this menu, the Compute
+    /// menu, and every "switch to full capabilities" offer open the same
+    /// sheet rather than one each.
+    @Bindable var compute: ComputeChoiceCoordinator
 
-    @State private var showingEngineSetup = false
     @State private var showingImporter = false
     @State private var exportDocument: SiteProfileJSONDocument?
     @State private var exportFilename = "cluster-site"
@@ -41,7 +45,6 @@ struct ClusterConnectionDot: View {
     @State private var importConfirmation: SiteImportConfirmation?
     @State private var siteEditTarget: SiteEditTarget?
     @State private var hfTokenTarget: SiteEditTarget?
-    @State private var showingSetupWizard = false
     /// One auto-connect attempt per running episode of the local server —
     /// reset when it stops, so a restart connects again.
     @State private var localServerAutoConnectAttempted = false
@@ -182,11 +185,9 @@ struct ClusterConnectionDot: View {
         .sheet(item: $hfTokenTarget) { target in
             HFTokenInstallSheet(cluster: cluster, tunnel: tunnel, entryID: target.id)
         }
-        .sheet(isPresented: $showingEngineSetup) {
-            LocalEngineSetupSheet(
-                engine: localEngine, service: service, server: localServer)
-        }
-        .sheet(isPresented: $showingSetupWizard) {
+        // The engine-setup sheet itself is presented by `ComputeSheets`, once
+        // for the window; this menu only asks for it.
+        .sheet(isPresented: $compute.showingClusterWizard) {
             // WS5 wizard — a veneer over ClusterProvisioner (ExperimentKit).
             ClusterSetupWizard(cluster: cluster, tunnel: tunnel, service: service)
         }
@@ -258,21 +259,24 @@ struct ClusterConnectionDot: View {
     // sentence, not a traceback.
     @ViewBuilder
     private var localServerSection: some View {
-        Section("Local Python Server") {
+        // "This Mac, full capabilities" — the Python engine on this Mac — by
+        // the name the Compute menu gives it, so the two menus read as one
+        // thing. Choosing it there runs the same setup this section opens.
+        Section(ComputeChoice.macFullCapabilities.title) {
             Text(localServer.statusLine)
             // WP3: the setup affordance sits ABOVE the start/stop controls
             // and answers the question those controls used to fail at —
             // "there is no Python environment here yet". A step in flight is
             // a status LINE plus the progress button; a disabled button whose
             // title promised an action was the audit's finding.
-            Text("Local engine: " + localEngineLine)
+            Text("Engine on this Mac: " + localEngineLine)
             if case .running = localEngine.phase {
-                Button("Show Setup Progress…") { showingEngineSetup = true }
+                Button("Show Setup Progress…") { compute.showingEngineSetup = true }
                     .help(
                         "opens the setup sheet on the step now running — it "
                             + "carries the step-by-step report and Cancel")
             } else {
-                Button(localEngineButtonTitle) { showingEngineSetup = true }
+                Button(localEngineButtonTitle) { compute.showingEngineSetup = true }
                     .help(
                         "provisions the local Python engine end to end: "
                             + "engine source (a code checkout, or the "
@@ -286,7 +290,7 @@ struct ClusterConnectionDot: View {
             }
             switch localServer.phase {
             case .idle:
-                Button("Start Local Python Server") {
+                Button("Start the Engine on This Mac") {
                     localServer.start(host: service)
                 }
                 .help(
@@ -299,7 +303,7 @@ struct ClusterConnectionDot: View {
                         + "Once running, the app connects to it "
                         + "automatically")
             case .starting, .running:
-                Button("Stop Local Python Server") { localServer.stop() }
+                Button("Stop the Engine on This Mac") { localServer.stop() }
                     .help(
                         "terminates the local server process on "
                             + "127.0.0.1:\(localServer.port); files it has "
@@ -314,16 +318,18 @@ struct ClusterConnectionDot: View {
     @ViewBuilder
     private var sitePickerSection: some View {
         Picker("Site", selection: siteSelection) {
-            Text("Local (MLX)").tag(ClusterConnectionStore.Workspace.local)
+            Text(ComputeChoice.macQuickStart.title)
+                .tag(ClusterConnectionStore.Workspace.local)
             ForEach(cluster.servers) { server in
                 Text(server.displayName).tag(ClusterConnectionStore.Workspace.server(server.id))
             }
         }
         .pickerStyle(.inline)
         .help(
-            "which compute this workspace talks to — Local (MLX) runs in this "
-                + "app, a site runs on its server; picking a site connects to "
-                + "it. Same selection as the toolbar's compute menu")
+            "where the app runs things — "
+                + "\(ComputeChoice.macQuickStart.title) runs in this app, a "
+                + "site runs on its own machine; picking a site connects to "
+                + "it. Same selection as the toolbar's Compute menu")
     }
 
     @ViewBuilder
@@ -367,7 +373,7 @@ struct ClusterConnectionDot: View {
                         + "and is kept in this Mac's Keychain")
             }
         }
-        Button("Set Up Cluster…") { showingSetupWizard = true }
+        Button("Set Up Cluster…") { compute.showingClusterWizard = true }
             .help(
                 "opens the step-by-step wizard — pick a site, authenticate, "
                     + "push the server bundle, bootstrap its Python "
@@ -377,7 +383,7 @@ struct ClusterConnectionDot: View {
     // MARK: Labels
 
     private var titleLine: String {
-        cluster.activeSite?.name ?? "Local (MLX)"
+        cluster.activeSite?.name ?? ComputeChoice.macQuickStart.title
     }
 
     /// The engine's one line in the menu. Deliberately short — the sheet is
@@ -397,9 +403,9 @@ struct ClusterConnectionDot: View {
 
     private var localEngineButtonTitle: String {
         switch localEngine.phase {
-        case .ready: return "Local Engine Details…"
-        case .failed, .cancelled: return "Resume Local Engine Setup…"
-        default: return "Set Up Local Engine…"
+        case .ready: return "Engine Details…"
+        case .failed, .cancelled: return "Resume the Engine Setup…"
+        default: return "Set Up the Engine on This Mac…"
         }
     }
 
@@ -589,7 +595,8 @@ struct ClusterConnectionDot: View {
             existing?.id != activeID
         {
             _ = existing
-                ?? cluster.addServer(name: "Local Python Server", urlString: urlString)
+                ?? cluster.addServer(
+                    name: ClusterConnectionStore.thisMacEngineName, urlString: urlString)
             localServer.noteAutoConnectOutcome(
                 "not auto-connected: \(cluster.substrateLabel) is the active "
                     + "site — pick the local server in the Site menu to switch")
@@ -597,7 +604,8 @@ struct ClusterConnectionDot: View {
         }
         if localServer.wasAdopted, cluster.activeWorkspace == .local {
             _ = existing
-                ?? cluster.addServer(name: "Local Python Server", urlString: urlString)
+                ?? cluster.addServer(
+                    name: ClusterConnectionStore.thisMacEngineName, urlString: urlString)
             localServer.noteAutoConnectOutcome(
                 "select it in the Site menu to connect")
             return

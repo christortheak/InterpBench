@@ -244,16 +244,22 @@ public enum WorkspaceScoping {
     /// Caption shown when a builder cannot run on the active server.
     static func localOnlyCaption(for builder: Builder) -> String {
         switch builder {
+        // The Compute menu's own name for the engine built into the app, so
+        // the instruction names an item the reader can find.
         case .robustnessBattery:
-            "the robustness battery runs locally — switch the Compute workspace to Local (MLX)"
+            "the robustness battery runs locally — switch Compute to "
+                + ComputeChoice.macQuickStart.title
         case .neutralPCBasis:
-            "neutral-PC bases build locally — switch the Compute workspace to Local (MLX)"
+            "neutral-PC bases build locally — switch Compute to "
+                + ComputeChoice.macQuickStart.title
         case .multiAgentScenario:
-            "scenario runs execute locally on this Mac — switch the Compute "
-                + "workspace to Local (MLX) to run one, or run the scenario as a "
-                + "multi-agent STUDY, which does execute on the server"
+            "scenario runs execute locally on this Mac — switch Compute to "
+                + "\(ComputeChoice.macQuickStart.title) to run one, or run "
+                + "the scenario as a multi-agent STUDY, which does execute on "
+                + "the server"
         default:
-            "this action runs locally — switch the Compute workspace to Local (MLX)"
+            "this action runs locally — switch Compute to "
+                + ComputeChoice.macQuickStart.title
         }
     }
 

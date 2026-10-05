@@ -849,10 +849,12 @@ public final class ClusterConnectionStore {
         return autoImportEnabled(for: activeServer)
     }
 
-    /// Compact label for the active workspace (window toolbar).
+    /// Compact label for the active workspace (window toolbar). The engine
+    /// built into the app goes by its plain name — the first of the three
+    /// compute choices — everywhere a researcher reads it.
     public var substrateLabel: String {
         switch activeWorkspace {
-        case .local: "Local (MLX)"
+        case .local: ComputeChoice.macQuickStart.title
         case .server: activeServer?.name ?? serverHostLabel
         }
     }
@@ -1345,6 +1347,9 @@ public final class ClusterConnectionStore {
     /// a switch to it lands `.paired`). Nil when the server is remote.
     public var localWorkspaceRootForServerSwitch: String? {
         guard activeServerSharesLocalFilesystem else { return nil }
+        // No workspace yet: there is no root to offer, and the placeholder
+        // that stands in for one must never be sent to a server.
+        guard WorkspaceRoot.hasWorkspace else { return nil }
         return VectorCatalog.projectRoot.resolvingSymlinksInPath().path
     }
 

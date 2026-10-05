@@ -51,7 +51,10 @@ struct SubstrateRoutingTests {
         // Substrate is a scope: local execution needs the Local scope, and
         // the decision says so instead of running into the wrong tree.
         #expect(decision.runBlockedReason != nil)
-        #expect(decision.localHint?.contains("Local (MLX)") == true)
+        // …by the Compute menu's own name for it, so the hint names an item
+        // the reader can find.
+        #expect(
+            decision.localHint?.contains(ComputeChoice.macQuickStart.title) == true)
     }
 
     // MARK: Stochastic designs retain the selected backend

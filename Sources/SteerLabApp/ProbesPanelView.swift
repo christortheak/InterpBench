@@ -28,6 +28,10 @@ struct ProbesPanelView: View {
             Text("A probe reads a model’s activations and returns a score. It measures the model; it does not change its behavior.")
             Text("Library in \(root.path)").font(.caption).textSelection(.enabled)
             Text("Capture labeled activations once, fit a classifier, and evaluate it on separate examples. Each button opens a guided request; execution follows an explicit review.").font(.caption)
+            // Capturing and scoring run on the Python engine. On the quick
+            // start, say so here with the switch — before the researcher has
+            // filled in a request that then has nowhere to run.
+            PythonEngineOffer(subject: "Probes and intervention policies")
             TrainVectorButton(service: service, operation: "probe-capture", title: "1. Capture activations…", root: root)
             TrainVectorButton(service: service, operation: "probe-train", title: "2. Fit a probe…", root: root)
             TrainVectorButton(service: service, operation: "probe-evaluate", title: "3. Evaluate a probe…", root: root)
