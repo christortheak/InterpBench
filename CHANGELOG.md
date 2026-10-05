@@ -12,6 +12,19 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **Bundles no longer record the account that packaged them.** Every file in
+  a study or evidence bundle recorded the packaging account, including its
+  user and group names, as its owner. A study bundle packed on a Mac also
+  carried each file's extended attributes, such as where it was downloaded
+  from. An evidence bundle's description gave the run's full path, which on a
+  researcher's computer is inside their home folder. Bundles now record no
+  owner and no extended attributes, and give the run's location relative to
+  the workspace (`runs/<run ID>`). Importing is unchanged, because neither app
+  read any of these, and bundles written earlier still import. The error
+  report inside a failure bundle can still name folders on the computer that
+  ran it. `scripts/ci/public_scan.py` now opens committed archives, so a name
+  or path inside one is caught. The cross-engine fixture bundle that carried
+  both has been regenerated.
 - **Older Mac analyses are described by what they counted.** Before this
   release, the Mac engine paired every response of a study run with several
   samples per item and counted responses, not items. `results export` and

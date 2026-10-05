@@ -254,6 +254,73 @@ import Testing
         }
     }
 
+    /// The raw tar headers of a `.tar.gz`: each member's name, its owner as
+    /// `uid:gid:user:group`, and the text of the pax header before it.
+    /// Extracting would show neither, because `tar -x` run as an ordinary
+    /// user applies neither.
+    private func tarHeaders(_ bundle: URL) throws
+        -> [(name: String, owner: String, pax: String)]
+    {
+        let process = Process()
+        process.executableURL = URL(filePath: "/usr/bin/gzip")
+        process.arguments = ["-dc", bundle.path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        try process.run()
+        let bytes = [UInt8](pipe.fileHandleForReading.readDataToEndOfFile())
+        process.waitUntilExit()
+        try #require(process.terminationStatus == 0)
+        func field(_ start: Int, _ length: Int) -> String {
+            String(decoding: bytes[start..<(start + length)].prefix { $0 != 0 }, as: UTF8.self)
+                .trimmingCharacters(in: .whitespaces)
+        }
+        var headers: [(name: String, owner: String, pax: String)] = []
+        var pax = ""
+        var offset = 0
+        while offset + 512 <= bytes.count,
+            bytes[offset..<(offset + 512)].contains(where: { $0 != 0 })
+        {
+            let size = try #require(Int(field(offset + 124, 12), radix: 8))
+            let body = offset + 512
+            switch bytes[offset + 156] {
+            case UInt8(ascii: "x"), UInt8(ascii: "g"):
+                pax += String(decoding: bytes[body..<(body + size)], as: UTF8.self)
+            default:
+                let uid = Int(field(offset + 108, 8), radix: 8) ?? -1
+                let gid = Int(field(offset + 116, 8), radix: 8) ?? -1
+                let owner = "\(uid):\(gid):\(field(offset + 265, 32)):\(field(offset + 297, 32))"
+                headers.append((field(offset, 100), owner, pax))
+                pax = ""
+            }
+            offset = body + (size + 511) / 512 * 512
+        }
+        return headers
+    }
+
+    /// A bundle travels to the cluster and to collaborators, so it must not
+    /// carry the account that packed it or the attributes this Mac keeps on
+    /// files. Until 2026-10-05 every member recorded the packer's uid, gid,
+    /// and login and group names, and every extended attribute. Parallel to
+    /// `test_a_run_bundle_names_no_owner`.
+    @Test func runBundleNamesNoOwnerAndCarriesNoExtendedAttributes() throws {
+        try withTempWorkspace { root in
+            let manifest = try everyPinKindStudy(in: root)
+            // An attribute of the kind a downloaded or Finder-tagged file carries.
+            let value = Array("origin".utf8)
+            try #require(
+                setxattr(
+                    ExperimentStore.manifestURL(manifest.name).path, "com.example.origin",
+                    value, value.count, 0, 0) == 0)
+
+            let headers = try tarHeaders(try RunBundlePackager.packageExperiment(manifest))
+            #expect(headers.contains { $0.name == "experiments/closure/experiment.json" })
+            for header in headers {
+                #expect(header.owner == "0:0::", "\(header.name) records an owner")
+                #expect(!header.pax.contains("xattr"), "\(header.name) carries extended attributes")
+            }
+        }
+    }
+
     /// Review 2026-08-29, P1: a bundle is a workspace with no git and no
     /// neighbours, so a preregistration that does not travel in it has no
     /// integrity at all on the far side. The freeze stamps the authored file,
