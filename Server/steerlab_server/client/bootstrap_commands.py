@@ -87,7 +87,11 @@ def run(invocation):
     elif verb == 'inspect':
         result = owner.inspect(paths.project_root())
     else:
+        # The handoff object is the same on both clients; what THIS client
+        # does is said in the message, which is the app-free client's own.
+        from .setup import CLIENT_SCOPE_SHORT
         result = owner.handoff(paths.project_root())
+        return CLIResult(message='Handoff ready. ' + CLIENT_SCOPE_SHORT, changed=result['changed'], payload=result)
     return CLIResult(message='Workspace operation completed.', changed=result['changed'], payload=result, next_action=following)
 
 

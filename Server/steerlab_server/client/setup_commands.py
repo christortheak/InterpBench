@@ -17,11 +17,16 @@ def run(invocation, *, root=None):
     validate(invocation, 1 if invocation.spec.verb == 'start' else 0)
     try:
         if invocation.spec.verb == 'start':
-            result = setup.start(invocation.positionals[0], create='--create' in invocation.flags)
+            # The first handoff an app-free researcher receives says what this client is for.
+            result = {**setup.start(invocation.positionals[0], create='--create' in invocation.flags),
+                      'clientScope': setup.CLIENT_SCOPE}
         elif invocation.spec.verb == 'inspect':
             result = setup.inspect(root)
         else:
             result = setup.provision(invocation.spec.verb, release=invocation.one('--release'), runtime=invocation.one('--runtime'), expected=invocation.one('--expect'), approved='--yes' in invocation.flags)
         return CLIResult(message='Client setup operation completed.', changed=result['changed'], payload=result)
     except (setup.SetupRefusal, OSError, ValueError) as exc:
-        raise ClientRefusal(code='clientSetupRefused', state='refused', reason=str(exc), repair_action=getattr(exc, 'repair_action', setup.SetupRefusal.repair_action)) from exc
+        # The installer's typed code (noNetwork, diskFull, cancelled, ...) travels in the result.
+        code = getattr(exc, 'installer_code', None)
+        raise ClientRefusal(code='clientSetupRefused', state='refused', reason=str(exc), repair_action=getattr(exc, 'repair_action', setup.SetupRefusal.repair_action),
+                            payload={'installerCode': code} if code else None) from exc

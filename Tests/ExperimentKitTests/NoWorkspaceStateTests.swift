@@ -424,6 +424,8 @@ struct FirstLaunchWordingTests {
         ResearchSetupCopy.helperUpdateTitle, ResearchSetupCopy.helperSetupTitle,
         ResearchSetupCopy.helperNeeded, ResearchSetupCopy.helperUpdateNeeded,
         ResearchSetupCopy.planCaption, ResearchSetupCopy.installing,
+        ResearchSetupCopy.cancelInstallButton, ResearchSetupCopy.cancellingInstall,
+        ResearchSetupCopy.installCancelled,
         ResearchSetupCopy.installed, ResearchSetupCopy.installedButNotReady,
         ResearchSetupCopy.beginStepTitle, ResearchSetupCopy.beginExplanation,
         ResearchSetupCopy.copyInstructions, ResearchSetupCopy.instructionsCopied,

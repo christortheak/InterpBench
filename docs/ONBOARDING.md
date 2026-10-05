@@ -163,6 +163,12 @@ the install.
 
 ### 4.2 The app-free client
 
+The app-free client is a preview. It creates workspaces and authors studies,
+then submits them to a runner that someone has set up (a workstation, a
+cluster, or a local engine installed separately); it does not run models
+itself. On a Mac, the app is the supported route to running studies and
+reading their results.
+
 Download the client archive from the Releases page and extract it. The
 folder contains an installer and an `AGENTS.md` written for a coding agent
 pointed at it; you can hand the folder to your agent with the prompt in the

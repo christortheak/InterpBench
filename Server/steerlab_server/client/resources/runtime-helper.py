@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -33,8 +34,12 @@ def activate(stage, runtime, expected, original_release):
     # Venv and its Python stay at their original paths. Only this public link moves.
     temporary = stage / 'activation'
     temporary.symlink_to(stage / 'venv', target_is_directory=True)
+    # From the switch to the report, a Cancel is too late: both finish, so the
+    # installer never reports a cancellation over an environment it activated.
+    for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(number, signal.SIG_IGN)
     os.replace(temporary, runtime)
-    print(json.dumps({'ok': True, 'changed': True, 'runtime': str(runtime), 'executable': str(runtime / 'bin/steerlab'), 'sourceSHA256': wanted, 'nextAction': 'Create or open a workspace; then run workspace handoff.'}))
+    print(json.dumps({'ok': True, 'changed': True, 'runtime': str(runtime), 'executable': str(runtime / 'bin/steerlab'), 'sourceSHA256': wanted, 'nextAction': 'Create or open a workspace; then run workspace handoff.'}), flush=True)
 
 
 if __name__ == '__main__':

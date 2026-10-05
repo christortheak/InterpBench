@@ -13,7 +13,7 @@ There are two routes:
   the source code, and no Python of your own are needed.
 - **The app-free client**, a command line named `steerlab`, is a preview. It
   designs a study and sends it to a runner that someone has already set up.
-  It runs on an Apple Silicon Mac or on x86_64 Linux with glibc. Windows is
+  It runs on an Apple Silicon Mac or on x86_64 Linux with glibc 2.28 or newer. Windows is
   not supported.
 
 You can start designing a study before you download a model or decide where
@@ -185,7 +185,10 @@ sh install-client.sh plan
 ```
 
 This changes nothing. It shows where the client will be installed, what the
-installer will do, and a plan hash. If you agree with the plan, install it
+installer will do, the approximate download size and disk space, and a plan
+hash. It first checks for the tools it needs (curl, tar, and a SHA-256 tool),
+a writable destination, enough free disk, and on Linux a recent enough C
+library, and stops early with a plain message if one is missing. If you agree with the plan, install it
 with that hash:
 
 ```sh
@@ -295,8 +298,15 @@ folder; an environment you made yourself stays usable when you select its
 interpreter explicitly. Managed upgrades and `repair` need a new plan and its
 approval. Each creates a new environment, verifies imports and the source
 identity, and switches the public runtime link to it in one step. A failed
-download or verification leaves the prior runtime in place. A concurrent setup
-refuses until the other one releases its lock. The installer does not start
+download or verification leaves the prior runtime in place. Downloads give up on a stalled
+connection and retry a few times. Each failure carries a `code` (such as
+`noNetwork`, `downloadStalled`, `tlsFailure`, `checksumMismatch`, `diskFull`,
+or `missingTools`), a plain reason, and a repair. Ctrl-C, or Cancel in
+Research Setup, stops an installation cleanly and keeps the previous runtime.
+A concurrent setup refuses while another is running. The setup lock records
+its process, machine, and start time; a lock left by a setup that is no longer
+running is reclaimed on the next attempt, together with that setup's
+unfinished staging folder, so a re-run needs no manual cleanup. The installer does not start
 services, download models, choose a cluster, or supply credentials. Paths stay
 local to the authoring workspace; cluster execution receives copies through
 managed submission and verified import.

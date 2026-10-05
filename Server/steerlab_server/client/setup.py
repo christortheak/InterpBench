@@ -11,6 +11,22 @@ from .. import client_dependencies
 
 class SetupRefusal(ValueError):
     repair_action = 'Review setup plan from the matching client release; approve setup apply or repair only after reviewing its actions.'
+    #: The installer's own typed code (``noNetwork``, ``diskFull``, ``cancelled``,
+    #: and so on) when the refusal came from it; None for this module's own.
+    installer_code = None
+
+
+#: What the app-free client does and does not do, said wherever it hands a
+#: workspace to a researcher or a coding assistant. The Mac command line runs
+#: studies itself, so this is the Python client's statement only.
+CLIENT_SCOPE = (
+    'This app-free client creates workspaces and authors studies, then submits them to a runner that '
+    'someone has set up: a workstation, a cluster, or a local engine installed separately. It does not '
+    "run models itself. To read results without the app, results export writes a completed run's stored "
+    'tables, transcripts, and methods summary to files. On a Mac, the SteerLab app is the supported route '
+    'to running studies and reading their results.')
+CLIENT_SCOPE_SHORT = ('This client authors studies and submits them to a runner someone has set up; '
+                      'it does not run models itself.')
 
 
 def inspect(root=None):
@@ -51,14 +67,27 @@ def provision(operation, *, release=None, runtime=None, expected=None, approved=
     if runtime is not None: command += ['--runtime', str(runtime)]
     if expected is not None: command += ['--expect', expected]
     if approved: command += ['--yes']
-    result = subprocess.run(command, stdout=subprocess.PIPE, text=True)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, text=True)
     try:
-        response = json.loads(result.stdout)
+        stdout, _ = process.communicate()
+    except KeyboardInterrupt:
+        # A Ctrl-C reached the installer too, and it is stopping its download,
+        # removing its staging folder, and releasing its lock. Let it finish
+        # and report, instead of killing it a moment later as subprocess.run
+        # would; an installer that does not finish in time is stopped.
+        try:
+            stdout, _ = process.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            raise KeyboardInterrupt from None
+    try:
+        response = json.loads(stdout)
     except ValueError as exc:
         raise SetupRefusal('Setup returned no structured result; inspect its stderr diagnostics.') from exc
-    if result.returncode or not response.get('ok'):
+    if process.returncode or not response.get('ok'):
         failure = SetupRefusal(response.get('reason', 'Client setup did not finish.'))
         failure.repair_action = response.get('repairAction', failure.repair_action)
+        failure.installer_code = response.get('code')
         raise failure
     return response
 

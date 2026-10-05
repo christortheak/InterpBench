@@ -51,7 +51,19 @@ struct ResearchSetupSheet: View {
                     beginStep
                 }
             }
-            if model.busy { HStack { ProgressView().controlSize(.small); Text(model.message ?? "Checking setup…").font(.caption) } }
+            if model.busy {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text(model.message ?? "Checking setup…").font(.caption)
+                    // An installation can be stopped: the installer removes
+                    // what it staged and the earlier helper stays in place.
+                    if model.installing {
+                        Spacer()
+                        Button(ResearchSetupCopy.cancelInstallButton) { model.cancelInstall() }
+                            .controlSize(.small).disabled(model.cancelling)
+                    }
+                }
+            }
             else if let message = model.message { Text(message).font(.caption).textSelection(.enabled) }
             if let error = model.error {
                 VStack(alignment: .leading, spacing: 2) {
@@ -70,12 +82,14 @@ struct ResearchSetupSheet: View {
                 Spacer()
                 // Return dismisses only once there is a workspace to return
                 // to. Before that, Return creates one (see `workspaceStep`).
-                Button("Done") { dismiss() }.disabled(model.busy)
+                // Only an installation holds the sheet open, and it has its
+                // own Cancel; a readiness check or a plan never does.
+                Button("Done") { dismiss() }.disabled(model.installing)
                     .keyboardShortcut(selectedRoot == nil ? nil : .defaultAction)
             }
         }
         .padding(24).frame(width: 660, height: 700)
-        .interactiveDismissDisabled(model.busy)
+        .interactiveDismissDisabled(model.installing)
         .task(id: selectedRoot) { copied = false; await model.refresh(workspace: selectedRoot) }
         // This sheet is itself a sheet, so the engine setup and the "what
         // runs where" view it can ask for are presented ON it.
