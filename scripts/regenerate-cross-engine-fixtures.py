@@ -2081,6 +2081,16 @@ def effect_units_cases() -> list[dict]:
          + [json.dumps({"condition": condition, "promptID": item, "instrument": "answerTokenLogprob",
                         "selected": "A"}) for condition in ("baseline", "formal") for item in items[:2]],
          "stampedUnit": None, "effectRows": [effect_units_row("formal", "2")]},
+        {"label": "fields present but null",
+         "note": "a key present with a null value counts as present, as the "
+                 "Python reader tests it: an error of null still drops the "
+                 "record; an output or an instrument of null still counts",
+         "generations": effect_units_sampled(["baseline"], items[:3], 1) + [
+             json.dumps({"condition": "formal", "promptID": "item-1", "output": None}),
+             json.dumps({"condition": "formal", "promptID": "item-2", "instrument": None}),
+             json.dumps({"condition": "formal", "promptID": "item-3", "output": "An answer.",
+                         "error": None})],
+         "stampedUnit": None, "effectRows": [effect_units_row("formal", "3")]},
         {"label": "a unit the analysis stamped",
          "generations": effect_units_sampled(["baseline", "formal"],
                                              items[:1], 4),

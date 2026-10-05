@@ -7,7 +7,7 @@
 import { adjudicationSentence, analysisStampsOf, exclusionsSentence, rescueSentence, unitSentence, type UnitOfAnalysis } from "../lib/analysisStamps";
 import { freezeDetails, freezeLabel, freezeOf, freezeTone, runsBeforeFreeze } from "../lib/freeze";
 import { cellsOverThreshold, cutOffCells, parseTruncation, percentText, thresholdSentence, truncationSentence } from "../lib/runReport";
-import { RESPONSE_UNIT_EXPLANATION, UNKNOWN_UNIT_NOTE, unitOf, unsettledUnitSentence, type PairedItems } from "../lib/effectUnits";
+import { RESPONSE_UNIT_EXPLANATION, unitOf, unsettledUnitSentence, type PairedItems } from "../lib/effectUnits";
 import type { Effect, RunFile, WorkspaceRun } from "../lib/types";
 import { Badge } from "./ui";
 
@@ -69,7 +69,7 @@ export function IntervalNote({ unit, corrections, rows = [], records = null }: {
       <p>Each pooled row compares one condition with the baseline on the <strong>same {many}</strong>. For every {one}, the engine takes the condition&rsquo;s value minus the baseline&rsquo;s value. The estimate is the average of those differences.</p>
       <p>The 95% interval is the range the engine found for that average by drawing the {many} again, many times over, from the ones in the study. It shows how much the average depends on which {many} the study happened to use. It does not show how much one answer differs from the next.</p>
       {responses && <p><strong>Rows of paired responses are not read this way.</strong> {RESPONSE_UNIT_EXPLANATION}</p>}
-      {unknown && <p>{UNKNOWN_UNIT_NOTE} for some rows, so this reading may not hold for them.</p>}
+      {unknown && <p>For some rows, the unit of the pairs is not established, so this reading may not hold for them.</p>}
       <div className="method-item"><span>Unit</span><small>{unit ? `One ${unit.unit}, as this run stamps it (${unit.source}).` : unsettledUnitSentence(rows, records)}</small></div>
       <div className="method-item"><span>Raw p</span><small>A Wilcoxon signed-rank test on the same differences: a second check that does not assume they follow a bell curve.</small></div>
       <div className="method-item"><span>Adjusted p</span><small>{corrections.length ? `The raw p after the ${corrections.join(" / ")} correction, which allows for several outcomes being tested at once.` : "This table names no correction, so the explorer does not say which one was used."}</small></div>

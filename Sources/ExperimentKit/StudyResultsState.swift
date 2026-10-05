@@ -187,12 +187,17 @@ public final class StudyResultsState {
         "cosine-matrix.csv": RunBrowser.jsonPreviewByteLimit,
         "panel-effects.csv": RunBrowser.jsonPreviewByteLimit,
         "unit-of-analysis.json": remoteReportByteLimit,
+        // An analysis directory's source run, for settling its rows' unit.
+        "source-run.txt": 4096,
+        "analysis.json": remoteReportByteLimit,
     ]
 
     public func loadRemoteRunDetail(
         run: RemoteStampedRunRecord, client: ClusterClient?,
         fetcher: (@Sendable (_ name: String, _ maxBytes: Int) async throws -> RemoteRunFileHead)? =
-            nil
+            nil,
+        analyzedRunFetcher: (@Sendable (_ runID: String, _ name: String, _ maxBytes: Int) async throws
+            -> RemoteRunFileHead)? = nil
     ) async -> RemoteRunDetailPayload {
         // A stale status from a previous run's failed load must not caption
         // THIS load — it re-appears below only if this load itself fails.
@@ -201,6 +206,7 @@ public final class StudyResultsState {
         remoteResultsStatus = nil
         var payload = RemoteRunDetailPayload()
         let fetch: @Sendable (String, Int) async throws -> RemoteRunFileHead
+        var fetchFromRun = analyzedRunFetcher
         if let fetcher {
             fetch = fetcher
         } else {
@@ -213,6 +219,11 @@ public final class StudyResultsState {
             fetch = { name, maxBytes in
                 try await client.runFileHead(
                     runID: runID, name: name, maxBytes: maxBytes)
+            }
+            if fetchFromRun == nil {
+                fetchFromRun = { runID, name, maxBytes in
+                    try await client.runFileHead(runID: runID, name: name, maxBytes: maxBytes)
+                }
             }
         }
 
@@ -296,6 +307,28 @@ public final class StudyResultsState {
             } else {
                 payload.previewed.append(
                     RemoteRunFilePreviewItem(file: file, preview: preview))
+            }
+        }
+
+        // An analysis directory holds no generations, so its rows' unit is
+        // settled from the run it analyzed (source-run.txt, else
+        // analysis.json's sourceRun): that run's generations head is fetched
+        // for this alone. A head is a lower bound on the items, so a row it
+        // cannot settle stays "not established", never guessed.
+        if artifacts.generationsText == nil, artifacts.effectSizesText != nil || artifacts.reportData != nil,
+            let fetchFromRun,
+            let source = RunResults.analyzedRunName(
+                sourceRunText: fetched["source-run.txt"].map { String(decoding: $0.head.data, as: UTF8.self) },
+                analysisData: fetched["analysis.json"]?.head.data),
+            source != run.id
+        {
+            let cap = RunBrowser.jsonPreviewByteLimit
+            if let head = try? await fetchFromRun(source, "generations.jsonl", cap) {
+                let bounded = RunBrowser.remoteHead(
+                    data: head.data, listedSize: 0, requestedBytes: cap,
+                    serverFileSize: head.fileSize, serverTruncated: head.truncated)
+                artifacts.analyzedRunGenerationsText = String(decoding: bounded.data, as: UTF8.self)
+                artifacts.analyzedRunGenerationsTruncated = bounded.truncated
             }
         }
 

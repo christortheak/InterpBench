@@ -813,6 +813,47 @@
         {
           "condition": "formal",
           "endpoint": "wordCount",
+          "n": "3",
+          "stratifyBy": "pooled",
+          "stratum": "",
+          "unit": ""
+        }
+      ],
+      "expected": {
+        "pairedItems": {
+          "formal": 2
+        },
+        "rows": [
+          {
+            "condition": "formal",
+            "count": "3 paired responses from 2 items",
+            "endpoint": "wordCount",
+            "pairedItems": 2,
+            "stratifyBy": "pooled",
+            "stratum": "",
+            "tooFew": true,
+            "unit": "response",
+            "unitSource": "inferred_from_records"
+          }
+        ]
+      },
+      "generations": [
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"promptID\": \"item-1\", \"output\": null}",
+        "{\"condition\": \"formal\", \"promptID\": \"item-2\", \"instrument\": null}",
+        "{\"condition\": \"formal\", \"promptID\": \"item-3\", \"output\": \"An answer.\", \"error\": null}"
+      ],
+      "label": "fields present but null",
+      "note": "a key present with a null value counts as present, as the Python reader tests it: an error of null still drops the record; an output or an instrument of null still counts",
+      "stampedUnit": null
+    },
+    {
+      "effectRows": [
+        {
+          "condition": "formal",
+          "endpoint": "wordCount",
           "n": "4",
           "stratifyBy": "pooled",
           "stratum": "",

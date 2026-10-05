@@ -8,7 +8,7 @@ import { skippedLinesNote } from "../lib/csv";
 import { demoCopy, demoEffects, DemoBanner, DemoEffectsLower, demoPreviewEnabled } from "../demo";
 import { findFile } from "../lib/discovery";
 import { effectConditions, effectEndpoints, estimandLabel, groupEffects, isDiagnostic, pairedCountLabel, stratumLabel } from "../lib/effects";
-import { effectsUnitSummary, unitCaveat, unitOf } from "../lib/effectUnits";
+import { effectsUnitSummary, hasTooFewIndependentPairs, tooFewNoun, unitCaveat, unitOf } from "../lib/effectUnits";
 import { csvFilename, type ExportColumn } from "../lib/export";
 import { fmt } from "../lib/format";
 import type { Effect, RunFile, WorkspaceRun } from "../lib/types";
@@ -56,18 +56,26 @@ const columns: ExportColumn<Effect>[] = [
 /// The p-value pair for one row. A DIAGNOSTIC row (a single item's own
 /// samples) is never shown a corrected p — the engine writes none, and this
 /// says why rather than printing a bare dash next to confirmatory rows.
+/// The stored interval, or why there is none to show: one or two pairs (for
+/// paired responses, one or two items) cannot carry an interval or a test.
+/// The same rule as the headline card, the app, and the Python results page.
+const intervalText = (effect: Effect) =>
+  hasTooFewIndependentPairs(effect) ? `too few ${tooFewNoun(effect)}` : `[${fmt(effect.low)}, ${fmt(effect.high)}]`;
+
 function PValues({ effect }: { effect: Effect }) {
   const diagnostic = isDiagnostic(effect);
+  const tooFew = hasTooFewIndependentPairs(effect);
   return (
     <>
       <div className="numeric"><strong>{effect.p == null ? "—" : effect.p.toFixed(3)}</strong><span>{effect.p == null ? "not reported" : diagnostic ? "Wilcoxon · locator" : "Wilcoxon"}</span></div>
-      <div className="numeric"><strong>{diagnostic || effect.q == null ? "—" : effect.q.toFixed(3)}</strong><span>{diagnostic ? "not corrected" : effect.q == null ? "not reported" : effect.q < .05 ? "survives" : "n.s."}</span></div>
+      <div className="numeric"><strong>{diagnostic || tooFew || effect.q == null ? "—" : effect.q.toFixed(3)}</strong><span>{diagnostic ? "not corrected" : tooFew ? "not a test" : effect.q == null ? "not reported" : effect.q < .05 ? "survives" : "n.s."}</span></div>
     </>
   );
 }
 
 function VerdictBadge({ effect }: { effect: Effect }) {
   if (isDiagnostic(effect)) return <Badge tone="warn">Diagnostic</Badge>;
+  if (hasTooFewIndependentPairs(effect)) return <Badge tone="neutral">{`Too few ${tooFewNoun(effect)}`}</Badge>;
   return <Badge tone={effect.q != null && effect.q < .05 ? "blue" : "neutral"}>{effect.q == null ? "Not tested" : effect.q < .05 ? "Moves" : "Uncertain"}</Badge>;
 }
 
@@ -139,7 +147,7 @@ export function EffectsView({ run, onOpenFile }: { run: WorkspaceRun | null; onO
                   {nested.length > 0 && <button className="quiet-link strata-toggle" aria-expanded={open} onClick={() => setOpenGroups((state) => ({ ...state, [group.key]: !open }))}>{open ? "Hide" : "Show"} {nested.length} stratified row{nested.length === 1 ? "" : "s"}{nested.filter(isDiagnostic).length ? ` · ${nested.filter(isDiagnostic).length} diagnostic` : ""}</button>}
                 </div>
                 <ForestRow effect={parent} compact />
-                <div className="numeric"><strong>{fmt(parent.estimate, parent.unit === "months" ? 1 : 2)}</strong><span>[{fmt(parent.low)}, {fmt(parent.high)}]</span></div>
+                <div className="numeric"><strong>{fmt(parent.estimate, parent.unit === "months" ? 1 : 2)}</strong><span>{intervalText(parent)}</span></div>
                 {/* The raw p is the table's stamped `wilcoxonP`. This column used
                     to print a hardcoded five-value array for the synthetic
                     preview and a bare dash for every real run — a fabricated
@@ -154,7 +162,7 @@ export function EffectsView({ run, onOpenFile }: { run: WorkspaceRun | null; onO
                     <span>{pairedCountLabel(stratum)}{estimandLabel(stratum) ? ` · ${estimandLabel(stratum)}` : ""}</span>
                   </div>
                   <ForestRow effect={stratum} compact />
-                  <div className="numeric"><strong>{fmt(stratum.estimate, stratum.unit === "months" ? 1 : 2)}</strong><span>[{fmt(stratum.low)}, {fmt(stratum.high)}]</span></div>
+                  <div className="numeric"><strong>{fmt(stratum.estimate, stratum.unit === "months" ? 1 : 2)}</strong><span>{intervalText(stratum)}</span></div>
                   <PValues effect={stratum} />
                   <VerdictBadge effect={stratum} />
                 </div>

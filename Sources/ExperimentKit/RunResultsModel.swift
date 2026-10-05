@@ -122,6 +122,11 @@ extension RunResults {
         /// pooled rows. Small, and read only to settle the effect rows' unit,
         /// so it takes no part in `isEmpty`.
         public var unitOfAnalysisData: Data?
+        /// The generations head of the run an analysis directory analyzed (it
+        /// holds none of its own). Read only to settle the effect rows' unit,
+        /// never shown, so it takes no part in `isEmpty`.
+        public var analyzedRunGenerationsText: String?
+        public var analyzedRunGenerationsTruncated = false
         /// Whether an evaluation report (a judged outcome) exists for this
         /// run's source run. The local loader looks beside the run
         /// (`HeadlineOutcome.evaluationReport`); a remote reading cannot, and
@@ -259,10 +264,15 @@ extension RunResults {
                 unitOfAnalysisData: artifacts.unitOfAnalysisData, report: model.report)
             let settled = resolveUnits(rows, stampedUnit: model.stampedUnit) {
                 if let effectUnitRecords { return effectUnitRecords() }
-                return artifacts.generationsText.map {
+                if let text = artifacts.generationsText {
+                    return PairedItems(
+                        counts: pairedItems(fromJSONL: text),
+                        complete: !artifacts.generationsTruncated)
+                }
+                return artifacts.analyzedRunGenerationsText.map {
                     PairedItems(
                         counts: pairedItems(fromJSONL: $0),
-                        complete: !artifacts.generationsTruncated)
+                        complete: !artifacts.analyzedRunGenerationsTruncated)
                 }
             }
             model.effectSizes = settled.rows

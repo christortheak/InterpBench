@@ -61,9 +61,10 @@ extension RunResults {
         public var isResponses: Bool { unit == "response" }
     }
 
-    /// Per condition, how many distinct items have a response under both
-    /// that condition and the baseline in the run's records: the most pairs
-    /// an item-level row of that condition can count.
+    /// Per condition, how many distinct items have a record (a generated
+    /// response or an instrument readout) under both that condition and the
+    /// baseline in the run's records: the most pairs an item-level row of that
+    /// condition can count.
     public struct PairedItems: Sendable, Equatable {
         public var counts: [String: Int]
         /// Every record of the run was read. When only the head of a large
@@ -94,17 +95,39 @@ extension RunResults {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return }
             let data = Data(text.utf8)
-            // Python's reader also accepts NaN and Infinity, which a strict
-            // JSON reader refuses; the lenient reader is only the fallback.
+            // Python's reader also accepts NaN, Infinity and -Infinity, which a
+            // strict JSON reader refuses, and nothing else beyond JSON: the
+            // fallback reads those three as null (the TypeScript copy's
+            // `withoutNonFinite`), never JSON5's comments or trailing commas.
             guard
                 let object = (try? JSONSerialization.jsonObject(with: data))
-                    ?? (try? JSONSerialization.jsonObject(with: data, options: [.json5Allowed])),
+                    ?? (try? JSONSerialization.jsonObject(with: Data(Self.withoutNonFinite(text).utf8))),
                 let record = object as? [String: Any],
                 record["error"] == nil,
                 record["instrument"] != nil || record["output"] != nil
             else { return }
             items[Self.text(record["condition"]), default: []]
                 .insert(Self.text(record["promptID"]))
+        }
+
+        /// `text` with each NaN, Infinity and -Infinity outside a string read
+        /// as null, so a strict reader takes the lines Python's reader takes.
+        static func withoutNonFinite(_ text: String) -> String {
+            var out = "", inString = false, escaped = false
+            var rest = Substring(text)
+            while let character = rest.first {
+                if inString {
+                    out.append(character); rest = rest.dropFirst()
+                    if escaped { escaped = false } else if character == "\\" { escaped = true } else if character == "\"" { inString = false }
+                    continue
+                }
+                if character == "\"" { inString = true; out.append(character); rest = rest.dropFirst(); continue }
+                if let token = ["-Infinity", "Infinity", "NaN"].first(where: { rest.hasPrefix($0) }) {
+                    out += "null"; rest = rest.dropFirst(token.count); continue
+                }
+                out.append(character); rest = rest.dropFirst()
+            }
+            return out
         }
 
         public var counts: [String: Int] {
@@ -243,33 +266,69 @@ extension RunResults {
             if let text = artifacts.generationsText, !artifacts.generationsTruncated {
                 return PairedItems(counts: pairedItems(fromJSONL: text), complete: true)
             }
-            return pairedItems(generationsAt: own).map { PairedItems(counts: $0, complete: true) }
+            return cachedPairedItems(generationsAt: own).map { PairedItems(counts: $0, complete: true) }
         }
         guard let source = analyzedRunName(runDirectory) else { return nil }
         let generations = runDirectory.standardizedFileURL.deletingLastPathComponent()
             .appending(components: source, "generations.jsonl")
-        return pairedItems(generationsAt: generations).map { PairedItems(counts: $0, complete: true) }
+        return cachedPairedItems(generationsAt: generations).map { PairedItems(counts: $0, complete: true) }
+    }
+
+    /// Counts already made, by the file's path, size and modification time:
+    /// a completed run never changes, so selecting it again reads nothing,
+    /// and a run still being written is counted afresh.
+    private static let countCache = CountCache()
+
+    private final class CountCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var entries: [String: [String: Int]] = [:]
+        func value(_ key: String) -> [String: Int]? { lock.withLock { entries[key] } }
+        func store(_ key: String, _ counts: [String: Int]) {
+            lock.withLock {
+                if entries.count >= 64 { entries.removeAll() }
+                entries[key] = counts
+            }
+        }
+    }
+
+    static func cachedPairedItems(generationsAt url: URL) -> [String: Int]? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attributes[.size] as? NSNumber, let modified = attributes[.modificationDate] as? Date
+        else { return pairedItems(generationsAt: url) }
+        let key = "\(url.standardizedFileURL.path)\u{1F}\(size)\u{1F}\(modified.timeIntervalSince1970)"
+        if let counts = countCache.value(key) { return counts }
+        guard let counts = pairedItems(generationsAt: url) else { return nil }
+        countCache.store(key, counts)
+        return counts
     }
 
     /// The directory name of the run an analysis directory analyzed: the
     /// first line of `source-run.txt`, else `analysis.json`'s `sourceRun`
     /// (the Python reader's order). nil when the directory names none.
     static func analyzedRunName(_ directory: URL) -> String? {
+        analyzedRunName(
+            sourceRunText: try? String(
+                contentsOf: directory.appending(component: "source-run.txt"), encoding: .utf8),
+            analysisData: try? Data(contentsOf: directory.appending(component: "analysis.json")))
+    }
+
+    /// `analyzedRunName(_:)` from the two files' contents, so a remote
+    /// reading, which holds bytes rather than a directory, settles it alike.
+    static func analyzedRunName(sourceRunText: String?, analysisData: Data?) -> String? {
         func baseName(_ raw: String) -> String? {
             var trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             while trimmed.hasSuffix("/") { trimmed.removeLast() }
             let name = trimmed.split(separator: "/").last.map(String.init) ?? ""
             return name.isEmpty || name == "." || name == ".." ? nil : name
         }
-        if let text = try? String(
-            contentsOf: directory.appending(component: "source-run.txt"), encoding: .utf8),
+        if let text = sourceRunText,
             let line = text.split(whereSeparator: \.isNewline).first,
             let name = baseName(String(line))
         {
             return name
         }
         guard
-            let data = try? Data(contentsOf: directory.appending(component: "analysis.json")),
+            let data = analysisData,
             let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
             let source = object["sourceRun"] as? String
         else { return nil }

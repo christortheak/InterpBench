@@ -88,7 +88,7 @@ extension RunResults {
             return EffectSizeRow(
                 condition: condition,
                 metric: metric,
-                n: index["n"].flatMap { double(row, $0) }.map(Int.init) ?? 0,
+                n: index["n"].flatMap { double(row, $0) }.map(pairCount) ?? 0,
                 meanDiff: mean,
                 ciLower: lower,
                 ciUpper: upper,
@@ -380,4 +380,14 @@ extension RunResults {
         else { return nil }
         return value
     }
+}
+
+/// A stored pair count as a whole number, never a crash. A fraction rounds up,
+/// so "more pairs than items" (against a whole number of items) reads the
+/// same as the Python reader's comparison of the stored value; a value that
+/// is not a positive finite number is no count (0); an absurdly large one is
+/// `Int.max`.
+func pairCount(_ value: Double) -> Int {
+    guard value.isFinite, value > 0 else { return 0 }
+    return value >= Double(Int.max) ? Int.max : Int(value.rounded(.up))
 }

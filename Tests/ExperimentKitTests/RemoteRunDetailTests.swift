@@ -322,4 +322,46 @@ struct RemoteRunDetailTests {
         #expect(garbage.fileSize == nil)
         #expect(garbage.truncated == nil)
     }
+
+    /// A remote analysis directory holds no generations. Its rows' unit is
+    /// settled from the run it analyzed (named by source-run.txt), whose
+    /// generations head is fetched for that alone: an ordinary item-level
+    /// analysis reads as items, not as pairs whose unit is not established.
+    @Test func aRemoteAnalysisSettlesItsUnitFromTheRunItAnalyzed() async throws {
+        let effects = "condition,metric,n,meanDiff,ciLower,ciUpper,wilcoxonW,wilcoxonP,adjustedP,"
+            + "correction,stratifyBy,stratum,unit,estimand,inference\n"
+            + "formal,wordCount,4,1.0,0.5,1.5,,,,,pooled,,,,\n"
+            + "formal,distinct2,9,0.1,0.0,0.2,,,,,pooled,,,,\n"
+        let generations = ["baseline", "formal"].flatMap { condition in
+            (1...4).map { #"{"condition": "\#(condition)", "promptID": "item-\#($0)", "output": "An answer."}"# }
+        }.joined(separator: "\n") + "\n"
+        let run = RemoteStampedRunRecord(
+            id: "20261005T000000000-exp-study-analyze", path: "/server/analysis",
+            files: ["effect-sizes.csv", "source-run.txt"],
+            fileEntries: [RemoteRunFileEntry(name: "effect-sizes.csv", size: effects.utf8.count),
+                          RemoteRunFileEntry(name: "source-run.txt", size: 40)])
+        let asked = AsyncStream<String>.makeStream()
+        let payload = await StudyResultsState().loadRemoteRunDetail(
+            run: run, client: nil,
+            fetcher: { name, _ in
+                switch name {
+                case "effect-sizes.csv": return RemoteRunFileHead(data: Data(effects.utf8), fileSize: effects.utf8.count, truncated: false)
+                case "source-run.txt": return RemoteRunFileHead(data: Data("runs/20261005T-run\n".utf8), fileSize: 19, truncated: false)
+                default: throw CocoaError(.fileReadNoSuchFile)
+                }
+            },
+            analyzedRunFetcher: { runID, name, _ in
+                asked.continuation.yield("\(runID)/\(name)")
+                return RemoteRunFileHead(data: Data(generations.utf8), fileSize: generations.utf8.count, truncated: false)
+            })
+        asked.continuation.finish()
+        var requests: [String] = []
+        for await request in asked.stream { requests.append(request) }
+        #expect(requests == ["20261005T-run/generations.jsonl"])
+        let rows = try #require(payload.model?.effectSizes)
+        let units = Dictionary(uniqueKeysWithValues: rows.map { ($0.metric, $0.unit) })
+        #expect(units["wordCount"]?.unit == "item" && units["wordCount"]?.source == .engineDefault)
+        // More pairs than the source run has items: paired responses.
+        #expect(units["distinct2"]?.unit == "response" && units["distinct2"]?.pairedItems == 4)
+    }
 }

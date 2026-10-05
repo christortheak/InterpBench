@@ -307,10 +307,12 @@ export const unsettledUnitSentence = (rows: Pick<Effect, "effectUnit" | "stratif
 export const effectsUnitSummary = (rows: Pick<Effect, "effectUnit" | "stratifyBy">[], stampedUnit: string): string => {
   if (stampedUnit === "transcript") return "Each transcript—not each turn—is the unit of analysis.";
   const units = summarized(rows).map((row) => unitOf(row).unit);
+  const unknown = units.includes("unknown")
+    ? ` ${units.every((unit) => unit === "unknown") ? "The" : "For some rows, the"} unit of analysis is not established.` : "";
   if (units.includes("response")) {
-    return `${units.every((unit) => unit === "response") ? "These rows" : "Some rows"} paired responses, not items: responses to the same item are not independent, so their intervals and tests are not findings about items. The unit of analysis below says how this was read from the run’s records.`;
+    return `${units.every((unit) => unit === "response") ? "These rows" : "Some rows"} paired responses, not items: responses to the same item are not independent, so their intervals and tests are not findings about items.${unknown} The unit of analysis below says how this was read from the run’s records.`;
   }
-  if (units.includes("unknown")) return "The unit of analysis of some rows is not established. The unit of analysis below says why.";
+  if (unknown) return `${unknown.trim()} The unit of analysis below says why.`;
   return "The item—not the generation—is the unit of analysis, except where a stratum says otherwise.";
 };
 

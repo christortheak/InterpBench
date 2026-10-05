@@ -259,6 +259,9 @@ struct RunSemanticSectionsView: View {
             let loaded = await Task.detached(priority: .userInitiated) {
                 RunResults.load(runDirectory: url)
             }.value
+            // Another run was selected while this one loaded: its own task
+            // shows it, and this result must not land under its title.
+            guard !Task.isCancelled else { return }
             model = loaded
         }
     }
@@ -1219,6 +1222,18 @@ struct EffectSizesTableView: View {
 
     @ViewBuilder
     private func significanceMark(_ row: RunResults.EffectSizeRow) -> some View {
+        // One or two pairs (for paired responses, one or two items) are not a
+        // test, whatever p the analysis stored: no mark either way.
+        if EffectNarrative.hasTooFewPairs(row) {
+            Text("—").foregroundStyle(.secondary)
+                .accessibilityLabel("not a test: too few \(EffectNarrative.tooFewNoun(row))")
+        } else {
+            significanceSymbol(row)
+        }
+    }
+
+    @ViewBuilder
+    private func significanceSymbol(_ row: RunResults.EffectSizeRow) -> some View {
         switch row.significantAfterCorrection {
         case .some(true):
             Image(systemName: "checkmark.circle.fill")

@@ -7,6 +7,7 @@ import { useState } from "react";
 import { deepLinkHref, deepLinksAvailable } from "../lib/deeplink";
 import { csvPreview, csvPreviewNotice } from "../lib/csv";
 import { pairedCountLabel } from "../lib/effects";
+import { hasTooFewIndependentPairs, tooFewNoun } from "../lib/effectUnits";
 import { exportCSV, exportColumnNotes, type ExportColumn } from "../lib/export";
 import { fmt } from "../lib/format";
 import { saveRunFile, saveStatusText, type SaveOutcome } from "../lib/save";
@@ -32,16 +33,21 @@ export function ForestRow({ effect, compact = false }: { effect: Effect; compact
   const max = bound;
   const position = (value: number) => Math.max(1, Math.min(99, ((value - adjustedMin) / (max - adjustedMin)) * 100));
   const zero = position(0);
+  const tooFew = hasTooFewIndependentPairs(effect);
   return (
     <div className={`forest-row ${compact ? "forest-compact" : ""}`}>
       <div className="forest-label">
         <strong>{effect.short}</strong>
         <span>{pairedCountLabel(effect)}</span>
       </div>
-      <div className="forest-track" aria-label={`${effect.endpoint}: ${fmt(effect.estimate)} ${effect.unit}, 95% CI ${fmt(effect.low)} to ${fmt(effect.high)}`}>
+      <div className="forest-track" aria-label={tooFew
+        ? `${effect.endpoint}: ${fmt(effect.estimate)} ${effect.unit}; too few ${tooFewNoun(effect)} for an interval`
+        : `${effect.endpoint}: ${fmt(effect.estimate)} ${effect.unit}, 95% CI ${fmt(effect.low)} to ${fmt(effect.high)}`}>
         <span className="zero-line" style={{ left: `${zero}%` }} />
-        <span className="ci-line" style={{ left: `${position(effect.low)}%`, width: `${position(effect.high) - position(effect.low)}%` }} />
-        <span className={`estimate-dot ${effect.q != null && effect.q < 0.05 ? "is-sig" : ""}`} style={{ left: `${position(effect.estimate)}%` }} />
+        {/* One or two pairs (for paired responses, one or two items) carry no
+            interval and no test: no whisker, and no significance dot. */}
+        {!tooFew && <span className="ci-line" style={{ left: `${position(effect.low)}%`, width: `${position(effect.high) - position(effect.low)}%` }} />}
+        <span className={`estimate-dot ${!tooFew && effect.q != null && effect.q < 0.05 ? "is-sig" : ""}`} style={{ left: `${position(effect.estimate)}%` }} />
       </div>
       <div className="forest-value">
         <strong>{fmt(effect.estimate, effect.unit === "months" ? 1 : 2)}</strong>
