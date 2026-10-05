@@ -463,3 +463,136 @@ P7 still needs live model and GPU qualification, overhead measurements, and the
 manual app/agent walkthrough. Successful synthetic tests do not qualify a research
 checkpoint. Native MLX policy execution and policy-aware direct scoring/batteries
 are not available; use sampled-response studies through Python Compute.
+
+## Measure what readings and policies cost
+
+`instrumentation-cost` measures what probe readings and intervention policies
+add to generation on one model, on the hardware it runs on. It reports numbers
+and sets no target. It does not show that a probe predicts well or that a
+policy helps.
+
+It generates each prompt under up to six configurations:
+
+1. `baseline`: no instrumentation;
+2. `probeReadings`: the probes are read and nothing is changed;
+3. `zeroActionPolicy`: a policy is attached and its strength is always zero;
+4. `fixedPolicy`: a policy always acts at one fixed strength;
+5. `conditionalPolicy`: a policy acts when a probe score calls for it; and
+6. `retainedActivations`: the probes are read and their activations are kept,
+   up to a small byte budget. This one is opt-in: set `retainActivations` to
+   `true`.
+
+Supply only what the study will use. A configuration whose file is missing is
+listed as not requested, and the others still run. Each configuration is
+measured in two views. The **fixed workload** masks the model's stop tokens, so
+every configuration generates exactly the token budget; compare what the
+instruments themselves cost there. Its text is not study evidence. **Ordinary
+generation** runs as a study would, so an intervention can end a response
+sooner or later. Read its tokens and duration together.
+
+### Inputs
+
+- The model and its exact 40-character revision. The model must already be
+  prepared where the measurement runs. Nothing is downloaded.
+- A reviewed prompt file in JSONL, one object per line, at most 64 lines:
+
+  ```json
+  {"id":"prompt-1","prompt":"Replace with a prompt the study will use."}
+  ```
+
+  Other fields on a line are ignored, so a study's own prompt file can be
+  used. A handful of prompts is usually enough: every prompt is generated once
+  for each configuration, view, and round.
+- Probe files named by `science probe-list`, and published policy files named
+  by `science policy-list`. Each must have been made for this model, revision,
+  and prompt rendering. A policy that never acts is an ordinary policy whose
+  fixed strength is `0`.
+- The token budget, the number of measured repeats, the number of warm-up
+  rounds, and a seed for the order.
+
+### Run it
+
+No new verb is needed. In the app, use Research methods and choose this
+operation. From a command line, `science interview instrumentation-cost --json`
+lists every field. Write the answers to a file, with values as text:
+
+```json
+{
+  "purpose": "Report what probe readings and policies cost on this model.",
+  "claim": "Measured cost on this model and hardware only.",
+  "controls": "A baseline with no instrumentation in every round.",
+  "selection": "Does not apply: nothing is fitted or selected.",
+  "fields": {
+    "modelID": "example/model",
+    "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "prompts": "prompts/cost-sample.jsonl",
+    "probes": "runs/<run>/trained.probe.json",
+    "zeroActionPolicy": "runs/<run>/intervention.policy.json",
+    "fixedPolicy": "runs/<run>/intervention.policy.json",
+    "conditionalPolicy": "runs/<run>/intervention.policy.json",
+    "retainActivations": "true",
+    "maxTokens": "64",
+    "repeats": "5"
+  },
+  "advanced": {}
+}
+```
+
+Then review, publish, package, stage, plan, submit, and fetch. These are the
+same steps every managed operation uses (`steerlab-cli` takes `--workspace`
+where `steerlab` takes `--root`, and `remote … --site <id>` where `steerlab`
+takes `runner … --runner <url>`):
+
+```sh
+steerlab science draft instrumentation-cost --answers answers.json --root <workspace> --json
+steerlab science publish instrumentation-cost --answers answers.json --destination requests/<new-name> --plan-sha256 <draft planSHA256> --root <workspace> --json
+steerlab science input-plan <requestFile> --root <workspace> --json
+steerlab science package <requestFile> --archive <archive.tar.gz> --plan-sha256 <input planSHA256> --root <workspace> --json
+steerlab runner science-stage <archive path on the runner> --sha256 <bundleSha256> --runner <url> --root <workspace> --json
+steerlab runner science-plan <localRequestPath> --runner <url> --root <workspace> --json
+steerlab runner science-submit <localRequestPath> --plan-sha256 <planSHA256> --runner <url> --root <workspace> --json
+steerlab runner science-fetch <job-id> --runner <url> --root <workspace> --json
+```
+
+Each step prints what the next one needs: `publish` returns `requestFile`,
+`input-plan` and `science-plan` return a `planSHA256`, `package` returns
+`bundleSha256`, and `science-stage` returns `localRequestPath`. The draft's
+`operationReview` lists the planned configurations, the number of responses,
+and the token budget before anything runs. Between `package` and
+`science-stage`, move the archive beneath the runner's run root by the
+transfer that machine permits. The same request runs on a local Python engine
+and on a remote GPU: leave `device` as `auto`, or name `mps`, `cuda`, or
+`cpu`. `runner jobs <job-id>` shows the job's state, and `runner logs <job-id>`
+shows one line for each finished round.
+
+### Read the report
+
+The run holds one `cost-report.json`. `rows` has every response, with warm-up
+rounds included and marked. `summary` gives, for each view and configuration,
+the count, mean, standard deviation, minimum, median, and maximum of each
+number over the measured rounds. Its `differenceFromBaseline` pairs each
+response with the baseline response for the same prompt in the same round.
+`order` records the shuffled order of every round, and `definitions` says what
+each number is.
+
+- **Time to process the prompt** is `hostPromptSeconds`, **decode throughput**
+  is `hostDecodeTokensPerSecond`, and **wall time** is `hostWallSeconds`. On a
+  GPU, compare the `synchronized…` numbers: they are read after waiting for
+  the device to finish, and a host timestamp alone can leave out work the
+  device has not finished. On the CPU there is nothing to wait for, so the
+  synchronized numbers are not available and the host numbers are complete.
+- **Peak device memory** on CUDA is the allocator's own peak for each
+  response. An Apple GPU keeps no peak, so its figure is the largest reading
+  taken between steps, and `deviceMemory.approximate` is `true`.
+- **Peak host memory** is the largest resident memory read between steps.
+- **Evidence bytes** are what the readings and decisions add to one response
+  record.
+
+A number the backend cannot give is `null`, with the reason under
+`notAvailable`. It is never written as zero. `advisories` says plainly when an
+instrument did not behave as its role suggests on this workload, for example a
+conditional policy that acted at every decision.
+
+The numbers describe this model, hardware, library versions, prompts, and
+token budget. Model loading, transfer, export, and import are not measured,
+and no static steering vector, adapter, or system prompt is applied.
