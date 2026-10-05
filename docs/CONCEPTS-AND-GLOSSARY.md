@@ -72,9 +72,10 @@ enough provenance to rebuild every table without running the model again.
 SteerLab's machinery maps onto familiar parts of research design. The mapping is
 close, but not exact, and the differences matter when you write up.
 
-**Operationalization: a concept's examples.** A concept enters SteerLab only
-as the example texts you write for it: texts that express it and matched texts
-that do not. Those examples *are* your operational definition, so two rules
+**Operationalization: a concept's examples.** A concept you define yourself
+enters SteerLab as the example texts you write for it: texts that express it
+and matched texts that do not. Those examples *are* your operational
+definition, so two rules
 decide what the direction means. The two sets must differ in the concept and
 nothing else (same topics, lengths, and register), or the direction encodes the
 difference you did not intend. And the examples must not contain the
@@ -148,12 +149,11 @@ numbers only, never participant data.
 **Confounds.** The ones SteerLab measures for you: degradation (a study's
 capability battery runs under every condition, and a drop there must be
 reported beside the effect), the size of the push (the random-direction
-control), and
-truncation (responses cut off at the length limit are counted per condition,
-and a study can refuse a cell where too many were). The ones you must watch
-yourself: example texts that differ in more than the concept, outcomes parsed
-from free text where parsing fails more often under steering, and judges or
-rubrics that could guess the condition.
+control), and truncation (responses cut off at the length limit are counted
+per condition, and a study can refuse a cell where too many were). The ones you
+must watch yourself: example texts that differ in more than the concept,
+outcomes parsed from free text where parsing fails more often under steering,
+and rubrics that let a judge guess which response was steered.
 
 ## Glossary
 
