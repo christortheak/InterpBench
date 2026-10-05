@@ -121,6 +121,7 @@ if __name__ == "__main__":
 
 from . import cli_envelope as envelope
 from .client import study_assembly, design_commands, authoring_commands, model_commands, science_commands, bootstrap_commands, setup_commands
+from .client import results_commands
 from .cli_envelope import (HELP_FLAG, JSON_FLAG, OUT_FLAG, CLIResult,
                            UsageError, VerbSpec)
 
@@ -260,6 +261,7 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
     *bootstrap_commands.VERB_SPECS,
     *setup_commands.VERB_SPECS,
     *science_commands.VERB_SPECS,
+    *results_commands.VERB_SPECS,
     *study_assembly.VERB_SPECS,
     *design_commands.VERB_SPECS,
     *authoring_commands.VERB_SPECS,
@@ -544,7 +546,8 @@ _SPECS_BY_LABEL = {spec.label: spec for spec in CLIENT_VERB_SPECS}
 #: this tuple, the handler table, and the verb table to the same set.
 FAMILIES: tuple[str, ...] = ("setup", "workspace", "authoring", "experiment",
                              "concept", "bundle", "pack", "design", "agent",
-                             "panel", "model", "science", "runner", "run")
+                             "panel", "model", "science", "runner", "run",
+                             "results")
 
 #: Families whose ENTIRE surface is one verb, spelled as the family name and
 #: nothing after it: ``steerlab run <experiment>``. Maps family → the verb its
@@ -579,6 +582,13 @@ RUNNER_FAMILY = "runner"
 #: precisely why it is not in the authoring set: an authoring verb may never
 #: hold a locator, and this one must.
 RUN_FAMILY = "run"
+
+#: The family that takes stored results out of the workspace. NOT in
+#: :data:`AUTHORING_FAMILIES`: it changes no study, concept, or manifest. It
+#: reads a completed run and writes a new folder of tables and summaries
+#: outside ``runs/``. It is local like the authoring families, so the "no flag
+#: holds a server locator" contract is checked for it too.
+RESULTS_FAMILY = "results"
 
 #: Families that run without a workspace when none is named. The runner verbs
 #: address a REMOTE engine and name their local paths explicitly (the bundle
@@ -636,6 +646,7 @@ METAVARS: dict = {
     "--revision": "<commit>",
     "--gpu-type": "<type>",
     "--root": "<dir>",
+    "--run": "<run-dir>",
     "--runner": "<url>",
     "--runner-root": "<dir>",
     "--set": "<key>=<json>",
@@ -652,6 +663,13 @@ METAVARS: dict = {
     "--timeout": "<seconds>",
     "--token-file": "<path>",
     "--verb": "<run|sweep|validate|…>",
+}
+
+#: Verb-qualified spellings, for a flag whose ARGUMENT is a different kind of
+#: thing on one verb. ``--out`` is a file everywhere except ``results export``,
+#: where it is the folder the export is written into.
+VERB_METAVARS: dict = {
+    "results export --out": "<dir>",
 }
 
 
@@ -1013,7 +1031,9 @@ def resolve_workspace(explicit: str | None) -> str:
 # --- help ----------------------------------------------------------------------
 
 
-def _metavar(flag: str) -> str:
+def _metavar(flag: str, label: str | None = None) -> str:
+    if label is not None and f"{label} {flag}" in VERB_METAVARS:
+        return VERB_METAVARS[f"{label} {flag}"]
     return METAVARS.get(flag, "<value>")
 
 
@@ -1025,10 +1045,10 @@ def synopsis(spec: VerbSpec) -> str:
     if spec.positional:
         parts.append(spec.positional)
     for flag in sorted(spec.required_flags):
-        parts.append(f"{flag} {_metavar(flag)}"
+        parts.append(f"{flag} {_metavar(flag, spec.label)}"
                      if flag in spec.value_flags else flag)
     for flag in sorted(spec.value_flags - spec.required_flags):
-        parts.append(f"[{flag} {_metavar(flag)}]")
+        parts.append(f"[{flag} {_metavar(flag, spec.label)}]")
     for flag in sorted(spec.boolean_flags - spec.required_flags):
         parts.append(f"[{flag}]")
     return " ".join(parts)
@@ -1042,8 +1062,8 @@ def help_text(family: str | None = None, verb: str | None = None) -> str:
         lines = [synopsis(spec), "", f"  {spec.purpose}", "",
                  "flags:"]
         for flag in spec.declared_flags:
-            metavar = (f" {_metavar(flag)}" if flag in spec.value_flags
-                       else "")
+            metavar = (f" {_metavar(flag, spec.label)}"
+                       if flag in spec.value_flags else "")
             lines.append(f"  {flag}{metavar}")
         lines.append(f"  {ROOT_FLAG} {_metavar(ROOT_FLAG)}")
         return "\n".join(lines) + "\n"
@@ -4181,7 +4201,8 @@ def _iso(value) -> str | None:
 HANDLERS = {"setup": setup_commands.run, "workspace": bootstrap_commands.run, "science": science_commands.run, "experiment": _experiment, "concept": _concept, "bundle": _bundle,
             "pack": study_assembly.run, "design": design_commands.run, "agent": lambda i: authoring_commands.run(i) if i.spec.verb == "list" else design_commands.run(i), "panel": authoring_commands.run,
             "model": _model,
-            "authoring": _authoring_prompt, "runner": _runner, "run": _run}
+            "authoring": _authoring_prompt, "runner": _runner, "run": _run,
+            "results": results_commands.run}
 
 
 # --- envelope construction -----------------------------------------------------

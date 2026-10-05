@@ -767,15 +767,20 @@ def test_no_authoring_verb_accepts_a_server_locator():
         not in client_cli.AUTHORING_FAMILIES
     excluded = ({spec.family for spec in client_cli.CLIENT_VERB_SPECS}
                 - set(client_cli.AUTHORING_FAMILIES))
+    # `results` is the FOURTH: it changes no study. It reads a completed run
+    # and writes a new folder of tables outside runs/. It is local, so it is
+    # held to the same locator check below.
     assert excluded == {client_cli.RUNNER_FAMILY, client_cli.RUN_FAMILY,
-                        client_cli.AUTHORING_PROMPT_FAMILY, "science"}
+                        client_cli.AUTHORING_PROMPT_FAMILY, "science",
+                        client_cli.RESULTS_FAMILY}
     assert len(authoring) >= 16
     # The exclusion must not become a HOLE: `authoring` is checked against the
     # same locator words, because "it writes nothing" is a reason not to call
     # it authoring, never a reason to let it hold a server address.
     checked = authoring + [spec for spec in client_cli.CLIENT_VERB_SPECS
                            if spec.family
-                           in (client_cli.AUTHORING_PROMPT_FAMILY, "science")]
+                           in (client_cli.AUTHORING_PROMPT_FAMILY, "science",
+                               client_cli.RESULTS_FAMILY)]
     for spec in checked:
         for flag in spec.declared_flags:
             lowered = flag.lower()
