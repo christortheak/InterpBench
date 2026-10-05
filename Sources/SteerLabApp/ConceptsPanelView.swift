@@ -3622,11 +3622,14 @@ extension ConceptsPanelView {
             }
             Text("\(lens.converted?.layerCount ?? lens.sourceLayers?.count ?? 0) "
                  + "matrices · layers \(lens.layerSpan)")
-            Text("\(lens.fit?.corpus ?? "?") · "
+            Text("\(lens.fit?.corpusSummary ?? "?") · "
                  + "\(lens.fit?.promptsFitted.map(String.init) ?? "?") prompts · "
                  + "\(lens.fit?.dtype ?? "?") · fit revision "
                  + ((lens.fit?.revisionKnown ?? false)
                     ? (lens.fit?.revision ?? "?") : "unknown"))
+            ForEach(lens.fit?.corpusContributionLines ?? [], id: \.self) { line in
+                Text("fitted on " + line)
+            }
             if lens.passingQualifications.isEmpty {
                 Text("not qualified for this runtime — exploration only")
                     .foregroundStyle(.orange)
