@@ -5,9 +5,21 @@ import SteeringKit
 /// `markers.json` ({"words": […], "characters": "…"}) beside its stimuli.
 /// Keyword rubric first, model-graded second, never model-graded only
 /// (CLAUDE.md › Experiment B). Adding a concept requires zero code.
+///
+/// Marker WORDS are matched against the text's words without regard to case
+/// or Unicode normalization; marker CHARACTERS are matched one code point at
+/// a time in the NFC text, with case. Both rules are the Python engine's
+/// (`scoring.MarkerRubric`), and both engines are held to
+/// `Tests/Fixtures/cross-engine/marker-scoring.json` (2026-10-05: the Python
+/// engine used to split words on anything but a-z, and this one counted
+/// characters per grapheme cluster, so the two disagreed on accented text).
 public struct MarkerRubric: Sendable {
+    /// In `folded` spelling.
     public let words: Set<String>
+    /// NFC. Kept as the characters a reader recognises; `characterScalars`
+    /// is what `count(in:)` matches.
     public let characters: Set<Character>
+    let characterScalars: Set<Unicode.Scalar>
 
     public init?(directory: URL) {
         struct File: Decodable {
@@ -18,20 +30,26 @@ public struct MarkerRubric: Sendable {
         guard let data = try? Data(contentsOf: url),
             let file = try? JSONDecoder().decode(File.self, from: data)
         else { return nil }
-        self.words = Set((file.words ?? []).map { $0.lowercased() })
-        self.characters = Set(file.characters ?? "")
+        // The characters are normalized as ONE string first, so a character
+        // written decomposed in the file ("e" + combining acute) is "é".
+        self.init(
+            words: Set(file.words ?? []),
+            characters: Set((file.characters ?? "").precomposedStringWithCanonicalMapping))
         if words.isEmpty && characters.isEmpty { return nil }
     }
 
     public init(words: Set<String>, characters: Set<Character> = []) {
-        self.words = words
-        self.characters = characters
+        self.words = Set(words.map(Self.folded))
+        let normalized = characters.map { String($0).precomposedStringWithCanonicalMapping }
+        self.characters = Set(normalized.flatMap { $0 })
+        self.characterScalars = Set(normalized.flatMap(\.unicodeScalars))
     }
 
     public func count(in text: String) -> Int {
         let tokens = Self.tokens(of: text)
         let wordHits = tokens.count { words.contains($0) }
-        let characterHits = text.count { characters.contains($0) }
+        let characterHits = text.precomposedStringWithCanonicalMapping.unicodeScalars
+            .count { characterScalars.contains($0) }
         return wordHits + characterHits
     }
 
@@ -42,10 +60,75 @@ public struct MarkerRubric: Sendable {
         return Float(count(in: text)) / Float(tokenCount)
     }
 
+    /// The words of `text` for marker scoring: maximal runs of letters and
+    /// marks (General Category L* or M*), in any script, in `folded`
+    /// spelling. Digits, punctuation (apostrophes and hyphens included),
+    /// spaces, symbols, and emoji separate words. A script written without
+    /// spaces is one run per stretch of text, so a marker for it belongs in
+    /// `characters`. Python twin: `scoring.marker_tokens`.
     static func tokens(of text: String) -> [String] {
-        text.lowercased()
-            .components(separatedBy: CharacterSet.letters.inverted)
-            .filter { !$0.isEmpty }
+        var tokens: [String] = []
+        var current = String.UnicodeScalarView()
+        for scalar in folded(text).unicodeScalars {
+            if isLetterOrMark(scalar) {
+                current.append(scalar)
+            } else if !current.isEmpty {
+                tokens.append(String(current))
+                current = String.UnicodeScalarView()
+            }
+        }
+        if !current.isEmpty { tokens.append(String(current)) }
+        return tokens
+    }
+
+    /// The spelling marker words are compared in: NFC, then case folding,
+    /// then NFC again. Python twin: `scoring.marker_folded`, which applies
+    /// Unicode full case folding (`str.casefold`). Foundation's folding
+    /// agrees with it everywhere except two places, which `pythonFoldTarget`
+    /// aligns, so the two engines fold every character Unicode 15 assigns
+    /// identically (checked exhaustively when this was written). Characters
+    /// added to Unicode after the Python runtime's version may still differ.
+    static func folded(_ text: String) -> String {
+        let once = text.precomposedStringWithCanonicalMapping
+            .folding(options: .caseInsensitive, locale: nil)
+        var scalars = String.UnicodeScalarView()
+        for scalar in once.unicodeScalars { scalars.append(pythonFoldTarget(scalar)) }
+        return String(scalars).precomposedStringWithCanonicalMapping
+    }
+
+    /// Where Foundation's folding and Unicode case folding part: Cherokee,
+    /// which Unicode folds to its capital letters and Foundation to its
+    /// small ones (the same letters compare equal either way; only the
+    /// spelling differs), and the historic Cyrillic letter variants
+    /// U+1C80–U+1C88, which Unicode folds to their ordinary letters and
+    /// Foundation leaves alone.
+    private static func pythonFoldTarget(_ scalar: Unicode.Scalar) -> Unicode.Scalar {
+        let value = scalar.value
+        let mapped: UInt32 =
+            switch value {
+            case 0x13F8...0x13FD: value - 0x13F8 + 0x13F0
+            case 0xAB70...0xABBF: value - 0xAB70 + 0x13A0
+            case 0x1C80: 0x0432
+            case 0x1C81: 0x0434
+            case 0x1C82: 0x043E
+            case 0x1C83: 0x0441
+            case 0x1C84, 0x1C85: 0x0442
+            case 0x1C86: 0x044A
+            case 0x1C87: 0x0463
+            case 0x1C88: 0xA64B
+            default: value
+            }
+        return Unicode.Scalar(mapped) ?? scalar
+    }
+
+    private static func isLetterOrMark(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.properties.generalCategory {
+        case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter,
+            .otherLetter, .nonspacingMark, .spacingMark, .enclosingMark:
+            true
+        default:
+            false
+        }
     }
 }
 

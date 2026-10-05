@@ -1,0 +1,236 @@
+{
+  "cases": [
+    {
+      "characters": "",
+      "count": 1,
+      "density": 0.5,
+      "label": "accented-word",
+      "text": "na\u00efve warm",
+      "tokens": [
+        "na\u00efve",
+        "warm"
+      ],
+      "words": [
+        "warm"
+      ]
+    },
+    {
+      "characters": "",
+      "count": 3,
+      "density": 0.6,
+      "label": "french-sentence",
+      "text": "L'\u00e9t\u00e9 est tr\u00e8s CHAUD.",
+      "tokens": [
+        "l",
+        "\u00e9t\u00e9",
+        "est",
+        "tr\u00e8s",
+        "chaud"
+      ],
+      "words": [
+        "\u00e9t\u00e9",
+        "tr\u00e8s",
+        "chaud"
+      ]
+    },
+    {
+      "characters": "",
+      "count": 1,
+      "density": 1.0,
+      "label": "decomposed-text",
+      "text": "e\u0301te\u0301",
+      "tokens": [
+        "\u00e9t\u00e9"
+      ],
+      "words": [
+        "\u00e9t\u00e9"
+      ]
+    },
+    {
+      "characters": "",
+      "count": 1,
+      "density": 0.5,
+      "label": "decomposed-marker-word",
+      "text": "Un \u00e9t\u00e9.",
+      "tokens": [
+        "un",
+        "\u00e9t\u00e9"
+      ],
+      "words": [
+        "E\u0301TE\u0301"
+      ]
+    },
+    {
+      "characters": "",
+      "count": 3,
+      "density": 1.0,
+      "label": "full-case-folding",
+      "text": "STRASSE stra\u00dfe Strasse",
+      "tokens": [
+        "strasse",
+        "strasse",
+        "strasse"
+      ],
+      "words": [
+        "stra\u00dfe"
+      ]
+    },
+    {
+      "characters": "",
+      "count": 2,
+      "density": 1.0,
+      "label": "greek-final-sigma",
+      "text": "\u039b\u038c\u0393\u039f\u03a3 \u03bb\u03cc\u03b3\u03bf\u03c2",
+      "tokens": [
+        "\u03bb\u03cc\u03b3\u03bf\u03c3",
+        "\u03bb\u03cc\u03b3\u03bf\u03c3"
+      ],
+      "words": [
+        "\u03bb\u03cc\u03b3\u03bf\u03c2"
+      ]
+    },
+    {
+      "characters": "",
+      "count": 3,
+      "density": 0.5,
+      "label": "separators",
+      "text": "warm2warm, warm-hearted; don't",
+      "tokens": [
+        "warm",
+        "warm",
+        "warm",
+        "hearted",
+        "don",
+        "t"
+      ],
+      "words": [
+        "warm"
+      ]
+    },
+    {
+      "characters": "",
+      "count": 1,
+      "density": 0.5,
+      "label": "devanagari-vowel-signs",
+      "text": "\u0928\u092e\u0938\u094d\u0924\u0947 \u0926\u0941\u0928\u093f\u092f\u093e",
+      "tokens": [
+        "\u0928\u092e\u0938\u094d\u0924\u0947",
+        "\u0926\u0941\u0928\u093f\u092f\u093e"
+      ],
+      "words": [
+        "\u0928\u092e\u0938\u094d\u0924\u0947"
+      ]
+    },
+    {
+      "characters": "\u52c7",
+      "count": 1,
+      "density": 1.0,
+      "label": "unspaced-script",
+      "text": "\u52c7\u6c17\u304c\u3042\u308b\u3002",
+      "tokens": [
+        "\u52c7\u6c17\u304c\u3042\u308b"
+      ],
+      "words": [
+        "\u52c7\u6c17"
+      ]
+    },
+    {
+      "characters": "e\u0301",
+      "count": 2,
+      "density": 1.0,
+      "label": "decomposed-character-marker",
+      "text": "cafe\u0301 cafe\u0301",
+      "tokens": [
+        "caf\u00e9",
+        "caf\u00e9"
+      ],
+      "words": []
+    },
+    {
+      "characters": "\u00e9",
+      "count": 2,
+      "density": 1.0,
+      "label": "characters-keep-case",
+      "text": "\u00c9T\u00c9 \u00e9t\u00e9",
+      "tokens": [
+        "\u00e9t\u00e9",
+        "\u00e9t\u00e9"
+      ],
+      "words": []
+    },
+    {
+      "characters": "\ud83d\udc4d",
+      "count": 1,
+      "density": 1.0,
+      "label": "emoji-character",
+      "text": "great \ud83d\udc4d\ud83c\udffd",
+      "tokens": [
+        "great"
+      ],
+      "words": []
+    },
+    {
+      "characters": "!",
+      "count": 3,
+      "density": 0.0,
+      "label": "no-words",
+      "text": "...!!!",
+      "tokens": [],
+      "words": []
+    },
+    {
+      "characters": "",
+      "count": 0,
+      "density": 0.0,
+      "label": "empty-text",
+      "text": "",
+      "tokens": [],
+      "words": [
+        "warm"
+      ]
+    },
+    {
+      "characters": "",
+      "count": 1,
+      "density": 0.5,
+      "label": "dotted-capital-i",
+      "text": "\u0130nce ince",
+      "tokens": [
+        "i\u0307nce",
+        "ince"
+      ],
+      "words": [
+        "ince"
+      ]
+    },
+    {
+      "characters": "",
+      "count": 2,
+      "density": 1.0,
+      "label": "cherokee",
+      "text": "\uab73\uab9f \u13a3\u13cf",
+      "tokens": [
+        "\u13a3\u13cf",
+        "\u13a3\u13cf"
+      ],
+      "words": [
+        "\u13a3\u13cf"
+      ]
+    },
+    {
+      "characters": "",
+      "count": 2,
+      "density": 1.0,
+      "label": "historic-cyrillic",
+      "text": "\u1c80 \u0432",
+      "tokens": [
+        "\u0432",
+        "\u0432"
+      ],
+      "words": [
+        "\u0432"
+      ]
+    }
+  ],
+  "note": "marker words are matched against the text's words (runs of letters and marks, NFC, case-folded, NFC); marker characters are matched per code point in the NFC text, with case; density is markers per word"
+}

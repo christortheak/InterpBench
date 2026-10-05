@@ -1743,8 +1743,59 @@ def effect_outcomes() -> None:
     })
 
 
+#: The marker-scoring fixture's cases: (label, marker words, marker
+#: characters, text). Each pins one rule of the shared tokenization — the
+#: hand-computed expectations are in `Server/tests/test_marker_scoring.py`
+#: and `Tests/ExperimentKitTests/ScoringTests.swift`.
+MARKER_SCORING_CASES = [
+    ("accented-word", ["warm"], "", "naïve warm"),
+    ("french-sentence", ["été", "très", "chaud"], "", "L'été est très CHAUD."),
+    ("decomposed-text", ["été"], "", "été"),
+    ("decomposed-marker-word", ["ÉTÉ"], "", "Un été."),
+    ("full-case-folding", ["straße"], "", "STRASSE straße Strasse"),
+    ("greek-final-sigma", ["λόγος"], "", "ΛΌΓΟΣ λόγος"),
+    ("separators", ["warm"], "", "warm2warm, warm-hearted; don't"),
+    ("devanagari-vowel-signs", ["नमस्ते"], "", "नमस्ते दुनिया"),
+    ("unspaced-script", ["勇気"], "勇", "勇気がある。"),
+    ("decomposed-character-marker", [], "é", "café café"),
+    ("characters-keep-case", [], "é", "ÉTÉ été"),
+    ("emoji-character", [], "\U0001F44D", "great \U0001F44D\U0001F3FD"),
+    ("no-words", [], "!", "...!!!"),
+    ("empty-text", ["warm"], "", ""),
+    ("dotted-capital-i", ["ince"], "", "İnce ince"),
+    ("cherokee", ["ᎣᏏ"], "", "ꭳꮟ ᎣᏏ"),
+    ("historic-cyrillic", ["в"], "", "ᲀ в"),
+]
+
+
+def marker_scoring() -> None:
+    """Concept-marker scoring, as the Python engine's ``MarkerRubric`` reads
+    each case: the words it finds, the marker count, and the density. The
+    Mac engine's ``MarkerRubric`` must read every case the same way."""
+    from steerlab_server.experiment import scoring
+
+    cases = []
+    for label, words, characters, text in MARKER_SCORING_CASES:
+        rubric = scoring.MarkerRubric.from_markers(words, characters)
+        cases.append({
+            "label": label, "words": words, "characters": characters,
+            "text": text,
+            "tokens": scoring.marker_tokens(text),
+            "count": rubric.count(text),
+            "density": rubric.density(text),
+        })
+    _write(os.path.join(FIXTURES, "marker-scoring.json"), {
+        "note": "marker words are matched against the text's words (runs of "
+                "letters and marks, NFC, case-folded, NFC); marker characters "
+                "are matched per code point in the NFC text, with case; "
+                "density is markers per word",
+        "cases": cases,
+    })
+
+
 def main() -> int:
     os.makedirs(FIXTURES, exist_ok=True)
+    marker_scoring()
     sampled_effect_pairing()
     effect_outcomes()
     promotion_keys()
