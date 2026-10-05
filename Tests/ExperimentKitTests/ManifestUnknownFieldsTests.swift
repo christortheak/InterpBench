@@ -10,8 +10,9 @@ import Testing
 /// structure did not name, so an older app that re-saved a draft written by a
 /// newer engine or client silently lost the newer fields. Now:
 ///
-/// - load and save of a draft keeps each unknown top-level key verbatim, and
-///   so do Copy Study JSON and pack export;
+/// - load and save of a draft keeps each unknown top-level key with its value
+///   exactly, large integers included, and so do Copy Study JSON and pack
+///   export;
 /// - the typed encoding, and therefore `manifestHash`, is unchanged;
 /// - freeze refuses a draft carrying unknown keys, naming them, with a repair
 ///   to update the app, because this build's freeze hash could not cover them;
@@ -20,8 +21,8 @@ import Testing
 ///   canonical bytes instead of reported as changed after freeze.
 @Suite(.serialized)
 struct ManifestUnknownFieldsTests {
-    static let future: JSONValue = .object([
-        "nested": .array([.number(1), .string("two"), .null]),
+    static let future: ExactJSONValue = .object([
+        "nested": .array([.integer(1), .string("two"), .null]),
         "flag": .bool(true),
     ])
 
@@ -37,8 +38,8 @@ struct ManifestUnknownFieldsTests {
         }
     }
 
-    private func object(_ data: Data) throws -> [String: JSONValue] {
-        guard case .object(let object) = try JSONDecoder().decode(JSONValue.self, from: data) else {
+    private func object(_ data: Data) throws -> [String: ExactJSONValue] {
+        guard case .object(let object) = try JSONDecoder().decode(ExactJSONValue.self, from: data) else {
             throw CancellationError()
         }
         return object
@@ -72,6 +73,50 @@ struct ManifestUnknownFieldsTests {
         }
     }
 
+    /// Integers a `Double` cannot hold survive exactly: 2^53 + 1, both ends of
+    /// Int64, and UInt64.max, nested in an unknown key. Checked against the
+    /// written text itself, not by reading it back through a value type.
+    @Test func largeIntegersInAnUnknownKeySurviveExactly() throws {
+        let literals = ["9007199254740993", "-9223372036854775808", "9223372036854775807", "18446744073709551615"]
+        try ExperimentRootOverrideLock.withTempRoot(prefix: "manifest-unknown-exact") { root in
+            _ = try ExperimentStore.create(name: "study", description: "Before", modelID: "test/model")
+            let url = ExperimentStore.manifestURL("study")
+            // Spliced in as text: no Foundation encoder writes these numbers.
+            var text = try String(contentsOf: url, encoding: .utf8)
+            let opening = try #require(text.range(of: "{\n"))
+            text.replaceSubrange(opening, with: """
+                {
+                  "futureSetting" : {"max" : 9223372036854775807, "nested" : {"u" : 18446744073709551615, "x" : 2.5},
+                    "seeds" : [9007199254740993, -9223372036854775808]},
+
+                """)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+
+            var manifest = try ExperimentStore.load(name: "study")
+            guard case .object(let setting)? = manifest.unknownTopLevelFields["futureSetting"],
+                  case .object(let nested)? = setting["nested"] else {
+                Issue.record("the unknown key was not kept")
+                return
+            }
+            #expect(setting["max"] == .integer(.max))
+            #expect(setting["seeds"] == .array([.integer(9_007_199_254_740_993), .integer(.min)]))
+            #expect(nested["u"] == .unsigned(.max) && nested["x"] == .number(2.5))
+
+            manifest.experimentDescription = "After"
+            try ExperimentStore.save(manifest)
+            let saved = try String(contentsOf: url, encoding: .utf8)
+            let copied = try ExperimentStore.exportStudyJSON(try ExperimentStore.load(name: "study"))
+            let pack = String(decoding: try StudyPackAuthoring.export(
+                reviewed: DraftAuthoringSnapshot(workspaceRoot: root, name: "study")).data, as: UTF8.self)
+            for (surface, written) in [("a draft save", saved), ("Copy Study JSON", copied), ("a pack export", pack)] {
+                for literal in literals {
+                    #expect(written.contains(literal), "\(literal) changed in \(surface)")
+                }
+                #expect(!written.contains("e+18") && !written.contains("e+19"), "rounded in \(surface)")
+            }
+        }
+    }
+
     @Test func freezeRefusesUnknownKeysAndLeavesTheFileAlone() throws {
         try withDraft { _, url in
             let before = try Data(contentsOf: url)
@@ -98,7 +143,7 @@ struct ManifestUnknownFieldsTests {
             #expect(study["futureSetting"] == Self.future)
             study["name"] = .string("copy")
             pack["study"] = .object(study)
-            let data = try JSONEncoder().encode(JSONValue.object(pack))
+            let data = try JSONEncoder().encode(ExactJSONValue.object(pack))
             let review = try StudyPackAuthoring.preview(data, workspaceRoot: root)
             _ = try StudyPackAuthoring.apply(data, workspaceRoot: root, expectedReviewSHA256: review.reviewSHA256)
             let copy = try object(Data(contentsOf: ExperimentStore.manifestURL("copy")))
