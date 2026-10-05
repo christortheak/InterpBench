@@ -691,8 +691,69 @@ public enum ModelVariantStore {
         return ModelVariantRecord(url: url, artifact: artifact)
     }
 
-    public static func delete(_ record: ModelVariantRecord) throws {
-        try FileManager.default.removeItem(at: record.url.deletingLastPathComponent())
+    /// Moves the agent's folder into a `.trash-<time>` folder beside it and
+    /// returns where it landed. Nothing is erased, and every listing skips
+    /// hidden folders, so the agent leaves the library and can be moved back
+    /// by hand.
+    ///
+    /// Callers check first that no study uses the agent
+    /// (`WorkspaceHousekeeping.deleteAgent(reviewed:)` is the one that does).
+    @discardableResult
+    public static func delete(
+        _ record: ModelVariantRecord, workspaceRoot: URL = ExperimentStore.workspaceRoot
+    ) throws -> URL {
+        let folder = try trashableFolder(for: record, workspaceRoot: workspaceRoot)
+        return try WorkspaceHousekeeping.moveToTrash(folder.folder, under: folder.trashParent)
+    }
+
+    /// The folder deleting this agent moves, and the folder its trash goes in.
+    ///
+    /// An agent lives in a folder of its own: either an entry directly inside
+    /// the agent library (`runs/model-variants/<slug>/`) or a run that saved
+    /// it (`runs/<run>/`). Anything else — a file sitting in the library
+    /// itself, a folder nested deeper, or a folder that also holds other
+    /// agents — would take more than this agent with it, so it is refused.
+    static func trashableFolder(
+        for record: ModelVariantRecord, workspaceRoot: URL
+    ) throws -> (folder: URL, trashParent: URL, isLibraryEntry: Bool) {
+        let runsDirectory = VectorCatalog.runsDirectory(root: workspaceRoot)
+        let libraryDirectory = runsDirectory.appending(component: "model-variants")
+        let folder = record.url.deletingLastPathComponent()
+        let parent = try ManifestFileTransaction.canonicalPath(folder.deletingLastPathComponent())
+        let library = try ManifestFileTransaction.canonicalPath(libraryDirectory)
+        let runs = try ManifestFileTransaction.canonicalPath(runsDirectory)
+        let folderPath = try ManifestFileTransaction.canonicalPath(folder)
+        let isLibraryEntry = parent == library
+        guard isLibraryEntry || (parent == runs && folderPath != library) else {
+            throw ExperimentError.refusing(
+                .artifactPin,
+                "This agent is not stored in a folder of its own, so deleting it would "
+                    + "take other files with it.",
+                repair: "Move the agent's file into its own folder under "
+                    + "runs/model-variants/, then preview the delete again.")
+        }
+        let fm = FileManager.default
+        let siblings = ((try? fm.contentsOfDirectory(
+            at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? [])
+            .filter {
+                $0.pathExtension == "json" && $0.lastPathComponent != "config.json"
+                    && $0.lastPathComponent != record.url.lastPathComponent
+            }
+            .filter { url in
+                (try? Data(contentsOf: url)).flatMap {
+                    try? JSONDecoder().decode(ModelVariantArtifact.self, from: $0)
+                } != nil
+            }
+        guard siblings.isEmpty else {
+            throw ExperimentError.refusing(
+                .artifactPin,
+                "This agent shares its folder with "
+                    + siblings.map(\.lastPathComponent).sorted().joined(separator: ", ")
+                    + ", which deleting it would also remove.",
+                repair: "Move each agent into a folder of its own under "
+                    + "runs/model-variants/, then preview the delete again.")
+        }
+        return (folder, isLibraryEntry ? libraryDirectory : runsDirectory, isLibraryEntry)
     }
 
     public static func hash(_ url: URL) throws -> String {

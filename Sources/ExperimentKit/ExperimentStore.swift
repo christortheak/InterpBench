@@ -3275,7 +3275,12 @@ public enum ExperimentStore {
                 }
                 let manifest = try storage.load(name: oldName)
                 guard manifest.status == .draft else {
-                    throw ExperimentError(reason: "experiment '\(oldName)' is \(manifest.status.rawValue) — its name is stamped into run provenance; set a display label instead, or duplicate to iterate")
+                    // Typed (statusImmutable) so the app can offer Duplicate and
+                    // a command line gets a runnable repair; the reason is unchanged.
+                    throw ExperimentError.refusing(
+                        .statusImmutable,
+                        "experiment '\(oldName)' is \(manifest.status.rawValue) — its name is stamped into run provenance; set a display label instead, or duplicate to iterate",
+                        repair: ManifestMutationPolicy.duplicateToIterateRepair(oldName))
                 }
                 guard target != oldName else {
                     return RenameOutcome(oldName: oldName, newName: oldName, runsKeepingOldName: 0)

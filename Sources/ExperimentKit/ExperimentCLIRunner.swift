@@ -3009,6 +3009,8 @@ public struct ExperimentCLIRunner: Sendable {
             return try StudyAuthoringCommands.run(invocation, root: ExperimentStore.workspaceRoot, sink: sink)
         case "attach-agent":
             return try StudyAgentCLI.attach(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
+        case "rename", "delete":
+            return try WorkspaceHousekeepingCLI.run(invocation, workspaceRoot: ExperimentStore.workspaceRoot, sink: sink)
         case "list":
             let manifests = ExperimentStore.list()
             if manifests.isEmpty { sink.out("no experiments") }

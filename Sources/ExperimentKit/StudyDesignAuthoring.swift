@@ -109,8 +109,11 @@ public enum StudyDesignAuthoring {
         } catch CocoaError.fileReadNoSuchFile { return .init(entries: [], issues: []) }
         var entries: [StudyDesignCatalog.Entry] = []
         var issues: [String] = []
+        // Hidden entries — `.DS_Store`, `._` resource forks, and the
+        // `.trash-<time>` folders a template delete moves into — are not
+        // templates. A template name can never start with a dot.
         for name in try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
-            where name != ".DS_Store" && !name.hasPrefix("._") {
+            where !name.hasPrefix(".") {
             do {
                 let read = try StudyDesignSnapshot(workspaceRoot: workspaceRoot, name: name)
                 entries.append(.init(name: name, description: read.template.templateDescription,

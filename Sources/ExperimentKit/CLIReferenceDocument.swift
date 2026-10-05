@@ -74,6 +74,7 @@ public enum CLIReferenceDocument {
                 "experiment set-primary-outcome",
                 "experiment set-style-taxonomy",
                 "experiment verify", "experiment freeze", "experiment duplicate",
+                "experiment rename", "experiment delete",
             ]),
         .init(
             id: "swift-experiment-running",
@@ -119,8 +120,8 @@ public enum CLIReferenceDocument {
                 "remote import", "remote import-chain", "remote variants",
                 "remote chat",
             ]),
-        .init(id: "swift-agent", verbLabels: ["agent list", "agent inspect"]),
-        .init(id: "swift-design", verbLabels: ["design expand", "design list", "design inspect", "design describe", "design instantiate", "design batch", "design save", "design update"]),
+        .init(id: "swift-agent", verbLabels: ["agent list", "agent inspect", "agent delete"]),
+        .init(id: "swift-design", verbLabels: ["design expand", "design list", "design inspect", "design describe", "design instantiate", "design batch", "design save", "design update", "design rename", "design delete"]),
         .init(id: "swift-authoring", verbLabels: ["authoring prompt", "authoring study", "science list", "science guide", "science operation", "science evidence-analyze", "science policy-list", "science policy-inspect", "science policy-review", "science policy-publish", "science policy-attach-review", "science policy-attach", "science measurements-review", "science measurements-save", "science probe-list", "science probe-inspect", "science corpus-preview", "science corpus-publish", "science artifact-plan", "science artifact-import", "science sae-check", "science sae-show", "science sae-pin-plan", "science sae-pin", "science interview", "science draft", "science publish", "science input-plan", "science package", "science import", "science custody", "science verify-custody", "science report"]),
         .init(id: "swift-pack", verbLabels: ["pack preview", "pack apply", "pack export"]),
         .init(id: "swift-docs", verbLabels: ["docs cli-reference"]),

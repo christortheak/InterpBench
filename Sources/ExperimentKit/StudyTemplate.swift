@@ -165,9 +165,20 @@ public enum StudyTemplateStore {
         try save(template)
     }
 
-    public static func delete(name: String) throws {
-        try FileManager.default.removeItem(
-            at: directory.appending(component: name))
+    /// Moves the template's folder into a `.trash-<time>` folder in the
+    /// library and returns where it landed. Nothing is erased: listings skip
+    /// hidden folders, and the folder can be moved back by hand. Studies
+    /// created from the template are ordinary drafts and are not touched.
+    @discardableResult
+    public static func delete(name: String) throws -> URL {
+        guard !name.isEmpty, !name.hasPrefix("."), !name.contains("/"),
+            !name.contains("\\"), !name.contains("\0"),
+            FileManager.default.fileExists(atPath: directory.appending(component: name).path)
+        else {
+            throw ExperimentError(reason: "no template named '\(name)' in this workspace")
+        }
+        return try WorkspaceHousekeeping.moveToTrash(
+            directory.appending(component: name), under: directory)
     }
 
     /// Renames a template: the directory moves and the manifest's `name`

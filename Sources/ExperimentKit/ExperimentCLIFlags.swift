@@ -356,6 +356,8 @@ public enum ExperimentCLIParser {
 
         .init(namespace: "agent", verb: "list", purpose: "List discoverable local agent artifacts and their file digests."),
         .init(namespace: "agent", verb: "inspect", positional: "<path>", purpose: "Inspect a workspace agent artifact before attachment."),
+        .init(namespace: "agent", verb: "delete", positional: "<path>", purpose: "Preview deleting an agent no study uses; repeat with its reviewed --artifact-sha256 and --yes to move it into a .trash folder. Refused while any study uses it.",
+            booleanFlags: ["--yes"], valueFlags: ["--artifact-sha256"]),
         .init(namespace: "design", verb: "expand", positional: "<name>", purpose: "Preview distinct panel castings as reviewable batch rows without creating studies.", valueFlags: ["--file-sha256", "--casting", "--mode"], requiredFlags: ["--file-sha256", "--casting", "--mode"]),
         .init(namespace: "experiment", verb: "set-pipeline", positional: "<study>", purpose: "Replace or clear a reviewed pipeline declaration without executing it.", valueFlags: ["--file", "--manifest-sha256"], requiredFlags: ["--file", "--manifest-sha256"]),
         .init(namespace: "experiment", verb: "attach-agent", positional: "<name>",
@@ -387,6 +389,10 @@ public enum ExperimentCLIParser {
             valueFlags: ["--rows", "--file-sha256"], requiredFlags: ["--rows", "--file-sha256"]),
         .init(namespace: "design", verb: "describe", positional: "<name>", purpose: "Save a design description against the reviewed file version.",
             valueFlags: ["--description", "--file-sha256"], requiredFlags: ["--description", "--file-sha256"]),
+        .init(namespace: "design", verb: "rename", positional: "<name> <new-name>", purpose: "Preview renaming a template; repeat with its reviewed --file-sha256 and --yes to rename it. Studies created from it are unchanged.",
+            booleanFlags: ["--yes"], valueFlags: ["--file-sha256"]),
+        .init(namespace: "design", verb: "delete", positional: "<name>", purpose: "Preview deleting a template; repeat with its reviewed --file-sha256 and --yes to move it into templates/.trash-<time>/. Studies created from it are unchanged.",
+            booleanFlags: ["--yes"], valueFlags: ["--file-sha256"]),
 
         // vectors
         .init(
@@ -792,6 +798,19 @@ public enum ExperimentCLIParser {
             positional: "<name> <new-name>",
             purpose: "Copy a manifest into a new draft — how a frozen study is "
                 + "iterated."),
+        .init(
+            namespace: "experiment", verb: "rename",
+            positional: "<name> <new-name>",
+            purpose: "Preview renaming a draft study; repeat with its reviewed "
+                + "--manifest-sha256 and --yes to rename it. Runs keep the name "
+                + "they recorded.",
+            booleanFlags: ["--yes"], valueFlags: ["--manifest-sha256"]),
+        .init(
+            namespace: "experiment", verb: "delete", positional: "<name>",
+            purpose: "Preview deleting a draft study; repeat with its reviewed "
+                + "--manifest-sha256 and --yes to move it into "
+                + "experiments/.trash-<time>/. Nothing in runs/ changes.",
+            booleanFlags: ["--yes"], valueFlags: ["--manifest-sha256"]),
         .init(
             namespace: "experiment", verb: "extract", positional: "<name>",
             purpose: "Derive the manifest's concept vectors on this engine."),
