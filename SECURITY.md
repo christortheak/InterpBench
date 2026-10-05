@@ -49,11 +49,86 @@ locations on the host.
 - **Models are code-adjacent.** Loading a model executes the loader against
   weights and configuration you fetched from elsewhere. Fetch models from
   sources you trust.
-- **Workspace inputs are trusted.** Prompts, rubrics, and parser
-  configurations are data you author; they are not sandboxed from the study
-  they configure.
+- **Workspace inputs are data, with one exception that is code.** Prompts,
+  rubrics, parser configurations, panels, agents, and vectors are data: the
+  engines read them and do not run them as programs. The exception is an
+  intervention policy's **expert provider**, Python source that the Python
+  engine runs with `exec`, with your permissions, whenever a study that uses
+  it generates text. See [Custom code in a study](#custom-code-in-a-study).
 - **The engine consumes GPU, disk, and — on a cluster — scheduler quota.**
   Anyone who can drive the API can spend all three.
+
+## Custom code in a study
+
+An intervention policy decides, while a model generates, when and how strongly
+to steer. Most policies are built from fixed rules and are data. A policy can
+instead carry an expert provider: a Python function, written by the policy's
+author, that the Python engine runs with `exec` during the study. **It is not
+sandboxed.** It runs with the permissions of whoever runs the study, on
+whichever machine runs it: your Mac, a runner you started, or your account on
+the cluster.
+
+The author sees a warning when they publish such a policy. A study shared as
+a pack or a bundle carries the code to someone who never saw that warning, so
+SteerLab gives notice when the code arrives and asks for an acknowledgement
+before it runs:
+
+- **Notice.** When `pack apply`, `bundle import` (on the Python client), or
+  `experiment attach-agent` brings a study or agent with an expert provider
+  into a workspace, the result says: "This study contains custom code from its
+  author. It runs with your permissions when the study runs. Run it only if
+  you trust the source." It names each provider by the SHA-256 of its source
+  text. The app shows the same notice, with the code and an acknowledge button,
+  at the top of the study's page.
+- **Reading the code.** `experiment acknowledge-custom-code <study>` (on
+  `steerlab` and `steerlab-cli`) prints each provider's source and changes
+  nothing.
+- **Acknowledgement.** `experiment acknowledge-custom-code <study> --sha256
+  <hash>`, or the app's button, records who acknowledged which source hash,
+  and when, in `custom-code-acknowledgements.json` at the workspace root. It
+  is an ordinary file in the workspace, so it is part of the workspace's
+  history. An acknowledgement covers that exact code wherever it appears in
+  the workspace; changed code has a different hash and needs a new one.
+- **The one gate.** Until each provider a study carries is acknowledged, the
+  clients do not send that study to run for a step that executes its agents
+  (`run`, `pipeline`, or `sweep`). Steps that run no agent, and dry runs, are
+  not held. The refusal names the code and gives the acknowledgement command.
+  A run's provenance record, written by `steerlab run`, lists each provider
+  and who acknowledged it.
+
+What this is not: the acknowledgement is a record of your decision, not a
+safety check on the code. SteerLab does not inspect, restrict, or sandbox
+expert providers. The gate is enforced by the clients and the app, where a
+person's workspace hands a study to an engine. An engine given a study
+directly (`steerlab-server` run against a root, or a hand-submitted bundle)
+runs what it is given. Read the code before you acknowledge it, and run
+studies only from sources you trust.
+
+## What leaves your machine
+
+SteerLab sends nothing about you, your workspace, or your studies anywhere
+unless you ask it to run something on another machine. The one network
+request the app makes on its own schedule is the update check:
+
+- **What.** At most once a day, when the app starts, it makes one
+  unauthenticated `GET` request to GitHub's public API for the project
+  repository's latest release (`api.github.com/repos/<owner>/<repository>/releases/latest`).
+  The request carries no body and no identifying header: no version, no
+  installation identifier, no workspace or study name. When a code checkout
+  sits beside the app, it also runs `git ls-remote` in that checkout, through
+  your own git configuration. The comparison with the version you run happens
+  on your Mac.
+- **What it does with the answer.** It shows a notice that a newer release
+  exists, with a link to the Releases page. It never downloads, installs, or
+  replaces anything.
+- **How to turn it off.** Uncheck **Check for Updates Automatically** in the
+  SteerLab menu (or **Check automatically** on the update notice). **Check for
+  Updates…** in the same menu still checks once, when you choose it.
+
+Other network requests follow from something you chose to do: downloading or
+loading a model from Hugging Face, connecting to a runner or the cluster, or
+judging with (or listing the models of) a hosted service whose key you
+supplied.
 
 ## Authentication
 
@@ -78,6 +153,18 @@ or `STEERLAB_EXECUTOR=slurm` is declared. An explicit `STEERLAB_AUTH_MODE=none`
 is refused under the same two conditions. On a personal Mac,
 `scripts/start-local-server.sh` (the app's one-click local server) passes the
 flag deliberately; the shipped bare CLI does not.
+
+**Why the one-click local engine is open, and why it is loopback only.** The
+app and the browser workbench talk to the local engine with no token, so a
+researcher can start it with one click and nothing to paste. That is safe only
+when the only person who can reach it is you. It therefore binds `127.0.0.1`
+and nothing else: no other machine can connect to it. It does not keep out
+other accounts on the same Mac. Any local user can drive an open engine, and
+driving an engine includes running a study, which can include a study's
+custom code ([above](#custom-code-in-a-study)) with your permissions. On a
+Mac you share with other accounts, use token mode: remove
+`--dev-open-loopback` from the script, and paste the printed token-file path
+into the app's connection sheet.
 
 ### What "privileged" means
 
