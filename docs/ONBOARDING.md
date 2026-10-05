@@ -12,6 +12,12 @@ synthesis), [METHODS.md](METHODS.md) (the math and its sources),
 claim), [CLI-REFERENCE.md](CLI-REFERENCE.md) (every verb and flag), and
 [SECURITY.md](../SECURITY.md) (the servers' threat model).
 
+Four short guides sit beside it for a researcher without a machine-learning
+background: [concepts and glossary](CONCEPTS-AND-GLOSSARY.md),
+[working with a coding assistant](WORKING-WITH-A-CODING-ASSISTANT.md),
+[models, hardware, and limits](MODELS-HARDWARE-AND-LIMITS.md), and
+[reporting and troubleshooting](REPORTING-AND-TROUBLESHOOTING.md).
+
 ---
 
 ## 1. What SteerLab is
@@ -85,24 +91,18 @@ Mac or x86_64 Linux machine (glibc) for the app-free client. Internet access
 for the one-time client setup. Nothing else: no Xcode, no repository
 checkout, no Python of your own. Windows is not supported.
 
-**To run a study**: a model and suitable compute. Supported studies can run
-locally on an Apple Silicon Mac or through the Python engine on a
-workstation or cluster. Choose according to the method, model size and
-available memory; [SUBSTRATES.md](SUBSTRATES.md) says which methods run
-where and what has been measured. Remote results return to your local
-workspace with their evidence verified. As a rough guide, a 4-bit 4B model
-needs a few gigabytes of memory and a 12 to 14B model in the low tens,
-before the KV cache and activations, which grow with context length; the
-exact fit depends on precision, context and the method, and the model plan
-verb (`model plan`, [LOCAL-MODEL-PREPARATION.md](LOCAL-MODEL-PREPARATION.md))
-reports what it can check without loading weights.
-
-**Disk**: the Hugging Face cache (`~/.cache/huggingface` by default) holds
-the models you download. No weights are distributed with SteerLab; you
-download the models you choose under their own licenses, some of which carry
-use restrictions that plausibly extend to artifacts you derive, including
-steering vectors you publish. Read the license of the model you use; see
-[NOTICE](../NOTICE).
+**To run a study**: a model and a place to run it. Each workspace uses one of
+three: *This Mac, quick start* (the engine built into the app, for core
+steering studies on small models), *This Mac, full capabilities* (the Python
+engine on this Mac's graphics processor, for every method), or *Another
+machine* (the Python engine on a workstation or cluster, with results returned
+to your workspace and verified). Models are downloaded into the Hugging Face
+cache (`~/.cache/huggingface` by default) under their own licenses, some of
+which restrict what you may do with artifacts you derive, including steering
+vectors you publish; see [NOTICE](../NOTICE).
+[MODELS-HARDWARE-AND-LIMITS.md](MODELS-HARDWARE-AND-LIMITS.md) covers what each
+choice runs, memory, disk and time, licenses, and what has been measured;
+[SUBSTRATES.md](SUBSTRATES.md) is the method-by-method record.
 
 ---
 
@@ -710,6 +710,13 @@ runtime configuration. Preserve the sampling provenance and consult
 [the qualification record](TECHNIQUE-PARITY-QUALIFICATION.md) for measured scope.
 For categorical outcomes, answer-token/logprob instruments remain temperature-free.
 
+**Writing it up.** `results export <study>` on either client, or Export
+Results… on the Studies page, copies a run's stored results into a new folder
+outside `runs/`: tables for R, Stata, SPSS, or a spreadsheet, transcripts, a
+methods summary, and a codebook. What it gives you, what to add yourself, and
+how to cite SteerLab are in
+[REPORTING-AND-TROUBLESHOOTING.md](REPORTING-AND-TROUBLESHOOTING.md).
+
 ---
 
 ## 8. Scaling out to a GPU
@@ -858,10 +865,13 @@ the lens's qualification for the study's exact model, revision and dtype.
 
 ## 9. Driving SteerLab with a coding agent
 
-Every workspace gets an `AGENTS.md`, generated at creation: the lifecycle in
-order, the file shapes, the freeze gates with their repairs, the machine
-contract, and an explicit list of what not to do. Point an agent at the
-workspace and it has what it needs; you do not have to explain SteerLab to it.
+Every workspace gets an `AGENTS.md`, generated at creation: a short core guide
+for a coding assistant, with the detail served one topic at a time by
+`workspace guide <topic>`. Point an assistant at the workspace and it has what
+it needs; you do not have to explain SteerLab to it. How to hand it over, what
+to ask first, and what it asks you before spending compute or money are in
+[WORKING-WITH-A-CODING-ASSISTANT.md](WORKING-WITH-A-CODING-ASSISTANT.md); the
+rest of this section is the machine contract the assistant follows.
 
 It also keeps itself current. The generated header carries a SHA-256 of the body
 it wrote, so a file whose hash still matches is provably the machine's and is
@@ -903,7 +913,9 @@ gate declined a well-formed request against a healthy system, and
 **advisories never change the exit code**: they are things you should know that
 did not stop the verb, such as a skipped gate, a vacuous validation, a one-judge
 panel, an empty analysis. Ignoring them produces results stamped as not citable;
-treating them as failures makes you refuse a legitimate lifecycle.
+treating them as failures makes you refuse a legitimate lifecycle. The common
+refusals and advisories, with their repairs on both clients, are listed in
+[REPORTING-AND-TROUBLESHOOTING.md](REPORTING-AND-TROUBLESHOOTING.md).
 
 ---
 
@@ -1011,34 +1023,12 @@ engines guard against it.
 
 ## 12. Glossary
 
-- **Activation / residual stream** — the per-layer hidden vector the model
-  carries through the network; where SteerLab reads and writes.
-- **CAA** — Contrastive Activation Addition: mean(positive) − mean(negative),
-  per layer. **Paired-difference PCA (RepE-inspired)** — a direction taken as
-  the first principal component of per-pair activation differences; called
-  `repeLAT` until the 2026-08-27 naming ruling, and its raw values on disk stay
-  `lat`/`repeLAT` forever. **RepE reader** — the separate, template-mediated
-  reading instrument of Zou et al.: a task template, the LAT token at the
-  rendered scaffold's final position, and a sign and layer chosen on a held-out
-  split. See [REPE-IMPLEMENTATION-BRIEF.md](REPE-IMPLEMENTATION-BRIEF.md).
-- **Alpha (α)** — steering strength. In residual-norm units the injected
-  perturbation's L2 norm is α × the layer's typical residual norm on the pinned
-  neutral corpus, which is what makes doses comparable.
-- **Stimulus set** — the texts a concept is extracted from; its hash is the
-  concept's identity in every pin. **Sidecar** — the JSON file beside each
-  `.safetensors` vector recording full provenance.
-- **Condition (arm)** — a named, complete steering configuration in a manifest;
-  several slots in one condition *are* the linear mix `h + Σ αᵢ·vᵢ`.
-- **Sweep** — the layer × α dose-response grid, scored for expression,
-  degeneration, and capability. **Capability battery** — short unrelated probes
-  that must survive steering, or a finding is confounded.
-- **Freeze** — the one-way transition that verifies every pin, applies the
-  evidence gates, and makes a manifest read-only.
-- **Run directory** — one immutable `runs/<timestamp>-<slug>/` per operation;
-  the unit of reproducibility. **Advisory** — something you should know that did
-  not stop the verb; never changes an exit code.
-- **Workspace** — the folder holding one project's prompts, experiments, and
-  runs, with its own git history, separate from the code.
+The glossary is [CONCEPTS-AND-GLOSSARY.md](CONCEPTS-AND-GLOSSARY.md): the
+terms you meet first, in plain words, with a bridge to the research methods
+they correspond to (operationalization, validity, manipulation checks,
+preregistration, inter-rater reliability, effect sizes, and confounds). The
+extraction recipes (CAA, paired-difference PCA, the RepE reader, and the rest)
+are defined, with their sources, in [METHODS.md](METHODS.md).
 
 ---
 

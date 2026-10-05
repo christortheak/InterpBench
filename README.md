@@ -208,6 +208,10 @@ runner and retrieve its results.
   and how a study is built, for a reader new to the field.
 - [Conducting a study](docs/CONDUCTING-A-STUDY.md): what makes a result
   defensible.
+- [Concepts and glossary](docs/CONCEPTS-AND-GLOSSARY.md): the terms, and how they map to research methods you know.
+- [Working with a coding assistant](docs/WORKING-WITH-A-CODING-ASSISTANT.md): handing it a workspace, and what it asks before acting.
+- [Models, hardware, and limits](docs/MODELS-HARDWARE-AND-LIMITS.md): where studies run, disk and time, and what has been measured.
+- [Reporting and troubleshooting](docs/REPORTING-AND-TROUBLESHOOTING.md): writing up, citing, data ethics, and what each refusal means.
 - [Technical overview](docs/TECHNICAL-OVERVIEW.md): the engines, the
   artifact model and the design philosophy, in full.
 - [Capabilities and measured limits](docs/SUBSTRATES.md), the
