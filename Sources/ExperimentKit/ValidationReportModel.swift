@@ -7,9 +7,13 @@ import Foundation
 /// - Swift: `{"validation": {name: {scenarios, layer, accuracy} | "<skip
 ///   message>"}, "logitLens": {name: {layer, topPositive: [{token,…}],
 ///   topNegative: […]}}, "worstCosinePair": "a × b = c",
-///   "capabilityBattery": [{condition, accuracy, correct, total}]}`
+///   "capabilityBattery": [{condition, accuracy, correct, total} |
+///   {condition, notApplicable} | {condition, error}]}`
 /// - Server: `{"concepts": {name: {layer, scenarioCount, labeled,
-///   scenarioAccuracy | fractionAboveMidpoint, note}}}`
+///   scenarioAccuracy | fractionAboveMidpoint, note}}}` — no battery rows;
+///   the server writes those to `validation-evidence.json`
+///   (`batteryResults`, the same three row shapes), which
+///   `RunResults.assemble` reads when the report carries none.
 ///
 /// Convergent accuracy is read against the 0.5 chance line (both engines'
 /// scenario scoring is a balanced two-class read).
@@ -69,7 +73,38 @@ extension RunResults {
         public var accuracy: Double?
         public var correct: Int?
         public var total: Int?
+        /// The recorded reason the battery was not applied to this
+        /// condition, when it was not. Such a row has no score.
+        public var notApplicable: String? = nil
+        /// The engine's account of why the battery could not run for this
+        /// condition, when it could not. Such a row has no score either.
+        public var error: String? = nil
         public var id: String { condition }
+
+        /// What stands where the score would be on a row without one; nil on
+        /// a scored row. A row with neither a score nor a stated reason says
+        /// so, rather than showing a condition name beside nothing.
+        public var unscoredLabel: String? {
+            if notApplicable != nil { return "not applicable" }
+            if error != nil { return "could not run" }
+            return accuracy == nil ? "no score recorded" : nil
+        }
+
+        /// The sentence that explains `unscoredLabel`: the same sentence the
+        /// freeze gates and the readiness checklist use for a condition the
+        /// battery was not applied to, or the engine's own account of why the
+        /// battery could not run.
+        public var unscoredExplanation: String? {
+            if let notApplicable {
+                return FreezePolicy.batteryNotAppliedSentence(
+                    .init(condition: condition, reason: notApplicable))
+            }
+            if let error {
+                return FreezePolicy.batteryErrorSentence(
+                    condition: condition, error: error)
+            }
+            return nil
+        }
     }
 
     public struct ValidationReport: Sendable, Equatable {
@@ -116,14 +151,7 @@ extension RunResults {
 
         var battery: [ValidationBatteryRow] = []
         if let rows = dictionary["capabilityBattery"] as? [[String: Any]] {
-            battery = rows.compactMap { row in
-                guard let condition = row["condition"] as? String else { return nil }
-                return ValidationBatteryRow(
-                    condition: condition,
-                    accuracy: (row["accuracy"] as? NSNumber)?.doubleValue,
-                    correct: (row["correct"] as? NSNumber)?.intValue,
-                    total: (row["total"] as? NSNumber)?.intValue)
-            }
+            battery = rows.compactMap(batteryRow)
         }
 
         return ValidationReport(
@@ -135,6 +163,34 @@ extension RunResults {
             cosineMatrixLayer: dictionary["cosineMatrixLayer"] as? Int,
             cosineMatrixLayers: (dictionary["cosineMatrixLayers"] as? [NSNumber])?
                 .map(\.intValue))
+    }
+
+    /// One capability-battery row, in the shape both the Swift validation
+    /// report (`capabilityBattery`) and either engine's evidence file
+    /// (`batteryResults`) write: a scored row, a not-applicable row, or an
+    /// error row. The last two carry no score keys.
+    private static func batteryRow(_ row: [String: Any]) -> ValidationBatteryRow? {
+        guard let condition = row["condition"] as? String else { return nil }
+        return ValidationBatteryRow(
+            condition: condition,
+            accuracy: (row["accuracy"] as? NSNumber)?.doubleValue,
+            correct: (row["correct"] as? NSNumber)?.intValue,
+            total: (row["total"] as? NSNumber)?.intValue,
+            notApplicable: row["notApplicable"] as? String,
+            error: row["error"] as? String)
+    }
+
+    /// The battery rows of a `validation-evidence.json`, or none when the
+    /// file is not evidence or carries no battery results. Deliberately
+    /// tolerant, row by row: this feeds a display, and one row it cannot
+    /// read must not hide the others.
+    static func batteryRows(fromEvidenceJSON data: Data) -> [ValidationBatteryRow] {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data),
+            let dictionary = object as? [String: Any],
+            let rows = dictionary["batteryResults"] as? [[String: Any]]
+        else { return [] }
+        return rows.compactMap(batteryRow)
     }
 
     /// One row per declared depth. A multi-depth entry (declared

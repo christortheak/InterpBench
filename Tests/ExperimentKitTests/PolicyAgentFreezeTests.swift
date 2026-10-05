@@ -372,8 +372,9 @@ extension ExperimentStoreTests {
     }
 
     /// The Python engine's row, as `validation_workflow._battery_results`
-    /// writes it, decodes here; its `error` row for an agent that failed to
-    /// load is refused by the decoder exactly as it always was.
+    /// writes it, decodes here. Its `error` row for an agent that failed to
+    /// load decodes too, as an error row and never as a score
+    /// (`BatteryEvidenceRowTests` holds the rest of that behaviour).
     @Test func thePythonEnginesNotApplicableRowDecodes() throws {
         let python = Data(
             #"{"condition":"policy-agent","batteryHash":"bh","notApplicable":"interventionPolicy"}"#
@@ -398,10 +399,10 @@ extension ExperimentStoreTests {
         let errorRow = Data(
             #"{"condition":"plain-agent","batteryHash":"bh","error":"adapter directory not found"}"#
                 .utf8)
-        #expect(throws: (any Error).self) {
-            try JSONDecoder().decode(
-                CapabilityBatteryConditionResult.self, from: errorRow)
-        }
+        let failed = try JSONDecoder().decode(
+            CapabilityBatteryConditionResult.self, from: errorRow)
+        #expect(failed.error == "adapter directory not found")
+        #expect(!failed.isScored && failed.notApplicable == nil)
     }
 
     /// An imported Python-engine validate run whose battery rows include the

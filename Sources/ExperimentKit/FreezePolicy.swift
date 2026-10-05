@@ -183,6 +183,16 @@ enum FreezePolicy {
             + "control for that agent."
     }
 
+    /// The researcher-facing sentence for an ERROR row: the validate run
+    /// could not run the battery for this condition, and `error` is the
+    /// engine's own account of why. Ends with a full stop exactly once.
+    static func batteryErrorSentence(condition: String, error: String) -> String {
+        let said = error.trimmingCharacters(in: .whitespacesAndNewlines)
+        let stop = said.hasSuffix(".") ? "" : "."
+        return "The capability battery could not run for \(condition): "
+            + "\(said)\(stop)"
+    }
+
     static func checkVariantBatteryEvidence(
         _ manifest: ExperimentManifest, facts: BatteryFacts
     ) throws {
@@ -223,10 +233,28 @@ enum FreezePolicy {
         // condition's agent carried a policy must not satisfy the gate after
         // that agent is swapped for one the battery can run). Server twin:
         // the `accuracy is None` test in `check_battery_evidence`.
-        let missing = required.filter {
-            results[$0] == nil || results[$0]?.notApplicable != nil
-        }
+        //
+        // An error row is a record too: the validate run could not run the
+        // battery for that condition (its agent did not load), so there is no
+        // reading. It is missing evidence for the gate, exactly as on the
+        // server, and the refusal carries the row's own account of why.
+        let missing = required.filter { results[$0]?.isScored != true }
         guard missing.isEmpty else {
+            let failures = missing.compactMap { condition in
+                results[condition]?.error.map {
+                    batteryErrorSentence(condition: condition, error: $0)
+                }
+            }
+            guard failures.isEmpty else {
+                throw ExperimentError(
+                    reason: "cannot freeze '\(name)': matching validate evidence has no "
+                        + "capability-battery results for condition(s): "
+                        + missing.joined(separator: ", ") + ". "
+                        + failures.joined(separator: " ")
+                        + " Repair what that message names, then re-run "
+                        + "'steerlab-cli experiment validate \(name)' (each variant "
+                        + "condition runs the pinned battery), or freeze --force")
+            }
             throw ExperimentError(
                 reason: "cannot freeze '\(name)': matching validate evidence has no "
                     + "capability-battery results for condition(s): "

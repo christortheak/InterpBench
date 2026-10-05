@@ -1551,6 +1551,14 @@ public enum ExperimentTasks {
                         "notApplicable": reason,
                     ] as [String: Any]
                 }
+                // An error row is written the same way, for the same reason.
+                if let message = result.error {
+                    return [
+                        "condition": result.condition,
+                        "batteryHash": result.batteryHash,
+                        "error": message,
+                    ] as [String: Any]
+                }
                 var row: [String: Any] = [
                     "condition": result.condition,
                     "batteryHash": result.batteryHash,
