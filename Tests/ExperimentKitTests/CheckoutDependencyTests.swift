@@ -675,6 +675,8 @@ extension CheckoutDependency {
         try stage("ClusterPayload/Server/scripts/bootstrap.sh", "#!/bin/sh\n")
         try stage("AnalysisTools/gemmascope_analyze.py", "# stub\n")
         try stage("web/index.html", "<!doctype html>\n")
+        // No backend inside: the README alone is what every build carries.
+        try stage("DemoWorkspaces/README.md", "# Demo Workspaces\n")
         let manifest = try ResourceManifest.generate(
             over: root, serverVersion: "0.0-test", protocolVersion: 1)
         try manifest.write(to: root.appending(component: "resource-manifest.json"))

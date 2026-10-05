@@ -102,7 +102,7 @@ Each says which one it is, and the two answers are unmistakable:
 
 | you typed | a correct install answers |
 |---|---|
-| `steerlab-cli --version` | the install report, ending in **6/6 resource families resolved** |
+| `steerlab-cli --version` | the install report, ending in **7/7 resource families resolved** |
 | `steerlab --version` | `steerlab <version> (client)` — one line, no resource families |
 
 If `steerlab --version` prints a resource-family report, the name on that PATH
@@ -196,7 +196,7 @@ steerlab setup inspect
 steerlab setup plan [--release <value>] [--runtime <value>]
 steerlab setup apply --expect <value> --yes [--release <value>] [--runtime <value>]
 steerlab setup repair --expect <value> --yes [--release <value>] [--runtime <value>]
-steerlab workspace init <directory> [--no-git]
+steerlab workspace init <directory> [--demo <mlx|mps|cuda>] [--no-git]
 steerlab workspace inspect
 steerlab workspace handoff
 steerlab workspace guide [<topic>]
@@ -937,7 +937,7 @@ rewrite of `install version` (§3.13), so the report, its envelope, and its
 
 ```
 steerlab-cli init [--home <dir>]
-steerlab-cli workspace init <path>
+steerlab-cli workspace init <path> [--demo <mlx|mps|cuda>]
 steerlab-cli workspace inspect
 steerlab-cli workspace handoff
 steerlab-cli workspace guide [<topic>]
@@ -951,7 +951,7 @@ steerlab-cli setup start <directory> [--create]
 | Verb | Purpose |
 |---|---|
 | `init` | Create the SteerLab home layout's Workspaces/ and Sites/ directories (default home ~/SteerLab). |
-| `workspace init` | Create and seed a data workspace, and git-init it. |
+| `workspace init` | Create and seed a data workspace, and git-init it. With --demo, open a verified copy of a Demo Workspace there instead. |
 | `workspace inspect` | Inspect an existing workspace without modifying it. |
 | `workspace handoff` | Return the first steps for a coding assistant: the study interview, the short method index, and how to work with the researcher. |
 | `workspace guide` | List the agent guide topics, or print one topic with this client's commands. |

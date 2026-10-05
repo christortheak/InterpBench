@@ -91,6 +91,42 @@ final class WorkspaceActions {
         }
     }
 
+    /// Open a copy of a Demo Workspace this build carries: ask where the copy
+    /// goes, copy it there with every byte checked, switch to the copy, and
+    /// check its studies. Returns nil when the researcher cancels the panel.
+    ///
+    /// Throws rather than raising the shared alert: the sheet that lists the
+    /// demos shows the reason and the repair in place, beside the button that
+    /// was pressed. The carried original is never opened or changed.
+    func openDemoWorkspace(_ entry: DemoWorkspace.Entry) throws -> WorkspaceStore.DemoOpening? {
+        let panel = NSSavePanel()
+        panel.title = DemoWorkspaceCopy.panelTitle
+        panel.prompt = DemoWorkspaceCopy.panelPrompt
+        panel.nameFieldStringValue = DemoWorkspaceCopy.defaultFolderName
+        panel.canCreateDirectories = true
+        panel.showsTagField = false
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        let opening = try workspace.openDemoWorkspace(entry.backend, at: url)
+        resetCatalogs()
+        demoChoiceToApply = entry.backend.computeChoice
+        return opening
+    }
+
+    /// The compute choice of a Demo Workspace that has just been opened,
+    /// waiting for its sheet to close.
+    private var demoChoiceToApply: ComputeChoice?
+
+    /// Called when the demo sheet closes. Takes the same step a new workspace
+    /// takes: switch the app to the engine the copy is set to, which for the
+    /// engine on this Mac opens its setup. Done here rather than at the copy,
+    /// so that setup is never presented underneath the sheet that is still
+    /// telling the researcher where the demo's guide is.
+    func demoSheetClosed() {
+        guard let choice = demoChoiceToApply else { return }
+        demoChoiceToApply = nil
+        onWorkspaceCreated?(choice)
+    }
+
     /// The existing refresh entry points, called once after a switch so
     /// panels drop state scanned from the previous root. Anything a panel
     /// caches outside these paths refreshes on its next interaction.

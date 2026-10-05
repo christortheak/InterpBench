@@ -658,6 +658,18 @@ printf '  %-16s %s\n' "$HELPERS_DIR_NAME" "$(du -sh "$HELPERS" | cut -f1)"
 # as Bundle.main.resourceURL/<name> and fails closed when one is missing.
 step "Staging CodeResources families"
 cp -R "$REPO/WorkspaceSeed" "$RES/WorkspaceSeed" || die "could not stage WorkspaceSeed"
+# DemoWorkspaces = the worked examples the app opens as a copy: one folder per
+# backend the checkout carries (mlx, mps, cuda — any subset, possibly none)
+# beside a README that always ships, so the family resolves in every build.
+# Checked BEFORE it is staged: each demo's shape, the size limits (one demo,
+# one file), and identifying strings. The scan of the assembled bundle below
+# reads the staged copy again, and the copy of it inside the client wheel.
+# Dot-prefixed entries are left out: a demo must not carry them, and neither
+# the resource manifest's walk nor a wheel would ship them reliably.
+python3 "$SCRIPT_DIR/ci/check-demo-workspaces.py" 2>&1 | sed 's/^/  /' \
+  || die "a Demo Workspace under DemoWorkspaces/ is not fit to ship (see the lines above)"
+rsync -a --exclude ".*" --exclude "__pycache__" --exclude "*.pyc" \
+  "$REPO/DemoWorkspaces/" "$RES/DemoWorkspaces/" || die "could not stage DemoWorkspaces"
 # web/ splits by nature: index.html is hand-written SOURCE and ships in
 # the repo; results-explorer/ is BUILD OUTPUT, which the repo does not
 # carry. It is produced HERE, from source, on every build, and written
@@ -709,7 +721,7 @@ cp -R "$RES/ClusterPayload/Server" "$RES/ServerPayload" || die "could not stage 
 python3 "$SCRIPT_DIR/build-client-release.py" --output "$RES/ServerPayload/client-release" \
   || die "could not build the lightweight client release (uv is required by the release builder)"
 
-for family in WorkspaceSeed web AnalysisTools ClusterPayload ServerPayload; do
+for family in WorkspaceSeed DemoWorkspaces web AnalysisTools ClusterPayload ServerPayload; do
   printf '  %-16s %s\n' "$family" "$(du -sh "$RES/$family" | cut -f1)"
 done
 

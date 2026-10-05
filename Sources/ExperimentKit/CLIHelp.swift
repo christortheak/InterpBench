@@ -65,6 +65,7 @@ public enum CLIFlagVocabulary {
         "--count": "<n>",
         "--decision": "<text>",
         "--deltas": "<d1,d2>",
+        "--demo": "<" + DemoWorkspace.Backend.allCases.map(\.rawValue).joined(separator: "|") + ">",
         "--description": "<text>",
         "--dev-prompts": "<path>",
         "--endpoint": "<key>",
@@ -209,6 +210,9 @@ public enum CLIFlagVocabulary {
         "--count": "How many rows the prompt asks for.",
         "--decision": "The decision each choice row puts to the model.",
         "--deltas": "Perturbation deltas around the anchor cell (default 0.2).",
+        "--demo": "Open a verified copy of the Demo Workspace for this backend "
+            + "instead of an empty workspace: mlx (this Mac, quick start), mps "
+            + "(this Mac, full capabilities), or cuda (another machine).",
         "--description": "Free text stored on the manifest.",
         "--dev-prompts": "The dev split the sweep generates on.",
         "--dry-run": "Print what would be submitted and submit nothing.",

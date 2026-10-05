@@ -416,7 +416,8 @@ struct FirstLaunchWordingTests {
     private static let researchSetupCopy: [String] = [
         ResearchSetupCopy.title, ResearchSetupCopy.introduction,
         ResearchSetupCopy.workspaceStepTitle, ResearchSetupCopy.workspacePrompt,
-        ResearchSetupCopy.workspaceCaption, ResearchSetupCopy.computeStepTitle,
+        ResearchSetupCopy.workspaceCaption, ResearchSetupCopy.demoCaption,
+        ResearchSetupCopy.computeStepTitle,
         ResearchSetupCopy.computeNeedsWorkspace, ResearchSetupCopy.computeCaption,
         ResearchSetupCopy.helperStepTitle,
         ResearchSetupCopy.helperExplanation, ResearchSetupCopy.helperReady,

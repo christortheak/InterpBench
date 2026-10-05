@@ -108,6 +108,11 @@ public enum ResearchSetupCopy {
         "The app and your coding assistant can both open the same workspace. "
         + "Your study files stay in this folder."
 
+    /// Under the step's three buttons: what the third one is for.
+    public static let demoCaption =
+        "New here? A Demo Workspace is a finished study to read and a draft "
+        + "to run. It opens as a copy in a folder you choose."
+
     // MARK: Step 2 — where studies run
 
     public static let computeStepTitle = "2. Choose where studies run"

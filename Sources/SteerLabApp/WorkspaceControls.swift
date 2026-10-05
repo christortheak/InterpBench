@@ -70,7 +70,9 @@ struct WorkspaceSelector: View {
                 model: researchSetup, workspace: workspace, compute: compute,
                 service: service, localServer: localServer,
                 createWorkspace: { actions.newWorkspace() },
-                openWorkspace: { actions.openWorkspace() })
+                openWorkspace: { actions.openWorkspace() },
+                openDemo: { try actions.openDemoWorkspace($0) },
+                demoSheetClosed: { actions.demoSheetClosed() })
         }
         .task {
             // With no workspace yet, Research Setup opens at EVERY launch.
