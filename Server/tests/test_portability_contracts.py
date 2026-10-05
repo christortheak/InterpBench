@@ -119,6 +119,7 @@ def _concept(root, name="french"):
 VOLATILE_FREEZE_KEYS = [
     "status", "frozenAt", "freezeHash", "gitCommit", "frozenBy", "createdAt",
     "appVersion", "freezeForced", "forcedGatesSkipped",
+    "capabilityBatteryNotApplied",
     "preregistrationHash", "preregistrationGeneratedHash",
 ]
 
@@ -213,6 +214,68 @@ def _interop_study(root: str) -> dict:
          "alphaInNormUnits": True},
     ], root)
     return es.load_raw("portability-interop", root)
+
+
+def _policy_agent_frozen(tmp_path):
+    """The interop study with one variant condition whose agent carries a real,
+    published intervention policy, frozen WITHOUT force.
+
+    The capability battery cannot run a policy, so the ``batteryEvidence`` gate
+    exempts that condition and freeze stamps ``capabilityBatteryNotApplied``
+    instead of marking the study forced. Returns ``(frozen, canonical bytes)``.
+    The agent is written by this engine's own ``ModelVariant.to_dict`` and the
+    attachment by its own policy publisher, so the Swift half reads what this
+    engine really emits."""
+    from pathlib import Path
+
+    from steerlab_server.experiment.model_variant import ModelVariant
+    from test_intervention_policies import attached, setup
+
+    root = str(tmp_path / "policy-agent")
+    _interop_study(root)
+    doc, _, _ = setup(Path(root))
+    artifact = ModelVariant(
+        name="policy-agent", base_model_id="org/m",
+        base_revision="0123456789abcdef0123456789abcdef01234567",
+        created_at="1970-01-01T00:00:00Z",
+        intervention_policies=attached(doc, Path(root))).to_dict()
+    rel = "runs/model-variants/policy-agent/model-variant.json"
+    digest = _write(root, rel, json.dumps(artifact, indent=2, sort_keys=True))
+    d = es.load_raw("portability-interop", root)
+    # A study with agent conditions runs agents only (verify refuses mixed arm
+    # modes), so the interop study's hand-declared injection arms go.
+    d["conditions"] = []
+    d["variantConditions"] = [{"name": "policy-agent", "artifactPath": rel,
+                               "artifactHash": digest, "artifact": artifact}]
+    es.save_raw(d, root)
+
+    # Scope-matched validate evidence as this engine's validate writes it for
+    # such a study: baseline scored, the policy agent NOT APPLICABLE.
+    manifest = Manifest.load("portability-interop", root)
+    rundir = os.path.join(root, "runs", "v-exp-portability-interop-validate")
+    os.makedirs(rundir)
+    battery_hash = d["capabilityBatteryHash"]
+    with open(os.path.join(rundir, "validation-evidence.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump({"schemaVersion": 1, "task": "validate",
+                   "substrate": "python-hf-transformers",
+                   "reportFile": "validation-report.json",
+                   "validationScopeHash": manifest.validation_scope_hash(),
+                   "batteryResults": [
+                       {"condition": "baseline", "batteryHash": battery_hash,
+                        "total": 1, "correct": 1, "accuracy": 1.0},
+                       {"condition": "policy-agent",
+                        "batteryHash": battery_hash,
+                        "notApplicable": "interventionPolicy"}]}, handle)
+    with open(os.path.join(rundir, "validation-report.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump({"concepts": {"french": {"scenarioAccuracy": 1.0}}}, handle)
+
+    frozen = es.freeze("portability-interop", force=False,
+                       cached_revision=lambda m: None, root=root)
+    with open(os.path.join(root, "experiments", "portability-interop",
+                           "freeze-canonical.json"), "rb") as handle:
+        return frozen, handle.read()
 
 
 # =============================================================================
@@ -322,6 +385,30 @@ def test_a_python_authored_manifest_fixture_is_current(tmp_path):
         if key in normalized_swift:
             normalized_swift[key] = value
 
+    # A policy-agent study frozen WITHOUT force (ruling 2026-10-04): the
+    # battery gate exempts the condition whose agent carries an intervention
+    # policy, and the frozen document says so in a freeze stamp instead of
+    # being marked forced. Published so the Swift half reads the stamp this
+    # engine really writes — and proves it survives that engine's model.
+    policy_frozen, policy_canonical = _policy_agent_frozen(tmp_path)
+    assert policy_frozen["status"] == "frozen"
+    assert "freezeForced" not in policy_frozen
+    assert "forcedGatesSkipped" not in policy_frozen
+    assert policy_frozen["capabilityBatteryNotApplied"] == [
+        {"condition": "policy-agent", "reason": "interventionPolicy"}]
+    assert hashlib.sha256(policy_canonical).hexdigest() \
+        == policy_frozen["freezeHash"]
+    assert "capabilityBatteryNotApplied" not in json.loads(policy_canonical)
+    normalized_policy = dict(policy_frozen)
+    for key, value in (("frozenAt", "1970-01-01T00:00:00Z"),
+                       ("createdAt", "1970-01-01T00:00:00Z"),
+                       ("appVersion", "<appVersion>"),
+                       ("gitCommit", "<gitCommit>"),
+                       ("preregistrationGeneratedHash",
+                        "<preregistrationGeneratedHash>")):
+        if key in normalized_policy:
+            normalized_policy[key] = value
+
     _write_or_compare("manifest-interop.json", {
         "note": "produced by Server experiment_store (create → attach → pin → "
                 "freeze) — do not hand-edit; delete and re-run "
@@ -338,6 +425,9 @@ def test_a_python_authored_manifest_fixture_is_current(tmp_path):
         "freezeHashWithSwiftDefaults": swift_shaped["freezeHash"],
         "keysSwiftAlwaysWritesAndThisEngineOmitsAtDefault": [
             "multiAgentIncludeBaseline", "recordTokenIDs"],
+        "frozenWithBatteryNotApplied": normalized_policy,
+        "freezeCanonicalWithBatteryNotApplied": policy_canonical.decode("utf-8"),
+        "freezeHashWithBatteryNotApplied": policy_frozen["freezeHash"],
         # G6, closed by Phase 1a. Published for the Swift half to read: the
         # refusal this engine gives a NEW key-less declaration, the repair it
         # names (which must be word-for-word the Mac's — the two are
@@ -516,6 +606,59 @@ def test_a_swift_authored_manifest_loads_with_every_field_intact(tmp_path):
     # And this engine can hash it — the value differs from Swift's by design,
     # but a manifest that cannot be canonicalized at all is unusable.
     assert len(manifest.content_hash()) == 64
+
+
+def test_a_swift_frozen_policy_study_keeps_its_battery_not_applied_stamp(tmp_path):
+    """CONTRACT: battery-not-applied stamp, Swift → this engine. A study whose
+    agent carries an intervention policy, frozen WITHOUT force by the Swift
+    engine, carries ``capabilityBatteryNotApplied``; this engine reads it,
+    keeps it, leaves it out of the content hash, and — from the agent bytes
+    Swift wrote — derives the same exemption itself.
+
+    Producer: ``PortabilityContractTests.swiftFrozenPolicyStudy``."""
+    from steerlab_server.experiment import freeze_policy
+
+    fixture = _load_fixture("swift-authored-manifest.json")
+    document = fixture["frozenWithBatteryNotApplied"]
+    name = document["name"]
+    stamp = [{"condition": "policy-agent", "reason": "interventionPolicy"}]
+
+    # Frozen cleanly: Swift did not mark it forced.
+    assert document["status"] == "frozen" and document["frozenBy"] == "swift"
+    assert "freezeForced" not in document
+    assert "forcedGatesSkipped" not in document
+    assert document[freeze_policy.BATTERY_NOT_APPLIED_KEY] == stamp
+
+    root = str(tmp_path)
+    directory = os.path.join(root, "experiments", name)
+    os.makedirs(directory, exist_ok=True)
+    with open(os.path.join(directory, "experiment.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump(document, handle)
+
+    # Nothing is dropped on the way in, the stamp included.
+    manifest = Manifest.load(name, root)
+    assert manifest.raw == document
+    assert es.load_raw(name, root)[freeze_policy.BATTERY_NOT_APPLIED_KEY] == stamp
+
+    # Outside the content hash, like every freeze stamp.
+    without = {k: v for k, v in document.items()
+               if k != freeze_policy.BATTERY_NOT_APPLIED_KEY}
+    assert Manifest.from_dict(without).content_hash() == manifest.content_hash()
+
+    # The two engines agree on WHICH condition is exempt and on the sentence
+    # a researcher reads: derived here from Swift's agent bytes, it is the
+    # stamp Swift wrote.
+    assert freeze_policy.battery_not_applied(document) == stamp
+    assert (
+        "The capability battery was not applied to policy-agent, because its "
+        "agent uses an intervention policy, which the battery cannot run. "
+        "This study has no capability control for that agent."
+    ) in es.freeze_advisories(document, root)
+
+    # A duplicate is a fresh draft: the stamp does not travel.
+    copy = es.duplicate(name, "portability-policy-copy", root=root)
+    assert freeze_policy.BATTERY_NOT_APPLIED_KEY not in copy
 
 
 # =============================================================================

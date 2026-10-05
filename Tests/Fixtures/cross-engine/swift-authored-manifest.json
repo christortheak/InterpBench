@@ -1,4 +1,71 @@
 {
+  "frozenWithBatteryNotApplied" : {
+    "appVersion" : "<appVersion>",
+    "capabilityBatteryNotApplied" : [
+      {
+        "condition" : "policy-agent",
+        "reason" : "interventionPolicy"
+      }
+    ],
+    "concepts" : [
+
+    ],
+    "conditions" : [
+
+    ],
+    "createdAt" : "1970-01-01T00:00:00Z",
+    "experimentDescription" : "Battery-not-applied interop fixture",
+    "freezeHash" : "159eae645b92d19bc465cd344f350a803f89b6f9dcf814b4d9a89a7ac84dd569",
+    "frozenAt" : "1970-01-01T00:00:00Z",
+    "frozenBy" : "swift",
+    "gitCommit" : "<gitCommit>",
+    "maxTokens" : 2048,
+    "modelID" : "org/m",
+    "modelRevision" : "0123456789abcdef0123456789abcdef01234567",
+    "multiAgentIncludeBaseline" : true,
+    "name" : "portability-policy-swift",
+    "preregistrationGeneratedHash" : "<preregistrationGeneratedHash>",
+    "promptMode" : "chatAssistant",
+    "reasoningEffort" : "off",
+    "recordTokenIDs" : false,
+    "seeds" : [
+      20260610
+    ],
+    "status" : "frozen",
+    "studyKind" : "modelOutput",
+    "temperature" : 0,
+    "variantConditions" : [
+      {
+        "artifact" : {
+          "adapters" : [
+
+          ],
+          "alphaInNormUnits" : true,
+          "bandWidth" : 1,
+          "baseModelID" : "org/m",
+          "baseRevision" : "0123456789abcdef0123456789abcdef01234567",
+          "createdAt" : "1970-01-01T00:00:00Z",
+          "injections" : [
+
+          ],
+          "interventionPolicies" : [
+            {
+              "json" : "{\"schemaVersion\":1}",
+              "sha256" : "0e9561cfb83d50990a103b3896fe249a11fe27fa28985448187f93ec12116d72"
+            }
+          ],
+          "name" : "policy-agent",
+          "promptMode" : "chatAssistant",
+          "qwenThinkingEnabled" : false,
+          "schemaVersion" : 1,
+          "temperature" : 0
+        },
+        "artifactHash" : "7d0fb50c4d90fffadd11d0a30da7dc87a26588ac8a8589d2c903f9593bb22921",
+        "artifactPath" : "experiments/portability-policy-swift/pinned/variant-policy-agent.json",
+        "name" : "policy-agent"
+      }
+    ]
+  },
   "manifest" : {
     "capabilityBatteryFile" : "prompts/batteries/b1.jsonl",
     "capabilityBatteryHash" : "976bd5dc407ad3f7f0203ca9b98a7bd8cf07740db9d689b693b2a451f13c5a19",

@@ -16,7 +16,8 @@ from ..experiment.manifest import Manifest
 
 
 FREEZE_FIELDS = ("frozenAt", "freezeHash", "frozenBy", "gitCommit", "freezeForced",
-                 "forcedGatesSkipped", "preregistrationHash", "preregistrationGeneratedHash")
+                 "forcedGatesSkipped", "preregistrationHash", "preregistrationGeneratedHash",
+                 "capabilityBatteryNotApplied")
 NAMED_INPUTS = ("taskPrompts", "judgeRubric", "capabilityBattery")
 
 

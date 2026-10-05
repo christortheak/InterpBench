@@ -262,6 +262,7 @@ public enum StudyTemplateStore {
     /// - `name`, `createdAt` — identity of an instance, not of the recipe.
     /// - `status`, `frozenAt`, `freezeHash`, `frozenBy`, `gitCommit`,
     ///   `appVersion`, `freezeForced`, `forcedGatesSkipped`,
+    ///   `capabilityBatteryNotApplied`,
     ///   `preregistrationHash`, `preregistrationGeneratedHash` — lifecycle
     ///   stamps; a template is never frozen and must never mint a study that
     ///   claims to be (and the preregistration stamps name bytes in one
@@ -295,6 +296,7 @@ public enum StudyTemplateStore {
         body.appVersion = nil
         body.freezeForced = nil
         body.forcedGatesSkipped = nil
+        body.capabilityBatteryNotApplied = nil
         body.preregistrationHash = nil
         body.preregistrationGeneratedHash = nil
         body.variantConditions = []

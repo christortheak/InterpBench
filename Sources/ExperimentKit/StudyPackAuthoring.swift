@@ -153,6 +153,7 @@ public enum StudyPackAuthoring {
         pack.study.gitCommit = nil
         pack.study.freezeForced = nil
         pack.study.forcedGatesSkipped = nil
+        pack.study.capabilityBatteryNotApplied = nil
         pack.study.preregistrationHash = nil
         pack.study.preregistrationGeneratedHash = nil
         return pack

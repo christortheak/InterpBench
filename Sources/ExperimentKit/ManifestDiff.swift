@@ -76,6 +76,7 @@ public enum ManifestDiff {
         canonical.appVersion = nil
         canonical.freezeForced = nil
         canonical.forcedGatesSkipped = nil
+        canonical.capabilityBatteryNotApplied = nil
         canonical.preregistrationHash = nil
         canonical.preregistrationGeneratedHash = nil
         let encoder = JSONEncoder()

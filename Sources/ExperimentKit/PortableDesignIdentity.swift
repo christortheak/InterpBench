@@ -12,7 +12,8 @@ public enum PortableDesignIdentity {
         body["createdAt"] = ""
         body["status"] = "draft"
         for key in ["frozenAt", "freezeHash", "frozenBy", "gitCommit", "appVersion", "freezeForced",
-                    "forcedGatesSkipped", "preregistrationHash", "preregistrationGeneratedHash"] {
+                    "forcedGatesSkipped", "preregistrationHash", "preregistrationGeneratedHash",
+                    "capabilityBatteryNotApplied"] {
             body.removeValue(forKey: key)
         }
         let scenario: Any

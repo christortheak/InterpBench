@@ -135,7 +135,7 @@ def test_advisory_codes_match_the_swift_literal():
         "revisionAdoptionWarning", "siteQualifyWarning", "designDerivationWarning",
         "deprecatedImplicitSelection", "systemPromptNotApplied",
         "singleRegimeCapabilityReading",
-        "modelCapabilities",
+        "modelCapabilities", "capabilityControlNotApplied",
     ]
     assert list(cli_envelope.ADVISORY_CODES) == contract
 

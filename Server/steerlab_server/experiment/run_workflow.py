@@ -759,6 +759,19 @@ def _run_capability_battery(model, name, manifest, bundles, conditions, root,
                     variant = (model_variant.ModelVariant.from_dict(vc.artifact)
                                if vc.artifact else model_variant.ModelVariant.from_file(
                                    paths.resolve(vc.artifact_path, root)))
+                    if variant.intervention_policies:
+                        # Not applicable, not a failure: the battery cannot
+                        # run an intervention policy. The run's report.json
+                        # records the condition under
+                        # ``capabilityBatteryNotApplied``
+                        # (``run_reporting.write_report``), so the missing
+                        # capability control is on the record, not only in
+                        # this log.
+                        from . import freeze_policy
+                        _log("battery: " + freeze_policy.battery_not_applied_sentence(
+                            vc.name,
+                            freeze_policy.BATTERY_REASON_INTERVENTION_POLICY))
+                        continue
                     injections = model_variant.variant_injections(variant)
                     adapter = model_variant.apply_adapter(model, variant, root=root)
                 except (OSError, KeyError, ValueError, RuntimeError) as exc:

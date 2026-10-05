@@ -12,6 +12,69 @@ FORCED_GATE_IDS = ("revision", "validateEvidence", "batteryEvidence",
                    "judgeValidity", "variantValidity", "gitClean",
                    "measurementPins")
 
+#: Freeze stamp (cross-engine manifest key): the variant conditions the
+#: capability battery was NOT applied to, and why — a list of
+#: ``{"condition": <name>, "reason": <reason id>}`` in manifest order. A
+#: lifecycle stamp like ``freezeForced``: written at freeze, excluded from the
+#: content hash and from ``freeze-canonical.json``, cleared on duplicate, and
+#: absent when the battery applied to every condition (so every manifest
+#: frozen before the key existed loads and hashes exactly as it did). It does
+#: NOT mark the study forced. Swift twin:
+#: ``ExperimentManifest.capabilityBatteryNotApplied``.
+BATTERY_NOT_APPLIED_KEY = "capabilityBatteryNotApplied"
+
+#: The one reason this engine records today: the condition's agent carries
+#: intervention policies, which the battery cannot run
+#: (``model_variant.variant_injections`` refuses them without
+#: ``allow_policies``). The list shape leaves room for other reasons; none
+#: exists, and nothing else is exempt.
+BATTERY_REASON_INTERVENTION_POLICY = "interventionPolicy"
+
+
+def battery_exemption_reason(vc) -> str | None:
+    """Why the capability battery cannot be applied to one variant condition,
+    or None when it applies.
+
+    Read from the condition's INLINE agent artifact — the bytes the manifest
+    pins and the content hash covers — so the answer needs no file read and
+    cannot differ between the freeze that stamps it and a later reader. A
+    forward-referenced condition has no agent yet and is handled by its own,
+    older exemption. Swift twin: ``FreezePolicy.batteryExemptionReason``."""
+    if not isinstance(vc, dict) or isinstance(vc.get("fromPromotion"), dict):
+        return None
+    artifact = vc.get("artifact")
+    if isinstance(artifact, dict) and artifact.get("interventionPolicies"):
+        return BATTERY_REASON_INTERVENTION_POLICY
+    return None
+
+
+def battery_not_applied(d: dict) -> list[dict]:
+    """The ``capabilityBatteryNotApplied`` entries for a manifest dict, in
+    manifest order; empty when the battery applies to every condition or the
+    battery gate is not asked of this study kind at all."""
+    if not declarations.model_output_surfaces_operative(d):
+        return []
+    entries = []
+    for vc in d.get("variantConditions") or []:
+        reason = battery_exemption_reason(vc)
+        if reason is not None:
+            entries.append({"condition": str(vc.get("name", "?")), "reason": reason})
+    return entries
+
+
+def battery_not_applied_sentence(condition: str, reason: str) -> str:
+    """The researcher-facing sentence for one entry. Both engines emit it
+    verbatim (Swift twin: ``FreezePolicy.batteryNotAppliedSentence``)."""
+    if reason == BATTERY_REASON_INTERVENTION_POLICY:
+        return (f"The capability battery was not applied to {condition}, "
+                "because its agent uses an intervention policy, which the "
+                "battery cannot run. This study has no capability control "
+                "for that agent.")
+    return (f"The capability battery was not applied to {condition} "
+            f"(recorded reason: {reason}). This study has no capability "
+            "control for that agent.")
+
+
 @dataclass(frozen=True)
 class FreezeEvidence:
     jlens: str | None = None
@@ -184,9 +247,17 @@ def check_battery_evidence(name: str, d: dict, evidence: dict | None,
     # Forward-referenced conditions (stage 4) are exempt: their agent does
     # not exist at validate time, so their battery evidence is produced by
     # the RUN's per-condition battery, not by freeze-time validation.
+    # A condition whose agent carries intervention policies is exempt too
+    # (maintainer ruling 2026-10-04): the battery cannot run a policy, so the
+    # evidence could never exist and only --force could freeze the study.
+    # The exemption is this narrow on purpose — baseline and every other
+    # condition are required exactly as before — and freeze records it in the
+    # ``capabilityBatteryNotApplied`` stamp instead of marking the study
+    # forced.
     required = ["baseline"] + [
         vc.get("name", "?") for vc in d.get("variantConditions") or []
-        if not isinstance(vc.get("fromPromotion"), dict)]
+        if not isinstance(vc.get("fromPromotion"), dict)
+        and battery_exemption_reason(vc) is None]
     missing = [c for c in required
                if c not in results or results[c].get("accuracy") is None]
     if missing:

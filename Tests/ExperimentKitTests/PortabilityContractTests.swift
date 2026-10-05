@@ -57,7 +57,8 @@ import Testing
     /// `experiment_store._write_freeze_canonical`. Server twin test:
     /// `test_portability_contracts.py::test_volatile_freeze_stamps_are_outside_the_content_hash`.
     static let volatileFreezeKeys = [
-        "appVersion", "createdAt", "forcedGatesSkipped", "freezeForced",
+        "appVersion", "capabilityBatteryNotApplied", "createdAt",
+        "forcedGatesSkipped", "freezeForced",
         "freezeHash", "frozenAt", "frozenBy", "gitCommit",
         "preregistrationGeneratedHash", "preregistrationHash", "status",
     ]
@@ -403,6 +404,9 @@ import Testing
         stamped.frozenBy = "server"
         stamped.gitCommit = String(repeating: "b", count: 40)
         stamped.appVersion = "a different build"
+        stamped.capabilityBatteryNotApplied = [
+            .init(condition: "some-agent", reason: "interventionPolicy")
+        ]
         #expect(
             ExperimentStore.manifestHash(stamped) == baseline,
             "a freeze stamp moved the content hash: the two engines then disagree about whether a study changed")
@@ -418,6 +422,84 @@ import Testing
             var mutated = manifest
             mutate(&mutated)
             #expect(ExperimentStore.manifestHash(mutated) != baseline)
+        }
+    }
+
+    /// CONTRACT: battery-not-applied stamp, server → this engine. A study
+    /// whose agent carries an intervention policy, frozen WITHOUT force by
+    /// the Python engine (`experiment_store.freeze`), carries the
+    /// `capabilityBatteryNotApplied` stamp; this engine reads it, keeps it
+    /// through its own model, leaves it out of the content hash, and — from
+    /// the agent bytes the server wrote — derives the same exemption itself.
+    ///
+    /// Producer: `test_portability_contracts.py::_policy_agent_frozen`.
+    @Test func aServerFrozenPolicyStudyKeepsItsBatteryNotAppliedStamp() throws {
+        let fixture = try loadFixture("manifest-interop.json")
+        let frozen = try #require(
+            fixture["frozenWithBatteryNotApplied"] as? [String: Any])
+        // Frozen cleanly: the server did not mark it forced.
+        #expect(frozen["status"] as? String == "frozen")
+        #expect(frozen["frozenBy"] as? String == "server")
+        #expect(frozen["freezeForced"] == nil)
+        #expect(frozen["forcedGatesSkipped"] == nil)
+        let expected = [
+            ExperimentManifest.BatteryNotApplied(
+                condition: "policy-agent", reason: "interventionPolicy")
+        ]
+
+        let manifest = try JSONDecoder().decode(
+            ExperimentManifest.self,
+            from: try JSONSerialization.data(withJSONObject: frozen))
+        #expect(manifest.capabilityBatteryNotApplied == expected)
+        #expect(manifest.freezeForced == nil)
+
+        // Survives this engine's model, key and value.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let reencoded = try #require(
+            try JSONSerialization.jsonObject(with: try encoder.encode(manifest))
+                as? [String: Any])
+        #expect(
+            (reencoded["capabilityBatteryNotApplied"] as? NSArray)
+                == (frozen["capabilityBatteryNotApplied"] as? NSArray))
+
+        // Outside the content hash, like every freeze stamp.
+        var unstamped = manifest
+        unstamped.capabilityBatteryNotApplied = nil
+        #expect(
+            ExperimentStore.manifestHash(unstamped)
+                == ExperimentStore.manifestHash(manifest))
+
+        // The two engines agree on WHICH condition is exempt and on the
+        // sentence a researcher reads: derived here from the server's agent
+        // bytes, it is the stamp the server wrote.
+        #expect(FreezePolicy.batteryNotApplied(manifest) == expected)
+        #expect(
+            ExperimentStore.batteryNotAppliedSentences(manifest) == [
+                "The capability battery was not applied to policy-agent, "
+                    + "because its agent uses an intervention policy, which "
+                    + "the battery cannot run. This study has no capability "
+                    + "control for that agent."
+            ])
+
+        // And the frozen study VERIFIES here against the exact bytes the
+        // server hashed: the stamp is outside the server's canonical payload
+        // and outside this engine's comparison of it, so a server-frozen
+        // policy study does not read as "changed after freeze" on the Mac.
+        let canonical = try #require(
+            fixture["freezeCanonicalWithBatteryNotApplied"] as? String)
+        let freezeHash = try #require(
+            fixture["freezeHashWithBatteryNotApplied"] as? String)
+        #expect(ExperimentStore.sha256Hex(Data(canonical.utf8)) == freezeHash)
+        #expect(!canonical.contains("capabilityBatteryNotApplied"))
+        try withTempRoot { root in
+            let planted = try plantServerFrozen(
+                root, document: frozen, canonical: canonical)
+            #expect(planted.capabilityBatteryNotApplied == expected)
+            let violations = freezeViolations(planted)
+            #expect(
+                violations == [],
+                "a server-frozen policy study failed this engine's canonical verification: \(violations)")
         }
     }
 
@@ -785,6 +867,13 @@ import Testing
             // run, which teaches reviewers to ignore its diffs.
             document["createdAt"] = "1970-01-01T00:00:00Z"
 
+            // A study whose agent carries an intervention policy, frozen by
+            // THIS engine without force: the battery gate exempts that
+            // condition and the frozen document carries the
+            // `capabilityBatteryNotApplied` stamp. Published so the server
+            // suite reads the stamp this engine really writes.
+            let policyDocument = try swiftFrozenPolicyStudy(root)
+
             let payload: [String: Any] = [
                 "note": "produced by the Swift engine's ExperimentStore "
                     + "(Tests/ExperimentKitTests/PortabilityContractTests.swift) "
@@ -793,6 +882,7 @@ import Testing
                 "manifest": document,
                 "manifestHash": ExperimentStore.manifestHash(manifest),
                 "stimulusSetHash": manifest.concepts.first?.stimulusSetHash ?? "",
+                "frozenWithBatteryNotApplied": policyDocument,
             ]
             let text = String(
                 decoding: try JSONSerialization.data(
@@ -812,6 +902,84 @@ import Testing
                 text == existing,
                 "swift-authored-manifest.json drifted: delete it and re-run this suite, then run the server suite")
         }
+    }
+
+    /// Freezes, on this engine and without force, a study with one variant
+    /// condition whose agent carries an intervention policy, and returns the
+    /// stored document with its per-run stamps normalized (each is outside
+    /// every canonicalization, which is what makes normalizing them safe).
+    private func swiftFrozenPolicyStudy(_ root: URL) throws -> [String: Any] {
+        let name = "portability-policy-swift"
+        var study = try ExperimentStore.create(
+            name: name, description: "Battery-not-applied interop fixture",
+            modelID: "org/m",
+            modelRevision: "0123456789abcdef0123456789abcdef01234567")
+        let policyText = "{\"schemaVersion\":1}"
+        let policyHash = SHA256.hash(data: Data(policyText.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let agent = ModelVariantArtifact(
+            name: "policy-agent", baseModelID: "org/m",
+            baseRevision: "0123456789abcdef0123456789abcdef01234567",
+            promptMode: "chatAssistant", qwenThinkingEnabled: false,
+            temperature: 0, systemPrompt: "",
+            createdAt: Date(timeIntervalSince1970: 0),
+            interventionPolicies: [
+                .object(["json": .string(policyText), "sha256": .string(policyHash)])
+            ])
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let agentPath = "runs/model-variants/policy-agent/model-variant.json"
+        let agentHash = try write(
+            root, agentPath,
+            String(decoding: try encoder.encode(agent), as: UTF8.self))
+        study.variantConditions = [
+            .init(
+                name: "policy-agent", artifactPath: agentPath,
+                artifactHash: agentHash, artifact: agent)
+        ]
+        try ExperimentStore.save(study)
+
+        // Validate evidence as this engine's validate writes it for such a
+        // study: baseline scored, the policy agent NOT APPLICABLE.
+        let run = root.appending(
+            path: "runs/20260610T000000000Z-exp-\(name)-validate")
+        try FileManager.default.createDirectory(
+            at: run, withIntermediateDirectories: true)
+        try JSONEncoder().encode(study).write(
+            to: run.appending(component: "experiment.json"))
+        try write(
+            root, "runs/20260610T000000000Z-exp-\(name)-validate/validation-report.json",
+            "{\"experiment\":\"\(name)\",\"validation\":{}}")
+        try ExperimentStore.writeValidationEvidence(
+            for: study, runDirectory: run,
+            capabilityBattery: [
+                .init(
+                    condition: "baseline", batteryHash: "bh", total: 1,
+                    correct: 1, accuracy: 1),
+                .init(
+                    condition: "policy-agent", batteryHash: "bh",
+                    notApplicable: "interventionPolicy"),
+            ])
+
+        let frozen = try ExperimentStore.freeze(name: name)
+        #expect(frozen.status == .frozen)
+        #expect(frozen.freezeForced == nil)
+        #expect(
+            frozen.capabilityBatteryNotApplied == [
+                .init(condition: "policy-agent", reason: "interventionPolicy")
+            ])
+
+        let stored = try #require(ExperimentStore.manifestData(name: name))
+        var document = try #require(
+            try JSONSerialization.jsonObject(with: stored) as? [String: Any])
+        #expect(document["freezeForced"] == nil)
+        document["createdAt"] = "1970-01-01T00:00:00Z"
+        document["frozenAt"] = "1970-01-01T00:00:00Z"
+        for key in ["appVersion", "gitCommit", "preregistrationGeneratedHash"]
+        where document[key] != nil {
+            document[key] = "<\(key)>"
+        }
+        return document
     }
 
     // MARK: - 3. Run-bundle interop

@@ -91,6 +91,7 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         case appVersion
         case freezeForced
         case forcedGatesSkipped
+        case capabilityBatteryNotApplied
         case preregistrationHash
         case preregistrationGeneratedHash
     }
@@ -99,6 +100,26 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         case draft
         case frozen
         case complete
+    }
+
+    /// One entry of the `capabilityBatteryNotApplied` freeze stamp: a variant
+    /// condition the capability battery was not applied to, and the reason.
+    /// `reason` is a plain string so a reason a later engine records is
+    /// carried rather than refused; this engine writes only
+    /// `interventionPolicyReason`.
+    public struct BatteryNotApplied: Codable, Sendable, Equatable {
+        /// The agent carries an intervention policy, which the battery
+        /// cannot run. Server twin:
+        /// `freeze_policy.BATTERY_REASON_INTERVENTION_POLICY`.
+        public static let interventionPolicyReason = "interventionPolicy"
+
+        public var condition: String
+        public var reason: String
+
+        public init(condition: String, reason: String) {
+            self.condition = condition
+            self.reason = reason
+        }
     }
 
     public enum PromptMode: String, Codable, Sendable, CaseIterable {
@@ -1676,6 +1697,20 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
     /// "variantValidity", "gitClean", "measurementPins". Lifecycle stamp
     /// like `freezeForced`.
     public var forcedGatesSkipped: [String]?
+    /// The variant conditions the capability battery was NOT applied to, and
+    /// why — stamped at freeze, in manifest order, and nil when the battery
+    /// applied to every condition (so manifests frozen before the key
+    /// existed decode and hash exactly as they did).
+    ///
+    /// Today's one reason is `interventionPolicy`: the condition's agent
+    /// carries an intervention policy, which the battery cannot run, so the
+    /// `batteryEvidence` gate does not ask for evidence about it. The study
+    /// is NOT marked forced; this stamp is what says, honestly, that the
+    /// agent has no capability control. A lifecycle stamp like
+    /// `freezeForced` — excluded from the content hash, cleared on
+    /// duplicate. Cross-engine key: "capabilityBatteryNotApplied" (server
+    /// twin: `freeze_policy.BATTERY_NOT_APPLIED_KEY`).
+    public var capabilityBatteryNotApplied: [BatteryNotApplied]?
     /// SHA-256 of the researcher-authored `preregistration.md` this freeze
     /// PRESERVED (nil when the freeze owned that path and generated the file
     /// itself). A lifecycle stamp like `freezeForced` — excluded from the
@@ -1770,6 +1805,7 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         self.appVersion = nil
         self.freezeForced = nil
         self.forcedGatesSkipped = nil
+        self.capabilityBatteryNotApplied = nil
         self.preregistrationHash = nil
         self.preregistrationGeneratedHash = nil
     }
@@ -1907,6 +1943,8 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         freezeForced = try container.decodeIfPresent(Bool.self, forKey: .freezeForced)
         forcedGatesSkipped = try container.decodeIfPresent(
             [String].self, forKey: .forcedGatesSkipped)
+        capabilityBatteryNotApplied = try container.decodeIfPresent(
+            [BatteryNotApplied].self, forKey: .capabilityBatteryNotApplied)
         preregistrationHash = try container.decodeIfPresent(
             String.self, forKey: .preregistrationHash)
         preregistrationGeneratedHash = try container.decodeIfPresent(
@@ -1996,6 +2034,14 @@ public struct ExperimentError: Error, CustomStringConvertible {
 /// server's two arming stamps ({"batteryFormat", "armingIsolated"}) when the
 /// reading came from a format-aware run — omitted, never null, on legacy
 /// evidence, so an existing evidence file still round-trips byte for byte.
+///
+/// A NOT-APPLICABLE row — the battery could not be applied to the condition,
+/// today only because its agent carries an intervention policy — is
+/// {"condition", "batteryHash", "notApplicable": "<reason>"} with NO score
+/// keys, on both engines. It decodes here with zero scores that mean
+/// nothing: read `notApplicable` before reading `accuracy`. A row with
+/// neither the score keys nor `notApplicable` (the server's `error` row for
+/// an agent that failed to load) fails to decode exactly as it always has.
 public struct CapabilityBatteryConditionResult: Codable, Sendable, Equatable {
     public var condition: String
     public var batteryHash: String
@@ -2008,6 +2054,11 @@ public struct CapabilityBatteryConditionResult: Codable, Sendable, Equatable {
     /// surrounding instrument — the difference between a number that is
     /// comparable across instruments and one that is not.
     public var armingIsolated: Bool?
+    /// Why the battery was not applied to this condition, when it was not
+    /// (`ExperimentManifest.BatteryNotApplied.interventionPolicyReason`);
+    /// nil on every scored row. When set, `total`/`correct`/`accuracy` are
+    /// placeholders and are not written.
+    public var notApplicable: String?
 
     public init(
         condition: String, batteryHash: String, total: Int, correct: Int,
@@ -2021,5 +2072,64 @@ public struct CapabilityBatteryConditionResult: Codable, Sendable, Equatable {
         self.accuracy = accuracy
         self.batteryFormat = batteryFormat
         self.armingIsolated = armingIsolated
+        self.notApplicable = nil
+    }
+
+    /// The explicit not-applicable row for a condition the battery cannot be
+    /// applied to.
+    public init(condition: String, batteryHash: String, notApplicable reason: String) {
+        self.condition = condition
+        self.batteryHash = batteryHash
+        self.total = 0
+        self.correct = 0
+        self.accuracy = 0
+        self.batteryFormat = nil
+        self.armingIsolated = nil
+        self.notApplicable = reason
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case condition, batteryHash, total, correct, accuracy
+        case batteryFormat, armingIsolated, notApplicable
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        condition = try container.decode(String.self, forKey: .condition)
+        batteryHash = try container.decode(String.self, forKey: .batteryHash)
+        notApplicable = try container.decodeIfPresent(
+            String.self, forKey: .notApplicable)
+        if notApplicable != nil {
+            // The score keys are absent by contract on a not-applicable row.
+            total = try container.decodeIfPresent(Int.self, forKey: .total) ?? 0
+            correct = try container.decodeIfPresent(Int.self, forKey: .correct) ?? 0
+            accuracy = try container.decodeIfPresent(
+                Double.self, forKey: .accuracy) ?? 0
+        } else {
+            total = try container.decode(Int.self, forKey: .total)
+            correct = try container.decode(Int.self, forKey: .correct)
+            accuracy = try container.decode(Double.self, forKey: .accuracy)
+        }
+        batteryFormat = try container.decodeIfPresent(
+            Int.self, forKey: .batteryFormat)
+        armingIsolated = try container.decodeIfPresent(
+            Bool.self, forKey: .armingIsolated)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(condition, forKey: .condition)
+        try container.encode(batteryHash, forKey: .batteryHash)
+        if let notApplicable {
+            // No score keys: a zero accuracy would read as a measured failure
+            // on either engine.
+            try container.encode(notApplicable, forKey: .notApplicable)
+        } else {
+            try container.encode(total, forKey: .total)
+            try container.encode(correct, forKey: .correct)
+            try container.encode(accuracy, forKey: .accuracy)
+        }
+        try container.encodeIfPresent(batteryFormat, forKey: .batteryFormat)
+        try container.encodeIfPresent(armingIsolated, forKey: .armingIsolated)
     }
 }

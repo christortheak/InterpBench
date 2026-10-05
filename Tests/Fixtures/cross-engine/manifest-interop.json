@@ -75,8 +75,10 @@
     "variantConditions": []
   },
   "freezeCanonical": "{\"capabilityBatteryFile\":\"prompts/batteries/b1.jsonl\",\"capabilityBatteryHash\":\"976bd5dc407ad3f7f0203ca9b98a7bd8cf07740db9d689b693b2a451f13c5a19\",\"concepts\":[{\"name\":\"french\",\"options\":{\"method\":\"meanDifference\",\"readingPosition\":{\"lastToken\":{}}},\"stimulusSetHash\":\"4c072659bd86a71455db8d7a69fea6f537ea528f5a761fe8715443630fcb1e1f\",\"validationHash\":\"91b8a716260b7ef8cb3962ad171744474ab0f5b4792a07106fb83a9f328da876\"}],\"conditions\":[{\"alphaInNormUnits\":true,\"bandWidth\":1,\"name\":\"baseline\",\"slots\":[]},{\"alphaInNormUnits\":true,\"bandWidth\":1,\"name\":\"arm-a\",\"slots\":[{\"alpha\":0.1,\"concept\":\"french\",\"layer\":1}]}],\"evaluation\":{\"judgeModel\":\"claude-opus-4-8\",\"judgePrompt\":\"\",\"kind\":\"none\"},\"experimentDescription\":\"Phase-0 interop fixture\",\"judgeRubricFile\":\"prompts/rubrics/r1.md\",\"judgeRubricHash\":\"4befec25b1813b4efb780bfe304acc7fa65d28c42e1765c299efc37a5ad5cea5\",\"markersHash\":\"cc3e2659bd2f316d4bd4d86aac89e899a79259b917d514384ead7027c26a24b9\",\"maxTokens\":512,\"modelID\":\"org/m\",\"modelRevision\":\"0123456789abcdef0123456789abcdef01234567\",\"name\":\"portability-interop\",\"neutralCorpusHash\":\"d7ade169c4c1f2b51954a9a8bbb5fd2c8d48c36f1ddd79781e19a2eea912988c\",\"promptMode\":\"chatAssistant\",\"reasoningEffort\":\"off\",\"samplesPerItem\":3,\"seedPolicy\":\"derivedSHA256\",\"seeds\":[0,1,2],\"studyKind\":\"modelOutput\",\"systemPrompt\":\"Respond in JSON.\",\"taskDescription\":\"answer the item\",\"taskPromptsFile\":\"prompts/tasks/cases.jsonl\",\"taskPromptsHash\":\"0cca009949adbced7db8a2427dd808435b1834eb482ad8c07d522f551bb0144c\",\"temperature\":0.7,\"variantConditions\":[]}",
+  "freezeCanonicalWithBatteryNotApplied": "{\"capabilityBatteryFile\":\"prompts/batteries/b1.jsonl\",\"capabilityBatteryHash\":\"976bd5dc407ad3f7f0203ca9b98a7bd8cf07740db9d689b693b2a451f13c5a19\",\"concepts\":[{\"name\":\"french\",\"options\":{\"method\":\"meanDifference\",\"readingPosition\":{\"lastToken\":{}}},\"stimulusSetHash\":\"4c072659bd86a71455db8d7a69fea6f537ea528f5a761fe8715443630fcb1e1f\",\"validationHash\":\"91b8a716260b7ef8cb3962ad171744474ab0f5b4792a07106fb83a9f328da876\"}],\"conditions\":[],\"evaluation\":{\"judgeModel\":\"claude-opus-4-8\",\"judgePrompt\":\"\",\"kind\":\"none\"},\"experimentDescription\":\"Phase-0 interop fixture\",\"judgeRubricFile\":\"prompts/rubrics/r1.md\",\"judgeRubricHash\":\"4befec25b1813b4efb780bfe304acc7fa65d28c42e1765c299efc37a5ad5cea5\",\"markersHash\":\"cc3e2659bd2f316d4bd4d86aac89e899a79259b917d514384ead7027c26a24b9\",\"maxTokens\":512,\"modelID\":\"org/m\",\"modelRevision\":\"0123456789abcdef0123456789abcdef01234567\",\"name\":\"portability-interop\",\"neutralCorpusHash\":\"d7ade169c4c1f2b51954a9a8bbb5fd2c8d48c36f1ddd79781e19a2eea912988c\",\"promptMode\":\"chatAssistant\",\"reasoningEffort\":\"off\",\"samplesPerItem\":3,\"seedPolicy\":\"derivedSHA256\",\"seeds\":[0,1,2],\"studyKind\":\"modelOutput\",\"systemPrompt\":\"Respond in JSON.\",\"taskDescription\":\"answer the item\",\"taskPromptsFile\":\"prompts/tasks/cases.jsonl\",\"taskPromptsHash\":\"0cca009949adbced7db8a2427dd808435b1834eb482ad8c07d522f551bb0144c\",\"temperature\":0.7,\"variantConditions\":[{\"artifact\":{\"adapters\":[],\"alphaInNormUnits\":true,\"bandWidth\":1,\"baseModelID\":\"org/m\",\"baseRevision\":\"0123456789abcdef0123456789abcdef01234567\",\"createdAt\":\"1970-01-01T00:00:00Z\",\"injections\":[],\"interventionPolicies\":[{\"json\":\"{\\n  \\\"actions\\\": [\\n    {\\n      \\\"bounds\\\": [\\n        0,\\n        2\\n      ],\\n      \\\"id\\\": \\\"change\\\",\\n      \\\"kind\\\": \\\"add\\\",\\n      \\\"vector\\\": [\\n        1,\\n        0\\n      ]\\n    }\\n  ],\\n  \\\"binding\\\": {\\n    \\\"coordinateConvention\\\": \\\"hf-decoder-block-v1/model.layers\\\",\\n    \\\"modelID\\\": \\\"example/model\\\",\\n    \\\"rendering\\\": \\\"raw\\\",\\n    \\\"revision\\\": \\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\n    \\\"tokenizerSHA256\\\": null\\n  },\\n  \\\"maxEvents\\\": 100,\\n  \\\"name\\\": \\\"example-policy\\\",\\n  \\\"onError\\\": \\\"stop\\\",\\n  \\\"positions\\\": \\\"lastPosition\\\",\\n  \\\"probes\\\": [\\n    {\\n      \\\"id\\\": \\\"reader\\\",\\n      \\\"json\\\": \\\"{\\\\\\\"artifactType\\\\\\\": \\\\\\\"activation-probe\\\\\\\", \\\\\\\"schemaVersion\\\\\\\": 1, \\\\\\\"label\\\\\\\": \\\\\\\"Example instrument\\\\\\\", \\\\\\\"createdAt\\\\\\\": \\\\\\\"2026-01-01T00:00:00Z\\\\\\\", \\\\\\\"method\\\\\\\": \\\\\\\"linear-logit-v1\\\\\\\", \\\\\\\"input\\\\\\\": {\\\\\\\"modelID\\\\\\\": \\\\\\\"example/model\\\\\\\", \\\\\\\"revision\\\\\\\": \\\\\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\\\\\", \\\\\\\"substrate\\\\\\\": \\\\\\\"pytorch\\\\\\\", \\\\\\\"coordinateConvention\\\\\\\": \\\\\\\"hf-decoder-block-v1/model.layers\\\\\\\", \\\\\\\"precision\\\\\\\": \\\\\\\"float32\\\\\\\", \\\\\\\"hiddenSize\\\\\\\": 2, \\\\\\\"site\\\\\\\": {\\\\\\\"kind\\\\\\\": \\\\\\\"residualPost\\\\\\\", \\\\\\\"layer\\\\\\\": 0}, \\\\\\\"reading\\\\\\\": {\\\\\\\"rendering\\\\\\\": \\\\\\\"raw\\\\\\\", \\\\\\\"position\\\\\\\": \\\\\\\"lastNonPadding\\\\\\\", \\\\\\\"population\\\\\\\": \\\\\\\"prompt\\\\\\\"}, \\\\\\\"tokenizerSHA256\\\\\\\": null, \\\\\\\"templateSHA256\\\\\\\": null}, \\\\\\\"preprocessing\\\\\\\": {\\\\\\\"center\\\\\\\": [1, 3], \\\\\\\"scale\\\\\\\": [2, 4]}, \\\\\\\"layers\\\\\\\": [{\\\\\\\"weights\\\\\\\": [[2, -1]], \\\\\\\"bias\\\\\\\": [0.5], \\\\\\\"activation\\\\\\\": \\\\\\\"identity\\\\\\\"}], \\\\\\\"output\\\\\\\": {\\\\\\\"negativeLabel\\\\\\\": \\\\\\\"absent\\\\\\\", \\\\\\\"positiveLabel\\\\\\\": \\\\\\\"present\\\\\\\", \\\\\\\"scoreKind\\\\\\\": \\\\\\\"logit\\\\\\\", \\\\\\\"threshold\\\\\\\": 0}, \\\\\\\"training\\\\\\\": {\\\\\\\"recipeID\\\\\\\": \\\\\\\"reference-fixture-v1\\\\\\\", \\\\\\\"data\\\\\\\": [{\\\\\\\"role\\\\\\\": \\\\\\\"fit\\\\\\\", \\\\\\\"sha256\\\\\\\": \\\\\\\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\\\\\\\"}], \\\\\\\"settings\\\\\\\": {\\\\\\\"seed\\\\\\\": \\\\\\\"18446744073709551615\\\\\\\", \\\\\\\"note\\\\\\\": \\\\\\\"synthetic fixture, not a fitted research instrument\\\\\\\"}}}\\\",\\n      \\\"sha256\\\": \\\"76cafa6b7e14d33b47a2fa47cb9f2a684a4bd7903bf1c2603114cbdbc5bb15fa\\\"\\n    }\\n  ],\\n  \\\"rules\\\": [\\n    {\\n      \\\"action\\\": \\\"change\\\",\\n      \\\"kind\\\": \\\"fixed\\\",\\n      \\\"value\\\": 2\\n    }\\n  ],\\n  \\\"schemaVersion\\\": 1,\\n  \\\"site\\\": {\\n    \\\"kind\\\": \\\"residualPost\\\",\\n    \\\"layer\\\": 0\\n  },\\n  \\\"stages\\\": [\\n    \\\"prefill\\\",\\n    \\\"decode\\\"\\n  ]\\n}\",\"sha256\":\"d4dcae2af44dcbdea22d1e7b51bb7a3cc60c4e7c2b7f30634893b01376917ba0\"}],\"name\":\"policy-agent\",\"neutralPCBasisPath\":null,\"promptMode\":\"chatAssistant\",\"qwenThinkingEnabled\":false,\"schemaVersion\":1,\"systemPrompt\":null,\"temperature\":0.0},\"artifactHash\":\"30b4b5a00461e076278ddd273b34892000f0823faae2ca8909ac5c3ab312f719\",\"artifactPath\":\"experiments/portability-interop/pinned/variant-policy-agent.json\",\"name\":\"policy-agent\"}]}",
   "freezeCanonicalWithSwiftDefaults": "{\"capabilityBatteryFile\":\"prompts/batteries/b1.jsonl\",\"capabilityBatteryHash\":\"976bd5dc407ad3f7f0203ca9b98a7bd8cf07740db9d689b693b2a451f13c5a19\",\"concepts\":[{\"name\":\"french\",\"options\":{\"method\":\"meanDifference\",\"readingPosition\":{\"lastToken\":{}}},\"stimulusSetHash\":\"4c072659bd86a71455db8d7a69fea6f537ea528f5a761fe8715443630fcb1e1f\",\"validationHash\":\"91b8a716260b7ef8cb3962ad171744474ab0f5b4792a07106fb83a9f328da876\"}],\"conditions\":[{\"alphaInNormUnits\":true,\"bandWidth\":1,\"name\":\"baseline\",\"slots\":[]},{\"alphaInNormUnits\":true,\"bandWidth\":1,\"name\":\"arm-a\",\"slots\":[{\"alpha\":0.1,\"concept\":\"french\",\"layer\":1}]}],\"evaluation\":{\"judgeModel\":\"claude-opus-4-8\",\"judgePrompt\":\"\",\"kind\":\"none\"},\"experimentDescription\":\"Phase-0 interop fixture\",\"judgeRubricFile\":\"prompts/rubrics/r1.md\",\"judgeRubricHash\":\"4befec25b1813b4efb780bfe304acc7fa65d28c42e1765c299efc37a5ad5cea5\",\"markersHash\":\"cc3e2659bd2f316d4bd4d86aac89e899a79259b917d514384ead7027c26a24b9\",\"maxTokens\":512,\"modelID\":\"org/m\",\"modelRevision\":\"0123456789abcdef0123456789abcdef01234567\",\"multiAgentIncludeBaseline\":true,\"name\":\"portability-interop\",\"neutralCorpusHash\":\"d7ade169c4c1f2b51954a9a8bbb5fd2c8d48c36f1ddd79781e19a2eea912988c\",\"promptMode\":\"chatAssistant\",\"reasoningEffort\":\"off\",\"recordTokenIDs\":false,\"samplesPerItem\":3,\"seedPolicy\":\"derivedSHA256\",\"seeds\":[0,1,2],\"studyKind\":\"modelOutput\",\"systemPrompt\":\"Respond in JSON.\",\"taskDescription\":\"answer the item\",\"taskPromptsFile\":\"prompts/tasks/cases.jsonl\",\"taskPromptsHash\":\"0cca009949adbced7db8a2427dd808435b1834eb482ad8c07d522f551bb0144c\",\"temperature\":0.7,\"variantConditions\":[]}",
   "freezeHash": "966c5ebdaa91dcd087f12e5cb724c3a39ef925889a7c1edee7bda2d4da85053a",
+  "freezeHashWithBatteryNotApplied": "6b58c9ca4b6c6a61d6e282a25f1fda027bade5c43620bf3eba364d5a8fb1308a",
   "freezeHashWithSwiftDefaults": "06eabe071241daee1c5194bf5b1179e8c47681f65366bba2559b62925d7765fe",
   "frozen": {
     "appVersion": "<appVersion>",
@@ -156,6 +158,96 @@
     "taskPromptsHash": "0cca009949adbced7db8a2427dd808435b1834eb482ad8c07d522f551bb0144c",
     "temperature": 0.7,
     "variantConditions": []
+  },
+  "frozenWithBatteryNotApplied": {
+    "appVersion": "<appVersion>",
+    "capabilityBatteryFile": "prompts/batteries/b1.jsonl",
+    "capabilityBatteryHash": "976bd5dc407ad3f7f0203ca9b98a7bd8cf07740db9d689b693b2a451f13c5a19",
+    "capabilityBatteryNotApplied": [
+      {
+        "condition": "policy-agent",
+        "reason": "interventionPolicy"
+      }
+    ],
+    "concepts": [
+      {
+        "name": "french",
+        "options": {
+          "method": "meanDifference",
+          "readingPosition": {
+            "lastToken": {}
+          }
+        },
+        "stimulusSetHash": "4c072659bd86a71455db8d7a69fea6f537ea528f5a761fe8715443630fcb1e1f",
+        "validationHash": "91b8a716260b7ef8cb3962ad171744474ab0f5b4792a07106fb83a9f328da876"
+      }
+    ],
+    "conditions": [],
+    "createdAt": "1970-01-01T00:00:00Z",
+    "evaluation": {
+      "judgeModel": "claude-opus-4-8",
+      "judgePrompt": "",
+      "kind": "none"
+    },
+    "experimentDescription": "Phase-0 interop fixture",
+    "freezeHash": "6b58c9ca4b6c6a61d6e282a25f1fda027bade5c43620bf3eba364d5a8fb1308a",
+    "frozenAt": "1970-01-01T00:00:00Z",
+    "frozenBy": "server",
+    "gitCommit": "<gitCommit>",
+    "judgeRubricFile": "prompts/rubrics/r1.md",
+    "judgeRubricHash": "4befec25b1813b4efb780bfe304acc7fa65d28c42e1765c299efc37a5ad5cea5",
+    "markersHash": "cc3e2659bd2f316d4bd4d86aac89e899a79259b917d514384ead7027c26a24b9",
+    "maxTokens": 512,
+    "modelID": "org/m",
+    "modelRevision": "0123456789abcdef0123456789abcdef01234567",
+    "name": "portability-interop",
+    "neutralCorpusHash": "d7ade169c4c1f2b51954a9a8bbb5fd2c8d48c36f1ddd79781e19a2eea912988c",
+    "preregistrationGeneratedHash": "<preregistrationGeneratedHash>",
+    "promptMode": "chatAssistant",
+    "reasoningEffort": "off",
+    "samplesPerItem": 3,
+    "seedPolicy": "derivedSHA256",
+    "seeds": [
+      0,
+      1,
+      2
+    ],
+    "status": "frozen",
+    "studyKind": "modelOutput",
+    "systemPrompt": "Respond in JSON.",
+    "taskDescription": "answer the item",
+    "taskPromptsFile": "prompts/tasks/cases.jsonl",
+    "taskPromptsHash": "0cca009949adbced7db8a2427dd808435b1834eb482ad8c07d522f551bb0144c",
+    "temperature": 0.7,
+    "variantConditions": [
+      {
+        "artifact": {
+          "adapters": [],
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "baseModelID": "org/m",
+          "baseRevision": "0123456789abcdef0123456789abcdef01234567",
+          "createdAt": "1970-01-01T00:00:00Z",
+          "injections": [],
+          "interventionPolicies": [
+            {
+              "json": "{\n  \"actions\": [\n    {\n      \"bounds\": [\n        0,\n        2\n      ],\n      \"id\": \"change\",\n      \"kind\": \"add\",\n      \"vector\": [\n        1,\n        0\n      ]\n    }\n  ],\n  \"binding\": {\n    \"coordinateConvention\": \"hf-decoder-block-v1/model.layers\",\n    \"modelID\": \"example/model\",\n    \"rendering\": \"raw\",\n    \"revision\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\n    \"tokenizerSHA256\": null\n  },\n  \"maxEvents\": 100,\n  \"name\": \"example-policy\",\n  \"onError\": \"stop\",\n  \"positions\": \"lastPosition\",\n  \"probes\": [\n    {\n      \"id\": \"reader\",\n      \"json\": \"{\\\"artifactType\\\": \\\"activation-probe\\\", \\\"schemaVersion\\\": 1, \\\"label\\\": \\\"Example instrument\\\", \\\"createdAt\\\": \\\"2026-01-01T00:00:00Z\\\", \\\"method\\\": \\\"linear-logit-v1\\\", \\\"input\\\": {\\\"modelID\\\": \\\"example/model\\\", \\\"revision\\\": \\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\", \\\"substrate\\\": \\\"pytorch\\\", \\\"coordinateConvention\\\": \\\"hf-decoder-block-v1/model.layers\\\", \\\"precision\\\": \\\"float32\\\", \\\"hiddenSize\\\": 2, \\\"site\\\": {\\\"kind\\\": \\\"residualPost\\\", \\\"layer\\\": 0}, \\\"reading\\\": {\\\"rendering\\\": \\\"raw\\\", \\\"position\\\": \\\"lastNonPadding\\\", \\\"population\\\": \\\"prompt\\\"}, \\\"tokenizerSHA256\\\": null, \\\"templateSHA256\\\": null}, \\\"preprocessing\\\": {\\\"center\\\": [1, 3], \\\"scale\\\": [2, 4]}, \\\"layers\\\": [{\\\"weights\\\": [[2, -1]], \\\"bias\\\": [0.5], \\\"activation\\\": \\\"identity\\\"}], \\\"output\\\": {\\\"negativeLabel\\\": \\\"absent\\\", \\\"positiveLabel\\\": \\\"present\\\", \\\"scoreKind\\\": \\\"logit\\\", \\\"threshold\\\": 0}, \\\"training\\\": {\\\"recipeID\\\": \\\"reference-fixture-v1\\\", \\\"data\\\": [{\\\"role\\\": \\\"fit\\\", \\\"sha256\\\": \\\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\\\"}], \\\"settings\\\": {\\\"seed\\\": \\\"18446744073709551615\\\", \\\"note\\\": \\\"synthetic fixture, not a fitted research instrument\\\"}}}\",\n      \"sha256\": \"76cafa6b7e14d33b47a2fa47cb9f2a684a4bd7903bf1c2603114cbdbc5bb15fa\"\n    }\n  ],\n  \"rules\": [\n    {\n      \"action\": \"change\",\n      \"kind\": \"fixed\",\n      \"value\": 2\n    }\n  ],\n  \"schemaVersion\": 1,\n  \"site\": {\n    \"kind\": \"residualPost\",\n    \"layer\": 0\n  },\n  \"stages\": [\n    \"prefill\",\n    \"decode\"\n  ]\n}",
+              "sha256": "d4dcae2af44dcbdea22d1e7b51bb7a3cc60c4e7c2b7f30634893b01376917ba0"
+            }
+          ],
+          "name": "policy-agent",
+          "neutralPCBasisPath": null,
+          "promptMode": "chatAssistant",
+          "qwenThinkingEnabled": false,
+          "schemaVersion": 1,
+          "systemPrompt": null,
+          "temperature": 0.0
+        },
+        "artifactHash": "30b4b5a00461e076278ddd273b34892000f0823faae2ca8909ac5c3ab312f719",
+        "artifactPath": "experiments/portability-interop/pinned/variant-policy-agent.json",
+        "name": "policy-agent"
+      }
+    ]
   },
   "frozenWithSwiftDefaults": {
     "appVersion": "<appVersion>",
@@ -254,6 +346,7 @@
     "appVersion",
     "freezeForced",
     "forcedGatesSkipped",
+    "capabilityBatteryNotApplied",
     "preregistrationHash",
     "preregistrationGeneratedHash"
   ]

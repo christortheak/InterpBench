@@ -2121,6 +2121,9 @@ class Manifest:
                    if k not in ("status", "frozenAt", "freezeHash", "gitCommit",
                                 "frozenBy", "appVersion", "createdAt",
                                 "freezeForced", "forcedGatesSkipped",
+                                # freeze_policy.BATTERY_NOT_APPLIED_KEY — a
+                                # freeze stamp like the two above.
+                                "capabilityBatteryNotApplied",
                                 "preregistrationHash",
                                 "preregistrationGeneratedHash")}
         blob = json.dumps(payload, sort_keys=True, separators=(",", ":"),
