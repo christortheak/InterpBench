@@ -46,7 +46,8 @@ from .workspace_lock import submitting as _submitting_workspace
 # (stamped requestedResources, else STEERLAB_AUTO_RESUBMIT), the reconciler
 # resubmits the SAME sbatch script itself — bounded by the resubmit-chain cap,
 # at most once per checkpoint, and never for a job whose cancellation was
-# requested (cancelled beats checkpointed).
+# requested (cancelled beats checkpointed). A PERSON may still resume a
+# cancelled job, through the manual verb and its own gate (``resubmit``).
 #
 # "parked" is the completed outcome of a worker that STOPPED SHORT on purpose:
 # the work could not continue here, the state is durable on disk, and a
@@ -120,9 +121,104 @@ class ResubmitRefused(Exception):
     """A manual resume request refused with a plain-language reason.
 
     Raised only by ``JobManager.resubmit`` (the Resume button's verb) for
-    states that are not a resumable checkpoint — already running, already
-    finished, already resubmitted, cancelled, or missing its sbatch script.
-    The message is the actionable text; the API maps it to HTTP 409."""
+    states that cannot be resumed — already running, already finished,
+    already resubmitted, cancelled without a kept state, or missing its
+    sbatch script. The message is the actionable text; the API maps it to
+    HTTP 409.
+
+    ``wait`` marks the one refusal that time alone repairs: a cancelled job
+    the scheduler has not yet confirmed as ended. A sharded parent uses it
+    to tell "try again in a moment" from "submit the study again"."""
+
+    def __init__(self, message: str, *, wait: bool = False):
+        super().__init__(message)
+        self.wait = wait
+
+
+# --- resume after a cancel (2026-10-04) ------------------------------------------
+#
+# A person may resume a run they cancelled. The cancelled job's child parks the
+# run exactly as it does for a walltime checkpoint (the cancel's SIGTERM sets
+# the same flag), so the same sbatch script continues it. Only the MANUAL verb
+# may do this, and only once the scheduler confirms the cancelled job has
+# ended: the automatic path never revives a cancelled job.
+
+#: Job kinds whose cancelled run can continue from its kept responses.
+CANCEL_RESUMABLE_KINDS = frozenset({
+    "study-submit", "study-submit-bundle", "study-submit-bundle-shard"})
+
+_CANCEL_RESUME_OFFER = (
+    "Resume continues this run from the responses it had already completed. "
+    "The server first checks that the cancelled job has fully stopped.")
+_CANCEL_RESUME_LOCAL = (
+    "This local run cannot be resumed yet; submit it again.")
+_CANCEL_RESUME_LATER_STAGE = (
+    "This run was cancelled after its responses were generated, while a "
+    "later stage (judging or analysis) was running. That stage cannot be "
+    "resumed after a cancel yet. The generated responses are kept on the "
+    "server; to finish the study, submit it again.")
+_CANCEL_RESUME_JUDGE_WORKER = (
+    "This is a judging job. It keeps no partial progress, so it cannot be "
+    "resumed after a cancel; submit the study again.")
+
+
+def cancel_resume_hint(job: "Job") -> dict | None:
+    """What a client should offer on a cancelled job's row, decided from the
+    record alone (no file or scheduler access, so the jobs list stays cheap).
+
+    None when the job carries no cancellation, or is not a study job at all.
+    Otherwise ``{"offered": bool, "explanation": str}``, plus
+    ``"continuation"`` once the job has been resumed. ``offered`` means the
+    Resume control should be shown; the deciding checks (the scheduler
+    confirms the cancelled job ended, the run kept a state to continue from)
+    run when the person asks, and their refusals are plain sentences."""
+    status = job.status
+    cancel_on_record = status in ("cancelled", "cancelling") or (
+        job.cancelled and status == "checkpointed")
+    if not cancel_on_record:
+        return None
+    kind = str(job.kind or "")
+    if not (kind.startswith("study-") or kind.startswith("experiment:")):
+        return None
+    rr = job.requested_resources or {}
+    result = job.result if isinstance(job.result, dict) else {}
+    continuation = result.get("resubmittedAs")
+    if continuation:
+        return {"offered": False, "continuation": str(continuation),
+                "explanation": ("This cancelled run was resumed as job "
+                                f"{continuation}. Follow that job; this "
+                                "record stays cancelled.")}
+    if status == "cancelling":
+        return {"offered": False,
+                "explanation": ("This run is still stopping. Responses it "
+                                "has already completed are kept.")}
+    if rr.get("shardChildren"):
+        if (rr.get("continuationJob") or isinstance(rr.get("judgeFanout"), dict)
+                or result.get("mergedRunDirectory")
+                or result.get("pipelineDirectory")):
+            return {"offered": False, "explanation": _CANCEL_RESUME_LATER_STAGE}
+        return {"offered": True,
+                "explanation": ("Resume continues every part of this run "
+                                "from the responses already completed. The "
+                                "server first checks that each cancelled job "
+                                "has fully stopped.")}
+    if rr.get("judgeWorker"):
+        return {"offered": False, "explanation": _CANCEL_RESUME_JUDGE_WORKER}
+    if job.executor != "slurm" or not job.executor_job_id:
+        return {"offered": False, "explanation": _CANCEL_RESUME_LOCAL}
+    if kind not in CANCEL_RESUMABLE_KINDS:
+        return {"offered": False, "explanation": _CANCEL_RESUME_LATER_STAGE}
+    parent = rr.get("parentJob")
+    if parent:
+        return {"offered": False,
+                "explanation": ("This job is one part of a larger run. "
+                                f"Resume the whole run from job {parent}.")}
+    if not JobManager._resubmit_script_candidate(job):
+        return {"offered": False,
+                "explanation": ("This job's submission script is not on "
+                                "record, so it cannot be resumed; submit the "
+                                "study again.")}
+    return {"offered": True, "explanation": _CANCEL_RESUME_OFFER}
 
 
 class DurableJobStore:
@@ -629,7 +725,11 @@ class Job:
     def to_dict(self, *, log_tail: list[str] | None = None) -> dict:
         # ``log_tail`` lets a bulk caller (the jobs list) supply tails it
         # fetched in one batched query instead of one store round-trip per job.
+        hint = cancel_resume_hint(self)
         return {
+            # Present only on a cancelled study job: whether a client should
+            # offer Resume, and the sentence that says why or why not.
+            **({"cancelResume": hint} if hint is not None else {}),
             "id": self.id,
             "kind": self.kind,
             "status": self.status,
@@ -1305,7 +1405,11 @@ class JobManager:
             unconfirmed: list[str] = []
             for cid in targets:
                 child = self.get(cid)
-                if child is not None and child.status not in TERMINAL:
+                # Liveness is the CHAIN's, not the child record's: a shard
+                # that was cancelled and then resumed by a person stays
+                # cancelled while its continuation runs, and stopping the
+                # fleet must stop that continuation too.
+                if child is not None and self._chain_is_live(child):
                     one = self.cancel(cid)
                     achieved = one and achieved
                     if not one:
@@ -1352,6 +1456,34 @@ class JobManager:
             current = child
         return achieved
 
+    def cancel_answer(self, job_id: str) -> dict:
+        """What an ACCEPTED cancel tells the person who asked: that the
+        responses already completed are kept, and whether (and how) the run
+        can be resumed. Read from the record after the cancel; the sentence
+        is plain and names no client, so each client adds its own "how"."""
+        answer: dict = {"ok": True}
+        job = self.get(job_id)
+        hint = cancel_resume_hint(job) if job is not None else None
+        if hint is None:
+            return answer
+        answer["cancelResume"] = hint
+        if hint.get("offered"):
+            answer["message"] = (
+                "Cancel requested. Responses this run has already completed "
+                "are kept. Once the scheduler confirms the job has stopped, "
+                f"you can resume job {job_id} and it continues from there; "
+                "nothing resumes it automatically.")
+        elif job is not None and job.status == "cancelling":
+            answer["message"] = (
+                "Cancel requested. The run is stopping; responses it has "
+                "already completed are kept. If it can be continued, its "
+                "status will read cancelled (resumable) and Resume continues "
+                "it.")
+        else:
+            answer["message"] = "Cancel requested. " + str(
+                hint.get("explanation") or "")
+        return answer
+
     def _cancel_one(self, job: Job) -> bool:
         job._cancel.set()
         self.store.mark_cancel_requested(job.id)
@@ -1370,6 +1502,12 @@ class JobManager:
                 # scancel kills the allocation itself, so terminal is honest here.
                 job.status = "cancelled"
                 job.finished_at = time.time()
+                if (cancel_resume_hint(job) or {}).get("offered"):
+                    job.log("responses this run has already completed are "
+                            "kept; once the scheduler confirms the job has "
+                            "stopped, a person can resume it and it "
+                            "continues from there (nothing resumes it "
+                            "automatically)")
             else:
                 # A nonzero scancel is NOT a cancellation: the allocation may
                 # still be running/queued (live shakedown 2026-07-16 — a stop
@@ -1606,7 +1744,10 @@ class JobManager:
             still: list[str] = []
             for cid in [str(c) for c in pending]:
                 child = self.get(cid)
-                if child is not None and child.status in TERMINAL:
+                # "Stopped" means no link of its resubmit chain is live (a
+                # cancelled shard a person resumed has a running
+                # continuation behind a terminal record).
+                if child is not None and not self._chain_is_live(child):
                     continue  # confirmed stopped (or never ran)
                 ok = False
                 try:
@@ -1614,7 +1755,7 @@ class JobManager:
                 except Exception:  # noqa: BLE001 - retried next tick
                     ok = False
                 child = self.get(cid)
-                if ok and (child is None or child.status in TERMINAL):
+                if ok and (child is None or not self._chain_is_live(child)):
                     continue
                 still.append(cid)
             if still == [str(c) for c in pending]:
@@ -1649,6 +1790,23 @@ class JobManager:
                 return current
             seen.add(child.id)
             current = child
+
+    def _chain_is_live(self, job: "Job") -> bool:
+        """Whether ``job`` or any continuation in its resubmit chain is still
+        non-terminal. For a job with no chain this is just its own status;
+        it differs for a record that stays terminal while a continuation
+        carries the run (a cancelled job a person resumed)."""
+        seen = {job.id}
+        current = job
+        while True:
+            if current.status not in TERMINAL:
+                return True
+            next_id = (current.result or {}).get("resubmittedAs")
+            following = self.get(str(next_id)) if next_id else None
+            if following is None or following.id in seen:
+                return False
+            seen.add(following.id)
+            current = following
 
     def _fanout_has_finished(self, parent: "Job", targets: list[str]) -> bool:
         """Whether a sharded parent has nothing left that a cancel could
@@ -2704,7 +2862,9 @@ class JobManager:
 
     def _resolve_stale_claim(self, job: "Job", result_now: dict, *,
                              limit: int, manual: bool,
-                             walltime: str | None = None) -> tuple[str, dict]:
+                             walltime: str | None = None,
+                             after_cancel: dict | None = None
+                             ) -> tuple[str, dict]:
         """Resolve a STALE resubmission claim (resume crash-safety,
         2026-07-23): the claimant died between claiming and stamping, and
         the crash window includes "sbatch succeeded, continuation record
@@ -2768,8 +2928,9 @@ class JobManager:
                 self._resubmit_note(job, "reconciliationRequired", message)
                 return "blocked", {"message": message}
             if found:
-                child = self._adopt_found_resubmission(job, claim, str(found),
-                                                       limit=limit)
+                child = self._adopt_found_resubmission(
+                    job, claim, str(found), limit=limit,
+                    after_cancel=after_cancel)
                 return "adopted", {"jobId": child.id,
                                    "slurmJobID": child.executor_job_id}
         elif not (manual and stale_token is None):
@@ -2818,7 +2979,8 @@ class JobManager:
         job.result = {**(job.result or {}), **result_after}
         try:
             child = self._perform_resubmit(job, limit=limit, manual=manual,
-                                           token=new_token, walltime=walltime)
+                                           token=new_token, walltime=walltime,
+                                           after_cancel=after_cancel)
         except Exception as exc:  # noqa: BLE001 - surfaced; retried next tick
             released = self.store.release_resubmit_claim(job.id, new_claimant)
             if released is not None:
@@ -2834,7 +2996,8 @@ class JobManager:
                                "slurmJobID": child.executor_job_id}
 
     def _adopt_found_resubmission(self, job: "Job", claim: dict,
-                                  slurm_id: str, *, limit: int) -> "Job":
+                                  slurm_id: str, *, limit: int,
+                                  after_cancel: dict | None = None) -> "Job":
         """The crash window's repair (sbatch succeeded, record unwritten):
         the scheduler KNOWS the stale claim's token, so the continuation is
         already running — write the job record the dead claimant never got
@@ -2844,10 +3007,18 @@ class JobManager:
         next_count = count + 1
         chain = [str(x) for x in (rr.get("resubmitChain") or [])] + [job.id]
         child_resources = dict(rr)
+        # Each continuation's stamp describes its OWN birth, never its
+        # ancestor's.
+        child_resources.pop("resumedAfterCancel", None)
         child_resources.update({"resubmitOf": job.id, "resubmitChain": chain,
                                 "resubmitCount": next_count,
                                 "submissionToken": claim.get("token"),
                                 "adoptedFromToken": True})
+        if after_cancel is not None:
+            # Only the manual verb ever claims a cancelled job, so the dead
+            # claimant was a person's resume.
+            child_resources["manualResubmit"] = True
+            child_resources["resumedAfterCancel"] = True
         records_dir = (rr.get("recordsDirectory")
                        or (job.result or {}).get("recordsDirectory"))
         child = self.record_external(
@@ -2863,9 +3034,12 @@ class JobManager:
         job.result = {**{k: v for k, v in (job.result or {}).items()
                          if k != "resubmitClaim"},
                       "resubmittedAs": child.id}
-        job.log(f"checkpointed — resubmission adopted as {child.id} "
+        job.log(f"{'cancelled' if after_cancel is not None else 'checkpointed'}"
+                f" — resubmission adopted as {child.id} "
                 f"({next_count}/{limit}), already running as Slurm job "
                 f"{slurm_id} (crash-window repair, no second submission)")
+        if after_cancel is not None:
+            self._stamp_resumed_after_cancel(job, child, after_cancel)
         self.store.update(job)
         self._resubmit_notes.pop(job.id, None)
         return child
@@ -2974,13 +3148,20 @@ class JobManager:
     def _perform_resubmit(self, job: Job, *, limit: int,
                           manual: bool = False,
                           token: str | None = None,
-                          walltime: str | None = None) -> Job:
+                          walltime: str | None = None,
+                          after_cancel: dict | None = None) -> Job:
         """THE SAME sbatch script, verbatim, through the executor's normal
         submit path (which re-checks the maintenance window itself): the
         script re-executes and the resume pointer continues the parked run.
         The ONE resubmit implementation — the reconciler's auto-resubmit and
         the manual Resume verb both land here, differing only in their gates
         and the ``manualResubmit`` stamp on the continuation record.
+
+        ``after_cancel`` is the admission a person's resume of a CANCELLED
+        job passed (``_cancel_resume_admission``). It is the only way a job
+        with a cancellation on record gets through here: without it this
+        raises, so no automatic caller can revive a cancelled job even if
+        its own gate were ever bypassed.
 
         Crash-safety ordering: sbatch FIRST, stamp second (the reverse crash
         is repaired by ``_existing_resubmission`` on a later tick — and,
@@ -2996,6 +3177,14 @@ class JobManager:
         flag-beats-header precedence is what applies the longer limit."""
         import inspect
         from .executors import JobBundle, SlurmResources
+        if after_cancel is None and (job.cancelled or job.status == "cancelled"):
+            raise RuntimeError(
+                f"job {job.id} has a cancellation on record; only a person's "
+                "resume, after the cancelled job is confirmed ended, may "
+                "continue it")
+        if after_cancel is not None and not manual:
+            raise RuntimeError(
+                "a cancelled job is resumed through the manual verb only")
         rr = job.requested_resources or {}
         script = self._resubmit_script_candidate(job)
         effective_walltime = walltime or str(rr.get("walltime") or "04:00:00")
@@ -3029,8 +3218,16 @@ class JobManager:
         next_count = count + 1
         chain = [str(x) for x in (rr.get("resubmitChain") or [])] + [job.id]
         child_resources = dict(rr)
+        # Each continuation's stamp describes its OWN birth, never its
+        # ancestor's.
+        child_resources.pop("resumedAfterCancel", None)
         child_resources.update({"resubmitOf": job.id, "resubmitChain": chain,
                                 "resubmitCount": next_count})
+        if after_cancel is not None:
+            # Resumed by a person after a cancel. The continuation is an
+            # ordinary job from here on: it carries no cancellation, and the
+            # automatic path treats it like any other.
+            child_resources["resumedAfterCancel"] = True
         if walltime:
             # The continuation's durable record prices the limit it actually
             # runs under (window math, walltime forensics), plus a provenance
@@ -3049,14 +3246,24 @@ class JobManager:
         records_dir = (rr.get("recordsDirectory")
                        or (job.result or {}).get("recordsDirectory"))
         how = "manual resubmission" if manual else "auto-resubmission"
+        what = "resumes the checkpointed run via its pointer"
+        if after_cancel is not None:
+            how = "manual resume after a cancel"
+            what = {
+                "parked": "continues the cancelled run from the responses "
+                          "it kept",
+                "complete": "reports and packages the run, which had already "
+                            "finished when the cancel arrived",
+            }.get(str(after_cancel.get("state")),
+                  "starts the cancelled job, which had not begun, from the "
+                  "beginning")
         child = self.record_external(
             job.kind, status="submitted", executor="slurm",
             executor_job_id=str(slurm_id),
             requested_resources=child_resources,
             result=({"recordsDirectory": records_dir} if records_dir else None),
             log=(f"{how} of {job.id} ({next_count}/{limit}): the same "
-                 f"sbatch script re-executes as Slurm job {slurm_id} and resumes "
-                 "the checkpointed run via its pointer"
+                 f"sbatch script re-executes as Slurm job {slurm_id} and {what}"
                  + (f" (walltime raised to {walltime} on the sbatch command "
                     "line; the script is unchanged)" if walltime else "")))
         # The stamp CONSUMES the resubmission claim: resubmittedAs is now the
@@ -3064,7 +3271,9 @@ class JobManager:
         job.result = {**{k: v for k, v in (job.result or {}).items()
                          if k != "resubmitClaim"},
                       "resubmittedAs": child.id}
-        if manual:
+        if after_cancel is not None:
+            self._stamp_resumed_after_cancel(job, child, after_cancel)
+        elif manual:
             job.log(f"checkpointed — manually resubmitted as {child.id} "
                     f"({next_count}/{limit}) — continuing as Slurm job {slurm_id}")
         else:
@@ -3073,7 +3282,8 @@ class JobManager:
         self._resubmit_notes.pop(job.id, None)
         return child
 
-    def resubmit(self, job_id: str, *, walltime: str | None = None) -> dict:
+    def resubmit(self, job_id: str, *, walltime: str | None = None,
+                 _from_parent: bool = False) -> dict:
         """Manual resume of a CHECKPOINTED job — the app's Resume button and
         the CLI's resubmit verb (``POST /api/jobs/{id}/resubmit``). Live
         incident 2026-07-22: a frozen pipeline checkpointed cleanly at the
@@ -3089,10 +3299,25 @@ class JobManager:
         non-resumable state refuses with a plain-language
         ``ResubmitRefused``; sbatch failures raise through untouched.
 
+        A CANCELLED job is resumable here too (2026-10-04), and only here:
+        the cancel parks the run the way a checkpoint does, so the same
+        script continues it and every completed response is kept. Two things
+        must hold first (``_cancel_resume_admission``): the scheduler
+        confirms the cancelled job has ended, because two processes must
+        never write to one run directory, and the run kept a state to
+        continue from. The continuation is a new, ordinary job stamped
+        ``manualResubmit`` and ``resumedAfterCancel``; the cancelled record
+        stays cancelled and links to it. The automatic path is unchanged and
+        never revives a cancelled job.
+
         ``walltime`` (field incident 2026-08-29: a shard that checkpointed
         AT its limit would only checkpoint again under the same one) raises
         the scheduler limit for the continuation — on sbatch's command
-        line, never by editing the script."""
+        line, never by editing the script.
+
+        ``_from_parent`` is set only by a sharded parent's own fan-out: it
+        lets one cancelled shard be resumed as part of resuming the whole
+        run, which a direct request for the shard alone is refused."""
         if walltime is not None:
             from .executors import validated_walltime
             try:
@@ -3109,6 +3334,11 @@ class JobManager:
         # implementation. The parent itself has no sbatch script.
         shard_children = (job.requested_resources or {}).get("shardChildren")
         if shard_children:
+            if job.status == "cancelled" or job.cancelled:
+                # A cancelled fan-out: resume every cancelled shard, then
+                # let the parent follow its shards again.
+                return self._resume_sharded_parent_after_cancel(
+                    job, walltime=walltime)
             if job.status in TERMINAL:
                 raise ResubmitRefused(
                     f"sharded run {job_id} already finished ({job.status}) — "
@@ -3161,21 +3391,24 @@ class JobManager:
                         "checkpoint exit code (85) for this job — record "
                         "corrected to checkpointed, resume proceeds")
                 self.store.update(job)
-        if job.status in TERMINAL:
+        # A cancellation on record sends the request down the cancel-resume
+        # path: the cancelled status itself, or the cancel flag beside a
+        # "checkpointed" that a late child-record fold restored. The
+        # automatic path keeps refusing both (cancelled beats checkpointed).
+        after_cancel_request = self._cancel_on_record(job)
+        if after_cancel_request:
+            self._refuse_unresumable_cancelled_job(job, from_parent=_from_parent)
+        elif job.status in TERMINAL:
             raise ResubmitRefused(
                 f"job {job_id} already finished ({job.status}) — a terminal "
                 "job has nothing to resume; submit the study again for a "
                 "fresh run")
-        if job.status != "checkpointed":
+        elif job.status != "checkpointed":
             raise ResubmitRefused(
                 f"job {job_id} is {job.status} — resume applies only to a "
-                "checkpointed job; this one is still with the scheduler "
-                "(wait for it to finish or checkpoint, or cancel it)")
-        if job.cancelled:
-            raise ResubmitRefused(
-                f"job {job_id} has a cancellation on record — cancelled "
-                "beats checkpointed, so it will not be resumed; submit the "
-                "study again if you want it to run")
+                "checkpointed or cancelled job; this one is still with the "
+                "scheduler (wait for it to finish or checkpoint, or cancel "
+                "it)")
         stamped = (job.result or {}).get("resubmittedAs")
         if not stamped:
             prior = self._existing_resubmission(job)
@@ -3200,6 +3433,12 @@ class JobManager:
                 "the submission's sbatch script is not on record or not on "
                 f"disk ({script!r}) — this job cannot be resumed from here; "
                 "submit the study again")
+        # The cancel-resume admission: the scheduler confirms the cancelled
+        # job ended, and the run kept a state to continue from. Raises the
+        # plain refusal otherwise; nothing has been claimed or submitted.
+        after_cancel = (self._cancel_resume_admission(
+                            job, script, allow_unstarted=_from_parent)
+                        if after_cancel_request else None)
         from .executors import first_crossing_window
         effective_walltime = walltime or str(
             (job.requested_resources or {}).get("walltime") or "04:00:00")
@@ -3234,7 +3473,7 @@ class JobManager:
                 # exists (resume crash-safety, 2026-07-23).
                 outcome, payload = self._resolve_stale_claim(
                     job, result_now, limit=limit, manual=True,
-                    walltime=walltime)
+                    walltime=walltime, after_cancel=after_cancel)
                 if outcome == "blocked":
                     raise ResubmitRefused(str(payload.get("message")))
                 child = self.get(str(payload.get("jobId") or ""))
@@ -3254,12 +3493,15 @@ class JobManager:
                     # — an adopted continuation runs under its own limit.
                     **({"walltime": walltime}
                        if walltime and outcome == "resubmitted" else {}),
+                    **self._after_cancel_answer(job, payload.get("jobId"),
+                                                after_cancel),
                 }
             return self._await_concurrent_resubmission(job, result_now)
         job.result = {**(job.result or {}), **result_now}
         try:
             child = self._perform_resubmit(job, limit=limit, manual=True,
-                                           token=token, walltime=walltime)
+                                           token=token, walltime=walltime,
+                                           after_cancel=after_cancel)
         except Exception:
             released = self.store.release_resubmit_claim(job.id, claimant)
             if released is not None:
@@ -3278,7 +3520,439 @@ class JobManager:
             # the caller's proof the server understood the request (an older
             # server ignores the field and omits the echo).
             **({"walltime": walltime} if walltime else {}),
+            **self._after_cancel_answer(job, child.id, after_cancel),
         }
+
+    # --- resume after a cancel: the manual verb's own gate (2026-10-04) --------
+
+    @staticmethod
+    def _cancel_on_record(job: Job) -> bool:
+        """Whether ``job`` is a cancelled job as far as the resume verb is
+        concerned: its status reads cancelled, or it carries the cancel flag
+        beside a ``checkpointed`` status that a child-record fold restored
+        around the cancel."""
+        return job.status == "cancelled" or (
+            job.cancelled and job.status == "checkpointed")
+
+    @staticmethod
+    def _refuse_unresumable_cancelled_job(job: Job, *, from_parent: bool) -> None:
+        """Refuse, in plain words, the cancelled jobs that have nothing the
+        resume verb can continue: a job that never went through the
+        scheduler, a judging worker, a later pipeline stage, and one shard
+        asked for on its own."""
+        rr = job.requested_resources or {}
+        if job.executor != "slurm":
+            raise ResubmitRefused(
+                f"job {job.id} ran on this machine, not through the "
+                "scheduler, and it did not keep a state it could continue "
+                "from when it was cancelled — this local run cannot be "
+                "resumed yet; submit it again")
+        if not job.executor_job_id:
+            raise ResubmitRefused(
+                f"job {job.id} was cancelled before it was handed to the "
+                "scheduler, so there is nothing to resume; submit the study "
+                "again")
+        if rr.get("judgeWorker"):
+            raise ResubmitRefused(
+                f"job {job.id} is a judging job, and a judging job keeps no "
+                "partial progress — it cannot be resumed after a cancel; "
+                "submit the study again")
+        if str(job.kind) == "study-submit-bundle-continuation":
+            raise ResubmitRefused(
+                f"job {job.id} ran a later stage of its study (judging or "
+                "analysis), and that stage cannot be resumed after a cancel "
+                "yet — the responses already generated are kept on the "
+                "server; to finish the study, submit it again")
+        if str(job.kind) not in CANCEL_RESUMABLE_KINDS:
+            raise ResubmitRefused(
+                f"job {job.id} ({job.kind}) is not a study run, and resume "
+                "after a cancel applies to study runs only — start it again "
+                "the way it was first started")
+        parent = rr.get("parentJob")
+        if parent and not from_parent:
+            raise ResubmitRefused(
+                f"job {job.id} is one part of a larger run — resume the "
+                f"whole run from job {parent} instead, so its parts are "
+                "merged when they finish")
+
+    def _cancelled_job_end_proof(self, job: Job, script: str) -> tuple[bool, str]:
+        """``(ended, why)``: whether the cancelled scheduler job behind
+        ``job`` has ENDED, by content first and the scheduler second.
+
+        The exit marker (``slurm-<id>.exit``, written last by the script's
+        own EXIT trap) proves it without a scheduler round trip. A job the
+        scheduler killed outright writes no marker, so the scheduler's own
+        record is asked next (``SlurmExecutor.job_end_evidence``, queue
+        first, because accounting reads CANCELLED while the job's processes
+        are still being stopped). Anything short of a positive answer is
+        ``False``: the caller refuses with "wait, then try again"."""
+        from .executors import job_end_marker_path
+        slurm_id = str(job.executor_job_id)
+        marker = job_end_marker_path(os.path.dirname(script), slurm_id)
+        if os.path.isfile(marker):
+            return True, "its exit marker is on disk"
+        probe = getattr(self._slurm(), "job_end_evidence", None)
+        if not callable(probe):
+            return False, ("it left no exit marker, and this scheduler "
+                           "connection cannot report whether a job has ended")
+        try:
+            evidence = probe(slurm_id)
+        except Exception as exc:  # noqa: BLE001 - silence is not an ended job
+            return False, ("the scheduler could not be asked "
+                           f"({type(exc).__name__}: {exc})")
+        return bool(evidence.ended is True), str(evidence.detail)
+
+    def _cancel_parked_state(self, job: Job) -> dict:
+        """What a cancelled scheduler job left on disk, read through its
+        resume pointer (``<records>/<chain root>.resume``, the same file the
+        re-executed script consults). Pure file reads. ``state`` is one of:
+
+        - ``parked``: the run kept a state the script will continue from;
+        - ``complete``: the run had already finished when the cancel landed
+          (the script then only reports and packages it);
+        - ``unstarted``: no pointer, so no run directory was ever created;
+        - ``unparked``: it started but was stopped before it could save its
+          place, so re-executing would generate every response again;
+        - ``mismatch``: the directory belongs to a different part of a
+          sharded run than this job (``detail`` says which).
+        """
+        from ..experiment import resume as resume_mod
+        from ..experiment import sharding as sharding_mod
+        rr = job.requested_resources or {}
+        records_dir = (rr.get("recordsDirectory")
+                       or (job.result or {}).get("recordsDirectory"))
+        if not isinstance(records_dir, str) or not records_dir:
+            return {"state": "unstarted"}
+        chain = [str(x) for x in (rr.get("resubmitChain") or [])]
+        root_id = chain[0] if chain else job.id
+        record_path = os.path.join(records_dir, f"{root_id}.json")
+        found: dict = {"recordPath": record_path}
+        pointer_path = resume_mod.pointer_path_for_record(record_path)
+        pointer = resume_mod.read_pointer(pointer_path)
+        if not pointer or not pointer.get("runDirectory"):
+            return {**found, "state": "unstarted"}
+        verb = str(pointer.get("verb") or "run")
+        directory = str(pointer["runDirectory"])
+        found.update({"verb": verb, "runDirectory": directory})
+        if verb == "pipeline":
+            return {**found, **self._cancel_parked_pipeline(directory)}
+        disposition, _resolved = resume_mod.resolve_pointer(pointer_path,
+                                                            verb=verb)
+        if disposition == "complete":
+            return {**found, "state": "complete"}
+        if disposition != "resume":
+            return {**found, "state": "unparked"}
+        # Shard identity, as the run's own resume admission checks it: the
+        # directory must be this job's shard of the run, or no shard at all.
+        def _shard(index, count) -> str | None:
+            try:
+                return f"{int(index)}/{int(count)}"
+            except (TypeError, ValueError):
+                return None
+
+        stamp = sharding_mod.read_shard_stamp(directory)
+        expected = _shard(rr.get("shardIndex"), rr.get("shardCount"))
+        on_disk = (_shard(stamp.get("shardIndex"), stamp.get("shardCount"))
+                   if stamp is not None else None)
+        if expected != on_disk:
+            return {**found, "state": "mismatch",
+                    "detail": ("its run folder holds "
+                               + (f"part {on_disk}" if on_disk
+                                  else "a whole run, not one part")
+                               + " but the job is "
+                               + (f"part {expected}" if expected
+                                  else "a whole run"))}
+        state = resume_mod.read_state(directory) or {}
+        return {**found, "state": "parked",
+                "completedRecords": state.get("completedRecords")}
+
+    @staticmethod
+    def _cancel_parked_pipeline(pipeline_directory: str) -> dict:
+        """A cancelled PIPELINE job's kept state, from its ledger: finished
+        stages are skipped on resume, and the run stage continues response
+        by response when it parked. ``unparked`` when the run stage started
+        and saved no place (resuming would generate every response again),
+        ``unstarted`` when no stage had finished."""
+        from ..experiment import resume as resume_mod
+        try:
+            with open(os.path.join(pipeline_directory, "pipeline.json"),
+                      encoding="utf-8") as handle:
+                ledger = json.load(handle)
+        except (OSError, ValueError):
+            return {"state": "unstarted"}
+        if not isinstance(ledger, dict):
+            return {"state": "unstarted"}
+        if ledger.get("disposition"):
+            return {"state": "complete"}
+        stages = ledger.get("stageResults") or {}
+        run_stage = stages.get("run") if isinstance(stages, dict) else None
+        run_stage = run_stage if isinstance(run_stage, dict) else {}
+        run_dir = run_stage.get("runDirectory")
+        if not (isinstance(run_dir, str) and run_dir and os.path.isdir(run_dir)):
+            run_dir = None
+        run_done = run_stage.get("status") == "completed" or (
+            run_dir is not None and resume_mod.is_complete(run_dir, "run"))
+        if run_dir is not None and not run_done:
+            if resume_mod.is_resumable(run_dir, "run"):
+                state = resume_mod.read_state(run_dir) or {}
+                return {"state": "parked",
+                        "completedRecords": state.get("completedRecords")}
+            return {"state": "unparked"}
+        finished = sorted(
+            name for name, entry in (stages.items()
+                                     if isinstance(stages, dict) else [])
+            if isinstance(entry, dict) and entry.get("status") == "completed")
+        if not finished and not run_done:
+            return {"state": "unstarted"}
+        return {"state": "parked", "completedRecords": None,
+                "finishedStages": finished}
+
+    def _cancel_resume_admission(self, job: Job, script: str, *,
+                                 allow_unstarted: bool = False) -> dict:
+        """The gate a person's resume of a cancelled job must pass. Returns
+        the admission (what was verified, stamped onto the record) or raises
+        the plain refusal. No side effects.
+
+        1. The scheduler confirms the cancelled job has ended. If that
+           cannot be established the refusal says "wait, then try again":
+           two processes must never write to one run directory. Asked FIRST,
+           because a job still winding down may be about to save its place.
+        2. The run kept a state to continue from. Without one, re-executing
+           the script would start over, so the refusal says "submit the
+           study again". A run that had already FINISHED when the cancel
+           landed is admitted too: the script recognises a complete run and
+           only reports and packages it, generating nothing.
+           ``allow_unstarted`` (a sharded parent's fan-out only) lets a
+           shard that never began start from the beginning, which loses
+           nothing and lets the run's other parts be merged.
+
+        The run's own admission checks (manifest content hash, shard
+        identity) are unchanged: the continuation re-executes the same
+        script and runs them before it loads a model."""
+        ended, why = self._cancelled_job_end_proof(job, script)
+        if not ended:
+            raise ResubmitRefused(
+                f"job {job.id} was cancelled, but the scheduler has not yet "
+                f"confirmed that it stopped ({why}). Two jobs must never "
+                "write to the same run folder, so it cannot be resumed yet — "
+                "wait a minute, then try again", wait=True)
+        parked = self._cancel_parked_state(job)
+        state = parked["state"]
+        if state in ("parked", "complete") or (
+                state == "unstarted" and allow_unstarted):
+            digest = None
+            try:
+                with open(parked.get("recordPath") or "", "rb") as handle:
+                    digest = hashlib.sha256(handle.read()).hexdigest()
+            except OSError:
+                pass
+            return {**parked, "endProof": why, "recordSha256": digest}
+        if state == "mismatch":
+            raise ResubmitRefused(
+                f"job {job.id} cannot be resumed: {parked.get('detail')} — "
+                "submit the study again")
+        if state == "unparked":
+            raise ResubmitRefused(
+                f"job {job.id} was stopped before it could save its place, "
+                "so resuming would generate every response again — there is "
+                "nothing to resume; submit the study again")
+        raise ResubmitRefused(
+            f"job {job.id} was cancelled before it had started generating "
+            "responses, so there is nothing to resume; submit the study "
+            "again")
+
+    def _stamp_resumed_after_cancel(self, job: Job, child: Job,
+                                    after_cancel: dict) -> None:
+        """Record, on the CANCELLED job, that a person resumed it: the link
+        to its continuation and what the admission verified. The record
+        stays cancelled (a fold-restored ``checkpointed`` is set back), so
+        the history reads cancel, then resume, in that order. The caller
+        persists the record."""
+        job.result = {**(job.result or {}), "resumedAfterCancel": {
+            "continuation": child.id,
+            "at": time.time(),
+            "cancelledSchedulerJobID": (str(job.executor_job_id)
+                                        if job.executor_job_id else None),
+            "endProof": after_cancel.get("endProof"),
+            "runDirectory": after_cancel.get("runDirectory"),
+            "completedRecords": after_cancel.get("completedRecords"),
+            # parked | complete | unstarted: what the cancelled job had left.
+            "state": after_cancel.get("state"),
+            "recordSha256": after_cancel.get("recordSha256"),
+        }}
+        if job.status != "cancelled":
+            job.status = "cancelled"
+        job.finished_at = job.finished_at or time.time()
+        kept = after_cancel.get("completedRecords")
+        job.log(
+            f"cancelled — resumed by a person as {child.id} (Slurm job "
+            f"{child.executor_job_id}); the cancelled job was confirmed "
+            f"ended first ({after_cancel.get('endProof')})"
+            + (f"; {kept} completed response record(s) are kept and will "
+               "not be generated again" if isinstance(kept, int) else "")
+            + ". This record stays cancelled; the continuation carries the "
+              "run")
+
+    @staticmethod
+    def _after_cancel_answer(job: Job, continuation_id, after_cancel) -> dict:
+        """The extra fields a resume-after-cancel answers with: the stamp,
+        what was kept, and one sentence a client can show as it is."""
+        if after_cancel is None:
+            return {}
+        kept = after_cancel.get("completedRecords")
+        state = after_cancel.get("state")
+        if state == "unstarted":
+            sentence = (f"Job {job.id} was cancelled before it began, so it "
+                        f"starts from the beginning as job {continuation_id}.")
+        elif state == "complete":
+            sentence = (f"Job {job.id} had already finished its run when the "
+                        f"cancel arrived; job {continuation_id} now reports "
+                        "and packages it. Nothing is generated again.")
+        elif isinstance(kept, int):
+            sentence = (f"Job {job.id} was cancelled; it now continues as "
+                        f"job {continuation_id}. The {kept} response "
+                        f"record{'' if kept == 1 else 's'} it had completed "
+                        f"{'is' if kept == 1 else 'are'} kept and will not "
+                        "be generated again.")
+        else:
+            sentence = (f"Job {job.id} was cancelled; it now continues as "
+                        f"job {continuation_id}. Everything it had completed "
+                        "is kept and will not be generated again.")
+        return {"resumedAfterCancel": True,
+                "completedRecords": kept if isinstance(kept, int) else None,
+                "message": sentence + " The cancelled job's record stays "
+                                      "cancelled."}
+
+    def _resume_sharded_parent_after_cancel(self, parent: Job, *,
+                                            walltime: str | None) -> dict:
+        """Resume a CANCELLED sharded run: each cancelled shard continues
+        through the one shared resubmit implementation (its own record stays
+        cancelled and links to its continuation), and the parent, whose
+        state is only ever derived from its shards, follows them again so
+        the finished parts are merged.
+
+        Admission is all-or-nothing and has no side effects: if any
+        cancelled shard is not yet confirmed ended the answer is "wait, then
+        try again"; if any cannot be continued the answer is "submit the
+        study again". Nothing is submitted for a run that could never be
+        merged. A shard that had not begun when it was cancelled starts from
+        the beginning (it has no responses to lose).
+
+        A run cancelled AFTER its shards were merged (during judging or a
+        later pipeline stage) is refused plainly: those stages keep no
+        state this verb can continue."""
+        rr = parent.requested_resources or {}
+        result = parent.result or {}
+        if (rr.get("continuationJob") or isinstance(rr.get("judgeFanout"), dict)
+                or result.get("mergedRunDirectory")
+                or result.get("pipelineDirectory")):
+            kept = result.get("mergedRunDirectory") or result.get(
+                "pipelineDirectory")
+            raise ResubmitRefused(
+                f"run {parent.id} was cancelled after its responses were "
+                "generated, while a later stage (judging or analysis) was "
+                "running. That stage cannot be resumed after a cancel yet. "
+                "The generated responses are kept on the server"
+                + (f" in {kept}" if kept else "")
+                + "; to finish the study, submit it again")
+        if ((result.get("cleanupIncomplete") or {}).get("pendingCancel")):
+            raise ResubmitRefused(
+                f"run {parent.id} is still being cancelled: the scheduler "
+                "has not confirmed that every part stopped. Wait a minute, "
+                "then try again", wait=True)
+        children = [(str(cid), self.get(str(cid)))
+                    for cid in rr.get("shardChildren") or []]
+        missing = [cid for cid, child in children if child is None]
+        if missing:
+            raise ResubmitRefused(
+                f"run {parent.id} has lost the record of its part(s) "
+                f"{', '.join(missing)}, so it cannot be resumed; submit the "
+                "study again")
+        after_cancel_tails: list[Job] = []
+        checkpointed_tails: list[Job] = []
+        waits: list[str] = []
+        blockers: list[str] = []
+        for _cid, child in children:
+            if self._shard_effective(child)[0] == "succeeded":
+                continue
+            tail = self._shard_chain_tail(child)
+            if self._cancel_on_record(tail):
+                script = self._resubmit_script_candidate(tail)
+                try:
+                    self._refuse_unresumable_cancelled_job(tail, from_parent=True)
+                    if not script or not os.path.isfile(script):
+                        raise ResubmitRefused(
+                            f"job {tail.id}'s submission script is not on "
+                            "record or not on disk")
+                    self._cancel_resume_admission(tail, script,
+                                                  allow_unstarted=True)
+                except ResubmitRefused as exc:
+                    (waits if exc.wait else blockers).append(str(exc))
+                else:
+                    after_cancel_tails.append(tail)
+            elif tail.status == "checkpointed":
+                checkpointed_tails.append(tail)
+            elif tail.status in TERMINAL:
+                blockers.append(f"job {tail.id} ended as {tail.status}")
+        if blockers:
+            raise ResubmitRefused(
+                f"run {parent.id} cannot be resumed: " + "; ".join(blockers)
+                + " — without every part the run cannot be merged; submit "
+                "the study again")
+        if waits:
+            raise ResubmitRefused(
+                f"run {parent.id} cannot be resumed yet: " + "; ".join(waits),
+                wait=True)
+        if not after_cancel_tails and not checkpointed_tails:
+            raise ResubmitRefused(
+                f"run {parent.id} has no cancelled part left to resume — "
+                "its parts are finished or already running again; check the "
+                "job list")
+        resumed: list[dict] = []
+        not_resumed: list[str] = []
+        for tail in after_cancel_tails + checkpointed_tails:
+            try:
+                resumed.append(self.resubmit(tail.id, walltime=walltime,
+                                             _from_parent=True))
+            except Exception as exc:  # noqa: BLE001 - reported per part
+                not_resumed.append(f"{tail.id}: {exc}")
+        if not resumed:
+            raise ResubmitRefused(
+                f"no part of run {parent.id} could be resumed — "
+                + "; ".join(not_resumed))
+        # The parent follows its shards again. Its state is derived, so this
+        # is the same record going back to deriving; the cancel and the
+        # resume both stay on its log and in the stamp.
+        now = time.time()
+        parent._cancel.clear()
+        parent.status = "running"
+        parent.finished_at = None
+        parent.error = None
+        parent.result = {**(parent.result or {}), "resumedAfterCancel": {
+            "at": now,
+            "resumed": [{"job": entry.get("resubmitOf"),
+                         "continuation": entry.get("jobId")}
+                        for entry in resumed]}}
+        parent.log(
+            f"cancelled run resumed by a person: {len(resumed)} part(s) "
+            "continue as "
+            + ", ".join(str(entry.get("jobId")) for entry in resumed)
+            + "; each cancelled part's own record stays cancelled, and this "
+              "run follows its parts again so they are merged when they "
+              "finish"
+            + (f"; NOT resumed: {'; '.join(not_resumed)} — press Resume "
+               "again for those" if not_resumed else ""))
+        self.store.update(parent)
+        return {"ok": True, "resubmitOf": parent.id,
+                "resumedShards": resumed, "manualResubmit": True,
+                "resumedAfterCancel": True,
+                **({"notResumed": not_resumed} if not_resumed else {}),
+                "message": (
+                    f"Run {parent.id} was cancelled; {len(resumed)} of its "
+                    f"part{'' if len(resumed) == 1 else 's'} now "
+                    f"continue{'s' if len(resumed) == 1 else ''}. Responses "
+                    "already completed are kept and will not be generated "
+                    "again.")}
 
     def _await_concurrent_resubmission(self, job: Job, result_now: dict,
                                        timeout: float = 10.0) -> dict:
@@ -3580,8 +4254,19 @@ class JobManager:
             job_id = str(data.get("id") or data.get("jobID") or "")
             if not job_id:
                 continue
-            job = self.get(job_id) or Job(id=job_id, kind=data.get("kind", "slurm-child"),
-                                          _store=self.store)
+            named = self.get(job_id)
+            if named is not None:
+                # A job resumed after a cancel STAYS cancelled: its record
+                # file is still written under its id (the same script
+                # re-executes), so what the continuation writes is folded
+                # onto the continuation instead, and the record the
+                # cancelled job itself left is not folded again.
+                named = self._record_fold_target(named, data, digest)
+                if named is None:
+                    self._folded_record_digests[path] = digest
+                    continue
+            job = named or Job(id=job_id, kind=data.get("kind", "slurm-child"),
+                               _store=self.store)
             # Reconciler bookkeeping the child cannot know must survive the
             # result replacement below: losing resubmittedAs would make the
             # auto-resubmit gate fall back to the (idempotent, but noisier)
@@ -3625,6 +4310,51 @@ class JobManager:
             self._folded_record_digests[path] = digest
             count += 1
         return count
+
+    def _record_fold_target(self, job: Job, data: dict,
+                            digest: str) -> "Job | None":
+        """Which job a child record written under ``job``'s id folds onto.
+
+        Ordinarily ``job`` itself: a resubmitted run re-executes the same
+        script, writes the same record file, and the first record of the
+        chain keeps folding the run's progress. A job that a person resumed
+        AFTER A CANCEL is the exception (``result.resumedAfterCancel``): it
+        stays cancelled, so everything written after that resume folds onto
+        the continuation it started. The whole resubmit chain is walked,
+        because the cancelled link need not be the first one (a run that
+        checkpointed, was resubmitted, and was then cancelled). The record
+        the cancelled job itself left (matched by content, or by the
+        scheduler job that wrote it) answers None: it is stale, and folding
+        it onto the continuation would misreport a job that has only just
+        been submitted."""
+        seen = {job.id}
+        current = job
+        target = job
+        writer = str(data.get("executorJobID") or "")
+        while True:
+            result = current.result or {}
+            stamp = result.get("resumedAfterCancel")
+            crossed = isinstance(stamp, dict) and bool(stamp.get("continuation"))
+            if crossed:
+                if digest and digest == stamp.get("recordSha256"):
+                    return None
+                if writer and writer == str(
+                        stamp.get("cancelledSchedulerJobID") or ""):
+                    return None
+                # The continuation may have been written by another process
+                # over the same store: look there before giving up on it.
+                following = (self.get(str(stamp["continuation"]))
+                             or self._existing_resubmission(current))
+                if following is None or following.id in seen:
+                    return None
+                target = following
+            else:
+                next_id = result.get("resubmittedAs")
+                following = self.get(str(next_id)) if next_id else None
+                if following is None or following.id in seen:
+                    return target
+            seen.add(following.id)
+            current = following
 
     def stream(self, job_id: str):
         job = self.get(job_id)

@@ -369,16 +369,21 @@ def test_manual_resubmit_still_works_on_a_stale_adopted_record(tmp_path, fake_sl
     assert restarted.get(job.id).result["resubmittedAs"] == child.id
 
 
-def test_manual_resubmit_keeps_refusing_a_scheduler_cancelled_record_only_when_terminal(
+def test_manual_resubmit_of_a_record_that_reads_cancelled_goes_through_its_gate(
         tmp_path, fake_slurm):
-    """The manual gate is unchanged: a record the fold left ``checkpointed``
-    is still resumable by a person, and a record that READS cancelled is
-    still refused — neither side of the manual verb widened."""
+    """A record the fold left ``checkpointed`` is still resumable by a
+    person, as before. A record that READS cancelled used to be refused
+    outright; a person may now resume it (2026-10-04), but only through the
+    cancel-resume gate — and this one has neither an exit marker nor a
+    scheduler record of its end, so nothing is submitted."""
     script = _dummy_script(tmp_path)
     mgr = _manager(tmp_path)
     plain = _checkpointed(mgr, "47070", script=script, status="cancelled")
-    with pytest.raises(ResubmitRefused, match="already finished"):
+    with pytest.raises(ResubmitRefused,
+                       match="has not yet confirmed that it stopped") as refused:
         mgr.resubmit(plain.id)
+    assert refused.value.wait is True
+    assert fake_slurm.calls("sbatch") == []
 
 
 # --- executor: sacct's End column rides the observation ------------------------------

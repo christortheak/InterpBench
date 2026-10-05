@@ -567,6 +567,23 @@ public struct ExperimentCLIRunner: Sendable {
         return total > 0
     }
 
+    /// The repair for a refused `remote resubmit`, chosen from the server's
+    /// own sentence. A cancelled job the scheduler has not yet confirmed as
+    /// stopped needs only time; every other refusal points at the record.
+    static func resubmitRefusalRepair(detail: String) -> String {
+        if detail.localizedCaseInsensitiveContains("then try again") {
+            return "wait a minute for the cancelled job to stop, then run "
+                + "the same `steerlab-cli remote resubmit` command again; "
+                + "`steerlab-cli remote jobs --json` shows the record"
+        }
+        return "steerlab-cli remote jobs --json — find the record; resume "
+            + "applies to a checkpointed record (or one whose scheduler "
+            + "exit code is the checkpoint code, 85) and to a cancelled "
+            + "study run that kept the responses it completed. A succeeded "
+            + "or failed job, or a cancelled one that kept nothing, is "
+            + "re-run by submitting the study again"
+    }
+
     /// `envelopeReason` overrides the human `failure.reason` in the DOCUMENT
     /// only — used where the thrown error's own description is unstable or
     /// unreadable, and the human line must nonetheless stay byte-identical.
@@ -2424,11 +2441,33 @@ public struct ExperimentCLIRunner: Sendable {
                 payload: ["jobID": .string(args[1])])
         case "cancel":
             guard args.count >= 2 else { throw ExperimentError(reason: "usage: remote cancel <job-id>") }
-            try await client.cancelJob(args[1])
+            let cancellation = try await client.cancelJob(args[1])
             sink.out("cancel requested")
+            // For a study run the server says completed responses are kept
+            // and whether the run can be resumed; the line below adds the
+            // exact command. An older server's bare acknowledgement keeps
+            // the message this verb has always printed.
+            let cancelResume = cancellation.cancelResume
+            let resumable = cancelResume?.offered == true
+            let cancelMessage =
+                cancelResume == nil
+                ? "cancel requested for job \(args[1])"
+                : RemoteJobStatusClass.cancelRequestedLine(
+                    jobID: args[1], cancellation: cancellation,
+                    surface: .commandLine)
+            if cancelResume != nil { sink.out(cancelMessage) }
+            var cancelPayload: [String: JSONValue] = [
+                "jobID": .string(args[1])
+            ]
+            if cancelResume != nil {
+                cancelPayload["resumable"] = .bool(resumable)
+            }
+            if resumable {
+                cancelPayload["resumeCommand"] = .string(
+                    "steerlab-cli remote resubmit \(args[1])")
+            }
             return ExperimentCLIResult(
-                message: "cancel requested for job \(args[1])", changed: true,
-                payload: ["jobID": .string(args[1])])
+                message: cancelMessage, changed: true, payload: cancelPayload)
         case "resubmit":
             // Managed resume of a checkpointed job (field incident
             // 2026-08-29: a shard hit its walltime, checkpointed cleanly,
@@ -2462,18 +2501,16 @@ public struct ExperimentCLIRunner: Sendable {
                 where status == 409
             {
                 // The server's typed refusal: the record is not resumable
-                // (running, finished, cancelled, already resubmitted, or
-                // its script is gone). 65, not 70 — the request was
-                // well-formed and the instrument declined it.
+                // (running, finished, already resubmitted, its script is
+                // gone, or a cancelled job that is not yet confirmed
+                // stopped or kept nothing to continue from). 65, not 70 —
+                // the request was well-formed and the instrument declined
+                // it.
                 sink.err("steerlab-cli remote: \(detail)\n")
                 throw ExperimentCLIStop(
                     exitCode: 1, state: .refused, code: "resubmitRefused",
                     reason: detail,
-                    repairAction: "steerlab-cli remote jobs --json — find "
-                        + "the record; resume applies to a checkpointed "
-                        + "record (or one whose scheduler exit code is the "
-                        + "checkpoint code, 85). A succeeded or failed job "
-                        + "is re-run by submitting the study again",
+                    repairAction: Self.resubmitRefusalRepair(detail: detail),
                     payload: ["jobID": .string(resubmitJobID)])
             } catch let ClusterClient.ClientError.badResponse(status, detail)
                 where status == 404
@@ -2506,12 +2543,24 @@ public struct ExperimentCLIRunner: Sendable {
             }
             let continuation = resubmission.jobId ?? "(existing continuation)"
             let message: String
-            if let shards = resubmission.resumedShards {
+            if resubmission.resumedAfterCancel == true,
+                resubmission.resumedShards != nil
+            {
+                // A cancelled sharded run: the server's sentence counts the
+                // parts that now continue.
+                message = RemoteJobStatusClass.resumedStatusLine(
+                    jobID: resubmitJobID, result: resubmission)
+            } else if let shards = resubmission.resumedShards {
                 message = "resume fanned out to \(shards.count) checkpointed "
                     + "shard(s) of \(resubmitJobID)"
             } else if resubmission.alreadyResumed == true {
                 message = "job \(resubmitJobID) was already resumed as "
                     + "\(continuation) — no new submission"
+            } else if resubmission.resumedAfterCancel == true {
+                // A cancelled run a person resumed: the server's own
+                // sentence says what was kept and which job carries it.
+                message = RemoteJobStatusClass.resumedStatusLine(
+                    jobID: resubmitJobID, result: resubmission)
             } else {
                 message = "resubmitted job \(resubmitJobID) as \(continuation)"
                     + (resubmission.slurmJobID.map {

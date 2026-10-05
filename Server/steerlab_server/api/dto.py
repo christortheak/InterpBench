@@ -107,6 +107,9 @@ class JobDTO(BaseModel):
     executorJobID: str | None = None
     cancellationRequested: bool = False
     capabilitySnapshot: dict = Field(default_factory=dict)
+    # Present only on a cancelled study job: {"offered": bool, "explanation":
+    # str, "continuation"?: str} — whether a client should offer Resume.
+    cancelResume: dict | None = None
 
 
 class StateDTO(BaseModel):
