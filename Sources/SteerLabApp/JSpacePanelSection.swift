@@ -613,6 +613,9 @@ struct JLensLibraryButton: View {
                     Form { JSpacePanelSection(service: service, includesAnalysis: false) }
                         .formStyle(.grouped)
                 }.padding(24).frame(minWidth: 800, minHeight: 700)
+                // The section's offer of the Python engine opens its setup
+                // on this sheet, not behind it.
+                .hostsComputeSheets()
             }
     }
 }

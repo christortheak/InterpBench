@@ -138,6 +138,8 @@ struct PythonEngineNoticeTests {
         "Sources/SteerLabApp/MethodAuthoringSheet.swift",
         "Sources/SteerLabApp/TemplateInstantiationSheet.swift",
         "Sources/SteerLabApp/InterventionPoliciesView.swift",
+        // The J-lens library sheet, which shows the J-Space section's offer.
+        "Sources/SteerLabApp/JSpacePanelSection.swift",
     ]
 
     @Test func everySiteShowsTheNoticeAndEverySheetHostsItsSetup() throws {
