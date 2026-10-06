@@ -598,8 +598,17 @@ def package_evidence(run_directory: str, *, output_path: str | None = None,
         # which keeps the module, line, and run file a reader needs. Nothing
         # parses these strings on either engine; the app checks only that a
         # failure is present. The receipt returned below keeps the original.
-        meta["failure"] = path_redaction.redact_value(
-            failure, run_directory=run_directory)
+        # Against the resolved run directory, as the rest of this function
+        # names it, so a symlinked run still reads `runs/<run ID>/…`. A fault
+        # in the redactor must not cost the partial bundle (the evidence
+        # outranks its redaction), and must not archive the raw text either.
+        try:
+            meta["failure"] = path_redaction.redact_value(failure, run_directory=run_dir)
+        except Exception:  # noqa: BLE001 - keep the bundle, withhold the text
+            meta["failure"] = {
+                "errorType": failure.get("errorType", "") if isinstance(failure, dict) else "",
+                "error": "The failure text was left out of this bundle: it could not be checked "
+                         "for paths. The job record on the computer that ran the job keeps it."}
     # DECLARE every sibling directory that was packed, pipeline or not.
     #
     # This key used to be written only for pipeline bundles, so a bundle

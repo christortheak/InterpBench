@@ -143,6 +143,42 @@ def test_an_unreadable_archive_is_a_finding_not_a_skip(repo):
     assert "bundle.tar.gz [archive] could not be read" in out
 
 
+def _sparse_tar_gz(logical_size: int) -> bytes:
+    """A GNU sparse member: 512 stored bytes that read back at
+    ``logical_size``. Python's tarfile cannot write one, so the header is
+    built by hand."""
+    import gzip
+
+    def octal(n, width):
+        return ("%0*o" % (width - 1, n)).encode() + b"\0"
+
+    data = b"x" * 512
+    h = bytearray(512)
+    name = b"runs/r/report.json"
+    h[0:len(name)] = name
+    h[100:108] = octal(0o644, 8)
+    h[108:116] = octal(0, 8)
+    h[116:124] = octal(0, 8)
+    h[124:136] = octal(len(data), 12)
+    h[136:148] = octal(0, 12)
+    h[156:157] = b"S"
+    h[257:265] = b"ustar  \0"
+    h[386:398] = octal(0, 12)
+    h[398:410] = octal(len(data), 12)
+    h[483:495] = octal(logical_size, 12)
+    h[148:156] = b" " * 8
+    h[148:156] = ("%06o\0 " % sum(h)).encode()
+    return gzip.compress(bytes(h) + data + b"\0" * 1024)
+
+
+def test_a_sparse_member_is_refused_not_expanded(repo):
+    """A few hundred compressed bytes must not expand to hundreds of megabytes
+    in the scanner's memory: a sparse member is reported, never read."""
+    code, out = _scan(repo, {"bundle.tar.gz": _sparse_tar_gz(200 * 1024 * 1024)})
+    assert code == 1
+    assert "bundle.tar.gz [archive] could not be read" in out
+
+
 def test_an_encrypted_zip_member_is_a_finding_not_a_crash(repo):
     data = bytearray(_zip({f"{HOME_PATH.lstrip('/')}/notes.md": b"hello\n"}))
     # The encrypted flag, in the local and the central header.

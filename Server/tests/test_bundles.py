@@ -156,8 +156,10 @@ def test_a_partial_bundle_archives_its_failure_without_absolute_paths(tmp_path):
     archived = bundles.inspect_bundle(meta["bundlePath"])["failure"]
     document = json.dumps(archived)
     server = os.path.dirname(os.path.dirname(path_redaction.__file__))
-    for spelling in {str(tmp_path), os.path.realpath(tmp_path), server,
-                     os.path.realpath(server), os.path.expanduser("~")}:
+    spellings = {str(tmp_path), os.path.realpath(tmp_path), server,
+                 os.path.realpath(server), os.path.expanduser("~")}
+    # A home of "/" (a service account, a container) names no one.
+    for spelling in {s for s in spellings if s.count(os.sep) >= 2}:
         assert spelling not in document
     # Still a usable traceback: the module and line, and the run file.
     assert 'File "<steerlab_server>/experiment/bundles.py", line ' in \
@@ -169,6 +171,41 @@ def test_a_partial_bundle_archives_its_failure_without_absolute_paths(tmp_path):
     # The receipt is for this machine (the job record, the server's log).
     assert meta["failure"] == failure
     assert str(run) in meta["failure"]["error"]
+
+
+def test_a_redactor_fault_keeps_the_partial_bundle_and_withholds_the_text(
+        tmp_path, monkeypatch):
+    """The evidence outranks its redaction: a fault in the redactor still
+    writes the partial bundle, its failure marked present, and archives no
+    raw text. The receipt keeps the original."""
+    from steerlab_server.experiment import path_redaction
+    run = tmp_path / "runs" / "20260701T000000-exp-demo-run"
+    run.mkdir(parents=True)
+    (run / "report.json").write_text('{"ok":true}', encoding="utf-8")
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("redactor fault")
+    monkeypatch.setattr(path_redaction, "redact_value", broken)
+    failure = {"error": f"boom at {run}/report.json", "errorType": "RuntimeError",
+               "verb": "run", "traceback": f"File {run}/x.py"}
+    meta = bundles.package_evidence(str(run), failure=failure)
+    archived = bundles.inspect_bundle(meta["bundlePath"])["failure"]
+    assert archived["errorType"] == "RuntimeError"
+    assert str(tmp_path) not in json.dumps(archived)
+    assert meta["failure"] == failure
+
+
+def test_a_symlinked_run_directory_is_redacted_by_its_real_place(tmp_path):
+    run = tmp_path / "ws" / "runs" / "20260701T000000-exp-demo-run"
+    run.mkdir(parents=True)
+    (run / "report.json").write_text('{"ok":true}', encoding="utf-8")
+    shortcut = tmp_path / "shortcut"
+    shortcut.symlink_to(run, target_is_directory=True)
+    real = os.path.realpath(run)
+    meta = bundles.package_evidence(
+        str(shortcut), failure={"error": f"cannot read {real}/report.json", "errorType": "OSError"})
+    archived = bundles.inspect_bundle(meta["bundlePath"])["failure"]
+    assert archived["error"] == "cannot read runs/20260701T000000-exp-demo-run/report.json"
 
 
 def test_redaction_names_the_run_its_siblings_and_its_workspace(

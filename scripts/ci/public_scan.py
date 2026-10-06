@@ -190,8 +190,17 @@ def _rooted(name: str) -> str:
 
 def _tar_members(data: bytes) -> list[Member]:
     members: list[Member] = []
+    budget = MAX_ARCHIVE_BYTES   # what the members may expand to, together
     with tarfile.open(fileobj=io.BytesIO(data)) as archive:
         for member in archive:
+            # A sparse member reads back at its logical size, which the
+            # compressed bytes do not bound: refuse it rather than expand it.
+            if member.issparse():
+                raise Unreadable("a sparse member")
+            if member.isfile():
+                budget -= member.size
+                if budget < 0:
+                    raise Unreadable(f"over {MAX_ARCHIVE_BYTES} bytes decompressed")
             header = "\n".join([_rooted(member.name), _rooted(member.linkname),
                                 *member.pax_headers.values()])
             owned = bool(member.uid or member.gid

@@ -941,12 +941,21 @@ def _explorer_error(note):
     return ""
 
 
+def _this_home():
+    """The current home folder, or, where it names no one ("/", for a service
+    account or a container), a made-up one the generic home pattern covers."""
+    home = os.path.expanduser("~")
+    return home if home.count(os.sep) >= 2 else "/" + "Users" + "/elsewhere"
+
+
 def _machine_spellings(tmp_path):
     from steerlab_server.experiment import path_redaction
     server = os.path.dirname(os.path.dirname(path_redaction.__file__))
-    return {str(tmp_path), os.path.realpath(tmp_path), server,
-            os.path.realpath(server), os.path.expanduser("~"),
-            "/" + "Users" + "/someone"}
+    spellings = {str(tmp_path), os.path.realpath(tmp_path), server,
+                 os.path.realpath(server), os.path.expanduser("~"),
+                 "/" + "Users" + "/someone"}
+    # A home of "/" (a service account, a container) names no one.
+    return {spelling for spelling in spellings if spelling.count(os.sep) >= 2}
 
 
 def _failure_raised_inside_the_server(run):
@@ -959,7 +968,7 @@ def _failure_raised_inside_the_server(run):
         except bundles.BundleError as cause:
             raise RuntimeError(
                 f"weights at {users}/someone/hf/model.bin and "
-                f"{os.path.expanduser('~')}/hf/token are unreadable"
+                f"{_this_home()}/hf/token are unreadable"
             ) from cause
     except RuntimeError as exc:
         return exc
@@ -989,7 +998,7 @@ def test_a_failure_record_names_no_machine(tmp_path):
             "runs/20261005T000000000-exp-s-run/missing") in note
     # Only what the directory records changes; the exception the caller
     # re-raises, and so the job record, keeps its paths.
-    assert os.path.expanduser("~") + "/hf/token" in str(error)
+    assert _this_home() + "/hf/token" in str(error)
 
 
 

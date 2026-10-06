@@ -34,9 +34,13 @@ migration that rewrites frozen bytes.
   read any of these, and bundles written earlier still import.
   `scripts/ci/public_scan.py` now opens committed archives, so a name or path
   inside one is caught. The cross-engine fixture bundle that carried both has
-  been regenerated. One part of a bundle still names a machine: the cluster
-  logs it carries under `diagnostics/` (each Slurm log opens with the node's
-  name) are kept as written, because they are diagnostics.
+  been regenerated. Three things still carry machine paths and are not yet
+  fixed: the cluster logs a bundle carries under `diagnostics/` (each Slurm
+  log opens with the node's name), kept as written because they are
+  diagnostics; a pipeline bundle's ledger (`pipeline.json`, and the
+  `originalPaths` and `missingEvidence` it records), which gives the
+  workspace's full path; and a standalone diagnostic archive's description,
+  which records the folders it was packed from.
 - **A failed run's own record no longer names the computer it ran on.**
   When a stage fails, either engine writes `FAILED.md` and `run-status.json`
   into its run directory, and a partial evidence bundle carries that
