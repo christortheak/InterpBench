@@ -46,10 +46,10 @@ The wire key names are additionally pinned by the key-list assertions in
 **Generate from Swift, never from Python.** The Swift renderer landed first
 (commit a9b99e0) and its hand-transcribed compatibility proof against the
 shipped `bootstrap.sh` / `executors.py` constants is the authority; Python is
-held to it.
+held to it. Run it with the release Xcode 27 or later that `xcode-select`
+selects (`xcodebuild -version`), not a beta.
 
 ```sh
-DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
 TEST_RUNNER_STEERLAB_WRITE_CLUSTER_GOLDENS=1 \
   xcodebuild test -skipMacroValidation -scheme SteerLab-Package \
   -destination 'platform=macOS' -parallel-testing-enabled NO \

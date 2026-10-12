@@ -52,9 +52,10 @@ Researcher-facing prose uses the Oxford comma. Call reusable study settings
 
 Check, in order: is this an Apple Silicon Mac on macOS 26.4+? Does
 `~/SteerLab/SteerLab.app` (or `/Applications/SteerLab.app`) exist? Is Xcode 27
-available (`xcodebuild -version`; `/Applications/Xcode-beta.app` may need
-`DEVELOPER_DIR`)? Is `python3.12` available? Report what you found before
-installing anything.
+or later the selected Xcode (`xcodebuild -version`)? The build scripts use
+`DEVELOPER_DIR` when it is set, otherwise the Xcode `xcode-select` selects,
+then `/Applications/Xcode.app`, and never prefer a beta. Is `python3.12`
+available? Report what you found before installing anything.
 
 ## Step 1 — get a command line
 
@@ -220,11 +221,18 @@ use, per machine.
 ## Verifying a checkout
 
 ```sh
-DEVELOPER_DIR=<Xcode 27> xcodebuild test -skipMacroValidation \
+xcodebuild -version                     # Xcode 27 or later
+xcodebuild test -skipMacroValidation \
   -scheme SteerLab-Package -destination 'platform=macOS' \
   -parallel-testing-enabled NO          # serial is required, not a preference
 cd Server && .venv.nosync/bin/python -m pytest -q
 ```
+
+`xcodebuild` runs the Xcode that `xcode-select` selects. Use the release
+Xcode, not a beta, unless the person asks for one. If the selected Xcode is
+older than 27, ask the person to run
+`sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`, or prefix
+the commands with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`.
 
 `python3 scripts/release-gate.py` runs every release gate in order, serially, and
 stops at the first failure; `RELEASING.md` is the procedure it belongs to.

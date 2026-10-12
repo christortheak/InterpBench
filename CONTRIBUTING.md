@@ -85,12 +85,16 @@ SteerLab has two test suites: the Swift suite for the Mac app and
 `steerlab-cli`, and the Python suite for the engine and the `steerlab`
 client.
 
-**Swift** needs a Mac with Xcode 27. Keep build output outside any folder
-that iCloud Drive or another service syncs, because code signing fails on
-the files a sync service adds.
+**Swift** needs a Mac with Xcode 27 or later. Use the release Xcode:
+`xcodebuild` runs the one `xcode-select` selects, and the build scripts never
+prefer a beta. If `xcodebuild -version` reports an older Xcode, select the
+release with `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`,
+or export `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` for one
+shell. Keep build output outside any folder that iCloud Drive or another
+service syncs, because code signing fails on the files a sync service adds.
 
 ```sh
-export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer   # if xcode-select points at an older Xcode
+xcodebuild -version   # Xcode 27 or later
 
 # a compile check, and one pure-CPU suite
 swift build --scratch-path <scratch>/spm

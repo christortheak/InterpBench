@@ -123,16 +123,18 @@ Before landing, read the entire diff, run both full suites, the parser audit,
 normal/release bridge checks, public scan and reference/contract checks. The
 maintainer, through the designated reviewing/integration agent, owns approval.
 Recheck main's ancestry before integration and bring in any later fixes first.
-Use Xcode beta, the explicit Metal toolchain and external temporary scratch.
+Use the release Xcode 27 or later that `xcode-select` selects (not a beta), the
+explicit Metal toolchain, and external temporary scratch.
 The real interchange test needs the Python client dependencies (including NumPy):
 it uses `Server/.venv.nosync/bin/python` when available, otherwise `python3`.
 For a worktree using a separate environment, set the variable in the **shell
 environment before `xcodebuild`**, as in this complete invocation from the
-worktree root (substitute the environment and scratch paths):
+worktree root (substitute the Metal toolchain identifier, which
+`xcodebuild -showComponent MetalToolchain` prints, the environment, and the
+scratch paths):
 
 ```sh
-DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
-TOOLCHAINS=com.apple.dt.toolchain.Metal.32023.920.1 \
+TOOLCHAINS=com.apple.dt.toolchain.Metal.<version> \
 TEST_RUNNER_STEERLAB_TEST_PYTHON="<environment>/bin/python" \
 xcodebuild test -skipMacroValidation -scheme SteerLab-Package \
   -destination 'platform=macOS' -parallel-testing-enabled NO \
