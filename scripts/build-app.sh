@@ -48,8 +48,9 @@
 #     --notarize          print the notarization commands and exit (a STUB:
 #                         it runs nothing and needs no credentials)
 #
-# Exit codes: 0 ok · 2 usage · 3 build failed · 4 products incomplete ·
-#             5 assembly failed · 6 signing or verification failed ·
+# Exit codes: 0 ok · 2 usage · 3 build failed, or no Xcode 27 or later ·
+#             4 products incomplete · 5 assembly failed ·
+#             6 signing or verification failed ·
 #             7 the assembled bundle carries identifying strings ·
 #             8 --package refused: the checkout is not a clean, tagged release
 #
@@ -463,13 +464,16 @@ case "$OUTPUT" in
     ;;
 esac
 
-# This project needs Xcode 27 and `xcode-select` may point at a 26.x install.
-if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode-beta.app ]; then
-  export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
-fi
-
 # ── Build ────────────────────────────────────────────────────────────────────
 if [ "$DO_BUILD" -eq 1 ]; then
+  # This project needs Xcode 27 or later. resolve-xcode.sh respects an explicit
+  # DEVELOPER_DIR, otherwise takes xcode-select's choice, then
+  # /Applications/Xcode.app, never a beta by preference, and says plainly what
+  # to install or select when that Xcode is older.
+  DEVELOPER_DIR="$(zsh "$SCRIPT_DIR/resolve-xcode.sh")" \
+    || die "there is no Xcode 27 or later to build with (see above)" 3
+  export DEVELOPER_DIR
+
   # ── Stage the package at the neutral build root ────────────────────────────
   # See "IDENTIFYING STRINGS" in the header for why the compiler must not see
   # this checkout's own path.

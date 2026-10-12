@@ -12,6 +12,18 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **Builds use the release Xcode and never prefer a beta.**
+  `scripts/build-app.sh`, `scripts/install-cli.sh`, `scripts/run-app.sh`, and
+  the two Finder launchers built with `/Applications/Xcode-beta.app` whenever
+  it existed, so installing a newer beta would have silently changed the
+  toolchain of every build. They now share one rule,
+  `scripts/resolve-xcode.sh`: `DEVELOPER_DIR` when it is set, otherwise the
+  Xcode `xcode-select` selects, then `/Applications/Xcode.app`. That Xcode
+  must be 27 or later. An older one builds nothing, and the refusal says what
+  to install or select. A build names the Xcode it used, and warns, with the
+  install command, when that Xcode cannot run the Metal compiler MLX's
+  shaders need.
+
 - **The app build's launch check no longer leaves the checked app
   running.** `scripts/app-bundle/launch-check.sh` killed the subshell it
   launched the app from, not the app itself. The app was reparented to

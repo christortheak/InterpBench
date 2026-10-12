@@ -197,7 +197,7 @@ too. A source install gives you command lines, not a workspace: create one
 afterwards with `steerlab-cli workspace init <dir>` or
 `steerlab workspace init <dir>`.
 
-**The Mac CLI** needs Xcode 27 (`xcodebuild`, not `swift build`, because
+**The Mac CLI** needs Xcode 27 or later (`xcodebuild`, not `swift build`, because
 SwiftPM alone cannot build the Metal shader library MLX needs; one time,
 `xcodebuild -downloadComponent MetalToolchain`):
 
@@ -213,7 +213,10 @@ tree, so a failed install leaves the previous one untouched. The binary lands
 in `~/.local/libexec/steerlab/` beside the Metal shader library, with a shim
 at `~/.local/bin/steerlab-cli`; the installer never writes a `steerlab` alias
 unless you pass `--short-name` on a machine that will never install the
-client. Set `DEVELOPER_DIR` first if `xcode-select` points at an older Xcode.
+client. The installer builds with `DEVELOPER_DIR` when that is set, otherwise
+with the Xcode `xcode-select` selects, then `/Applications/Xcode.app`, and
+never prefers a beta. If that Xcode is older than 27, it builds nothing and
+says what to install or select.
 `steerlab-cli install verify` re-hashes the installed tree against its own
 manifest. `scripts/build-app.sh` assembles the signed app from the same
 checkout (it needs `uv` on `PATH`); `./scripts/run-app.sh` builds and
@@ -1021,13 +1024,19 @@ directory is the reliable form. The environment that works from a clean
 scratch, spelled out once:
 
 ```bash
-export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer   # when xcode-select points elsewhere
-export TOOLCHAINS=com.apple.dt.toolchain.Metal.<version>              # the Metal toolchain you downloaded
+xcodebuild -version                                        # Xcode 27 or later
+export TOOLCHAINS=com.apple.dt.toolchain.Metal.<version>   # the Metal toolchain you downloaded
 xcodebuild test -skipMacroValidation -scheme SteerLab-Package \
   -destination 'platform=macOS' -parallel-testing-enabled NO \
   -derivedDataPath /path/outside/the/synced/folder/DerivedData \
   CLANG_COVERAGE_MAPPING=NO
 ```
+
+`xcodebuild` runs the Xcode that `xcode-select` selects; use the release
+Xcode, not a beta. If it reports an older Xcode,
+`sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` selects the
+release, or `export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`
+uses it for one shell.
 
 Without `TOOLCHAINS` naming the Metal toolchain, a fresh derived-data
 directory can die at `CompileMetalFile` even though an older one built;

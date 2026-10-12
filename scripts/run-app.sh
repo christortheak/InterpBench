@@ -4,9 +4,11 @@
 # Metal shader bundle visible to a bare executable — see CLAUDE.md › Build & run.)
 set -e
 cd "$(dirname "$0")/.."
-if [[ -d /Applications/Xcode-beta.app ]]; then
-  export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
-fi
+# Xcode 27 or later: DEVELOPER_DIR when it is set, otherwise xcode-select's
+# choice, then /Applications/Xcode.app, never a beta by preference. Refused,
+# with what to install or select, when that Xcode is older.
+DEVELOPER_DIR="$(zsh scripts/resolve-xcode.sh)" || exit 1
+export DEVELOPER_DIR
 # The embedded Results Explorer (web/results-explorer) is build output and is
 # not tracked, so a fresh clone has none. Build it when it is missing or older
 # than its source. Never fatal: without it the app still runs, and its Results

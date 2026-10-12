@@ -48,7 +48,8 @@
 # swapped in only once all of it has passed, so an interrupted or failing
 # install leaves the previous install (and its shim) exactly as it was.
 #
-# Exit codes: 0 installed (or verified) · 2 usage · 3 build failed ·
+# Exit codes: 0 installed (or verified) · 2 usage · 3 build failed, or no
+#             Xcode 27 or later to build with ·
 #             4 build products incomplete · 5 an absolute build-machine rpath
 #             survived · 6 the installed tree failed verification
 set -euo pipefail
@@ -160,11 +161,16 @@ fi
 
 # ── Build (or accept an existing products directory) ──────────────────────
 if (( BUILD )); then
-  # This project needs Xcode 27, and `xcode-select` may point at a 26.x
-  # install; SwiftPM cannot build the Metal shaders at all (CLAUDE.md).
-  if [[ -z "${DEVELOPER_DIR:-}" && -d /Applications/Xcode-beta.app ]]; then
-    export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
+  # This project needs Xcode 27 or later; SwiftPM cannot build the Metal
+  # shaders at all (CLAUDE.md). resolve-xcode.sh respects an explicit
+  # DEVELOPER_DIR, otherwise takes xcode-select's choice, then
+  # /Applications/Xcode.app, never a beta by preference, and says plainly what
+  # to install or select when that Xcode is older.
+  if ! DEVELOPER_DIR="$(zsh "$SCRIPT_DIR/resolve-xcode.sh")"; then
+    echo "nothing was built or installed: there is no Xcode 27 or later to build with (see above)"
+    exit 3
   fi
+  export DEVELOPER_DIR
   echo "Building $BINARY_NAME (xcodebuild — SwiftPM cannot build the Metal shaders)…"
   # CLANG_COVERAGE_MAPPING=NO: the auto-generated scheme of a package with
   # test targets gathers coverage even for plain `build` actions, which would

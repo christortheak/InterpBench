@@ -278,8 +278,11 @@ controls. Read the entire final diff and run both full suites before landing.
 On the supported Mac build environment:
 
 ```sh
-export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
-export TOOLCHAINS=com.apple.dt.toolchain.Metal.32023.920.1
+xcodebuild -version   # Xcode 27 or later: the release Xcode that xcode-select selects
+# Only when xcode-select selects an older Xcode, name the release for this shell:
+# export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+# The Metal toolchain identifier: xcodebuild -showComponent MetalToolchain prints it.
+export TOOLCHAINS=com.apple.dt.toolchain.Metal.<version>
 # Set this to the test-capable Python environment, even in a venv-less worktree.
 export TEST_RUNNER_STEERLAB_TEST_PYTHON=/absolute/path/to/test-environment/bin/python
 PYTHONPATH=Server "$TEST_RUNNER_STEERLAB_TEST_PYTHON" -m pytest Server/tests -q

@@ -34,16 +34,32 @@ def _stand_in(directory: pathlib.Path, name: str, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
+#: Every stand-in xcodebuild answers `-version` (scripts/resolve-xcode.sh asks
+#: before the build) without recording a call, as `$XCODE_VERSION` when a test
+#: sets it, and records the developer directory each build ran under.
+ANSWERS_VERSION = r'''
+if [ "$1" = "-version" ]; then
+  printf '%s\nBuild version 27A000\n' "${XCODE_VERSION:-Xcode 27.0}"
+  exit 0
+fi
+printf "developer=%s\n" "$DEVELOPER_DIR" >> "$CALLS"
+'''
+
+
 def _run(tmp_path, *arguments, stand_ins=None, env=None):
-    """Run build-app.sh with stand-in tools first on PATH and a scratch HOME."""
+    """Run build-app.sh with stand-in tools first on PATH, a scratch HOME, and
+    a scratch DEVELOPER_DIR, so no test depends on this machine's Xcode."""
     fakebin = tmp_path / "fakebin"
     log = tmp_path / "calls.log"
     tools = {
         # Records where it was run from and with what, and builds nothing —
         # so the script stops at "no built SteerLabApp" (exit 4), after the
         # build step has shown its whole hand.
-        "xcodebuild": 'printf "cwd=%s\\n" "$PWD" >> "$CALLS"\n'
+        "xcodebuild": ANSWERS_VERSION +
+                      'printf "cwd=%s\\n" "$PWD" >> "$CALLS"\n'
                       'for word in "$@"; do printf "arg=%s\\n" "$word" >> "$CALLS"; done\n',
+        # The Metal compiler check: present, so the resolver has nothing to warn of.
+        "xcrun": "exit 0\n",
     }
     tools.update(stand_ins or {})
     for name, body in tools.items():
@@ -53,11 +69,14 @@ def _run(tmp_path, *arguments, stand_ins=None, env=None):
     _stand_in(fakebin, "python3", f'exec "{sys.executable}" "$@"\n')
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
+    developer = tmp_path / "Xcode.app" / "Contents" / "Developer"
+    developer.mkdir(parents=True, exist_ok=True)
     environment = {
         "PATH": f"{fakebin}:/usr/bin:/bin:/usr/sbin:/sbin",
         "HOME": str(home),
         "TMPDIR": str(tmp_path / "tmp"),
         "CALLS": str(log),
+        "DEVELOPER_DIR": str(developer),
     }
     (tmp_path / "tmp").mkdir(exist_ok=True)
     environment.update(env or {})
@@ -75,7 +94,7 @@ def _run(tmp_path, *arguments, stand_ins=None, env=None):
 #: `$APP_BINARY_TEXT` is what the fake app executable contains, so a test can
 #: plant a string in a "binary".
 ASSEMBLING_STAND_INS = {
-    "xcodebuild": r'''
+    "xcodebuild": ANSWERS_VERSION + r'''
 printf "cwd=%s\n" "$PWD" >> "$CALLS"
 derived=""
 while [ $# -gt 0 ]; do
@@ -232,6 +251,48 @@ def test_a_build_root_the_prefix_maps_cannot_express_is_refused(tmp_path):
                            "--output", tmp_path / "out", "--no-verify")
     assert relative.returncode == 2
     assert "absolute path" in relative.stderr
+    assert calls == []
+
+
+# -- the Xcode the build runs under --------------------------------------------
+
+
+def test_both_builds_run_under_the_xcode_developer_dir_names(tmp_path):
+    """An explicit DEVELOPER_DIR is respected for the app and the CLI alike,
+    and the build says which Xcode it used."""
+    chosen = tmp_path / "Chosen.app" / "Contents" / "Developer"
+    chosen.mkdir(parents=True)
+    result, calls = _run(tmp_path, "--build-root", tmp_path / "neutral",
+                         "--output", tmp_path / "out", "--no-verify",
+                         env={"DEVELOPER_DIR": str(chosen)})
+    assert result.returncode == 4, result.stdout + result.stderr
+    developers = [line[len("developer="):] for line in calls if line.startswith("developer=")]
+    assert developers == [str(chosen), str(chosen)]
+    assert f"Using Xcode 27.0 (27A000) at {chosen}, named by DEVELOPER_DIR." in result.stderr
+
+
+def test_an_xcode_older_than_27_is_refused_before_anything_is_staged(tmp_path):
+    build_root = tmp_path / "neutral"
+    result, calls = _run(tmp_path, "--build-root", build_root,
+                         "--output", tmp_path / "out", "--no-verify",
+                         env={"XCODE_VERSION": "Xcode 26.4"})
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "SteerLab needs Xcode 27 or later to build" in result.stderr
+    assert "is Xcode 26.4." in result.stderr
+    assert "Point DEVELOPER_DIR at Xcode 27 or later" in result.stderr   # the repair
+    assert "there is no Xcode 27 or later to build with" in result.stderr
+    assert calls == []                       # nothing was compiled
+    assert not (build_root / "src").exists()
+
+
+def test_reusing_built_products_asks_for_no_xcode(tmp_path):
+    """--no-build compiles nothing, so an old Xcode is no reason to refuse."""
+    result, calls = _run(tmp_path, "--build-root", tmp_path / "neutral",
+                         "--output", tmp_path / "out", "--no-verify", "--no-build",
+                         env={"XCODE_VERSION": "Xcode 26.4"})
+    assert result.returncode == 4, result.stdout + result.stderr
+    assert "no built SteerLabApp" in result.stderr
+    assert "needs Xcode" not in result.stderr
     assert calls == []
 
 
