@@ -12,6 +12,16 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **The app build's launch check no longer leaves the checked app
+  running.** `scripts/app-bundle/launch-check.sh` killed the subshell it
+  launched the app from, not the app itself. The app was reparented to
+  launchd and kept running against a scratch workspace the build had already
+  deleted, and blocked the next install until someone killed it by hand. The
+  subshell now execs the app, so the check stops the app itself: it sends
+  SIGTERM, waits `--grace` seconds (default 5), and then sends SIGKILL. The
+  check fails, and names each process, if anything from the checked bundle is
+  still running afterwards.
+
 - **Pipeline bundles and diagnostic archives no longer give the workspace's
   location.** A pipeline's ledger (`pipeline.json`) named each stage's run,
   each promoted agent, and an abort's evidence by its full path, and a

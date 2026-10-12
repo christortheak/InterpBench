@@ -5,7 +5,9 @@ The script drives ``xcodebuild``, ``codesign``, and friends. Each test here
 puts stand-ins for those tools first on ``PATH`` (they record how they were
 called and do nothing), runs the real script against scratch directories, and
 reads what it did. Nothing is compiled, signed, installed, or launched, and
-nothing is written outside ``tmp_path``.
+nothing is written outside ``tmp_path``. The launch-check tests at the end
+start only a stand-in executable of their own, and stop it if the check does
+not.
 """
 
 import os
@@ -503,3 +505,120 @@ def test_package_refuses_a_checkout_that_is_not_the_release(tmp_path, state, rea
     assert allowed.returncode == 0, allowed.stdout + allowed.stderr
     assert archive.is_file()
     assert reason in allowed.stderr                   # still said, as a note
+
+
+# -- the launch check stops what it launched -----------------------------------
+
+LAUNCH_CHECK = ROOT / "scripts" / "app-bundle" / "launch-check.sh"
+
+#: What a stand-in app prints: the two lines an honest app writes under
+#: STEERLAB_LAUNCH_CHECK=1, so the check passes on everything but the stop.
+_HONEST_APP_LINES = (
+    "launch-check: offline mode armed (STEERLAB_LAUNCH_CHECK)",
+    "launch-check: offline mode, no network activity",
+)
+
+
+def _python_stand_in(path: pathlib.Path, body: str) -> None:
+    """A single-process stand-in executable (a Python script, so its command
+    line names its own path, as the app's does)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"#!{sys.executable}\nimport os, signal, subprocess, sys, time\n{body}")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
+def _fake_app(tmp_path, before_sleeping=""):
+    """A stand-in `Fake.app` whose executable records its PID, does
+    `before_sleeping`, prints an honest verdict, and sleeps for a minute."""
+    app = tmp_path / "Fake.app"
+    executable = app / "Contents/MacOS/Fake"
+    pid_file = tmp_path / "app.pid"
+    lines = "".join(f"print({line!r}, file=sys.stderr, flush=True)\n" for line in _HONEST_APP_LINES)
+    _python_stand_in(executable, (
+        f"open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
+        f"{before_sleeping}{lines}time.sleep(60)\n"))
+    return app, executable, pid_file
+
+
+def _launch_check(tmp_path, executable, *flags):
+    return subprocess.run(
+        ["/bin/bash", str(LAUNCH_CHECK), str(executable), str(tmp_path / "launch.log"),
+         "--seconds", "1", "--grace", "1", *flags],
+        env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(tmp_path)},
+        text=True, capture_output=True, check=False, timeout=60)
+
+
+def _running(pid: int) -> bool:
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
+                           capture_output=True, text=True, check=False)
+    return state.returncode == 0 and "Z" not in state.stdout
+
+
+def _running_from(app: pathlib.Path) -> list:
+    table = subprocess.run(["ps", "-axo", "pid=,command="],
+                           capture_output=True, text=True, check=True).stdout
+    return [line.strip() for line in table.splitlines() if f"{app}/" in line]
+
+
+def _stop(*pid_files: pathlib.Path) -> None:
+    """Kill whatever a failed assertion left behind, so a regression costs a
+    test failure and not a minute-long stray process."""
+    import signal
+    for pid_file in pid_files:
+        if pid_file.exists():
+            try:
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_the_launch_check_leaves_nothing_running_from_the_checked_bundle(tmp_path):
+    """A build on 2026-10-12 left the app it had checked running: the script
+    killed the PID of the subshell it launched the app from, and the app was
+    reparented to launchd and kept going, against a scratch workspace the
+    build had already deleted, until it was killed by hand."""
+    app, executable, pid_file = _fake_app(tmp_path)
+    try:
+        result = _launch_check(tmp_path, executable)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "nothing left running from the checked bundle" in result.stdout
+        assert not _running(int(pid_file.read_text()))
+        assert _running_from(app) == []
+    finally:
+        _stop(pid_file)
+
+
+def test_an_app_that_ignores_sigterm_is_killed_after_the_grace_period(tmp_path):
+    app, executable, pid_file = _fake_app(
+        tmp_path, before_sleeping="signal.signal(signal.SIGTERM, signal.SIG_IGN)\n")
+    try:
+        result = _launch_check(tmp_path, executable)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "still running 1s after SIGTERM; sending SIGKILL" in result.stderr
+        assert not _running(int(pid_file.read_text()))
+        assert _running_from(app) == []
+    finally:
+        _stop(pid_file)
+
+
+def test_a_helper_that_outlives_the_app_fails_the_check_by_name(tmp_path):
+    """Stopping the app does not stop what it started. Anything still running
+    from the bundle would block the next install, so the check fails and
+    names it."""
+    helper = tmp_path / "Fake.app/Contents/Helpers/helper"
+    helper_pid = tmp_path / "helper.pid"
+    _python_stand_in(helper, (
+        f"open({str(helper_pid)!r}, 'w').write(str(os.getpid()))\ntime.sleep(60)\n"))
+    app, executable, pid_file = _fake_app(tmp_path, before_sleeping=(
+        f"subprocess.Popen([{str(helper)!r}], start_new_session=True)\n"
+        f"while not os.path.exists({str(helper_pid)!r}): time.sleep(0.01)\n"))
+    try:
+        result = _launch_check(tmp_path, executable)
+        assert result.returncode == 6, result.stdout + result.stderr
+        assert "still running from the checked bundle" in result.stderr
+        assert f"pid {helper_pid.read_text()}: " in result.stderr
+        assert str(helper) in result.stderr
+        assert "before installing this build" in result.stderr
+        assert not _running(int(pid_file.read_text()))     # the app itself was stopped
+    finally:
+        _stop(pid_file, helper_pid)
