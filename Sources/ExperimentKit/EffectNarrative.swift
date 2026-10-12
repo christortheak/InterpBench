@@ -34,6 +34,16 @@ public enum EffectNarrative {
 
     /// Why a row is read as paired responses (the Python reader's
     /// `RESPONSE_UNIT_EXPLANATION`, word for word).
+    /// What a recorded unit means, in the Python reader's words
+    /// (`results_export.RECORDED_UNIT_LINES`; pinned in effect-units.json).
+    /// A unit with no entry is named as recorded.
+    public static let recordedUnitLines: [String: String] = [
+        "item": "the item, with an item's samples averaged within each condition, as the analysis recorded.",
+        "transcript": "the transcript, as the analysis recorded: one play-through of a multi-agent "
+            + "conversation, with its turns reduced to their average difference before any test, "
+            + "because turns in the same conversation depend on each other.",
+    ]
+
     public static let responseUnitExplanation =
         "These rows count more pairs than the run has paired items, so the "
         + "analysis paired responses, not items: each response with the "
@@ -216,7 +226,11 @@ public enum EffectNarrative {
             let said: String
             switch group.source {
             case .recorded:
-                said = joined(group.units) + ", as the analysis recorded."
+                if group.units.count == 1, let defined = recordedUnitLines[group.units[0]] {
+                    said = defined
+                } else {
+                    said = joined(group.units) + ", as the analysis recorded."
+                }
             case .engineDefault:
                 said = "the item, with an item's samples averaged within each "
                     + "condition. This is the engines' documented default; the "

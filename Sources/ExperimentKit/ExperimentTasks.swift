@@ -4457,7 +4457,8 @@ public enum ExperimentTasks {
                         ciLower: ci.ciLower,
                         ciUpper: ci.ciUpper,
                         wilcoxonW: wilcoxon.w.isNaN ? nil : wilcoxon.w,
-                        wilcoxonP: wilcoxon.p.isNaN ? nil : wilcoxon.p))
+                        wilcoxonP: wilcoxon.p.isNaN ? nil : wilcoxon.p,
+                        unit: "transcript"))
             }
         }
         return applyCorrection(entries, phase: phase)

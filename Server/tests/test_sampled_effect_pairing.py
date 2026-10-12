@@ -189,10 +189,10 @@ def test_paired_differences_match_the_hand_computation(tmp_path, case):
     # A family of one: the adjusted p is the raw p.
     assert pooled["adjustedP"] == pooled["wilcoxonP"]
     assert pooled["correction"] == "bh"
-    # Pooled rows leave unit, estimand, and inference empty: their unit is
-    # the run's default, the item.
+    # A pooled row records its unit, the item (since 2026-10-12); estimand
+    # and inference stay empty, as the run's unit of analysis.
     assert (pooled["unit"], pooled["estimand"], pooled["inference"]) \
-        == ("", "", "")
+        == ("item", "", "")
     # The interval is a bootstrap of those four differences.
     assert -1 <= float(pooled["ciLower"]) <= 4.5 <= float(pooled["ciUpper"]) <= 10
 

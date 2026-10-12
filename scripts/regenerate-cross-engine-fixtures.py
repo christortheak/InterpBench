@@ -2146,6 +2146,16 @@ def effect_units() -> None:
                     "not established. The analysis did not stamp it, and the "
                     "run's records have no items paired with the baseline for "
                     "these conditions."),
+                # A recorded unit is defined, not only named: every analysis
+                # since units were recorded falls here.
+                "recorded_item": (
+                    "the item, with an item's samples averaged within each "
+                    "condition, as the analysis recorded."),
+                "recorded_transcript": (
+                    "the transcript, as the analysis recorded: one play-through "
+                    "of a multi-agent conversation, with its turns reduced to "
+                    "their average difference before any test, because turns "
+                    "in the same conversation depend on each other."),
             },
         },
         "cases": cases,

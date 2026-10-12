@@ -502,13 +502,15 @@ extension ExperimentTasks {
         /// including rows whose p was undefined.
         var correction: String? = nil
         /// Stratified-analysis provenance (2026-08-06, cross-engine CSV
-        /// columns stratifyBy/stratum/unit — server `EffectRow` twin). nil
-        /// on pooled rows (keys omitted, so run-report bytes are unchanged;
+        /// columns stratifyBy/stratum/unit — server `EffectRow` twin).
+        /// `stratifyBy` and `stratum` are nil on pooled rows (keys omitted;
         /// the CSV writes "pooled" for a nil stratifyBy). Stratified rows
         /// carry the family ("promptID", a factor key, or "×"-joined
-        /// crossed keys), the cell label, and what one paired difference
-        /// IS: "item" (one pair per item — the pooled semantics restricted
-        /// to the stratum) or "sample" (multiple pairs within an item).
+        /// crossed keys) and the cell label. `unit` is what one paired
+        /// difference IS: "item" (one pair per item), "sample" (multiple
+        /// pairs within one item), or "transcript" (one per conversation).
+        /// Every row records it since 2026-10-12; pooled rows written
+        /// before then left it nil, and readers infer it.
         var stratifyBy: String? = nil
         var stratum: String? = nil
         var unit: String? = nil

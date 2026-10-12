@@ -97,7 +97,7 @@ def test_saturated_cells_no_longer_mask_a_live_cell(tmp_path):
     # is blind to it — exactly the bug this table now makes visible.
     [pooled] = _rows_by(rows, stratifyBy="pooled", endpoint="choiceRate")
     assert pooled["condition"] == "steered"
-    assert pooled["stratum"] == "" and pooled["unit"] == ""
+    assert pooled["stratum"] == "" and pooled["unit"] == "item"
     assert pooled["estimand"] == "" and pooled["inference"] == ""
     assert pooled["n"] == "12"
     assert abs(float(pooled["deltaMean"]) - 0.025) < 1e-9

@@ -37,8 +37,8 @@ extension RunResults {
         public var correction: String?
         public var modality: String?
         /// The row's own `unit` column: what one paired difference is, when
-        /// the row records it. Stratified rows do; pooled rows leave it
-        /// empty, so this is nil for them.
+        /// the row records it. Every row does since 2026-10-12; pooled rows
+        /// written earlier left it empty, so this is nil for them.
         public var recordedUnit: String? = nil
         /// What one paired difference of this row is, settled from the row,
         /// its analysis's stamp, and the run's records

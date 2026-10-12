@@ -206,7 +206,7 @@
           "n": "4",
           "stratifyBy": "pooled",
           "stratum": "",
-          "unit": ""
+          "unit": "item"
         },
         {
           "condition": "steered",
@@ -214,7 +214,7 @@
           "n": "4",
           "stratifyBy": "pooled",
           "stratum": "",
-          "unit": ""
+          "unit": "item"
         },
         {
           "condition": "steered",
@@ -327,7 +327,7 @@
             "stratum": "",
             "tooFew": false,
             "unit": "item",
-            "unitSource": "engine_default"
+            "unitSource": "recorded"
           },
           {
             "condition": "steered",
@@ -338,7 +338,7 @@
             "stratum": "",
             "tooFew": false,
             "unit": "item",
-            "unitSource": "engine_default"
+            "unitSource": "recorded"
           },
           {
             "condition": "steered",
@@ -959,7 +959,9 @@
     "unitLines": {
       "engine_default": "the item, with an item's samples averaged within each condition. This is the engines' documented default; the analysis did not stamp the unit itself. The run's records are consistent with it: no such row counts more pairs than the items paired in the run.",
       "inferred_from_records": "the response, not the item. These rows count more pairs than the run has paired items, so the analysis paired responses, not items: each response with the baseline response to the same item and seed. That is how the Mac engine paired a study with several samples per item before SteerLab 0.9.7, and it stamped no unit. Responses to the same item are not independent, so these intervals and tests are likely to understate the uncertainty, and they are not findings about items. The stored numbers are copied unchanged; analyzing the run again computes item-level rows.",
-      "not_established": "not established. The analysis did not stamp it, and the run's records have no items paired with the baseline for these conditions."
+      "not_established": "not established. The analysis did not stamp it, and the run's records have no items paired with the baseline for these conditions.",
+      "recorded_item": "the item, with an item's samples averaged within each condition, as the analysis recorded.",
+      "recorded_transcript": "the transcript, as the analysis recorded: one play-through of a multi-agent conversation, with its turns reduced to their average difference before any test, because turns in the same conversation depend on each other."
     },
     "unknownNote": "The unit of these pairs is not established"
   }

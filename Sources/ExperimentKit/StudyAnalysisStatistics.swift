@@ -234,7 +234,10 @@ enum StudyAnalysisStatistics {
                     condition: condition, metric: metric, n: ci.n,
                     meanDiff: ci.mean, ciLower: ci.ciLower, ciUpper: ci.ciUpper,
                     wilcoxonW: wilcoxon.w.isNaN ? nil : wilcoxon.w,
-                    wilcoxonP: wilcoxon.p.isNaN ? nil : wilcoxon.p))
+                    wilcoxonP: wilcoxon.p.isNaN ? nil : wilcoxon.p,
+                    // One difference per conversation, recorded rather than
+                    // left for readers (Python twin: analysis_workflow).
+                    unit: "transcript"))
         }
 
         var conditionOrder: [String] = []
@@ -465,7 +468,9 @@ enum StudyAnalysisStatistics {
                         wilcoxonP: wilcoxon.p.isNaN ? nil : wilcoxon.p,
                         stratifyBy: stratum?.family,
                         stratum: stratum?.label,
-                        unit: stratum.map { _ in withinItem ? "sample" : "item" },
+                        // A pooled row records its unit too: one difference
+                        // per item (Python twin: analysis_workflow).
+                        unit: stratum.map { _ in withinItem ? "sample" : "item" } ?? "item",
                         // The unit IS the estimand: one difference per item
                         // is the pooled estimand restricted to this stratum
                         // and belongs in the correction family; several
@@ -544,7 +549,7 @@ enum StudyAnalysisStatistics {
                     // the instrument has no sample axis, so a stratified
                     // ordinal pair is always per-item — item-level, and
                     // therefore always a member of the correction family.
-                    unit: stratum.map { _ in "item" },
+                    unit: "item",
                     estimand: stratum.map { _ in EffectSizeEstimand.itemLevel },
                     inference: stratum.map { _ in EffectSizeInference.corrected }))
         }
@@ -597,7 +602,7 @@ enum StudyAnalysisStatistics {
                     wilcoxonP: wilcoxon.p.isNaN ? nil : wilcoxon.p,
                     stratifyBy: stratum?.family,
                     stratum: stratum?.label,
-                    unit: stratum.map { _ in "item" },
+                    unit: "item",
                     estimand: stratum.map { _ in EffectSizeEstimand.itemLevel },
                     inference: stratum.map { _ in EffectSizeInference.corrected }))
         }

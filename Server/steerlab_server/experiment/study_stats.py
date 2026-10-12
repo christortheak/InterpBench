@@ -332,8 +332,9 @@ class EffectRow:
     # difference IS in ``unit``: "item" (per-item, sample-averaged — the
     # pooled semantics restricted to the stratum) or "sample" (per-sample
     # pairs by sampleIndex, used when the stratum is a single item). Pooled
-    # rows leave ``unit`` empty — their unit is the run's default (item, or
-    # transcript for clustered multi-agent runs; see unit-of-analysis.json).
+    # rows record the run's unit: "item", or "transcript" for clustered
+    # multi-agent runs (see unit-of-analysis.json). Pooled rows written before
+    # 2026-10-12 left it empty, and readers then infer it.
     stratify_by: str = "pooled"
     stratum: str = ""
     unit: str = ""
@@ -358,8 +359,8 @@ class EffectRow:
     # from a within-family correction; "diagnostic" rows are DELIBERATELY left
     # out of every correction family and carry no adjusted p at all — their
     # raw Wilcoxon p stays as a descriptive locator (which cell moved), not as
-    # a test. Pooled rows leave both fields empty, as they leave ``unit``
-    # empty: their estimand is the run's declared unit of analysis (item, or
+    # a test. Pooled rows leave both fields empty: their estimand is the
+    # run's unit of analysis, which their ``unit`` records (item, or
     # transcript for clustered runs; see unit-of-analysis.json).
     estimand: str = ""
     inference: str = ""

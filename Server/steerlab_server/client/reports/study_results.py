@@ -502,7 +502,9 @@ class Page:
             label = (join(' for the rows marked ', join(*[code(unit) for unit in units], sep=', '))
                      if len(groups) > 1 else '')
             if how == 'recorded':
-                said = join(join(*[code(unit) for unit in units], sep=', '), ', as the analysis recorded.')
+                defined = source.recorded_unit_line(units)
+                said = (defined.replace("'", '’') if defined
+                        else join(join(*[code(unit) for unit in units], sep=', '), ', as the analysis recorded.'))
             elif how == 'engine_default':
                 said = ('the item, with an item’s samples averaged within each condition. This is the engines’ '
                         'documented default; the analysis did not stamp the unit itself. The run’s records are '

@@ -209,9 +209,10 @@ extension ExperimentStoreTests {
         let pooledWordCount = pooled.first { $0.metric == "wordCount" }
         #expect(pooledWordCount?.meanDiff == 9)
         #expect(pooledWordCount?.n == 4)
-        // Pooled entries carry no stratification keys (report bytes stable).
+        // Pooled entries carry no stratification keys, and record their
+        // unit, the item (since 2026-10-12).
         #expect(pooledWordCount?.stratifyBy == nil)
-        #expect(pooledWordCount?.unit == nil)
+        #expect(pooledWordCount?.unit == "item")
 
         let stratified = ExperimentTasks.stratifiedEffectSizes(
             rows: rows, concepts: [], factorsByItem: factors, replicates: 200)

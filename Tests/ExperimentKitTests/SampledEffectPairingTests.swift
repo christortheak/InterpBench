@@ -234,9 +234,9 @@ struct SampledEffectPairingTests {
         // A family of one: the adjusted p is the raw p.
         #expect(pooled.adjustedP == pooled.wilcoxonP)
         #expect(pooled.correction == "bh")
-        // Pooled rows leave unit, estimand, and inference unset: their unit
-        // is the run's default, the item.
-        #expect(pooled.unit == nil && pooled.estimand == nil && pooled.inference == nil)
+        // A pooled row records its unit, the item (since 2026-10-12);
+        // estimand and inference stay unset, as the run's unit of analysis.
+        #expect(pooled.unit == "item" && pooled.estimand == nil && pooled.inference == nil)
         // The interval is a bootstrap of those four differences.
         #expect(-1 <= pooled.ciLower && pooled.ciLower <= 4.5)
         #expect(4.5 <= pooled.ciUpper && pooled.ciUpper <= 10)
@@ -299,13 +299,12 @@ struct SampledEffectPairingTests {
         }
 
         // The plain-language sentence counts what the row counts: items,
-        // which the run's records confirm.
+        // which the engine recorded, so no records are counted to infer it.
         let rows = settled(
             try #require(RunResults.effectSizes(fromCSV: analysis.csv)), records: value.records)
         let sentenceRow = try #require(rows.first { $0.metric == "wordCount" })
         #expect(sentenceRow.n == 4)
-        #expect(sentenceRow.unit == RunResults.EffectUnit(
-            unit: "item", source: .engineDefault, pairedItems: 4))
+        #expect(sentenceRow.unit == RunResults.EffectUnit(unit: "item", source: .recorded))
         #expect(
             EffectNarrative.sentence(for: sentenceRow, in: rows)
                 .contains("by +4.5 across 4 paired items"))
@@ -391,7 +390,9 @@ struct SampledEffectPairingTests {
     /// output of the engine BEFORE sampled cells were averaged, captured on
     /// these exact rows (five items, shuffled prompt indices, and seeds that
     /// differ between items, so the row order feeding the bootstrap is
-    /// pinned too).
+    /// pinned too). Only the pooled rows' unit column differs from that
+    /// capture: empty then, it records "item" since 2026-10-12; no number
+    /// changed.
     @Test func oneResponsePerItemKeepsEveryNumber() {
         var rows: [ExperimentTasks.MetricRow] = []
         let cells: [(String, UInt64, Int, Int, Int, Float, Float)] = [
@@ -416,9 +417,9 @@ struct SampledEffectPairingTests {
         ]
         let before = """
             condition,metric,n,meanDiff,ciLower,ciUpper,wilcoxonW,wilcoxonP,adjustedP,correction,stratifyBy,stratum,unit,estimand,inference
-            steered,wordCount,5,2.4,0.4,4.2,1.5,0.1362168698445676,0.1362168698445676,bh,pooled,,,,
-            steered,distinct2,5,0.075,-0.1,0.225,3.0,0.570750388058174,0.570750388058174,bh,pooled,,,,
-            steered,warmMarkerDensity,5,0.25,0.1,0.4,0.0,0.10034824646229079,0.10034824646229079,bh,pooled,,,,
+            steered,wordCount,5,2.4,0.4,4.2,1.5,0.1362168698445676,0.1362168698445676,bh,pooled,,item,,
+            steered,distinct2,5,0.075,-0.1,0.225,3.0,0.570750388058174,0.570750388058174,bh,pooled,,item,,
+            steered,warmMarkerDensity,5,0.25,0.1,0.4,0.0,0.10034824646229079,0.10034824646229079,bh,pooled,,item,,
             steered,wordCount,1,3.0,3.0,3.0,0.0,1.0,1.0,bh,promptID,q-a,item,itemLevel,corrected
             steered,distinct2,1,0.25,0.25,0.25,0.0,1.0,1.0,bh,promptID,q-a,item,itemLevel,corrected
             steered,warmMarkerDensity,1,0.25,0.25,0.25,0.0,1.0,1.0,bh,promptID,q-a,item,itemLevel,corrected

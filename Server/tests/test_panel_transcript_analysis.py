@@ -84,7 +84,7 @@ def test_turns_are_averaged_within_each_transcript(tmp_path):
     assert float(words["deltaMean"]) == 1.75
     assert float(words["wilcoxonW"]) == 1.0
     assert float(words["wilcoxonP"]) == pytest.approx(_two_sided_p(1, 3), abs=1e-6)
-    assert words["stratifyBy"] == "pooled" and words["unit"] == ""
+    assert words["stratifyBy"] == "pooled" and words["unit"] == "transcript"
     # distinct2: 0, 0.25, 0, -0.25 — mean 0; the two nonzero values tie.
     distinct = next(row for row in rows if row["endpoint"] == "distinct2")
     assert distinct["n"] == "4" and float(distinct["deltaMean"]) == 0.0

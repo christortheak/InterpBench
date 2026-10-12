@@ -471,8 +471,29 @@ def test_the_mac_engines_own_run_table_is_used_when_no_analysis_exists(root):
         "transcript", "recorded")
 
 
-def test_an_unstamped_unit_of_analysis_is_shown_as_the_engine_default(root):
+def test_a_current_analysis_records_its_unit_and_the_export_says_so(root):
+    """Both engines record each pooled row's unit since 2026-10-12, so the
+    export reports it as recorded rather than working it out."""
     _python_study(root)
+    result = _export(root)
+    assert {(row["unit_of_analysis"], row["unit_of_analysis_source"])
+            for row in _table(result, "effects.csv")} == {("item", "recorded")}
+
+
+def test_an_unstamped_unit_of_analysis_is_shown_as_the_engine_default(root):
+    """An analysis written before units were recorded leaves the column
+    empty, and the export falls back to the engines' default."""
+    analysis = _python_study(root)
+    path = os.path.join(root, "runs", analysis, "effect-sizes.csv")
+    with open(path, encoding="utf-8", newline="") as handle:
+        table = list(csv.DictReader(handle))
+    for row in table:
+        if row["stratifyBy"] == "pooled":
+            row["unit"] = ""                    # as analyses before 2026-10-12 wrote it
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(table[0]))
+        writer.writeheader()
+        writer.writerows(table)
     result = _export(root)
     assert {(row["unit_of_analysis"], row["unit_of_analysis_source"])
             for row in _table(result, "effects.csv")} == {("item", "engine_default")}
@@ -667,6 +688,13 @@ def test_the_shared_effect_unit_wording_is_this_readers():
                          ("not_established", "unknown")):
         context = {"effectRows": [{"stratify_by": "pooled", "unit_source": source, "unit_resolved": unit}]}
         assert results_export.unit_lines(context) == ["- Unit of analysis: " + wording["unitLines"][source]]
+    # A recorded unit is defined, not only named.
+    for unit in ("item", "transcript"):
+        context = {"effectRows": [{"stratify_by": "pooled", "unit_source": "recorded", "unit_resolved": unit}]}
+        assert results_export.unit_lines(context) == [
+            "- Unit of analysis: " + wording["unitLines"]["recorded_" + unit]]
+    context = {"effectRows": [{"stratify_by": "pooled", "unit_source": "recorded", "unit_resolved": "sample"}]}
+    assert results_export.unit_lines(context) == ["- Unit of analysis: `sample`, as the analysis recorded."]
 
 
 def test_a_run_without_analysis_says_effects_are_not_available(root):

@@ -991,7 +991,8 @@ def _effects_tables(study, run_name, analysis_label, rows, source, stamped_unit)
                   "paired with the baseline response to the same item and seed; "
                   "responses to the same item are not independent), or unknown.", unit)
         table.add("unit_of_analysis_source", "Where the unit comes from: recorded "
-                  "when the analysis stamped it; engine_default when it did not "
+                  "when the analysis stamped it, as both engines now do; engine_default "
+                  "when it did not (an older analysis) "
                   "and the run's records are consistent with the engines' rule, the item; "
                   "inferred_from_records when the row counts more pairs than the "
                   "items paired in the run, so it paired responses; and "
@@ -1394,6 +1395,22 @@ def unit_groups(context):
     return list(groups.items())
 
 
+#: What a recorded unit means, in the words every reader uses: this export,
+#: the results page, the Mac app, and the explorer (pinned in the cross-engine
+#: effect-units fixture). A unit with no entry is named as recorded.
+RECORDED_UNIT_LINES = {
+    "item": "the item, with an item's samples averaged within each condition, as the analysis recorded.",
+    "transcript": ("the transcript, as the analysis recorded: one play-through of a multi-agent "
+                   "conversation, with its turns reduced to their average difference before any test, "
+                   "because turns in the same conversation depend on each other."),
+}
+
+
+def recorded_unit_line(units):
+    """The definition of a single recorded unit, or None to name the units."""
+    return RECORDED_UNIT_LINES.get(units[0]) if len(units) == 1 else None
+
+
 def unit_lines(context):
     """The methods summary's unit-of-analysis lines."""
     groups = unit_groups(context)
@@ -1401,7 +1418,8 @@ def unit_lines(context):
     for source, units in groups:
         marked = f" for the rows marked {_and(_code(u) for u in units)}" if len(groups) > 1 else ""
         if source == "recorded":
-            lines.append(f"- Unit of analysis{marked}: {_and(_code(u) for u in units)}, as the analysis recorded.")
+            said = recorded_unit_line(units) or f"{_and(_code(u) for u in units)}, as the analysis recorded."
+            lines.append(f"- Unit of analysis{marked}: {said}")
         elif source == "engine_default":
             lines.append(f"- Unit of analysis{marked}: the item, with an item's samples averaged within each "
                          "condition. This is the engines' documented default; the analysis did not stamp the "

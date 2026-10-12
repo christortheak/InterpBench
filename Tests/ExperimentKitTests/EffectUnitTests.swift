@@ -192,6 +192,17 @@ struct EffectUnitTests {
                 EffectNarrative.unitLines(rows: [settled], records: records)
                     == ["Unit of analysis: " + line])
         }
+        // A recorded unit is defined, not only named.
+        for unit in ["item", "transcript"] {
+            var settled = row(
+                Row(condition: "formal", endpoint: "wordCount", n: "4", unit: unit,
+                    stratifyBy: "pooled", stratum: ""))
+            settled.unit = RunResults.EffectUnit(unit: unit, source: .recorded)
+            let line = try #require(value.wording.unitLines["recorded_" + unit])
+            #expect(
+                EffectNarrative.unitLines(rows: [settled], records: records)
+                    == ["Unit of analysis: " + line])
+        }
     }
 
     // MARK: - The sentence

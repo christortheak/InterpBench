@@ -13,7 +13,7 @@
           "n": 4,
           "stratifyBy": "pooled",
           "stratum": "",
-          "unit": "",
+          "unit": "transcript",
           "wilcoxonP": 0.422678,
           "wilcoxonW": 1.0
         },
@@ -28,7 +28,7 @@
           "n": 4,
           "stratifyBy": "pooled",
           "stratum": "",
-          "unit": "",
+          "unit": "transcript",
           "wilcoxonP": 1.0,
           "wilcoxonW": 1.5
         }

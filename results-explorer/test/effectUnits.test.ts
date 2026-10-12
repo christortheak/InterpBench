@@ -109,6 +109,11 @@ describe("the shared effect-unit fixture", () => {
       const effect: EffectUnit = { unit, source, pairedItems: 4 };
       expect(unitLines([{ effectUnit: effect }], records)).toEqual([`Unit of analysis: ${fixture.wording.unitLines[source]}`]);
     }
+    // A recorded unit is defined, not only named.
+    for (const unit of ["item", "transcript"]) {
+      const effect: EffectUnit = { unit, source: "recorded", pairedItems: null };
+      expect(unitLines([{ effectUnit: effect }], records)).toEqual([`Unit of analysis: ${fixture.wording.unitLines[`recorded_${unit}`]}`]);
+    }
   });
 });
 

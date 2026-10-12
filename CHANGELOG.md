@@ -12,6 +12,16 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **Every effect row records its unit of analysis.** The unit is what one
+  paired difference is: an item (a prompt, its answers averaged), a
+  transcript (one multi-agent conversation), or a sample. Both engines left
+  the `unit` column empty on their main rows, so the app, the export, and the
+  results page worked it out from the run's records: a large cluster run, of
+  which the app reads only the first records, then showed "not established"
+  for a result that was in fact per item, and so did results whose records
+  were not at hand. Both engines now write `item`, or `transcript` for a
+  multi-agent study, on every row. No number changes, and analyses made
+  earlier are read as before.
 - **Custom code is found however it is written.** Two gaps, both found by
   an external review and its follow-up, let a policy's custom code run
   without the notice or an acknowledgement. Packaging a standalone diagnostic

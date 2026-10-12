@@ -182,7 +182,9 @@ def _check(row, *, n, mean, w, p, stamps, adjusted="raw", correction="bh"):
         assert float(row["adjustedP"]) == pytest.approx(adjusted, abs=1e-6)
 
 
-POOLED = ("", "", "")
+#: A pooled row records its unit, the item (since 2026-10-12); its estimand
+#: and inference stay empty, as the run's unit of analysis.
+POOLED = ("item", "", "")
 
 
 # --- the fixture is what this engine writes -----------------------------------

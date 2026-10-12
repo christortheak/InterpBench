@@ -13,7 +13,7 @@
           "n": 4,
           "stratifyBy": "pooled",
           "stratum": "",
-          "unit": "",
+          "unit": "item",
           "wilcoxonP": 0.201243,
           "wilcoxonW": 1.0
         },
@@ -28,7 +28,7 @@
           "n": 4,
           "stratifyBy": "pooled",
           "stratum": "",
-          "unit": "",
+          "unit": "item",
           "wilcoxonP": 1.0,
           "wilcoxonW": 3.0
         },
@@ -501,7 +501,7 @@
           "n": 4,
           "stratifyBy": "pooled",
           "stratum": "",
-          "unit": "",
+          "unit": "item",
           "wilcoxonP": 0.201243,
           "wilcoxonW": 1.0
         },
@@ -516,7 +516,7 @@
           "n": 4,
           "stratifyBy": "pooled",
           "stratum": "",
-          "unit": "",
+          "unit": "item",
           "wilcoxonP": 1.0,
           "wilcoxonW": 3.0
         },

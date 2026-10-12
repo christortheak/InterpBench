@@ -94,8 +94,9 @@ export const isDiagnostic = (row: Effect) =>
 /// The paired-count sentence, in the unit the count is actually in: the
 /// row's settled unit (lib/effectUnits.ts), never an assumed one.
 ///
-/// A stratified row names its own unit (`unit` = "sample" or "item"). A
-/// POOLED row leaves that column empty, so its unit is the run's stamp — one
+/// A stratified row names its own unit (`unit` = "sample" or "item"), and so
+/// does a pooled row written since 2026-10-12 ("item" or "transcript"). An
+/// older POOLED row leaves that column empty, so its unit is the run's stamp — one
 /// TRANSCRIPT for a multi-agent run, where each conversation is reduced to a
 /// single difference before any test — or, when nothing is stamped, what
 /// the run's records show: "n = 4 paired items" for a current analysis, "n =

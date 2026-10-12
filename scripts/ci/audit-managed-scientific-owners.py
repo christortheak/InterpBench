@@ -22,9 +22,17 @@ NEW_CALL = 'artifact_paths.converted_file(record.lensID, record.converted.path, 
 #: approved 2026-10-05) add outcome-coverage.json: the outcomes that reached
 #: the effect rows and those the run could not produce, computed read-only from
 #: the records and the finished rows; and the exclusion-pin refusal's repair
-#: text is now spelled for the client that shows it. No existing endpoint or
-#: statistic body changes.
+#: text is now spelled for the client that shows it. On 2026-10-12 (reviewed,
+#: approved) each pooled effect row records its unit, "item" or "transcript",
+#: in the column stratified rows already filled, so no reader has to infer it.
+#: No existing endpoint or statistic body changes.
 ANALYSIS_WORKFLOW_CHANGES = (
+    ("""            row.modality = modalities.get(condition, "")
+            # What one difference is, recorded rather than left for readers.
+            row.unit = "transcript" if clustered else "item"
+            rows.append(row)""",
+     """            row.modality = modalities.get(condition, "")
+            rows.append(row)"""),
     ("""    from . import instrumentation_evidence
     if any('probeMeasurements' in r or 'interventionDecisions' in r for r in records):
         with open(os.path.join(out, 'instrumentation-summary.json'), 'w', encoding='utf-8') as handle:
@@ -119,6 +127,7 @@ def main():
             # change, and a changed existing statistic body, are both refused.
             for label, mutant in (
                     ('altered coverage rows', after.replace('rows + stratified_rows]', 'rows]', 1)),
+                    ('altered unit stamp', after.replace('"transcript" if clustered else "item"', '"item"', 1)),
                     ('removed repair change', after.replace('pin_required_repair()', 'PIN_REQUIRED_REPAIR', 1)),
                     ('changed existing body', after.replace('    stratified_rows: list = []', '    stratified_rows: list = [None]', 1))):
                 assert mutant != after, 'Mutation control did not apply: ' + label

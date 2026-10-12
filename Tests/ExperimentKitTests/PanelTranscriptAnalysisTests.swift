@@ -144,8 +144,9 @@ struct PanelTranscriptAnalysisTests {
         #expect(distinct.meanDiff == 0)
         #expect(distinct.wilcoxonW == 1.5)
         #expect(distinct.wilcoxonP == 1)
-        // No strata: the per-turn cells are the dependent observations.
-        #expect(analysis.entries.allSatisfy { $0.stratifyBy == nil && $0.unit == nil })
+        // No strata: the per-turn cells are the dependent observations, and
+        // every row records its unit, the conversation.
+        #expect(analysis.entries.allSatisfy { $0.stratifyBy == nil && $0.unit == "transcript" })
         #expect(analysis.entries.count == 2)
         #expect(
             analysis.unit

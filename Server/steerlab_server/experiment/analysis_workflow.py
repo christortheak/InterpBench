@@ -310,6 +310,8 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
                 continue
             row = study_stats.effect_row(condition, endpoint, diffs)
             row.modality = modalities.get(condition, "")
+            # What one difference is, recorded rather than left for readers.
+            row.unit = "transcript" if clustered else "item"
             rows.append(row)
             diffs_index[(condition, endpoint)] = diffs
     method = "holm" if manifest.phase == "confirm" else "bh"

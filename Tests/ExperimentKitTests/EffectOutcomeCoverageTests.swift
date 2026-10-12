@@ -245,8 +245,10 @@ struct EffectOutcomeCoverageTests {
         }
         switch stamps {
         case .pooled:
+            // A pooled row records its unit, the item (since 2026-10-12);
+            // estimand and inference stay empty, as the run's unit of analysis.
             #expect(
-                row.unit == nil && row.estimand == nil && row.inference == nil,
+                row.unit == "item" && row.estimand == nil && row.inference == nil,
                 "stamps of \(name)", sourceLocation: sourceLocation)
         case .item:
             #expect(

@@ -263,6 +263,17 @@ const joined = (items: string[]) =>
 
 export type UnitExplanation = { source: UnitSource; units: string[]; said: string };
 
+/// What a recorded unit means, in the Python reader's words
+/// (`results_export.RECORDED_UNIT_LINES`; pinned in effect-units.json).
+export const RECORDED_UNIT_LINES: Record<string, string> = {
+  item: "the item, with an item's samples averaged within each condition, as the analysis recorded.",
+  transcript: 'the transcript, as the analysis recorded: one play-through of a multi-agent conversation, with its turns reduced to their average difference before any test, because turns in the same conversation depend on each other.',
+};
+
+/// Whether every row a unit summary describes recorded its own unit.
+export const unitsRecorded = (rows: Pick<Effect, "effectUnit" | "stratifyBy">[]): boolean =>
+  rows.length > 0 && summarized(rows).every((row) => unitOf(row).source === "recorded");
+
 /// One explanation per way the rows' units are known, in the order they
 /// first appear: the Python reader's methods summary (`unit_lines`).
 /// `records` is what the units were settled against, which says why a unit
@@ -277,7 +288,7 @@ export const unitExplanations = (rows: Pick<Effect, "effectUnit">[], records: Pa
   }
   return groups.map(({ source, units }) => ({
     source, units,
-    said: source === "recorded" ? `${joined(units)}, as the analysis recorded.`
+    said: source === "recorded" ? (units.length === 1 && RECORDED_UNIT_LINES[units[0]]) || `${joined(units)}, as the analysis recorded.`
       : source === "engine_default" ? "the item, with an item's samples averaged within each condition. This is the engines' documented default; the analysis did not stamp the unit itself. The run's records are consistent with it: no such row counts more pairs than the items paired in the run."
       : source === "inferred_from_records" ? `the response, not the item. ${RESPONSE_UNIT_EXPLANATION}`
       : records === null ? "not established. The analysis did not stamp it, and the run's records are not available here."
