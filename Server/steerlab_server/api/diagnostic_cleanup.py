@@ -42,21 +42,45 @@ def contains_reference(value, relative, absolute):
     return False
 
 
+#: Keys an archive's description carried before it stopped naming the server's
+#: folders. A receipt holding them was made from such an archive.
+_LEGACY_CONTEXT_ROOTS = ('servingRoot', 'metadataRoot', 'executionRoot')
+
+
+class LegacyCustody(archives.Refusal):
+    repair_action = ('Fetch the evidence again with `science-fetch` (the export is made afresh and its '
+                     'import gives a current receipt; the local copy is unchanged), then plan the cleanup '
+                     'with the new receipt SHA-256.')
+
+
 def facts(job_id, custody, jobs, profile):
+    return _facts(job_id, custody, jobs, profile)[0]
+
+
+def _facts(job_id, custody, jobs, profile):
+    """The cleanup plan, and the execution root it acts on: a path on this
+    server, read here, never from the client's receipt."""
     job = jobs.get(job_id)
     if job is None or job.kind not in ('science:battery', 'science:stability'):
         raise archives.Refusal('This retention policy covers battery and stability copies only; other scientific artifacts are retained.')
     declared = policy()
-    reference = diagnostic_transport.export(job_id, jobs, profile)
+    # Before the export, which a changed description makes afresh: a receipt
+    # that cannot match is refused without packaging the output to find out.
+    if (isinstance(custody, dict) and isinstance(custody.get('context'), dict)
+            and any(key in custody['context'] for key in _LEGACY_CONTEXT_ROOTS)):
+        raise LegacyCustody('This receipt comes from an archive made before archives stopped naming the '
+                            "server's folders, so it no longer matches this job's export.")
+    reference, execution_root = diagnostic_transport.exported(job_id, jobs, profile)
     context = reference['context']
     if (not isinstance(custody, dict) or custody.get('kind') != 'diagnosticCustody'
         or custody.get('schemaVersion') != 1 or not custody.get('workspaceRoot')
         or custody.get('context') != context or custody.get('archiveSHA256') != reference['bundleSha256']
         or custody.get('files') != reference['entries']):
         raise archives.Refusal('Local custody attestation does not match this job and its exported bytes.')
-    if Path(context['executionRoot']) == Path(context['servingRoot']):
+    serving_root = Path(profile.root).resolve()
+    if execution_root == serving_root:
         raise archives.Refusal('Managed cleanup is limited to isolated diagnostic execution copies; retain original workspace outputs.')
-    target = Path(context['executionRoot']) / context['outputRelative']
+    target = execution_root / context['outputRelative']
     blockers, dependencies = [], []
     for job in jobs.list():
         if job.id == job_id: continue
@@ -82,13 +106,13 @@ def facts(job_id, custody, jobs, profile):
     retain_until = job.finished_at + declared['document']['minimumRetentionHours'] * 3600
     if time.time() < retain_until: blockers.append('Declared minimum retention period has not elapsed.')
     result = {'schemaVersion': 1, 'kind': 'diagnosticCleanupPlan', 'jobID': job_id,
-              'servingRoot': context['servingRoot'], 'metadataRoot': context['metadataRoot'],
+              'servingRoot': str(serving_root), 'metadataRoot': str(Path(profile.metadata_root).resolve()),
               'target': str(target), 'outputSHA256': context['outputSHA256'],
               'exportSHA256': reference['bundleSha256'], 'custodySHA256': archives.digest(custody),
               'policy': declared, 'retainUntil': retain_until, 'dependencies': dependencies,
               'blockers': sorted(blockers), 'eligible': not blockers,
               'retained': ['staged inputs', 'export archive', 'job records', 'local evidence and receipt']}
-    return {**result, 'planSHA256': archives.digest(result)}
+    return {**result, 'planSHA256': archives.digest(result)}, execution_root
 
 
 def plan(job_id, custody, jobs, profile):
@@ -102,7 +126,7 @@ def apply(job_id, custody, expected, jobs, profile, *, confirmed):
     with workspace_lock.switching(), jobs.store.exclusive_snapshot() as snapshot:
         jobs = SimpleNamespace(get=snapshot.get, list=lambda: list(snapshot.values()))
         with manifest_files.transaction(str(Path(profile.metadata_root) / 'diagnostic-cleanup'), workspace_root=profile.metadata_root):
-            reviewed = facts(job_id, custody, jobs, profile)
+            reviewed, execution_root = _facts(job_id, custody, jobs, profile)
             if reviewed['planSHA256'] != expected or not reviewed['eligible']:
                 raise archives.Refusal('Cleanup facts changed or remain blocked; nothing was removed. Review a new plan.')
             target = Path(reviewed['target'])
@@ -117,8 +141,8 @@ def apply(job_id, custody, expected, jobs, profile, *, confirmed):
             quarantine = target.with_name('.diagnostic-cleanup-' + operation)
             try:
                 archives.publish_directory(target, quarantine)
-                relative = quarantine.relative_to(Path(custody['context']['executionRoot'])).as_posix()
-                entries = archives.snapshot(custody['context']['executionRoot'], archives.files_in(custody['context']['executionRoot'], relative))
+                relative = quarantine.relative_to(execution_root).as_posix()
+                entries = archives.snapshot(execution_root, archives.files_in(execution_root, relative))
                 original_prefix = custody['context']['outputRelative']
                 for entry in entries: entry['path'] = original_prefix + entry['path'][len(relative):]
                 if entries != custody['files']:

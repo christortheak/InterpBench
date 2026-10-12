@@ -366,6 +366,11 @@ if [ "$PACKAGE_ONLY" -eq 1 ]; then
 
   PKG_ZIP="$OUTPUT/SteerLab-$PKG_VERSION+$PKG_REV.zip"
   rm -f "$PKG_ZIP" "$PKG_ZIP.sha256"
+  # Extended attributes stay in (no --noextattr): mlx.metallib, a non-Mach-O
+  # file in Contents/Helpers, keeps its code signature in them, and the
+  # unzipped app would fail verification without it. The cost is that every
+  # file also carries com.apple.provenance, an opaque identifier with no name
+  # or path, as an AppleDouble ._ member.
   ditto -c -k --keepParent "$PKG_APP" "$PKG_ZIP" || die "ditto failed"
   # The checksum file, in the form `shasum -a 256 -c` reads, naming the zip by
   # its file name so the pair can be moved or downloaded together.

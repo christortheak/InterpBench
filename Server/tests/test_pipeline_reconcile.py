@@ -240,7 +240,10 @@ def test_startup_parks_a_healed_chain_whose_evidence_cannot_be_packaged(
     ledger = json.load(open(os.path.join(run_dir, "pipeline.json")))
     reason = ledger["parked"]["reason"]
     assert "could not be packaged" in reason
-    assert run_dir in reason
+    # It names the chain by run ID, never by where the workspace is: the
+    # ledger travels in the chain's bundles.
+    assert "runs/" + os.path.basename(run_dir) in reason
+    assert run_dir not in reason
     assert "Import evidence" in reason
     assert ledger["parked"]["completedStages"] == ["run"]
 

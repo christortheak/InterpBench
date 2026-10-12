@@ -34,6 +34,7 @@ from steerlab_server.experiment import tasks
 import steerlab_server.experiment.forward_resolution as forward_resolution
 import steerlab_server.experiment.model_resources as model_resources
 import steerlab_server.experiment.pipeline_evidence as pipeline_evidence
+import steerlab_server.experiment.pipeline_ledger as pipeline_ledger
 from steerlab_server.experiment.manifest import Manifest
 
 
@@ -45,6 +46,13 @@ def _write(path, text):
         handle.write(text)
     with open(path, "rb") as handle:
         return hashlib.sha256(handle.read()).hexdigest()
+
+
+def _ledger(directory):
+    """A chain's ledger as the engine uses it: the file names runs relative to
+    the workspace, and they are read back as paths on this machine."""
+    with open(os.path.join(directory, "pipeline.json"), encoding="utf-8") as handle:
+        return pipeline_ledger.resolve_ledger(json.load(handle), directory)
 
 
 def _workspace(root, name="chain", *, pipeline=None):
@@ -473,7 +481,7 @@ def test_full_chain_happy_path(tmp_path, monkeypatch):
                            "run"]
     # ONE model load spans the whole chain.
     assert acquisitions == ["org/m"]
-    ledger = json.load(open(os.path.join(out, "pipeline.json")))
+    ledger = _ledger(out)
     assert ledger["disposition"] == "completed"
     assert ledger["stages"] == list(pspec.DEFAULT_STAGES)
     results = ledger["stageResults"]
@@ -517,7 +525,7 @@ def test_validate_gate_abort_stops_the_chain(tmp_path, monkeypatch):
     assert gate["measured"] == pytest.approx(0.3)
     assert gate["threshold"] == pytest.approx(0.6)
     assert abort["evidenceRunDirectory"].endswith("-exp-chain-validate")
-    ledger = json.load(open(os.path.join(out, "pipeline.json")))
+    ledger = _ledger(out)
     assert ledger["disposition"] == "aborted"
     # The validate STAGE itself completed — the science said stop.
     assert ledger["stageResults"]["validate"]["status"] == "completed"
@@ -650,7 +658,7 @@ def test_crash_requeue_skips_completed_stages(tmp_path, monkeypatch):
     runs = os.path.join(root, "runs")
     (pipeline_dir,) = [os.path.join(runs, d) for d in os.listdir(runs)
                        if "-pipeline" in d]
-    ledger = json.load(open(os.path.join(pipeline_dir, "pipeline.json")))
+    ledger = _ledger(pipeline_dir)
     assert ledger["stageResults"]["extract"]["status"] == "completed"
     assert ledger["disposition"] is None
     assert calls == ["extract", "validate", "sweep"] or \
@@ -737,7 +745,7 @@ def _incident_chain(tmp_path, monkeypatch, calls):
     runs = os.path.join(root, "runs")
     (pipeline_dir,) = [os.path.join(runs, d) for d in os.listdir(runs)
                        if "-pipeline" in d]
-    ledger = json.load(open(os.path.join(pipeline_dir, "pipeline.json")))
+    ledger = _ledger(pipeline_dir)
     assert ledger["stageResults"]["run"]["status"] == "completed"
     assert ledger["disposition"] is None
     return root, name, pipeline_dir
@@ -783,7 +791,7 @@ def test_incident_resume_restores_stripped_pin_and_completes(
     # The live manifest is re-pinned, the resume ran ONLY analyze, and the
     # chain completed as the SAME epoch — no drift stamp.
     assert es.load_raw(name, root)["modelRevision"] == "abc"
-    ledger = json.load(open(os.path.join(pipeline_dir, "pipeline.json")))
+    ledger = _ledger(pipeline_dir)
     assert [c for c in calls if isinstance(c, tuple)] == [
         ("analyze", ledger["stageResults"]["run"]["runDirectory"])]
     assert ledger["disposition"] == "completed"
@@ -811,7 +819,7 @@ def test_resume_drift_stamp_survives_stage_completion(tmp_path, monkeypatch):
                              pipeline_run_directory=pipeline_dir,
                              log=logs.append)
     assert out == pipeline_dir
-    ledger = json.load(open(os.path.join(pipeline_dir, "pipeline.json")))
+    ledger = _ledger(pipeline_dir)
     assert ledger["disposition"] == "completed"
     (stamp,) = ledger["epochDriftAtContinuation"]
     assert stamp["ledgerHash"] != stamp["liveHash"]
@@ -838,7 +846,7 @@ def test_resume_clears_parked_stamp(tmp_path, monkeypatch):
         out = tasks.pipeline(name, root, model_provider=provider,
                              pipeline_run_directory=pipeline_dir,
                              log=lambda *_: None)
-    ledger = json.load(open(os.path.join(out, "pipeline.json")))
+    ledger = _ledger(out)
     assert ledger["disposition"] == "completed"
     assert "parked" not in ledger
     assert "parked" not in pipeline_evidence.list_pipeline_runs(name, root)[0]
@@ -889,7 +897,7 @@ def test_checkpoint_mid_run_resumes_record_level(tmp_path, monkeypatch):
     runs = os.path.join(root, "runs")
     (pipeline_dir,) = [os.path.join(runs, d) for d in os.listdir(runs)
                        if "-pipeline" in d]
-    ledger = json.load(open(os.path.join(pipeline_dir, "pipeline.json")))
+    ledger = _ledger(pipeline_dir)
     # The run stage is recorded STARTED with its dir — resumable, not done.
     assert ledger["stageResults"]["run"]["status"] == "started"
     parked = ledger["stageResults"]["run"]["runDirectory"]
@@ -904,7 +912,7 @@ def test_checkpoint_mid_run_resumes_record_level(tmp_path, monkeypatch):
     # Earlier stages skipped; the run stage received the PARKED dir back.
     assert calls == ["run"]
     assert seen_run_dirs == [None, parked]
-    ledger = json.load(open(os.path.join(out, "pipeline.json")))
+    ledger = _ledger(out)
     assert ledger["disposition"] == "completed"
     assert ledger["stageResults"]["run"]["runDirectory"] == parked
 
@@ -977,7 +985,7 @@ def test_evaluate_and_analyze_receive_the_chains_own_run_path(
     with _acquire_counter([]) as provider:
         out = tasks.pipeline(name, root, model_provider=provider,
                              log=lambda *_: None)
-    ledger = json.load(open(os.path.join(out, "pipeline.json")))
+    ledger = _ledger(out)
     assert ledger["disposition"] == "completed"
     run_dir = ledger["stageResults"]["run"]["runDirectory"]
     sources = {c[0]: c[1] for c in calls
@@ -1062,7 +1070,7 @@ def test_promote_crash_window_adopts_the_minted_agent(tmp_path, monkeypatch):
     runs = os.path.join(root, "runs")
     (pipeline_dir,) = [os.path.join(runs, d) for d in os.listdir(runs)
                        if "-pipeline" in d]
-    ledger = json.load(open(os.path.join(pipeline_dir, "pipeline.json")))
+    ledger = _ledger(pipeline_dir)
     # The crash left the stage marked mid-flight — the recovery gate.
     assert ledger["stageResults"]["promote"]["status"] == "started"
     chain_sweep = os.path.basename(
@@ -1098,7 +1106,7 @@ def test_promote_crash_window_adopts_the_minted_agent(tmp_path, monkeypatch):
         out = tasks.pipeline(name, root, model_provider=provider,
                              pipeline_run_directory=pipeline_dir,
                              log=lambda *_: None)
-    ledger = json.load(open(os.path.join(out, "pipeline.json")))
+    ledger = _ledger(out)
     assert ledger["disposition"] == "completed"
     pin = ledger["stageResults"]["promote"]["concepts"]["fear"]
     assert pin["path"] == artifact
@@ -1119,7 +1127,7 @@ def test_fresh_pipeline_never_adopts(tmp_path, monkeypatch):
     with _acquire_counter([]) as provider:
         first = tasks.pipeline(name, root, model_provider=provider,
                                log=lambda *_: None)
-    ledger = json.load(open(os.path.join(first, "pipeline.json")))
+    ledger = _ledger(first)
     runs = os.path.join(root, "runs")
     # An artifact fully matching the FIRST chain's identity sits in runs/.
     chain_sweep = os.path.basename(
@@ -1230,6 +1238,220 @@ def test_aborted_pipeline_packages_honestly_incomplete(tmp_path):
     with tarfile.open(meta["bundlePath"], "r:gz") as tar:
         assert (f"runs/{os.path.basename(pipeline_dir)}/pipeline.json"
                 in tar.getnames())
+
+
+# --- references name the workspace's runs, never the workspace's location ----
+
+def _files_naming(root, needle):
+    """Every file under ``root``'s runs tree, and every member of every
+    bundle there, whose bytes contain ``needle``."""
+    import tarfile
+    found = []
+    for dirpath, _dirs, files in os.walk(os.path.join(root, "runs")):
+        for filename in files:
+            path = os.path.join(dirpath, filename)
+            shown = os.path.relpath(path, root)
+            if filename.endswith(".tar.gz"):
+                with tarfile.open(path, "r:gz") as tar:
+                    for member in tar.getmembers():
+                        if member.isfile() and needle.encode() in \
+                                tar.extractfile(member).read():
+                            found.append(f"{shown}!{member.name}")
+            elif needle.encode() in open(path, "rb").read():
+                found.append(shown)
+    return sorted(found)
+
+
+def _promote_into_a_variant_run(monkeypatch, root):
+    """The faked promote, minting a real agent file in a variant run, as the
+    real one does (the shared fake returns a placeholder path)."""
+    faked = promote_mod.promote
+
+    def promote(*args, **kwargs):
+        outcome = faked(*args, **kwargs)
+        outcome["path"] = os.path.join(
+            root, "runs", "20260718T000009000-variant-chain-fear-agent",
+            "chain-fear-agent.json")
+        _write(outcome["path"], "{}")
+        return outcome
+    monkeypatch.setattr(promote_mod, "promote", promote)
+
+
+@pytest.mark.parametrize("accuracy", [0.9, 0.3], ids=["completed", "aborted"])
+def test_a_chain_and_its_bundle_never_name_the_workspace_location(
+        tmp_path, monkeypatch, accuracy):
+    # The ledger, the abort record, and the bundle's portable projection all
+    # gave the workspace's absolute path, so every pipeline bundle named the
+    # account that ran it (a home folder on a Mac, a scratch folder on a
+    # cluster). They now name runs relative to the workspace.
+    root = str(tmp_path)
+    name = _workspace(root, pipeline={"gates": GATES})
+    calls: list = []
+    _stage_fakes(monkeypatch, root, calls, accuracy=accuracy)
+    _promote_into_a_variant_run(monkeypatch, root)
+    with _acquire_counter([]) as provider:
+        out = tasks.pipeline(name, root, model_provider=provider,
+                             log=lambda *_: None)
+    stored = json.load(open(os.path.join(out, "pipeline.json")))
+    references = [entry["runDirectory"]
+                  for entry in stored["stageResults"].values()
+                  if "runDirectory" in entry]
+    references += [pin["path"] for pin in (stored["stageResults"].get(
+        "promote") or {}).get("concepts", {}).values()]
+    assert references and all(r.startswith("runs/") for r in references)
+    if accuracy < 0.6:
+        abort = json.load(open(os.path.join(out, "pipeline-abort.json")))
+        assert abort["evidenceRunDirectory"].startswith("runs/")
+        assert stored["abort"]["evidenceRunDirectory"] == \
+            abort["evidenceRunDirectory"]
+    from steerlab_server.experiment import bundles
+    meta = bundles.package_evidence(out)
+    # An abort is a determination, so its chain's evidence is whole too.
+    assert meta["evidenceComplete"] is True
+    assert _files_naming(root, root) == []
+    # Read back, every reference is a path on this machine again.
+    for reference in references:
+        assert os.path.exists(pipeline_ledger.resolve_reference(reference, out))
+
+
+@pytest.mark.parametrize("layout", ["symlinked runs", "relative root"])
+def test_references_resolve_however_the_runs_folder_is_reached(
+        tmp_path, monkeypatch, layout):
+    # A `runs` that is a link to another folder (a fast store, a `.nosync`
+    # folder) is reached by two spellings, and the packager uses the
+    # resolved one; a root given relative to the working directory makes
+    # every path relative. Each reference must still lead to its run.
+    if layout == "symlinked runs":
+        root = str(tmp_path / "ws")
+        os.makedirs(root)
+        os.makedirs(tmp_path / "fast-store")
+        os.symlink(tmp_path / "fast-store", os.path.join(root, "runs"))
+    else:
+        monkeypatch.chdir(tmp_path)
+        root = "ws"
+    name = _workspace(root, pipeline={"gates": GATES})
+    calls: list = []
+    _stage_fakes(monkeypatch, root, calls)
+    _promote_into_a_variant_run(monkeypatch, root)
+    with _acquire_counter([]) as provider:
+        out = tasks.pipeline(name, root, model_provider=provider,
+                             log=lambda *_: None)
+    stored = json.load(open(os.path.join(out, "pipeline.json")))
+    runs = [e["runDirectory"] for e in stored["stageResults"].values()
+            if "runDirectory" in e]
+    assert runs and all(r.startswith("runs/") for r in runs)
+    for spelling in (out, os.path.realpath(out)):
+        ledger = pipeline_ledger.read_pipeline_ledger(spelling)
+        for entry in ledger["stageResults"].values():
+            if "runDirectory" in entry:
+                assert os.path.isdir(entry["runDirectory"])
+    from steerlab_server.experiment import bundles
+    meta = bundles.package_evidence(out)
+    assert meta["evidenceComplete"] is True
+    assert len(meta["pipelineStageDirectories"]) == 5  # four stages, one agent
+
+
+def test_a_ledger_with_absolute_paths_still_resumes_and_is_rewritten_portable(
+        tmp_path, monkeypatch):
+    # A chain started before references were portable, on the same machine:
+    # its ledger names its runs absolutely. The resume finds them, and the
+    # next write spells them relative to the workspace.
+    root = str(tmp_path)
+    name = _workspace(root, pipeline={"gates": GATES})
+    calls: list = []
+    seen_run_dirs: list = []
+
+    def parking_run(kwargs, run_dir):
+        seen_run_dirs.append(kwargs.get("run_directory"))
+        if kwargs.get("run_directory") is None:
+            _write(os.path.join(run_dir, "generations.jsonl"), '{"n": 1}\n')
+            resume_mod.write_state(run_dir, run_id="r", verb="run",
+                                   completed_records=1, reason="signal")
+            raise resume_mod.CheckpointRequested(run_dir, "run", 1)
+        _write(os.path.join(run_dir, "report.json"), "{}")
+        return run_dir
+
+    _stage_fakes(monkeypatch, root, calls, run_behavior=parking_run)
+    _promote_into_a_variant_run(monkeypatch, root)
+    with _acquire_counter([]) as provider:
+        with pytest.raises(resume_mod.CheckpointRequested):
+            tasks.pipeline(name, root, model_provider=provider,
+                           log=lambda *_: None)
+    runs = os.path.join(root, "runs")
+    (pipeline_dir,) = [os.path.join(runs, d) for d in os.listdir(runs)
+                       if "-pipeline" in d]
+    ledger_path = os.path.join(pipeline_dir, "pipeline.json")
+    # Rewrite it as the engine wrote ledgers before 2026-10.
+    absolute = _ledger(pipeline_dir)
+    with open(ledger_path, "w", encoding="utf-8") as handle:
+        json.dump(absolute, handle)
+    parked = absolute["stageResults"]["run"]["runDirectory"]
+    assert os.path.isabs(parked) and resume_mod.is_resumable(parked)
+
+    calls.clear()
+    with _acquire_counter([]) as provider:
+        out = tasks.pipeline(name, root, model_provider=provider,
+                             pipeline_run_directory=pipeline_dir,
+                             log=lambda *_: None)
+    assert calls == ["run"]
+    assert seen_run_dirs == [None, parked]
+    stored = json.load(open(os.path.join(out, "pipeline.json")))
+    assert stored["disposition"] == "completed"
+    assert stored["stageResults"]["run"]["runDirectory"] == \
+        "runs/" + os.path.basename(parked)
+    assert root not in json.dumps(stored)
+
+
+def test_missing_evidence_names_the_run_not_the_workspace(tmp_path):
+    # The archived `missingEvidence` named the absent stage by its absolute
+    # path. It names it as the ledger does now, by run ID, which the Swift
+    # importer needs (it accepts an absent sibling only when a message
+    # contains its ID), and so does the receipt.
+    import tarfile
+    from steerlab_server.experiment import bundles
+    root = str(tmp_path)
+    runs = os.path.join(root, "runs")
+    gone = os.path.join(runs, "20260718T000001000-exp-chain-validate")
+    pipeline_dir = _pipeline_dir_with_ledger(
+        runs, disposition="aborted", references=[gone])
+    meta = bundles.package_evidence(pipeline_dir)
+    assert meta["missingEvidence"] == [
+        "stage 'validate': 'runs/20260718T000001000-exp-chain-validate' not found"]
+    with tarfile.open(meta["bundlePath"], "r:gz") as tar:
+        archived = json.load(tar.extractfile("steerlab-evidence.json"))
+    (entry,) = archived["missingEvidence"]
+    assert entry == ("stage 'validate': "
+                     "'runs/20260718T000001000-exp-chain-validate' not found")
+    assert root not in json.dumps(archived)
+
+
+def test_a_redactor_fault_keeps_the_pipeline_bundle_and_every_run_id(
+        tmp_path, monkeypatch):
+    # As with an archived failure, the evidence outranks its redaction: the
+    # bundle is still written, the missing stage is still named by its run
+    # ID (the Swift importer needs it), and nothing is archived raw.
+    import tarfile
+    from steerlab_server.experiment import bundles, path_redaction
+    root = str(tmp_path)
+    runs = os.path.join(root, "runs")
+    gone = os.path.join(runs, "20260718T000001000-exp-chain-validate")
+    outside = os.path.join(root, "elsewhere", "20260718T000002000-exp-chain-run")
+    os.makedirs(outside)
+    pipeline_dir = _pipeline_dir_with_ledger(
+        runs, disposition="aborted", references=[gone])
+
+    def faulty(*args, **kwargs):
+        raise RuntimeError("redactor fault")
+    monkeypatch.setattr(path_redaction, "redact_value", faulty)
+    meta = bundles.package_evidence(pipeline_dir, extra_run_directories=[outside])
+    with tarfile.open(meta["bundlePath"], "r:gz") as tar:
+        archived = json.load(tar.extractfile("steerlab-evidence.json"))
+        assert "steerlab-pipeline.json" not in tar.getnames()
+    assert archived["missingEvidence"] == [
+        "stage 'validate': 'runs/20260718T000001000-exp-chain-validate' not found",
+        "failed stage: '20260718T000002000-exp-chain-run' is outside the runs root"]
+    assert "pipelinePortable" not in archived
+    assert root not in json.dumps(archived)
 
 
 def test_pipeline_is_a_submittable_verb():
@@ -1360,9 +1582,15 @@ def test_evidence_bundle_carries_a_portable_ledger(tmp_path):
     assert agent["runID"] == os.path.basename(variant_dir)
     assert agent["artifact"] == "chain-fear-agent.json"
     assert agent["winningCell"] == {"layer": 2, "alpha": 4.0}
-    # Original paths survive as provenance, never as the reference.
-    assert portable["originalPaths"]["validate"] == stage_dir
-    assert portable["originalPaths"]["agent:fear"] == variant_path
+    # The ledger's references survive as provenance, never as the
+    # reference, and name no machine: this ledger predates portable
+    # references (absolute paths), and the projection spells them
+    # relative to the workspace.
+    assert portable["originalPaths"]["validate"] == \
+        "runs/" + os.path.basename(stage_dir)
+    assert portable["originalPaths"]["agent:fear"] == \
+        "runs/" + os.path.basename(variant_dir) + "/chain-fear-agent.json"
+    assert root not in json.dumps(portable)
     # The portable member is hash-pinned like everything else.
     with tarfile.open(meta["bundlePath"], "r:gz") as tar:
         blob = tar.extractfile("steerlab-pipeline.json").read()
@@ -1404,7 +1632,8 @@ def test_pipeline_evidence_round_trips_through_import(tmp_path):
         assert portable["abort"]["evidenceRunID"] == \
             os.path.basename(stage_dir)
         assert "evidenceRunDirectory" not in portable["abort"]
-        assert portable["originalPaths"]["abort"] == stage_dir
+        assert portable["originalPaths"]["abort"] == \
+            "runs/" + os.path.basename(stage_dir)
 
     target = str(tmp_path / "mac")
     os.makedirs(target, exist_ok=True)

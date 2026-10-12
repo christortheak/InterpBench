@@ -632,7 +632,8 @@ def test_cancelling_the_original_again_stops_its_continuation(
 
 # --- pipelines: the ledger is the kept state ----------------------------------------
 
-def _pipeline_job(mgr, tmp_path, slurm_id, ledger, *, run_state=None):
+def _pipeline_job(mgr, tmp_path, slurm_id, ledger, *, run_state=None,
+                  relative=False):
     script = _dummy_script(tmp_path)
     records = tmp_path / "records"
     records.mkdir(exist_ok=True)
@@ -650,8 +651,11 @@ def _pipeline_job(mgr, tmp_path, slurm_id, ledger, *, run_state=None):
                            completed_records=5, reason="signal")
     stage_results = dict(ledger)
     if "run" in stage_results:
+        # A chain written since 2026-10 names its runs relative to the
+        # workspace; an older one gave absolute paths. Both must resume.
         stage_results["run"] = {**stage_results["run"],
-                                "runDirectory": str(run_dir)}
+                                "runDirectory": (f"runs/{run_dir.name}"
+                                                 if relative else str(run_dir))}
     (pipeline_dir / "pipeline.json").write_text(json.dumps({
         "experiment": "demo", "stages": ["sweep", "run", "analyze"],
         "disposition": None, "stageResults": stage_results}), encoding="utf-8")
@@ -670,6 +674,19 @@ def test_a_pipeline_cancelled_in_its_run_stage_resumes_from_the_parked_run(
                         {"sweep": {"status": "completed"},
                          "run": {"status": "started"}}, run_state="parked")
     monkeypatch.setenv("FAKE_SLURM_JOB_ID", "9702")
+    outcome = mgr.resubmit(job.id)
+    assert outcome["resumedAfterCancel"] is True
+    assert outcome["completedRecords"] == 5
+
+
+def test_a_pipeline_whose_ledger_names_its_run_relative_to_the_workspace_resumes(
+        tmp_path, fake_slurm, monkeypatch):
+    mgr = _manager(tmp_path)
+    job = _pipeline_job(mgr, tmp_path, "9731",
+                        {"sweep": {"status": "completed"},
+                         "run": {"status": "started"}}, run_state="parked",
+                        relative=True)
+    monkeypatch.setenv("FAKE_SLURM_JOB_ID", "9732")
     outcome = mgr.resubmit(job.id)
     assert outcome["resumedAfterCancel"] is True
     assert outcome["completedRecords"] == 5

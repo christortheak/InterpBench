@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from . import experiment_store, path_redaction, paths
+from .pipeline_ledger import resolve_ledger, workspace_reference
 from . import resume as resume_mod
 from . import run_status
 from .manifest import Manifest
@@ -266,6 +267,9 @@ def _pipeline_evidence_directories(run_dir: str):
         return [], [f"pipeline.json is unreadable ({type(exc).__name__})"], None
     if not isinstance(ledger, dict):
         return [], ["pipeline.json is not an object"], None
+    # A ledger names runs relative to its workspace (absolute on ledgers
+    # written before 2026-10); either way they are opened as paths here.
+    ledger = resolve_ledger(ledger, run_dir)
     runs_root = os.path.realpath(os.path.dirname(run_dir.rstrip(os.sep)))
     directories: list[str] = []
     missing: list[str] = []
@@ -275,11 +279,15 @@ def _pipeline_evidence_directories(run_dir: str):
         if not isinstance(candidate, str) or not candidate:
             return
         resolved = os.path.realpath(candidate)
+        # Named as the ledger names it (`runs/<run ID>`), whatever the runs
+        # folder is called or however it is reached; a reference outside it
+        # keeps its path, and the archived copy is redacted.
+        shown = workspace_reference(candidate, run_dir)
         if not resolved.startswith(runs_root + os.sep):
-            missing.append(f"{what}: '{candidate}' is outside the runs root")
+            missing.append(f"{what}: '{shown}' is outside the runs root")
             return
         if not os.path.isdir(resolved):
-            missing.append(f"{what}: '{candidate}' not found")
+            missing.append(f"{what}: '{shown}' not found")
             return
         if resolved in seen:
             return
@@ -303,11 +311,18 @@ def _pipeline_evidence_directories(run_dir: str):
 def _portable_pipeline_ledger(run_dir: str) -> dict | None:
     """A PORTABLE projection of the pipeline ledger for the evidence bundle
     (stage 5, engineer review 2026-07-18 third round): the on-disk ledger
-    references absolute cluster paths, which are meaningless after import
+    referenced absolute cluster paths, which are meaningless after import
     to the Mac. This projection references everything by imported RUN ID
     (the ``runs/<id>/`` prefix the bundle itself uses) and keeps the
-    original paths as provenance. The on-disk ledger is never rewritten —
-    the run directory is immutable."""
+    ledger's own references as provenance. The on-disk ledger is never
+    rewritten — the run directory is immutable.
+
+    The projection names no machine. A ledger written since 2026-10 already
+    spells its references `runs/<run ID>`; an older one spelled them as
+    absolute paths, which named the account that ran the chain, and a parked
+    reason or a gate's detail can quote a path too. Every string is passed
+    through :mod:`path_redaction` against this run, so a sibling run reads
+    `runs/<its ID>` and anything else reads as a placeholder."""
     ledger_path = os.path.join(run_dir, "pipeline.json")
     if not os.path.isfile(ledger_path):
         return None
@@ -379,7 +394,20 @@ def _portable_pipeline_ledger(run_dir: str) -> dict | None:
                 evidence_dir.rstrip(os.sep))
             original_paths["abort"] = evidence_dir
         portable["abort"] = abort
-    return portable
+    try:
+        return path_redaction.redact_value(portable, run_directory=run_dir)
+    except Exception:  # noqa: BLE001 - the evidence outranks its projection
+        # Unchecked, it is left out rather than archived raw; it is optional,
+        # and both importers then read the chain from its ledger.
+        return None
+
+
+def _run_ids_only(message: str) -> str:
+    """A missing-evidence message with each quoted absolute path cut to its
+    last component, the run ID: the fallback when redaction itself fails."""
+    return re.sub(r"'(/[^']*)'",
+                  lambda match: "'" + os.path.basename(
+                      match.group(1).rstrip("/")) + "'", message)
 
 
 def _jlens_trace_problem(run_directory: str) -> str | None:
@@ -538,7 +566,8 @@ def package_evidence(run_directory: str, *, output_path: str | None = None,
         resolved = os.path.realpath(extra)
         if not resolved.startswith(runs_root + os.sep):
             missing_evidence.append(
-                f"failed stage: '{extra}' is outside the runs root")
+                f"failed stage: '{workspace_reference(extra, run_dir)}' is "
+                "outside the runs root")
             continue
         if os.path.isdir(resolved) and resolved not in already:
             stage_directories.append(resolved)
@@ -631,7 +660,17 @@ def package_evidence(run_directory: str, *, output_path: str | None = None,
         # stage directory it reached and still not be a finished chain.
         meta["evidenceComplete"] = not missing_evidence and not failure
         if missing_evidence:
-            meta["missingEvidence"] = missing_evidence
+            # Named by the run each message is about (`runs/<run ID>`), never
+            # by its absolute path, which gave the workspace's location on
+            # the packaging machine. The Swift importer accepts an absent
+            # sibling only when some message contains its run ID, and the
+            # redaction keeps every ID. The receipt below keeps the original.
+            try:
+                meta["missingEvidence"] = path_redaction.redact_value(
+                    missing_evidence, run_directory=run_dir)
+            except Exception:  # noqa: BLE001 - keep the bundle, and every run ID
+                meta["missingEvidence"] = [
+                    _run_ids_only(message) for message in missing_evidence]
         portable_ledger = _portable_pipeline_ledger(run_dir)
         if portable_ledger is not None:
             meta["pipelinePortable"] = "steerlab-pipeline.json"
@@ -655,6 +694,8 @@ def package_evidence(run_directory: str, *, output_path: str | None = None,
     meta["runDirectory"] = run_dir
     if failure:
         meta["failure"] = failure
+    if "missingEvidence" in meta:
+        meta["missingEvidence"] = missing_evidence
     meta["bundlePath"] = output_path
     meta["bundleSha256"] = sha256_file(output_path)
     return meta

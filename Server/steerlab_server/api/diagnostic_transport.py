@@ -97,14 +97,24 @@ def output(job_id, jobs, profile):
     if len(components) != 2 or components[0] != wanted:
         raise archives.Refusal('Output is outside the bounded diagnostic artifact class.')
     entries = archives.snapshot(root, archives.files_in(root, relative))
-    context = {'jobID': job_id, 'servingRoot': str(Path(profile.root).resolve()),
-               'metadataRoot': str(Path(profile.metadata_root).resolve()), 'executionRoot': str(root),
-               'operation': plan['request']['operation'], 'outputRelative': relative,
+    # The description travels inside the archive, so it names no machine. It
+    # used to give the serving, metadata, and execution roots as absolute
+    # paths, which named the account that ran the controller. The job, its
+    # reviewed plan (whose digest covers the execution root), and where the
+    # output sits in the workspace still identify the export; cleanup takes
+    # the roots from this server, never from an archive or a receipt.
+    context = {'jobID': job_id, 'operation': plan['request']['operation'], 'outputRelative': relative,
                'scientificPlanSHA256': plan['planSHA256'], 'outputSHA256': archives.digest(entries)}
     return root, relative, entries, context
 
 
 def export(job_id, jobs, profile):
+    return exported(job_id, jobs, profile)[0]
+
+
+def exported(job_id, jobs, profile):
+    """The export reference and the execution root it was read from (a path on
+    this server, for cleanup; the reference names no machine)."""
     root, relative, entries, context = output(job_id, jobs, profile)
     base = storage(profile)
     with manifest_files.transaction(str(base / ('diagnostic-export-' + job_id)), workspace_root=profile.metadata_root):
@@ -117,5 +127,5 @@ def export(job_id, jobs, profile):
         else:
             metadata = archives.package(root, [e['path'] for e in entries], archive, kind='diagnosticEvidence', context=context, expected_entries=entries)
         if metadata['entries'] != entries: raise archives.Refusal('Output changed during export; do not import it.')
-        return {'bundlePath': str(archive), 'bundleSha256': archives.file_hash(archive),
-                'context': context, 'entries': entries, 'bytes': archive.stat().st_size}
+        return ({'bundlePath': str(archive), 'bundleSha256': archives.file_hash(archive),
+                 'context': context, 'entries': entries, 'bytes': archive.stat().st_size}, root)

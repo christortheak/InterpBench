@@ -204,7 +204,10 @@ def package(request, root, destination, expected, acknowledge=None):
                 'the source, repeat `science package` with ' + block['acknowledgeFlag'] + '.')
         custom_code.acknowledge_inputs(root, block['providers'], [row['sha256'] for row in pending],
                                        operation=reviewed['request'].get('operation', ''))
-    context = {'request': reviewed['request'], 'sourcePlanSHA256': expected, 'sourceRoot': reviewed['sourceRoot']}
+    # The archive goes to another machine, so its description names none: it
+    # used to carry `sourceRoot`, the workspace's absolute path here, which no
+    # reader used. The reviewed plan's digest still identifies the source.
+    context = {'request': reviewed['request'], 'sourcePlanSHA256': expected}
     return archives.package(root, [e['path'] for e in reviewed['files']], destination,
         kind='diagnosticInput', context=context, expected_entries=reviewed['files'])
 

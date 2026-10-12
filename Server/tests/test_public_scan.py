@@ -15,15 +15,20 @@ hold the scan to four promises:
   archive nested in another, and a member name that is itself a finding is
   never printed;
 * an archive that cannot be read, is nested too deep, or is large is a
-  finding or is scanned, never a silent skip;
+  finding or is scanned, never a silent skip, whatever its format: tar with
+  or without the ustar magic, gzip, bzip2, xz, or a zip with leading bytes;
+* extended attributes recorded in an archive (a tar's extended headers, a
+  Mac packer's AppleDouble members) are a finding, never printed;
 * a clean archive and a placeholder path pass.
 
 Every name is made up and every path is assembled at run time, so this file
 holds nothing the scan hunts.
 """
 
+import bz2
 import gzip
 import io
+import lzma
 import os
 import pathlib
 import subprocess
@@ -59,6 +64,33 @@ def _tar(members: dict, *, owner: str | None = None, uid: int = 0) -> bytes:
 
 def _tar_gz(members: dict, **owner) -> bytes:
     return gzip.compress(_tar(members, **owner))
+
+
+def _v7_tar(members: dict) -> bytes:
+    """A tar in the original format, which has no ustar magic: Python's
+    tarfile cannot write one, so the magic is blanked and the checksum
+    recomputed in each header it wrote."""
+    data = bytearray(_tar(members))
+    offset = 0
+    for name, payload in members.items():
+        header = data[offset:offset + 512]
+        header[257:265] = b"\0" * 8
+        header[148:156] = b" " * 8
+        header[148:156] = ("%06o\0 " % sum(header)).encode()
+        data[offset:offset + 512] = header
+        offset += 512 + -(-len(payload) // 512) * 512
+    return bytes(data)
+
+
+def _pax_tar(members: dict, headers: dict) -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        for name, data in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            info.pax_headers = dict(headers)
+            archive.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
 
 
 def _zip(members: dict) -> bytes:
@@ -208,6 +240,196 @@ def test_an_archive_nested_too_deep_is_a_finding_not_a_skip(repo):
     assert code == 1
     assert ("outer.zip [archive] one.zip!two.zip!three.tar.gz is nested too "
             "deep") in out
+
+
+@pytest.mark.parametrize("name, data", [
+    ("bundle.tar.xz", lzma.compress(_tar({"runs/r/log.txt": f"cwd {TEMP_PATH}\n".encode()}))),
+    ("bundle.tar.bz2", bz2.compress(_tar({"runs/r/log.txt": f"cwd {TEMP_PATH}\n".encode()}))),
+    ("bundle.tar", _v7_tar({"runs/r/log.txt": f"cwd {TEMP_PATH}\n".encode()})),
+    ("installer.sh", b"#!/bin/sh\nexit 0\n" + _zip({"runs/r/log.txt": f"cwd {TEMP_PATH}\n".encode()})),
+    ("outer.zip", _zip({"inner.tar.xz": lzma.compress(_tar({"runs/r/log.txt": f"cwd {TEMP_PATH}\n".encode()}))})),
+], ids=["xz", "bzip2", "tar without ustar magic", "zip with leading bytes", "xz in a zip"])
+def test_every_archive_format_is_opened(repo, name, data):
+    # Each of these was skipped as an ordinary binary: the scan recognized
+    # only gzip, a zip that starts at byte 0, and a tar with the ustar magic.
+    code, out = _scan(repo, {name: data})
+    assert code == 1
+    assert f"{name} [path] personal absolute path in " in out
+    assert "runs/r/log.txt" in out and "k2m9q4w8" not in out
+
+
+def test_an_owner_in_a_bzip2_tar_is_found(repo):
+    code, out = _scan(repo, {"bundle.tbz": bz2.compress(_tar({"a.txt": b"hi\n"}, owner=OWNER, uid=501))})
+    assert code == 1
+    assert "bundle.tbz [owner] 1 member(s) record an owner account" in out
+    assert OWNER not in out
+
+
+def test_a_large_zip_with_leading_bytes_is_still_opened(repo):
+    # Past the 4 MB text limit a file is read whole only when it is an
+    # archive, and a zip with leading bytes shows that only at its end.
+    data = (b"\x7fELF" + os.urandom(5 * 1024 * 1024)
+            + _zip({"notes.md": f"built in {HOME_PATH}\n".encode()}))
+    code, out = _scan(repo, {"tool.bin": data})
+    assert code == 1
+    assert "tool.bin [path] personal absolute path in notes.md" in out
+
+
+@pytest.mark.parametrize("key", ["LIBARCHIVE.xattr.com.apple.provenance",
+                                 "SCHILY.xattr.com.apple.quarantine"])
+def test_extended_attributes_in_a_tar_are_a_finding_never_printed(repo, key):
+    # macOS's tar (bsdtar) records each file's extended attributes in an
+    # extended header unless told not to; GNU tar does with --xattrs.
+    secret = "0083;5f3a;Safari;" + OWNER
+    code, out = _scan(repo, {"bundle.tar.gz": gzip.compress(_pax_tar(
+        {"runs/r/a.txt": b"hi\n", "runs/r/b.txt": b"hi\n"}, {key: secret}))})
+    assert code == 1
+    assert ("bundle.tar.gz [xattr] 2 member(s) record extended attributes, "
+            "the first runs/r/a.txt") in out
+    assert secret not in out and OWNER not in out
+
+
+@pytest.mark.parametrize("name", ["__MACOSX/runs/r/._report.json", "runs/r/._report.json"])
+def test_apple_double_members_are_a_finding(repo, name):
+    # `ditto -c -k` and Finder's Compress store a file's extended attributes
+    # as an AppleDouble member beside it.
+    code, out = _scan(repo, {"bundle.zip": _zip({"runs/r/report.json": b"{}\n",
+                                                 name: b"\x00\x05\x16\x07attributes"})})
+    assert code == 1
+    assert f"bundle.zip [xattr] 1 member(s) record extended attributes, the first {name}" in out
+
+
+@pytest.mark.parametrize("name, data", [
+    ("bundle.tar.xz", lzma.compress(_tar({"runs/r/report.json": b"{}\n" * 4096}))[:-40]),
+    ("bundle.tar.bz2", bz2.compress(_tar({"runs/r/report.json": b"{}\n" * 4096}))[:-40]),
+    ("bomb.xz", lzma.compress(b"\0" * (65 * 1024 * 1024), preset=0)),
+], ids=["truncated xz", "truncated bzip2", "xz over the bound"])
+def test_an_unreadable_compressed_stream_is_a_finding(repo, name, data):
+    code, out = _scan(repo, {name: data})
+    assert code == 1
+    assert f"{name} [archive] could not be read" in out
+
+
+def test_a_tar_that_ends_with_a_zip_is_read_as_the_tar(repo):
+    # A zip's records sit at the very end of a tar whose last member is a
+    # zip, and a zip reader finds them there. The tar's own headers and
+    # members must still be scanned.
+    data = _tar({"notes.md": f"built in {HOME_PATH}\n".encode(),
+                 "last.zip": _zip({"clean.txt": b"hi\n"})}, owner=OWNER, uid=501)
+    code, out = _scan(repo, {"bundle.tar": data})
+    assert code == 1
+    assert "bundle.tar [owner] 2 member(s)" in out
+    assert "bundle.tar [path] personal absolute path in notes.md" in out
+
+
+def test_an_archive_this_scan_cannot_open_is_a_finding(repo):
+    code, out = _scan(repo, {"bundle.tar.zst": b"\x28\xb5\x2f\xfd" + os.urandom(64)})
+    assert code == 1
+    assert ("bundle.tar.zst [archive] could not be read, so it was not "
+            "scanned (a zstd archive, which this scan cannot open)") in out
+
+
+def test_a_zip_end_record_zipfile_cannot_parse_never_crashes_the_scan(repo):
+    # A zip64 locator naming another disk makes Python 3.9's zipfile raise
+    # while it is only deciding whether the file is a zip (later versions
+    # answer "not a zip"; the unit test above provokes the raise on any
+    # version). End to end, the scan finishes and prints no traceback.
+    import struct
+    data = (b"#!/bin/sh\nexit 0\n" + struct.pack("<4sIQI", b"PK\x06\x07", 1, 0, 2)
+            + b"PK\x05\x06" + b"\0" * 18)
+    # At the nesting limit the check ran outside any error handling, and the
+    # scan of a commit holding this died with a traceback on Python 3.9.
+    nested = _zip({"one.zip": _zip({"two.zip": _zip({"tool.sh": data})})})
+    code, out = _scan(repo, {"tool.sh": data, "outer.zip": nested,
+                             "big.bin": os.urandom(5 * 1024 * 1024) + data})
+    assert code in (0, 1) and out.startswith("public scan:"), out
+    assert "Traceback" not in out
+
+
+def test_a_large_binary_with_stray_zip_bytes_near_its_end_is_data(repo):
+    # Only an end record that ends the file makes it a zip; the same four
+    # bytes inside other data do not. Taken for a zip, a file this size is
+    # an archive too large to scan, which fails the check.
+    data = b"\x7fELF" + bytes(65 * 1024 * 1024) + b"PK\x05\x06" + b"\xff" * 64
+    code, out = _scan(repo, {"tool.bin": data})
+    assert (code, out.strip()) == (0, "public scan: clean"), out
+
+
+def _with_comment(zipped: bytes, comment: bytes) -> bytes:
+    """``zipped`` with an archive comment, as a packer writes it."""
+    buffer = io.BytesIO(zipped)
+    with zipfile.ZipFile(buffer, "a") as archive:
+        archive.comment = comment
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize("tail", ["a trailing newline", "a comment holding the end signature"])
+def test_a_zip_with_leading_bytes_is_found_by_any_end_record(repo, tail):
+    zipped = _zip({"notes.md": f"built in {HOME_PATH}\n".encode()})
+    if tail == "a trailing newline":
+        data = b"#!/bin/sh\nexit 0\n" + zipped + b"\n"
+    else:
+        data = b"#!/bin/sh\nexit 0\n" + _with_comment(zipped, b"see PK\x05\x06 above" + b"x" * 30)
+    code, out = _scan(repo, {"installer.sh": data})
+    assert code == 1
+    # Scanned, or (where this Python's zipfile stops at the signature in the
+    # comment) reported unread: never skipped as an ordinary binary.
+    assert ("installer.sh [path] personal absolute path in notes.md" in out
+            or "installer.sh [archive] could not be read" in out), out
+
+
+def test_a_zip_appended_after_a_tar_is_scanned_too(repo):
+    data = _tar({"clean.txt": b"hi\n"}) + _zip({"notes.md": f"built in {HOME_PATH}\n".encode()})
+    code, out = _scan(repo, {"bundle.tar": data})
+    assert code == 1
+    assert ("bundle.tar [path] personal absolute path in "
+            "(zip after the tar)!notes.md") in out
+
+
+def _scanner_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("public_scan_under_test", SCAN)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_reader_that_raises_anything_is_unreadable_never_a_crash(monkeypatch):
+    # Python 3.9's zipfile raises BadZipFile from is_zipfile on some end
+    # records, and IndexError from ZipInfo.is_dir() on an empty name; the
+    # suite runs a later Python, so both are provoked here directly.
+    scan = _scanner_module()
+    data = b"#!/bin/sh\n" + _zip({"a.txt": b"hi\n"})
+
+    def bad_zip(_handle):
+        raise zipfile.BadZipFile("spans disks")
+    monkeypatch.setattr(scan.zipfile, "is_zipfile", bad_zip)
+    assert scan._is_archive(data) is True
+    monkeypatch.undo()
+
+    def index_error(self):
+        raise IndexError("string index out of range")
+    monkeypatch.setattr(zipfile.ZipInfo, "is_dir", index_error)
+    with pytest.raises(scan.Unreadable, match="IndexError"):
+        scan.archive_members(data)
+
+
+def test_files_that_only_start_like_an_archive_are_text(repo):
+    code, out = _scan(repo, {"notes.md": b"BZh9 is how a bzip2 stream begins.\n",
+                             "plain.txt": b"PK is a pair of letters.\n"})
+    assert (code, out.strip()) == (0, "public scan: clean"), out
+
+
+def test_a_clean_archive_in_every_format_passes(repo):
+    members = {"runs/r/report.json": b'{"runDirectory": "runs/r"}\n'}
+    code, out = _scan(repo, {
+        "a.tar.xz": lzma.compress(_tar(members)),
+        "a.tar.bz2": bz2.compress(_tar(members)),
+        "a.tar": _v7_tar(members),
+        "a.pax.tar": _pax_tar(members, {"comment": "made for a test"}),
+        "a.sh": b"#!/bin/sh\nexit 0\n" + _zip(members),
+    })
+    assert (code, out.strip()) == (0, "public scan: clean"), out
 
 
 def test_a_temp_folder_path_in_text_is_a_finding(repo):

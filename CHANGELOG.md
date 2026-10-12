@@ -12,6 +12,32 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **Pipeline bundles and diagnostic archives no longer give the workspace's
+  location.** A pipeline's ledger (`pipeline.json`) named each stage's run,
+  each promoted agent, and an abort's evidence by its full path, and a
+  pipeline bundle repeated those paths in its description
+  (`missingEvidence`) and its portable ledger (`originalPaths`). The ledger,
+  the abort record (`pipeline-abort.json`), and the judge fan-out request now
+  name runs relative to the workspace (`runs/<run ID>`), and a parked chain's
+  reason and a gate's detail spell paths as failure records do. A chain
+  started before this change still resumes: its ledger's full paths still
+  read, and its next write makes them relative. A standalone diagnostic
+  archive's description no longer records folders: an input archive drops
+  `sourceRoot`, and an evidence archive drops the server's `servingRoot`,
+  `metadataRoot`, and `executionRoot`. Cleanup takes those from the server
+  instead. A custody receipt made from an earlier archive is refused for
+  cleanup, with the repair: fetch the evidence again (`science-fetch`) and
+  plan with the new receipt. `scripts/ci/public_scan.py` now also opens xz
+  and bzip2 archives, tars without the ustar magic, and zips with bytes
+  before them; it reports archives it cannot open (zstd, 7z, rar, lz4, and
+  compress) instead of skipping them, and reports archive members that
+  record extended attributes.
+  Two things are unchanged. Ledgers written before this change keep their
+  paths, because a run directory is never rewritten. The release zip from
+  `scripts/build-app.sh --package` still stores each file's
+  `com.apple.provenance` attribute, an opaque identifier with no name or
+  path: the zip has to keep extended attributes, because `mlx.metallib`'s
+  code signature is stored in one.
 - **A partial evidence bundle's failure record no longer names the computer
   that packaged it.** When a run fails, its partial bundle records the error and, from the
   Python engine, the traceback. Both gave full paths: the traceback named
@@ -34,13 +60,9 @@ migration that rewrites frozen bytes.
   read any of these, and bundles written earlier still import.
   `scripts/ci/public_scan.py` now opens committed archives, so a name or path
   inside one is caught. The cross-engine fixture bundle that carried both has
-  been regenerated. Three things still carry machine paths and are not yet
-  fixed: the cluster logs a bundle carries under `diagnostics/` (each Slurm
-  log opens with the node's name), kept as written because they are
-  diagnostics; a pipeline bundle's ledger (`pipeline.json`, and the
-  `originalPaths` and `missingEvidence` it records), which gives the
-  workspace's full path; and a standalone diagnostic archive's description,
-  which records the folders it was packed from.
+  been regenerated. The cluster logs a bundle carries under `diagnostics/`
+  still name the node they ran on (each Slurm log opens with it), and are
+  kept as written because they are diagnostics.
 - **A failed run's own record no longer names the computer it ran on.**
   When a stage fails, either engine writes `FAILED.md` and `run-status.json`
   into its run directory, and a partial evidence bundle carries that

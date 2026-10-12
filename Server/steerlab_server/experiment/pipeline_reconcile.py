@@ -26,6 +26,8 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from . import path_redaction
+
 #: Ledger schema this module can hand to the resume machinery (matches
 #: ``tasks.PIPELINE_LEDGER_SCHEMA``; duplicated as a literal to keep this
 #: module import-light — the cross-module agreement is pinned by test).
@@ -125,7 +127,10 @@ def park(run_directory: str, *, reason: str,
     parked = {
         "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "by": by,
-        "reason": reason,
+        # A reason is often a refusal's text, which can name the chain's own
+        # directory; the ledger travels in every bundle of this chain.
+        "reason": path_redaction.redact_paths(reason,
+                                              run_directory=run_directory),
         "completedStages": [
             s for s in stages
             if (stage_results.get(s) or {}).get("status") == "completed"],

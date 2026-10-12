@@ -53,6 +53,57 @@ def test_round_trip_isolated_inputs_output_and_offline_custody(completed, tmp_pa
     assert output.exists()
 
 
+def _metadata_and_names(archive):
+    """An archive's raw description and its member names, read as a recipient
+    reads them: from the bytes, with no help from the packager."""
+    import tarfile
+    with tarfile.open(archive, 'r:gz') as tar:
+        names = tar.getnames()
+        (description,) = [m for m in tar.getmembers() if m.name.endswith('.json') and m.name.startswith('steerlab')]
+        return tar.extractfile(description).read().decode(), names
+
+
+def test_archives_that_leave_a_machine_name_none_of_its_folders(completed, tmp_path):
+    # The input archive (packed on the researcher's machine, sent to a runner)
+    # recorded the workspace's absolute path as `sourceRoot`, and the evidence
+    # archive (packed on the runner, sent home) recorded the runner's serving,
+    # metadata, and execution roots. Neither archive names a folder now, and
+    # custody still verifies and imports.
+    root, profile, jobs, job, output = completed
+    inputs = root / 'runs/input.tar.gz'
+    description, names = _metadata_and_names(inputs)
+    assert '"sourceRoot"' not in description and str(tmp_path) not in description
+    assert all(not name.startswith('/') for name in names)
+    reference = transport.export(job.id, jobs, profile)
+    description, names = _metadata_and_names(reference['bundlePath'])
+    for key in ('servingRoot', 'metadataRoot', 'executionRoot'):
+        assert key not in reference['context'] and f'"{key}"' not in description
+    assert str(tmp_path) not in description
+    imported = archives.import_evidence(reference['bundlePath'], reference['bundleSha256'], tmp_path / 'local',
+                                        expected_context=reference['context'])
+    assert archives.verify(imported['receiptSHA256'], tmp_path / 'local') == imported['receipt']
+
+
+def test_a_receipt_from_an_archive_that_named_folders_asks_for_a_fresh_fetch(completed, tmp_path, monkeypatch):
+    # Cleanup acts on the server's own roots. A receipt made before archives
+    # stopped naming them cannot match the export any more, and says how to
+    # get a current one rather than only that it does not match.
+    _, profile, jobs, job, output = completed
+    reference = transport.export(job.id, jobs, profile)
+    receipt = archives.import_evidence(reference['bundlePath'], reference['bundleSha256'], tmp_path / 'local')['receipt']
+    assert cleanup.plan(job.id, receipt, jobs, profile)['eligible']
+    legacy = {**receipt, 'context': {**receipt['context'], 'servingRoot': str(profile.root),
+                                     'metadataRoot': str(profile.metadata_root), 'executionRoot': str(output.parent.parent)}}
+    # Refused before the output is packaged again only to find that out.
+    def no_export(*args, **kwargs):
+        raise AssertionError('a receipt that cannot match must not cost an export')
+    monkeypatch.setattr(transport, 'exported', no_export)
+    with pytest.raises(cleanup.LegacyCustody) as refused:
+        cleanup.plan(job.id, legacy, jobs, profile)
+    assert 'science-fetch' in refused.value.repair_action
+    assert output.exists()
+
+
 def test_import_refuses_missing_root_without_creating_parents(completed, tmp_path, capsys):
     from steerlab_server import client_cli
     _, profile, jobs, job, _ = completed

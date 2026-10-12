@@ -2128,14 +2128,19 @@ class JobManager:
         evaluate → completed. Best-effort — the pipeline's own resume also
         adopts a completed judgment run, so a failed write only costs one
         redundant model-free adoption pass."""
+        from ..experiment.pipeline_ledger import workspace_reference
         path = os.path.join(pipeline_dir, "pipeline.json")
         try:
             with open(path, encoding="utf-8") as handle:
                 ledger = json.load(handle)
             stage = (ledger.get("stageResults") or {}).get("evaluate") or {}
             if stage.get("status") == "awaitingJudgment":
+                # Relative to the workspace, as the chain writes its own
+                # references: the ledger travels in the chain's bundles.
                 ledger["stageResults"]["evaluate"] = {
-                    "status": "completed", "runDirectory": completion_dir,
+                    "status": "completed",
+                    "runDirectory": workspace_reference(completion_dir,
+                                                        pipeline_dir),
                     "judgedVia": "judgeWorkerFanout"}
                 tmp = path + ".tmp"
                 with open(tmp, "w", encoding="utf-8") as handle:
@@ -3713,6 +3718,7 @@ class JobManager:
         holds none it can use (resuming would generate every response
         again), ``unstarted`` when no stage had finished."""
         from ..experiment import resume as resume_mod
+        from ..experiment.pipeline_ledger import resolve_reference
         try:
             with open(os.path.join(pipeline_directory, "pipeline.json"),
                       encoding="utf-8") as handle:
@@ -3726,7 +3732,8 @@ class JobManager:
         stages = ledger.get("stageResults") or {}
         run_stage = stages.get("run") if isinstance(stages, dict) else None
         run_stage = run_stage if isinstance(run_stage, dict) else {}
-        run_dir = run_stage.get("runDirectory")
+        run_dir = resolve_reference(run_stage.get("runDirectory"),
+                                    pipeline_directory)
         if not (isinstance(run_dir, str) and run_dir and os.path.isdir(run_dir)):
             run_dir = None
         run_done = run_stage.get("status") == "completed" or (

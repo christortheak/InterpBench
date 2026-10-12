@@ -11,7 +11,7 @@ import os
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from typing import Callable
-from . import paths, resume as resume_mod
+from . import path_redaction, paths, resume as resume_mod
 from .manifest import Manifest
 from .cancellation import observe_cancel
 from .study_admission import verify_or_warn
@@ -19,6 +19,7 @@ from .run_artifacts import write_config_snapshot
 from .run_status import heal_after_completion
 from .pipeline_ledger import (PIPELINE_LEDGER_SCHEMA,
     read_pipeline_ledger as _read_pipeline_ledger,
+    workspace_reference,
     write_pipeline_ledger as _write_pipeline_ledger)
 from .pipeline_evidence import (find_minted_agent,
     restore_self_pinned_revision, stamp_pipeline_drift)
@@ -271,12 +272,21 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
                 "schema": 1, "experiment": name,
                 "experimentHash": ledger["experimentHash"],
                 "stage": stage,
-                "gates": [f.to_dict() for f in failures],
+                # A gate's detail can quote a refusal, and a refusal can name
+                # a path; the record travels in every bundle of this chain.
+                "gates": path_redaction.redact_value(
+                    [f.to_dict() for f in failures],
+                    run_directory=run_directory),
                 "evidenceRunDirectory": evidence_dir,
             }
+            # Like the ledger, the file names the evidence run relative to
+            # the workspace (`runs/<run ID>`); the ledger's copy in memory
+            # stays absolute until its own write makes it portable.
             with open(os.path.join(run_directory, "pipeline-abort.json"),
                       "w", encoding="utf-8") as handle:
-                json.dump(record, handle, indent=2, sort_keys=True)
+                json.dump({**record, "evidenceRunDirectory": workspace_reference(
+                    evidence_dir, run_directory)},
+                    handle, indent=2, sort_keys=True)
             ledger["disposition"] = "aborted"
             ledger["abort"] = record
             _write_pipeline_ledger(run_directory, ledger)

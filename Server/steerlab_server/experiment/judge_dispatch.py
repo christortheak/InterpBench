@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 from .manifest import JudgeRef, Manifest
+from .pipeline_ledger import workspace_reference
 
 JUDGE_FANOUT_REQUEST_FILE = "judge-fanout-request.json"
 
@@ -114,7 +115,11 @@ def write_judge_fanout_request(pipeline_directory: str, name: str,
         "schema": 1,
         "experiment": name,
         "evaluateRun": os.path.basename(awaiting_dir),
-        "pipelineDirectory": pipeline_directory,
+        # Relative to the workspace, like the ledger beside it: the file is
+        # a member of the chain's run directory and travels in its bundles.
+        # Nothing reads this key back; the controller acts on the rest.
+        "pipelineDirectory": workspace_reference(pipeline_directory,
+                                                 pipeline_directory),
         "packetsSha256": jm.get("packetsSha256"),
         "packetCount": jm.get("packetCount"),
         "judgeModels": evaluate_fanout_judge_models(manifest),

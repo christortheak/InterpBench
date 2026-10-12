@@ -308,6 +308,9 @@ def test_pipeline_emits_fanout_request_and_adopts_completion(tmp_path):
     request = tasks.read_judge_fanout_request(pipe_dir)
     assert request is not None
     assert request["experiment"] == "ev"
+    # The request file travels in the chain's bundles: it names the chain
+    # relative to the workspace, not by where the workspace is.
+    assert request["pipelineDirectory"] == "runs/" + os.path.basename(pipe_dir)
     assert [m["model"] for m in request["judgeModels"]] \
         == ["org/m", "other/judge-12b"]
     assert request["judgeModels"][0]["revision"] == "abc"
@@ -335,7 +338,10 @@ def test_pipeline_emits_fanout_request_and_adopts_completion(tmp_path):
     assert returned2 == pipe_dir
     final = json.load(open(os.path.join(pipe_dir, "pipeline.json")))
     assert final["disposition"] == "completed"
-    assert final["stageResults"]["evaluate"]["runDirectory"] == completion
+    # Stored relative to the workspace, and it is the completion run.
+    stored = final["stageResults"]["evaluate"]["runDirectory"]
+    assert stored == "runs/" + os.path.basename(completion)
+    assert pipeline_ledger.resolve_reference(stored, pipe_dir) == completion
     assert bundles._pipeline_awaits_judgment(pipe_dir) is False
 
 

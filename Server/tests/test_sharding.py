@@ -40,6 +40,7 @@ import pytest
 import torch
 
 from steerlab_server.experiment import bundles, experiment_store as es
+from steerlab_server.experiment import pipeline_ledger
 from steerlab_server.experiment import resume
 from steerlab_server.experiment import run_status
 from steerlab_server.experiment import sharding
@@ -867,7 +868,9 @@ def test_pipeline_parent_submits_continuation_after_merge(
         ledger = json.load(handle)
     assert ledger["stages"] == ["run", "analyze"]
     assert ledger["stageResults"]["run"]["status"] == "completed"
-    merged = ledger["stageResults"]["run"]["runDirectory"]
+    stored = ledger["stageResults"]["run"]["runDirectory"]
+    assert stored.startswith("runs/")
+    merged = pipeline_ledger.resolve_reference(stored, pipeline_dir)
     assert os.path.isfile(os.path.join(merged, "report.json"))
     assert (parent.result or {})["mergedRunDirectory"] == merged
     script = open(continuation.requested_resources["scriptPath"],

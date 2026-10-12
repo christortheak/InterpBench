@@ -215,8 +215,10 @@ def remote(client, invocation, common):
         else:
             custody = archives.verify(invocation.one('--receipt-sha256'), root)
             if custody['context']['jobID'] != value: raise archives.Refusal('Receipt belongs to another job.')
-            # The endpoint's plan compares serving/metadata roots, original plan
-            # digest, export hash and entries. A valid receipt is no bypass.
+            # The endpoint's plan compares the job, its reviewed plan digest
+            # (which covers the execution root), the export hash and entries,
+            # and takes every root from the server itself. A valid receipt is
+            # no bypass.
             result = client.diagnostic_cleanup_plan(value, custody) if verb == 'cleanup-plan' else client.diagnostic_cleanup_apply(value, custody, invocation.one('--plan-sha256'))
         print(json.dumps(result, indent=2))
         return CLIResult(message='Diagnostic transport or cleanup operation completed; inspect retained and removed paths.',
