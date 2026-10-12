@@ -12,6 +12,20 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **Custom code is found however it is written.** Two gaps, both found by
+  an external review and its follow-up, let a policy's custom code run
+  without the notice or an acknowledgement. Packaging a standalone diagnostic
+  looked for the code by the literal text `sourceText`, but JSON can write
+  that key with escape codes, which the policy reader decodes. Every input
+  that starts as JSON is now searched for the key or an escape that could
+  spell it, and parsed where either appears, including JSON Lines, UTF-16,
+  and UTF-32 files; escapes of ordinary text, such as accented letters, do
+  not cost a parse. A file too large to parse whole is read line by line when
+  it is JSON Lines, so a large corpus is checked rather than refused; one
+  large JSON document that might hold code is still refused. And a policy
+  attached inside an agent is now read from its bytes, as the code that runs
+  it reads it: a byte-order mark, or text whose bytes spell UTF-16, had hidden
+  its code from the study's run check as well as from packaging.
 - **The app build's launch check no longer leaves the checked app
   running.** `scripts/app-bundle/launch-check.sh` killed the subshell it
   launched the app from, not the app itself. The app was reparented to

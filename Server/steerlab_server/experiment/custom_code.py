@@ -175,9 +175,14 @@ def _scan(value, found: dict, depth: int) -> None:
         if isinstance(attached, list):
             for item in attached:
                 if isinstance(item, dict) and isinstance(item.get("json"), str):
+                    # Parsed as the executor parses it (`policy_artifacts.
+                    # load_attached`): from its UTF-8 bytes, which a JSON
+                    # reader decodes by their own encoding. Parsed as text, a
+                    # byte-order mark, or text whose bytes spell UTF-16, hid
+                    # a provider the executor then ran.
                     try:
-                        parsed = json.loads(item["json"])
-                    except ValueError:
+                        parsed = json.loads(item["json"].encode())
+                    except (ValueError, RecursionError):   # UnicodeError is a ValueError
                         continue
                     _scan(parsed, found, depth + 1)
         for child in value.values():

@@ -1,12 +1,24 @@
 """Discover exact diagnostic input dependencies and package execution copies."""
 from pathlib import Path
+import codecs
 import json
+import re
 from . import diagnostic_archives as archives
 
-#: Every provider holds its code under ``sourceText``, so a file without those
-#: bytes carries none. Searched in every input that starts as JSON, whatever
-#: its name; parsed only where found, up to this size, and refused above it.
+#: Every provider holds its code under the key ``sourceText``. JSON can also
+#: spell that key with backslash-u escapes, and a JSON reader decodes them, so
+#: the literal bytes alone settle nothing. An escape can only spell one of the
+#: key's letters, and, at the next depth of JSON held inside a JSON string, an
+#: escape's own backslash, ``u``, or hex digits: every spelling of the key at
+#: any depth leaves the literal key or one of those escapes. A file with none
+#: carries no provider; one with any is parsed: whole up to this size, line by
+#: line above it. (Escapes of anything else, such as accented text in a
+#: corpus, cannot take part, so they do not cost a parse.)
 _PROVIDER_MARK = b'sourceText'
+_MARK = re.compile(rb'sourceText|\\u00(?:3[0-9]|4[1-6]|54|5[cC]|6[1-6]|6[fF]|7[2-5]|78)')
+_TEXT_MARK = re.compile(_MARK.pattern.decode())
+_MARK_TAIL = len(_PROVIDER_MARK) - 1     # longer than any escape the pattern matches
+_JSON_SPACE = ' \t\r\n'
 _CODE_PARSE_BYTES = 256 * 1024 * 1024
 
 
@@ -20,13 +32,32 @@ class CustomCodeRefusal(archives.Refusal):
         self.repair_action = repair_action
 
 
+class _Uncheckable(Exception):
+    """A file too large to parse whole that is not JSON Lines."""
+
+
+class _TooDeep(Exception):
+    """JSON nested past the interpreter's limit. Refused, never skipped: a
+    reader with more stack could load what this check could not."""
+
+
+def _marked(data):
+    """Whether bytes or text hold the key, or an escape that could spell it."""
+    return (_MARK if isinstance(data, bytes) else _TEXT_MARK).search(data) is not None
+
+
 def _may_carry_code(path):
     """Whether a file could hold a provider a JSON reader would load: it starts
-    as JSON (after whitespace or a byte-order mark) and contains the mark. A
-    streaming search, so a large input is read once and never held."""
+    as JSON (after whitespace or a byte-order mark) and is marked. A streaming
+    search, so a large input is read once and never held. A JSON reader also
+    takes UTF-16 and UTF-32, decoded as it decodes them (byte-order mark,
+    surrogates passed through); such a file is searched as text."""
     size = 1024 * 1024
     with open(path, 'rb') as handle:
         chunk = handle.read(size)
+        encoding = json.detect_encoding(chunk) if chunk else 'utf-8'
+        if encoding not in ('utf-8', 'utf-8-sig'):
+            return _may_carry_code_wide(handle, chunk, encoding, size)
         body = chunk.removeprefix(b'\xef\xbb\xbf')
         while not (body := body.lstrip(b' \t\r\n')) and chunk:   # any amount of leading whitespace
             body = chunk = handle.read(size)
@@ -34,28 +65,99 @@ def _may_carry_code(path):
             return False
         tail = b''
         while chunk:
-            if _PROVIDER_MARK in tail + chunk:
+            if _marked(tail + chunk):
                 return True
-            tail = chunk[-len(_PROVIDER_MARK):]
+            tail = chunk[-_MARK_TAIL:]
             chunk = handle.read(size)
     return False
 
 
+def _may_carry_code_wide(handle, chunk, encoding, size):
+    """`_may_carry_code` for a UTF-16 or UTF-32 file. Bytes that do not decode
+    are no JSON a reader could load (it fails on the same bytes)."""
+    decoder = codecs.getincrementaldecoder(encoding)('surrogatepass')
+    started, tail = False, ''
+    try:
+        while chunk:
+            text = decoder.decode(chunk)
+            if not started:
+                text = text.lstrip(_JSON_SPACE)
+                if text:
+                    if text[0] not in '{[':
+                        return False
+                    started = True
+            if started and _marked(tail + text):
+                return True
+            tail = text[-_MARK_TAIL:] if started else ''
+            chunk = handle.read(size)
+        decoder.decode(b'', final=True)
+    except UnicodeDecodeError:
+        return False
+    return False
+
+
+def _loads(data):
+    """A JSON value, or None where a JSON reader fails; raises
+    :class:`_TooDeep` where it fails on depth."""
+    try:
+        return json.loads(data)
+    except RecursionError:
+        raise _TooDeep from None
+    except ValueError:
+        return None
+
+
+def _line_documents(line):
+    """The documents one line of a JSON Lines file holds: the line, or, where
+    it is not one, each piece of it between carriage returns (a reader that
+    also splits on those sees records there). Bytes or text."""
+    if (document := _loads(line)) is not None:
+        return [document]
+    return [document for piece in line.split(b'\r' if isinstance(line, bytes) else '\r')
+            if _marked(piece) and (document := _loads(piece)) is not None]
+
+
 def _documents(raw):
     """The JSON documents in a file: the whole file, or else each line that
-    could hold a provider (a JSON Lines file)."""
-    try:
-        return [json.loads(raw)]
-    except ValueError:
-        pass
-    documents = []
-    for line in raw.splitlines():
-        if _PROVIDER_MARK in line:
-            try:
-                documents.append(json.loads(line))
-            except ValueError:
-                continue
-    return documents
+    could hold a provider (a JSON Lines file), decoded as the JSON reader
+    would decode the file. Split at line feeds, as the large-file path is,
+    with a carriage-return split tried where a line is not a document."""
+    if (document := _loads(raw)) is not None:
+        return [document]
+    text = raw.decode(json.detect_encoding(raw), errors='replace')
+    return [document for line in text.split('\n') if _marked(line)
+            for document in _line_documents(line)]
+
+
+def _streamed_documents(path):
+    """The documents of a file too large to read whole, one line at a time.
+
+    Only JSON Lines can be checked this way, and the first line that is not
+    blank settles whether the file is that: it must be a complete JSON value.
+    Then nothing else in the file can be part of it, and a JSON reader of the
+    whole file fails ("extra data"), so the lines are the only documents any
+    reader loads; each that could hold a provider is parsed, and one that does
+    not parse is no document, as below the bound. A first line that is not a
+    complete value may begin one large document, which cannot be checked a
+    line at a time: raises :class:`_Uncheckable`, as does a line over the
+    bound or a file in an encoding other than UTF-8."""
+    with open(path, 'rb') as handle:
+        if json.detect_encoding(handle.read(4)) not in ('utf-8', 'utf-8-sig'):
+            raise _Uncheckable
+        handle.seek(0)
+        first = True
+        while line := handle.readline(_CODE_PARSE_BYTES + 1):
+            if len(line) > _CODE_PARSE_BYTES:
+                raise _Uncheckable
+            if first:
+                if not line.removeprefix(b'\xef\xbb\xbf').strip(b' \t\r\n'):
+                    continue
+                first = False
+                if (document := _loads(line)) is None:
+                    raise _Uncheckable
+                yield document
+            elif _marked(line):
+                yield from _line_documents(line)
 
 
 def _carried_code(files, root):
@@ -73,15 +175,24 @@ def _carried_code(files, root):
                 continue
         except OSError:
             continue
-        if entry.get('bytes', 0) > _CODE_PARSE_BYTES:
+        try:
+            documents = (_streamed_documents(path) if entry.get('bytes', 0) > _CODE_PARSE_BYTES
+                         else _documents(path.read_bytes()))
+            for document in documents:
+                for provider in custom_code.providers(document):
+                    names.setdefault(provider['sha256'], set()).update(provider['policyNames'])
+                sources.update(custom_code.provider_sources(document))
+        except _TooDeep:
+            raise CustomCodeRefusal(
+                f"The diagnostic was not packaged: {entry['path']} is JSON nested too deeply to check for "
+                "custom code.",
+                'Prepare the input with less nesting, then review the input plan again.') from None
+        except _Uncheckable:
             raise CustomCodeRefusal(
                 f"The diagnostic was not packaged: {entry['path']} may hold custom code, and at "
-                f"{entry['bytes']} bytes it is too large to check.",
-                'Prepare a smaller input, or split the policy or agent out into its own file, then review the input plan again.')
-        for document in _documents(path.read_bytes()):
-            for provider in custom_code.providers(document):
-                names.setdefault(provider['sha256'], set()).update(provider['policyNames'])
-            sources.update(custom_code.provider_sources(document))
+                f"{entry['bytes']} bytes it is too large to check (only JSON Lines, one complete JSON "
+                "value per line, can be checked at that size).",
+                'Prepare a smaller input, or split the policy or agent out into its own file, then review the input plan again.') from None
     return [{'sha256': digest, 'policyNames': sorted(names[digest])} for digest in sorted(names)], sources
 
 

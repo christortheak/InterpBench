@@ -141,6 +141,24 @@ def test_providers_are_found_inside_attached_policy_bytes_and_named_by_their_cod
     assert custom_code.provider_sources(document) == {DIGEST: SOURCE}
 
 
+@pytest.mark.parametrize("spelling", ["byte-order mark", "UTF-16 in UTF-8 bytes"])
+def test_an_attached_policy_is_read_from_its_bytes_as_the_executor_reads_it(spelling):
+    """The executor parses an attached policy from its UTF-8 bytes, which a
+    JSON reader decodes by their own encoding; this check parsed the text, so a
+    byte-order mark, or text whose bytes spell UTF-16, hid a provider that then
+    ran, past both the study gate and the diagnostic packaging gate."""
+    from steerlab_server.experiment import policy_artifacts
+    raw = policy()["json"]
+    text = (chr(0xFEFF) + raw if spelling == "byte-order mark"
+            else "".join(chr(0) + character for character in raw))
+    attached = [{"json": text, "sha256": hashlib.sha256(text.encode()).hexdigest()}]
+    [(_, loaded)] = policy_artifacts.load_attached(attached)          # the executor takes it
+    assert loaded["provider"]["sourceText"] == SOURCE
+    assert custom_code.providers({"interventionPolicies": attached}) == [
+        {"sha256": DIGEST, "policyNames": ["expert-policy"]}]
+    assert custom_code.provider_sources({"interventionPolicies": attached}) == {DIGEST: SOURCE}
+
+
 def test_a_panel_seats_agent_is_found_through_its_references(tmp_path):
     """A multi-agent study reaches its seats' agents only by path: manifest →
     compiled panel → seat's agent file."""

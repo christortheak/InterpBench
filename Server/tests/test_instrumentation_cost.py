@@ -567,6 +567,192 @@ def test_custom_code_is_found_whatever_the_file_is_called_and_however_it_is_padd
         diagnostic_inputs._carried_code([e for e in entries if e['path'] == 'padded.json'], tmp_path)
 
 
+def _escaped_key(text, letter='T'):
+    """``text`` with the provider key spelled with one JSON escape, which a
+    JSON reader decodes back to ``sourceText``."""
+    return text.replace('"sourceText"', '"source' + ''.join(
+        '\\u%04x' % ord(c) if c == letter else c for c in 'Text') + '"')
+
+
+def test_custom_code_is_found_however_its_key_is_spelled(tmp_path):
+    """The scan looked for the literal bytes `sourceText`, but JSON may spell
+    a key with backslash-u escapes and the policy reader decodes them, so a
+    provider under an escaped key was packaged without any acknowledgement. Every
+    spelling is found: escaped, in JSON Lines, in UTF-16, and inside a policy
+    attached as a JSON string (escaped in the inner text or the outer)."""
+    from steerlab_server.experiment import diagnostic_inputs
+    policy = {'name': 'expert', 'provider': {'sourceText': PROVIDER, 'sourceSHA256': PROVIDER_SHA256, 'assets': {}}}
+    text = json.dumps(policy)
+    escaped = _escaped_key(text)
+    assert '"sourceText"' not in escaped and json.loads(escaped) == policy
+    backslash = chr(92)
+    # Inner: the attached policy's own text escapes its key, and the outer JSON
+    # carries that escape with its backslash escaped. Outer: the attached text
+    # spells the key plainly, and the outer JSON escapes one of its letters.
+    inner_escaped = json.dumps({'interventionPolicies': [{'json': escaped}]})
+    outer_escaped = json.dumps({'interventionPolicies': [{'json': text}]}).replace(
+        'sourceText', 'source' + backslash + 'u0054ext')
+    assert json.loads(json.loads(outer_escaped)['interventionPolicies'][0]['json']) == policy
+    assert backslash * 2 + 'u0054' in inner_escaped and backslash * 2 not in outer_escaped.split('source')[1][:2]
+    assert 'sourceText' not in inner_escaped and 'sourceText' not in outer_escaped
+    files = {
+        'escaped.json': escaped.encode(),
+        'escaped.jsonl': ('{"id": "a"}\n' + escaped + '\n').encode(),
+        'utf16.json': text.encode('utf-16'),
+        'attached-inner.json': inner_escaped.encode(),
+        'attached-outer.json': outer_escaped.encode(),
+    }
+    for name, data in files.items():
+        (tmp_path / name).write_bytes(data)
+        carried, sources = diagnostic_inputs._carried_code([{'path': name, 'bytes': len(data)}], tmp_path)
+        assert carried == [{'sha256': PROVIDER_SHA256, 'policyNames': ['expert']}], name
+        assert sources == {PROVIDER_SHA256: PROVIDER}, name
+
+
+def test_a_large_json_lines_input_is_checked_line_by_line_not_refused(tmp_path, monkeypatch):
+    """Above the parse bound a file is read one line at a time. A corpus whose
+    lines merely hold escaped text is checked and passes; a provider on a line
+    of its own is found; one large document spread over lines cannot be
+    checked and is refused."""
+    from steerlab_server.experiment import diagnostic_inputs
+    monkeypatch.setattr(diagnostic_inputs, '_CODE_PARSE_BYTES', 4096)
+    corpus = ''.join(json.dumps({'id': str(i), 'text': 'café naïve'}) + '\n' for i in range(400))
+    assert '\\u00e9' in corpus and len(corpus) > 4096
+    policy = json.dumps({'name': 'expert', 'provider': {'sourceText': PROVIDER, 'sourceSHA256': PROVIDER_SHA256, 'assets': {}}})
+    files = {'corpus.jsonl': corpus, 'with-policy.jsonl': corpus + _escaped_key(policy) + '\n',
+             'pretty.json': json.dumps({'rows': [json.loads(line) for line in corpus.splitlines()],
+                                        'policy': json.loads(policy)}, indent=2)}
+    for name, data in files.items():
+        (tmp_path / name).write_text(data)
+    entry = lambda name: [{'path': name, 'bytes': (tmp_path / name).stat().st_size}]
+    assert diagnostic_inputs._carried_code(entry('corpus.jsonl'), tmp_path) == ([], {})
+    carried, _ = diagnostic_inputs._carried_code(entry('with-policy.jsonl'), tmp_path)
+    assert [row['sha256'] for row in carried] == [PROVIDER_SHA256]
+    with pytest.raises(diagnostic_inputs.CustomCodeRefusal, match='too large to check'):
+        diagnostic_inputs._carried_code(entry('pretty.json'), tmp_path)
+
+
+def _policy_text():
+    return json.dumps({'name': 'expert', 'provider': {'sourceText': PROVIDER, 'sourceSHA256': PROVIDER_SHA256, 'assets': {}}})
+
+
+def test_one_large_document_is_refused_even_where_a_line_parses_alone(tmp_path, monkeypatch):
+    """Above the bound only JSON Lines can be checked. A line of one large
+    document can parse by itself (the provider object, the key alone as a
+    string, an attached policy's text as a string), and reading those lines as
+    records skipped a provider a whole-file reader loads: such a file is
+    refused, settled by its first line not being a complete value."""
+    from steerlab_server.experiment import custom_code, diagnostic_inputs
+    monkeypatch.setattr(diagnostic_inputs, '_CODE_PARSE_BYTES', 4096)
+    provider = json.dumps({'sourceText': PROVIDER, 'sourceSHA256': PROVIDER_SHA256, 'assets': {}})
+    padding = ''.join(f'"p{i}": "{"a" * 40}",\n' for i in range(120))
+    files = {
+        'object-on-its-line.json': '{\n' + padding + '"name": "expert", "provider":\n' + provider + '\n}\n',
+        'key-on-its-line.json': '{\n' + padding + '"name": "expert", "provider": {\n"sourceText"\n: '
+                                + json.dumps(PROVIDER) + ', "sourceSHA256": "' + PROVIDER_SHA256 + '", "assets": {}}}\n',
+        'attached-on-its-line.json': '{\n' + padding + '"interventionPolicies": [{"sha256": "x", "json":\n'
+                                     + json.dumps(_policy_text()) + '\n}]}\n',
+    }
+    for name, text in files.items():
+        (tmp_path / name).write_text(text)
+        assert custom_code.providers(json.loads(text)), name          # a whole-file reader finds it
+        with pytest.raises(diagnostic_inputs.CustomCodeRefusal, match='too large to check'):
+            diagnostic_inputs._carried_code([{'path': name, 'bytes': len(text.encode())}], tmp_path)
+
+
+def test_large_inputs_that_cannot_hold_a_provider_are_not_refused(tmp_path, monkeypatch):
+    """Escapes of accented text cannot spell the key, so a large document of
+    such text is not even parsed; and in a large JSON Lines file a marked line
+    that is not a document is no record, as below the bound."""
+    from steerlab_server.experiment import diagnostic_inputs
+    monkeypatch.setattr(diagnostic_inputs, '_CODE_PARSE_BYTES', 4096)
+    accented = json.dumps({'rows': ['caf' + chr(0xe9) + ' na' + chr(0xef) + 've ' + str(i) for i in range(400)]})
+    assert chr(92) + 'u00e9' in accented and len(accented) > 4096
+    rows = ''.join(json.dumps({'id': str(i)}) + '\n' for i in range(300)) + '{"sourceText": broken\n'
+    for name, text in {'accented.json': accented, 'rows.jsonl': rows}.items():
+        (tmp_path / name).write_text(text)
+        assert diagnostic_inputs._carried_code([{'path': name, 'bytes': len(text)}], tmp_path) == ([], {}), name
+
+
+def test_wide_encodings_and_line_breaks_inside_strings_are_read_as_the_reader_reads_them(tmp_path):
+    """A JSON reader takes UTF-16 and UTF-32 (with or without a byte-order
+    mark, surrogates passed through, any amount of leading whitespace), and a
+    line reader splits JSON Lines only at line breaks, never at U+2028 or
+    U+0085, which may stand unescaped inside a string."""
+    from steerlab_server.experiment import diagnostic_inputs
+    text = _policy_text()
+    # A raw lone surrogate (not its escape), then the policy.
+    lone = json.dumps({'x': chr(0xd800)}, ensure_ascii=False)[:-1] + ', ' + text[1:]
+    # An emoji whose UTF-16 pair sits at bytes 4094-4097, across the first 4 KB.
+    emoji = '{"pad": "' + 'a' * 2038 + chr(0x1F600) + '", ' + text[1:]
+    assert len(emoji[:emoji.index(chr(0x1F600))].encode('utf-16-le')) == 4094
+    files = {
+        'padded16.json': (' ' * 3000 + text).encode('utf-16'),
+        'le16.json': (' ' * 3000 + text).encode('utf-16-le'),
+        'padded32.json': (' ' * 1100 + text).encode('utf-32'),
+        'lone16.json': lone.encode('utf-16-le', 'surrogatepass'),
+        'emoji16.json': emoji.encode('utf-16-le'),
+        'separators.jsonl': ('{"id": "a"}\n' + json.dumps({**json.loads(text), 'note': 'x' + chr(0x2028) + 'y' + chr(0x85) + 'z'},
+                                                            ensure_ascii=False) + '\n').encode(),
+    }
+    for name, data in files.items():
+        (tmp_path / name).write_bytes(data)
+        carried, _ = diagnostic_inputs._carried_code([{'path': name, 'bytes': len(data)}], tmp_path)
+        assert [row['sha256'] for row in carried] == [PROVIDER_SHA256], name
+
+
+def test_both_size_paths_read_lines_alike_and_too_deep_json_is_refused(tmp_path, monkeypatch):
+    """Below and above the parse bound, a JSON Lines file splits at line
+    feeds, and a line that is not a document is tried in its pieces between
+    carriage returns: records separated by a bare CR are found either way, and
+    a CR used as whitespace inside one record does not split it. JSON nested
+    past the interpreter's limit is refused, never skipped."""
+    from steerlab_server.experiment import diagnostic_inputs
+    policy = json.loads(_policy_text())
+    cr_records = '{"id": "x"}' + chr(13) + json.dumps(policy) + chr(10)
+    cr_space = json.dumps(policy).replace('"provider":', chr(13) + '"provider":', 1) + chr(10)
+    first = '{"id": "first"}' + chr(10)
+    padding = ''.join(json.dumps({'id': str(i)}) + chr(10) for i in range(300))
+    cases = {}
+    for label, line in (('cr-records', cr_records), ('cr-space', cr_space)):
+        cases[f'{label}-small.jsonl'] = first + line
+        cases[f'{label}-large.jsonl'] = first + padding + line
+    for name, text in cases.items():
+        (tmp_path / name).write_text(text, newline='')
+    for bound in (256 * 1024 * 1024, 4096):
+        monkeypatch.setattr(diagnostic_inputs, '_CODE_PARSE_BYTES', bound)
+        for name in cases:
+            size = (tmp_path / name).stat().st_size
+            carried, _ = diagnostic_inputs._carried_code([{'path': name, 'bytes': size}], tmp_path)
+            assert [row['sha256'] for row in carried] == [PROVIDER_SHA256], (name, bound)
+    monkeypatch.setattr(diagnostic_inputs, '_CODE_PARSE_BYTES', 256 * 1024 * 1024)
+    deep = '[' * 20000 + '"sourceText"' + ']' * 20000
+    (tmp_path / 'deep.json').write_text(deep)
+    with pytest.raises(diagnostic_inputs.CustomCodeRefusal, match='nested too deeply'):
+        diagnostic_inputs._carried_code([{'path': 'deep.json', 'bytes': len(deep)}], tmp_path)
+
+
+def test_an_escaped_provider_key_in_a_cost_policy_still_needs_acknowledgement(tmp_path, model):
+    """The reproduction in the 2026-10-12 review: the instrument's own policy
+    file, with only its key escaped and its pinned digest updated."""
+    from steerlab_server.experiment import custom_code, diagnostic_inputs
+    draft = method_authoring.draft('instrumentation-cost', answers(tmp_path, model, provider=PROVIDER), tmp_path)
+    request = draft['request']; config = request['parameters']['config']
+    [name] = [n for n in owner.POLICIES if '"sourceText"' in (tmp_path / config[n]['path']).read_text()]
+    path = tmp_path / config[name]['path']
+    path.write_text(_escaped_key(path.read_text()))
+    assert '"sourceText"' not in path.read_text()
+    config[name] = {**config[name], 'sha256': archives.file_hash(path)}
+    plan = diagnostic_inputs.plan(request, tmp_path)
+    assert [(row['sha256'], row['sourceText']) for row in plan['customCode']['providers']] == [(PROVIDER_SHA256, PROVIDER)]
+    archive = tmp_path / 'runs/escaped.tar.gz'
+    with pytest.raises(diagnostic_inputs.CustomCodeRefusal, match='nobody has acknowledged'):
+        diagnostic_inputs.package(request, tmp_path, archive, plan['planSHA256'])
+    assert not archive.exists() and not (tmp_path / custom_code.FILENAME).exists()
+    diagnostic_inputs.package(request, tmp_path, archive, plan['planSHA256'], acknowledge=PROVIDER_SHA256)
+    assert archive.is_file()
+
+
 def test_a_wrong_hash_is_refused_even_once_everything_is_acknowledged(tmp_path, model):
     from steerlab_server.experiment import diagnostic_inputs
     draft = method_authoring.draft('instrumentation-cost', answers(tmp_path, model, provider=PROVIDER), tmp_path)
