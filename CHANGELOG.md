@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.8] — 2026-10-12
+
 - **Every effect row records its unit of analysis.** The unit is what one
   paired difference is: an item (a prompt, its answers averaged), a
   transcript (one multi-agent conversation), or a sample. Both engines left
