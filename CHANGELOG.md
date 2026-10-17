@@ -42,12 +42,16 @@ migration that rewrites frozen bytes.
   list, Apple's notarization, your copy's own Developer ID team, and a newer
   version. Your current version is kept beside the new one as
   `SteerLab-<version>-previous.app`, and the app reopens. It waits while work
-  is running, cancels cleanly, and puts the original back if any step fails.
-  A copy that cannot replace itself (one beside a source checkout, or one not
-  signed for distribution) says why and keeps the link to the Releases page.
-  Nothing about your installation is sent. **Refresh Engine** brings the
-  local Python engine up to date after an update and keeps its installed
-  packages; a cluster site's engine still needs pushing again.
+  is running (a study, a model loading or downloading, and other tasks),
+  cancels cleanly, and puts the original back if any step fails. Older kept
+  copies go to the Trash. A copy that cannot replace itself (one built
+  locally, or one not in a folder you can write to) says why and keeps the
+  link to the Releases page. Nothing about your installation is sent.
+  **Refresh Engine** brings the local Python engine up to date after an
+  update and keeps its installed packages. If a SteerLab code checkout sits
+  beside the app, the local engine runs from it, and the update gives the
+  two `git` commands that bring it to the new release. A cluster site's
+  engine still needs pushing again.
 - **Older results say only what their files establish about `n`.** An
   analysis made before 0.9.8 did not record whether its pairs count items or
   responses, and the readers called a row item-level whenever it counted no
