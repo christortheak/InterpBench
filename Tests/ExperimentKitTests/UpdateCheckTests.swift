@@ -270,6 +270,70 @@ struct UpdateCheckTests {
         #expect(answer == .unknown(reason: "could not reach the release feed"))
     }
 
+    // MARK: - The release an update installs from
+
+    private static let releaseAssets = [
+        ReleaseAsset(
+            name: "SteerLab-0.9.3+abcdef12.zip",
+            downloadURL: URL(string: "https://github.com/acme/widget/releases/download/v0.9.3/SteerLab-0.9.3+abcdef12.zip")!)
+    ]
+
+    @Test func theFeedsNewerReleaseComesWithItsFiles() async {
+        let service = UpdateCheckService(
+            currentVersion: SemanticVersion("0.9.1")!, builtRevision: nil, checkout: nil,
+            feed: StubFeed(outcome: .release(tag: "v0.9.3", page: nil, assets: Self.releaseAssets)),
+            git: StubGit(responses: [:]), repository: repository)
+        let result = await service.checkDetailed()
+        #expect(result.release?.tag == "v0.9.3")
+        #expect(result.release?.assets == Self.releaseAssets)
+        #expect(result.availability == (await service.check()))
+    }
+
+    @Test func aReleaseSeenOnlyAsAGitTagOffersNothingToInstall() async {
+        // The feed names a release that is not newer; the newer one is only
+        // a tag on the remote, which GitHub serves no files for
+        // unauthenticated.
+        let service = UpdateCheckService(
+            currentVersion: SemanticVersion("0.9.1")!, builtRevision: nil,
+            checkout: URL(filePath: "/nowhere/checkout"),
+            feed: StubFeed(outcome: .release(tag: "v0.9.0", page: nil, assets: Self.releaseAssets)),
+            git: StubGit(responses: [
+                "ls-remote --tags origin": .output(
+                    "aa1a2b3c4d5e6f708192a3b4c5d6e7f809a1b2c3\trefs/tags/v0.9.5")
+            ]),
+            repository: repository)
+        let result = await service.checkDetailed()
+        guard case .releaseAvailable(let version, _) = result.availability else {
+            Issue.record("expected v0.9.5 to be announced")
+            return
+        }
+        #expect(version == SemanticVersion("0.9.5")!)
+        #expect(result.release == nil)
+
+        // And an up-to-date answer never carries a release.
+        let current = UpdateCheckService(
+            currentVersion: SemanticVersion("0.9.3")!, builtRevision: nil, checkout: nil,
+            feed: StubFeed(outcome: .release(tag: "v0.9.3", page: nil, assets: Self.releaseAssets)),
+            git: StubGit(responses: [:]), repository: repository)
+        #expect((await current.checkDetailed()).release == nil)
+    }
+
+    @Test func theHandCheckHookPicksATagOfTheSameRepositoryOnly() {
+        #expect(UpdateCheckOverrides.releaseTag(environment: [:]) == nil)
+        #expect(
+            UpdateCheckOverrides.releaseTag(environment: ["STEERLAB_UPDATE_RELEASE_TAG": " v1.0.0-rc.1 "])
+                == "v1.0.0-rc.1")
+        // Anything that could change WHERE the lookup goes is ignored.
+        for hostile in ["../../other/repo", "v1?x=1", "https://example.com", "v1 v2", ""] {
+            #expect(
+                UpdateCheckOverrides.releaseTag(environment: ["STEERLAB_UPDATE_RELEASE_TAG": hostile])
+                    == nil, "\(hostile)")
+        }
+        #expect(
+            repository.releaseEndpoint(tag: "v1.0.0-rc.1").absoluteString
+                == "https://api.github.com/repos/acme/widget/releases/tags/v1.0.0-rc.1")
+    }
+
     @Test func serviceFallsBackToTheCompiledInRepositoryWhenOriginIsUnparseable() async {
         let service = UpdateCheckService(
             currentVersion: SemanticVersion("0.9.1")!,
