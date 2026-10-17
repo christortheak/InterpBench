@@ -131,6 +131,68 @@ def test_incomplete_client_does_not_activate_over_working_environment(tmp_path, 
     assert list(stage.iterdir()) == []
 
 
+def _activate_with_resources(tmp_path, monkeypatch, remove=()):
+    """Run the helper's checks against a copy of the packaged resources with
+    the named files removed. Every earlier check passes; the plan review
+    after them is made to fail, so a run that gets past the guide check stops
+    there, before anything is switched (and before the helper ignores
+    signals, which it must never do inside this test process)."""
+    import runpy
+    from steerlab_server import client_dependencies
+    from steerlab_server.client import runtime_identity, workspace_bootstrap
+    resources = tmp_path / 'resources'
+    shutil.copytree(RESOURCES, resources)
+    for name in remove:
+        (resources / name).unlink()
+    monkeypatch.setattr(workspace_bootstrap, 'RESOURCES', resources)
+    monkeypatch.setattr(client_dependencies, 'probe', lambda: {
+        'basicAuthoring': {'label': 'Basic study authoring', 'ready': True}})
+    monkeypatch.setattr(runtime_identity, 'source_sha256', lambda: 'a' * 64)
+    stage = tmp_path / 'stage'
+    (stage / 'release').mkdir(parents=True)
+    (stage / 'release/source.sha256').write_text('a' * 64 + '\n')
+    original = tmp_path / 'original-release'
+    original.mkdir()
+    (original / 'install-client.sh').write_text('printf \'{"planSHA256":"a-different-plan"}\\n\'\n')
+    old = tmp_path / 'working'
+    old.mkdir()
+    runtime = tmp_path / 'client-runtime'
+    runtime.symlink_to(old)
+    activate = runpy.run_path(str(RESOURCES / 'runtime-helper.py'))['activate']
+    with pytest.raises(RuntimeError) as raised:
+        activate(stage, runtime, 'reviewed', original)
+    assert runtime.resolve() == old
+    return str(raised.value)
+
+
+def _packaged_topic_names():
+    index = json.loads((RESOURCES / 'agent-guide-topics.json').read_bytes())
+    return [topic['name'] for topic in index['topics']]
+
+
+def test_the_final_check_passes_a_complete_set_of_guide_topics(tmp_path, monkeypatch):
+    message = _activate_with_resources(tmp_path, monkeypatch)
+    assert 'agent-guide' not in message
+    assert 'plan changed' in message
+
+
+@pytest.mark.parametrize('position', [0, -1])
+def test_the_final_check_refuses_a_client_missing_a_guide_topic(tmp_path, monkeypatch, position):
+    """The topic is chosen from the packaged list, so the check is held to
+    whatever topics ship, not to a count written here."""
+    name = _packaged_topic_names()[position]
+    message = _activate_with_resources(
+        tmp_path, monkeypatch, remove=[f'agent-guide-topic-{name}.md'])
+    assert f'agent-guide-topic-{name}.md' in message
+    assert 'previous runtime remains active' in message
+
+
+def test_the_final_check_refuses_a_client_missing_its_topic_list(tmp_path, monkeypatch):
+    message = _activate_with_resources(
+        tmp_path, monkeypatch, remove=['agent-guide-topics.json'])
+    assert 'agent-guide-topics.json' in message
+
+
 def test_a_cancel_at_the_switch_is_too_late_and_the_install_completes(tmp_path):
     """Once the helper switches the runtime link, a Cancel must not stop it
     before it reports success: the installer would otherwise announce a

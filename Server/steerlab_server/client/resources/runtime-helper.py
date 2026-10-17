@@ -9,6 +9,22 @@ import sys
 import tempfile
 
 
+def missing_guide_files():
+    """Packaged agent-guide files that are absent: the topic list itself, or
+    a topic file it names. Read from the packaged list, never a count, so a
+    topic added later is checked with no change here."""
+    from steerlab_server.client import workspace_bootstrap
+    index = 'agent-guide-topics.json'
+    try:
+        names = [topic['name'] for topic in workspace_bootstrap.guide_topics()]
+    except (OSError, ValueError, KeyError, TypeError):
+        return [index]
+    if not names:
+        return [index + ' (it lists no topics)']
+    return [f'agent-guide-topic-{name}.md' for name in names
+            if not (workspace_bootstrap.RESOURCES / f'agent-guide-topic-{name}.md').is_file()]
+
+
 def activate(stage, runtime, expected, original_release):
     from steerlab_server.client.runtime_identity import source_sha256
     from steerlab_server.client.workspace_bootstrap import manifest, SEED, agent_contents
@@ -24,6 +40,10 @@ def activate(stage, runtime, expected, original_release):
         raise RuntimeError('Installed wheel source identity differs from the reviewed release.')
     assert all((SEED / p).is_file() for p in manifest()['seedFiles']), 'Incomplete seed'
     assert agent_contents(), 'Missing agent instructions'
+    missing = missing_guide_files()
+    if missing:
+        raise RuntimeError('The installed client is missing agent-guide files: ' + ', '.join(missing)
+                           + '. Download the complete client release again and retry; the previous runtime remains active.')
     # Same request after downloads: no stale activation over another controller.
     review = json.loads(subprocess.check_output(['/bin/sh', str(Path(original_release) / 'install-client.sh'), 'plan', '--runtime', str(runtime)]))
     if review.get('planSHA256') != expected:
