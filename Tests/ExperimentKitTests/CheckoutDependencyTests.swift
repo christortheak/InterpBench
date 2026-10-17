@@ -329,6 +329,17 @@ extension CheckoutDependency {
                 + "public release feed, and reports \"unknown\" with a reason when "
                 + "that is unavailable too — never \"up to date\""),
         .init(
+            file: "Sources/ExperimentKit/UpdateInstallerLive.swift",
+            token: "executableCheckout",
+            resolves:
+                "READ-ONLY: whether a code checkout sits beside the app, which makes "
+                + "it a developer install that the updater leaves to a rebuild. "
+                + "Nothing is read from or written into the tree",
+            bucket: .developerOnly,
+            withoutACheckout:
+                "the expected case for a packaged app: installation may be offered, "
+                + "subject to the signature, notarization, and folder checks"),
+        .init(
             file: "Sources/ExperimentKit/InstallProvenance.swift",
             token: "developerCheckoutRoot",
             resolves: "reporting only — `install version` names the checkout when there is one",
