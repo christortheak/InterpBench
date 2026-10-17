@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ExportButton } from "../components/ui";
 import { findFile, runKindOf, runStatusOf, sortRunsByTimestamp } from "../lib/discovery";
 import { csvFilename, type ExportColumn } from "../lib/export";
+import { pairedReportHeadline } from "../lib/judged";
 import { runKindLabel, type RunKind } from "../lib/runKind";
 import { statusLabel, type StatusState } from "../lib/status";
 import type { RunFile, View, WorkspaceRun } from "../lib/types";
@@ -128,26 +129,7 @@ const sweepHeadline = (recommendations: Record<string, unknown>): string => {
   return `${selected} concept${selected === 1 ? "" : "s"} selected · ${failed} with no qualifying cell`;
 };
 
-const pairedHeadline = (report: Record<string, unknown>): string => {
-  const conditions = record(report.conditions);
-  const tally = Object.values(conditions).reduce<{ variant: number; baseline: number; ties: number }>((totals, entry) => {
-    const row = record(entry);
-    return {
-      variant: totals.variant + (numberOf(row.variantWins) ?? 0),
-      baseline: totals.baseline + (numberOf(row.baselineWins) ?? 0),
-      ties: totals.ties + (numberOf(row.ties) ?? 0),
-    };
-  }, { variant: 0, baseline: 0, ties: 0 });
-  const pairs = numberOf(report.pairs);
-  const judges = Array.isArray(report.judges) ? report.judges.length : 0;
-  const parts: string[] = [];
-  if (pairs !== null) parts.push(`${pairs} pairs`);
-  if (judges) parts.push(`${judges} judges`);
-  if (tally.variant || tally.baseline || tally.ties) {
-    parts.push(`${tally.variant} variant / ${tally.baseline} baseline / ${tally.ties} ties`);
-  }
-  return parts.join(" · ");
-};
+const pairedHeadline = (report: Record<string, unknown>): string => pairedReportHeadline(report);
 
 const codingHeadline = (report: Record<string, unknown>): string => {
   const codings = numberOf(report.codings);

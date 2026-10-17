@@ -16,6 +16,7 @@ import {
   readJSONArtifact,
   tallyCoverage,
   tallyCoverageNote,
+  pairedReportHeadline,
 } from "../app/lib/judged";
 import type { LocalDirectoryHandle, LocalFileHandle, RunFile, WorkspaceRun } from "../app/lib/types";
 
@@ -287,6 +288,21 @@ describe("parseJudgeReport", () => {
     expect(tallyCoverage(report)).toBe("panel");
     expect(tallyCoverageNote(report)).toBe("These counts add up the verdicts of all 2 judges (judge-1, judge-2). Each judge's own counts are under each condition.");
     expect(report.conditions[0]).toMatchObject({ variantWins: 30, baselineWins: 30, pairs: 60 });
+  });
+
+  it("names whose counts the workspace triage line shows", () => {
+    const raw = (top: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+      conditions: { steered: top }, sourceRun: "run", pairs: 30, ...extra,
+      judges: [{ name: "judge-1", conditions: { steered: { baselineWins: 0, variantWins: 30, ties: 0, n: 30 } } },
+               { name: "judge-2", conditions: { steered: { baselineWins: 30, variantWins: 0, ties: 0, n: 30 } } }],
+    });
+    expect(pairedReportHeadline(raw({ baselineWins: 0, variantWins: 30, ties: 0, n: 30 })))
+      .toBe("30 pairs · 2 judges · first judge: 30 variant / 0 baseline / 0 ties");
+    expect(pairedReportHeadline(raw({ baselineWins: 30, variantWins: 30, ties: 0, n: 60 }, { conditionsScope: "allJudges" })))
+      .toBe("30 pairs · 2 judges · all judges: 30 variant / 30 baseline / 0 ties");
+    // The Swift engine's words for the same counts.
+    expect(pairedReportHeadline({ conditions: { steered: { pairs: 4, conditionWins: 3, baselineWins: 1, ties: 0 } }, judges: ["judge-1"], sourceRunDirectory: "/runs/run" }))
+      .toBe("1 judge · 3 variant / 1 baseline / 0 ties");
   });
 
   it("reads a Swift report's top-level tally as the panel, and one judge's as that judge's", () => {

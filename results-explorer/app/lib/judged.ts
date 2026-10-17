@@ -275,6 +275,27 @@ export const tallyCoverageNote = (report: JudgeReport): string => {
   }
 };
 
+/// The workspace triage list's one line for a paired judge report: its
+/// pairs, its judges, and its top-level counts across conditions, named for
+/// whose verdicts they are when the panel has several judges ("all judges"
+/// or "first judge", `tallyCoverage`).
+export const pairedReportHeadline = (raw: Record<string, unknown>): string => {
+  const report = parseJudgeReport({ present: true, raw, error: "", file: null });
+  const tally = report.conditions.reduce((totals, entry) => ({
+    variant: totals.variant + (entry.variantWins ?? 0),
+    baseline: totals.baseline + (entry.baselineWins ?? 0),
+    ties: totals.ties + (entry.ties ?? 0),
+  }), { variant: 0, baseline: 0, ties: 0 });
+  const parts: string[] = [];
+  if (report.pairs !== null) parts.push(`${report.pairs} pair${report.pairs === 1 ? "" : "s"}`);
+  if (report.judges.length) parts.push(`${report.judges.length} judge${report.judges.length === 1 ? "" : "s"}`);
+  if (tally.variant || tally.baseline || tally.ties) {
+    const whose = { panel: "all judges: ", firstJudge: "first judge: ", oneJudge: "" }[tallyCoverage(report)];
+    parts.push(`${whose}${tally.variant} variant / ${tally.baseline} baseline / ${tally.ties} ties`);
+  }
+  return parts.join(" · ");
+};
+
 const conditionTally = (condition: string, raw: unknown): ConditionTally => {
   const entry = record(raw);
   const structured = entry.structuredSummaries;
