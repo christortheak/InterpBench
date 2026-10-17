@@ -54,11 +54,18 @@ enum StudyAnalysisCalculator {
         // be said out loud on stderr (WP0 dry run #0, P0-2).
         var conditionsSeen = Set<String>()
         let decoder = JSONDecoder()
-        for line in text.split(separator: "\n") {
+        // Lines are numbered as `ChoiceReread` numbers them, so a re-read
+        // (`analyze --reread-choices`) reaches the record it was read from.
+        for (offset, line) in ChoiceReread.lines(of: text).enumerated() {
             guard
                 let record = try? decoder.decode(
                     AnalysisGeneration.self, from: Data(line.utf8))
             else { continue }
+            // The record's choice reading: the re-read one when choices were
+            // re-read, otherwise the one the run stored.
+            let reread: String?? = input.choiceRereads[offset + 1]
+            let parsedChoice: String? =
+                if let fresh = reread { fresh } else { record.parsedChoice?.value }
             conditionsSeen.insert(record.condition)
             if factorsByItem[record.promptID] == nil {
                 var levels: [String: String] = [:]
@@ -131,15 +138,25 @@ enum StudyAnalysisCalculator {
             }
             guard let wordCount = record.wordCount else { continue }
             if !exclusionRules.isEmpty {
+                var endpoints = analysisEndpoints(
+                    jsonLine: Data(line.utf8), names: exclusionEndpoints)
+                if let fresh = reread, exclusionEndpoints.contains("parsedChoice") {
+                    // An endpoint rule reads parsedChoice as present-and-null
+                    // (no answer) or not a number (an answer), exactly as
+                    // `analysisEndpoints` reads the stored value.
+                    if fresh == nil {
+                        endpoints.updateValue(nil, forKey: "parsedChoice")
+                    } else {
+                        endpoints.removeValue(forKey: "parsedChoice")
+                    }
+                }
                 exclusionViews.append(
                     ExclusionEngine.RecordView(
                         condition: record.condition,
                         seed: record.seed ?? 0,
                         promptID: record.promptID,
                         output: record.output ?? "",
-                        endpoints: analysisEndpoints(
-                            jsonLine: Data(line.utf8),
-                            names: exclusionEndpoints)))
+                        endpoints: endpoints))
             }
             let markerDensity = record.markerDensity ?? [:]
             conceptSet.formUnion(markerDensity.keys)
@@ -149,12 +166,13 @@ enum StudyAnalysisCalculator {
                 } else {
                     [:]
                 }
-            // The record's own outcome readings, as the run wrote them:
-            // nothing is re-parsed or re-scored here. A parse that failed
-            // (`null`) and a reading the study never took (key absent) are
-            // both "no reading" for the paired effects.
+            // The record's own outcome readings, as the run wrote them —
+            // except a choice re-read when the analysis was asked for one
+            // (`--reread-choices`, read in the repository, not here). A parse
+            // that failed (`null`) and a reading the study never took (key
+            // absent) are both "no reading" for the paired effects.
             let choseTarget: Bool? =
-                if let choice = record.parsedChoice?.value, let target = record.target {
+                if let choice = parsedChoice, let target = record.target {
                     choice == target
                 } else {
                     nil

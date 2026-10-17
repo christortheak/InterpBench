@@ -66,6 +66,13 @@ enum StudyAnalysisRendering {
         for outcome in result.outcomes.notAvailable {
             artifacts.log("\(outcome.name): \(outcome.reason ?? "not available")")
         }
+        // `--reread-choices`: the stamp saying every stored choice was read
+        // again, with which parser, how many changed, and that the run is
+        // unchanged (server twin: the same file, the same shape).
+        if let stamp = input.choiceRereadStamp {
+            try artifacts.add(ChoiceReread.stampFile, json: stamp)
+            artifacts.log("choice re-read: " + ChoiceReread.sentence(stamp))
+        }
         // Per-item choice deltas (server twin: choice-deltas.csv +
         // choice-deltas.json). Absence over empty artifacts: a run with no
         // non-baseline choice readouts grows no table implying it had some.

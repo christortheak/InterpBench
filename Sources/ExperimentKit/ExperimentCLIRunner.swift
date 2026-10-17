@@ -4111,11 +4111,16 @@ public struct ExperimentCLIRunner: Sendable {
             // content hash). Pure CPU — no model load.
             guard args.count >= 2 else {
                 throw ExperimentError(
-                    reason: "usage: experiment analyze <name> [--allow-unverified-epoch]")
+                    reason: "usage: experiment analyze <name> [--allow-unverified-epoch] "
+                        + "[--reread-choices]")
             }
+            // --reread-choices: every stored choice read again with the
+            // current parser, for this analysis only (`ChoiceReread`).
+            let rereadChoices = args.contains("--reread-choices")
             let runDirectory = try ExperimentTasks.analyze(
                 experimentName: args[1],
-                allowUnverifiedEpoch: args.contains("--allow-unverified-epoch"))
+                allowUnverifiedEpoch: args.contains("--allow-unverified-epoch"),
+                rereadChoices: rereadChoices)
             var payload = Self.analysisPayload(inRunAt: runDirectory)
             payload["experiment"] = .string(args[1])
             payload["runDirectory"] = .string(runDirectory.path)
@@ -4155,6 +4160,24 @@ public struct ExperimentCLIRunner: Sendable {
                             + "\(runDirectory.lastPathComponent), and confirm the "
                             + "declared studyType does not inert them "
                             + "(steerlab-cli experiment verify \(args[1]))"))
+            }
+            // Discoverability: an ordinary analysis used the stored choices,
+            // so say when the current parser would read some of them
+            // differently. Never blocks (server twin: the same advisory).
+            if !rereadChoices,
+                let found = ExperimentTasks.choiceRereadAdvisory(
+                    analysisDirectory: runDirectory, study: args[1])
+            {
+                advisories.append(
+                    .init(
+                        CLIAdvisory.storedChoicesReadDifferently,
+                        ChoiceReread.advisoryDetail(
+                            changed: found.changed, storedChoices: found.storedChoices,
+                            run: found.run,
+                            checkCommand: "steerlab-cli results check-choices \(args[1]) "
+                                + "--run runs/\(found.run)",
+                            analyzeCommand: "steerlab-cli experiment analyze \(args[1]) "
+                                + "--reread-choices")))
             }
             return ExperimentCLIResult(
                 message: "analyzed '\(args[1])' → \(entries) effect-size "

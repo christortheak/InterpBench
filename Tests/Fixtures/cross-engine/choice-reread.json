@@ -56,6 +56,7 @@
         {"line": 11, "condition": "steered", "promptID": "q4", "sampleIndex": 0, "stored": null, "reread": "B"}
       ]
     },
+    "note": "Every record that carries parsedChoice was read again from its stored reply with the choice parser this engine has now. The re-read choices replace the stored ones in this analysis only: every choice outcome, exclusion, and table here uses them. The run directory, including generations.jsonl, was not changed. Records without finishReason come from engines that did not record whether a reply was cut off by the length limit; they were read as complete replies.",
     "sentence": "Choices were re-read from the stored replies with choice parser version 2026-10-17; 5 of 12 stored choices changed, and the run itself is unchanged. 2 of those replies come from an older engine that did not record whether a reply was cut off by the length limit, so they were read as complete replies (1 of them changed).",
     "choiceRate": {
       "about": "The pooled choiceRate row for condition 'steered' against 'baseline': per item, the share of readable replies naming the target B, minus the baseline's; the estimate is the mean of those differences over the items both conditions read. Baseline per item: q1 1, q2 1, q3 1, q4 1, q5 0, q6 1.",

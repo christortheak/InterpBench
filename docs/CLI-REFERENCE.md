@@ -1530,11 +1530,12 @@ Python engine.
 <!-- Generated from the declarative verb table — `steerlab-cli docs cli-reference --write`. Edit the table, not this block. -->
 
 ```
-steerlab-cli experiment analyze <name> [--allow-unverified-epoch]
+steerlab-cli experiment analyze <name> [--allow-unverified-epoch] [--reread-choices]
 steerlab-cli experiment rescore-style <name> [--allow-unverified-epoch] [--run <run-dir>]
 steerlab-cli experiment evaluate <name> [--allow-unverified-epoch] [--run <run-dir>] [--sample-per-condition <n>] [--sample-seed <hex-or-int>]
 steerlab-cli results export <study> [--out <dir>] [--run <run-dir>]
 steerlab-cli results report <study> [--out <file>] [--run <run-dir>]
+steerlab-cli results check-choices <study> [--run <run-dir>]
 ```
 
 | Verb | Purpose |
@@ -1544,6 +1545,7 @@ steerlab-cli results report <study> [--out <file>] [--run <run-dir>]
 | `experiment evaluate` | Judge a completed run with the pinned rubric and judges. |
 | `results export` | Export a completed run's results into a new folder outside runs/: tables that open in R, Stata, SPSS, or a spreadsheet, transcripts for coding by hand, a methods summary, and a codebook. Runs no model, and recalculates nothing. |
 | `results report` | Write a completed run's results as one readable page (HTML) outside runs/: the headline outcome with its interval, every stored effect, each condition, controls, the judges' agreement, exclusions, and how the study was frozen. The page goes under reports/ in the workspace unless --out names the file. Runs no model, and recalculates nothing. |
+| `results check-choices` | Read a run's stored choices again with the current choice parser and report, per condition, how many would read differently: changed to another option, changed to no answer, or gained an answer, with a few records of each kind to look at. Uses the newest completed run unless --run names another. Writes nothing and changes nothing under runs/; to analyze with the current reading, analyze the run with --reread-choices. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:swift-experiment-analysis END -->

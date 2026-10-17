@@ -5194,15 +5194,37 @@ public enum ExperimentTasks {
             runName: runName, recordCount: count, conditions: conditions)
     }
 
+    /// `rereadChoices` (`--reread-choices`, the app's "Re-read choices"):
+    /// every stored choice is read again with the current parser for this
+    /// analysis only, stamped in `choice-reread.json` (`ChoiceReread`).
     public static func analyze(
         experimentName: String,
-        allowUnverifiedEpoch: Bool = false
+        allowUnverifiedEpoch: Bool = false,
+        rereadChoices: Bool = false
     ) throws -> URL {
         let manifest = try loadVerified(experimentName)
         let repository = StudyAnalysisRepository(
             workspaceRoot: ExperimentStore.workspaceRoot, promptRoot: VectorCatalog.projectRoot)
         return try StudyAnalysisWorkflow.analyze(
-            manifest: manifest, repository: repository, allowUnverifiedEpoch: allowUnverifiedEpoch)
+            manifest: manifest, repository: repository, allowUnverifiedEpoch: allowUnverifiedEpoch,
+            rereadChoices: rereadChoices)
+    }
+
+    /// The `storedChoicesReadDifferently` count for an analysis directory's
+    /// source run (`source-run.txt`, or `analysis.json`'s `sourceRun`), or
+    /// nil when nothing differs or the run's options cannot be verified.
+    /// Never throws: the advisory never blocks an analysis.
+    public static func choiceRereadAdvisory(
+        analysisDirectory: URL, study: String
+    ) -> (run: String, changed: Int, storedChoices: Int)? {
+        guard let run = RunResults.analyzedRunName(analysisDirectory) else { return nil }
+        let runDirectory = analysisDirectory.deletingLastPathComponent().appending(component: run)
+        guard
+            let found = ChoiceReread.advisoryCount(
+                runDirectory: runDirectory, workspaceRoot: ExperimentStore.workspaceRoot,
+                study: study)
+        else { return nil }
+        return (run, found.changed, found.storedChoices)
     }
 
     // MARK: - rescore-style (post-hoc reasoning-style scoring)

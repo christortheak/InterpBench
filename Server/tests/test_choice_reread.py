@@ -242,6 +242,7 @@ def test_reread_choices_uses_the_current_reading_and_stamps_it(tmp_path):
     assert (stamp["total"], stamp["conditions"], stamp["examples"]) == (
         EXPECTED["total"], EXPECTED["conditions"], EXPECTED["examples"])
     assert stamp["taskPrompts"]["sha256"] == _digest(FIXTURE["taskPromptsText"])
+    assert stamp["note"] == EXPECTED["note"]
     # The run directory is byte for byte what it was.
     assert _run_bytes(run_dir) == before
 

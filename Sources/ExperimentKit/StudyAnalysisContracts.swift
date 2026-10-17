@@ -143,6 +143,14 @@ struct StudyAnalysisInput {
     var exclusionChecks: [String: AttentionCheck] = [:]
     var declaredTargets: [String: Bool]? = nil
     var numericParser: AnalysisNumericParser = .undeclared
+    /// `analyze --reread-choices` only: each re-read line's new
+    /// `parsedChoice` (nil for no answer), keyed by its number among the
+    /// non-blank lines of `generations` counting from 1
+    /// (`ChoiceReread.lines`). Empty for an ordinary analysis, which uses the
+    /// stored readings.
+    var choiceRereads: [Int: String?] = [:]
+    /// The stamp written as `choice-reread.json` when choices were re-read.
+    var choiceRereadStamp: ChoiceReread.Stamp? = nil
 }
 
 struct StudyAnalysisDiagnostic {
