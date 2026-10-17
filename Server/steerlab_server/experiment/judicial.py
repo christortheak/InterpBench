@@ -5,9 +5,11 @@ These are the engine's two SHIPPED parsers, both concept-agnostic text
 readers over whatever prose a study's items elicit:
 
 - **categorical choice** — the option a response settled on, read from a JSON
-  object with a declared key, an exact whole-response match, or (over complete
-  text only — a truncated output parses as a failure, never as its
-  first-enumerated option) the earliest word-boundary mention. Derived
+  object with a declared key (tolerantly, when the object does not parse), an
+  exact whole-response match, or (over complete text only — a truncated
+  output parses as a failure, never as its first-enumerated option) the last
+  answer marker, an option opening the reply, or the earliest mention, where
+  a single-letter option counts only as its capital letter. Derived
   endpoints over it are outcome rates and between-item contrasts.
 - **duration in months** — a numeric quantity stated in years and/or months.
   Derived endpoints are the mean shift, spread, anchor slope, and
@@ -31,6 +33,10 @@ import math
 import re
 from dataclasses import dataclass
 
+# One definition of "ASCII fold" and "letter" per engine (the Swift side
+# shares ``TurnEndpointParser.fold``/``isLetter`` the same way).
+from .turn_endpoint import _fold, _is_letter
+
 # --- categorical option parsing ----------------------------------------------
 
 
@@ -38,11 +44,51 @@ def parse_choice(text: str, options: list[str], *, json_key: str = "answer",
                  truncated: bool = False) -> str | None:
     """Extract a categorical choice from sampled prose.
 
-    Tries, in order: a JSON object carrying ``json_key`` (the usual
-    answer-in-JSON schema), an exact normalized match of the whole response,
-    then — for text that finished saying its piece — the option whose earliest
-    word-boundary mention appears first in the text. Returns the matched
-    option verbatim, or ``None`` (a parse failure — count it).
+    Tries, in order:
+
+    1. a JSON object carrying ``json_key`` (the usual answer-in-JSON schema);
+    2. the ``json_key`` read TOLERANTLY when the object does not parse — the
+       last ``"<json_key>": "<value>"`` whose value names an option;
+    3. an exact normalized match of the whole response;
+
+    and then, only for text that finished saying its piece:
+
+    4. an explicit answer marker — the word "answer" followed by ``:`` or
+       "is", Markdown emphasis ignored — where the LAST marker that names an
+       option wins ("Final answer: B", "**Final answer:** B", "my answer is
+       B");
+    5. an option at the very start of the reply followed by punctuation
+       ("B. Because…", "b) …", "**B**");
+    6. the option whose earliest mention appears first in the text.
+
+    Returns the matched option verbatim, or ``None`` (a parse failure —
+    count it). The shared hand-written fixture
+    ``Tests/Fixtures/cross-engine/choice-parsing.json`` states the intended
+    reading of every rule; the Swift twin reads the same file.
+
+    **Single-letter options and the article "a" (2026-10-17).** Rules 4–6
+    once matched every option case-insensitively at a word boundary, so the
+    English article "a" was a mention of option A: "As a doctor, I would
+    choose B." parsed as A, and so did any free-text reply that used the
+    article before stating its letter — a bias toward A in every letter-option
+    study with free-text replies. A single-letter option now counts in
+    running text only as its CAPITAL letter, standing alone; a lower-case
+    letter counts only where it cannot be the article: as the whole reply,
+    or directly followed by punctuation or the end of the reply at the start
+    of the reply or after an answer marker. A capital "A" that opens a
+    sentence ("A hard case, but I choose B.") still cannot be told from
+    option A without understanding the sentence; the fixture keeps that case
+    as a known limit, and the remedy is to ask for "Final answer:" or JSON.
+
+    **Malformed JSON answers (2026-10-17).** A model told to answer in JSON
+    often writes an object that does not parse — unescaped quotes inside its
+    reasons, or raw newlines and control characters in a string. Rule 1 then
+    found nothing, and first mention read the article in the reasons as
+    option A. Steering makes the JSON messier, so the miscodes concentrated
+    in steered conditions: a dose-correlated spurious shift toward A. Rule 2
+    reads the declared key from the text instead, and it is honored on a
+    truncated output too, because a complete key and value written before
+    the cut are a decision.
 
     The first-mention fallback is legitimate only for a COMPLETE free-form
     answer that names its choice in prose ("I would rule for X because…").
@@ -65,9 +111,23 @@ def parse_choice(text: str, options: list[str], *, json_key: str = "answer",
       was started but cut off) — detectable from the text alone, so records
       parsed without a token count are still covered.
 
-    A complete embedded JSON answer or an exact whole-response match is still
-    honored on a ``truncated`` output: answering and then running out of room
-    while elaborating is a decision, not a coerced one.
+    A complete embedded JSON answer, a complete answer key, or an exact
+    whole-response match is still honored on a ``truncated`` output:
+    answering and then running out of room while elaborating is a decision,
+    not a coerced one. Markers and the start-of-reply rule are not read in a
+    truncated output, exactly as first mention is not: a deliberation that
+    was cut off may restate an option after a marker or open with a list of
+    the options.
+
+    The new rules (2, 4, 5, and the single-letter scan in 6) are literal
+    scans with no regex, in the panel turn parser's house style, so the two
+    engines agree character for character: ASCII case folding and the
+    letter test are :mod:`.turn_endpoint`'s own, and positions are code
+    points. The marker logic itself is not shared with the panel parser:
+    a panel turn declares its own marker and reads the FIRST occurrence in
+    an 80-character window, while a choice reply has no declared marker,
+    reads the LAST "answer" marker that names an option, and reads the
+    option directly after it.
     """
     if not text or not options:
         return None
@@ -80,6 +140,11 @@ def parse_choice(text: str, options: list[str], *, json_key: str = "answer",
             if match is not None:
                 return match
 
+    flat = _normalize_spaces(text)
+    keyed = _answer_key_value(flat, normalized, json_key)
+    if keyed is not None:
+        return keyed
+
     whole = _normalize(text)
     if whole in normalized:
         return normalized[whole]
@@ -87,14 +152,211 @@ def parse_choice(text: str, options: list[str], *, json_key: str = "answer",
     if truncated or _opens_unclosed_json(text):
         return None
 
+    marked = _marked_option(flat, options)
+    if marked is not None:
+        return marked
+
+    leading = _leading_option(flat, options)
+    if leading is not None:
+        return leading
+
     earliest: tuple[int, str] | None = None
     for option in options:
-        pattern = re.compile(
-            r"\b" + re.escape(_normalize(option)) + r"\b", re.IGNORECASE)
-        hit = pattern.search(_normalize_spaces(text))
-        if hit and (earliest is None or hit.start() < earliest[0]):
-            earliest = (hit.start(), option)
+        letter = _single_character(option)
+        if letter is not None:
+            position = _first_standalone(flat, letter)
+        else:
+            pattern = re.compile(
+                r"\b" + re.escape(_normalize(option)) + r"\b", re.IGNORECASE)
+            hit = pattern.search(flat)
+            position = hit.start() if hit else None
+        if position is not None and (earliest is None
+                                     or position < earliest[0]):
+            earliest = (position, option)
     return earliest[1] if earliest else None
+
+
+# The literal-scan pieces of parse_choice. Swift twins carry the same names
+# in camelCase (``Judicial.answerKeyValue`` …) and must agree character for
+# character; the shared fixture is the contract.
+
+#: The answer-marker word, matched whole and ignoring ASCII case.
+_MARKER_WORD = "answer"
+#: Skipped between the marker word and its ``:`` or "is": spaces, Markdown
+#: emphasis, and the quotes and backticks a model wraps a label in.
+_MARKER_GAP = frozenset(" *_\"'`")
+#: Skipped between a marker (or the start of the reply) and the option.
+_VALUE_GAP = frozenset(" *_\"'`([:")
+#: Punctuation that may follow an option where a delimiter is required.
+_DELIMITERS = frozenset(".,:;)]!?*_\"'`")
+#: An optional word between a marker and the option ("the answer is option B").
+_OPTION_WORD = "option"
+
+
+def _is_word(ch: str) -> bool:
+    """A letter (Unicode L*) or an ASCII digit — what an option may not touch."""
+    return _is_letter(ch) or "0" <= ch <= "9"
+
+
+def _single_character(option: str) -> str | None:
+    """The character a single-character option is found by in running text:
+    an ASCII letter as its CAPITAL (so the article "a" is never option A,
+    and a declared "a" is found as "A"), anything else as itself. ``None``
+    for a longer option."""
+    stripped = _normalize_spaces(option).strip().strip(".")
+    if len(stripped) != 1:
+        return None
+    if "a" <= stripped <= "z" or "A" <= stripped <= "Z":
+        return stripped.upper()
+    return stripped
+
+
+def _first_standalone(flat: str, char: str) -> int | None:
+    """Position of the first ``char`` that touches no letter or digit."""
+    index = flat.find(char)
+    while index != -1:
+        end = index + len(char)
+        if ((index == 0 or not _is_word(flat[index - 1]))
+                and (end >= len(flat) or not _is_word(flat[end]))):
+            return index
+        index = flat.find(char, index + 1)
+    return None
+
+
+def _answer_key_value(flat: str, normalized: dict[str, str],
+                      json_key: str) -> str | None:
+    """The last ``"<json_key>": "<value>"`` whose value names an option, read
+    from the text without parsing it as JSON (``flat`` has every whitespace
+    run collapsed to one space, so raw newlines inside the object are gone).
+    The value runs to the next ``"`` not preceded by a backslash; one that
+    never closes is not read."""
+    needle = '"' + json_key + '"'
+    found = None
+    index = flat.find(needle)
+    while index != -1:
+        cursor = index + len(needle)
+        if cursor < len(flat) and flat[cursor] == " ":
+            cursor += 1
+        if cursor < len(flat) and flat[cursor] == ":":
+            cursor += 1
+            if cursor < len(flat) and flat[cursor] == " ":
+                cursor += 1
+            if cursor < len(flat) and flat[cursor] == '"':
+                start = end = cursor + 1
+                while end < len(flat) and not (
+                        flat[end] == '"' and flat[end - 1] != "\\"):
+                    end += 1
+                if end < len(flat):
+                    match = normalized.get(_normalize(flat[start:end]))
+                    if match is not None:
+                        found = match
+        index = flat.find(needle, index + 1)
+    return found
+
+
+def _option_at(flat: str, start: int, options: list[str], *,
+               delimiter_required: bool) -> str | None:
+    """The option written at ``flat[start:]``, or ``None``.
+
+    A single ASCII letter counts as its capital followed by anything but a
+    letter or digit, or — where it cannot be the article — as its lower case
+    followed by punctuation or the end of the reply. A longer option is
+    compared ignoring ASCII case and must not run into a letter or digit.
+    With ``delimiter_required`` (the start of the reply) every option must be
+    followed by punctuation or the end, so "A hard case" opens with no
+    option. The longest match wins, then declaration order."""
+    best: tuple[int, int, str] | None = None
+    for order, option in enumerate(options):
+        needle = _normalize_spaces(option).strip()
+        if not needle:
+            continue
+        end = start + len(needle)
+        if end > len(flat):
+            continue
+        written = flat[start:end]
+        is_letter = len(needle) == 1 and ("a" <= needle <= "z"
+                                          or "A" <= needle <= "Z")
+        if is_letter:
+            if written == needle.upper():
+                capital = True
+            elif written == needle.lower():
+                capital = False
+            else:
+                continue
+        elif _fold(written) != _fold(needle):
+            continue
+        else:
+            capital = True
+        at_end = end >= len(flat)
+        delimited = at_end or flat[end] in _DELIMITERS
+        if delimiter_required or not capital:
+            if not delimited:
+                continue
+        elif not at_end and _is_word(flat[end]):
+            continue
+        candidate = (-len(needle), order, option)
+        if best is None or candidate < best:
+            best = candidate
+    return None if best is None else best[2]
+
+
+def _option_after(flat: str, start: int, options: list[str], *,
+                  delimiter_required: bool) -> str | None:
+    """Skip spaces, emphasis, quotes, and opening brackets, then read an
+    option — directly, or after the word "option" (tried second, so an
+    option that itself begins with "Option" is still read whole)."""
+    cursor = start
+    while cursor < len(flat) and flat[cursor] in _VALUE_GAP:
+        cursor += 1
+    choice = _option_at(flat, cursor, options,
+                        delimiter_required=delimiter_required)
+    if choice is not None:
+        return choice
+    end = cursor + len(_OPTION_WORD)
+    if (_fold(flat[cursor:end]) == _OPTION_WORD and end < len(flat)
+            and flat[end] == " "):
+        cursor = end
+        while cursor < len(flat) and flat[cursor] in _VALUE_GAP:
+            cursor += 1
+        return _option_at(flat, cursor, options,
+                          delimiter_required=delimiter_required)
+    return None
+
+
+def _marked_option(flat: str, options: list[str]) -> str | None:
+    """The option named by the LAST answer marker that names one: the whole
+    word "answer" (any ASCII case), then — past spaces, emphasis, and quotes
+    — a ``:`` or the whole word "is"."""
+    folded = _fold(flat)
+    found = None
+    index = folded.find(_MARKER_WORD)
+    while index != -1:
+        end = index + len(_MARKER_WORD)
+        if ((index == 0 or not _is_letter(flat[index - 1]))
+                and (end >= len(flat) or not _is_letter(flat[end]))):
+            cursor = end
+            while cursor < len(flat) and flat[cursor] in _MARKER_GAP:
+                cursor += 1
+            after = None
+            if cursor < len(flat) and flat[cursor] == ":":
+                after = cursor + 1
+            elif (folded.startswith("is", cursor)
+                  and (cursor + 2 >= len(flat)
+                       or not _is_letter(flat[cursor + 2]))):
+                after = cursor + 2
+            if after is not None:
+                choice = _option_after(flat, after, options,
+                                       delimiter_required=False)
+                if choice is not None:
+                    found = choice
+        index = folded.find(_MARKER_WORD, index + 1)
+    return found
+
+
+def _leading_option(flat: str, options: list[str]) -> str | None:
+    """An option at the very start of the reply, followed by punctuation or
+    the end ("B. Because…", "b) …", "**B**")."""
+    return _option_after(flat, 0, options, delimiter_required=True)
 
 
 def _normalize(text: str) -> str:

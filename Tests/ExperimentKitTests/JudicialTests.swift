@@ -33,6 +33,50 @@ import Testing
         #expect(Judicial.parseChoice("", options: options) == nil)
     }
 
+    // MARK: The shared, hand-written choice-parsing contract
+
+    /// `Tests/Fixtures/cross-engine/choice-parsing.json`: every expected
+    /// value was written by hand from the parser's rules, never read back
+    /// from an engine; `Server/tests/test_judicial.py` reads the same file,
+    /// so a divergence fails on both sides.
+    private struct ChoiceFixture: Decodable {
+        struct Case: Decodable {
+            let name: String
+            let options: [String]
+            let text: String
+            let expected: String?
+            let truncated: Bool?
+            let jsonKey: String?
+        }
+        let cases: [Case]
+    }
+
+    private func choiceFixture() throws -> ChoiceFixture {
+        let url = CodeResources.compiledCheckoutPath.appending(
+            components: "Tests", "Fixtures", "cross-engine", "choice-parsing.json")
+        return try JSONDecoder().decode(ChoiceFixture.self, from: Data(contentsOf: url))
+    }
+
+    @Test func parseChoiceMatchesTheHandWrittenFixture() throws {
+        let fixture = try choiceFixture()
+        #expect(fixture.cases.count >= 50)
+        for item in fixture.cases {
+            #expect(
+                Judicial.parseChoice(
+                    item.text, options: item.options, jsonKey: item.jsonKey ?? "answer",
+                    truncated: item.truncated ?? false) == item.expected,
+                "\(item.name)")
+        }
+    }
+
+    @Test func theArticleIsNeverOptionAButACapitalLetterIs() {
+        let letters = ["A", "B"]
+        #expect(Judicial.parseChoice("As a doctor, I would choose B.", options: letters) == "B")
+        #expect(Judicial.parseChoice("In this case I choose A.", options: letters) == "A")
+        // The declared option is returned whatever case the reply used.
+        #expect(Judicial.parseChoice("I choose B.", options: ["a", "b"]) == "b")
+    }
+
     // Truncation must parse as failure, never as the first-enumerated option.
     // FIXTURES SHARED WITH THE SERVER TWIN (`test_judicial.py`). A 2026-08-29
     // 1,200-record run: 19 outputs hit the token cap mid-deliberation and

@@ -9,10 +9,13 @@ import Foundation
 /// readers over whatever prose a study's items elicit:
 ///
 /// - **categorical choice**: the option a response settled on, read from a
-///   JSON object with a declared key, an exact whole-response match, or (over
-///   complete text only — a truncated output parses as a failure, never as
-///   its first-enumerated option) the earliest word-boundary mention. Derived
-///   endpoints over it are outcome rates and between-item contrasts.
+///   JSON object with a declared key (tolerantly, when the object does not
+///   parse), an exact whole-response match, or (over complete text only — a
+///   truncated output parses as a failure, never as its first-enumerated
+///   option) the last answer marker, an option opening the reply, or the
+///   earliest mention, where a single-letter option counts only as its
+///   capital letter. Derived endpoints over it are outcome rates and
+///   between-item contrasts.
 /// - **duration in months**: a numeric quantity stated in years and/or
 ///   months; endpoints are the mean shift, spread, anchor slope, and
 ///   proportionality; the parse-failure rate is itself a coherence signal.
@@ -29,12 +32,47 @@ public enum Judicial {
 
     /// Extracts a categorical choice from sampled prose.
     ///
-    /// Tries, in order: a JSON object carrying `jsonKey` (the usual
-    /// answer-in-JSON schema), an exact normalized match of the whole
-    /// response, then — for text that finished saying its piece — the option
-    /// whose earliest word-boundary mention appears first in the text.
+    /// Tries, in order:
+    ///
+    /// 1. a JSON object carrying `jsonKey` (the usual answer-in-JSON schema);
+    /// 2. `jsonKey` read TOLERANTLY when the object does not parse — the
+    ///    last `"<jsonKey>": "<value>"` whose value names an option;
+    /// 3. an exact normalized match of the whole response;
+    ///
+    /// and then, only for text that finished saying its piece:
+    ///
+    /// 4. an explicit answer marker — the word "answer" followed by `:` or
+    ///    "is", Markdown emphasis ignored — where the LAST marker that names
+    ///    an option wins ("Final answer: B", "**Final answer:** B", "my
+    ///    answer is B");
+    /// 5. an option at the very start of the reply followed by punctuation
+    ///    ("B. Because…", "b) …", "**B**");
+    /// 6. the option whose earliest mention appears first in the text.
+    ///
     /// Returns the matched option verbatim, or nil (a parse failure — count
-    /// it).
+    /// it). The shared hand-written fixture
+    /// `Tests/Fixtures/cross-engine/choice-parsing.json` states the intended
+    /// reading of every rule; the server twin reads the same file.
+    ///
+    /// **Single-letter options and the article "a" (2026-10-17).** Rules 4–6
+    /// once matched every option case-insensitively at a word boundary, so
+    /// the English article "a" was a mention of option A: "As a doctor, I
+    /// would choose B." parsed as A — a bias toward A in every letter-option
+    /// study with free-text replies. A single-letter option now counts in
+    /// running text only as its CAPITAL letter, standing alone; a lower-case
+    /// letter counts only where it cannot be the article: as the whole reply,
+    /// or directly followed by punctuation or the end of the reply at the
+    /// start of the reply or after an answer marker. A capital "A" that opens
+    /// a sentence still cannot be told from option A without understanding
+    /// the sentence; the fixture keeps that case as a known limit.
+    ///
+    /// **Malformed JSON answers (2026-10-17).** A model told to answer in
+    /// JSON often writes an object that does not parse (unescaped quotes in
+    /// its reasons, raw newlines in a string). Rule 1 then found nothing and
+    /// first mention read the article in the reasons as option A — more often
+    /// under steering, which makes the JSON messier. Rule 2 reads the declared
+    /// key from the text instead, and it is honored on a truncated output
+    /// too: a complete key and value written before the cut are a decision.
     ///
     /// The first-mention fallback is legitimate only for a COMPLETE free-form
     /// answer that names its choice in prose. Over an output that was cut off
@@ -51,10 +89,23 @@ public enum Judicial {
     /// decode ended by exhausting its token budget — the run loop reads the
     /// stream's own stop reason), and a JSON object the text opens but never
     /// closes (detectable from the text alone, covering records parsed
-    /// without a stop reason). A complete embedded JSON answer or an exact
-    /// whole-response match is still honored on a truncated output:
-    /// answering and then running out of room while elaborating is a
-    /// decision, not a coerced one.
+    /// without a stop reason). A complete embedded JSON answer, a complete
+    /// answer key, or an exact whole-response match is still honored on a
+    /// truncated output: answering and then running out of room while
+    /// elaborating is a decision, not a coerced one. Markers and the
+    /// start-of-reply rule are not read in a truncated output, exactly as
+    /// first mention is not: a deliberation that was cut off may restate an
+    /// option after a marker or open with a list of the options.
+    ///
+    /// The new rules (2, 4, 5, and the single-letter scan in 6) are literal
+    /// scans with no regex, in the panel turn parser's house style, so the
+    /// two engines agree character for character: ASCII folding and the
+    /// letter test are `TurnEndpointParser.fold`/`isLetter`, and positions
+    /// are Unicode scalars (Python code points). The marker logic itself is
+    /// not shared with the panel parser: a panel turn declares its own marker
+    /// and reads the FIRST occurrence in an 80-scalar window, while a choice
+    /// reply has no declared marker, reads the LAST "answer" marker that
+    /// names an option, and reads the option directly after it.
     ///
     /// Server twin: `judicial.parse_choice` — fixture-locked on both engines.
     public static func parseChoice(
@@ -74,26 +125,286 @@ public enum Judicial {
             }
         }
 
+        let flat = normalizeSpaces(text)
+        let scalars = Array(flat.unicodeScalars)
+        if let keyed = answerKeyValue(scalars, normalized: normalized, jsonKey: jsonKey) {
+            return keyed
+        }
+
         if let match = normalized[normalize(text)] { return match }
 
         if truncated || opensUnclosedJSON(text) { return nil }
 
-        let haystack = normalizeSpaces(text)
-        let haystackRange = NSRange(haystack.startIndex..., in: haystack)
-        var earliest: (location: Int, option: String)?
+        if let marked = markedOption(scalars, options: options) { return marked }
+
+        if let leading = optionAfter(
+            scalars, from: 0, options: options, delimiterRequired: true)
+        {
+            return leading
+        }
+
+        let haystackRange = NSRange(flat.startIndex..., in: flat)
+        var earliest: (position: Int, option: String)?
         for option in options {
-            let pattern =
-                "\\b" + NSRegularExpression.escapedPattern(for: normalize(option)) + "\\b"
-            guard
-                let regex = try? NSRegularExpression(
+            var position: Int?
+            if let letter = singleCharacter(option) {
+                position = firstStandalone(scalars, letter)
+            } else {
+                let pattern =
+                    "\\b" + NSRegularExpression.escapedPattern(for: normalize(option)) + "\\b"
+                if let regex = try? NSRegularExpression(
                     pattern: pattern, options: [.caseInsensitive]),
-                let hit = regex.firstMatch(in: haystack, range: haystackRange)
-            else { continue }
-            if earliest == nil || hit.range.location < (earliest?.location ?? .max) {
-                earliest = (hit.range.location, option)
+                    let hit = regex.firstMatch(in: flat, range: haystackRange),
+                    let range = Range(hit.range, in: flat)
+                {
+                    // Scalar offset, so a regex hit and a single-letter scan
+                    // compare in one unit (UTF-16 offsets would not).
+                    position = flat.unicodeScalars.distance(
+                        from: flat.unicodeScalars.startIndex, to: range.lowerBound)
+                }
+            }
+            if let position, earliest == nil || position < (earliest?.position ?? .max) {
+                earliest = (position, option)
             }
         }
         return earliest?.option
+    }
+
+    // MARK: Literal-scan pieces of parseChoice (server twins: `_answer_key_value`,
+    // `_option_at`, `_option_after`, `_marked_option`, `_first_standalone`,
+    // `_single_character` in `judicial.py`)
+
+    /// The answer-marker word, matched whole and ignoring ASCII case.
+    private static let markerWord = Array("answer".unicodeScalars).map(\.value)
+    /// An optional word between a marker and the option ("the answer is
+    /// option B").
+    private static let optionWord = Array("option".unicodeScalars).map(\.value)
+    /// Skipped between the marker word and its `:` or "is": spaces, Markdown
+    /// emphasis, and the quotes and backticks a model wraps a label in.
+    private static let markerGap: Set<Unicode.Scalar> = [" ", "*", "_", "\"", "'", "`"]
+    /// Skipped between a marker (or the start of the reply) and the option.
+    private static let valueGap: Set<Unicode.Scalar> = [
+        " ", "*", "_", "\"", "'", "`", "(", "[", ":",
+    ]
+    /// Punctuation that may follow an option where a delimiter is required.
+    private static let delimiters: Set<Unicode.Scalar> = [
+        ".", ",", ":", ";", ")", "]", "!", "?", "*", "_", "\"", "'", "`",
+    ]
+
+    /// A letter (Unicode L*) or an ASCII digit — what an option may not touch.
+    private static func isWord(_ scalar: Unicode.Scalar) -> Bool {
+        TurnEndpointParser.isLetter(scalar) || (scalar.value >= 48 && scalar.value <= 57)
+    }
+
+    private static func isASCIILetter(_ scalar: Unicode.Scalar) -> Bool {
+        (scalar.value >= 65 && scalar.value <= 90) || (scalar.value >= 97 && scalar.value <= 122)
+    }
+
+    private static func asciiUpper(_ scalar: Unicode.Scalar) -> Unicode.Scalar {
+        (scalar.value >= 97 && scalar.value <= 122)
+            ? Unicode.Scalar(scalar.value - 32)! : scalar
+    }
+
+    private static func asciiLower(_ scalar: Unicode.Scalar) -> Unicode.Scalar {
+        (scalar.value >= 65 && scalar.value <= 90)
+            ? Unicode.Scalar(scalar.value + 32)! : scalar
+    }
+
+    /// Naive literal search, the twin of Python's `str.find`.
+    private static func find(_ haystack: [UInt32], _ needle: [UInt32], from: Int) -> Int? {
+        guard !needle.isEmpty, haystack.count >= needle.count else { return nil }
+        var start = Swift.max(0, from)
+        while start + needle.count <= haystack.count {
+            var offset = 0
+            while offset < needle.count, haystack[start + offset] == needle[offset] {
+                offset += 1
+            }
+            if offset == needle.count { return start }
+            start += 1
+        }
+        return nil
+    }
+
+    /// The scalar a single-character option is found by in running text: an
+    /// ASCII letter as its CAPITAL (so the article "a" is never option A, and
+    /// a declared "a" is found as "A"), anything else as itself. nil for a
+    /// longer option.
+    private static func singleCharacter(_ option: String) -> Unicode.Scalar? {
+        var stripped = normalizeSpaces(option).trimmingCharacters(in: .whitespaces)
+        while stripped.hasPrefix(".") { stripped.removeFirst() }
+        while stripped.hasSuffix(".") { stripped.removeLast() }
+        let scalars = Array(stripped.unicodeScalars)
+        guard scalars.count == 1 else { return nil }
+        return isASCIILetter(scalars[0]) ? asciiUpper(scalars[0]) : scalars[0]
+    }
+
+    /// Position of the first `scalar` that touches no letter or digit.
+    private static func firstStandalone(
+        _ scalars: [Unicode.Scalar], _ scalar: Unicode.Scalar
+    ) -> Int? {
+        for index in scalars.indices where scalars[index] == scalar {
+            if (index == 0 || !isWord(scalars[index - 1]))
+                && (index + 1 >= scalars.count || !isWord(scalars[index + 1]))
+            {
+                return index
+            }
+        }
+        return nil
+    }
+
+    /// The last `"<jsonKey>": "<value>"` whose value names an option, read
+    /// from the text without parsing it as JSON (`scalars` has every
+    /// whitespace run collapsed to one space, so raw newlines inside the
+    /// object are gone). The value runs to the next `"` not preceded by a
+    /// backslash; one that never closes is not read.
+    private static func answerKeyValue(
+        _ scalars: [Unicode.Scalar], normalized: [String: String], jsonKey: String
+    ) -> String? {
+        let haystack = scalars.map(\.value)
+        let needle = Array(("\"" + jsonKey + "\"").unicodeScalars).map(\.value)
+        var found: String?
+        var index = find(haystack, needle, from: 0)
+        while let at = index {
+            var cursor = at + needle.count
+            if cursor < scalars.count, scalars[cursor] == " " { cursor += 1 }
+            if cursor < scalars.count, scalars[cursor] == ":" {
+                cursor += 1
+                if cursor < scalars.count, scalars[cursor] == " " { cursor += 1 }
+                if cursor < scalars.count, scalars[cursor] == "\"" {
+                    let start = cursor + 1
+                    var end = start
+                    while end < scalars.count,
+                        !(scalars[end] == "\"" && scalars[end - 1] != "\\")
+                    {
+                        end += 1
+                    }
+                    if end < scalars.count {
+                        let value = String(String.UnicodeScalarView(scalars[start ..< end]))
+                        if let match = normalized[normalize(value)] { found = match }
+                    }
+                }
+            }
+            index = find(haystack, needle, from: at + 1)
+        }
+        return found
+    }
+
+    /// The option written at `scalars[start...]`, or nil.
+    ///
+    /// A single ASCII letter counts as its capital followed by anything but a
+    /// letter or digit, or — where it cannot be the article — as its lower
+    /// case followed by punctuation or the end of the reply. A longer option
+    /// is compared ignoring ASCII case and must not run into a letter or
+    /// digit. With `delimiterRequired` (the start of the reply) every option
+    /// must be followed by punctuation or the end, so "A hard case" opens
+    /// with no option. The longest match wins, then declaration order.
+    private static func optionAt(
+        _ scalars: [Unicode.Scalar], from start: Int, options: [String],
+        delimiterRequired: Bool
+    ) -> String? {
+        var best: (length: Int, order: Int, option: String)?
+        for (order, option) in options.enumerated() {
+            let needle = Array(
+                normalizeSpaces(option).trimmingCharacters(in: .whitespaces).unicodeScalars)
+            guard !needle.isEmpty else { continue }
+            let end = start + needle.count
+            guard end <= scalars.count else { continue }
+            let written = Array(scalars[start ..< end])
+            let capital: Bool
+            if needle.count == 1, isASCIILetter(needle[0]) {
+                if written[0] == asciiUpper(needle[0]) {
+                    capital = true
+                } else if written[0] == asciiLower(needle[0]) {
+                    capital = false
+                } else {
+                    continue
+                }
+            } else if written.map(TurnEndpointParser.fold)
+                != needle.map(TurnEndpointParser.fold)
+            {
+                continue
+            } else {
+                capital = true
+            }
+            let atEnd = end >= scalars.count
+            let delimited = atEnd || delimiters.contains(scalars[end])
+            if delimiterRequired || !capital {
+                if !delimited { continue }
+            } else if !atEnd, isWord(scalars[end]) {
+                continue
+            }
+            if best == nil || needle.count > best!.length
+                || (needle.count == best!.length && order < best!.order)
+            {
+                best = (needle.count, order, option)
+            }
+        }
+        return best?.option
+    }
+
+    /// Skip spaces, emphasis, quotes, and opening brackets, then read an
+    /// option — directly, or after the word "option" (tried second, so an
+    /// option that itself begins with "Option" is still read whole).
+    private static func optionAfter(
+        _ scalars: [Unicode.Scalar], from start: Int, options: [String],
+        delimiterRequired: Bool
+    ) -> String? {
+        var cursor = start
+        while cursor < scalars.count, valueGap.contains(scalars[cursor]) { cursor += 1 }
+        if let choice = optionAt(
+            scalars, from: cursor, options: options, delimiterRequired: delimiterRequired)
+        {
+            return choice
+        }
+        let end = cursor + optionWord.count
+        guard end < scalars.count,
+            scalars[cursor ..< end].map(TurnEndpointParser.fold) == optionWord,
+            scalars[end] == " "
+        else { return nil }
+        cursor = end
+        while cursor < scalars.count, valueGap.contains(scalars[cursor]) { cursor += 1 }
+        return optionAt(
+            scalars, from: cursor, options: options, delimiterRequired: delimiterRequired)
+    }
+
+    /// The option named by the LAST answer marker that names one: the whole
+    /// word "answer" (any ASCII case), then — past spaces, emphasis, and
+    /// quotes — a `:` or the whole word "is".
+    private static func markedOption(
+        _ scalars: [Unicode.Scalar], options: [String]
+    ) -> String? {
+        let folded = scalars.map(TurnEndpointParser.fold)
+        var found: String?
+        var index = find(folded, markerWord, from: 0)
+        while let at = index {
+            let end = at + markerWord.count
+            if (at == 0 || !TurnEndpointParser.isLetter(scalars[at - 1]))
+                && (end >= scalars.count || !TurnEndpointParser.isLetter(scalars[end]))
+            {
+                var cursor = end
+                while cursor < scalars.count, markerGap.contains(scalars[cursor]) {
+                    cursor += 1
+                }
+                var after: Int?
+                if cursor < scalars.count, scalars[cursor] == ":" {
+                    after = cursor + 1
+                } else if cursor + 2 <= scalars.count,
+                    folded[cursor] == 105, folded[cursor + 1] == 115,  // "is"
+                    cursor + 2 >= scalars.count
+                        || !TurnEndpointParser.isLetter(scalars[cursor + 2])
+                {
+                    after = cursor + 2
+                }
+                if let after,
+                    let choice = optionAfter(
+                        scalars, from: after, options: options, delimiterRequired: false)
+                {
+                    found = choice
+                }
+            }
+            index = find(folded, markerWord, from: at + 1)
+        }
+        return found
     }
 
     private static func normalize(_ text: String) -> String {
