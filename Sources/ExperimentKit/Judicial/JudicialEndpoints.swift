@@ -9,10 +9,13 @@ import Foundation
 /// readers over whatever prose a study's items elicit:
 ///
 /// - **categorical choice**: the option a response settled on, read from a
-///   JSON object with a declared key, an exact whole-response match, or (over
-///   complete text only — a truncated output parses as a failure, never as
-///   its first-enumerated option) the earliest word-boundary mention. Derived
-///   endpoints over it are outcome rates and between-item contrasts.
+///   JSON object with a declared key (tolerantly, when the object does not
+///   parse), an exact whole-response match, or (over complete text only — a
+///   truncated output parses as a failure, never as its first-enumerated
+///   option) the last answer marker, an option opening the reply, or the
+///   earliest mention, where a single-letter option counts only as its
+///   capital letter. Derived endpoints over it are outcome rates and
+///   between-item contrasts.
 /// - **duration in months**: a numeric quantity stated in years and/or
 ///   months; endpoints are the mean shift, spread, anchor slope, and
 ///   proportionality; the parse-failure rate is itself a coherence signal.
