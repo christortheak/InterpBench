@@ -93,6 +93,7 @@
 	  .review-card { border: 1px solid var(--bg2); border-radius: 8px; padding: 12px;
 	                 margin-bottom: 12px; background: color-mix(in srgb, CanvasText 3%, transparent); }
 	  .review-card h3 { margin: 0 0 6px; font-size: 14px; }
+	  .review-body .attention { font-weight: 600; }
 	  .review-card pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12.5px ui-monospace,SFMono-Regular,Menlo,monospace;
 	                     background: var(--bg2); padding: 10px; border-radius: 6px; }
 	  .download-row a { color: var(--accent); text-decoration: none; margin-right: 10px; font-size: 12px; }
@@ -1365,8 +1366,8 @@ function resultsHTML(e) {
 
 	function downloadsHTML(d) {
 	  const links = [];
-	  if ((d.generations || []).length) links.push(artifactFileLink("generations.jsonl", "generations.jsonl"));
-	  if ((d.judgments || []).length) links.push(artifactFileLink("judgments.jsonl", "judgments.jsonl"));
+	  if (d.responseRecordCount || (d.generations || []).length) links.push(artifactFileLink("generations.jsonl", "generations.jsonl"));
+	  if (d.judgmentRecordCount || (d.judgments || []).length) links.push(artifactFileLink("judgments.jsonl", "judgments.jsonl"));
 	  if (d.report || d.validationReportText) links.push(artifactFileLink("report.json", "report.json"));
 	  if (d.pairedJudgeReport) links.push(artifactFileLink("judge-report.json", "judge-report.json"));
 	  return links.length ? `<div class="download-row">${links.join("")}</div>` : "";
@@ -1397,11 +1398,19 @@ function reportHTML(report) {
 
 	function responseButtonsHTML(d) {
 	  const rows = [];
-	  if ((d.generations || []).length) {
-	    rows.push(`<button id="ex-review-generations">Review Responses (${d.generations.length})</button>`);
+	  // The true totals: every record in each file. d.generations and
+	  // d.judgments are a bounded preview of them, never the count.
+	  const responseTotal = d.responseRecordCount ?? (d.generations || []).length;
+	  const judgeTotal = d.judgmentRecordCount ?? (d.judgments || []).length;
+	  if (responseTotal) {
+	    rows.push(`<button id="ex-review-generations">Review Responses (${responseTotal.toLocaleString("en-US")} ${responseTotal === 1 ? "record" : "records"})</button>`);
 	  }
 	  if ((d.judgments || []).length) {
-	    rows.push(`<button id="ex-review-judgments">Review Judge Responses (${d.judgments.length})</button>`);
+	    const shown = d.judgments.length;
+	    const label = shown < judgeTotal
+	      ? `first ${shown.toLocaleString("en-US")} of ${judgeTotal.toLocaleString("en-US")}`
+	      : `${shown.toLocaleString("en-US")}`;
+	    rows.push(`<button id="ex-review-judgments">Review Judge Responses (${label})</button>`);
 	  }
 	  if (!rows.length) return "";
 	  const preview = (d.generations || []).slice(0, 5).map(g =>
@@ -1409,33 +1418,92 @@ function reportHTML(report) {
 	  return `<div class="row">${rows.join("")}</div>${preview}`;
 	}
 
-	function showReview(kind) {
-	  const d = S && S.experiment && S.experiment.selectedResult;
-	  if (!d) return;
-	  const isJudge = kind === "judgments";
-	  const title = isJudge ? "Judge Responses" : "Generated Responses";
-	  const items = isJudge ? (d.judgments || []) : (d.generations || []);
-	  const cards = items.map(x => isJudge ? judgmentCardHTML(x) : generationCardHTML(x)).join("");
+	function reviewModal(title, subtitle) {
 	  const old = $("review-modal");
 	  if (old) old.remove();
 	  const modal = document.createElement("div");
 	  modal.id = "review-modal";
 	  modal.className = "review-backdrop";
 	  modal.innerHTML = `<div class="review-window" role="dialog" aria-modal="true">
-	    <div class="review-head"><div class="grow"><h2>${title}</h2><div class="muted">${esc(d.item.directoryName)}</div></div><button id="review-close">Close</button></div>
-	    <div class="review-body">${cards || `<div class="muted">No records loaded for this artifact.</div>`}</div>
+	    <div class="review-head"><div class="grow"><h2>${esc(title)}</h2><div class="muted">${esc(subtitle)}</div></div><button id="review-close">Close</button></div>
+	    <div class="review-body" id="review-body"></div>
 	  </div>`;
 	  document.body.appendChild(modal);
 	  $("review-close").onclick = () => modal.remove();
 	  modal.onclick = ev => { if (ev.target === modal) modal.remove(); };
+	  return $("review-body");
 	}
 
-	function generationCardHTML(g) {
+	function showReview(kind) {
+	  const d = S && S.experiment && S.experiment.selectedResult;
+	  if (!d) return;
+	  if (kind !== "judgments") return showResponsePage(d.item.directoryName, 0);
+	  const body = reviewModal("Judge Responses", d.item.directoryName);
+	  const items = d.judgments || [];
+	  const total = d.judgmentRecordCount ?? items.length;
+	  const note = items.length < total
+	    ? `<div class="muted">Showing the first ${items.length.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} judge rows. Download judgments.jsonl above for all of them, or review them in the app.</div>`
+	    : "";
+	  const cards = items.map(judgmentCardHTML).join("");
+	  body.innerHTML = note + (cards || `<div class="muted">No records loaded for this artifact.</div>`);
+	}
+
+	// Every response, a page at a time, from the route that reads the whole
+	// file (GET /api/experiment/result/responses).
+	const RESPONSE_PAGE_SIZE = 50;
+	async function showResponsePage(directoryName, offset) {
+	  const existing = $("review-body");
+	  const body = existing && existing.dataset.run === directoryName
+	    ? existing : reviewModal("Generated Responses", directoryName);
+	  body.dataset.run = directoryName;
+	  body.innerHTML = `<div class="muted">Loading responses…</div>`;
+	  let page;
+	  try {
+	    const r = await fetch(`/api/experiment/result/responses?offset=${Number(offset)}&limit=${RESPONSE_PAGE_SIZE}`);
+	    page = await r.json();
+	    if (!r.ok) throw new Error((page.error || "The responses could not be read.") + (page.repairAction ? " " + page.repairAction : ""));
+	  } catch (error) {
+	    body.innerHTML = `<div class="muted">${esc(String(error.message || error))}</div>`;
+	    return;
+	  }
+	  if (page.directoryName !== directoryName) {
+	    body.innerHTML = `<div class="muted">The selected run changed. Close this and open its responses again.</div>`;
+	    return;
+	  }
+	  const counts = (page.counts || []).map(c =>
+	    `<span${c.needsAttention ? ' class="attention"' : ""}>${esc(c.label)} ${Number(c.count).toLocaleString("en-US")}</span>`).join(" · ");
+	  const hasPrevious = page.offset > 0;
+	  const hasNext = page.offset + page.rows.length < page.total;
+	  const nav = page.total > page.rows.length ? `<div class="row">
+	      <button id="review-prev" ${hasPrevious ? "" : "disabled"}>Previous</button>
+	      <button id="review-next" ${hasNext ? "" : "disabled"}>Next</button></div>` : "";
+	  body.innerHTML = `<div class="muted">${esc(page.caption)}</div>
+	    ${counts ? `<div class="muted">${counts}</div>` : ""}
+	    ${nav}
+	    ${page.rows.map(responseRowCardHTML).join("")}
+	    ${nav}`;
+	  body.scrollTop = 0;
+	  body.querySelectorAll("#review-prev").forEach(b => b.onclick = () => showResponsePage(directoryName, Math.max(0, page.offset - page.limit)));
+	  body.querySelectorAll("#review-next").forEach(b => b.onclick = () => showResponsePage(directoryName, page.offset + page.limit));
+	}
+
+	function responseRowCardHTML(r) {
+	  const text = x => esc(String(x ?? ""));
+	  const facts = [];
+	  if (r.wordCount != null) facts.push(`${Number(r.wordCount)} words`);
+	  if (r.distinct2 != null) facts.push(`distinct-2 ${fmt(r.distinct2, 3)}`);
+	  if (r.instrument) facts.push(`${text(r.instrument)}: ${text(r.selected)}${r.margin != null ? ` (margin ${fmt(r.margin, 3)})` : ""}`);
 	  return `<div class="review-card">
-	    <h3>${esc(g.condition)} · ${esc(g.promptID)}</h3>
-	    <div class="muted">${g.wordCount} words · distinct-2 ${fmt(g.distinct2, 3)}</div>
-	    <p class="muted">${esc(g.prompt)}</p>
-	    <pre>${esc(g.output)}${g.truncated ? "\n…" : ""}</pre>
+	    <h3>Record ${Number(r.record)} · ${text(r.title)}</h3>
+	    ${r.statusNote ? `<div class="muted">${text(r.statusNote)}</div>` : ""}
+	    ${r.answerNote ? `<div class="muted">${text(r.answerNote)}</div>` : ""}
+	    ${facts.length ? `<div class="muted">${facts.join(" · ")}</div>` : ""}
+	    ${r.prompt != null ? `<p class="muted">${text(r.prompt)}</p>` : ""}
+	    ${r.promptNote ? `<div class="muted">${text(r.promptNote)}</div>` : ""}
+	    ${r.output != null ? `<pre>${text(r.output)}</pre>` : ""}
+	    ${r.outputNote ? `<div class="muted">${text(r.outputNote)}</div>` : ""}
+	    ${r.failure ? `<div class="muted">${text(r.failure)}</div>` : ""}
+	    ${r.rawJSON ? `<pre>${text(r.rawJSON)}</pre>` : ""}
 	  </div>`;
 	}
 
