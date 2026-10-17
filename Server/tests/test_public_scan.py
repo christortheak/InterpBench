@@ -8,8 +8,10 @@ and neither check could see inside it. These tests build a throwaway
 repository, plant one thing in an archive (or a temp-folder path in text), and
 hold the scan to four promises:
 
-* an owner recorded in a tar member is a finding, and the account is never
-  printed;
+* an owner recorded in a tar member, or in a zip member's Info-ZIP Unix
+  extra field, is a finding, and the account is never printed;
+* no finding prints what it found: a finding names the file, the line, and
+  the kind, and an email address is shown masked;
 * a personal path inside an archive is found, whether in a text member, a
   member's name (with or without the leading "/" a packer strips), or an
   archive nested in another, and a member name that is itself a finding is
@@ -458,3 +460,118 @@ def test_an_accepted_archive_finding_is_matched_by_the_archive_path(repo):
         "scripts/ci/scan-accepted.txt": b"bundle.tar.gz :: owner\n",
     })
     assert (code, out.strip()) == (0, "public scan: clean")
+
+
+# --- what a finding prints -------------------------------------------------
+#
+# CI logs of a public repository are public, so a finding names the file, the
+# line, and the kind of thing found, and never the thing itself. `.internal`
+# is a top-level domain reserved for private use, so this address is nobody's.
+EMAIL = OWNER + "@" + "mail.campus" + ".internal"
+MASKED_EMAIL = "r***@***.internal"
+TOKEN = "gh" + "p_" + "A1b2C3d4E5f6G7h8I9j0K1"   # secret-shaped, made up
+
+
+def test_an_email_address_is_located_and_never_printed(repo):
+    code, out = _scan(repo, {"notes.md": f"first line\nwrite to {EMAIL} for data\n".encode()})
+    assert code == 1
+    assert f"notes.md [email] email address {MASKED_EMAIL} on line 2" in out
+    assert EMAIL not in out and OWNER not in out
+
+
+def test_an_email_address_inside_an_archive_is_masked(repo):
+    code, out = _scan(repo, {"bundle.tar.gz": _tar_gz(
+        {"runs/r/README.md": f"contact\n\n{EMAIL}\n".encode()})})
+    assert code == 1
+    assert (f"bundle.tar.gz [email] email address {MASKED_EMAIL} in "
+            "runs/r/README.md, line 3") in out
+    assert EMAIL not in out and OWNER not in out
+
+
+def test_no_kind_of_finding_prints_what_it_found(repo):
+    text = f"token {TOKEN}\npath {HOME_PATH}\nmail {EMAIL}\n".encode()
+    code, out = _scan(repo, {"notes.md": text, "bundle.zip": _zip({"log.txt": text})})
+    assert code == 1
+    assert "notes.md [secret] secret-shaped content on line 1" in out
+    assert "notes.md [path] personal absolute path on line 2" in out
+    assert f"notes.md [email] email address {MASKED_EMAIL} on line 3" in out
+    assert "bundle.zip [secret] secret-shaped content in log.txt, line 1" in out
+    assert "bundle.zip [path] personal absolute path in log.txt, line 2" in out
+    assert f"bundle.zip [email] email address {MASKED_EMAIL} in log.txt, line 3" in out
+    for found in (TOKEN, HOME_PATH, EMAIL, OWNER):
+        assert found not in out
+
+
+# --- a zip's Unix owner ----------------------------------------------------
+#
+# Info-ZIP's `zip` (macOS's included) records the packing account's uid and
+# gid in Unix extra fields: "ux" (0x7875) in both headers, and the older "UX"
+# (0x5855) and "Ux" (0x7855) in the local header only.
+
+def _field(tag: int, body: bytes) -> bytes:
+    return tag.to_bytes(2, "little") + len(body).to_bytes(2, "little") + body
+
+
+def _ux(uid: int, gid: int) -> bytes:
+    return _field(0x7875, bytes([1, 4]) + uid.to_bytes(4, "little")
+                  + bytes([4]) + gid.to_bytes(4, "little"))
+
+
+def _zip_with_extra(members: dict, local: bytes, central=None) -> bytes:
+    """A zip whose members carry ``local`` as the local header's extra field
+    and ``central`` (default: the same) as the central directory's. zipfile
+    writes one extra to both headers, so the central copy is replaced in
+    place, padded with an unknown field to the same length."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, data in members.items():
+            info = zipfile.ZipInfo(name)
+            info.extra = local
+            archive.writestr(info, data)
+    data = bytearray(buffer.getvalue())
+    if central is None:
+        return bytes(data)
+    padding = len(local) - len(central)
+    assert padding == 0 or padding >= 4
+    replacement = central + (_field(0x9999, bytes(padding - 4)) if padding else b"")
+    offset = data.find(b"PK\x01\x02")
+    while offset >= 0:
+        name_length = int.from_bytes(data[offset + 28:offset + 30], "little")
+        extra_length = int.from_bytes(data[offset + 30:offset + 32], "little")
+        start = offset + 46 + name_length
+        assert bytes(data[start:start + extra_length]) == local
+        data[start:start + extra_length] = replacement
+        offset = data.find(b"PK\x01\x02", start)
+    return bytes(data)
+
+
+def _ids(uid: int, gid: int) -> bytes:
+    return uid.to_bytes(2, "little") + gid.to_bytes(2, "little")
+
+
+@pytest.mark.parametrize("local, central", [
+    (_ux(501, 20), None),
+    (_ux(0, 20), None),                                   # a group alone
+    # "UX": access and modification times, then uid and gid (local only).
+    (_field(0x5855, bytes(8) + _ids(501, 20)), _field(0x5855, bytes(8))),
+    # "Ux": uid and gid (local only; the central copy is empty).
+    (_field(0x7855, _ids(501, 20)), _field(0x7855, b"")),
+], ids=["ux", "ux-group-only", "UX-local-only", "Ux-local-only"])
+def test_an_owner_in_a_zip_unix_extra_field_is_a_finding(repo, local, central):
+    code, out = _scan(repo, {"wheel.zip": _zip_with_extra(
+        {"demo/__init__.py": b"VALUE = 1\n", "demo/data.txt": b"x\n"}, local, central)})
+    assert code == 1
+    assert ("wheel.zip [owner] 2 member(s) record an owner account, the first "
+            "demo/__init__.py") in out
+    assert "501" not in out
+
+
+def test_a_zip_unix_extra_field_with_no_owner_passes(repo):
+    code, out = _scan(repo, {
+        "root.zip": _zip_with_extra({"a.txt": b"hi\n"}, _ux(0, 0)),
+        # Times alone: the original field with no uid or gid in it.
+        "times.zip": _zip_with_extra({"a.txt": b"hi\n"}, _field(0x5855, bytes(8))),
+        # A malformed field is never a crash.
+        "short.zip": _zip_with_extra({"a.txt": b"hi\n"}, _field(0x7875, b"\x01\x04\x00")),
+    })
+    assert (code, out.strip()) == (0, "public scan: clean"), out
