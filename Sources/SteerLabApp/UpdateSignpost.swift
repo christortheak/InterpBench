@@ -69,6 +69,7 @@ final class UpdateSignpostModel {
     @ObservationIgnored private var busyTask: Task<Void, Never>?
     @ObservationIgnored private var installer: UpdateInstaller?
     @ObservationIgnored private var staged: UpdateStagedApp?
+    @ObservationIgnored private var launchNoted = false
 
     init(
         service: UpdateCheckService = UpdateCheckService(),
@@ -95,9 +96,11 @@ final class UpdateSignpostModel {
     /// interrupted update left beside the app, say "updated" once on the
     /// first launch of a newer version, and remember this version.
     func noteLaunch(hasClusterSites: @autoclosure () -> Bool) {
-        // A build-script launch check touches nothing beside the app and
-        // writes no preference.
-        guard !LaunchCheckMode.isActive else { return }
+        // Once per process, however many windows open; and a build-script
+        // launch check touches nothing beside the app and writes no
+        // preference.
+        guard !launchNoted, !LaunchCheckMode.isActive else { return }
+        launchNoted = true
         let app = Bundle.main.bundleURL.standardizedFileURL
         let current = service.version
         if app.pathExtension == "app" {

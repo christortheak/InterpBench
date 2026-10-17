@@ -916,9 +916,20 @@ public struct UpdateInstallEnvironment: Sendable {
 
 /// Owning, clearing, and cleaning the staging folder.
 public enum UpdateStaging {
+    /// Whether `pid` is a running copy of this app. A process number left in
+    /// an owner file by a copy that crashed can be reused by another
+    /// program, which must not keep the staging folder (or block the next
+    /// update) forever; when the path cannot be read, it counts as alive, so
+    /// nothing is ever removed on a guess.
     public static func isProcessAlive(_ pid: Int32) -> Bool {
-        guard pid > 0 else { return false }
-        return kill(pid, 0) == 0 || errno == EPERM
+        guard pid > 0, kill(pid, 0) == 0 || errno == EPERM else { return false }
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        guard length > 0 else { return true }
+        let path = String(
+            decoding: buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        let name = Bundle.main.executableURL?.lastPathComponent ?? "SteerLabApp"
+        return path.hasSuffix("/Contents/MacOS/\(name)")
     }
 
     /// The process recorded as preparing an update in `root`, if any.
@@ -940,8 +951,10 @@ public enum UpdateStaging {
     ) -> Bool {
         let root = UpdateStagingLayout.stagingRoot(forApp: app)
         guard fileSystem.exists(root) else { return false }
-        if let owner = owner(of: root, fileSystem: fileSystem), owner != currentProcess,
-            isProcessAlive(owner)
+        // In use: by this very process (a second window opening while an
+        // update downloads), or by another running copy of the app.
+        if let owner = owner(of: root, fileSystem: fileSystem),
+            owner == currentProcess || isProcessAlive(owner)
         {
             return false
         }

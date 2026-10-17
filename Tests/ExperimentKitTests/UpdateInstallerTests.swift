@@ -927,6 +927,10 @@ struct UpdateInstallerTests {
         let whileAlive = UpdateStaging.removeLeftovers(
             besideApp: scratch.installed, currentProcess: 1, isProcessAlive: { $0 == 4242 })
         #expect(!whileAlive)
+        // Owned by this very process (a second window opening mid-download).
+        let ownedHere = UpdateStaging.removeLeftovers(
+            besideApp: scratch.installed, currentProcess: 4242, isProcessAlive: { _ in false })
+        #expect(!ownedHere)
         #expect(FileManager.default.fileExists(atPath: root.path))
         // Owner gone: removed.
         let afterExit = UpdateStaging.removeLeftovers(
@@ -938,6 +942,15 @@ struct UpdateInstallerTests {
         #expect(!nothing)
         // The app itself is never touched.
         #expect(LiveUpdateFileSystem().bundleInfo(at: scratch.installed).version == "0.9.8")
+    }
+
+    /// A process number recorded by a copy that crashed may now belong to
+    /// another program; only a running SteerLab keeps the staging folder.
+    @Test func aRecycledProcessNumberDoesNotCountAsTheOwner() {
+        #expect(!UpdateStaging.isProcessAlive(0))
+        #expect(!UpdateStaging.isProcessAlive(Int32.max))
+        // launchd is alive, and is not SteerLab.
+        #expect(!UpdateStaging.isProcessAlive(1))
     }
 
     @Test func aLeftoverWithNoOwnerFileIsRemovedToo() throws {
