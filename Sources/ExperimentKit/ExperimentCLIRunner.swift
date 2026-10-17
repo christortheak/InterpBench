@@ -2620,6 +2620,18 @@ public struct ExperimentCLIRunner: Sendable {
                         + "--sample-per-condition 2400 --sample-seed "
                         + "0x5eed0a5e5eed0a5e")
             }
+            // A choice re-read is an analysis option: refused for any other
+            // verb before the request leaves this process.
+            let submitReread = args.contains("--reread-choices")
+            if submitReread, submitVerb != "analyze" {
+                throw ExperimentError.malformed(
+                    "--reread-choices is for an analysis: it reads a completed "
+                        + "run's stored choices again with the current choice "
+                        + "parser, and '--verb \(submitVerb)' reads no stored "
+                        + "choices",
+                    repair: "steerlab-cli remote submit-bundle \(path) "
+                        + "--verb analyze --reread-choices")
+            }
             // Multi-GPU fan-out, headless. The machinery has been complete
             // underneath since 2026-07-22 — `submitBundle` takes
             // `parallelJobs`, the server route reads it and launches K shard
@@ -2670,7 +2682,8 @@ public struct ExperimentCLIRunner: Sendable {
                 parallelJobs: parallelJobs,
                 sourceRun: submitSourceRun,
                 samplePerCondition: submitSubsample?.samplePerCondition,
-                sampleSeed: submitSubsample?.seedText)
+                sampleSeed: submitSubsample?.seedText,
+                rereadChoices: submitReread)
             await recordJobOrigin(
                 submission.jobId, experiment: submission.experiment, verb: submission.verb,
                 operation: "submit-bundle")

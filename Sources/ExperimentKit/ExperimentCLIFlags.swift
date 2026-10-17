@@ -520,7 +520,9 @@ public enum ExperimentCLIParser {
             namespace: "remote", verb: "submit-bundle",
             positional: "<server-bundle-path>",
             purpose: "Submit an uploaded bundle as a server job.",
-            booleanFlags: ["--dry-run"],
+            // `--reread-choices` (with --verb analyze): the analysis reads
+            // every stored choice again with the server's current parser.
+            booleanFlags: ["--dry-run", "--reread-choices"],
             valueFlags: remoteConnection.union([
                 "--bundle", "--verb", "--executor", "--gres", "--walltime",
                 "--parallel", "--source",

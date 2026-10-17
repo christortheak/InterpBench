@@ -498,6 +498,23 @@ import Testing
             outcome.envelope.error?.repairAction.contains("--parallel 4") == true)
     }
 
+    /// `--reread-choices` is an analysis option: with any other verb it is a
+    /// malformed invocation, refused before any request leaves the machine.
+    @Test func aChoiceRereadOutsideAnalyzeIsMalformedBeforeAnyRequest() async throws {
+        let outcome = await ExperimentCLIRunner(sink: .discarding).run(
+            namespace: "remote",
+            [
+                "submit-bundle", "/srv/bundles/demo", "--url",
+                "http://127.0.0.1:1", "--verb", "run", "--reread-choices",
+            ])
+        #expect(outcome.envelope.exitCode == 64)
+        #expect(outcome.envelope.error?.code == "usage")
+        #expect(outcome.envelope.error?.reason.contains("'--verb run'") == true)
+        #expect(
+            outcome.envelope.error?.repairAction.contains("--verb analyze --reread-choices")
+                == true)
+    }
+
     @Test func aZeroParallelIsMalformedToo() async throws {
         let outcome = await ExperimentCLIRunner(sink: .discarding).run(
             namespace: "remote",

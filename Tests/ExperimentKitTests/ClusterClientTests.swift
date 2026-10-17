@@ -356,6 +356,70 @@ import Testing
         #expect(submission.dryRun)
     }
 
+    /// A choice re-read (`analyze --reread-choices`) rides both analyze
+    /// bodies exactly when asked for — the in-process route the app's server
+    /// Analyze uses and the bundle submission — and never otherwise, so an
+    /// older server sees the body it always did.
+    @Test func rereadChoicesRidesTheBodyOnlyWhenAsked() async throws {
+        let bodies = LockedBodies()
+        let client = ClusterClient(
+            profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+            session: Self.session { request in
+                if request.url?.path == "/api/bundles/inspect" {
+                    return (Data(#"{"runtimeRequirements":[]}"#.utf8), 200)
+                }
+                let body = try #require(Self.bodyData(from: request))
+                let object = try #require(
+                    JSONSerialization.jsonObject(with: body) as? [String: Any])
+                bodies.append(request.url?.path ?? "", object["rereadChoices"] as? Bool)
+                if request.url?.path == "/api/studies/submit-bundle" {
+                    return (
+                        Data(
+                            """
+                            {"jobId": "job-4", "experiment": "study", "verb": "analyze",
+                             "executor": "local", "dryRun": false, "runBundle": {},
+                             "command": [], "recordsDirectory": "/r", "submissionDirectory": "/s"}
+                            """.utf8), 200)
+                }
+                return (Data(#"{"jobId": "job-5"}"#.utf8), 200)
+            })
+        _ = try await client.submitExperimentJobDetailed(
+            experiment: "study", verb: "analyze", rereadChoices: true)
+        _ = try await client.submitExperimentJobDetailed(experiment: "study", verb: "analyze")
+        _ = try await client.submitBundle(
+            path: "/runs/uploaded/study.tar.gz", verb: "analyze", executor: "local",
+            dryRun: false, rereadChoices: true)
+        _ = try await client.submitBundle(
+            path: "/runs/uploaded/study.tar.gz", verb: "analyze", executor: "local",
+            dryRun: false)
+        #expect(
+            bodies.values == [
+                .init(path: "/api/experiment/study/analyze", reread: true),
+                .init(path: "/api/experiment/study/analyze", reread: nil),
+                .init(path: "/api/studies/submit-bundle", reread: true),
+                .init(path: "/api/studies/submit-bundle", reread: nil),
+            ])
+    }
+
+    private final class LockedBodies: @unchecked Sendable {
+        struct Entry: Equatable {
+            let path: String
+            let reread: Bool?
+        }
+        private let lock = NSLock()
+        private var entries: [Entry] = []
+        func append(_ path: String, _ reread: Bool?) {
+            lock.lock()
+            entries.append(Entry(path: path, reread: reread))
+            lock.unlock()
+        }
+        var values: [Entry] {
+            lock.lock()
+            defer { lock.unlock() }
+            return entries
+        }
+    }
+
     /// The source-run override (2026-08-28, the renamed-duplicate evaluate):
     /// `sourcePath` rides the body exactly when given — and never otherwise,
     /// so older servers see no unknown field and run discovery stays the
