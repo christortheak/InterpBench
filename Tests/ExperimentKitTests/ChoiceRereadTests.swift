@@ -451,3 +451,100 @@ struct ChoiceRereadTests {
             })
     }
 }
+
+/// `steerlab-cli experiment analyze` end to end, with and without
+/// `--reread-choices`, through the command runner and the workspace it binds.
+///
+/// Serialized and holding `ExperimentRootOverrideLock`: `rootOverride` is a
+/// process-global seam shared with every other lifecycle suite.
+@Suite(.serialized) struct ChoiceRereadCLITests {
+
+    private struct Fixture: Decodable {
+        let study: String
+        let taskPromptsFile: String
+        let taskPromptsText: String
+    }
+
+    private func withTempRoot<T>(_ body: (URL) async throws -> T) async rethrows -> T {
+        ExperimentRootOverrideLock.acquire()
+        let temp = FileManager.default.temporaryDirectory
+            .appending(component: "choice-reread-cli-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        WorkspaceRoot.programmaticOverride = temp
+        ExperimentStore.rootOverride = temp
+        defer {
+            ExperimentStore.rootOverride = nil
+            WorkspaceRoot.programmaticOverride = nil
+            try? FileManager.default.removeItem(at: temp)
+            ExperimentRootOverrideLock.release()
+        }
+        return try await body(temp)
+    }
+
+    @Test func analyzeSaysWhenChoicesReadDifferentlyAndRereadsOnRequest() async throws {
+        let directory = CodeResources.compiledCheckoutPath.appending(
+            components: "Tests", "Fixtures", "cross-engine")
+        let data = try Data(contentsOf: directory.appending(component: "choice-reread.json"))
+        let value = try JSONDecoder().decode(Fixture.self, from: data)
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let records = try #require(object["records"] as? [[String: Any]])
+        try await withTempRoot { root in
+            let prompts = root.appending(path: value.taskPromptsFile)
+            try FileManager.default.createDirectory(
+                at: prompts.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(value.taskPromptsText.utf8).write(to: prompts)
+            // A study that measures something: one attached concept.
+            let concept = root.appending(path: "prompts/concepts/fair")
+            try FileManager.default.createDirectory(at: concept, withIntermediateDirectories: true)
+            try Data("{\"text\": \"fair\"}\n".utf8).write(to: concept.appending(component: "positive.jsonl"))
+            try Data("{\"text\": \"unfair\"}\n".utf8).write(to: concept.appending(component: "negative.jsonl"))
+            _ = try ExperimentStore.create(name: value.study, description: "", modelID: "test/model")
+            let attached = await ExperimentCLIRunner(sink: .discarding).run(
+                namespace: "experiment", ["attach", value.study, "fair", "--json"])
+            #expect(attached.envelope.exitCode == 0, "\(attached.envelope)")
+            var manifest = try ExperimentStore.load(name: value.study)
+            manifest.taskPromptsFile = value.taskPromptsFile
+            manifest.taskPromptsHash = SHA256.hash(data: Data(value.taskPromptsText.utf8))
+                .map { String(format: "%02x", $0) }.joined()
+            try ExperimentStore.save(manifest)
+            let run = root.appending(path: "runs/20261017T000000000Z-exp-\(value.study)-run")
+            try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true)
+            try JSONEncoder().encode(manifest).write(to: run.appending(component: "experiment.json"))
+            try Data(ExperimentStore.manifestHash(manifest).utf8).write(
+                to: run.appending(component: "experiment-hash.txt"))
+            let lines = try records.map {
+                String(
+                    decoding: try JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]),
+                    as: UTF8.self)
+            }
+            try Data((lines.joined(separator: "\n") + "\n").utf8).write(
+                to: run.appending(component: "generations.jsonl"))
+            try Data("{}".utf8).write(to: run.appending(component: "report.json"))
+
+            let ordinary = await ExperimentCLIRunner(sink: .discarding).run(
+                namespace: "experiment", ["analyze", value.study, "--json"])
+            #expect(ordinary.envelope.exitCode == 0, "\(ordinary.envelope)")
+            let advice = (ordinary.envelope.advisories ?? []).filter {
+                $0.code == CLIAdvisory.storedChoicesReadDifferently.rawValue
+            }
+            #expect(advice.count == 1)
+            #expect(advice.first?.detail.hasPrefix("5 of 12 stored choices in run '") == true)
+            #expect(advice.first?.detail.contains("steerlab-cli results check-choices") == true)
+
+            let reread = await ExperimentCLIRunner(sink: .discarding).run(
+                namespace: "experiment", ["analyze", value.study, "--reread-choices", "--json"])
+            #expect(reread.envelope.exitCode == 0, "\(reread.envelope)")
+            #expect(
+                !(reread.envelope.advisories ?? []).contains {
+                    $0.code == CLIAdvisory.storedChoicesReadDifferently.rawValue
+                })
+            guard let result = reread.envelope.result,
+                case .object(let summary)? = result["choiceReread"]
+            else {
+                Issue.record("no choiceReread summary in \(reread.envelope)")
+                return
+            }
+            #expect(summary["changed"] == .number(5))
+        }
+    }
+}
