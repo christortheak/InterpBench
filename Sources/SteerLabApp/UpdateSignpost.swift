@@ -271,19 +271,35 @@ final class UpdateSignpostModel {
         installState = .working(.downloading(received: 0, total: installAssets?.archive.size))
         let onProgress = progressHandler()
         installTask = Task { [weak self] in
+            let outcome: Result<UpdateStagedApp, UpdateInstallError>
             do {
-                let staged = try await installer.prepare(release, progress: onProgress)
-                guard let self else { return }
-                self.staged = staged
-                self.installTask = nil
-                await self.swapWhenIdle()
+                outcome = .success(try await installer.prepare(release, progress: onProgress))
             } catch {
-                guard let self else { return }
-                self.installTask = nil
-                let typed = error as? UpdateInstallError
-                    ?? .downloadFailed(error.localizedDescription)
-                self.installState = .failed(typed)
+                outcome = .failure(
+                    error as? UpdateInstallError ?? .downloadFailed(error.localizedDescription))
             }
+            await self?.prepared(outcome, by: installer, cancelled: Task.isCancelled)
+        }
+    }
+
+    /// Where a download-and-verify ends. A Cancel that arrived meanwhile
+    /// wins: the sheet has already closed, so nothing is installed and what
+    /// was downloaded is removed (`prepare` removes it on its own failures).
+    private func prepared(
+        _ outcome: Result<UpdateStagedApp, UpdateInstallError>, by installer: UpdateInstaller,
+        cancelled: Bool
+    ) async {
+        installTask = nil
+        if cancelled {
+            if case .success = outcome { installer.discardStaging() }
+            return
+        }
+        switch outcome {
+        case .failure(let error):
+            installState = .failed(error)
+        case .success(let staged):
+            self.staged = staged
+            await swapWhenIdle()
         }
     }
 
@@ -328,11 +344,14 @@ final class UpdateSignpostModel {
     /// Cancel at any point before the swap: nothing is changed, and the
     /// downloaded files are removed.
     func cancelInstall() {
-        installTask?.cancel()
-        installTask = nil
-        installer?.discardStaging()
+        if let installTask {
+            // It removes its own download as it unwinds; a new Install waits
+            // until it has (`startInstall` requires no task in flight).
+            installTask.cancel()
+        } else if staged != nil {
+            installer?.discardStaging()
+        }
         staged = nil
-        installer = nil
         installState = .reviewing
         closeInstallSheet()
     }
