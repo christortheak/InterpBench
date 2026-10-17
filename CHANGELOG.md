@@ -23,10 +23,19 @@ migration that rewrites frozen bytes.
   read, in order: a JSON answer; the answer field of JSON that does not parse;
   the whole reply; then, for a reply that finished, the last "Final answer:"
   or "my answer is" line, an option opening the reply, and only then a
-  capital letter standing alone. A choice is stored when a run writes its
-  records, so runs made earlier keep their old readings; for items with
-  letter options and free-text replies, ask the model to end with
-  "Final answer: A".
+  capital letter standing alone. For items with letter options and
+  free-text replies, ask the model to end with "Final answer: A".
+- **Re-read stored choices without re-running a study.** A choice is
+  stored when a run writes its records, and the run is never changed, so
+  a run made earlier keeps its old reading until you ask otherwise.
+  `results check-choices <study> --run <run>` shows, per condition, how
+  many stored choices the current reader would read differently, and
+  writes nothing. `analyze --reread-choices` (in the app, the "Re-read
+  choices" box beside Analyze) analyzes with the current reading, taking
+  each item's options only from the study's verified task prompts; it
+  writes `choice-reread.json` beside the new analysis, every results view
+  says so, and the run itself is untouched. An ordinary analysis now
+  advises when stored choices would read differently.
 - **Install Update in the Mac app.** The update notice now offers Install
   Update, which says what will happen, downloads the release from GitHub,
   and checks it on your Mac before anything moves: the checksum, a safe file
