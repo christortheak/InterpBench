@@ -14,6 +14,8 @@ import {
   parseRunStatus,
   parseSourceResponses,
   readJSONArtifact,
+  tallyCoverage,
+  tallyCoverageNote,
 } from "../app/lib/judged";
 import type { LocalDirectoryHandle, LocalFileHandle, RunFile, WorkspaceRun } from "../app/lib/types";
 
@@ -254,6 +256,45 @@ describe("parseJudgeReport", () => {
   it("sorts baseline first among conditions", () => {
     const report = parseJudgeReport({ present: true, raw: { conditions: { "zeta agent": { n: 1 }, baseline: { n: 2 }, "alpha agent": { n: 3 } } }, error: "", file: null });
     expect(report.conditions.map((condition) => condition.condition)).toEqual(["baseline", "alpha agent", "zeta agent"]);
+  });
+
+  // Two judges that disagree: judge-1 prefers the condition on all 30 pairs,
+  // judge-2 the baseline on all 30. The server engine's report used to repeat
+  // judge-1's tally at the top level; since it adds up the panel, the top
+  // level reads 30 + 0 condition wins and 0 + 30 baseline wins, and says so.
+  const twoJudges = (top: Record<string, unknown>, extra: Record<string, unknown> = {}) => parseJudgeReport({
+    present: true, error: "", file: null,
+    raw: {
+      conditions: { steered: top }, sourceRun: "run", judgedOn: "server", ...extra,
+      judges: [
+        { name: "judge-1", requestedModel: "m-a", pairs: 30, conditions: { steered: { baselineWins: 0, variantWins: 30, ties: 0, n: 30 } } },
+        { name: "judge-2", requestedModel: "m-b", pairs: 30, conditions: { steered: { baselineWins: 30, variantWins: 0, ties: 0, n: 30 } } },
+      ],
+    },
+  });
+
+  it("says a server report from before the panel tally shows the first judge's counts only", () => {
+    const report = twoJudges({ baselineWins: 0, variantWins: 30, ties: 0, n: 30 });
+    expect(report.conditionsScope).toBe("");
+    expect(tallyCoverage(report)).toBe("firstJudge");
+    expect(tallyCoverageNote(report)).toBe("These counts are the first judge's (judge-1) only: this report was written before the Python engine added up the whole panel here. Each judge's own counts are under each condition.");
+    // The stored counts are shown as stored, never re-added.
+    expect(report.conditions[0]).toMatchObject({ variantWins: 30, baselineWins: 0, pairs: 30 });
+  });
+
+  it("says a report that adds up the panel counts every judge", () => {
+    const report = twoJudges({ baselineWins: 30, variantWins: 30, ties: 0, n: 60 }, { conditionsScope: "allJudges" });
+    expect(tallyCoverage(report)).toBe("panel");
+    expect(tallyCoverageNote(report)).toBe("These counts add up the verdicts of all 2 judges (judge-1, judge-2). Each judge's own counts are under each condition.");
+    expect(report.conditions[0]).toMatchObject({ variantWins: 30, baselineWins: 30, pairs: 60 });
+  });
+
+  it("reads a Swift report's top-level tally as the panel, and one judge's as that judge's", () => {
+    const swift = parseJudgeReport({ present: true, error: "", file: null, raw: { conditions: { steered: { pairs: 60, conditionWins: 30, baselineWins: 30, ties: 0 } }, judges: ["judge-1", "judge-2"], sourceRunDirectory: "/runs/run" } });
+    expect(tallyCoverage(swift)).toBe("panel");
+    const one = parseJudgeReport({ present: true, error: "", file: null, raw: { conditions: { steered: { n: 30 } }, sourceRun: "run", judges: [{ name: "judge-1", conditions: { steered: { n: 30 } } }] } });
+    expect(tallyCoverage(one)).toBe("oneJudge");
+    expect(tallyCoverageNote(one)).toBe("");
   });
 });
 

@@ -146,9 +146,11 @@ public struct PairedJudgeReportView: Codable, Sendable, Equatable {
     public let sourceRunDirectory: String
     public let judgeModel: String
     /// The report's top-level tally. On a Mac-engine report this adds up
-    /// the whole panel (pairs count judges × items). On a Python-engine
-    /// report it is the FIRST judge's tally, which that engine repeats at
-    /// the top level for older readers — `judgeBlocks` holds every judge.
+    /// the whole panel (pairs count judges × items). A Python-engine report
+    /// adds up the panel too when it stamps `conditionsScope: "allJudges"`;
+    /// one written before that stamp repeats its FIRST judge's tally here.
+    /// Either way `judgeBlocks` holds every judge's own tally, and the
+    /// judged section shows those (`tallyGroups`).
     public let conditions: [Condition]
 
     public var dialect: Dialect? = nil

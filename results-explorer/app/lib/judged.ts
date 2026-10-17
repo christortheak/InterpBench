@@ -242,6 +242,37 @@ export type JudgeReport = {
   /// The report's own count of rows with no verdict (`noncompliantJudgments`,
   /// written only when nonzero). null = the report stamps none.
   noncompliantJudgments: number | null;
+  /// What the top-level `conditions` covers, as the report stamps it
+  /// (`conditionsScope`): "allJudges" on server reports that add up the
+  /// whole panel; "" on reports written before that stamp, where a server
+  /// report repeated its FIRST judge's tally there. The Swift engine's
+  /// top-level tally has always added up the panel.
+  conditionsScope: string;
+};
+
+/// Whose verdicts the report's top-level tally counts.
+export type TallyCoverage = "panel" | "firstJudge" | "oneJudge";
+
+/// Whose verdicts the top-level `conditions` counts, from what the report
+/// stamps: the whole panel (a Swift report, or a server report stamped
+/// `conditionsScope: allJudges`), one judge (a one-judge panel), or the
+/// first judge only (a server report from before the stamp, with several
+/// judges). Nothing is added up here: the counts are shown as stored.
+export const tallyCoverage = (report: JudgeReport): TallyCoverage => {
+  if (report.judges.length <= 1) return "oneJudge";
+  if (report.dialect === "swift" || report.conditionsScope === "allJudges") return "panel";
+  return "firstJudge";
+};
+
+/// The sentence beside the top-level tally that says whose verdicts it
+/// counts, or "" for a one-judge report.
+export const tallyCoverageNote = (report: JudgeReport): string => {
+  const names = report.judges.map((judge) => judge.name);
+  switch (tallyCoverage(report)) {
+    case "panel": return `These counts add up the verdicts of all ${names.length} judges (${names.join(", ")}). Each judge's own counts are under each condition.`;
+    case "firstJudge": return `These counts are the first judge's (${names[0]}) only: this report was written before the Python engine added up the whole panel here. Each judge's own counts are under each condition.`;
+    default: return "";
+  }
 };
 
 const conditionTally = (condition: string, raw: unknown): ConditionTally => {
@@ -326,6 +357,7 @@ export const parseJudgeReport = (loaded: LoadedJSON): JudgeReport => {
     freshJudgments: num(raw.freshJudgments),
     judgedOn: str(raw.judgedOn),
     noncompliantJudgments: num(raw.noncompliantJudgments),
+    conditionsScope: str(raw.conditionsScope),
   };
 };
 

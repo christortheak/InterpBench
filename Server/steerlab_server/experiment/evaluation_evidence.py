@@ -149,6 +149,49 @@ def agreement_entries(labeled: list[tuple[str, dict]]) -> list[dict]:
     return entries
 
 
+#: What a judge report's top-level ``conditions`` covers, stamped beside it
+#: (``conditionsScope``). Reports written before this stamp carried the FIRST
+#: judge's tally there; each judge's own tally is in ``judges``.
+CONDITIONS_SCOPE_ALL_JUDGES = "allJudges"
+
+_TALLY_KEYS = ("baselineWins", "variantWins", "ties", "n")
+
+
+def panel_top_level(judge_blocks: list[dict]) -> dict:
+    """The keys a judge report states for the whole panel, as the Mac engine
+    states them: ``conditions`` adds up every judge's verdicts (its counts
+    are judges × items, noncompliant answers left out as in each judge's
+    own tally), and the judge models are every judge's, in panel order. With
+    one judge this is that judge's tally and model, as before.
+
+    ``pairs`` is how many pairs each judge was given, the same for every
+    judge. ``conditionsScope`` says the tally covers all judges, so a reader
+    can tell a report written before this from one written after."""
+    conditions: dict[str, dict] = {}
+    for block in judge_blocks:
+        for condition, tally in (block.get("conditions") or {}).items():
+            total = conditions.setdefault(condition, dict.fromkeys(_TALLY_KEYS, 0))
+            for key in _TALLY_KEYS:
+                total[key] += int(tally.get(key) or 0)
+
+    def models(key: str):
+        values = [block.get(key) for block in judge_blocks]
+        if len(values) == 1:
+            return values[0]
+        if not any(values):
+            return None
+        return ", ".join(str(value) if value else "not recorded" for value in values)
+
+    return {
+        "pairs": judge_blocks[0]["pairs"] if judge_blocks else 0,
+        "conditions": conditions,
+        "conditionsScope": CONDITIONS_SCOPE_ALL_JUDGES,
+        "judgeModel": models("requestedModel"),
+        "requestedJudgeModel": models("requestedModel"),
+        "actualJudgeModel": models("actualModel"),
+    }
+
+
 def load_human_validation(
         manifest: manifest_module.Manifest, root) -> dict[tuple[str, str | None, str], str]:
     """The pinned human-labeled subset, hash-checked then parsed through the

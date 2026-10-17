@@ -11,6 +11,9 @@ import Foundation
 /// | the non-baseline wins  | `conditionWins`         | `variantWins`              |
 /// | verdicts in a tally    | `pairs`                 | `n`                        |
 /// | per-judge tallies      | none (one panel tally)  | `judges[].conditions`      |
+/// | top-level tally        | the whole panel         | the whole panel when       |
+/// |                        |                         | `conditionsScope` is       |
+/// |                        |                         | `allJudges`; else judge 1  |
 /// | judge agreement        | `judgeAgreement[]` with | `agreement[]` with         |
 /// |                        | `judgeA`/`judgeB`/`items` | `judges: [a, b]`/`n`     |
 /// | human agreement count  | `items`                 | `n`                        |
