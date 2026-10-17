@@ -712,11 +712,8 @@ def complete_evaluate_judgment(name: str, evaluate_run: str, judgments: list,
         "rubricFile": jm.get("rubricFile"), "rubricHash": jm.get("rubricHash"),
         "judges": judge_blocks,
         "agreement": evaluation_evidence.agreement_entries(outcome_maps),
-        "pairs": judge_blocks[0]["pairs"] if judge_blocks else 0,
-        "conditions": judge_blocks[0]["conditions"] if judge_blocks else {},
-        "judgeModel": judge_blocks[0]["requestedModel"] if judge_blocks else None,
-        "requestedJudgeModel": judge_blocks[0]["requestedModel"] if judge_blocks else None,
-        "actualJudgeModel": judge_blocks[0]["actualModel"] if judge_blocks else None,
+        # The whole panel at the top level, as the inline path writes it.
+        **evaluation_evidence.panel_top_level(judge_blocks),
         "judgedOn": "client",
     }
     if jm.get("evaluationSource"):

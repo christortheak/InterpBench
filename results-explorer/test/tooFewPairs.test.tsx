@@ -12,7 +12,7 @@ const effect = (overrides: Partial<Effect>): Effect => {
     condition: "steered", endpoint: "wordCount", short: "wordCount", estimate: 2, low: 1.5, high: 2.5,
     unit: "words", n: 8 as number | null, q: 0.01 as number | null, p: 0.01 as number | null, correction: "bh",
     direction: "positive" as const, stratifyBy: "pooled", stratum: "", pairedUnit: "", estimand: "", inference: "",
-    effectUnit: { unit: "item", source: "engine_default" as const, pairedItems: 8 },
+    effectUnit: { unit: "item", source: "recorded" as const, pairedItems: 8 },
     ...overrides,
   };
   return { ...base, key: effectKey(base) } as Effect;
@@ -35,7 +35,7 @@ describe("too few independent pairs", () => {
   });
 
   it("counts pairs, not items, for an item-level row", () => {
-    const { html } = render(<ForestRow effect={effect({ n: 2, effectUnit: { unit: "item", source: "engine_default", pairedItems: 2 } })} />);
+    const { html } = render(<ForestRow effect={effect({ n: 2, effectUnit: { unit: "item", source: "recorded", pairedItems: 2 } })} />);
     expect(html).not.toContain("ci-line");
     expect(html).toContain("too few pairs for an interval");
   });

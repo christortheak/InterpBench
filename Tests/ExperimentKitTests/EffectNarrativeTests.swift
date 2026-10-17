@@ -21,7 +21,7 @@ import Testing
         wilcoxonP: Double? = nil,
         adjustedP: Double? = nil,
         correction: String? = nil,
-        unit: RunResults.EffectUnit = .init(unit: "item", source: .engineDefault)
+        unit: RunResults.EffectUnit = .init(unit: "item", source: .recorded)
     ) -> RunResults.EffectSizeRow {
         // An item-level row, as the Results model settles a current run's
         // rows against its records (`EffectUnitTests` covers the settling).
@@ -277,7 +277,7 @@ import Testing
             unit: .init(unit: "response", source: .inferredFromRecords, pairedItems: 2))
         let sentence = EffectNarrative.sentence(for: responses, familySize: 2)
         #expect(sentence.contains(
-            "across 8 paired responses from 2 items (too few items for a "
+            "across 8 paired responses from at most 2 items (too few items for a "
                 + "confidence interval; at least 3 are needed) — with so few "
                 + "items this describes these items only, and is not a test."))
         #expect(EffectNarrative.hasTooFewPairs(responses))

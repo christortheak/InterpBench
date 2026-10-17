@@ -29,8 +29,10 @@ public enum EffectNarrative {
         + "interval and test treat responses to the same item as independent "
         + "and are not findings about items"
 
-    /// What a row whose unit nothing settles says about its pairs.
-    public static let unknownUnitNote = "The unit of these pairs is not established"
+    /// What a row whose unit nothing settles says about its pairs (the
+    /// Python reader's `UNKNOWN_UNIT_NOTE`).
+    public static let unknownUnitNote =
+        "The analysis that made this row did not record whether its pairs count items or responses"
 
     /// Why a row is read as paired responses (the Python reader's
     /// `RESPONSE_UNIT_EXPLANATION`, word for word).
@@ -55,6 +57,45 @@ public enum EffectNarrative {
         + "The stored numbers are copied unchanged; analyzing the run again "
         + "computes item-level rows."
 
+    /// What the not-established line adds when this reading could not check
+    /// the run's records: none were available, or only their first part was
+    /// read (a remote preview). The Python reader's `UNIT_RECORDS_UNAVAILABLE`
+    /// and `UNIT_RECORDS_PARTIAL`.
+    public static let unitRecordsUnavailable =
+        "The run's records are not available here, so they could not be checked."
+    public static let unitRecordsPartial =
+        "Only the first part of the run's records was read here; reading the whole file may settle it."
+
+    /// What a unit the analysis did not record is, and how it is known: the
+    /// Python reader's `UNSTAMPED_UNIT_LINES`, word for word (pinned in
+    /// effect-units.json). Keyed by source, and for a unit the engine
+    /// settles, by unit too.
+    public static let unstampedUnitLines: [String: String] = [
+        "one_sample_per_item":
+            "the item. The analysis did not record its unit, but the run's records answer each "
+            + "item only once in each condition compared, so here an item and a response are the "
+            + "same thing.",
+        "analysis_engine_item":
+            "the item, with an item's samples averaged within each condition. The analysis did "
+            + "not record its unit, but its config.json names the engine that made it, and that "
+            + "engine paired these rows by item.",
+        "analysis_engine_response":
+            "the response, not the item. The analysis did not record its unit, but its "
+            + "config.json names the Mac engine from before SteerLab 0.9.7, which paired each "
+            + "response with the baseline response to the same item and seed when a study had "
+            + "several responses per item, as this run does. Responses to the same item are not "
+            + "independent, so these intervals and tests are likely to understate the "
+            + "uncertainty, and they are not findings about items. The stored numbers are copied "
+            + "unchanged; analyzing the run again computes item-level rows.",
+        "inferred_from_records": "the response, not the item. " + responseUnitExplanation,
+        "not_established":
+            "not established. The analysis that made these rows did not record whether their "
+            + "pairs count items or responses, and neither its config.json nor the run's records "
+            + "settle it: fewer pairs than items can mean items, or responses from fewer items. "
+            + "The numbers are shown as stored; analyzing the run again with this version records "
+            + "the unit.",
+    ]
+
     /// One plain-language line for an effect row, e.g.:
     ///
     ///   "Steering 'fear' at layer 12 (strength 0.8) shifted 'fear' marker
@@ -63,7 +104,7 @@ public enum EffectNarrative {
     ///    (corrected p = 0.012)."
     ///
     /// The count is in the row's settled unit (`EffectSizeRow.unit`): paired
-    /// items, transcripts, or samples; "8 paired responses from 4 items",
+    /// items, transcripts, or samples; "8 paired responses from at most 4 items",
     /// followed by `responseCaveat`, for an analysis that paired responses;
     /// and plain "pairs", followed by `unknownUnitNote`, when nothing
     /// settles the unit.
@@ -140,13 +181,16 @@ public enum EffectNarrative {
 
     /// The row's count in its own unit, as the Python reader's results page
     /// states it: "24 paired items", "4 paired transcripts", "3 pairs", or
-    /// "8 paired responses from 4 items". nil when the file gave no count.
+    /// "8 paired responses from at most 4 items". nil when the file gave no
+    /// count. The items a response row draws on are the run's paired items
+    /// at most (exclusions or missing values can leave fewer), so more than
+    /// one is an upper bound: the Python reader's `response_items`.
     public static func countPhrase(_ row: RunResults.EffectSizeRow) -> String? {
         guard row.n >= 1 else { return nil }
         let (one, many) = unitNouns[row.unit.unit] ?? ("paired unit", "paired units")
         var text = plural(row.n, one, many)
         if row.unit.isResponses, let items = row.unit.pairedItems {
-            text += " from " + plural(items, "item", "items")
+            text += items == 1 ? " from 1 item" : " from at most \(items) items"
         }
         return text
     }
@@ -173,13 +217,14 @@ public enum EffectNarrative {
     }
 
     /// The unit cell of the effect table: the settled unit, marked when the
-    /// analysis did not record it itself — "item (default)" when the run's
-    /// records are consistent with the engines' rule, "response (from the records)"
-    /// when they show the row paired responses (the Python reader's page
+    /// analysis did not record it itself — "item (answered once)",
+    /// "item (from the engine record)" or "response (from the engine
+    /// record)", and "response (from the records)" (the Python reader's page
     /// marks its table the same way).
     public static func unitLabel(_ row: RunResults.EffectSizeRow) -> String {
         switch row.unit.source {
-        case .engineDefault: row.unit.unit + " (default)"
+        case .oneSamplePerItem: row.unit.unit + " (answered once)"
+        case .analysisEngine: row.unit.unit + " (from the engine record)"
         case .inferredFromRecords: row.unit.unit + " (from the records)"
         case .recorded, .notEstablished: row.unit.unit
         }
@@ -204,54 +249,44 @@ public enum EffectNarrative {
 
     /// One "Unit of analysis" line per way the rows' units are known, in the
     /// order they first appear: the Python reader's methods summary
-    /// (`unit_lines`), for the app's effect table. `records` is what the
-    /// units were settled against (`Model.effectUnitRecords`), which says
-    /// why a unit is not established.
+    /// (`unit_lines`), for the app's effect table. A unit the analysis's
+    /// engine settles is grouped by unit too: one Mac analysis from before
+    /// 0.9.7 can hold item rows (its ordinal readouts) and response rows.
+    /// `records` is what the units were settled against
+    /// (`Model.effectUnitRecords`); the words do not depend on it.
     public static func unitLines(
         rows: [RunResults.EffectSizeRow], records: RunResults.PairedItems?
     ) -> [String] {
-        var groups: [(source: RunResults.EffectUnit.Source, units: [String])] = []
+        var groups: [(key: String, units: [String])] = []
         for row in rows {
-            if let index = groups.firstIndex(where: { $0.source == row.unit.source }) {
+            var key = row.unit.source.rawValue
+            if row.unit.source == .analysisEngine { key += "_" + row.unit.unit }
+            if let index = groups.firstIndex(where: { $0.key == key }) {
                 if !groups[index].units.contains(row.unit.unit) {
                     groups[index].units.append(row.unit.unit)
                 }
             } else {
-                groups.append((row.unit.source, [row.unit.unit]))
+                groups.append((key, [row.unit.unit]))
             }
         }
         return groups.map { group in
             let marked = groups.count > 1
                 ? " for the rows marked " + joined(group.units) : ""
             let said: String
-            switch group.source {
-            case .recorded:
+            if group.key == RunResults.EffectUnit.Source.recorded.rawValue {
                 if group.units.count == 1, let defined = recordedUnitLines[group.units[0]] {
                     said = defined
                 } else {
                     said = joined(group.units) + ", as the analysis recorded."
                 }
-            case .engineDefault:
-                said = "the item, with an item's samples averaged within each "
-                    + "condition. This is the engines' documented default; the "
-                    + "analysis did not stamp the unit itself. The run's records "
-                    + "are consistent with it: no such row counts more pairs "
-                    + "than the items paired in the run."
-            case .inferredFromRecords:
-                said = "the response, not the item. " + responseUnitExplanation
-            case .notEstablished:
-                if records == nil {
-                    said = "not established. The analysis did not stamp it, and "
-                        + "the run's records are not available here."
-                } else if records?.complete == false {
-                    said = "not established. The analysis did not stamp it, and "
-                        + "only the first part of the run's records was read "
-                        + "here, which does not settle it."
-                } else {
-                    said = "not established. The analysis did not stamp it, and "
-                        + "the run's records have no items paired with the "
-                        + "baseline for these conditions."
-                }
+            } else if let line = unstampedUnitLines[group.key], group.key != "not_established" {
+                said = line
+            } else {
+                // The line speaks of the files; what this reading saw of the
+                // run's records is added when it could not check them all.
+                said = unstampedUnitLines["not_established"]!
+                    + (records == nil ? " " + unitRecordsUnavailable
+                        : records?.complete == false ? " " + unitRecordsPartial : "")
             }
             return "Unit of analysis\(marked): \(said)"
         }

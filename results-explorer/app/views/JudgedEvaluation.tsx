@@ -36,6 +36,8 @@ import {
   parseJudgingContext,
   parseRunStatus,
   readJSONArtifact,
+  tallyCoverage,
+  tallyCoverageNote,
   type ConditionTally,
   type JudgeReport,
   type JudgeTally,
@@ -365,13 +367,14 @@ export function JudgedEvaluationView({ run, workspaceRuns, onActivateRun, onNavi
 
       <section className="card">
         <header className="section-header">
-          <div><span className="section-number">PER-CONDITION TALLIES</span><h2>Which arm the panel preferred</h2></div>
+          <div><span className="section-number">PER-CONDITION TALLIES</span><h2>{tallyCoverage(judgeReport) === "firstJudge" ? "Which arm the first judge preferred" : "Which arm the panel preferred"}</h2></div>
           <div className="section-actions">
             {!judgeReport.present && <DerivedBadge formula="counted from judgments.jsonl rows because judge-report.json is absent" />}
             {tallyRows.length > 0 && <ExportButton filename={csvFilename(run.name, "judge-tallies")} columns={tallyColumns} rows={tallyRows} label="Export tallies" />}
             {derivedTallies.length > 0 && <ExportButton filename={csvFilename(run.name, "judge-tallies-by-judge")} columns={judgeTallyColumns(storedPerJudge)} rows={perJudgeExportRows} label="Export per-judge splits" />}
           </div>
         </header>
+        {tallyRows.length > 0 && tallyCoverageNote(judgeReport) && <p className="table-note tally-coverage">{tallyCoverageNote(judgeReport)}</p>}
         {tallyRows.length === 0 && rows.length === 0 && <div className="artifact-empty"><span>∅</span><p>No tallies: this run has neither a <code>conditions</code> block in judge-report.json nor readable judgment rows.</p></div>}
         {(tallyRows.length ? tallyRows : []).map((condition) => {
           const total = (condition.baselineWins ?? 0) + (condition.variantWins ?? 0) + (condition.ties ?? 0);

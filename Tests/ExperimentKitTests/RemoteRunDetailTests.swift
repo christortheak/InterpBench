@@ -325,8 +325,8 @@ struct RemoteRunDetailTests {
 
     /// A remote analysis directory holds no generations. Its rows' unit is
     /// settled from the run it analyzed (named by source-run.txt), whose
-    /// generations head is fetched for that alone: an ordinary item-level
-    /// analysis reads as items, not as pairs whose unit is not established.
+    /// generations head is fetched for that alone: a run that answered each
+    /// item once reads as items, not as pairs whose unit is not established.
     @Test func aRemoteAnalysisSettlesItsUnitFromTheRunItAnalyzed() async throws {
         let effects = "condition,metric,n,meanDiff,ciLower,ciUpper,wilcoxonW,wilcoxonP,adjustedP,"
             + "correction,stratifyBy,stratum,unit,estimand,inference\n"
@@ -360,15 +360,29 @@ struct RemoteRunDetailTests {
         #expect(requests == ["20261005T-run/generations.jsonl"])
         let rows = try #require(payload.model?.effectSizes)
         let units = Dictionary(uniqueKeysWithValues: rows.map { ($0.metric, $0.unit) })
-        #expect(units["wordCount"]?.unit == "item" && units["wordCount"]?.source == .engineDefault)
+        #expect(units["wordCount"]?.unit == "item" && units["wordCount"]?.source == .oneSamplePerItem)
         // More pairs than the source run has items: paired responses.
         #expect(units["distinct2"]?.unit == "response" && units["distinct2"]?.pairedItems == 4)
     }
 
-    /// A head of the analyzed run's records is a lower bound on its items: a
-    /// row within it is item-level, but a row beyond it is not established,
-    /// never guessed to be paired responses.
+    /// A head of the analyzed run's records is a lower bound on its items and
+    /// its samples, so it settles neither a row within it nor one beyond it:
+    /// both are not established, never guessed. The analysis's own
+    /// config.json, fetched with it, settles a Python-engine analysis (every
+    /// cluster run) as items whatever the head holds.
     @Test func aTruncatedSourceRunHeadSettlesOnlyWhatItCan() async throws {
+        for engine in [nil, "python-hf-transformers"] {
+            let units = try await truncatedSourceRunUnits(substrate: engine)
+            if engine == nil {
+                #expect(units["wordCount"]?.unit == "unknown" && units["wordCount"]?.source == .notEstablished)
+            } else {
+                #expect(units["wordCount"]?.unit == "item" && units["wordCount"]?.source == .analysisEngine)
+            }
+            #expect(units["distinct2"]?.unit == (engine == nil ? "unknown" : "item"))
+        }
+    }
+
+    private func truncatedSourceRunUnits(substrate: String?) async throws -> [String: RunResults.EffectUnit] {
         let effects = "condition,metric,n,meanDiff,ciLower,ciUpper,wilcoxonW,wilcoxonP,adjustedP,"
             + "correction,stratifyBy,stratum,unit,estimand,inference\n"
             + "formal,wordCount,4,1.0,0.5,1.5,,,,,pooled,,,,\n"
@@ -376,16 +390,20 @@ struct RemoteRunDetailTests {
         let head = ["baseline", "formal"].flatMap { condition in
             (1...4).map { #"{"condition": "\#(condition)", "promptID": "item-\#($0)", "output": "An answer."}"# }
         }.joined(separator: "\n") + "\n"
+        let config = substrate.map { #"{"runType": "analyze", "substrate": "\#($0)"}"# }
         let run = RemoteStampedRunRecord(
-            id: "analysis", path: "/server/analysis", files: ["effect-sizes.csv", "analysis.json"],
+            id: "analysis", path: "/server/analysis",
+            files: ["effect-sizes.csv", "analysis.json"] + (config == nil ? [] : ["config.json"]),
             fileEntries: [RemoteRunFileEntry(name: "effect-sizes.csv", size: effects.utf8.count),
-                          RemoteRunFileEntry(name: "analysis.json", size: 30)])
+                          RemoteRunFileEntry(name: "analysis.json", size: 30)]
+                + (config.map { [RemoteRunFileEntry(name: "config.json", size: $0.utf8.count)] } ?? []))
         let payload = await StudyResultsState().loadRemoteRunDetail(
             run: run, client: nil,
             fetcher: { name, _ in
                 switch name {
                 case "effect-sizes.csv": return RemoteRunFileHead(data: Data(effects.utf8), fileSize: effects.utf8.count, truncated: false)
                 case "analysis.json": return RemoteRunFileHead(data: Data(#"{"sourceRun": "source"}"#.utf8), truncated: false)
+                case "config.json" where config != nil: return RemoteRunFileHead(data: Data(config!.utf8), truncated: false)
                 default: throw CocoaError(.fileReadNoSuchFile)
                 }
             },
@@ -393,8 +411,6 @@ struct RemoteRunDetailTests {
                 #expect(runID == "source")  // named by analysis.json when there is no source-run.txt
                 return RemoteRunFileHead(data: Data(head.utf8), fileSize: 10 * head.utf8.count, truncated: true)
             })
-        let units = Dictionary(uniqueKeysWithValues: try #require(payload.model?.effectSizes).map { ($0.metric, $0.unit) })
-        #expect(units["wordCount"]?.unit == "item")
-        #expect(units["distinct2"]?.unit == "unknown" && units["distinct2"]?.source == .notEstablished)
+        return Dictionary(uniqueKeysWithValues: try #require(payload.model?.effectSizes).map { ($0.metric, $0.unit) })
     }
 }

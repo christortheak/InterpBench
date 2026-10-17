@@ -1,6 +1,7 @@
 {
   "cases": [
     {
+      "config": null,
       "effectRows": [
         {
           "condition": "formal",
@@ -12,6 +13,7 @@
         }
       ],
       "expected": {
+        "enginePairing": null,
         "pairedItems": {
           "formal": 1
         },
@@ -27,7 +29,17 @@
             "unit": "response",
             "unitSource": "inferred_from_records"
           }
-        ]
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 5
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 5
+          }
+        }
       },
       "generations": [
         "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
@@ -46,6 +58,7 @@
       "stampedUnit": null
     },
     {
+      "config": null,
       "effectRows": [
         {
           "condition": "formal",
@@ -57,13 +70,14 @@
         }
       ],
       "expected": {
+        "enginePairing": null,
         "pairedItems": {
           "formal": 4
         },
         "rows": [
           {
             "condition": "formal",
-            "count": "8 paired responses from 4 items",
+            "count": "8 paired responses from at most 4 items",
             "endpoint": "wordCount",
             "pairedItems": 4,
             "stratifyBy": "pooled",
@@ -72,7 +86,17 @@
             "unit": "response",
             "unitSource": "inferred_from_records"
           }
-        ]
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 2
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 2
+          }
+        }
       },
       "generations": [
         "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
@@ -97,6 +121,7 @@
       "stampedUnit": null
     },
     {
+      "config": null,
       "effectRows": [
         {
           "condition": "formal",
@@ -108,13 +133,14 @@
         }
       ],
       "expected": {
+        "enginePairing": null,
         "pairedItems": {
           "formal": 2
         },
         "rows": [
           {
             "condition": "formal",
-            "count": "8 paired responses from 2 items",
+            "count": "8 paired responses from at most 2 items",
             "endpoint": "wordCount",
             "pairedItems": 2,
             "stratifyBy": "pooled",
@@ -123,7 +149,17 @@
             "unit": "response",
             "unitSource": "inferred_from_records"
           }
-        ]
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 4
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 4
+          }
+        }
       },
       "generations": [
         "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
@@ -148,6 +184,10 @@
       "stampedUnit": null
     },
     {
+      "config": {
+        "appVersion": "swift-app 0.9.7+0a1b2c3d",
+        "substrate": "swift-mlx"
+      },
       "effectRows": [
         {
           "condition": "formal",
@@ -159,6 +199,7 @@
         }
       ],
       "expected": {
+        "enginePairing": "items",
         "pairedItems": {
           "formal": 4
         },
@@ -172,9 +213,19 @@
             "stratum": "",
             "tooFew": false,
             "unit": "item",
-            "unitSource": "engine_default"
+            "unitSource": "analysis_engine"
           }
-        ]
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 2
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 2
+          }
+        }
       },
       "generations": [
         "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
@@ -195,10 +246,925 @@
         "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}"
       ],
       "label": "a current item-level analysis of four items, two seeds",
-      "note": "the same records, analyzed with samples averaged within each item",
+      "note": "the same records, analyzed by the Mac engine 0.9.7 with samples averaged within each item; its config.json says so",
       "stampedUnit": null
     },
     {
+      "config": null,
+      "effectRows": [
+        {
+          "condition": "formal",
+          "endpoint": "wordCount",
+          "n": "4",
+          "stratifyBy": "pooled",
+          "stratum": "",
+          "unit": ""
+        }
+      ],
+      "expected": {
+        "enginePairing": null,
+        "pairedItems": {
+          "formal": 4
+        },
+        "rows": [
+          {
+            "condition": "formal",
+            "count": "4 pairs",
+            "endpoint": "wordCount",
+            "pairedItems": 4,
+            "stratifyBy": "pooled",
+            "stratum": "",
+            "tooFew": false,
+            "unit": "unknown",
+            "unitSource": "not_established"
+          }
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 2
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 2
+          }
+        }
+      },
+      "generations": [
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}"
+      ],
+      "label": "the same item-level rows with no engine record",
+      "note": "four pairs from four items with two samples each could be four items or four responses (after exclusions or missing values); nothing records which",
+      "stampedUnit": null
+    },
+    {
+      "config": {
+        "appVersion": "swift-app 0.9.6+0a1b2c3d",
+        "substrate": "swift-mlx"
+      },
+      "effectRows": [
+        {
+          "condition": "formal",
+          "endpoint": "wordCount",
+          "n": "5",
+          "stratifyBy": "pooled",
+          "stratum": "",
+          "unit": ""
+        }
+      ],
+      "expected": {
+        "enginePairing": "responses",
+        "pairedItems": {
+          "formal": 10
+        },
+        "rows": [
+          {
+            "condition": "formal",
+            "count": "5 paired responses from at most 10 items",
+            "endpoint": "wordCount",
+            "pairedItems": 10,
+            "stratifyBy": "pooled",
+            "stratum": "",
+            "tooFew": false,
+            "unit": "response",
+            "unitSource": "analysis_engine"
+          }
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 5
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 5
+          }
+        }
+      },
+      "generations": [
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under formal.\", \"wordCount\": 6}"
+      ],
+      "label": "the reviewer's exclusion case, made by the Mac engine before 0.9.7",
+      "note": "ten items, five samples; a declared exclusion kept one item, so the Mac engine before 0.9.7 stored n = 5, all five responses from that item",
+      "stampedUnit": null
+    },
+    {
+      "config": {
+        "substrate": "swift-mlx"
+      },
+      "effectRows": [
+        {
+          "condition": "formal",
+          "endpoint": "wordCount",
+          "n": "5",
+          "stratifyBy": "pooled",
+          "stratum": "",
+          "unit": ""
+        }
+      ],
+      "expected": {
+        "enginePairing": null,
+        "pairedItems": {
+          "formal": 10
+        },
+        "rows": [
+          {
+            "condition": "formal",
+            "count": "5 pairs",
+            "endpoint": "wordCount",
+            "pairedItems": 10,
+            "stratifyBy": "pooled",
+            "stratum": "",
+            "tooFew": false,
+            "unit": "unknown",
+            "unitSource": "not_established"
+          }
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 5
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 5
+          }
+        }
+      },
+      "generations": [
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 3, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 4, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 3, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 4, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under formal.\", \"wordCount\": 6}"
+      ],
+      "label": "the reviewer's exclusion case, with no engine version recorded",
+      "stampedUnit": null
+    },
+    {
+      "config": {
+        "appVersion": "swift-app 0.9.6+0a1b2c3d",
+        "substrate": "swift-mlx"
+      },
+      "effectRows": [
+        {
+          "condition": "formal",
+          "endpoint": "wordCount",
+          "n": "15",
+          "stratifyBy": "arm",
+          "stratum": "x",
+          "unit": ""
+        }
+      ],
+      "expected": {
+        "enginePairing": "responses",
+        "pairedItems": {
+          "formal": 20
+        },
+        "rows": [
+          {
+            "condition": "formal",
+            "count": "15 pairs",
+            "endpoint": "wordCount",
+            "pairedItems": 20,
+            "stratifyBy": "arm",
+            "stratum": "x",
+            "tooFew": false,
+            "unit": "unknown",
+            "unitSource": "not_established"
+          }
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 3
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 3
+          }
+        }
+      },
+      "generations": [
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 10, \"promptID\": \"item-11\", \"output\": \"An answer to item-11 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 10, \"promptID\": \"item-11\", \"output\": \"An answer to item-11 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 10, \"promptID\": \"item-11\", \"output\": \"An answer to item-11 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 11, \"promptID\": \"item-12\", \"output\": \"An answer to item-12 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 11, \"promptID\": \"item-12\", \"output\": \"An answer to item-12 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 11, \"promptID\": \"item-12\", \"output\": \"An answer to item-12 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 12, \"promptID\": \"item-13\", \"output\": \"An answer to item-13 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 12, \"promptID\": \"item-13\", \"output\": \"An answer to item-13 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 12, \"promptID\": \"item-13\", \"output\": \"An answer to item-13 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 13, \"promptID\": \"item-14\", \"output\": \"An answer to item-14 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 13, \"promptID\": \"item-14\", \"output\": \"An answer to item-14 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 13, \"promptID\": \"item-14\", \"output\": \"An answer to item-14 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 14, \"promptID\": \"item-15\", \"output\": \"An answer to item-15 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 14, \"promptID\": \"item-15\", \"output\": \"An answer to item-15 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 14, \"promptID\": \"item-15\", \"output\": \"An answer to item-15 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 15, \"promptID\": \"item-16\", \"output\": \"An answer to item-16 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 15, \"promptID\": \"item-16\", \"output\": \"An answer to item-16 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 15, \"promptID\": \"item-16\", \"output\": \"An answer to item-16 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 16, \"promptID\": \"item-17\", \"output\": \"An answer to item-17 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 16, \"promptID\": \"item-17\", \"output\": \"An answer to item-17 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 16, \"promptID\": \"item-17\", \"output\": \"An answer to item-17 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 17, \"promptID\": \"item-18\", \"output\": \"An answer to item-18 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 17, \"promptID\": \"item-18\", \"output\": \"An answer to item-18 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 17, \"promptID\": \"item-18\", \"output\": \"An answer to item-18 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 18, \"promptID\": \"item-19\", \"output\": \"An answer to item-19 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 18, \"promptID\": \"item-19\", \"output\": \"An answer to item-19 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 18, \"promptID\": \"item-19\", \"output\": \"An answer to item-19 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 19, \"promptID\": \"item-20\", \"output\": \"An answer to item-20 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 19, \"promptID\": \"item-20\", \"output\": \"An answer to item-20 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 2, \"promptIndex\": 19, \"promptID\": \"item-20\", \"output\": \"An answer to item-20 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 6, \"promptID\": \"item-7\", \"output\": \"An answer to item-7 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 7, \"promptID\": \"item-8\", \"output\": \"An answer to item-8 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 8, \"promptID\": \"item-9\", \"output\": \"An answer to item-9 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 9, \"promptID\": \"item-10\", \"output\": \"An answer to item-10 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 10, \"promptID\": \"item-11\", \"output\": \"An answer to item-11 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 10, \"promptID\": \"item-11\", \"output\": \"An answer to item-11 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 10, \"promptID\": \"item-11\", \"output\": \"An answer to item-11 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 11, \"promptID\": \"item-12\", \"output\": \"An answer to item-12 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 11, \"promptID\": \"item-12\", \"output\": \"An answer to item-12 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 11, \"promptID\": \"item-12\", \"output\": \"An answer to item-12 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 12, \"promptID\": \"item-13\", \"output\": \"An answer to item-13 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 12, \"promptID\": \"item-13\", \"output\": \"An answer to item-13 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 12, \"promptID\": \"item-13\", \"output\": \"An answer to item-13 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 13, \"promptID\": \"item-14\", \"output\": \"An answer to item-14 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 13, \"promptID\": \"item-14\", \"output\": \"An answer to item-14 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 13, \"promptID\": \"item-14\", \"output\": \"An answer to item-14 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 14, \"promptID\": \"item-15\", \"output\": \"An answer to item-15 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 14, \"promptID\": \"item-15\", \"output\": \"An answer to item-15 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 14, \"promptID\": \"item-15\", \"output\": \"An answer to item-15 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 15, \"promptID\": \"item-16\", \"output\": \"An answer to item-16 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 15, \"promptID\": \"item-16\", \"output\": \"An answer to item-16 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 15, \"promptID\": \"item-16\", \"output\": \"An answer to item-16 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 16, \"promptID\": \"item-17\", \"output\": \"An answer to item-17 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 16, \"promptID\": \"item-17\", \"output\": \"An answer to item-17 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 16, \"promptID\": \"item-17\", \"output\": \"An answer to item-17 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 17, \"promptID\": \"item-18\", \"output\": \"An answer to item-18 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 17, \"promptID\": \"item-18\", \"output\": \"An answer to item-18 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 17, \"promptID\": \"item-18\", \"output\": \"An answer to item-18 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 18, \"promptID\": \"item-19\", \"output\": \"An answer to item-19 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 18, \"promptID\": \"item-19\", \"output\": \"An answer to item-19 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 18, \"promptID\": \"item-19\", \"output\": \"An answer to item-19 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 19, \"promptID\": \"item-20\", \"output\": \"An answer to item-20 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 19, \"promptID\": \"item-20\", \"output\": \"An answer to item-20 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 2, \"promptIndex\": 19, \"promptID\": \"item-20\", \"output\": \"An answer to item-20 under formal.\", \"wordCount\": 6}"
+      ],
+      "label": "a subgroup row within the run's items",
+      "note": "five items of a twenty-item run with three samples each: 15 responses; every engine stamps its subgroup rows, so the engine named in config.json does not settle an unstamped one",
+      "stampedUnit": null
+    },
+    {
+      "config": {
+        "appVersion": "steerlab-server 0.9.6+0a1b2c3d",
+        "substrate": "python-hf-transformers"
+      },
+      "effectRows": [
+        {
+          "condition": "formal",
+          "endpoint": "wordCount",
+          "n": "4",
+          "stratifyBy": "pooled",
+          "stratum": "",
+          "unit": ""
+        }
+      ],
+      "expected": {
+        "enginePairing": "items",
+        "pairedItems": {
+          "formal": 4
+        },
+        "rows": [
+          {
+            "condition": "formal",
+            "count": "4 paired items",
+            "endpoint": "wordCount",
+            "pairedItems": 4,
+            "stratifyBy": "pooled",
+            "stratum": "",
+            "tooFew": false,
+            "unit": "item",
+            "unitSource": "analysis_engine"
+          }
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 2
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 2
+          }
+        }
+      },
+      "generations": [
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}"
+      ],
+      "label": "an unstamped row made by the Python engine",
+      "stampedUnit": null
+    },
+    {
+      "config": {
+        "appVersion": "swift-app 0.9.6+0a1b2c3d",
+        "substrate": "swift-mlx"
+      },
+      "effectRows": [
+        {
+          "condition": "formal",
+          "endpoint": "wordCount",
+          "n": "8",
+          "stratifyBy": "pooled",
+          "stratum": "",
+          "unit": ""
+        }
+      ],
+      "expected": {
+        "enginePairing": "responses",
+        "pairedItems": {
+          "formal": 4
+        },
+        "rows": [
+          {
+            "condition": "formal",
+            "count": "8 paired responses from at most 4 items",
+            "endpoint": "wordCount",
+            "pairedItems": 4,
+            "stratifyBy": "pooled",
+            "stratum": "",
+            "tooFew": false,
+            "unit": "response",
+            "unitSource": "analysis_engine"
+          }
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 2
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 2
+          }
+        }
+      },
+      "generations": [
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}"
+      ],
+      "label": "an unstamped row made by the Mac engine before 0.9.7",
+      "stampedUnit": null
+    },
+    {
+      "config": {
+        "appVersion": "swift-app 0.9.6+0a1b2c3d",
+        "substrate": "swift-mlx"
+      },
+      "effectRows": [
+        {
+          "condition": "formal",
+          "endpoint": "ordinalPosition",
+          "n": "4",
+          "stratifyBy": "pooled",
+          "stratum": "",
+          "unit": ""
+        }
+      ],
+      "expected": {
+        "enginePairing": "responses",
+        "pairedItems": {
+          "formal": 4
+        },
+        "rows": [
+          {
+            "condition": "formal",
+            "count": "4 paired items",
+            "endpoint": "ordinalPosition",
+            "pairedItems": 4,
+            "stratifyBy": "pooled",
+            "stratum": "",
+            "tooFew": false,
+            "unit": "item",
+            "unitSource": "analysis_engine"
+          }
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 1,
+            "responses": 2
+          },
+          "formal": {
+            "readouts": 1,
+            "responses": 2
+          }
+        }
+      },
+      "generations": [
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"promptID\": \"item-1\", \"instrument\": \"ordinalScale\", \"ordinalPosition\": 2.0}",
+        "{\"condition\": \"baseline\", \"promptID\": \"item-2\", \"instrument\": \"ordinalScale\", \"ordinalPosition\": 2.0}",
+        "{\"condition\": \"baseline\", \"promptID\": \"item-3\", \"instrument\": \"ordinalScale\", \"ordinalPosition\": 2.0}",
+        "{\"condition\": \"baseline\", \"promptID\": \"item-4\", \"instrument\": \"ordinalScale\", \"ordinalPosition\": 2.0}",
+        "{\"condition\": \"formal\", \"promptID\": \"item-1\", \"instrument\": \"ordinalScale\", \"ordinalPosition\": 2.0}",
+        "{\"condition\": \"formal\", \"promptID\": \"item-2\", \"instrument\": \"ordinalScale\", \"ordinalPosition\": 2.0}",
+        "{\"condition\": \"formal\", \"promptID\": \"item-3\", \"instrument\": \"ordinalScale\", \"ordinalPosition\": 2.0}",
+        "{\"condition\": \"formal\", \"promptID\": \"item-4\", \"instrument\": \"ordinalScale\", \"ordinalPosition\": 2.0}"
+      ],
+      "label": "an ordinal readout row made by the Mac engine before 0.9.7",
+      "note": "the Mac engine before 0.9.7 read ordinal outcomes from one readout per item and condition, so it paired them by item",
+      "stampedUnit": null
+    },
+    {
+      "config": {
+        "appVersion": "swift-app 0.9.7-beta+0a1b2c3d",
+        "substrate": "swift-mlx"
+      },
+      "effectRows": [
+        {
+          "condition": "formal",
+          "endpoint": "wordCount",
+          "n": "4",
+          "stratifyBy": "pooled",
+          "stratum": "",
+          "unit": ""
+        }
+      ],
+      "expected": {
+        "enginePairing": null,
+        "pairedItems": {
+          "formal": 4
+        },
+        "rows": [
+          {
+            "condition": "formal",
+            "count": "4 pairs",
+            "endpoint": "wordCount",
+            "pairedItems": 4,
+            "stratifyBy": "pooled",
+            "stratum": "",
+            "tooFew": false,
+            "unit": "unknown",
+            "unitSource": "not_established"
+          }
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 2
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 2
+          }
+        }
+      },
+      "generations": [
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 1, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 1, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}"
+      ],
+      "label": "a pre-release of 0.9.7",
+      "note": "a pre-release of 0.9.7 could have been built either side of the change, so its version settles nothing",
+      "stampedUnit": null
+    },
+    {
+      "config": null,
+      "effectRows": [
+        {
+          "condition": "formal",
+          "endpoint": "wordCount",
+          "n": "4.5",
+          "stratifyBy": "pooled",
+          "stratum": "",
+          "unit": ""
+        }
+      ],
+      "expected": {
+        "enginePairing": null,
+        "pairedItems": {
+          "formal": 4
+        },
+        "rows": [
+          {
+            "condition": "formal",
+            "count": "4 paired responses from at most 4 items",
+            "endpoint": "wordCount",
+            "pairedItems": 4,
+            "stratifyBy": "pooled",
+            "stratum": "",
+            "tooFew": false,
+            "unit": "response",
+            "unitSource": "inferred_from_records"
+          }
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 1
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 1
+          }
+        }
+      },
+      "generations": [
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}"
+      ],
+      "label": "a fractional count",
+      "note": "the stored count is compared as stored: 4.5 pairs are more than four items answered once, so the units do not coincide and the row paired responses",
+      "stampedUnit": null
+    },
+    {
+      "config": null,
+      "effectRows": [
+        {
+          "condition": "formal",
+          "endpoint": "wordCount",
+          "n": "4",
+          "stratifyBy": "pooled",
+          "stratum": "",
+          "unit": ""
+        }
+      ],
+      "expected": {
+        "enginePairing": null,
+        "pairedItems": {
+          "formal": 6
+        },
+        "rows": [
+          {
+            "condition": "formal",
+            "count": "4 paired items",
+            "endpoint": "wordCount",
+            "pairedItems": 6,
+            "stratifyBy": "pooled",
+            "stratum": "",
+            "tooFew": false,
+            "unit": "item",
+            "unitSource": "one_sample_per_item"
+          }
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 1
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 1
+          }
+        }
+      },
+      "generations": [
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 4, \"promptID\": \"item-5\", \"output\": \"An answer to item-5 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 5, \"promptID\": \"item-6\", \"output\": \"An answer to item-6 under formal.\", \"wordCount\": 6}"
+      ],
+      "label": "missing values in a run with one sample per item",
+      "stampedUnit": null
+    },
+    {
+      "config": null,
       "effectRows": [
         {
           "condition": "steered",
@@ -314,6 +1280,7 @@
         }
       ],
       "expected": {
+        "enginePairing": null,
         "pairedItems": {
           "steered": 4
         },
@@ -472,7 +1439,17 @@
             "unit": "item",
             "unitSource": "recorded"
           }
-        ]
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 3
+          },
+          "steered": {
+            "readouts": 0,
+            "responses": 3
+          }
+        }
       },
       "generations": [
         "{\"condition\": \"baseline\", \"seed\": 11, \"seedPolicy\": \"manifestSeeds\", \"sampleIndex\": 0, \"promptIndex\": 1, \"promptID\": \"item-1\", \"arm\": \"x\", \"wordCount\": 10, \"distinct2\": 0.5, \"output\": \"An answer to item-1.\"}",
@@ -505,6 +1482,7 @@
       "stampedUnit": null
     },
     {
+      "config": null,
       "effectRows": [
         {
           "condition": "formal",
@@ -516,6 +1494,7 @@
         }
       ],
       "expected": {
+        "enginePairing": null,
         "pairedItems": {
           "formal": 2
         },
@@ -529,9 +1508,19 @@
             "stratum": "",
             "tooFew": true,
             "unit": "item",
-            "unitSource": "engine_default"
+            "unitSource": "one_sample_per_item"
           }
-        ]
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 1
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 1
+          }
+        }
       },
       "generations": [
         "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
@@ -543,6 +1532,7 @@
       "stampedUnit": null
     },
     {
+      "config": null,
       "effectRows": [
         {
           "condition": "formal",
@@ -554,6 +1544,7 @@
         }
       ],
       "expected": {
+        "enginePairing": null,
         "pairedItems": {
           "formal": 3
         },
@@ -567,9 +1558,19 @@
             "stratum": "",
             "tooFew": false,
             "unit": "item",
-            "unitSource": "engine_default"
+            "unitSource": "one_sample_per_item"
           }
-        ]
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 1
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 1
+          }
+        }
       },
       "generations": [
         "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
@@ -583,6 +1584,7 @@
       "stampedUnit": null
     },
     {
+      "config": null,
       "effectRows": [
         {
           "condition": "formal",
@@ -602,6 +1604,7 @@
         }
       ],
       "expected": {
+        "enginePairing": null,
         "pairedItems": {
           "formal": 3
         },
@@ -615,7 +1618,7 @@
             "stratum": "",
             "tooFew": false,
             "unit": "item",
-            "unitSource": "engine_default"
+            "unitSource": "one_sample_per_item"
           },
           {
             "condition": "casual",
@@ -628,7 +1631,17 @@
             "unit": "unknown",
             "unitSource": "not_established"
           }
-        ]
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 1
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 1
+          }
+        }
       },
       "generations": [
         "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
@@ -642,6 +1655,7 @@
       "stampedUnit": null
     },
     {
+      "config": null,
       "effectRows": [
         {
           "condition": "formal",
@@ -653,6 +1667,7 @@
         }
       ],
       "expected": {
+        "enginePairing": null,
         "pairedItems": {
           "formal": 0
         },
@@ -668,7 +1683,17 @@
             "unit": "unknown",
             "unitSource": "not_established"
           }
-        ]
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 1
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 1
+          }
+        }
       },
       "generations": [
         "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
@@ -680,6 +1705,7 @@
       "stampedUnit": null
     },
     {
+      "config": null,
       "effectRows": [
         {
           "condition": "formal",
@@ -691,13 +1717,14 @@
         }
       ],
       "expected": {
+        "enginePairing": null,
         "pairedItems": {
           "formal": 2
         },
         "rows": [
           {
             "condition": "formal",
-            "count": "3 paired responses from 2 items",
+            "count": "3 paired responses from at most 2 items",
             "endpoint": "wordCount",
             "pairedItems": 2,
             "stratifyBy": "pooled",
@@ -706,7 +1733,17 @@
             "unit": "response",
             "unitSource": "inferred_from_records"
           }
-        ]
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 1
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 1
+          }
+        }
       },
       "generations": [
         "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
@@ -724,6 +1761,7 @@
       "stampedUnit": null
     },
     {
+      "config": null,
       "effectRows": [
         {
           "condition": "formal",
@@ -735,6 +1773,7 @@
         }
       ],
       "expected": {
+        "enginePairing": null,
         "pairedItems": {
           "formal": 4
         },
@@ -748,9 +1787,19 @@
             "stratum": "",
             "tooFew": false,
             "unit": "item",
-            "unitSource": "engine_default"
+            "unitSource": "one_sample_per_item"
           }
-        ]
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 1,
+            "responses": 0
+          },
+          "formal": {
+            "readouts": 1,
+            "responses": 0
+          }
+        }
       },
       "generations": [
         "{\"condition\": \"baseline\", \"promptIndex\": 0, \"promptID\": \"item-1\", \"instrument\": \"answerTokenLogprob\", \"selected\": \"B\", \"margin\": 3.0}",
@@ -767,6 +1816,7 @@
       "stampedUnit": null
     },
     {
+      "config": null,
       "effectRows": [
         {
           "condition": "formal",
@@ -778,6 +1828,7 @@
         }
       ],
       "expected": {
+        "enginePairing": null,
         "pairedItems": {
           "formal": 2
         },
@@ -791,9 +1842,19 @@
             "stratum": "",
             "tooFew": true,
             "unit": "item",
-            "unitSource": "engine_default"
+            "unitSource": "one_sample_per_item"
           }
-        ]
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 1,
+            "responses": 1
+          },
+          "formal": {
+            "readouts": 1,
+            "responses": 1
+          }
+        }
       },
       "generations": [
         "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
@@ -809,6 +1870,7 @@
       "stampedUnit": null
     },
     {
+      "config": null,
       "effectRows": [
         {
           "condition": "formal",
@@ -820,13 +1882,14 @@
         }
       ],
       "expected": {
+        "enginePairing": null,
         "pairedItems": {
           "formal": 2
         },
         "rows": [
           {
             "condition": "formal",
-            "count": "3 paired responses from 2 items",
+            "count": "3 paired responses from at most 2 items",
             "endpoint": "wordCount",
             "pairedItems": 2,
             "stratifyBy": "pooled",
@@ -835,7 +1898,17 @@
             "unit": "response",
             "unitSource": "inferred_from_records"
           }
-        ]
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 1
+          },
+          "formal": {
+            "readouts": 1,
+            "responses": 1
+          }
+        }
       },
       "generations": [
         "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
@@ -850,6 +1923,7 @@
       "stampedUnit": null
     },
     {
+      "config": null,
       "effectRows": [
         {
           "condition": "formal",
@@ -861,6 +1935,7 @@
         }
       ],
       "expected": {
+        "enginePairing": null,
         "pairedItems": {
           "formal": 1
         },
@@ -876,7 +1951,17 @@
             "unit": "transcript",
             "unitSource": "recorded"
           }
-        ]
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 4
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 4
+          }
+        }
       },
       "generations": [
         "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
@@ -892,6 +1977,7 @@
       "stampedUnit": "transcript"
     },
     {
+      "config": null,
       "effectRows": [
         {
           "condition": "formal",
@@ -911,6 +1997,7 @@
         }
       ],
       "expected": {
+        "enginePairing": null,
         "pairedItems": {
           "formal": 1
         },
@@ -937,7 +2024,17 @@
             "unit": "item",
             "unitSource": "recorded"
           }
-        ]
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 3
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 3
+          }
+        }
       },
       "generations": [
         "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
@@ -951,18 +2048,23 @@
       "stampedUnit": null
     }
   ],
+  "macItemPairingVersion": "0.9.7",
   "minimumPairs": 3,
-  "note": "a recorded unit is used; otherwise a row counting no more pairs than the items paired with the baseline in the run's records is item-level, a row counting more is response-level, and a condition with no paired items is unknown",
+  "note": "the first that applies: a unit the row or analysis recorded; item when the records answer each item only once under the row's condition and the baseline (the units coincide); for a pooled row, the pairing of the engine the analysis's config.json names (Python, or Mac from 0.9.7: item; Mac before 0.9.7: response on a run with several responses per item, item for its ordinal readouts); response when the row counts more pairs than the items paired in the run; otherwise unknown. Fewer pairs than items settles nothing. The hand-written answers that prove the rule right are in Server/tests/test_effect_unit_interpretation.py; this file proves the three readers agree",
   "wording": {
     "responseCaveat": "These are responses, not items: the analysis paired each response with the baseline response to the same item and seed, so its interval and test treat responses to the same item as independent and are not findings about items",
     "responseUnitExplanation": "These rows count more pairs than the run has paired items, so the analysis paired responses, not items: each response with the baseline response to the same item and seed. That is how the Mac engine paired a study with several samples per item before SteerLab 0.9.7, and it stamped no unit. Responses to the same item are not independent, so these intervals and tests are likely to understate the uncertainty, and they are not findings about items. The stored numbers are copied unchanged; analyzing the run again computes item-level rows.",
     "unitLines": {
-      "engine_default": "the item, with an item's samples averaged within each condition. This is the engines' documented default; the analysis did not stamp the unit itself. The run's records are consistent with it: no such row counts more pairs than the items paired in the run.",
+      "analysis_engine_item": "the item, with an item's samples averaged within each condition. The analysis did not record its unit, but its config.json names the engine that made it, and that engine paired these rows by item.",
+      "analysis_engine_response": "the response, not the item. The analysis did not record its unit, but its config.json names the Mac engine from before SteerLab 0.9.7, which paired each response with the baseline response to the same item and seed when a study had several responses per item, as this run does. Responses to the same item are not independent, so these intervals and tests are likely to understate the uncertainty, and they are not findings about items. The stored numbers are copied unchanged; analyzing the run again computes item-level rows.",
       "inferred_from_records": "the response, not the item. These rows count more pairs than the run has paired items, so the analysis paired responses, not items: each response with the baseline response to the same item and seed. That is how the Mac engine paired a study with several samples per item before SteerLab 0.9.7, and it stamped no unit. Responses to the same item are not independent, so these intervals and tests are likely to understate the uncertainty, and they are not findings about items. The stored numbers are copied unchanged; analyzing the run again computes item-level rows.",
-      "not_established": "not established. The analysis did not stamp it, and the run's records have no items paired with the baseline for these conditions.",
+      "not_established": "not established. The analysis that made these rows did not record whether their pairs count items or responses, and neither its config.json nor the run's records settle it: fewer pairs than items can mean items, or responses from fewer items. The numbers are shown as stored; analyzing the run again with this version records the unit.",
+      "one_sample_per_item": "the item. The analysis did not record its unit, but the run's records answer each item only once in each condition compared, so here an item and a response are the same thing.",
       "recorded_item": "the item, with an item's samples averaged within each condition, as the analysis recorded.",
       "recorded_transcript": "the transcript, as the analysis recorded: one play-through of a multi-agent conversation, with its turns reduced to their average difference before any test, because turns in the same conversation depend on each other."
     },
-    "unknownNote": "The unit of these pairs is not established"
+    "unitRecordsPartial": "Only the first part of the run's records was read here; reading the whole file may settle it.",
+    "unitRecordsUnavailable": "The run's records are not available here, so they could not be checked.",
+    "unknownNote": "The analysis that made this row did not record whether its pairs count items or responses"
   }
 }

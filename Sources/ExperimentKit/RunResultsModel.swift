@@ -127,6 +127,12 @@ extension RunResults {
         /// never shown, so it takes no part in `isEmpty`.
         public var analyzedRunGenerationsText: String?
         public var analyzedRunGenerationsTruncated = false
+        /// The directory's own `config.json`: its `substrate` and
+        /// `appVersion` name the engine that wrote the effect table beside
+        /// it, which settles how an unstamped row was paired
+        /// (`RunResults.enginePairing`). Read only for that, so it takes no
+        /// part in `isEmpty`.
+        public var configData: Data?
         /// Whether an evaluation report (a judged outcome) exists for this
         /// run's source run. The local loader looks beside the run
         /// (`HeadlineOutcome.evaluationReport`); a remote reading cannot, and
@@ -153,6 +159,7 @@ extension RunResults {
             "validation-evidence.json", "effect-sizes.csv",
             "alien-residuals.csv", "promoted-movers.json",
             "cosine-matrix.csv", "panel-effects.csv", "unit-of-analysis.json",
+            "config.json",
         ]
 
         /// Route one fetched file's bytes to its slot. `truncated` matters
@@ -186,6 +193,8 @@ extension RunResults {
                 panelEffectsText = String(decoding: data, as: UTF8.self)
             case "unit-of-analysis.json":
                 unitOfAnalysisData = data
+            case "config.json":
+                configData = data
             default:
                 break
             }
@@ -262,17 +271,16 @@ extension RunResults {
         if let rows = model.effectSizes {
             model.stampedUnit = stampedUnit(
                 unitOfAnalysisData: artifacts.unitOfAnalysisData, report: model.report)
-            let settled = resolveUnits(rows, stampedUnit: model.stampedUnit) {
+            let settled = resolveUnits(
+                rows, stampedUnit: model.stampedUnit,
+                pairing: enginePairing(configData: artifacts.configData)
+            ) {
                 if let effectUnitRecords { return effectUnitRecords() }
                 if let text = artifacts.generationsText {
-                    return PairedItems(
-                        counts: pairedItems(fromJSONL: text),
-                        complete: !artifacts.generationsTruncated)
+                    return pairedRecords(fromJSONL: text, complete: !artifacts.generationsTruncated)
                 }
                 return artifacts.analyzedRunGenerationsText.map {
-                    PairedItems(
-                        counts: pairedItems(fromJSONL: $0),
-                        complete: !artifacts.analyzedRunGenerationsTruncated)
+                    pairedRecords(fromJSONL: $0, complete: !artifacts.analyzedRunGenerationsTruncated)
                 }
             }
             model.effectSizes = settled.rows
@@ -371,6 +379,8 @@ extension RunResults {
             contentsOf: runDirectory.appending(component: "experiment.json"))
         artifacts.unitOfAnalysisData = try? Data(
             contentsOf: runDirectory.appending(component: "unit-of-analysis.json"))
+        artifacts.configData = try? Data(
+            contentsOf: runDirectory.appending(component: "config.json"))
         artifacts.hasEvaluationReport =
             HeadlineOutcome.evaluationReport(forRunAt: runDirectory) != nil
 

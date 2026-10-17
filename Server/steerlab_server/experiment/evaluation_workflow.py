@@ -847,13 +847,10 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
         "rubricFile": rubric_file, "rubricHash": rubric_hash,
         "judges": judge_blocks,
         "agreement": evaluation_evidence.agreement_entries(outcome_maps),
-        "pairs": judge_blocks[0]["pairs"] if judge_blocks else 0,
-        # Legacy single-judge keys (first judge) so existing readers keep
-        # working; per-judge truth lives in "judges".
-        "conditions": judge_blocks[0]["conditions"] if judge_blocks else {},
-        "judgeModel": judge_blocks[0]["requestedModel"] if judge_blocks else None,
-        "requestedJudgeModel": judge_blocks[0]["requestedModel"] if judge_blocks else None,
-        "actualJudgeModel": judge_blocks[0]["actualModel"] if judge_blocks else None,
+        # The whole panel at the top level, as the Mac engine states it: the
+        # tally adds up every judge (these keys used to repeat the first
+        # judge's alone); each judge's own tally lives in "judges".
+        **evaluation_evidence.panel_top_level(judge_blocks),
     }
     noncompliant_total = sum(
         b.get("noncompliantJudgments", 0) for b in judge_blocks)

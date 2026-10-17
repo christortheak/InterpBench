@@ -131,7 +131,7 @@ describe("pairedCountLabel", () => {
 
   // The unit a row is counted in is settled when the run is loaded
   // (lib/effectUnits.ts); these rows carry it as the loader would set it.
-  const item = { unit: "item", source: "engine_default" as const, pairedItems: 12 };
+  const item = { unit: "item", source: "recorded" as const, pairedItems: 12 };
 
   it("names the paired unit the row's settled unit declares", () => {
     expect(pairedCountLabel(effect({ condition: "c", endpoint: "e", n: 12, effectUnit: item }))).toBe("n = 12 paired items");

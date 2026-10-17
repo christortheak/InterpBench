@@ -64,7 +64,7 @@ export const demoLabel = () => demoPreviewEnabled() ? "Invented demo data" : "";
 const demoRow = (row: Omit<Effect, "condition" | "stratifyBy" | "stratum" | "pairedUnit" | "estimand" | "inference" | "key">): Effect => ({
   ...row, condition: "example-condition", stratifyBy: "pooled", stratum: "",
   pairedUnit: "", estimand: "", inference: "",
-  effectUnit: { unit: "item", source: "engine_default", pairedItems: null },
+  effectUnit: { unit: "item", source: "recorded", pairedItems: null },
   key: effectKey({ condition: "example-condition", endpoint: row.endpoint, stratifyBy: "pooled", stratum: "" }),
 });
 

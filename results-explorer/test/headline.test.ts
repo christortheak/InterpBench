@@ -95,7 +95,7 @@ const effect = (overrides: Partial<Effect> & { condition: string; endpoint: stri
     pairedUnit: "", estimand: "", inference: "",
     // Item-level, as a current run's rows read once its records settle them
     // (test/effectUnits.test.ts covers the settling).
-    effectUnit: { unit: "item", source: "engine_default" as const, pairedItems: null },
+    effectUnit: { unit: "item", source: "recorded" as const, pairedItems: null },
     ...overrides,
   };
   return { ...base, key: effectKey(base) };
@@ -165,7 +165,7 @@ describe("the headline card", () => {
     // Eight responses from two items are two items: too few.
     const responses = effect({ condition: "steered", endpoint: "choiceLogOdds", n: 8, effectUnit: { unit: "response", source: "inferred_from_records", pairedItems: 2 } });
     expect(hasTooFewPairs(responses)).toBe(true);
-    expect(intervalLine(responses, fmt)).toBe("too few items for a confidence interval (n = 8 paired responses from 2 items; at least 3 are needed)");
+    expect(intervalLine(responses, fmt)).toBe("too few items for a confidence interval (n = 8 paired responses from at most 2 items; at least 3 are needed)");
     expect(pLine(responses, [responses])).toBe("");
   });
 });
