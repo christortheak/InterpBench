@@ -493,6 +493,21 @@ def test_bundle_execute_threads_the_reread_to_analyze_only_when_asked(tmp_path, 
     assert seen == [{"reread_choices": True}, {}]
 
 
+def test_bundle_execute_notes_the_count_on_an_ordinary_analysis(tmp_path, monkeypatch, capsys):
+    from steerlab_server.experiment import bundles
+    meta = _packaged_study(str(tmp_path / "source"))
+    monkeypatch.setattr(tasks, "analyze", lambda name, root=None, source_run=None, **_: os.path.join(
+        root, "runs", "fake-exp-submit-study-analyze"))
+    monkeypatch.setattr(choice_reread, "advisory_for_analysis", lambda *_args, **_kwargs: {
+        "run": RUN, "changed": 5, "storedChoices": 12, "parserVersion": FIXTURE["parserVersion"]})
+    for reread in (False, True):
+        bundles.execute_run_bundle(
+            meta["bundlePath"], verb="analyze", target_root=str(tmp_path / f"target-{reread}"),
+            package_evidence_on_complete=False, reread_choices=reread)
+        out = capsys.readouterr().out
+        assert ("NOTE: 5 of 12 stored choices in run '" + RUN + "'" in out) is (not reread)
+
+
 def test_bundle_execute_refuses_the_reread_for_any_other_verb(tmp_path):
     from steerlab_server.experiment import bundles
     with pytest.raises(bundles.BundleError) as refusal:

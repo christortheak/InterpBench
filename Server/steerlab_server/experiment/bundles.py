@@ -2069,6 +2069,19 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
             run_directory = tasks.analyze(
                 name, target, source_path,
                 **({"reread_choices": True} if reread_choices else {}))
+            if not reread_choices:
+                # The discoverability count, said in the job's log (which a
+                # runner and the cluster carry home). Never blocks.
+                from . import choice_reread
+                found = choice_reread.advisory_for_analysis(
+                    run_directory, target, study=name)
+                if found is not None:
+                    print("NOTE: " + choice_reread.advisory_detail(
+                        found,
+                        check_command=(f"results check-choices {name} "
+                                       f"--run runs/{found['run']}"),
+                        analyze_command="analyze again with --reread-choices"),
+                        flush=True)
         elif verb == "pipeline":
             run_directory = tasks.pipeline(
                 name, target, dtype, device, checkpoint=checkpoint,
