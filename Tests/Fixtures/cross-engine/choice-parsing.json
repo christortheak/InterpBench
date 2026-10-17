@@ -458,6 +458,16 @@
       "why": "Digits are matched exactly."
     },
     {
+      "name": "positions count characters, not storage units",
+      "options": [
+        "B",
+        "neither"
+      ],
+      "text": "😀😀😀😀😀😀😀😀😀😀 neither B.",
+      "expected": "neither",
+      "why": "Ten emoji, then 'neither' (character 11) before B (character 19). An engine that counted UTF-16 units for one option and characters for the other would put B first."
+    },
+    {
       "name": "multi-word: whole reply",
       "options": [
         "rule for the plaintiff",
