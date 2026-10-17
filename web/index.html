@@ -1142,7 +1142,7 @@ function renderExperiments() {
 	    </select></div>
 	    <div class="row"><textarea id="ex-system" class="grow" rows="3" placeholder="baseline system prompt" ${e.status!=="draft"?"disabled":""} title="optional system instruction for the baseline condition; saved variants use their own system prompt">${esc(e.systemPrompt||"")}</textarea></div>
 	    <div class="row"><label title="baseline Qwen-only setting; measured studies default to no-think"><input type="checkbox" id="ex-think" ${e.qwenThinkingEnabled?"checked":""} ${e.status!=="draft" || !String(e.modelID||"").toLowerCase().includes("qwen")?"disabled":""}> Baseline Qwen thinking</label></div>
-	    <div class="row"><label title="study-wide generation temperature; measured variant-comparison runs currently require 0">Temp</label><input type="number" id="ex-temp" min="0" max="1.5" step="0.1" value="${esc(String(e.temperature))}" ${e.status!=="draft"?"disabled":""}></div>
+	    <div class="row"><label title="study-wide generation temperature: 0 is greedy and repeats exactly; above 0 each record is sampled with its own seed">Temp</label><input type="number" id="ex-temp" min="0" max="1.5" step="0.1" value="${esc(String(e.temperature))}" ${e.status!=="draft"?"disabled":""}></div>
     <div class="row"><label title="study-wide per-response token cap for baseline and variants">Max tokens</label><input type="number" id="ex-max" min="1" step="1" value="${esc(String(e.maxTokens))}" ${e.status!=="draft"?"disabled":""}></div>
   </fieldset>
   <fieldset><legend>Evaluation</legend>
@@ -1175,9 +1175,8 @@ function renderExperiments() {
   </div>
   <div class="row">
     <button id="ex-validate" ${e.isValidating || e.isRunning || e.violations.length ? "disabled" : ""} title="creates the validation evidence required by Freeze Study: verifies pinned inputs, loads the model at its pinned revision (or pins the local cached revision for drafts), re-derives concept vectors, runs never-named validation scenarios when present, writes the cross-concept cosine matrix, and stores a manifest snapshot in a new runs/ validate directory">${e.isValidating ? "Validating Study…" : "Validate Study"}</button>
-    <button id="ex-run" ${e.isRunning || e.violations.length || e.temperature !== 0 ? "disabled" : ""} title="executes the study in the webapp: verifies pins, loads the model at the pinned revision, re-derives vectors, runs every condition × seed × task prompt, and writes generations, metrics.csv, report.json, vector sidecars, and the manifest snapshot into a new immutable runs/ directory. Currently requires Temp = 0 because mlx-swift-lm does not expose a per-run seed for reproducible sampling">${e.isRunning ? "Running Study…" : "Run Study"}</button>
+    <button id="ex-run" ${e.isRunning || e.violations.length ? "disabled" : ""} title="executes the study in the webapp: verifies pins, loads the model at the pinned revision, re-derives vectors, runs every condition × seed × task prompt, and writes generations, metrics.csv, report.json, vector sidecars, and the manifest snapshot into a new immutable runs/ directory. At Temp 0 decoding is greedy; above 0 each record is sampled with its own seed">${e.isRunning ? "Running Study…" : "Run Study"}</button>
   </div>
-  ${e.temperature !== 0 ? `<div class="muted">Run Study requires Temp = 0 for reproducible measured runs.</div>` : ""}
   ${e.lastValidationDirectory ? `<div class="muted" title="latest completed validation run directory">${esc(e.lastValidationDirectory)}</div>` : ""}
   ${e.lastRunDirectory ? `<div class="muted" title="latest completed study run directory">${esc(e.lastRunDirectory)}</div>` : ""}
   <div class="muted">Same engine as CLI: steerlab-cli experiment extract|validate|sweep|run ${esc(e.name)}</div>

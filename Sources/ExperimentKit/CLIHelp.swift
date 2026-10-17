@@ -392,8 +392,9 @@ public enum CLIFlagVocabulary {
         // The TOP-LEVEL sampling fields, disambiguated from the sweep grid's
         // per-cell budget and `panel compile`'s pre-cast overrides.
         "experiment set-sampling --temperature":
-            "The study's sampling temperature (0 = greedy; a local MLX run "
-            + "refuses any other value).",
+            "The study's sampling temperature (default 0 = greedy, so every "
+            + "run repeats exactly; above 0, either engine samples each record "
+            + "with its own seed).",
         "experiment set-sampling --max-tokens":
             "Maximum tokens generated per record (default 512) — the study's "
             + "generation length, not the sweep grid's per-cell budget.",

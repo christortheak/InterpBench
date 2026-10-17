@@ -7,9 +7,9 @@ import SwiftUI
 /// had a picker while the list it indexes into could only ever be the
 /// default `[20260610]` or a confirm-draft carry. Renders only under the
 /// fixed-list policy (the derived policy never reads it), and the help
-/// text carries the local-engine caveat: local measured runs are greedy
-/// and stamp `seedInert`, so these seeds are causally meaningful only on
-/// the server substrate.
+/// text carries the greedy caveat: at temperature 0 both engines decode
+/// greedily and stamp `seedInert`, so these seeds are causally meaningful
+/// only above temperature 0 (on either engine).
 ///
 /// Pattern: `OrdinalScaleInstrumentControls` — the store's draft-edit gate,
 /// never a parallel save path.

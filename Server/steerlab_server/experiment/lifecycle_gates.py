@@ -67,7 +67,11 @@ SWEEP_SELECTION_RULE = "sweepSelectionRule"
 SWEEP_JUDGE_CAPACITY = "sweepJudgeCapacity"
 #: ``data check`` found blocking data requirements.
 DATA_READINESS = "dataReadiness"
-#: The local greedy-only sampling policy (MLX substrate; not raised here).
+#: Retired: no engine raises it. It named the Mac (MLX) engine's former
+#: greedy-only rule, withdrawn when that engine gained seeded sampling; both
+#: engines now run any temperature >= 0. Swift dropped the id from its
+#: ``LifecycleGate`` enum at the same time; it still appears in the tuple
+#: below, so the two vocabularies differ by this one retired id.
 SAMPLING_POLICY = "samplingPolicy"
 #: A logprob/ordinal arm declared with thinking mode on.
 THINKING_MODE_CONFLICT = "thinkingModeConflict"
