@@ -166,9 +166,20 @@ options: the workspace file, if it still has the hash the run's
 restore the file. They never re-read against a file with other bytes.
 
 Records without `finishReason` come from engines older than that field, which
-never recorded whether a reply was cut off by the length limit. They are
-re-read as complete replies and counted separately (`noFinishReason`, and
+never recorded whether a reply was cut off by the length limit. Those with a
+stored answer are re-read as complete replies. Those with no stored answer
+are re-read as possibly cut off, because the builds just before
+`finishReason` already stored no answer for a reply cut off at the length
+limit: only a JSON answer, the answer key, or a reply that is exactly an
+option can give them one. Both are counted separately (`noFinishReason`, and
 how many of them changed). Report that count beside the change counts.
+
+**The runner's engine must be current.** An older engine cannot re-read
+choices. `steerlab run` and `runner submit` check the runner's capabilities
+before anything is uploaded or submitted and refuse, saying so, rather than
+let that engine analyze the stored choices; they also refuse when the
+submission does not confirm the re-read. Bring the runner's engine up to
+date first, then analyze again.
 
 ## `evaluate`
 

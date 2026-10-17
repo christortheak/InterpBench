@@ -235,9 +235,13 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
             devices = ["cpu"]
     from .service_authority import service_role
     from . import science_placement
-    from ..experiment import instrumentation_contract
+    from ..experiment import choice_reread, instrumentation_contract
     return {
         "instrumentation": list(instrumentation_contract.SUPPORTED),
+        # Analysis options this engine honours when a client asks for them
+        # (an older engine ignores an unknown request key, so a client checks
+        # here before asking): `rereadChoices` is `analyze --reread-choices`.
+        choice_reread.CAPABILITY_KEY: [choice_reread.REMOTE_OPTION],
         "sciencePlacement": science_placement.capabilities(profile),
         "serviceRole": service_role(),
         "serverVersion": __version__,

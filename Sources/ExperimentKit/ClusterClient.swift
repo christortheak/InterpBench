@@ -25,6 +25,10 @@ public struct ClusterConnectionProfile: Codable, Sendable, Equatable {
 
 public struct ClusterCapabilities: Codable, Sendable {
     public var instrumentation: [String]? = nil
+    /// Analysis options the engine honours when asked (`rereadChoices` is
+    /// `analyze --reread-choices`). nil on an engine older than the key,
+    /// which would ignore the request (`ChoiceReread.capabilityKey`).
+    public var analysisOptions: [String]? = nil
     public struct RemoteStudy: Codable, Sendable {
         public var bundleUpload: Bool?
         public var bundleDownload: Bool?
@@ -1060,6 +1064,9 @@ public struct PreflightReport: Codable, Sendable, Equatable {
 public struct RemoteExperimentJobSubmission: Codable, Sendable {
     public var jobId: String
     public var preflight: PreflightReport?
+    /// The route's echo of a honoured choice re-read; nil from an engine
+    /// that ignored the request, or when none was asked for.
+    public var rereadChoices: Bool? = nil
 }
 
 // MARK: - Housekeeping (WS3 contract — camelCase, ISO-8601 dates as strings)
@@ -2649,9 +2656,21 @@ public struct ClusterClient: Sendable {
         // anyway: a URL must never depend on that invariant holding forever.
         let safeName = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
         let safeVerb = verb.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? verb
-        return try await post(
+        // An older engine ignores `rereadChoices` and analyzes the stored
+        // choices: refused before submitting when its capabilities do not
+        // list it, and after when its answer does not echo it.
+        if rereadChoices {
+            try ChoiceReread.requireRemoteSupport(
+                try await capabilities(), where: profile.baseURL.absoluteString)
+        }
+        let submission: RemoteExperimentJobSubmission = try await post(
             "/api/experiment/\(safeName)/\(safeVerb)",
             body: Body(resumeFrom: resumeFrom, rereadChoices: rereadChoices ? true : nil))
+        if rereadChoices, submission.rereadChoices != true {
+            throw ChoiceReread.remoteNotConfirmed(
+                where: profile.baseURL.absoluteString, jobID: submission.jobId)
+        }
+        return submission
     }
 
     /// Names of the experiments present in the SERVER's workspace tree — the
@@ -3052,6 +3071,12 @@ public struct ClusterClient: Sendable {
         rereadChoices: Bool = false
     ) async throws -> RemoteStudySubmission {
         try await requireBundleInstrumentation(path: path)
+        // An older engine ignores `rereadChoices`: refused before submitting
+        // when its capabilities do not list it.
+        if rereadChoices {
+            try ChoiceReread.requireRemoteSupport(
+                try await capabilities(), where: profile.baseURL.absoluteString)
+        }
         struct Body: Encodable {
             var bundlePath: String
             var verb: String
@@ -3099,7 +3124,7 @@ public struct ClusterClient: Sendable {
             merged["autoResubmit"] = .bool(resumePolicy.autoResubmit)
             merged["autoResubmitLimit"] = .number(Double(resumePolicy.limit))
         }
-        return try await post(
+        let submission: RemoteStudySubmission = try await post(
             "/api/studies/submit-bundle",
             body: Body(
                 bundlePath: path, verb: verb, executor: executor, dryRun: dryRun,
@@ -3111,6 +3136,13 @@ public struct ClusterClient: Sendable {
                 parallelJobs: ShardedSubmission.encodedParallelJobs(
                     requested: parallelJobs, executor: executor, verb: verb),
                 rereadChoices: rereadChoices ? true : nil))
+        // ...and after, when the rendered command does not carry the flag:
+        // that job analyzes the stored choices.
+        if rereadChoices, !submission.command.contains(ChoiceReread.commandFlag) {
+            throw ChoiceReread.remoteNotConfirmed(
+                where: profile.baseURL.absoluteString, jobID: submission.jobId)
+        }
+        return submission
     }
 
     /// Manual resume of a checkpointed job (`POST /api/jobs/{id}/resubmit`,

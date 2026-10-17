@@ -4239,6 +4239,10 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
     _refuse_unexecutable(stages, study_verb=study_verb, executor=executor,
                          dry_run=dry_run, capabilities=capabilities,
                          identity=identity, common=common)
+    if invocation.has("--reread-choices"):
+        # An older engine ignores the request and analyzes the stored
+        # choices; refused here, before anything is uploaded.
+        runner_api.require_reread_support(capabilities, client.base_url)
     runner_facts = {"url": client.base_url,
                     "service": identity.get("service"),
                     "engineVersion": identity.get("engineVersion"),

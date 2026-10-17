@@ -215,6 +215,33 @@ class RunnerRefusal(RunnerError):
     code = "runnerRefused"
 
 
+def require_reread_support(capabilities, where: str) -> None:
+    """Refuse a choice re-read BEFORE anything is sent when the runner's
+    capability snapshot does not list it: an older engine would ignore the
+    request and analyze the stored choices."""
+    from ..experiment import choice_reread
+    if not choice_reread.remote_supports(capabilities):
+        raise RunnerRefusal(
+            choice_reread.remote_unsupported_reason(where),
+            code=choice_reread.UNSUPPORTED_CODE,
+            repair_action=choice_reread.remote_repair())
+
+
+def confirm_reread(submission, where: str) -> None:
+    """Refuse AFTER a submission whose rendered command does not carry the
+    re-read: that job analyzes the stored choices, and must not be reported
+    as an analysis with re-read choices."""
+    from ..experiment import choice_reread
+    command = submission.get("command") if isinstance(submission, dict) else None
+    if not (isinstance(command, list) and choice_reread.COMMAND_FLAG in command):
+        job_id = submission.get("jobId") if isinstance(submission, dict) else None
+        raise RunnerRefusal(
+            choice_reread.remote_not_confirmed_reason(where, job_id),
+            code=choice_reread.NOT_CONFIRMED_CODE,
+            repair_action=choice_reread.remote_repair(),
+            detail={"jobId": job_id})
+
+
 def _digest_pin(value, *, what: str, detail: dict | None = None) -> str:
     """Normalize an EXPLICIT digest pin, or refuse it as malformed.
 
@@ -796,7 +823,11 @@ class RunnerClient:
 
         ``reread_choices`` (verb ``analyze`` only) asks the analysis to read
         every stored choice again with the runner's current choice parser;
-        sent only when true.
+        sent only when true. An older runner ignores the key, so the request
+        is checked twice: refused before submitting when the runner's
+        capabilities do not list it (:func:`require_reread_support`), and
+        refused after submitting when the rendered command does not carry
+        ``--reread-choices`` (the job then analyzes the stored choices).
 
         **This call is not idempotent.** It creates a job and, on a Slurm
         runner, spends a scheduler allocation. Do not retry it automatically;
@@ -867,12 +898,16 @@ class RunnerClient:
         if force:
             body["force"] = True
         if reread_choices:
+            require_reread_support(self.capabilities(), self.base_url)
             body["rereadChoices"] = True
         if resources:
             body["resources"] = dict(resources)
         if env:
             body["env"] = dict(env)
-        return self._json("POST", "/api/studies/submit-bundle", json_body=body)
+        submission = self._json("POST", "/api/studies/submit-bundle", json_body=body)
+        if reread_choices:
+            confirm_reread(submission, self.base_url)
+        return submission
 
     # -- jobs --------------------------------------------------------------
 

@@ -56,7 +56,7 @@ describe("the choice re-read stamp", () => {
     });
     const [run] = await discoverRuns(embeddedRunsDirectory() as unknown as LocalDirectoryHandle);
     const hydrated = await hydrateRun(run);
-    expect(analysisStampsOf(hydrated).choiceReread?.changed).toBe(5);
+    expect(analysisStampsOf(hydrated).choiceReread?.changed).toBe(fixture.expected.total.changed);
     const page = render(<EffectsView run={hydrated} onOpenFile={() => {}} />);
     expect(page.text).toContain("Choices re-read");
     expect(page.text).toContain(fixture.expected.sentence);

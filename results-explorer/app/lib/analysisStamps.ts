@@ -281,7 +281,7 @@ export const choiceRereadSentence = (stamp: ChoiceRereadStamp | null): string =>
   const stored = stamp.storedChoices === null ? "an unstated number of stored choices" : plural(stamp.storedChoices, "stored choice");
   let text = `Choices were re-read from the stored replies with choice parser version ${stamp.parserVersion || "unknown"}; ${stamp.changed ?? "an unstated number"} of ${stored} changed, and the run itself is ${stamp.runUnchanged ? "unchanged" : "not said to be unchanged"}.`;
   if (stamp.noFinishReason) {
-    text += ` ${stamp.noFinishReason} of those replies come from an older engine that did not record whether a reply was cut off by the length limit, so they were read as complete replies (${stamp.noFinishReasonChanged ?? "an unstated number"} of them changed).`;
+    text += ` ${stamp.noFinishReason} of those replies come from an older engine that did not record whether a reply was cut off by the length limit: those with a stored answer were read as complete replies, and those without one as possibly cut off (${stamp.noFinishReasonChanged ?? "an unstated number"} of them changed).`;
   }
   return text;
 };

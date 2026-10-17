@@ -356,35 +356,62 @@ import Testing
         #expect(submission.dryRun)
     }
 
-    /// A choice re-read (`analyze --reread-choices`) rides both analyze
-    /// bodies exactly when asked for — the in-process route the app's server
-    /// Analyze uses and the bundle submission — and never otherwise, so an
-    /// older server sees the body it always did.
-    @Test func rereadChoicesRidesTheBodyOnlyWhenAsked() async throws {
-        let bodies = LockedBodies()
-        let client = ClusterClient(
+    /// A client whose server answers are scripted for the choice re-read:
+    /// whether its capabilities list `rereadChoices`, whether the analyze
+    /// route echoes it, and whether the bundle submission's command carries
+    /// `--reread-choices`. Every request body's `rereadChoices` is recorded.
+    private func rereadClient(
+        lists: Bool, echoes: Bool, renders: Bool, bodies: LockedBodies
+    ) -> ClusterClient {
+        ClusterClient(
             profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
             session: Self.session { request in
-                if request.url?.path == "/api/bundles/inspect" {
+                switch request.url?.path {
+                case "/api/bundles/inspect":
                     return (Data(#"{"runtimeRequirements":[]}"#.utf8), 200)
+                case "/api/capabilities":
+                    return (
+                        Data((lists ? #"{"analysisOptions": ["rereadChoices"]}"# : "{}").utf8),
+                        200)
+                default:
+                    break
                 }
                 let body = try #require(Self.bodyData(from: request))
                 let object = try #require(
                     JSONSerialization.jsonObject(with: body) as? [String: Any])
-                bodies.append(request.url?.path ?? "", object["rereadChoices"] as? Bool)
+                let asked = object["rereadChoices"] as? Bool
+                bodies.append(request.url?.path ?? "", asked)
                 if request.url?.path == "/api/studies/submit-bundle" {
+                    let command = renders && asked == true
+                        ? #"["python", "bundle", "execute", "--reread-choices"]"#
+                        : #"["python", "bundle", "execute"]"#
                     return (
                         Data(
                             """
                             {"jobId": "job-4", "experiment": "study", "verb": "analyze",
                              "executor": "local", "dryRun": false, "runBundle": {},
-                             "command": [], "recordsDirectory": "/r", "submissionDirectory": "/s"}
+                             "command": \(command), "recordsDirectory": "/r", "submissionDirectory": "/s"}
                             """.utf8), 200)
                 }
-                return (Data(#"{"jobId": "job-5"}"#.utf8), 200)
+                return (
+                    Data(
+                        (echoes && asked == true
+                            ? #"{"jobId": "job-5", "rereadChoices": true}"#
+                            : #"{"jobId": "job-5"}"#).utf8), 200)
             })
-        _ = try await client.submitExperimentJobDetailed(
+    }
+
+    /// A choice re-read (`analyze --reread-choices`) rides both analyze
+    /// bodies exactly when asked for — the in-process route the app's server
+    /// Analyze uses and the bundle submission — and never otherwise, so an
+    /// older server sees the body it always did. A current engine says it
+    /// can re-read and confirms each request.
+    @Test func rereadChoicesRidesTheBodyOnlyWhenAsked() async throws {
+        let bodies = LockedBodies()
+        let client = rereadClient(lists: true, echoes: true, renders: true, bodies: bodies)
+        let routed = try await client.submitExperimentJobDetailed(
             experiment: "study", verb: "analyze", rereadChoices: true)
+        #expect(routed.rereadChoices == true)
         _ = try await client.submitExperimentJobDetailed(experiment: "study", verb: "analyze")
         _ = try await client.submitBundle(
             path: "/runs/uploaded/study.tar.gz", verb: "analyze", executor: "local",
@@ -399,6 +426,54 @@ import Testing
                 .init(path: "/api/studies/submit-bundle", reread: true),
                 .init(path: "/api/studies/submit-bundle", reread: nil),
             ])
+    }
+
+    /// An engine whose capabilities do not list `rereadChoices` would ignore
+    /// the request and analyze the stored choices: both routes refuse before
+    /// anything is submitted, with the repair.
+    @Test func anOlderEngineIsRefusedBeforeAReReadIsSubmitted() async throws {
+        let bodies = LockedBodies()
+        let client = rereadClient(lists: false, echoes: false, renders: false, bodies: bodies)
+        for submit in [
+            { _ = try await client.submitExperimentJobDetailed(
+                experiment: "study", verb: "analyze", rereadChoices: true) },
+            { _ = try await client.submitBundle(
+                path: "/runs/uploaded/study.tar.gz", verb: "analyze", executor: "local",
+                dryRun: false, rereadChoices: true) },
+        ] as [() async throws -> Void] {
+            do {
+                try await submit()
+                Issue.record("an older engine was asked to re-read")
+            } catch let error as ExperimentError {
+                #expect(error.lifecycleRefusal?.gate == .missingPrerequisite)
+                #expect(error.reason.contains("Nothing was submitted"))
+                #expect(error.lifecycleRefusal?.repairAction.contains("cluster push --site") == true)
+                #expect(ChoiceReread.appMessage(for: error).hasSuffix(ChoiceReread.remoteRepair))
+            }
+        }
+        #expect(bodies.values.isEmpty)
+    }
+
+    /// An answer that does not confirm the re-read (no echo from the route,
+    /// no flag in the rendered command) is refused after submitting: that
+    /// job analyzes the stored choices.
+    @Test func anAnswerThatDoesNotConfirmTheReReadIsRefused() async throws {
+        let client = rereadClient(lists: true, echoes: false, renders: false, bodies: LockedBodies())
+        for (submit, job) in [
+            ({ _ = try await client.submitExperimentJobDetailed(
+                experiment: "study", verb: "analyze", rereadChoices: true) }, "job-5"),
+            ({ _ = try await client.submitBundle(
+                path: "/runs/uploaded/study.tar.gz", verb: "analyze", executor: "local",
+                dryRun: false, rereadChoices: true) }, "job-4"),
+        ] as [(() async throws -> Void, String)] {
+            do {
+                try await submit()
+                Issue.record("an unconfirmed re-read was accepted")
+            } catch let error as ExperimentError {
+                #expect(error.reason.contains("accepted job \(job) but did not confirm the re-read"))
+                #expect(error.lifecycleRefusal?.repairAction == ChoiceReread.remoteRepair)
+            }
+        }
     }
 
     private final class LockedBodies: @unchecked Sendable {

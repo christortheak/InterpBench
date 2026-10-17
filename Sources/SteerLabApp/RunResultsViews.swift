@@ -750,7 +750,7 @@ struct RunAnalyzeRow: View {
                     "submitted analyze job \(jobID) — monitor in Compute, then "
                         + "refresh the server runs list")
             } catch {
-                state = .failed(error.localizedDescription)
+                state = .failed(ChoiceReread.appMessage(for: error))
             }
         }
     }
@@ -839,7 +839,7 @@ struct RemoteRunAnalyzeRow: View {
                 ).jobId
                 state = .finished("submitted analyze job \(jobID) — monitor in Compute")
             } catch {
-                state = .failed(error.localizedDescription)
+                state = .failed(ChoiceReread.appMessage(for: error))
             }
         }
     }

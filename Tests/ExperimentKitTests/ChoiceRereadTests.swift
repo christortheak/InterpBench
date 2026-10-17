@@ -178,7 +178,7 @@ struct ChoiceRereadTests {
         #expect(result.total == value.expected.total)
         #expect(result.conditions == value.expected.conditions)
         #expect(result.examples == value.expected.examples)
-        #expect(result.fresh.keys.sorted() == [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13])
+        #expect(result.fresh.keys.sorted() == [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 15, 16])
     }
 
     /// The fixture's malformed records, given as exact lines: read as the
@@ -262,8 +262,8 @@ struct ChoiceRereadTests {
             return
         }
         #expect(summary["sentence"] == .string(value.expected.sentence))
-        #expect(summary["changed"] == .number(5))
-        #expect(summary["storedChoices"] == .number(12))
+        #expect(summary["changed"] == .number(6))
+        #expect(summary["storedChoices"] == .number(14))
         #expect(summary["parserVersion"] == .string(value.parserVersion))
         #expect(summary["stamp"] == .string(ChoiceReread.stampFile))
         #expect(ExperimentCLIRunner.analysisPayload(inRunAt: try analyze(space, reread: false))["choiceReread"] == nil)
@@ -345,12 +345,12 @@ struct ChoiceRereadTests {
         let found = try #require(
             ChoiceReread.advisoryCount(
                 runDirectory: space.run, workspaceRoot: space.root, study: value.study))
-        #expect(found.changed == 5)
-        #expect(found.storedChoices == 12)
+        #expect(found.changed == 6)
+        #expect(found.storedChoices == 14)
         let detail = ChoiceReread.advisoryDetail(
             changed: found.changed, storedChoices: found.storedChoices, run: Self.runName,
             checkCommand: "C", analyzeCommand: "A")
-        #expect(detail.hasPrefix("5 of 12 stored choices in run '\(Self.runName)'"))
+        #expect(detail.hasPrefix("6 of 14 stored choices in run '\(Self.runName)'"))
         #expect(CLIAdvisory.storedChoicesReadDifferently.rawValue == "storedChoicesReadDifferently")
     }
 
@@ -409,9 +409,9 @@ struct ChoiceRereadTests {
             Issue.record("no total in \(result.payload)")
             return
         }
-        #expect(total["changed"] == .number(5))
-        #expect(total["storedChoices"] == .number(12))
-        #expect(total["noFinishReason"] == .number(2))
+        #expect(total["changed"] == .number(6))
+        #expect(total["storedChoices"] == .number(14))
+        #expect(total["noFinishReason"] == .number(4))
         #expect(result.message.contains("steerlab-cli experiment analyze reread --reread-choices"))
         let report = try await ChoiceCheck.check(
             workspaceRoot: space.root, study: value.study, client: .commandLine,
@@ -554,7 +554,7 @@ struct ChoiceRereadTests {
                 $0.code == CLIAdvisory.storedChoicesReadDifferently.rawValue
             }
             #expect(advice.count == 1)
-            #expect(advice.first?.detail.hasPrefix("5 of 12 stored choices in run '") == true)
+            #expect(advice.first?.detail.hasPrefix("6 of 14 stored choices in run '") == true)
             #expect(advice.first?.detail.contains("steerlab-cli results check-choices") == true)
 
             let reread = await ExperimentCLIRunner(sink: .discarding).run(
@@ -570,7 +570,7 @@ struct ChoiceRereadTests {
                 Issue.record("no choiceReread summary in \(reread.envelope)")
                 return
             }
-            #expect(summary["changed"] == .number(5))
+            #expect(summary["changed"] == .number(6))
         }
     }
 }

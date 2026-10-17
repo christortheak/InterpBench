@@ -105,6 +105,9 @@ class Script:
         self.available_job_types = ["run", "extract", "validate", "sweep",
                                     "evaluate"]
         self.root_looks_like_checkout = False
+        #: The capability snapshot's ``analysisOptions``; ``None`` = an engine
+        #: older than the key, which lists nothing.
+        self.analysis_options: list | None = None
 
         #: What the runner will claim the upload hashed to. ``None`` = agree.
         self.reported_upload_sha: str | None = None
@@ -172,6 +175,8 @@ class FakeRunner:
                 "schedulerMode": self.script.scheduler_mode,
                 "serverRole": "workbench",
                 "availableJobTypes": list(self.script.available_job_types),
+                **({"analysisOptions": list(self.script.analysis_options)}
+                   if self.script.analysis_options is not None else {}),
             },
         }
 
@@ -550,12 +555,28 @@ def test_a_choice_reread_reaches_the_runner_only_when_asked(workspace, script,
     every stored choice again; an ordinary submission asks nothing of the
     kind, and both reach the submit stage."""
     script.job_status = "prepared"
+    script.analysis_options = ["rereadChoices"]
     for extra, expected in (([], False), (["--verb", "analyze", "--reread-choices"], True)):
         code, document, _ = _run(
             [STUDY_NAME, "--runner", RUNNER_URL, "--dry-run", *extra], capsys,
             root=workspace)
         assert code == 0, document
         assert script.submits[-1]["reread_choices"] is expected
+
+
+def test_a_choice_reread_on_an_older_runner_is_refused_before_any_upload(
+        workspace, script, capsys):
+    """An engine whose capabilities do not list `rereadChoices` would ignore
+    the request and analyze the stored choices. Refused at the capabilities
+    stage, with the repair, and nothing is uploaded or submitted."""
+    code, document, _ = _run(
+        [STUDY_NAME, "--runner", RUNNER_URL, "--verb", "analyze",
+         "--reread-choices", "--dry-run"], capsys, root=workspace)
+    assert code == 65, document
+    assert document["error"]["code"] == "rereadChoicesUnsupported"
+    assert "cluster push --site" in document["error"]["repairAction"]
+    assert document["result"]["failedStage"] == "capabilities"
+    assert script.uploads == [] and script.submits == []
 
 
 def test_a_dry_run_may_name_slurm_on_any_runner(workspace, script, capsys):
