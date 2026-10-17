@@ -35,7 +35,13 @@ migration that rewrites frozen bytes.
   each item's options only from the study's verified task prompts; it
   writes `choice-reread.json` beside the new analysis, every results view
   says so, and the run itself is untouched. An ordinary analysis now
-  advises when stored choices would read differently.
+  advises when stored choices would read differently. A re-read on a
+  server or cluster needs that engine to be current: the client checks the
+  engine before submitting and its answer afterwards, and refuses with the
+  repair (push the engine) rather than let an older engine quietly analyze
+  the stored choices. A reply from an engine too old to record why it
+  stopped, stored with no answer, is re-read as possibly cut off, so a
+  correct "no answer" is never turned into the first option it mentions.
 - **Install Update in the Mac app.** The update notice now offers Install
   Update, which says what will happen, downloads the release from GitHub,
   and checks it on your Mac before anything moves: the checksum, a safe file
