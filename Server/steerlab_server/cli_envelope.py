@@ -583,7 +583,10 @@ VERB_SPECS: tuple[VerbSpec, ...] = (
     VerbSpec("study", "submit", positional="<experiment>",
              purpose="Submit one experiment verb to an executor as a durable "
                      "job.",
-             boolean_flags=frozenset({"--dry-run", "--force", "--no-evidence"}),
+             # `--reread-choices` (with --verb analyze): the analysis reads
+             # every stored choice again with the current choice parser.
+             boolean_flags=frozenset({"--dry-run", "--force", "--no-evidence",
+                                      "--reread-choices"}),
              value_flags=frozenset({
                  "--verb", "--executor", "--parallel", "--parallel-jobs",
                  "--gres", "--partition", "--mem", "--walltime", "--job-name",

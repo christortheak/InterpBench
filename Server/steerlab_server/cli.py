@@ -1605,6 +1605,9 @@ def _bundle(args: list[str]) -> int:
                 # a 7,200-record corpus actually runs.
                 sample_per_condition=_flag(args, "--sample-per-condition"),
                 sample_seed=_flag(args, "--sample-seed"),
+                # `--reread-choices` (analyze only): every stored choice read
+                # again with the current parser, for that analysis only.
+                reread_choices=("--reread-choices" in args),
                 # `--resume <run-dir>` continues a PARKED run/sweep/pipeline
                 # through the bundle path (2026-08-23). A relative directory
                 # is resolved against `--target`, so the flag behaves the same
@@ -1676,6 +1679,9 @@ def _study(args: list[str]):
             "  [--sample-per-condition N --sample-seed S]  (--verb evaluate "
             "only: code a seeded, stratified subsample instead of the whole "
             "source run; both flags or neither)\n"
+            "  [--reread-choices]  (--verb analyze only: read every stored "
+            "choice again with the current choice parser, for that analysis "
+            "only)\n"
             "(--force overrides a failing preflight verdict — recorded loudly "
             "on the job)\n"
             "(--parallel N shards a Slurm 'run' across N GPU jobs, cap 64; the "
@@ -1756,7 +1762,8 @@ def _study(args: list[str]):
             # design has to be expressible here and not only in a local
             # `experiment evaluate`.
             sample_per_condition=_flag(args, "--sample-per-condition"),
-            sample_seed=_flag(args, "--sample-seed"))
+            sample_seed=_flag(args, "--sample-seed"),
+            reread_choices=("--reread-choices" in args))
     except SubmissionRefusal as exc:
         # A TYPED refusal, not a failure: the request is well formed and a
         # policy/precondition declined it, so `--json` carries the reason and

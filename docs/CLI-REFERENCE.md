@@ -3672,7 +3672,7 @@ from a probed one.
 <!-- Generated from the declarative verb table — `steerlab-server docs cli-reference --write`. Edit the table, not this block. -->
 
 ```
-steerlab-server study submit <experiment> [--dependency <spec>] [--device <device>] [--dry-run] [--dtype <dtype>] [--executor <local|slurm>] [--force] [--gres <spec>] [--job-name <name>] [--mem <size>] [--no-evidence] [--parallel <n>] [--parallel-jobs <n>] [--partition <partition>] [--prompts <path>] [--resume <run-dir>] [--sample-per-condition <n>] [--sample-seed <hex-or-int>] [--source <run-dir>] [--target <root>] [--verb <verb>] [--walltime <hh:mm:ss>]
+steerlab-server study submit <experiment> [--dependency <spec>] [--device <device>] [--dry-run] [--dtype <dtype>] [--executor <local|slurm>] [--force] [--gres <spec>] [--job-name <name>] [--mem <size>] [--no-evidence] [--parallel <n>] [--parallel-jobs <n>] [--partition <partition>] [--prompts <path>] [--reread-choices] [--resume <run-dir>] [--sample-per-condition <n>] [--sample-seed <hex-or-int>] [--source <run-dir>] [--target <root>] [--verb <verb>] [--walltime <hh:mm:ss>]
 ```
 
 | Verb | Purpose |

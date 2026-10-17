@@ -3905,6 +3905,10 @@ def build_router(state: ServiceState) -> APIRouter:
                 # the submit-time refusal rather than be quietly completed.
                 sample_per_condition=body.get("samplePerCondition"),
                 sample_seed=body.get("sampleSeed"),
+                # Cross-engine body key "rereadChoices" (analyze only): the
+                # analysis reads every stored choice again with the current
+                # choice parser. Only a literal true asks for it.
+                reread_choices=body.get("rereadChoices") is True,
                 registry=state.registry)
         except PreflightRejection as exc:
             raise HTTPException(
@@ -3950,7 +3954,11 @@ def build_router(state: ServiceState) -> APIRouter:
                 # `sourcePath` gets: absent from an older client's body, and
                 # then absent from the rendered command line too.
                 sample_per_condition=body.get("samplePerCondition"),
-                sample_seed=body.get("sampleSeed"))
+                sample_seed=body.get("sampleSeed"),
+                # "rereadChoices" (analyze only), as on /api/studies/submit:
+                # absent from an older client's body, and then absent from
+                # the rendered command line too.
+                reread_choices=body.get("rereadChoices") is True)
         except PreflightRejection as exc:
             raise HTTPException(
                 status_code=400,

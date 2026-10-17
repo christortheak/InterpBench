@@ -503,7 +503,10 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
     VerbSpec("runner", "submit",
              purpose="Submit an already-uploaded bundle to a runner for "
                      "execution.",
-             boolean_flags=frozenset({"--dry-run", "--no-evidence"}),
+             # `--reread-choices` (with --verb analyze): the analysis reads
+             # every stored choice again with the runner's current parser.
+             boolean_flags=frozenset({"--dry-run", "--no-evidence",
+                                      "--reread-choices"}),
              value_flags=_RUNNER_FLAGS | frozenset({
                  "--bundle-path", "--bundle-sha", "--verb", "--executor",
                  "--target-root", "--dtype", "--device", "--parallel"}),
@@ -563,7 +566,7 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
                      "steps that come before freeze, --verb validate and "
                      "--verb extract.",
              boolean_flags=frozenset({"--dry-run", "--no-evidence",
-                                      "--no-wait"}),
+                                      "--no-wait", "--reread-choices"}),
              value_flags=frozenset({
                  "--runner", "--token-file", "--ca-bundle", "--timeout",
                  "--request-timeout", "--verb", "--executor", "--target-root",
@@ -3098,6 +3101,22 @@ def _runner_serve(invocation: Invocation) -> CLIResult:
     raise ServeCompleted(0 if stopped_by_signal or code == 0 else 70)
 
 
+def _require_reread_verb(reread_choices: bool, study_verb: str | None, *,
+                         payload: dict) -> None:
+    """``--reread-choices`` reads a completed run's stored choices again for
+    one analysis; with any other step it is refused, never dropped."""
+    if reread_choices and study_verb != "analyze":
+        raise ClientRefusal(
+            code=USAGE_CODE,
+            reason=("--reread-choices is for an analysis: it reads a "
+                    "completed run's stored choices again with the current "
+                    f"choice parser, and the '{study_verb}' step reads no "
+                    "stored choices"),
+            repair_action=("add --verb analyze to analyze a completed run with "
+                           "its choices re-read, or leave --reread-choices out"),
+            payload=payload)
+
+
 def _normalized_runner_url(runner_api, raw: str, *, payload: dict) -> str:
     """The runner locator, canonical — or this client's typed refusal.
 
@@ -3261,6 +3280,8 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
         # The runner's identity is read BEFORE the submit, deliberately: it is
         # an idempotent GET, so a wrong URL or a dead tunnel fails here rather
         # than after a job (and possibly a scheduler allocation) exists.
+        reread_choices = invocation.has("--reread-choices")
+        _require_reread_verb(reread_choices, study_verb, payload=dict(common))
         identity = client.identity()
         submission = client.submit_uploaded_bundle(
             remote_path=remote_path, expected_sha256=bundle_sha,
@@ -3270,7 +3291,8 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
             dtype=invocation.one("--dtype"),
             device=invocation.one("--device"),
             package_evidence=not invocation.has("--no-evidence"),
-            parallel_jobs=_runner_int(invocation, "--parallel", 1) or 1)
+            parallel_jobs=_runner_int(invocation, "--parallel", 1) or 1,
+            reread_choices=reread_choices)
         run_bundle = submission.get("runBundle") or {}
         job_id = submission.get("jobId")
         # Where the job went, recorded in the named workspace so the Mac app
@@ -3972,6 +3994,11 @@ def _run(invocation: Invocation) -> CLIResult:
         payload={"experiment": name, "stages": _stage_table(stages)})
 
     study_verb = (invocation.one("--verb") or DEFAULT_STUDY_VERB).strip()
+    # `--reread-choices`: an analysis option, refused for any other step
+    # before anything is built or sent.
+    reread_choices = invocation.has("--reread-choices")
+    _require_reread_verb(reread_choices, study_verb,
+                         payload={"experiment": name, "stages": _stage_table(stages)})
     executor = (invocation.one("--executor") or "").strip() or None
     dry_run = invocation.has("--dry-run")
     package_evidence = not invocation.has("--no-evidence")
@@ -4248,7 +4275,8 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
             dry_run=dry_run, dtype=invocation.one("--dtype"),
             device=invocation.one("--device"),
             package_evidence=package_evidence,
-            parallel_jobs=_runner_int(invocation, "--parallel", 1) or 1)
+            parallel_jobs=_runner_int(invocation, "--parallel", 1) or 1,
+            reread_choices=reread_choices)
     except runner_api.RunnerUnreachable as exc:
         # The one call in this machine whose failure is genuinely ambiguous:
         # the request may have created a job (and on Slurm spent an

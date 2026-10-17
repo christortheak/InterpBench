@@ -442,3 +442,90 @@ def test_the_route_refuses_reread_choices_on_any_other_verb():
     response = TestClient(app).post(f"/api/experiment/{STUDY}/evaluate", json={"rereadChoices": True})
     assert response.status_code == 400
     assert "analyze" in response.json()["detail"]
+
+
+# --- the bundle path: runners, the cluster, and `steerlab run --verb analyze` -----
+
+
+def _packaged_study(root):
+    """A minimal study packaged as a run bundle (the shape every remote
+    submission executes)."""
+    from steerlab_server.experiment import bundles, experiment_store
+    concept = os.path.join(root, "prompts", "concepts", "fair")
+    os.makedirs(concept, exist_ok=True)
+    for name, text in (("positive.jsonl", '{"text":"fair"}\n'), ("negative.jsonl", '{"text":"unfair"}\n')):
+        with open(os.path.join(concept, name), "w", encoding="utf-8") as handle:
+            handle.write(text)
+    experiment_store.create("Submit Study", model_id="org/m", revision="abc", root=root)
+    experiment_store.attach("submit-study", ["fair"], root=root)
+    return bundles.package_experiment("submit-study", root=root)
+
+
+def test_bundle_execute_threads_the_reread_to_analyze_only_when_asked(tmp_path, monkeypatch):
+    from steerlab_server.experiment import bundles
+    meta = _packaged_study(str(tmp_path / "source"))
+    seen = []
+
+    def fake_analyze(name, root=None, source_run=None, **kwargs):
+        seen.append(kwargs)
+        return os.path.join(root, "runs", "fake-exp-submit-study-analyze")
+
+    monkeypatch.setattr(tasks, "analyze", fake_analyze)
+    for reread in (True, False):
+        bundles.execute_run_bundle(
+            meta["bundlePath"], verb="analyze", target_root=str(tmp_path / f"target-{reread}"),
+            package_evidence_on_complete=False, reread_choices=reread)
+    assert seen == [{"reread_choices": True}, {}]
+
+
+def test_bundle_execute_refuses_the_reread_for_any_other_verb(tmp_path):
+    from steerlab_server.experiment import bundles
+    with pytest.raises(bundles.BundleError) as refusal:
+        bundles.execute_run_bundle(str(tmp_path / "absent.tar.gz"), verb="run",
+                                   reread_choices=True)
+    assert "'analyze' verb only" in str(refusal.value)
+
+
+def test_a_submission_renders_the_flag_only_when_asked(tmp_path, monkeypatch):
+    from steerlab_server.api import submissions
+    from steerlab_server.api.jobs import DurableJobStore, JobManager
+    base = dict(verb="analyze", target_root="/t", dtype="auto", device=None, prompts_path=None,
+                source_path=None, package_evidence=True, record_path="/r.json")
+    assert "--reread-choices" not in submissions._bundle_execute_command("/b.tar.gz", **base)
+    assert submissions._bundle_execute_command("/b.tar.gz", reread_choices=True, **base)[-1] == "--reread-choices"
+    with pytest.raises(submissions.SubmissionRefusal) as refusal:
+        submissions._require_reread_verb(True, verb="run")
+    assert refusal.value.code == "rereadUnsupportedVerb"
+
+    root = str(tmp_path / "source")
+    monkeypatch.setenv("STEERLAB_ROOT", root)
+    monkeypatch.setenv("STEERLAB_RUN_ROOT", str(tmp_path / "scratch"))
+    _packaged_study(root)
+    jobs = JobManager(DurableJobStore(str(tmp_path / "jobs.sqlite")))
+    submission = submissions.submit_study(
+        "submit-study", verb="analyze", jobs=jobs, executor="slurm", dry_run=True,
+        resources={"walltime": "00:30:00"}, reread_choices=True)
+    assert "--reread-choices" in submission.command
+
+
+def test_the_runner_client_sends_the_reread_only_when_asked(monkeypatch):
+    from steerlab_server.client import runner as runner_api
+    client = runner_api.RunnerClient(base_url="http://127.0.0.1:9")
+    monkeypatch.setattr(client, "inspect_remote_bundle", lambda _path: {"runtimeRequirements": []})
+    sent = []
+    monkeypatch.setattr(client, "_json", lambda method, path, json_body=None, **_: sent.append(json_body) or {})
+    client.submit_uploaded_bundle(remote_path="/staged.tar.gz", verb="analyze", reread_choices=True)
+    client.submit_uploaded_bundle(remote_path="/staged.tar.gz", verb="analyze")
+    assert sent[0]["rereadChoices"] is True
+    assert "rereadChoices" not in sent[1]
+
+
+def test_the_client_run_refuses_the_reread_for_any_other_step(tmp_path, capsys, monkeypatch):
+    root, _run_dir = _workspace(tmp_path)
+    monkeypatch.delenv("STEERLAB_ROOT", raising=False)
+    code = client_cli.main(["--root", root, "run", STUDY, "--runner", "http://127.0.0.1:9",
+                            "--verb", "run", "--reread-choices", "--json"])
+    document = json.loads(capsys.readouterr().out)
+    assert code == 64, document
+    assert document["error"]["code"] == "usage"
+    assert "--verb analyze" in document["error"]["repairAction"]

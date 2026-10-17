@@ -1788,7 +1788,8 @@ def execute_run_bundle(bundle_path: str, *, verb: str, target_root: str | None =
                        resume_from: str | None = None,
                        resume_directory: str | None = None,
                        sample_per_condition=None,
-                       sample_seed=None) -> dict:
+                       sample_seed=None,
+                       reread_choices: bool = False) -> dict:
     """Import a run bundle, execute one experiment verb, and package evidence.
 
     This is intended as the Slurm child-process entry point. It deliberately
@@ -1824,6 +1825,7 @@ def execute_run_bundle(bundle_path: str, *, verb: str, target_root: str | None =
             resume_from=resume_from, resume_directory=resume_directory,
             sample_per_condition=sample_per_condition,
             sample_seed=sample_seed,
+            reread_choices=reread_choices,
             captured_logs=captured_lines)
     finally:
         sys.stdout = sys.stdout.wrapped  # type: ignore[union-attr]
@@ -1867,7 +1869,15 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
                               captured_logs: list[str],
                               resume_directory: str | None = None,
                               sample_per_condition=None,
-                              sample_seed=None) -> dict:
+                              sample_seed=None,
+                              reread_choices: bool = False) -> dict:
+    # A choice re-read is an analysis option and nothing else; refused for
+    # any other verb before the bundle is opened, like the subsample below.
+    if reread_choices and verb != "analyze":
+        raise BundleError(
+            "--reread-choices applies to the 'analyze' verb only (got "
+            f"{verb!r}) — it reads a completed run's stored choices again "
+            "for one analysis, and no other verb reads them that way")
     # The seeded-subsample ask is checked FIRST, before the bundle is even
     # opened (2026-08-29): it needs nothing from the bundle, and a malformed
     # ask must leave the workspace untouched — on this path `import_bundle`
@@ -2054,7 +2064,11 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
             # itself — same enforcement as the direct API/CLI paths. The
             # source run threads exactly as evaluate's (--source /
             # sourcePath); absent, the newest completed run is analyzed.
-            run_directory = tasks.analyze(name, target, source_path)
+            # `--reread-choices` threads only when asked, so an ordinary
+            # analysis keeps the call it always made.
+            run_directory = tasks.analyze(
+                name, target, source_path,
+                **({"reread_choices": True} if reread_choices else {}))
         elif verb == "pipeline":
             run_directory = tasks.pipeline(
                 name, target, dtype, device, checkpoint=checkpoint,
