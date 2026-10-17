@@ -26,12 +26,13 @@ import Testing
 ///   `Server/tests/test_portability_contracts.py`), so a consumer's test
 ///   cannot pin its author's *belief* about the other engine — the failure
 ///   mode `CrossEngineLifecycleTests` was written to end.
-/// - **Write-if-missing**, for the one fixture this engine produces
+/// - **Write on request**, for the one fixture this engine produces
 ///   (`swift-authored-manifest.json`, consumed by the server suite): the
-///   structural assertions always run on the fresh document, and only the byte
-///   comparison waits for the file to be committed
-///   (`ExperimentCLIEnvelopeTests.check`). To regenerate, delete the file and
-///   re-run this suite.
+///   structural assertions always run on the fresh document; a missing file
+///   fails rather than being written. To regenerate, set
+///   `STEERLAB_WRITE_CROSS_ENGINE_GOLDENS=1` (under `xcodebuild`,
+///   `TEST_RUNNER_STEERLAB_WRITE_CROSS_ENGINE_GOLDENS=1`) and re-run this
+///   suite, then the server suite.
 /// - **Twin literals** (`CLIEnvelopeParityTests`): a constant belonging to the
 ///   other engine is written out here with a naming cross-reference, so
 ///   neither engine can quietly follow the other.
@@ -49,6 +50,18 @@ import Testing
         CodeResources.compiledCheckoutPath.appending(
             components: "Tests", "Fixtures", "cross-engine")
     }
+
+    /// True when this engine's fixture is being rewritten on request rather
+    /// than compared (the `STEERLAB_WRITE_CLUSTER_GOLDENS` convention).
+    static var regeneratingGoldens: Bool {
+        ProcessInfo.processInfo.environment["STEERLAB_WRITE_CROSS_ENGINE_GOLDENS"] == "1"
+    }
+
+    static let regenerateHint =
+        "regenerate with STEERLAB_WRITE_CROSS_ENGINE_GOLDENS=1 swift test "
+        + "--filter PortabilityContractTests (under xcodebuild, export "
+        + "TEST_RUNNER_STEERLAB_WRITE_CROSS_ENGINE_GOLDENS=1), review the diff, "
+        + "then run the server suite"
 
     /// Volatile freeze stamps: keys describing WHEN and BY WHAT a manifest was
     /// stamped, never what the study measures. This engine's own list lives in
@@ -810,8 +823,8 @@ import Testing
     /// CONTRACT: manifest-interop-reverse (producer half) — publishes a
     /// manifest THIS engine authored for the server suite to read.
     ///
-    /// Write-if-missing: the structural assertions below always run; only the
-    /// byte comparison waits for the file to be committed. Consumer:
+    /// Written only on request (`regeneratingGoldens`); a missing file fails.
+    /// The structural assertions below always run. Consumer:
     /// `test_portability_contracts.py::test_a_swift_authored_manifest_loads_with_every_field_intact`.
     @Test func theSwiftAuthoredManifestFixtureIsCurrent() throws {
         try withTempRoot { root in
@@ -877,8 +890,8 @@ import Testing
             let payload: [String: Any] = [
                 "note": "produced by the Swift engine's ExperimentStore "
                     + "(Tests/ExperimentKitTests/PortabilityContractTests.swift) "
-                    + "— do not hand-edit; delete this file and re-run that "
-                    + "suite to regenerate",
+                    + "— do not hand-edit; regenerate by re-running that suite "
+                    + "with STEERLAB_WRITE_CROSS_ENGINE_GOLDENS=1",
                 "manifest": document,
                 "manifestHash": ExperimentStore.manifestHash(manifest),
                 "stimulusSetHash": manifest.concepts.first?.stimulusSetHash ?? "",
@@ -892,15 +905,26 @@ import Testing
 
             let url = Self.fixtureDirectory.appending(
                 component: "swift-authored-manifest.json")
-            guard let existing = try? String(contentsOf: url, encoding: .utf8) else {
+            if Self.regeneratingGoldens {
                 try FileManager.default.createDirectory(
                     at: Self.fixtureDirectory, withIntermediateDirectories: true)
                 try text.write(to: url, atomically: true, encoding: .utf8)
                 return
             }
+            guard let existing = try? String(contentsOf: url, encoding: .utf8) else {
+                Issue.record(
+                    Comment(
+                        rawValue: "Tests/Fixtures/cross-engine/swift-authored-manifest.json "
+                            + "is missing, so this engine's manifest was not compared "
+                            + "and the server suite has nothing to read — "
+                            + Self.regenerateHint))
+                return
+            }
             #expect(
                 text == existing,
-                "swift-authored-manifest.json drifted: delete it and re-run this suite, then run the server suite")
+                Comment(
+                    rawValue: "swift-authored-manifest.json drifted; if the change is "
+                        + "deliberate, " + Self.regenerateHint))
         }
     }
 

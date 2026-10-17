@@ -32,9 +32,13 @@ They reuse the suite's existing idioms rather than inventing new ones:
 **producer-generated fixtures** (the engine that really emits the bytes writes
 the fixture; the other engine's test consumes it — the discipline
 `scripts/regenerate-cross-engine-fixtures.py` and `test_fixture_staleness.py`
-established), **write-if-missing goldens** (`ExperimentCLIEnvelopeTests`,
+established), **goldens** (`ExperimentCLIEnvelopeTests`,
 `test_cli_envelope.py::_check`), and **twin literals** (`CLIEnvelopeParityTests`
-↔ `test_cli_envelope.py`).
+↔ `test_cli_envelope.py`). On the Swift side a missing golden fails and is
+written only on request (`STEERLAB_WRITE_CLI_ENVELOPE_GOLDENS=1` for the
+envelopes, `STEERLAB_WRITE_CROSS_ENGINE_GOLDENS=1` for
+`swift-authored-manifest.json`; under `xcodebuild`, prefix each with
+`TEST_RUNNER_`). The Python goldens are still written when missing.
 
 ---
 

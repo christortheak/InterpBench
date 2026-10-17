@@ -271,6 +271,17 @@ public final class SteerLabWebServer: Sendable {
             let response = LocalModelPreparationHTTP.perform(operation, body: body, installer: service.modelInstaller)
             return Response(status: response.status, body: response.body)
 
+        case _ where method == "GET"
+            && path.split(separator: "?").first == "/api/experiment/result/responses":
+            // Every response of the selected run, a bounded page at a time
+            // (`StudyResponsePageHTTP`); the state document carries only a
+            // preview. The file is read off the main actor.
+            let detail = service.experiments.results.selectedResult
+            let response = await Task.detached(priority: .userInitiated) {
+                StudyResponsePageHTTP.page(selected: detail, path: path)
+            }.value
+            return Response(status: response.status, body: response.body)
+
         case _ where method == "GET" && path.hasPrefix("/api/experiment/result/file"):
             guard let filename = queryValue("name", in: path) else {
                 return .error("missing file name")

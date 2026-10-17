@@ -19,8 +19,15 @@ One JSON object per line:
   metrics (e.g. the sweep's `logprobShift` objective); omitted, the
   first option is used.
 
-Other per-item keys (`id`, `arm`, `caseID`, …) are preserved by the
-editor and carried into run records.
+Only these item keys reach run records, on both engines: `id` (as
+`promptID`), `text` or `prompt` (as `prompt`), and `target`,
+`anchorMonths`, `severity`, `arm`, `caseID`, and `factors`, copied as
+written. An answer-option reading also records `options`, and a scripted
+multi-turn item records its `transcript`. `attentionCheck` and
+`responseFormat` are read by the engine but not copied. Any other key
+stays in the file (the editor preserves it, and the study pins the file
+by hash) but no record carries it; join records to the file on
+`promptID` to use it in analysis.
 
 ## Where the file lives in a workspace
 

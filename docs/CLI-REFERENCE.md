@@ -66,7 +66,7 @@ they are not interchangeable:
 | Capability | Swift `steerlab-cli` | Python `steerlab-server` |
 |---|---|---|
 | Authoring (create/attach/freeze/duplicate) | yes | **no** — verify/read only; authoring is the HTTP API or the app |
-| extract / validate / sweep / run | yes (MLX, greedy-only) | yes (PyTorch/HF, seeded sampling) |
+| extract / validate / sweep / run | yes (MLX, seeded sampling) | yes (PyTorch/HF, seeded sampling) |
 | analyze / evaluate / rescore-style | yes | yes |
 | `pipeline` (chained stages) | **no** | yes |
 | Cluster ops (Slurm, jobs, bundles) | client only (`remote …`) | yes (server-side) |
@@ -1336,8 +1336,7 @@ The **joint** stochastic rules — `samplesPerItem > 1` requires
 rather than write-time refusals, deliberately: the fields must be declarable
 one flag at a time, and a merge-style writer that refused a half-built
 protocol could never reach the finished one. Declaring the protocol is legal
-on either engine; §3.4's greedy-only rule then routes the *run* to the Python
-engine.
+on either engine, and either engine runs it (§3.4).
 
 **`set-exclusions <name> <rule>[,…]`** — the declared record-exclusion rules
 analysis applies (`failedAttentionCheck`, `unparseableEndpoint`,
@@ -1516,12 +1515,20 @@ These load the model through MLX. `--prompts` overrides the manifest's pinned
 task-prompt file; for a **frozen** manifest the override is pin-checked, so it
 cannot silently substitute a different measurement input.
 
-Local measured runs are **greedy-only** by construction: the runner requires
-`temperature == 0` and rejects more than one seed, because the MLX generator
-does not pin a per-run sampling seed. `manifest.seeds` is recorded for
-provenance and every local generation record stamps `seedInert: true`.
-Stochastic studies (`temperature > 0`, `samplesPerItem > 1`) belong on the
-Python engine.
+Local measured runs accept any `temperature ≥ 0`. At `temperature 0` decoding
+is greedy: no random draws are made and every record stamps `seedInert: true`.
+Several seeds at temperature 0 give identical records, so declare one (the
+Python engine refuses more). Above 0, each record is sampled from its own
+seeded random stream: one pass per entry in `manifest.seeds` under the default
+`manifestSeeds` policy, or, with `samplesPerItem > 1` and
+`seedPolicy derivedSHA256`, a seed derived from the study hash, condition,
+prompt ID, and sample index. Records stamp their `seed`, `seedPolicy`, and
+`sampleIndex`, and a run that generates text writes `sampling-provenance.json`
+beside them. Top-p and top-k are not study settings: the MLX engine samples
+from the full temperature-scaled distribution (top-p 1, no top-k, recorded in
+that file), while the Python engine applies the checkpoint's own defaults and
+records them on each record. Equal seeds on the two engines do not produce
+equal tokens.
 
 ### 3.5 Analysis (pure CPU, no model load)
 
@@ -3219,6 +3226,14 @@ Traps:
   tree reports the version and source revision recorded at install time, and an
   unstamped one falls back to a live `git rev-parse` in whatever checkout the
   build was compiled from.
+- **The command line inside the app is never stamped, by design.** A write
+  into a signed bundle breaks its seal, so
+  `SteerLab.app/Contents/Helpers/steerlab-cli --version` reports its layout as
+  the command line bundled in the app (`"layout": "appBundle"`), with the app's
+  version and build from its `Info.plist` and the app's own
+  `Contents/Resources/resource-manifest.json` (the `app` key in `--json`).
+  `install verify` there names the app's integrity check instead:
+  `codesign --verify --deep --strict <app>`.
 - **`install stamp` refuses a build directory.** A root containing `.o`,
   `.swiftmodule`, or `.xctest` entries is DerivedData, not an install root.
 - **R1 bundles no resources.** An installed binary still resolves workspace

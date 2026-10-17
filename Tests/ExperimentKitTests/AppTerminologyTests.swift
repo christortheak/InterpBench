@@ -62,14 +62,38 @@ struct AppTerminologyTests {
         ("model variant", "agent"),
         ("Python Compute", "the Python engine"),
         ("Local (MLX)", ComputeChoice.macQuickStart.title),
+        ("cast from", "created from"),
+        ("substrate selector", "the Compute menu"),
     ]
 
     /// Files another stream owns in this wave; their wording is changed
     /// there. Kept to the minimum, with the reason.
-    private static let excused: [String: String] = [
-        // Method guides view (stream C, wave 3): its one line about
-        // "scenarios cast from" a template is reworded with that view.
-        "Sources/SteerLabApp/ScienceGuidesView.swift": "stream C",
+    private static let excused: [String: String] = [:]
+
+    /// ExperimentKit files whose notes, refusals, and advisories the app
+    /// shows as they are written. They also hold identifiers that keep the
+    /// old words (`seatCasting`, `mint.minted`, the CLI's `--casting`), so
+    /// only whole retired phrases are looked for here.
+    private static let appNoteSources = [
+        "Sources/ExperimentKit/ExperimentPanel.swift",
+        "Sources/ExperimentKit/StudyManagementController.swift",
+        "Sources/ExperimentKit/SeatCasting.swift",
+    ]
+
+    private static let retiredInAppNotes: [(phrase: String, use: String)] = [
+        ("casting", "seat assignments"),
+        ("cast a different", "assign the seats differently"),
+        ("cast seats", "assign seats"),
+        ("re-seat the", "rearrange the seat assignments"),
+        ("steered) and pinned", "with an agent"),
+        ("minted in", "created in"),
+        ("minted from", "created from"),
+        ("mints one", "creates one"),
+        ("mints from", "creates from"),
+        ("— mint ", "— create "),
+        ("substrate selector", "the Compute menu"),
+        ("no server connection for judging",
+         "what changed, and how to reconnect and try again"),
     ]
 
     /// The text a researcher could read on this line, or nil for code.
@@ -130,6 +154,30 @@ struct AppTerminologyTests {
                 if delimiters % 2 == 1 { inMultiline.toggle() }
                 guard let text else { continue }
                 for (phrase, use) in Self.retired where text.contains(phrase) {
+                    offenders.append("\(relative):\(index + 1): '\(phrase)' — say '\(use)'")
+                }
+            }
+        }
+        #expect(offenders.isEmpty, "\(offenders.joined(separator: "\n"))")
+    }
+
+    /// The study panel's notes and the seat editor's advisories come from
+    /// ExperimentKit; they say "seat assignments", "create", and "the
+    /// Compute menu" like the rest of the app.
+    @Test func theStudyPanelNotesUseTheSettledWords() throws {
+        var offenders: [String] = []
+        for relative in Self.appNoteSources {
+            let source = try String(
+                contentsOf: Self.repoRoot.appending(path: relative), encoding: .utf8)
+            var inMultiline = false
+            for (index, line) in source.split(separator: "\n", omittingEmptySubsequences: false)
+                .enumerated()
+            {
+                let delimiters = line.components(separatedBy: "\"\"\"").count - 1
+                let text = Self.readableText(line, inMultiline: inMultiline && delimiters == 0)
+                if delimiters % 2 == 1 { inMultiline.toggle() }
+                guard let text else { continue }
+                for (phrase, use) in Self.retiredInAppNotes where text.contains(phrase) {
                     offenders.append("\(relative):\(index + 1): '\(phrase)' — say '\(use)'")
                 }
             }

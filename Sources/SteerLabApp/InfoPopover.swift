@@ -124,9 +124,10 @@ enum StudyInfo {
         """
 
     static let seedPolicy = """
-        How each generated response gets its random seed on stochastic \
-        runs. Only the Python server reads this — the local Mac engine \
-        decodes greedily (temperature 0) and never uses a sampling seed.
+        How each generated response gets its random seed when the \
+        temperature is above 0. Both engines read this — this Mac and a \
+        server alike. At temperature 0 decoding is greedy and no seed is \
+        used.
 
         Derived per record (engine term 'derivedSHA256'): every \
         (condition, prompt, sample) derives its own seed from those \

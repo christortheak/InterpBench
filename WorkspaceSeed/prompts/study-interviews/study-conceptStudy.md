@@ -35,11 +35,11 @@ CONFIRM PHASE: if the researcher is confirming an already promoted agent (screen
 2. "status" must be "draft". Never emit freeze fields (frozenAt, freezeHash, frozenBy, gitCommit) — the pack importer strips them; preregistration is earned through gates, never pasted.
 3. NEVER fabricate hashes. Omit every *Hash field. Hashes are pins computed from real files by the authoring operations. A made-up hash = instant verify violation.
 4. Leave "concepts": [] and "variantConditions": [] unless the researcher gives you exact existing artifacts — attaching concepts and agents through the reviewed authoring operations is what pins them correctly.
-5. Researcher-notes fields (never sent to any model): "experimentDescription", "taskDescription", "outcomeMeasures", "phase" (screen|confirm|triangulate|panel — picks the analysis correction). Behavior fields: "modelID" (a Hugging Face id), "temperature" (0 for locally-measured runs), "maxTokens", "samplesPerItem" + "seedPolicy" (stochastic designs — server/cluster runs only), "systemPrompt", "promptMode" ("chatAssistant" | "rawCompletion"), "numericParser" (the name of an entry in prompts/parsers/parser-registry.json — this is how a study declares the grammar its numeric answers are parsed with). Declare numericParser explicitly rather than relying on legacy provenance labels to select a parser.
+5. Researcher-notes fields (never sent to any model): "experimentDescription", "taskDescription", "outcomeMeasures", "phase" (screen|confirm|triangulate|panel — picks the analysis correction). Behavior fields: "modelID" (a Hugging Face id), "temperature" (0 decodes greedily and repeats exactly; above 0 each record is sampled with its own seed, on this Mac or a server), "maxTokens", "samplesPerItem" + "seedPolicy" (stochastic designs, run by either engine; samplesPerItem above 1 needs temperature above 0 and seedPolicy "derivedSHA256"), "reasoningEffort" ("off" by default; any other value turns on the model's thinking mode, needs "reasoningMaxTokens", and must be one the model's chat template accepts — set it with set-sampling --reasoning-effort; the legacy "qwenThinkingEnabled" boolean still reads, false meaning off), "systemPrompt", "promptMode" ("chatAssistant" | "rawCompletion"), "numericParser" (the name of an entry in prompts/parsers/parser-registry.json — this is how a study declares the grammar its numeric answers are parsed with). Declare numericParser explicitly rather than relying on legacy provenance labels to select a parser.
 6. Judges: "judges" is a list of {"name", "kind", "model", "provider"}. kind "openrouter" REQUIRES both a model slug and a pinned provider. Two or more judges for evidence-grade studies.
 7. A pipeline (one cluster job chaining stages, with gates) is declared as {"stages": [...], "gates": {...}}. Stages in order from: extract, validate, sweep, promote, run, evaluate, analyze. Concept studies use the full funnel; comparisons chain run → evaluate → analyze; evaluate/analyze require run in the chain. Gates: {"validate": {"minScenarioAccuracy": 0.6, "maxCrossConceptCosine": 0.8}, "sweep": {"requireSelectionForEveryConcept": true}}.
 
-Ask about the research question, the model (exact Hugging Face id; local runs are greedy temperature 0, cluster runs may be stochastic), judging, and the pipeline + gates — then AUTHOR the data files with the researcher rather than leaving placeholders.
+Ask about the research question, the model (exact Hugging Face id; temperature 0 is greedy; above 0 either engine samples each record with its own seed), judging, and the pipeline + gates — then AUTHOR the data files with the researcher rather than leaving placeholders.
 
 ## Output
 
@@ -58,7 +58,7 @@ When you have enough, output the complete STUDY PACK in one ```json fenced block
     "modelID": "Qwen/Qwen3-4B-MLX-4bit",
     "createdAt": "1970-01-01T00:00:00Z",
     "promptMode": "chatAssistant",
-    "qwenThinkingEnabled": false,
+    "reasoningEffort": "off",
     "temperature": 0,
     "maxTokens": 512,
     "seeds": [0],

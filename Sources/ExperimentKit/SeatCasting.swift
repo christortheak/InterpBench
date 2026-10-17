@@ -197,7 +197,7 @@ public enum SeatCasting {
             advisories.append(
                 "the scenario this study pins (\(manifest.multiAgentScenarioPath ?? "")) "
                     + "is missing — restore it, or pick a scenario and save the "
-                    + "casting to pin a new one")
+                    + "seat assignments to pin a new one")
         }
 
         let seats = semantic.agents.map { Seat(id: $0.id, name: $0.name) }
@@ -295,7 +295,7 @@ public enum SeatCasting {
             throw ExperimentError.refusing(
                 .missingPrerequisite,
                 "agent artifact not found: \(artifactPath)",
-                repair: "agent artifacts live under runs/model-variants/ — mint "
+                repair: "agent artifacts live under runs/model-variants/ — create "
                     + "one with steerlab-cli experiment promote <name> <concept>, "
                     + "or name an existing artifact's model-variant.json")
         }
@@ -307,7 +307,7 @@ public enum SeatCasting {
                 .missingPrerequisite,
                 "not an agent artifact: \(artifactPath)",
                 repair: "name the model-variant.json of a promoted agent — "
-                    + "steerlab-cli experiment promote <name> <concept> mints one")
+                    + "steerlab-cli experiment promote <name> <concept> creates one")
         }
         return occupant(for: ModelVariantRecord(url: url, artifact: artifact))
     }
@@ -335,10 +335,10 @@ public enum SeatCasting {
 
     static let legacyAdvisory =
         "this scenario carries its own seat bindings (authored before seats "
-        + "and scenarios were separated), so its casting is shown read-only "
-        + "here. Migrate it in Multi-Agent — that splits it into a "
-        + "reusable scenario plus the casting it was carrying — then pick the "
-        + "migrated scenario to cast seats from this study."
+        + "and scenarios were separated), so its seat assignments are shown "
+        + "read-only here. Migrate it in Multi-Agent — that splits it into a "
+        + "reusable scenario plus the seat assignments it was carrying — then "
+        + "pick the migrated scenario to assign seats from this study."
 
     /// Says the drift and what it means, without pretending it is a violation:
     /// the study runs the compiled bytes, which is the honest reading.
@@ -350,13 +350,13 @@ public enum SeatCasting {
         guard let pinnedHash = manifest.multiAgentSemanticScenarioHash else { return nil }
         let url = ExperimentStore.resolveProjectPath(path, root: workspaceRoot)
         guard let live = try? MultiAgentScenarioStore.hash(url) else {
-            return "the scenario this casting came from (\(path)) is no longer "
-                + "in the workspace. The study still runs its compiled "
-                + "casting; saving the seats recompiles from the compiled "
+            return "the scenario these seat assignments came from (\(path)) is "
+                + "no longer in the workspace. The study still runs its "
+                + "compiled seat assignments; saving the seats recompiles from the compiled "
                 + "scenario's own roles and turns."
         }
         guard live != pinnedHash else { return nil }
-        return "'\(path)' has changed since this casting was compiled "
+        return "'\(path)' has changed since these seat assignments were compiled "
             + "(\(pinnedHash.prefix(12))… → \(live.prefix(12))…). This study "
             + "runs the COMPILED scenario, so nothing moved under it — pick "
             + "the scenario again and save the seats to adopt the new version."

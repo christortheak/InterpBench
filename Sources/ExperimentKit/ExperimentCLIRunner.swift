@@ -1220,11 +1220,16 @@ public struct ExperimentCLIRunner: Sendable {
         switch args.first {
         case "version":
             sink.out(provenance.report, terminator: "")
+            let whereFrom: String
+            switch provenance.shape {
+            case .installed: whereFrom = "installed at \(provenance.root.path)"
+            case .buildProduct: whereFrom = "unstamped build product at \(provenance.root.path)"
+            case .appBundle:
+                whereFrom = "the command line bundled in "
+                    + (provenance.app?.bundle.path ?? provenance.root.path)
+            }
             var result = ExperimentCLIResult(
-                message: "\(provenance.engineVersion) — "
-                    + (provenance.shape == .installed
-                        ? "installed at \(provenance.root.path)"
-                        : "unstamped build product at \(provenance.root.path)"),
+                message: "\(provenance.engineVersion) — \(whereFrom)",
                 payload: provenance.payload)
             if provenance.shape == .installed {
                 result.nextAction = .init(

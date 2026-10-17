@@ -833,9 +833,9 @@ extension ExperimentTasks {
         /// (external review 2026-07-22): pairs join on (promptID,
         /// sampleIndex), never the seed, which under the server's
         /// derivedSHA256 policy includes condition identity and therefore
-        /// differs between the two sides of a pair by design. Local
-        /// records are greedy single-sample, so this is 0 unless the
-        /// source run stamped `sampleIndex`.
+        /// differs between the two sides of a pair by design. Records from
+        /// local runs made before seeded local sampling carry no
+        /// `sampleIndex`; this is 0 for them.
         let sampleIndex: UInt64
         /// Seed provenance for BOTH sides of the pair (cross-engine keys
         /// "baselineSeed"/"variantSeed" — deliberately no field named

@@ -471,7 +471,7 @@ public final class StudyManagementController {
             guard resolved != oldName else { return }
             note(
                 "renamed template '\(oldName)' → '\(resolved)' — studies already "
-                    + "minted from it keep the old name in their lineage stamp",
+                    + "created from it keep the old name in their lineage stamp",
                 severity: .success)
         } catch {
             refuse(.template, "Couldn't rename the template; nothing changed.", error)
