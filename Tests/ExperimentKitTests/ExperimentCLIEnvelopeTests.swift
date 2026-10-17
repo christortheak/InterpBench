@@ -20,11 +20,14 @@ import Testing
 /// byte-stable, which is the point: the fixtures are what would catch a verb
 /// silently dropping `freezeHash`, or eliding it back to twelve characters.
 ///
-/// **A missing fixture is written rather than failed.** The structural
-/// assertions (`exactlyOneJSONDocumentIsProduced`, the closed key set, the
-/// state/exit-code agreement) still run on the freshly produced document, so a
-/// new verb cannot land without being checked; only the byte comparison waits
-/// for the file to be committed. A fixture that EXISTS must match exactly.
+/// **A missing fixture fails.** It used to be written and the test passed, so
+/// deleting a golden made its check pass vacuously. Now a fixture is written
+/// only on request: set `STEERLAB_WRITE_CLI_ENVELOPE_GOLDENS=1` (under
+/// `xcodebuild`, `TEST_RUNNER_STEERLAB_WRITE_CLI_ENVELOPE_GOLDENS=1`), the
+/// convention `ClusterEnvironmentRendererTests` set with
+/// `STEERLAB_WRITE_CLUSTER_GOLDENS`. The structural assertions (one JSON
+/// document, the closed key set, the state/exit-code agreement) run either
+/// way. A fixture that exists must match exactly.
 ///
 /// Coverage is every agent-path verb that is drivable without a model, a
 /// server, or a completed run. The model-loading verbs (`extract`, `validate`,
@@ -47,6 +50,18 @@ import Testing
         CodeResources.compiledCheckoutPath.appending(
             components: "Tests", "Fixtures", "cli-envelopes")
     }
+
+    /// True when the goldens are being rewritten on request rather than
+    /// compared (see the type's documentation).
+    static var regeneratingGoldens: Bool {
+        ProcessInfo.processInfo.environment["STEERLAB_WRITE_CLI_ENVELOPE_GOLDENS"] == "1"
+    }
+
+    static let regenerateHint =
+        "regenerate with STEERLAB_WRITE_CLI_ENVELOPE_GOLDENS=1 swift test "
+        + "--filter ExperimentCLIEnvelopeTests (under xcodebuild, export "
+        + "TEST_RUNNER_STEERLAB_WRITE_CLI_ENVELOPE_GOLDENS=1), then review the "
+        + "diff and commit it"
 
     func withTempRoot<T>(_ body: (URL) async throws -> T) async throws -> T {
         ExperimentRootOverrideLock.acquire()
@@ -149,15 +164,25 @@ import Testing
         // The golden.
         let canonical = canonicalize(document, root: root)
         let url = Self.fixtureDirectory.appending(component: "\(name).json")
-        guard let existing = try? String(contentsOf: url, encoding: .utf8) else {
+        if Self.regeneratingGoldens {
             try FileManager.default.createDirectory(
                 at: Self.fixtureDirectory, withIntermediateDirectories: true)
             try canonical.write(to: url, atomically: true, encoding: .utf8)
             return
         }
+        guard let existing = try? String(contentsOf: url, encoding: .utf8) else {
+            Issue.record(
+                Comment(
+                    rawValue: "\(name): the golden Tests/Fixtures/cli-envelopes/"
+                        + "\(name).json is missing, so this envelope was not "
+                        + "compared — " + Self.regenerateHint))
+            return
+        }
         #expect(
             canonical == existing,
-            "\(name): envelope drifted from Tests/Fixtures/cli-envelopes/\(name).json")
+            Comment(
+                rawValue: "\(name): envelope drifted from Tests/Fixtures/cli-envelopes/"
+                    + "\(name).json; if the change is deliberate, " + Self.regenerateHint))
     }
 
     // MARK: - The goldens, one per verb
