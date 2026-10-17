@@ -34,12 +34,7 @@ public struct GitHubUpdateTransport: UpdateTransport {
             throw UpdateInstallError.untrustedDownloadLocation(url.host() ?? url.absoluteString)
         }
         let (stream, continuation) = AsyncThrowingStream<UpdateTransferEvent, Error>.makeStream()
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = stallTimeout
-        configuration.httpShouldSetCookies = false
-        configuration.httpCookieAcceptPolicy = .never
-        configuration.urlCache = nil
-        configuration.urlCredentialStorage = nil
+        let configuration = Self.sessionConfiguration(stallTimeout: stallTimeout)
         let delegate = UpdateStreamingDelegate(continuation: continuation)
         let session = URLSession(
             configuration: configuration, delegate: delegate, delegateQueue: nil)
@@ -52,6 +47,20 @@ public struct GitHubUpdateTransport: UpdateTransport {
         }
         task.resume()
         return stream
+    }
+
+    /// No cookies, no cache, no stored credentials, and a fixed User-Agent:
+    /// the default one names this app's version and the macOS build, which
+    /// the privacy promise says are never sent.
+    static func sessionConfiguration(stallTimeout: TimeInterval) -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = stallTimeout
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieAcceptPolicy = .never
+        configuration.urlCache = nil
+        configuration.urlCredentialStorage = nil
+        configuration.httpAdditionalHeaders = ["User-Agent": UpdateCheckOverrides.userAgent]
+        return configuration
     }
 }
 

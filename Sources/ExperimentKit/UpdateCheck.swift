@@ -285,6 +285,10 @@ public protocol UpdateReleaseFeed: Sendable {
 public enum UpdateCheckOverrides {
     public static let releaseTagVariable = "STEERLAB_UPDATE_RELEASE_TAG"
 
+    /// The User-Agent every update request sends. GitHub requires one; the
+    /// system default would name this app's version and the macOS build.
+    public static let userAgent = "SteerLab"
+
     /// The pinned tag, when the variable names a plausible one. Anything
     /// with characters a tag would not carry is ignored, not escaped.
     public static func releaseTag(
@@ -361,16 +365,24 @@ public struct GitHubReleaseFeed: UpdateReleaseFeed {
             tag: tag, page: payload.htmlURL.flatMap(URL.init(string:)), assets: assets)
     }
 
+    /// The lookup request. Two headers, and neither says anything about this
+    /// machine: one selects the response format, and the User-Agent (which
+    /// GitHub requires) is fixed, where the system default would name this
+    /// app's version and the macOS build.
+    static func request(for endpoint: URL, timeout: TimeInterval) -> URLRequest {
+        var request = URLRequest(url: endpoint)
+        request.timeoutInterval = timeout
+        request.httpMethod = "GET"
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue(UpdateCheckOverrides.userAgent, forHTTPHeaderField: "User-Agent")
+        return request
+    }
+
     public func latestRelease(for repository: UpdateRepository) async -> ReleaseFeedOutcome {
         let endpoint =
             releaseTag.map { repository.releaseEndpoint(tag: $0) }
             ?? repository.latestReleaseEndpoint
-        var request = URLRequest(url: endpoint)
-        request.timeoutInterval = timeout
-        request.httpMethod = "GET"
-        // The one header, and it selects a response format — it says nothing
-        // about this machine.
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        let request = Self.request(for: endpoint, timeout: timeout)
         do {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else {

@@ -271,6 +271,8 @@ public enum UpdateInstallRefusal: Error, Sendable, Equatable {
     case translocated
     case readOnlyVolume
     case folderNotWritable(String)
+    /// This is a kept earlier copy (`SteerLab-<version>-previous.app`).
+    case runningKeptCopy(String)
 
     public var line: String {
         switch self {
@@ -313,6 +315,10 @@ public enum UpdateInstallRefusal: Error, Sendable, Equatable {
                 + "cannot put the new version there. Move SteerLab.app to your SteerLab "
                 + "folder or to Applications, or download the new release from the "
                 + "Releases page."
+        case .runningKeptCopy(let version):
+            return "This is the kept copy of SteerLab \(version) from an earlier update. "
+                + "Open the current SteerLab.app to update, or rename this copy to "
+                + "SteerLab.app first."
         }
     }
 }
@@ -341,6 +347,9 @@ public enum UpdateInstallEligibility {
     {
         guard let app = context.appBundle, app.pathExtension == "app" else {
             return .failure(.notAnAppBundle)
+        }
+        if let kept = UpdateStagingLayout.previousCopyVersion(fromName: app.lastPathComponent) {
+            return .failure(.runningKeptCopy(kept.releaseDescription))
         }
         if context.hasSourceCheckout { return .failure(.developerInstall) }
         let team: String
@@ -610,7 +619,9 @@ public enum UpdateArchiveListing {
             } else {
                 return .failure(.archiveRejected("it holds \(topName) beside the app"))
             }
-            if entry.isSymlink { symlinks.insert(parts.joined(separator: "/")) }
+            // Case-folded: on a case-insensitive volume `Contents/A` and
+            // `Contents/a` are one path.
+            if entry.isSymlink { symlinks.insert(parts.joined(separator: "/").lowercased()) }
             total += max(0, entry.size)
             if total > limits.maximumUnpackedBytes {
                 return .failure(
@@ -630,7 +641,7 @@ public enum UpdateArchiveListing {
             let parts = components(entry.path)
             guard parts.count > 1 else { continue }
             for depth in 1..<parts.count
-            where symlinks.contains(parts[0..<depth].joined(separator: "/")) {
+            where symlinks.contains(parts[0..<depth].joined(separator: "/").lowercased()) {
                 return .failure(.archiveRejected("it writes a file through a symbolic link"))
             }
         }
@@ -717,7 +728,7 @@ public enum UpdateDownload {
         } catch let error as URLError where error.code == .cancelled {
             throw UpdateInstallError.cancelled
         } catch let error as URLError where error.code == .timedOut {
-            throw UpdateInstallError.downloadTimedOut(minutes: minutes)
+            throw UpdateInstallError.downloadFailed("no data arrived for a minute")
         } catch {
             throw UpdateInstallError.downloadFailed(error.localizedDescription)
         }
@@ -932,6 +943,30 @@ public enum UpdateStaging {
         return path.hasSuffix("/Contents/MacOS/\(name)")
     }
 
+    /// Inside a staging folder: an earlier kept copy moved aside during a
+    /// swap. Never deleted with the folder.
+    public static let parkedCopyName = "replaced-previous.app"
+
+    /// Move a parked kept copy out of `root` to a name of its own beside the
+    /// app. Returns false only when one is there and could not be moved, in
+    /// which case the staging folder must not be removed.
+    @discardableResult
+    public static func rescueParkedCopy(
+        in root: URL, besideApp app: URL, fileSystem: any UpdateFileSystem
+    ) -> Bool {
+        let parked = root.appending(component: parkedCopyName)
+        guard fileSystem.exists(parked) else { return true }
+        let folder = app.deletingLastPathComponent()
+        let version = fileSystem.bundleInfo(at: parked).version ?? "earlier"
+        for attempt in 1...50 {
+            let destination = folder.appending(
+                component: "SteerLab-\(version)-kept-\(attempt).app")
+            guard !fileSystem.exists(destination) else { continue }
+            return (try? fileSystem.move(parked, to: destination)) != nil
+        }
+        return false
+    }
+
     /// The process recorded as preparing an update in `root`, if any.
     static func owner(of root: URL, fileSystem: any UpdateFileSystem) -> Int32? {
         guard let data = fileSystem.read(root.appending(component: UpdateStagingLayout.ownerFileName)),
@@ -956,6 +991,9 @@ public enum UpdateStaging {
         if let owner = owner(of: root, fileSystem: fileSystem),
             owner == currentProcess || isProcessAlive(owner)
         {
+            return false
+        }
+        guard rescueParkedCopy(in: root, besideApp: app, fileSystem: fileSystem) else {
             return false
         }
         return (try? fileSystem.remove(root)) != nil
@@ -1022,6 +1060,14 @@ public struct UpdateInstaller: Sendable {
                 throw UpdateInstallError.stagingUnavailable(
                     "another copy of SteerLab is preparing an update")
             }
+            guard
+                UpdateStaging.rescueParkedCopy(
+                    in: root, besideApp: target.appBundle, fileSystem: fs)
+            else {
+                throw UpdateInstallError.stagingUnavailable(
+                    "an earlier kept copy is still in \(root.path); move "
+                        + "\(UpdateStaging.parkedCopyName) out of it first")
+            }
             do { try fs.remove(root) } catch {
                 throw UpdateInstallError.stagingUnavailable(
                     "an earlier update's files at \(root.path) could not be removed")
@@ -1047,6 +1093,10 @@ public struct UpdateInstaller: Sendable {
         {
             return
         }
+        guard
+            UpdateStaging.rescueParkedCopy(
+                in: root, besideApp: target.appBundle, fileSystem: fs)
+        else { return }
         try? fs.remove(root)
     }
 
@@ -1116,6 +1166,22 @@ public struct UpdateInstaller: Sendable {
         try environment.codeSigning.validate(bundle: app, requirement: requirement)
 
         // 4. The version, read from the now-verified bundle.
+        let version = try verifiedVersion(of: app, expected: pair.version)
+        return UpdateStagedApp(stagedApp: app, version: version, stagingRoot: root)
+    }
+
+    /// The signature and the version of a staged app, checked again.
+    private func verifyStaged(_ staged: UpdateStagedApp) throws {
+        let requirement = try UpdateSignatureRequirement.text(
+            bundleIdentifier: target.bundleIdentifier, teamID: target.teamID)
+        try environment.codeSigning.validate(bundle: staged.stagedApp, requirement: requirement)
+        _ = try verifiedVersion(of: staged.stagedApp, expected: staged.version)
+    }
+
+    /// The identifier and version of an app whose signature has passed.
+    private func verifiedVersion(
+        of app: URL, expected: SemanticVersion
+    ) throws -> SemanticVersion {
         let info = fs.bundleInfo(at: app)
         guard info.identifier == target.bundleIdentifier else {
             throw UpdateInstallError.versionMismatch(
@@ -1124,15 +1190,15 @@ public struct UpdateInstaller: Sendable {
         guard let raw = info.version, let version = SemanticVersion(raw) else {
             throw UpdateInstallError.versionMismatch("it does not say which version it is")
         }
-        guard version == pair.version else {
+        guard version == expected else {
             throw UpdateInstallError.versionMismatch(
                 "it is \(version.releaseDescription), but the release file names "
-                    + pair.version.releaseDescription)
+                    + expected.releaseDescription)
         }
         guard version > currentVersion else {
             throw UpdateInstallError.notNewer(found: version, running: currentVersion)
         }
-        return UpdateStagedApp(stagedApp: app, version: version, stagingRoot: root)
+        return version
     }
 
     private func runTool(
@@ -1160,7 +1226,7 @@ public struct UpdateInstaller: Sendable {
     public func install(_ staged: UpdateStagedApp) throws -> UpdateInstallReceipt {
         let original = target.appBundle
         let previous = previousCopy
-        let parked = staged.stagingRoot.appending(component: "replaced-previous.app")
+        let parked = staged.stagingRoot.appending(component: UpdateStaging.parkedCopyName)
         guard fs.isDirectory(staged.stagedApp) else {
             throw UpdateInstallError.installFailedRestored(
                 "the downloaded app is no longer in \(staged.stagingRoot.path)")
@@ -1169,6 +1235,14 @@ public struct UpdateInstaller: Sendable {
             throw UpdateInstallError.installFailedRestored(
                 "the running app is no longer at \(original.path)")
         }
+        guard previous.standardizedFileURL != original.standardizedFileURL else {
+            throw UpdateInstallError.installFailedRestored(
+                "the running app is itself the kept copy \(previous.lastPathComponent)")
+        }
+        // Verified again, immediately before anything moves: whatever sits in
+        // the staging folder now is what is installed, so it is checked now,
+        // not only when it was unpacked.
+        try verifyStaged(staged)
 
         enum Done { case parkedPrevious, keptRunning, placedNew }
         var done: [Done] = []
@@ -1235,6 +1309,8 @@ public struct UpdateInstaller: Sendable {
         if done.contains(.parkedPrevious), (try? fs.trash(parked)) != nil {
             trashed.insert(previous, at: 0)
         }
+        // A parked copy the Trash would not take (a volume with no Trash) is
+        // moved beside the app by `discardStaging`, never deleted with it.
         discardStaging()
         return UpdateInstallReceipt(
             installedVersion: staged.version, previousCopy: previous, trashedCopies: trashed)

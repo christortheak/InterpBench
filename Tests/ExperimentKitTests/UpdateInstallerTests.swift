@@ -96,7 +96,7 @@ struct UpdateInstallerTests {
     /// or answer with a status. Holds every continuation so a hanging stream
     /// stays open until its task is cancelled.
     final class FakeTransport: UpdateTransport, @unchecked Sendable {
-        enum Answer { case bytes(Data, declared: Int64?), status(Int), hang }
+        enum Answer { case bytes(Data, declared: Int64?), status(Int), hang, fail(URLError) }
         let answers: [String: Answer]
         private let held = Mutex<[AsyncThrowingStream<UpdateTransferEvent, Error>.Continuation]>([])
         let opened = Mutex<[String]>([])
@@ -122,6 +122,9 @@ struct UpdateInstallerTests {
             case .hang:
                 continuation.yield(.response(status: 200, expectedLength: 1_000))
                 held.withLock { $0.append(continuation) }
+            case .fail(let error):
+                continuation.yield(.response(status: 200, expectedLength: 1_000))
+                continuation.finish(throwing: error)
             }
             return stream
         }
@@ -130,15 +133,15 @@ struct UpdateInstallerTests {
     /// Accepts or rejects every bundle, and records the requirement it was
     /// handed — the requirement itself is tested separately.
     final class FakeSigning: UpdateCodeSigning, @unchecked Sendable {
-        let accept: Bool
+        let accepting: Mutex<Bool>
         let seen = Mutex<[String]>([])
-        init(accept: Bool = true) { self.accept = accept }
+        init(accept: Bool = true) { accepting = Mutex(accept) }
         func runningAppSignature() -> RunningAppSignature {
             .developerID(teamID: UpdateInstallerTests.team, notarized: true)
         }
         func validate(bundle: URL, requirement: String) throws {
             seen.withLock { $0.append(requirement) }
-            if !accept {
+            if !accepting.withLock({ $0 }) {
                 throw UpdateInstallError.signatureRejected("refused by the test")
             }
         }
@@ -265,6 +268,10 @@ struct UpdateInstallerTests {
         #expect(refusal(Self.context(translocated: true, readOnly: true)) == .translocated)
         #expect(refusal(Self.context(readOnly: true)) == .readOnlyVolume)
         #expect(refusal(Self.context(writable: false)) == .folderNotWritable("/opt/lab/SteerLab"))
+        // A kept copy from an earlier update never updates itself in place.
+        #expect(
+            refusal(Self.context(app: URL(filePath: "/opt/lab/SteerLab/SteerLab-0.9.9-previous.app")))
+                == .runningKeptCopy("0.9.9"))
     }
 
     @Test func refusalsSayWhatToDoInOneLine() {
@@ -593,6 +600,10 @@ struct UpdateInstallerTests {
             verdict([(dir, "SteerLab.app/"), (file, "SteerLab.app/Contents/x"), (link, "SteerLab.app/Contents")])
                 != nil)
         #expect(verdict([(dir, "SteerLab.app/"), ("garbage", "line")]) != nil)
+        // On a case-insensitive volume `A` and `a` are one folder.
+        #expect(
+            verdict([(dir, "SteerLab.app/"), (link, "SteerLab.app/Contents/A"), (file, "SteerLab.app/Contents/a/x")])
+                != nil)
     }
 
     @Test func listingBoundsStopAnArchiveBomb() {
@@ -687,6 +698,29 @@ struct UpdateInstallerTests {
                 URL(string: "https://example.com/f.zip")!, into: destination, byteLimit: 100,
                 deadline: .distantFuture, transport: missing, clock: FakeClock(expired: false))
         }
+    }
+
+    @Test func aStallIsReportedAsAStallNotAsTheDeadline() async throws {
+        let scratch = try Scratch()
+        defer { scratch.remove() }
+        let url = URL(string: "https://github.com/acme/widget/releases/download/v0.9.9/stall.zip")!
+        let transport = FakeTransport(["stall.zip": .fail(URLError(.timedOut))])
+        await #expect(throws: UpdateInstallError.downloadFailed("no data arrived for a minute")) {
+            _ = try await UpdateDownload.receive(
+                url, into: scratch.root.appending(component: "stall"), byteLimit: 10_000,
+                deadline: .distantFuture, transport: transport, clock: FakeClock(expired: false))
+        }
+    }
+
+    @Test func updateRequestsSendAFixedUserAgent() {
+        let lookup = GitHubReleaseFeed.request(
+            for: URL(string: "https://api.github.com/repos/acme/widget/releases/latest")!, timeout: 8)
+        #expect(lookup.value(forHTTPHeaderField: "User-Agent") == "SteerLab")
+        #expect(lookup.httpBody == nil)
+        let download = GitHubUpdateTransport.sessionConfiguration(stallTimeout: 60)
+        #expect(download.httpAdditionalHeaders?["User-Agent"] as? String == "SteerLab")
+        #expect(download.httpCookieAcceptPolicy == .never)
+        #expect(download.urlCredentialStorage == nil)
     }
 
     @Test func aStalledDownloadTimesOutOnTheInjectedClock() async throws {
@@ -868,6 +902,58 @@ struct UpdateInstallerTests {
         }
     }
 
+    @Test func theStagedAppIsVerifiedAgainImmediatelyBeforeTheSwap() async throws {
+        let scratch = try Scratch()
+        defer { scratch.remove() }
+        try Self.makeBundle(at: scratch.installed, version: "0.9.8", marker: "old")
+        let (release, transport) = try Self.release(in: scratch)
+        let signing = FakeSigning()
+        let installer = Self.installer(scratch, transport: transport, signing: signing)
+        let staged = try await installer.prepare(release)
+        // Something replaced the staged app after it was checked.
+        signing.accepting.withLock { $0 = false }
+        #expect(throws: UpdateInstallError.signatureRejected("refused by the test")) {
+            _ = try installer.install(staged)
+        }
+        #expect(signing.seen.withLock { $0.count } == 2)
+        #expect(LiveUpdateFileSystem().bundleInfo(at: scratch.installed).version == "0.9.8")
+        #expect(!FileManager.default.fileExists(atPath: installer.previousCopy.path))
+    }
+
+    @Test func aKeptCopyThatCannotGoToTheTrashIsKeptBesideTheApp() async throws {
+        let scratch = try Scratch()
+        defer { scratch.remove() }
+        try Self.makeBundle(at: scratch.installed, version: "0.9.8", marker: "old")
+        try Self.makeBundle(
+            at: scratch.apps.appending(component: "SteerLab-0.9.8-previous.app"), version: "0.9.8",
+            marker: "kept earlier")
+        let (release, transport) = try Self.release(in: scratch)
+        var fileSystem = FaultyFileSystem()
+        fileSystem.failTrash = true
+        let installer = Self.installer(scratch, transport: transport, fileSystem: fileSystem)
+        let staged = try await installer.prepare(release)
+        _ = try installer.install(staged)
+        let rescued = scratch.apps.appending(component: "SteerLab-0.9.8-kept-1.app")
+        #expect(
+            try String(contentsOf: rescued.appending(components: "Contents", "MacOS", "SteerLabApp"), encoding: .utf8)
+                == "kept earlier")
+        #expect(!FileManager.default.fileExists(atPath: installer.stagingRoot.path))
+    }
+
+    @Test func aParkedCopyLeftInTheStagingFolderIsRescuedNotDeleted() throws {
+        let scratch = try Scratch()
+        defer { scratch.remove() }
+        let root = UpdateStagingLayout.stagingRoot(forApp: scratch.installed)
+        try Self.makeBundle(
+            at: root.appending(component: UpdateStaging.parkedCopyName), version: "0.9.7", marker: "parked")
+        let removed = UpdateStaging.removeLeftovers(besideApp: scratch.installed, isProcessAlive: { _ in false })
+        #expect(removed)
+        #expect(!FileManager.default.fileExists(atPath: root.path))
+        #expect(
+            FileManager.default.fileExists(
+                atPath: scratch.apps.appending(component: "SteerLab-0.9.7-kept-1.app").path))
+    }
+
     @Test func aNewAppThatIsNotTheVerifiedVersionIsRolledBack() async throws {
         let scratch = try Scratch()
         defer { scratch.remove() }
@@ -880,7 +966,7 @@ struct UpdateInstallerTests {
         #expect {
             _ = try installer.install(staged)
         } throws: { error in
-            guard case .installFailedRestored = error as? UpdateInstallError else { return false }
+            guard case .versionMismatch = error as? UpdateInstallError else { return false }
             return true
         }
         #expect(LiveUpdateFileSystem().bundleInfo(at: scratch.installed).version == "0.9.8")

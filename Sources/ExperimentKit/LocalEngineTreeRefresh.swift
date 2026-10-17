@@ -33,7 +33,12 @@ public enum LocalEngineTreeRefresh {
         let incoming = parent.appending(component: "Server.incoming-\(token)")
         let replaced = parent.appending(component: "Server.replaced-\(token)")
 
-        try fm.copyItem(at: packageRoot, to: incoming)
+        do {
+            try fm.copyItem(at: packageRoot, to: incoming)
+        } catch {
+            try? fm.removeItem(at: incoming)
+            throw error
+        }
         let count = regularFileCount(under: incoming, fileManager: fm)
 
         let shipped = Set((try? fm.contentsOfDirectory(atPath: incoming.path)) ?? [])
