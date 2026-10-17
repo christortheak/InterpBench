@@ -217,6 +217,10 @@ On these refusals, `error.code` names the problem directly.
 | `needsHumanAuthentication` (exit `10`) | A person must sign in at their own terminal | Sign in yourself; your assistant cannot do it for you |
 | `pending` (exit `12`) or `degraded` (exit `13`) | Work is still in progress, or something could not be read for now | Repeat the command later |
 | `verbFailed` | Not a typed refusal: something failed | Read the reason. It usually names a file to fix |
+| The update notice offers no **Install Update…** | This copy cannot replace itself; the notice's second line says why (opened straight from the download, on a disk SteerLab cannot write to, built from source, or not notarized) | Move `SteerLab.app` to Applications or your SteerLab folder and open it from there, or download the release from the Releases page |
+| **Install Update** stopped | A download, the checksum, or the signature check failed, or you cancelled. Nothing was replaced | Try again later, or download the release from the Releases page |
+| Going back after an update | The earlier version is kept beside the app as `SteerLab-<version>-previous.app` | Quit SteerLab, move `SteerLab.app` to the Trash, rename the kept copy to `SteerLab.app`, and open it |
+| The engine setup says the engine was copied by a different build | After an update, the Python engine on this Mac still holds the earlier version's code | Stop the engine if it is running, then choose **Refresh Engine** in its setup (**Engine Details…** in the toolbar's connection menu). Installed packages are kept |
 
 ### Advisories worth knowing
 
