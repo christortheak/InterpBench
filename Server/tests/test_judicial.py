@@ -1,12 +1,60 @@
 """Judicial parsers + derived endpoints (pure text/arithmetic fixtures shared
 in spirit with the Swift twin)."""
 
+import json
 import math
+import os
+
+import pytest
 
 from steerlab_server.experiment import judicial
 
 
 OPTIONS = ["Apply Kansas law", "Apply Nebraska law"]
+
+# --- the shared, hand-written choice-parsing contract -------------------------
+# Every expected value in this file was written by hand from the parser's
+# rules, never read back from an engine; JudicialTests.swift reads the same
+# file, so a divergence fails on both sides.
+CHOICE_FIXTURE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "Tests", "Fixtures", "cross-engine", "choice-parsing.json")
+
+
+def _choice_cases():
+    with open(CHOICE_FIXTURE, encoding="utf-8") as handle:
+        return json.load(handle)["cases"]
+
+
+@pytest.mark.parametrize("case", _choice_cases(), ids=lambda case: case["name"])
+def test_parse_choice_matches_the_hand_written_fixture(case):
+    assert judicial.parse_choice(
+        case["text"], case["options"],
+        json_key=case.get("jsonKey", "answer"),
+        truncated=case.get("truncated", False)) == case["expected"]
+
+
+def test_the_choice_fixture_covers_the_reported_defects():
+    # The four replies the defect report named, and the malformed-JSON shapes
+    # found in stored runs, must stay in the contract.
+    by_text = {case["text"]: case["expected"] for case in _choice_cases()}
+    assert by_text["As a doctor, I would choose B."] == "B"
+    assert by_text["This is a hard case; my answer is B."] == "B"
+    assert by_text["I choose B. It saves a life."] == "B"
+    assert by_text["B"] == "B"
+    names = {case["name"] for case in _choice_cases()}
+    assert {"invalid JSON in a fence: unescaped quotes inside the reasons",
+            "invalid JSON: raw newlines and a tab inside the reasons",
+            "truncated object cut before the answer key, flagged",
+            "truncated object after a complete answer key"} <= names
+
+
+def test_the_article_is_never_option_a_but_a_capital_letter_is():
+    letters = ["A", "B"]
+    assert judicial.parse_choice("As a doctor, I would choose B.", letters) == "B"
+    assert judicial.parse_choice("In this case I choose A.", letters) == "A"
+    # The declared option is returned whatever case the reply used.
+    assert judicial.parse_choice("I choose B.", ["a", "b"]) == "b"
 
 
 def test_parse_choice_from_fenced_json():
