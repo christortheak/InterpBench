@@ -70,6 +70,9 @@ final class UpdateSignpostModel {
     @ObservationIgnored private var installer: UpdateInstaller?
     @ObservationIgnored private var staged: UpdateStagedApp?
     @ObservationIgnored private var launchNoted = false
+    /// Bumped by every Install and every Cancel: work that finishes for an
+    /// attempt that is no longer current does nothing.
+    @ObservationIgnored private var installGeneration = 0
 
     init(
         service: UpdateCheckService = UpdateCheckService(),
@@ -268,6 +271,8 @@ final class UpdateSignpostModel {
                 transport: GitHubUpdateTransport(),
                 codeSigning: SecurityFrameworkCodeSigning()))
         self.installer = installer
+        installGeneration += 1
+        let generation = installGeneration
         installState = .working(.downloading(received: 0, total: installAssets?.archive.size))
         let onProgress = progressHandler()
         installTask = Task { [weak self] in
@@ -278,7 +283,8 @@ final class UpdateSignpostModel {
                 outcome = .failure(
                     error as? UpdateInstallError ?? .downloadFailed(error.localizedDescription))
             }
-            await self?.prepared(outcome, by: installer, cancelled: Task.isCancelled)
+            await self?.prepared(
+                outcome, by: installer, cancelled: Task.isCancelled, generation: generation)
         }
     }
 
@@ -287,10 +293,10 @@ final class UpdateSignpostModel {
     /// was downloaded is removed (`prepare` removes it on its own failures).
     private func prepared(
         _ outcome: Result<UpdateStagedApp, UpdateInstallError>, by installer: UpdateInstaller,
-        cancelled: Bool
+        cancelled: Bool, generation: Int
     ) async {
         installTask = nil
-        if cancelled {
+        if cancelled || generation != installGeneration {
             if case .success = outcome { installer.discardStaging() }
             return
         }
@@ -318,7 +324,12 @@ final class UpdateSignpostModel {
     /// The last step, which quits the app: only when nothing is running.
     func swapWhenIdle() async {
         guard let installer, let staged else { return }
+        let generation = installGeneration
         await refreshBusy()
+        // A Cancel (or a new attempt) while the busy check was out wins.
+        guard generation == installGeneration, self.staged == staged,
+            installState != .reviewing
+        else { return }
         guard busy.isIdle else {
             installState = .waitingForIdle
             return
@@ -344,6 +355,7 @@ final class UpdateSignpostModel {
     /// Cancel at any point before the swap: nothing is changed, and the
     /// downloaded files are removed.
     func cancelInstall() {
+        installGeneration += 1
         if let installTask {
             // It removes its own download as it unwinds; a new Install waits
             // until it has (`startInstall` requires no task in flight).

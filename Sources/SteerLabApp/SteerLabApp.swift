@@ -139,6 +139,11 @@ struct SteerLabApp: App {
         localEngine: LocalEngineProvisioner, localServer: LocalServerController,
         compute: ComputeChoiceCoordinator
     ) {
+        // One short-timeout session for every probe of the local engine:
+        // the sheet asks every two seconds, for as long as it is open.
+        let probeConfiguration = URLSessionConfiguration.ephemeral
+        probeConfiguration.timeoutIntervalForRequest = 3
+        let probeSession = URLSession(configuration: probeConfiguration)
         updates.busyProbe = { [weak service, weak localEngine, weak localServer] in
             guard let service, let localEngine, let localServer else { return UpdateBusyState() }
             let jobs = service.experiments.localJobs
@@ -146,7 +151,9 @@ struct SteerLabApp: App {
             if localServer.phase == .running,
                 let url = URL(string: "http://127.0.0.1:\(localServer.port)"),
                 let state = try? await ClusterClient(
-                    profile: ClusterConnectionProfile(baseURL: url)).state()
+                    profile: ClusterConnectionProfile(baseURL: url), session: probeSession,
+                    streamSession: probeSession
+                ).state()
             {
                 engineJobs = state.jobs.filter { $0.finishedAt == nil }.count
             }
