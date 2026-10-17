@@ -387,6 +387,13 @@ struct ChoiceRereadTests {
         #expect(total["storedChoices"] == .number(12))
         #expect(total["noFinishReason"] == .number(2))
         #expect(result.message.contains("steerlab-cli experiment analyze reread --reread-choices"))
+        let report = try await ChoiceCheck.check(
+            workspaceRoot: space.root, study: value.study, client: .commandLine,
+            python: python, source: source)
+        #expect(report.examples["changedToNoAnswer"] == value.expected.examples["changedToNoAnswer"])
+        let lines = ChoiceCheck.summaryLines(study: value.study, report: report)
+        #expect(lines.contains("  e.g. to no answer: line 10, steered, item q3, sample 0: A -> no answer"))
+        #expect(lines.contains("  e.g. gained an answer: line 11, steered, item q4, sample 0: no answer -> B"))
         #expect(try runBytes(space.run) == before)
 
         let missing = try workspace(inWorkspace: false)

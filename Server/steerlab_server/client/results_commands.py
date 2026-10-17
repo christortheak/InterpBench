@@ -119,8 +119,13 @@ def check_lines(result):
         for entry in result['examples'][kind]:
             lines.append(f"  e.g. {label}: line {entry['line']}, {entry['condition']}, item {entry['promptID']}"
                          + (f", sample {entry['sampleIndex']}" if 'sampleIndex' in entry else '')
-                         + f": {entry['stored']!r} -> {entry['reread']!r}")
+                         + f": {_reading(entry['stored'])} -> {_reading(entry['reread'])}")
     return lines
+
+
+def _reading(value):
+    """One stored or re-read choice, said for a person."""
+    return 'no answer' if value is None else str(value)
 
 
 def check_message(result, *, analyze_command):

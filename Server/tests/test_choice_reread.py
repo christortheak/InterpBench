@@ -332,6 +332,17 @@ def test_the_client_check_writes_nothing_and_reports_the_counts(tmp_path, capsys
     assert sorted(os.walk(root)) == before
 
 
+def test_the_client_check_says_the_changes_in_words(tmp_path, capsys, monkeypatch):
+    root, _run_dir = _workspace(tmp_path)
+    monkeypatch.delenv("STEERLAB_ROOT", raising=False)
+    assert client_cli.main(["--root", root, "results", "check-choices", STUDY]) == 0
+    out = capsys.readouterr().out
+    assert ("  steered: 6 stored, 1 unchanged, 3 to another option, 1 to no answer, "
+            "1 gained an answer") in out
+    assert "e.g. to no answer: line 10, steered, item q3, sample 0: A -> no answer" in out
+    assert "e.g. gained an answer: line 11, steered, item q4, sample 0: no answer -> B" in out
+
+
 def test_the_client_check_refuses_with_the_gate_and_repair(tmp_path, capsys, monkeypatch):
     root, _run_dir = _workspace(tmp_path, in_workspace=False)
     monkeypatch.delenv("STEERLAB_ROOT", raising=False)

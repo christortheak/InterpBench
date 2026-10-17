@@ -32,6 +32,8 @@ public enum ChoiceCheck {
         public let parserVersion: String
         public let total: ChoiceReread.Counts
         public let conditions: [String: ChoiceReread.Counts]
+        /// A few records of each kind of change, by kind's raw name.
+        public var examples: [String: [ChoiceReread.Example]] = [:]
         /// The Python client's whole answer, for the command line's envelope.
         public let response: [String: JSONValue]
     }
@@ -88,9 +90,27 @@ public enum ChoiceCheck {
                 if let parsed = counts(block) { conditions[name] = parsed }
             }
         }
+        var examples: [String: [ChoiceReread.Example]] = [:]
+        if case .object(let kinds) = fields["examples"] {
+            for (kind, value) in kinds {
+                guard case .array(let entries) = value else { continue }
+                examples[kind] = entries.compactMap(example)
+            }
+        }
         return Report(
             run: run, parserVersion: version, total: total, conditions: conditions,
-            response: fields)
+            examples: examples, response: fields)
+    }
+
+    private static func example(_ value: JSONValue) -> ChoiceReread.Example? {
+        guard case .object(let fields) = value, case .number(let line)? = fields["line"]
+        else { return nil }
+        var sampleIndex: Int?
+        if case .number(let index)? = fields["sampleIndex"] { sampleIndex = Int(index) }
+        return ChoiceReread.Example(
+            line: Int(line), condition: string(fields["condition"]) ?? "",
+            promptID: string(fields["promptID"]) ?? "", sampleIndex: sampleIndex,
+            stored: string(fields["stored"]), reread: string(fields["reread"]))
     }
 
     private static func counts(_ value: JSONValue?) -> ChoiceReread.Counts? {
@@ -134,6 +154,20 @@ public enum ChoiceCheck {
                     "    \(counts.noFinishReason) from an older engine that did not record "
                         + "whether a reply was cut off (read as complete replies; "
                         + "\(counts.noFinishReasonChanged) changed)")
+            }
+        }
+        let labels: [(ChoiceReread.Kind, String)] = [
+            (.changedToOtherOption, "to another option"),
+            (.changedToNoAnswer, "to no answer"),
+            (.gainedAnswer, "gained an answer"),
+        ]
+        func said(_ value: String?) -> String { value ?? "no answer" }
+        for (kind, label) in labels {
+            for entry in report.examples[kind.rawValue] ?? [] {
+                lines.append(
+                    "  e.g. \(label): line \(entry.line), \(entry.condition), item \(entry.promptID)"
+                        + (entry.sampleIndex.map { ", sample \($0)" } ?? "")
+                        + ": \(said(entry.stored)) -> \(said(entry.reread))")
             }
         }
         return lines
