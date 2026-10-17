@@ -1789,6 +1789,38 @@ run-time parse. What the analyze run directory gains:
   `adjudicated: true` plus that summary, so a reader of the summary alone
   cannot miss that the endpoint values were substituted.
 
+**Re-reading stored choices (both engines, 0.9.9).** A choice is read once,
+when a run writes its records (`parsedChoice`), and a run read by an older
+choice parser keeps that parser's mistakes. Two verbs read the stored replies
+again with the current parser (`judicial.CHOICE_PARSER_VERSION` /
+`Judicial.choiceParserVersion`), against the options of the task prompts file
+the run's `experiment.json` pins — the workspace file when its SHA-256
+matches, otherwise a matching copy under `experiments/<study>/pinned/`, and
+never a file with other bytes (`pinDrift` or `missingPrerequisite` otherwise,
+with a repair):
+
+```
+steerlab results check-choices <study> [--run <run-dir>]        # writes nothing
+steerlab-cli results check-choices <study> [--run <run-dir>]    # the same check, through the bridge
+steerlab-cli experiment analyze <name> --reread-choices
+steerlab-server experiment analyze <name> [--source <run-dir>] --reread-choices
+steerlab run <experiment> --runner <url> --verb analyze --reread-choices
+```
+
+`check-choices` counts, per condition and in total, the records with a stored
+choice, the unchanged ones, those changed to another option, changed to no
+answer, or that gained an answer, and the records without `finishReason`
+(older engines never recorded whether a reply was cut off; they are re-read
+as complete replies), with up to five records of each kind by line of
+`generations.jsonl`. `--reread-choices` substitutes the re-read values in
+memory before exclusions and endpoints, writes `choice-reread.json` (parser
+version, source run, the same counts, `runUnchanged: true`), and leaves the
+run directory untouched. It also travels through `runner submit`,
+`study submit`, `remote submit-bundle`, and the HTTP routes (body key
+`rereadChoices`), and is refused for any verb but `analyze`. An ordinary
+analysis whose run the current parser would read differently carries the
+non-blocking `storedChoicesReadDifferently` advisory.
+
 **How a study declares its numeric endpoint — and the one deprecated implicit
 selection (2026-08-18).** The mechanism is the manifest's `numericParser`: the
 name of an entry in the workspace parser registry
