@@ -509,6 +509,59 @@ public enum ChoiceReread {
             + "is never changed."
     }
 
+    // MARK: - Asking a remote engine
+
+    /// How an engine says it can re-read: `analysisOptions` in its capability
+    /// snapshot lists `rereadChoices`. An older engine ignores the request,
+    /// so every remote request is checked before and after. Python twins:
+    /// `choice_reread.CAPABILITY_KEY` / `REMOTE_OPTION` / `COMMAND_FLAG`.
+    public static let capabilityKey = "analysisOptions"
+    public static let remoteOption = "rereadChoices"
+    public static let commandFlag = "--reread-choices"
+
+    /// The repair when a remote engine cannot (or did not) re-read. Python
+    /// twin: `choice_reread.remote_repair` (identical words).
+    public static let remoteRepair =
+        "Bring that engine up to date (for a cluster site, steerlab-cli cluster "
+        + "push --site <id>), then analyze again with the choices re-read."
+
+    /// Refuses, before anything is submitted, when the engine's capabilities
+    /// do not list the re-read.
+    static func requireRemoteSupport(_ capabilities: ClusterCapabilities, where server: String)
+        throws
+    {
+        guard capabilities.analysisOptions?.contains(remoteOption) == true else {
+            throw ExperimentError.refusing(
+                .missingPrerequisite,
+                "The engine at \(server) cannot re-read stored choices: its "
+                    + "capabilities do not list \(remoteOption), so it is older than "
+                    + "this client. Nothing was submitted, because that engine would "
+                    + "have analyzed the stored choices instead.",
+                repair: remoteRepair)
+        }
+    }
+
+    /// The refusal after a submission whose answer does not confirm the
+    /// re-read: that job analyzes the stored choices.
+    static func remoteNotConfirmed(where server: String, jobID: String) -> ExperimentError {
+        ExperimentError.refusing(
+            .missingPrerequisite,
+            "The engine at \(server) accepted job \(jobID) but did not confirm the "
+                + "re-read, so that job analyzes the stored choices and writes no "
+                + "choice-reread.json. Do not report it as an analysis with re-read "
+                + "choices.",
+            repair: remoteRepair)
+    }
+
+    /// What the app shows for an error from a remote analysis: a typed
+    /// refusal's reason and its repair, so the repair is never lost.
+    public static func appMessage(for error: Error) -> String {
+        if let refusal = (error as? ExperimentError)?.lifecycleRefusal {
+            return refusal.reason + " " + refusal.repairAction
+        }
+        return error.localizedDescription
+    }
+
     // MARK: - The app's words
 
     /// The control beside every Analyze button.

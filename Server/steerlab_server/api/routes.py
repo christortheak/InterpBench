@@ -1554,7 +1554,10 @@ def build_router(state: ServiceState) -> APIRouter:
             _refuse_batch_only_verb(verb)
 
         job = state.jobs.submit(f"experiment:{verb}", work)
-        return {"jobId": job.id}
+        # The echo a client checks before it reports a re-read analysis: an
+        # older engine ignores `rereadChoices` and answers without it.
+        return {"jobId": job.id,
+                **({"rereadChoices": True} if reread_choices else {})}
 
     # --- catalog (read-only discovery for the UI) ---------------------------
 

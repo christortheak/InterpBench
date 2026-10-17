@@ -442,8 +442,10 @@ def test_the_route_rereads_on_request_and_notes_the_count_otherwise(tmp_path, mo
     monkeypatch.setenv("STEERLAB_ROOT", root)
     client = TestClient(app)
 
-    job = _wait_for_job(client, client.post(f"/api/experiment/{STUDY}/analyze",
-                                            json={"rereadChoices": True}).json()["jobId"])
+    answer = client.post(f"/api/experiment/{STUDY}/analyze", json={"rereadChoices": True}).json()
+    # The echo the app checks before it reports a re-read analysis.
+    assert answer["rereadChoices"] is True
+    job = _wait_for_job(client, answer["jobId"])
     assert job["status"] == "succeeded", job
     reread_out = job["result"]["runDirectory"]
     assert os.path.exists(os.path.join(reread_out, choice_reread.STAMP_FILE))
@@ -451,7 +453,9 @@ def test_the_route_rereads_on_request_and_notes_the_count_otherwise(tmp_path, mo
     assert _pooled(reread_out, "choiceRate") == pytest.approx(
         (expected["estimate"], expected["n"]), abs=1e-5)
 
-    job_id = client.post(f"/api/experiment/{STUDY}/analyze").json()["jobId"]
+    ordinary = client.post(f"/api/experiment/{STUDY}/analyze").json()
+    assert "rereadChoices" not in ordinary
+    job_id = ordinary["jobId"]
     job = _wait_for_job(client, job_id)
     assert job["status"] == "succeeded", job
     assert not os.path.exists(os.path.join(job["result"]["runDirectory"], choice_reread.STAMP_FILE))
@@ -549,16 +553,69 @@ def test_a_submission_renders_the_flag_only_when_asked(tmp_path, monkeypatch):
     assert "--reread-choices" in submission.command
 
 
-def test_the_runner_client_sends_the_reread_only_when_asked(monkeypatch):
+def _scripted_runner(monkeypatch, *, capabilities, command):
+    """A real RunnerClient whose wire answers are scripted: the capability
+    snapshot, and the submission's rendered command."""
     from steerlab_server.client import runner as runner_api
     client = runner_api.RunnerClient(base_url="http://127.0.0.1:9")
     monkeypatch.setattr(client, "inspect_remote_bundle", lambda _path: {"runtimeRequirements": []})
+    monkeypatch.setattr(client, "capabilities", lambda: capabilities)
     sent = []
-    monkeypatch.setattr(client, "_json", lambda method, path, json_body=None, **_: sent.append(json_body) or {})
+
+    def answer(method, path, json_body=None, **_):
+        sent.append(json_body)
+        return {"jobId": "job-7", "command": list(command)}
+
+    monkeypatch.setattr(client, "_json", answer)
+    return client, sent
+
+
+def test_the_runner_client_sends_the_reread_only_when_asked(monkeypatch):
+    client, sent = _scripted_runner(
+        monkeypatch, capabilities={"analysisOptions": ["rereadChoices"]},
+        command=["python", "-m", "steerlab_server.cli", "bundle", "execute", "--reread-choices"])
     client.submit_uploaded_bundle(remote_path="/staged.tar.gz", verb="analyze", reread_choices=True)
     client.submit_uploaded_bundle(remote_path="/staged.tar.gz", verb="analyze")
     assert sent[0]["rereadChoices"] is True
     assert "rereadChoices" not in sent[1]
+
+
+def test_an_older_runner_is_refused_before_anything_is_submitted(monkeypatch):
+    """An engine whose capabilities do not list rereadChoices would ignore the
+    key and analyze the stored choices: refused before the submit."""
+    from steerlab_server.client import runner as runner_api
+    client, sent = _scripted_runner(monkeypatch, capabilities={"instrumentation": []},
+                                    command=["python"])
+    with pytest.raises(runner_api.RunnerRefusal) as refusal:
+        client.submit_uploaded_bundle(remote_path="/staged.tar.gz", verb="analyze",
+                                      reread_choices=True)
+    assert refusal.value.code == choice_reread.UNSUPPORTED_CODE
+    assert "Nothing was submitted" in refusal.value.reason
+    assert "steerlab-cli cluster push --site <id>" in refusal.value.repair_action
+    assert sent == []
+
+
+def test_a_submission_that_does_not_confirm_the_reread_is_refused(monkeypatch):
+    """The capabilities claimed it, but the rendered command does not carry
+    --reread-choices: that job analyzes the stored choices, said plainly."""
+    from steerlab_server.client import runner as runner_api
+    client, sent = _scripted_runner(
+        monkeypatch, capabilities={"analysisOptions": ["rereadChoices"]},
+        command=["python", "-m", "steerlab_server.cli", "bundle", "execute"])
+    with pytest.raises(runner_api.RunnerRefusal) as refusal:
+        client.submit_uploaded_bundle(remote_path="/staged.tar.gz", verb="analyze",
+                                      reread_choices=True)
+    assert refusal.value.code == choice_reread.NOT_CONFIRMED_CODE
+    assert "job-7" in refusal.value.reason and refusal.value.detail["jobId"] == "job-7"
+    assert "cluster push" in refusal.value.repair_action
+    assert len(sent) == 1
+
+
+def test_the_engine_says_it_can_reread_and_its_route_echoes_the_request():
+    from steerlab_server.api import profile
+    snapshot = profile.capability_snapshot()
+    assert choice_reread.remote_supports(snapshot)
+    assert snapshot["analysisOptions"] == ["rereadChoices"]
 
 
 def test_the_client_run_refuses_the_reread_for_any_other_step(tmp_path, capsys, monkeypatch):

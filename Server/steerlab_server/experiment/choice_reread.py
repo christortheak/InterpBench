@@ -54,6 +54,45 @@ STAMP_FILE = "choice-reread.json"
 #: read some stored choices differently (``cli_envelope.ADVISORY_CODES``).
 ADVISORY_CODE = "storedChoicesReadDifferently"
 
+#: How an engine says it can re-read: ``analysisOptions`` in its capability
+#: snapshot lists ``rereadChoices``. An older engine ignores the request key,
+#: so every client that asks a REMOTE engine to re-read checks this first and
+#: then checks the answer (the rendered command, or the route's echo). Swift
+#: twins: ``ChoiceReread.capabilityKey`` / ``remoteOption``.
+CAPABILITY_KEY = "analysisOptions"
+REMOTE_OPTION = "rereadChoices"
+#: The flag a bundle submission renders when it honours the request.
+COMMAND_FLAG = "--reread-choices"
+UNSUPPORTED_CODE = "rereadChoicesUnsupported"
+NOT_CONFIRMED_CODE = "rereadChoicesNotConfirmed"
+
+
+def remote_repair() -> str:
+    """The repair when a remote engine cannot (or did not) re-read."""
+    return ("Bring that engine up to date (for a cluster site, steerlab-cli "
+            "cluster push --site <id>), then analyze again with the choices "
+            "re-read.")
+
+
+def remote_unsupported_reason(where: str) -> str:
+    return (f"The engine at {where} cannot re-read stored choices: its "
+            f"capabilities do not list {REMOTE_OPTION}, so it is older than this "
+            "client. Nothing was submitted, because that engine would have "
+            "analyzed the stored choices instead.")
+
+
+def remote_not_confirmed_reason(where: str, job_id) -> str:
+    return (f"The engine at {where} accepted job {job_id} but did not confirm "
+            "the re-read, so that job analyzes the stored choices and writes no "
+            "choice-reread.json. Do not report it as an analysis with re-read "
+            "choices.")
+
+
+def remote_supports(capabilities) -> bool:
+    """Whether a capability snapshot says the engine can re-read."""
+    options = capabilities.get(CAPABILITY_KEY) if isinstance(capabilities, dict) else None
+    return isinstance(options, list) and REMOTE_OPTION in options
+
 #: The three ways a re-read can differ from the stored reading, in the order
 #: every count and every sentence lists them.
 CHANGED_TO_OTHER_OPTION = "changedToOtherOption"

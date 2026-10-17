@@ -1817,16 +1817,24 @@ steerlab run <experiment> --runner <url> --verb analyze --reread-choices
 `check-choices` counts, per condition and in total, the records with a stored
 choice, the unchanged ones, those changed to another option, changed to no
 answer, or that gained an answer, and the records without `finishReason`
-(older engines never recorded whether a reply was cut off; they are re-read
-as complete replies), with up to five records of each kind by line of
+(older engines never recorded whether a reply was cut off; those with a
+stored answer are re-read as complete replies, and those without one as
+possibly cut off, so only a JSON answer, the answer key, or a whole-reply
+match can give them one), with up to five records of each kind by line of
 `generations.jsonl`. `--reread-choices` substitutes the re-read values in
 memory before exclusions and endpoints, writes `choice-reread.json` (parser
 version, source run, the same counts, `runUnchanged: true`), and leaves the
 run directory untouched. It also travels through `runner submit`,
 `study submit`, `remote submit-bundle`, and the HTTP routes (body key
-`rereadChoices`), and is refused for any verb but `analyze`. An ordinary
-analysis whose run the current parser would read differently carries the
-non-blocking `storedChoicesReadDifferently` advisory.
+`rereadChoices`), and is refused for any verb but `analyze`. A remote
+request is checked: the client refuses before submitting when the engine's
+capabilities do not list `rereadChoices` under `analysisOptions`, and
+refuses after submitting when the answer does not confirm the re-read (the
+rendered command carries `--reread-choices`, or the in-process route echoes
+`rereadChoices: true`). The repair is to bring that engine up to date (for a
+cluster site, `steerlab-cli cluster push --site <id>`), then analyze again.
+An ordinary analysis whose run the current parser would read differently
+carries the non-blocking `storedChoicesReadDifferently` advisory.
 
 **How a study declares its numeric endpoint — and the one deprecated implicit
 selection (2026-08-18).** The mechanism is the manifest's `numericParser`: the
