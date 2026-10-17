@@ -9,6 +9,8 @@
 //   adjudicated-endpoint.json  answers replaced by an outside adjudication
 //   unit-of-analysis.json      what one paired difference is (the Mac engine
 //                              stamps the same fact in report.json)
+//   choice-reread.json         every stored choice read again with the current
+//                              choice parser (`analyze --reread-choices`)
 //
 // The explorer used to show none of them, so an estimate over 40 surviving
 // records looked exactly like one over all 64. Everything here is read as
@@ -71,11 +73,23 @@ export type UnitOfAnalysis = {
   source: string;
 };
 
+/// `choice-reread.json`: the analysis read every stored choice again with the
+/// current choice parser, and used those readings. Counts as stamped.
+export type ChoiceRereadStamp = {
+  parserVersion: string;
+  storedChoices: number | null;
+  changed: number | null;
+  noFinishReason: number | null;
+  noFinishReasonChanged: number | null;
+  runUnchanged: boolean;
+};
+
 export type AnalysisStamps = {
   exclusions: ExclusionsStamp | null;
   rescue: EndpointRescueStamp | null;
   adjudication: AdjudicationStamp | null;
   unit: UnitOfAnalysis | null;
+  choiceReread: ChoiceRereadStamp | null;
   /// The source run carried no study fingerprint, and the analysis went
   /// ahead anyway.
   epochUnverified: boolean;
@@ -84,7 +98,7 @@ export type AnalysisStamps = {
 };
 
 export const emptyAnalysisStamps = (): AnalysisStamps => ({
-  exclusions: null, rescue: null, adjudication: null, unit: null, epochUnverified: false, measurementDrift: "",
+  exclusions: null, rescue: null, adjudication: null, unit: null, choiceReread: null, epochUnverified: false, measurementDrift: "",
 });
 
 /// The run's stamps, or none for a run that has not been activated or was
@@ -99,6 +113,7 @@ export type AnalysisStampFiles = {
   reparse?: Record<string, unknown>;
   adjudication?: Record<string, unknown>;
   unit?: Record<string, unknown>;
+  choiceReread?: Record<string, unknown>;
   epochUnverified?: Record<string, unknown>;
   measurementDrift?: Record<string, unknown>;
   report?: Record<string, unknown>;
@@ -185,11 +200,23 @@ export const parseAnalysisStamps = (files: AnalysisStampFiles): AnalysisStamps =
     source: unitSource.source,
   } : null;
 
+  const reread = files.choiceReread;
+  const rereadTotal = recordValue(reread?.total);
+  const choiceReread: ChoiceRereadStamp | null = has(reread) ? {
+    parserVersion: textValue(reread, "parserVersion"),
+    storedChoices: count(rereadTotal.storedChoices),
+    changed: count(rereadTotal.changed),
+    noFinishReason: count(rereadTotal.noFinishReason),
+    noFinishReasonChanged: count(rereadTotal.noFinishReasonChanged),
+    runUnchanged: reread.runUnchanged === true,
+  } : null;
+
   return {
     exclusions,
     rescue,
     adjudication,
     unit,
+    choiceReread,
     epochUnverified: (files.epochUnverified ?? {}).epochUnverified === true || analysis.epochUnverified === true || notes.epochUnverified === true,
     measurementDrift: driftText((files.measurementDrift ?? {}).measurementDrift) || driftText(analysis.measurementDrift) || driftText(notes.measurementDrift),
   };
@@ -197,7 +224,7 @@ export const parseAnalysisStamps = (files: AnalysisStampFiles): AnalysisStamps =
 
 /// Whether the run records any of the stamps at all.
 export const hasAnalysisStamps = (stamps: AnalysisStamps) =>
-  Boolean(stamps.exclusions || stamps.rescue || stamps.adjudication || stamps.unit || stamps.epochUnverified || stamps.measurementDrift);
+  Boolean(stamps.exclusions || stamps.rescue || stamps.adjudication || stamps.unit || stamps.choiceReread || stamps.epochUnverified || stamps.measurementDrift);
 
 // --- sentences ---------------------------------------------------------------
 // One plain sentence per stamp, built only from the stamped numbers.
@@ -245,4 +272,16 @@ export const adjudicationSentence = (stamp: AdjudicationStamp | null): string =>
     ...part("unadjudicatable", "had no value before or after"),
   ];
   return `${total === undefined ? "Answers were" : `${plural(total, "answer")} ${total === 1 ? "was" : "were"}`} replaced by values from an outside adjudication${stamp.endpoint ? ` of ${stamp.endpoint}` : ""}${classes.length ? `: ${classes.join(", ")}` : ""}. The effects below use the adjudicated values.`;
+};
+
+/// The engines' own sentence for a choice re-read (`choice_reread.sentence`,
+/// `ChoiceReread.sentence`), built from the stamped numbers alone.
+export const choiceRereadSentence = (stamp: ChoiceRereadStamp | null): string => {
+  if (!stamp) return "None recorded. Every choice in this analysis is the one the run stored when it was made.";
+  const stored = stamp.storedChoices === null ? "an unstated number of stored choices" : plural(stamp.storedChoices, "stored choice");
+  let text = `Choices were re-read from the stored replies with choice parser version ${stamp.parserVersion || "unknown"}; ${stamp.changed ?? "an unstated number"} of ${stored} changed, and the run itself is ${stamp.runUnchanged ? "unchanged" : "not said to be unchanged"}.`;
+  if (stamp.noFinishReason) {
+    text += ` ${stamp.noFinishReason} of those replies come from an older engine that did not record whether a reply was cut off by the length limit, so they were read as complete replies (${stamp.noFinishReasonChanged ?? "an unstated number"} of them changed).`;
+  }
+  return text;
 };

@@ -355,3 +355,37 @@ def test_the_bridge_returns_a_refusal_as_data(tmp_path):
     assert answer["checked"] is False
     assert answer["refusal"]["code"] == lifecycle_gates.PIN_DRIFT
     assert answer["refusal"]["state"] == "refused"
+
+
+# --- the readers show the stamp, as stored ---------------------------------------
+
+
+def test_the_export_and_the_results_page_say_the_choices_were_reread(tmp_path):
+    from steerlab_server.client import results_export
+    from steerlab_server.client.reports import study_results
+    root, _run_dir = _workspace(tmp_path)
+    tasks.analyze(STUDY, root=root, log=lambda *_: None, reread_choices=True)
+    result = results_export.export_results(root, STUDY, out=str(tmp_path / "export"))
+    folder = result["exportDirectory"]
+    methods = open(os.path.join(folder, "methods.md"), encoding="utf-8").read()
+    codebook = open(os.path.join(folder, "codebook.md"), encoding="utf-8").read()
+    page = open(os.path.join(folder, "report.html"), encoding="utf-8").read()
+    assert "- Choices: " + EXPECTED["sentence"] in methods
+    assert EXPECTED["sentence"] in codebook
+    assert "parsed_choice and parsed_choice_failed hold the choices as the run stored them" in codebook
+    assert EXPECTED["sentence"] in page
+    manifest = json.load(open(os.path.join(folder, "manifest.json"), encoding="utf-8"))
+    assert any(entry["path"].endswith("/" + choice_reread.STAMP_FILE) and entry["role"] == "analysis"
+               for entry in manifest["sources"])
+    # The page drawn by `results report` is the export's own page.
+    assert EXPECTED["sentence"] in study_results.render(results_export.read_results(root, STUDY))
+
+
+def test_an_ordinary_analysis_export_says_nothing_about_a_reread(tmp_path):
+    from steerlab_server.client import results_export
+    root, _run_dir = _workspace(tmp_path)
+    tasks.analyze(STUDY, root=root, log=lambda *_: None)
+    result = results_export.export_results(root, STUDY, out=str(tmp_path / "export"))
+    for name in ("methods.md", "codebook.md", "report.html"):
+        text = open(os.path.join(result["exportDirectory"], name), encoding="utf-8").read()
+        assert "re-read" not in text, name

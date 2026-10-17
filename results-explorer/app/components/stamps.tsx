@@ -4,7 +4,7 @@
 // here comes from lib/ (which reads the run's files); these components only
 // arrange it.
 
-import { adjudicationSentence, analysisStampsOf, exclusionsSentence, rescueSentence, unitSentence, type UnitOfAnalysis } from "../lib/analysisStamps";
+import { adjudicationSentence, analysisStampsOf, choiceRereadSentence, exclusionsSentence, rescueSentence, unitSentence, type UnitOfAnalysis } from "../lib/analysisStamps";
 import { freezeDetails, freezeLabel, freezeOf, freezeTone, runsBeforeFreeze } from "../lib/freeze";
 import { cellsOverThreshold, cutOffCells, parseTruncation, percentText, thresholdSentence, truncationSentence } from "../lib/runReport";
 import { RESPONSE_UNIT_EXPLANATION, unitOf, unsettledUnitSentence, type PairedItems } from "../lib/effectUnits";
@@ -222,6 +222,13 @@ export function AnalysisStampsCard({ run, onOpenFile }: { run: WorkspaceRun; onO
           <dd>
             <p>{rescueSentence(stamps.rescue)}</p>
             {stamps.rescue && <small>Stamped in endpoint-reparse.json. {open("endpoint-reparse.json")}</small>}
+          </dd>
+        </div>
+        <div>
+          <dt>Choices re-read</dt>
+          <dd>
+            <p>{choiceRereadSentence(stamps.choiceReread)}</p>
+            {stamps.choiceReread && <small>Stamped in choice-reread.json, with the changes for each condition and a few of the records that changed. {open("choice-reread.json")}</small>}
           </dd>
         </div>
         <div>
