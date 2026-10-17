@@ -439,6 +439,12 @@ def test_both_effect_size_dialects_normalize_to_the_same_table(tmp_path):
             # Only the Python engine records the kind of intervention.
             assert python_row.pop("modality", "") in ("injection", "")
             mac_row.pop("modality", None)
+            # The unit is the same; how it is known differs with the records
+            # and the engine: the Python run sampled each item twice, and its
+            # analysis's config.json names the Python engine, while the Mac
+            # run answered each item once.
+            sources = (python_row.pop("unit_of_analysis_source"), mac_row.pop("unit_of_analysis_source"))
+            assert sources in {("analysis_engine", "one_sample_per_item"), ("recorded", "recorded")}
             assert python_row == mac_row
     assert [row["estimate"] for row in exported["mac"]["effects.csv"]] == ["4.5", "0.5"]
 
@@ -480,9 +486,10 @@ def test_a_current_analysis_records_its_unit_and_the_export_says_so(root):
             for row in _table(result, "effects.csv")} == {("item", "recorded")}
 
 
-def test_an_unstamped_unit_of_analysis_is_shown_as_the_engine_default(root):
+def test_an_unstamped_unit_of_analysis_is_settled_by_the_engine_that_made_it(root):
     """An analysis written before units were recorded leaves the column
-    empty, and the export falls back to the engines' default."""
+    empty. Its config.json names the Python engine, which has always paired
+    items, so the export says item and says how it knows."""
     analysis = _python_study(root)
     path = os.path.join(root, "runs", analysis, "effect-sizes.csv")
     with open(path, encoding="utf-8", newline="") as handle:
@@ -496,8 +503,9 @@ def test_an_unstamped_unit_of_analysis_is_shown_as_the_engine_default(root):
         writer.writerows(table)
     result = _export(root)
     assert {(row["unit_of_analysis"], row["unit_of_analysis_source"])
-            for row in _table(result, "effects.csv")} == {("item", "engine_default")}
-    assert "engines' documented default" in _read(result, "methods.md")
+            for row in _table(result, "effects.csv")} == {("item", "analysis_engine")}
+    assert ("its config.json names the engine that made it, and that engine paired these rows by item"
+            in _read(result, "methods.md"))
 
 
 def _mac_sampled_records(manifest_hash, items, seeds):
@@ -563,7 +571,8 @@ def test_an_old_mac_response_level_interval_is_shown_with_what_it_is_not(root):
     [row] = _table(_export(root), "effects.csv")
     assert (row["n_pairs"], row["unit_of_analysis"]) == ("8", "response")
     page = study_results.render(results_export.read_results(str(root), STUDY))
-    assert "across 8 paired responses from 4 items. " + _effect_units()["wording"]["responseCaveat"] in page
+    assert ("across 8 paired responses from at most 4 items. " + _effect_units()["wording"]["responseCaveat"]
+            in page)
     assert "are not findings about items" in page and "(interval 1.5 to 2.5)" in page
     assert "too few" not in page.split("Headline outcome", 1)[1].split("</section>", 1)[0]
 
@@ -584,7 +593,7 @@ def test_a_study_of_instrument_readouts_alone_is_item_level(root):
     _write_mac_analysis(root, manifest, [{**_pooled("formal", len(ITEMS), 0.5, 1.5), "metric": "choiceLogOdds"}])
     result = _export(root)
     [row] = _table(result, "effects.csv")
-    assert (row["unit_of_analysis"], row["unit_of_analysis_source"]) == ("item", "engine_default")
+    assert (row["unit_of_analysis"], row["unit_of_analysis_source"]) == ("item", "one_sample_per_item")
     assert "not established" not in _read(result, "methods.md")
 
 
@@ -596,12 +605,32 @@ def test_a_row_the_records_cannot_place_has_an_unknown_unit(root):
     result = _export(root)
     units = {row["condition"]: (row["unit_of_analysis"], row["unit_of_analysis_source"])
              for row in _table(result, "effects.csv")}
-    assert units == {"formal": ("item", "engine_default"), "casual": ("unknown", "not_established")}
+    assert units == {"formal": ("item", "one_sample_per_item"), "casual": ("unknown", "not_established")}
     methods = _read(result, "methods.md")
     assert "Unit of analysis for the rows marked `unknown`: not established." in methods
     assert "Unit of analysis for the rows marked `item`: the item" in methods
     page = study_results.render(results_export.read_results(str(root), STUDY))
     assert "across 3 pairs. " + _effect_units()["wording"]["unknownNote"] in page
+
+
+def test_fewer_pairs_than_items_is_not_called_items(root):
+    """External review F1: ten items with five samples each, and a declared
+    exclusion that kept one item. The Mac engine before 0.9.7 stored n = 5,
+    five responses of that one item; 5 is fewer than the run's 10 items, and
+    that used to read as "5 paired items". With no version in the analysis's
+    config.json nothing records which it is, so the row says so, and the
+    stored numbers are shown unchanged."""
+    items = [f"item-{index}" for index in range(1, 11)]
+    _old_mac_analysis(root, items, 5, [_pooled("formal", 5, 1.5, 2.5)])
+    result = _export(root)
+    [row] = _table(result, "effects.csv")
+    assert (row["n_pairs"], row["unit_of_analysis"], row["unit_of_analysis_source"]) == (
+        "5", "unknown", "not_established")
+    assert (row["estimate"], row["ci_lower"], row["ci_upper"]) == ("2.0", "1.5", "2.5")
+    page = study_results.render(results_export.read_results(str(root), STUDY))
+    assert "across 5 pairs. " + _effect_units()["wording"]["unknownNote"] in page
+    assert "paired items" not in page and "(interval 1.5 to 2.5)" in page
+    assert "did not record whether their pairs count items or responses" in _read(result, "methods.md")
 
 
 # --- the rule the Mac app and the results explorer copy ------------------------
@@ -629,6 +658,8 @@ def _settled_units(case, directory):
         handle.write("".join(line + "\n" for line in case["generations"]))
     loaded = results_export._load_generations(path, results_export._Sources(directory))
     paired = results_export.paired_items(loaded)
+    samples = results_export.samples_per_item(loaded)
+    pairing = results_export.engine_pairing(case["config"])
     table = io.StringIO()
     writer = csv.writer(table, lineterminator="\n")
     writer.writerow(["condition", "metric", "n", "meanDiff", "ciLower", "ciUpper", "stratifyBy", "stratum", "unit"])
@@ -636,7 +667,7 @@ def _settled_units(case, directory):
         writer.writerow([row["condition"], row["endpoint"], row["n"], "1.0", "0.5", "1.5", row["stratifyBy"],
                          row["stratum"], row["unit"]])
     rows, _ = results_export._read_effects(table.getvalue())
-    results_export.resolve_units(rows, case["stampedUnit"], paired)
+    results_export.resolve_units(rows, case["stampedUnit"], paired, samples, pairing)
 
     def count(row):
         n = study_results.stored_number(row["n_pairs"])
@@ -644,11 +675,13 @@ def _settled_units(case, directory):
             return None
         text = study_results._plural(int(n), *study_results._UNITS[row["unit_resolved"]])
         if row["unit_resolved"] == "response":
-            text += " from " + study_results._plural(row["paired_items"], "item", "items")
+            text += " " + study_results.response_items(row["paired_items"])
         return text
 
     return {
+        "enginePairing": pairing,
         "pairedItems": dict(sorted(paired.items())),
+        "samplesPerItem": dict(sorted(samples.items())),
         "rows": [{"condition": row["condition"], "endpoint": row["outcome"], "stratifyBy": row["stratify_by"],
                   "stratum": row["stratum"], "unit": row["unit_resolved"], "unitSource": row["unit_source"],
                   "pairedItems": row["paired_items"], "count": count(row), "tooFew": study_results.Page.too_few(row)}
@@ -670,11 +703,17 @@ def test_the_shared_effect_unit_cases_cover_the_rule():
     assert (one_prompt["unit"], one_prompt["count"], one_prompt["tooFew"]) == (
         "response", "5 paired responses from 1 item", True)
     [four_items] = cases["four items, two seeds"]
-    assert (four_items["unit"], four_items["count"]) == ("response", "8 paired responses from 4 items")
+    assert (four_items["unit"], four_items["count"]) == ("response", "8 paired responses from at most 4 items")
     [current] = cases["a current item-level analysis of four items, two seeds"]
-    assert (current["unit"], current["unitSource"], current["count"]) == ("item", "engine_default", "4 paired items")
+    assert (current["unit"], current["unitSource"], current["count"]) == ("item", "analysis_engine", "4 paired items")
+    [unrecorded] = cases["the same item-level rows with no engine record"]
+    assert (unrecorded["unit"], unrecorded["unitSource"], unrecorded["count"]) == (
+        "unknown", "not_established", "4 pairs")
+    [reviewer] = cases["the reviewer's exclusion case, made by the Mac engine before 0.9.7"]
+    assert (reviewer["unit"], reviewer["count"]) == ("response", "5 paired responses from at most 10 items")
     sources = {row["unitSource"] for rows in cases.values() for row in rows}
-    assert sources == {"recorded", "engine_default", "inferred_from_records", "not_established"}
+    assert sources == {"recorded", "one_sample_per_item", "analysis_engine", "inferred_from_records",
+                       "not_established"}
 
 
 def test_the_shared_effect_unit_wording_is_this_readers():
@@ -684,10 +723,14 @@ def test_the_shared_effect_unit_wording_is_this_readers():
     wording = fixture["wording"]
     assert fixture["minimumPairs"] == study_results.MINIMUM_PAIRS
     assert wording["responseUnitExplanation"] == results_export.RESPONSE_UNIT_EXPLANATION
-    for source, unit in (("engine_default", "item"), ("inferred_from_records", "response"),
-                         ("not_established", "unknown")):
+    assert wording["unknownNote"] == results_export.UNKNOWN_UNIT_NOTE
+    for source, unit, key in (("one_sample_per_item", "item", "one_sample_per_item"),
+                              ("analysis_engine", "item", "analysis_engine_item"),
+                              ("analysis_engine", "response", "analysis_engine_response"),
+                              ("inferred_from_records", "response", "inferred_from_records"),
+                              ("not_established", "unknown", "not_established")):
         context = {"effectRows": [{"stratify_by": "pooled", "unit_source": source, "unit_resolved": unit}]}
-        assert results_export.unit_lines(context) == ["- Unit of analysis: " + wording["unitLines"][source]]
+        assert results_export.unit_lines(context) == ["- Unit of analysis: " + wording["unitLines"][key]]
     # A recorded unit is defined, not only named.
     for unit in ("item", "transcript"):
         context = {"effectRows": [{"stratify_by": "pooled", "unit_source": "recorded", "unit_resolved": unit}]}

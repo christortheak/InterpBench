@@ -1961,6 +1961,7 @@ def effect_units_resolve(case: dict) -> dict:
     finally:
         shutil.rmtree(directory, ignore_errors=True)
     paired = results_export.paired_items(loaded)
+    samples = results_export.samples_per_item(loaded)
     table = io.StringIO()
     writer = csv.writer(table, lineterminator="\n")
     writer.writerow(EFFECT_UNITS_COLUMNS)
@@ -1969,7 +1970,9 @@ def effect_units_resolve(case: dict) -> dict:
                          "0.5", "1.5", row["stratifyBy"], row["stratum"],
                          row["unit"]])
     rows, _ = results_export._read_effects(table.getvalue())
-    results_export.resolve_units(rows, case["stampedUnit"], paired)
+    pairing = results_export.engine_pairing(case["config"])
+    results_export.resolve_units(rows, case["stampedUnit"], paired, samples,
+                                 pairing)
 
     def count(row):
         n = study_results.stored_number(row["n_pairs"])
@@ -1978,12 +1981,14 @@ def effect_units_resolve(case: dict) -> dict:
         one, many = study_results._UNITS[row["unit_resolved"]]
         text = study_results._plural(int(n), one, many)
         if row["unit_resolved"] == "response":
-            text += " from " + study_results._plural(
-                row["paired_items"], "item", "items")
+            text += " " + study_results.response_items(row["paired_items"])
         return text
 
     return {
+        "enginePairing": pairing,
         "pairedItems": dict(sorted(paired.items())),
+        "samplesPerItem": {condition: samples[condition]
+                           for condition in sorted(samples)},
         "rows": [{"condition": row["condition"], "endpoint": row["outcome"],
                   "stratifyBy": row["stratify_by"], "stratum": row["stratum"],
                   "unit": row["unit_resolved"], "unitSource": row["unit_source"],
@@ -1995,6 +2000,10 @@ def effect_units_resolve(case: dict) -> dict:
 
 def effect_units_cases() -> list[dict]:
     items = ["item-1", "item-2", "item-3", "item-4"]
+    many = [f"item-{index}" for index in range(1, 21)]
+    # The config.json an analysis directory carries: the engine that made it.
+    mac_096 = {"substrate": "swift-mlx", "appVersion": "swift-app 0.9.6+0a1b2c3d"}
+    mac_097 = {"substrate": "swift-mlx", "appVersion": "swift-app 0.9.7+0a1b2c3d"}
     old = ("an analysis from before SteerLab 0.9.7, when the Mac engine "
            "paired every response with the baseline response to the same "
            "item and seed, counted responses in n, and stamped no unit")
@@ -2036,9 +2045,63 @@ def effect_units_cases() -> list[dict]:
                                              items[:2], 4),
          "stampedUnit": None, "effectRows": [effect_units_row("formal", "8")]},
         {"label": "a current item-level analysis of four items, two seeds",
-         "note": "the same records, analyzed with samples averaged within "
-                 "each item",
+         "note": "the same records, analyzed by the Mac engine 0.9.7 with "
+                 "samples averaged within each item; its config.json says so",
          "generations": effect_units_sampled(["baseline", "formal"], items, 2),
+         "config": mac_097,
+         "stampedUnit": None, "effectRows": [effect_units_row("formal", "4")]},
+        {"label": "the same item-level rows with no engine record",
+         "note": "four pairs from four items with two samples each could be "
+                 "four items or four responses (after exclusions or missing "
+                 "values); nothing records which",
+         "generations": effect_units_sampled(["baseline", "formal"], items, 2),
+         "stampedUnit": None, "effectRows": [effect_units_row("formal", "4")]},
+        {"label": "the reviewer's exclusion case, made by the Mac engine before 0.9.7",
+         "note": "ten items, five samples; a declared exclusion kept one item, "
+                 "so the Mac engine before 0.9.7 stored n = 5, all five "
+                 "responses from that item",
+         "generations": effect_units_sampled(["baseline", "formal"], many[:10], 5),
+         "config": mac_096,
+         "stampedUnit": None, "effectRows": [effect_units_row("formal", "5")]},
+        {"label": "the reviewer's exclusion case, with no engine version recorded",
+         "generations": effect_units_sampled(["baseline", "formal"], many[:10], 5),
+         "config": {"substrate": "swift-mlx"},
+         "stampedUnit": None, "effectRows": [effect_units_row("formal", "5")]},
+        {"label": "a subgroup row within the run's items",
+         "note": "five items of a twenty-item run with three samples each: 15 "
+                 "responses; every engine stamps its subgroup rows, so the "
+                 "engine named in config.json does not settle an unstamped one",
+         "generations": effect_units_sampled(["baseline", "formal"], many[:20], 3),
+         "config": mac_096, "stampedUnit": None,
+         "effectRows": [effect_units_row("formal", "15", stratify_by="arm",
+                                         stratum="x")]},
+        {"label": "an unstamped row made by the Python engine",
+         "generations": effect_units_sampled(["baseline", "formal"], items, 2),
+         "config": {"substrate": "python-hf-transformers",
+                    "appVersion": "steerlab-server 0.9.6+0a1b2c3d"},
+         "stampedUnit": None, "effectRows": [effect_units_row("formal", "4")]},
+        {"label": "an unstamped row made by the Mac engine before 0.9.7",
+         "generations": effect_units_sampled(["baseline", "formal"], items, 2),
+         "config": mac_096,
+         "stampedUnit": None, "effectRows": [effect_units_row("formal", "8")]},
+        {"label": "an ordinal readout row made by the Mac engine before 0.9.7",
+         "note": "the Mac engine before 0.9.7 read ordinal outcomes from one "
+                 "readout per item and condition, so it paired them by item",
+         "generations": effect_units_sampled(["baseline", "formal"], items, 2)
+         + [json.dumps({"condition": condition, "promptID": item,
+                        "instrument": "ordinalScale", "ordinalPosition": 2.0})
+            for condition in ("baseline", "formal") for item in items],
+         "config": mac_096, "stampedUnit": None,
+         "effectRows": [effect_units_row("formal", "4", endpoint="ordinalPosition")]},
+        {"label": "a pre-release of 0.9.7",
+         "note": "a pre-release of 0.9.7 could have been built either side of "
+                 "the change, so its version settles nothing",
+         "generations": effect_units_sampled(["baseline", "formal"], items, 2),
+         "config": {"substrate": "swift-mlx",
+                    "appVersion": "swift-app 0.9.7-beta+0a1b2c3d"},
+         "stampedUnit": None, "effectRows": [effect_units_row("formal", "4")]},
+        {"label": "missing values in a run with one sample per item",
+         "generations": effect_units_sampled(["baseline", "formal"], many[:6], 1),
          "stampedUnit": None, "effectRows": [effect_units_row("formal", "4")]},
         {"label": "the Python engine's analysis of a sampled run",
          "note": "rows written by the Python engine's analyze from these "
@@ -2115,47 +2178,40 @@ def effect_units() -> None:
 
     cases = []
     for case in effect_units_cases():
-        case = {key: value for key, value in case.items()}
+        case = {"config": None, **case}
         case["expected"] = effect_units_resolve(case)
         cases.append(case)
     _write(os.path.join(FIXTURES, "effect-units.json"), {
-        "note": "a recorded unit is used; otherwise a row counting no more "
-                "pairs than the items paired with the baseline in the run's "
-                "records is item-level, a row counting more is response-level, "
-                "and a condition with no paired items is unknown",
+        "note": "the first that applies: a unit the row or analysis recorded; "
+                "item when the records hold one response or readout per item "
+                "under the row's condition and the baseline (the units "
+                "coincide); for a pooled row, the pairing of the engine the "
+                "analysis's config.json names (Python, or Mac from 0.9.7: "
+                "item; Mac before 0.9.7: response on a run with several "
+                "responses per item, item for its ordinal readouts); response "
+                "when the row counts more pairs than the items paired in the "
+                "run; otherwise unknown. Fewer pairs than items settles "
+                "nothing. The hand-written answers that prove the rule right "
+                "are in Server/tests/test_effect_unit_interpretation.py; this "
+                "file proves the three readers agree",
         "minimumPairs": study_results.MINIMUM_PAIRS,
+        "macItemPairingVersion": ".".join(
+            str(part) for part in results_export.MAC_ITEM_PAIRING_VERSION),
         "wording": {
             "responseCaveat": (
                 "These are responses, not items: the analysis paired each "
                 "response with the baseline response to the same item and "
                 "seed, so its interval and test treat responses to the same "
                 "item as independent and are not findings about items"),
-            "unknownNote": "The unit of these pairs is not established",
+            "unknownNote": results_export.UNKNOWN_UNIT_NOTE,
             "responseUnitExplanation": results_export.RESPONSE_UNIT_EXPLANATION,
             "unitLines": {
-                "engine_default": (
-                    "the item, with an item's samples averaged within each "
-                    "condition. This is the engines' documented default; the "
-                    "analysis did not stamp the unit itself. The run's records "
-                    "are consistent with it: no such row counts more pairs "
-                    "than the items paired in the run."),
-                "inferred_from_records": (
-                    "the response, not the item. "
-                    + results_export.RESPONSE_UNIT_EXPLANATION),
-                "not_established": (
-                    "not established. The analysis did not stamp it, and the "
-                    "run's records have no items paired with the baseline for "
-                    "these conditions."),
+                **results_export.UNSTAMPED_UNIT_LINES,
                 # A recorded unit is defined, not only named: every analysis
                 # since units were recorded falls here.
-                "recorded_item": (
-                    "the item, with an item's samples averaged within each "
-                    "condition, as the analysis recorded."),
-                "recorded_transcript": (
-                    "the transcript, as the analysis recorded: one play-through "
-                    "of a multi-agent conversation, with its turns reduced to "
-                    "their average difference before any test, because turns "
-                    "in the same conversation depend on each other."),
+                "recorded_item": results_export.RECORDED_UNIT_LINES["item"],
+                "recorded_transcript":
+                    results_export.RECORDED_UNIT_LINES["transcript"],
             },
         },
         "cases": cases,

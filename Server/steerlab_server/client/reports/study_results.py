@@ -34,8 +34,8 @@ _UNITS = {'item': ('paired item', 'paired items'), 'transcript': ('paired transc
           'sample': ('paired sample', 'paired samples'), 'response': ('paired response', 'paired responses'),
           'unknown': ('pair', 'pairs')}
 #: What the table adds after a unit the analysis did not record itself.
-_UNIT_NOTES = {'engine_default': ' (default)', 'inferred_from_records': ' (from the records)',
-               'not_established': ''}
+_UNIT_NOTES = {'one_sample_per_item': ' (one response per item)', 'analysis_engine': ' (from the engine record)',
+               'inferred_from_records': ' (from the records)', 'not_established': ''}
 _CORRECTIONS = {'bh': 'Benjamini-Hochberg (false discovery rate)', 'holm': 'Holm'}
 _SHORT_CORRECTIONS = {'bh': 'Benjamini-Hochberg', 'holm': 'Holm'}
 _CONTROLS = {
@@ -99,6 +99,13 @@ def count_text(value):
 
 def _plural(count, one, many=None):
     return f'{count} {one}' if count == 1 else f'{count} {many or one + "s"}'
+
+
+def response_items(items):
+    """Where a row's paired responses come from: "from 1 item", or "from at most 4 items". The items paired in the
+    run are the most a row can draw on; exclusions or missing values can leave it fewer, so more than one is an upper
+    bound. Swift twin: ``EffectNarrative.countPhrase``."""
+    return 'from 1 item' if items == 1 else f'from at most {items} items'
 
 
 def _inline(sentence):
@@ -189,12 +196,11 @@ class Page:
                  headline_outcome.plain_phrase(row['outcome']) or row['outcome'], ' differed from the baseline by ',
                  signed_text(row['estimate']) or 'an unrecorded amount', across]
         if row['unit_resolved'] == 'response':
-            items = row['paired_items']
-            parts.append(f' from {_plural(items, "item", "items")}. These are responses, not items: the analysis '
+            parts.append(f' {response_items(row["paired_items"])}. These are responses, not items: the analysis '
                          'paired each response with the baseline response to the same item and seed, so its interval '
                          'and test treat responses to the same item as independent and are not findings about items')
         elif row['unit_resolved'] == 'unknown':
-            parts.append('. The unit of these pairs is not established')
+            parts.append('. ' + source.UNKNOWN_UNIT_NOTE)
         if self.too_few(row):
             fewer = 'items' if row['unit_resolved'] == 'response' else 'pairs'
             parts.append(f'. That is too few {fewer} for an interval or a test (at least {MINIMUM_PAIRS} are needed), '
@@ -505,15 +511,9 @@ class Page:
                 defined = source.recorded_unit_line(units)
                 said = (defined.replace("'", '’') if defined
                         else join(join(*[code(unit) for unit in units], sep=', '), ', as the analysis recorded.'))
-            elif how == 'engine_default':
-                said = ('the item, with an item’s samples averaged within each condition. This is the engines’ '
-                        'documented default; the analysis did not stamp the unit itself. The run’s records are '
-                        'consistent with it: no such row counts more pairs than the items paired in the run.')
-            elif how == 'inferred_from_records':
-                said = 'the response, not the item. ' + source.RESPONSE_UNIT_EXPLANATION
             else:
-                said = ('not established. The analysis did not stamp it, and the run’s records have no items paired '
-                        'with the baseline for these conditions.')
+                said = source.UNSTAMPED_UNIT_LINES.get(how, source.UNSTAMPED_UNIT_LINES['not_established'])
+                said = said.replace("'", '’')
             lines.append(join(el('strong', 'Unit of analysis'), label, ': ', said))
         return lines
 
@@ -566,7 +566,8 @@ class Page:
                  Column('What its p supports')],
                 [[code(row['outcome']), row['condition'], row['stratify_by'], row['stratum'],
                   signed_text(row['estimate']), number_text(row['ci_lower']), number_text(row['ci_upper']),
-                  count_text(row['n_pairs']), self.unit(row), p_text(row['p_value']), p_text(row['adjusted_p_value']),
+                  count_text(row['n_pairs']), self.unit(row) + _UNIT_NOTES.get(row['unit_source'], ''),
+                  p_text(row['p_value']), p_text(row['adjusted_p_value']),
                   {'itemLevel': 'an effect across items',
                    'withinItemSamples': 'one item’s samples only'}.get(
                       row['estimand'], row['estimand']) or None,
@@ -575,7 +576,10 @@ class Page:
                  for row in self.strata],
                 key='strata-table', row_header=False,
                 footnote='Copied from the analysis and rounded to four significant digits. A row marked as a '
-                         'description describes the samples of one item and is not a test.'))
+                         'description describes the samples of one item and is not a test.'
+                         + (' Where the unit is unknown, the analysis that made the row did not record whether its '
+                            'pairs count items or responses.'
+                            if any(self.unit(row) == 'unknown' for row in self.strata) else '')))
         return block('Effects', *parts, key='effects')
 
     def condition_summary(self):

@@ -921,37 +921,131 @@ def paired_items(loaded):
     return _paired_items(loaded["responses"] + loaded["readouts"])
 
 
-def resolve_units(rows, stamped_unit, paired_items):
+def samples_per_item(loaded):
+    """Condition -> ``{"responses": n, "readouts": n}``: the most generated
+    responses, and the most instrument readouts, that any one item has under
+    that condition in the run's records. One of each means every item was
+    answered once, so an item and a response are the same thing there."""
+    most = {}
+    for kind in ("responses", "readouts"):
+        counts = {}
+        for record in loaded[kind]:
+            key = (str(record.get("condition", "")), str(record.get("promptID", "")))
+            counts[key] = counts.get(key, 0) + 1
+        for (condition, _), count in counts.items():
+            entry = most.setdefault(condition, {"responses": 0, "readouts": 0})
+            entry[kind] = max(entry[kind], count)
+    return most
+
+
+#: The engines as a directory's ``config.json`` names them (``substrate``).
+PYTHON_SUBSTRATE = "python-hf-transformers"
+MAC_SUBSTRATE = "swift-mlx"
+#: The first Mac engine release that averages an item's samples within each
+#: condition. Before it, the Mac engine paired every response of a study with
+#: several responses per item with the baseline response to the same item and
+#: seed.
+MAC_ITEM_PAIRING_VERSION = (0, 9, 7)
+#: How the engine that made an effect table paired its pooled rows.
+PAIRS_ITEMS = "items"
+PAIRED_RESPONSES = "responses"
+_MAC_APP_VERSION = re.compile(r"swift-app (\d+)\.(\d+)\.(\d+)(-[^+\s]+)?(\+\S*)?")
+
+
+def engine_pairing(config):
+    """How the engine named by a directory's ``config.json`` paired the pooled
+    rows of the effect table beside it: ``PAIRS_ITEMS``, ``PAIRED_RESPONSES``,
+    or None when the file does not establish it.
+
+    The Python engine has always averaged an item's samples within each
+    condition. The Mac engine has since SteerLab 0.9.7; before that it paired
+    responses. Its ``appVersion`` ("swift-app 0.9.6+1a2b3c4d") says which. A
+    missing or unreadable stamp, another engine, or a pre-release of 0.9.7
+    itself (either side of the change) establishes nothing."""
+    if not isinstance(config, dict):
+        return None
+    substrate = config.get("substrate")
+    if substrate == PYTHON_SUBSTRATE:
+        return PAIRS_ITEMS
+    if substrate != MAC_SUBSTRATE or not isinstance(config.get("appVersion"), str):
+        return None
+    match = _MAC_APP_VERSION.fullmatch(config["appVersion"].strip())
+    if not match:
+        return None
+    version = tuple(int(part) for part in match.group(1, 2, 3))
+    if match.group(4) and version == MAC_ITEM_PAIRING_VERSION:
+        return None
+    return PAIRS_ITEMS if version >= MAC_ITEM_PAIRING_VERSION else PAIRED_RESPONSES
+
+
+#: The one outcome the Mac engine before 0.9.7 read from instrument readouts,
+#: one per item and condition, and so paired by item even then.
+_MAC_READOUT_OUTCOMES = ("ordinalPosition",)
+
+
+def resolve_units(rows, stamped_unit, paired_items, samples=None, pairing=None):
     """Settle each effect row's unit of analysis, once, for every reader: the
     export's tables, its methods summary, and the results page.
 
     Sets ``unit_resolved``, ``unit_source`` and ``paired_items`` on each row.
-    A unit the row or its analysis stamped is ``recorded``. Otherwise the
-    engines' rule is the item, an item's samples averaged within each
-    condition, and the run's records can test it: an item-level row counts at
-    most the items paired in the run. A row that counts more paired
-    *responses* (the Mac engine before 0.9.7 paired every response of a
-    multi-sample run with the baseline response of the same item and seed, and
-    stamped nothing) is ``response``, ``inferred_from_records``. A row whose
-    condition has no paired items in the records is ``unknown``. Nothing
-    stored is changed."""
+    ``paired_items`` and ``samples`` come from the run's records
+    (``paired_items``, ``samples_per_item``); ``pairing`` from the analysis's
+    ``config.json`` (``engine_pairing``). Each row is settled by the first of
+    these that applies, and says only what the files establish:
+
+    1. ``recorded``: the row or its analysis stamped a unit.
+    2. ``one_sample_per_item`` -> item: the records hold at most one response
+       and one readout per item under the row's condition and the baseline,
+       and the row counts no more pairs than the items paired there. Items and
+       responses coincide.
+    3. ``analysis_engine``, for a pooled row: the Python engine, or the Mac
+       engine from 0.9.7, paired items -> item. The Mac engine before 0.9.7
+       paired responses -> response, on a run whose records hold several
+       responses per item under both the row's condition and the baseline;
+       its ordinal readouts, one per item, were items. (Every engine stamps
+       its subgroup rows, so an unstamped one is not settled this way.)
+    4. ``inferred_from_records`` -> response: the row counts more pairs than
+       the items paired in the run (for a subgroup, the run's items are the
+       most it can draw on), which no item-level row can.
+    5. ``not_established`` -> unknown. The analysis did not record whether its
+       pairs count items or responses. Fewer pairs than items does not settle
+       it: exclusions, missing values, or a subgroup leave an item-level count
+       and a response count looking alike.
+
+    Nothing stored is changed."""
+    samples = samples or {}
     for row in rows:
         items = paired_items.get(row["condition"])
         row["paired_items"] = items
-        if row["unit"] or stamped_unit:
-            row["unit_resolved"], row["unit_source"] = row["unit"] or stamped_unit, "recorded"
-            continue
-        try:
-            pairs = float(row["n_pairs"]) if row["n_pairs"] != "" else None
-        except (TypeError, ValueError):
-            pairs = None
-        if not items:
-            row["unit_resolved"], row["unit_source"] = "unknown", "not_established"
-        elif pairs is not None and pairs > items:
-            row["unit_resolved"], row["unit_source"] = "response", "inferred_from_records"
-        else:
-            row["unit_resolved"], row["unit_source"] = "item", "engine_default"
+        unit, source = _settled_unit(row, stamped_unit, items, samples, pairing)
+        row["unit_resolved"], row["unit_source"] = unit, source
     return rows
+
+
+def _settled_unit(row, stamped_unit, items, samples, pairing):
+    if row["unit"] or stamped_unit:
+        return row["unit"] or stamped_unit, "recorded"
+    try:
+        pairs = float(row["n_pairs"]) if row["n_pairs"] != "" else None
+    except (TypeError, ValueError):
+        pairs = None
+    condition = samples.get(row["condition"], {})
+    baseline = samples.get("baseline", {})
+    if (items and (pairs is None or pairs <= items) and samples
+            and all(side.get(kind, 0) <= 1 for side in (condition, baseline)
+                    for kind in ("responses", "readouts"))):
+        return "item", "one_sample_per_item"
+    if row["stratify_by"] in ("", "pooled"):
+        if pairing == PAIRS_ITEMS:
+            return "item", "analysis_engine"
+        if pairing == PAIRED_RESPONSES:
+            if row["outcome"] in _MAC_READOUT_OUTCOMES:
+                return "item", "analysis_engine"
+            if items and condition.get("responses", 0) > 1 and baseline.get("responses", 0) > 1:
+                return "response", "analysis_engine"
+    if items and pairs is not None and pairs > items:
+        return "response", "inferred_from_records"
+    return "unknown", "not_established"
 
 
 def _effects_tables(study, run_name, analysis_label, rows, source, stamped_unit):
@@ -989,14 +1083,23 @@ def _effects_tables(study, run_name, analysis_label, rows, source, stamped_unit)
                   "samples averaged), a transcript (one play-through of a "
                   "multi-agent conversation), a sample, a response (one response "
                   "paired with the baseline response to the same item and seed; "
-                  "responses to the same item are not independent), or unknown.", unit)
-        table.add("unit_of_analysis_source", "Where the unit comes from: recorded "
-                  "when the analysis stamped it, as both engines now do; engine_default "
-                  "when it did not (an older analysis) "
-                  "and the run's records are consistent with the engines' rule, the item; "
-                  "inferred_from_records when the row counts more pairs than the "
-                  "items paired in the run, so it paired responses; and "
-                  "not_established when the records cannot tell.", unit_source)
+                  "responses to the same item are not independent), or unknown "
+                  "(the analysis did not record whether n counts items or "
+                  "responses, and nothing else settles it).", unit)
+        table.add("unit_of_analysis_source", "Where the unit comes from. "
+                  "recorded: the analysis stamped it, as both engines now do. "
+                  "one_sample_per_item: it did not (an older analysis), but the "
+                  "run's records hold one response (or one readout) per item under "
+                  "the row's condition and under the baseline, so an item and a "
+                  "response are the same thing here. analysis_engine: the "
+                  "analysis's config.json names the engine that made it, and how "
+                  "that engine paired is known: the Python engine, and the Mac "
+                  "engine from SteerLab 0.9.7, pair items; the Mac engine before "
+                  "0.9.7 paired responses when a study had several responses per "
+                  "item, except its ordinal readouts, one per item. "
+                  "inferred_from_records: the row counts more pairs than the items "
+                  "paired in the run, so it paired responses. not_established: "
+                  "none of these settles it.", unit_source)
         table.add("test", "The significance test the engine ran on the paired "
                   f"differences: {WILCOXON} is the Wilcoxon signed-rank test. Empty "
                   "when the analysis stored no test.",
@@ -1382,14 +1485,27 @@ RESPONSE_UNIT_EXPLANATION = (
     "numbers are copied unchanged; analyzing the run again computes item-level rows.")
 
 
+#: What a row whose unit nothing settles says, after its sentence, on every
+#: surface (pinned in the cross-engine effect-units fixture).
+UNKNOWN_UNIT_NOTE = ("The analysis that made this row did not record whether its pairs count items or "
+                     "responses")
+
+
 def unit_groups(context):
     """The pooled rows' resolved units, grouped by how each is known, in the
-    order they first appear: ``[(source, [unit, ...]), ...]``."""
+    order they first appear: ``[(key, [unit, ...]), ...]``. The key is the
+    row's ``unit_source``, except that a unit the analysis's engine settles is
+    keyed by its unit too (``analysis_engine_item``,
+    ``analysis_engine_response``): one Mac analysis from before 0.9.7 can hold
+    both."""
     rows = context.get("effectRows") or []
     pooled = [row for row in rows if row["stratify_by"] in ("", "pooled")] or rows
     groups = {}
     for row in pooled:
-        units = groups.setdefault(row["unit_source"], [])
+        key = row["unit_source"]
+        if key == "analysis_engine":
+            key = f"{key}_{row['unit_resolved']}"
+        units = groups.setdefault(key, [])
         if row["unit_resolved"] not in units:
             units.append(row["unit_resolved"])
     return list(groups.items())
@@ -1406,6 +1522,33 @@ RECORDED_UNIT_LINES = {
 }
 
 
+#: What a unit the analysis did not record is, and how it is known, keyed as
+#: ``unit_groups`` keys it. Every reader uses these words (pinned in the
+#: cross-engine effect-units fixture).
+UNSTAMPED_UNIT_LINES = {
+    "one_sample_per_item": (
+        "the item. The analysis did not record its unit, but the run's records hold one response or "
+        "readout per item in each condition compared, so here an item and a response are the same thing."),
+    "analysis_engine_item": (
+        "the item, with an item's samples averaged within each condition. The analysis did not record "
+        "its unit, but its config.json names the engine that made it, and that engine paired these rows "
+        "by item."),
+    "analysis_engine_response": (
+        "the response, not the item. The analysis did not record its unit, but its config.json names the "
+        "Mac engine from before SteerLab 0.9.7, which paired each response with the baseline response to "
+        "the same item and seed when a study had several responses per item, as this run does. Responses "
+        "to the same item are not independent, so these intervals and tests are likely to understate the "
+        "uncertainty, and they are not findings about items. The stored numbers are copied unchanged; "
+        "analyzing the run again computes item-level rows."),
+    "inferred_from_records": "the response, not the item. " + RESPONSE_UNIT_EXPLANATION,
+    "not_established": (
+        "not established. The analysis that made these rows did not record whether their pairs count "
+        "items or responses, and neither its config.json nor the run's records settle it: fewer pairs "
+        "than items can mean items, or responses from fewer items. The numbers are shown as stored; "
+        "analyzing the run again with this version records the unit."),
+}
+
+
 def recorded_unit_line(units):
     """The definition of a single recorded unit, or None to name the units."""
     return RECORDED_UNIT_LINES.get(units[0]) if len(units) == 1 else None
@@ -1415,21 +1558,13 @@ def unit_lines(context):
     """The methods summary's unit-of-analysis lines."""
     groups = unit_groups(context)
     lines = []
-    for source, units in groups:
+    for key, units in groups:
         marked = f" for the rows marked {_and(_code(u) for u in units)}" if len(groups) > 1 else ""
-        if source == "recorded":
+        if key == "recorded":
             said = recorded_unit_line(units) or f"{_and(_code(u) for u in units)}, as the analysis recorded."
-            lines.append(f"- Unit of analysis{marked}: {said}")
-        elif source == "engine_default":
-            lines.append(f"- Unit of analysis{marked}: the item, with an item's samples averaged within each "
-                         "condition. This is the engines' documented default; the analysis did not stamp the "
-                         "unit itself. The run's records are consistent with it: no such row counts more pairs "
-                         "than the items paired in the run.")
-        elif source == "inferred_from_records":
-            lines.append(f"- Unit of analysis{marked}: the response, not the item. " + RESPONSE_UNIT_EXPLANATION)
         else:
-            lines.append(f"- Unit of analysis{marked}: not established. The analysis did not stamp it, and the "
-                         "run's records have no items paired with the baseline for these conditions.")
+            said = UNSTAMPED_UNIT_LINES.get(key, UNSTAMPED_UNIT_LINES["not_established"])
+        lines.append(f"- Unit of analysis{marked}: {said}")
     return lines
 
 
@@ -2097,7 +2232,11 @@ def _collect(root, study, run_name, steps, now):
         text = sources.text(os.path.join(effects_directory, "effect-sizes.csv"), role) or ""
         rows, effects_source = _read_effects(text)
         effect_rows = rows
+        # The engine that made the table, as the directory holding it names
+        # it: the analysis's own config.json, or the run's.
+        effects_config = config
         if analysis_name:
+            effects_config = sources.json(os.path.join(effects_directory, "config.json"), role)
             unit_stamp = sources.json(os.path.join(effects_directory, "unit-of-analysis.json"), role)
             if isinstance(unit_stamp, dict):
                 stamped_unit = unit_stamp.get("unitOfAnalysis")
@@ -2119,7 +2258,8 @@ def _collect(root, study, run_name, steps, now):
             exclusions.append(("The run's own analysis", report.get("exclusions")))
         if not isinstance(stamped_unit, str) or not stamped_unit:
             stamped_unit = None
-        resolve_units(rows, stamped_unit, paired_items(loaded))
+        resolve_units(rows, stamped_unit, paired_items(loaded), samples_per_item(loaded),
+                      engine_pairing(effects_config))
         pooled, strata = _effects_tables(
             study, run_name, os.path.basename(effects_directory), rows,
             effects_source, stamped_unit)
