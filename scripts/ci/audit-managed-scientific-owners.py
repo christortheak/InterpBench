@@ -25,7 +25,10 @@ NEW_CALL = 'artifact_paths.converted_file(record.lensID, record.converted.path, 
 #: text is now spelled for the client that shows it. On 2026-10-12 (reviewed,
 #: approved) each pooled effect row records its unit, "item" or "transcript",
 #: in the column stratified rows already filled, so no reader has to infer it.
-#: No existing endpoint or statistic body changes.
+#: No existing endpoint or statistic body changes. On 2026-10-17 (reviewed,
+#: approved) an opt-in `reread_choices`, off by default, re-reads stored
+#: choices with the current parser in memory and stamps choice-reread.json;
+#: without it the analysis is unchanged.
 ANALYSIS_WORKFLOW_CHANGES = (
     ("""            row.modality = modalities.get(condition, "")
             # What one difference is, recorded rather than left for readers.
@@ -70,6 +73,21 @@ ANALYSIS_WORKFLOW_CHANGES = (
         if entry["status"] == "notAvailable":
             _log(f"{entry['name']}: {entry['reason']}")
 """, ''),
+    ("from . import (choice_deltas, choice_reread, judicial, lifecycle_gates, paths,\n               turn_endpoint)\n",
+     "from . import choice_deltas, judicial, lifecycle_gates, paths, turn_endpoint\n"),
+    ("            adjudicated_endpoint: str | None = None,\n            reread_choices: bool = False) -> str:",
+     "            adjudicated_endpoint: str | None = None) -> str:"),
+    ("""    # Opt-in choice re-read (--reread-choices): every stored parsedChoice is
+    # read again from its stored reply, in memory, before any exclusion or
+    # endpoint reads it; stamped in choice-reread.json (see choice_reread).
+    choice_reread_stamp = None
+    if reread_choices:
+        records, choice_reread_stamp = choice_reread.for_analysis(
+            run_dir, records, root, study=name, log=_log)
+""",
+     ''),
+    ("    if choice_reread_stamp is not None:\n        choice_reread.write_stamp(out, choice_reread_stamp)\n",
+     ''),
 )
 
 
@@ -128,6 +146,8 @@ def main():
             for label, mutant in (
                     ('altered coverage rows', after.replace('rows + stratified_rows]', 'rows]', 1)),
                     ('altered unit stamp', after.replace('"transcript" if clustered else "item"', '"item"', 1)),
+                    ('re-read on by default', after.replace('reread_choices: bool = False', 'reread_choices: bool = True', 1)),
+                    ('re-read without its gate', after.replace('    if reread_choices:\n        records, choice_reread_stamp', '    if True:\n        records, choice_reread_stamp', 1)),
                     ('removed repair change', after.replace('pin_required_repair()', 'PIN_REQUIRED_REPAIR', 1)),
                     ('changed existing body', after.replace('    stratified_rows: list = []', '    stratified_rows: list = [None]', 1))):
                 assert mutant != after, 'Mutation control did not apply: ' + label
