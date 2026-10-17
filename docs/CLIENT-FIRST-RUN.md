@@ -269,10 +269,42 @@ Stata, SPSS, or a spreadsheet.
 
 ## Updating and repairing
 
-In the app, choose **Check for Updates…** in the SteerLab menu. Research Setup
-offers **Review Update Plan** when the helper is missing newer tools, and
-**Review Repair Plan** when it is already up to date; either way it shows a
-plan first and installs nothing until you approve.
+In the app, choose **Check for Updates…** in the SteerLab menu, or wait for
+the notice at the top of the window; the app checks at most once a day.
+When a newer release is out, **Install Update…** shows what will happen
+before anything is downloaded: the new version, the download size, a link to
+the release notes, and where your current version will be kept. SteerLab
+then downloads the release from GitHub, checks it (its checksum, Apple's
+notarization, and that it comes from the same developer as your copy), and
+quits and reopens as the new version. It does not proceed while a study, a
+submission, or the Python engine on this Mac is busy, and Cancel stops it
+with nothing changed. Your workspaces, studies, and models are not touched.
+
+The version you were running is kept beside the app as
+`SteerLab-<version>-previous.app`. To go back, quit SteerLab, move
+`SteerLab.app` to the Trash, rename the kept copy to `SteerLab.app`, and open
+it.
+
+After an update:
+
+- If you use **This Mac, full capabilities**, choose **Open Engine Setup…**
+  on the notice the first launch after an update shows (or **Engine
+  Details…** in the toolbar's connection menu), then **Refresh Engine**. It
+  copies the new version's Python engine and keeps the packages already
+  installed.
+- If you run studies on a cluster, push the engine there again (the cluster
+  setup's Push step, or `steerlab-cli cluster push --site <site>`), then
+  restart its controller. Until then the cluster runs the engine from the
+  earlier version, and submissions say so.
+
+A copy that cannot update itself keeps the notice and says why: one opened
+straight from the download (move it to Applications or your SteerLab folder
+and open it from there), one on a disk SteerLab cannot write to, or one built
+from source. Download the new release from the Releases page instead.
+
+Research Setup offers **Review Update Plan** when the helper is missing newer
+tools, and **Review Repair Plan** when it is already up to date; either way it
+shows a plan first and installs nothing until you approve.
 
 For the app-free client, download the new release and run `plan` and
 `install` again from its folder, or use `repair` in place of `install` to

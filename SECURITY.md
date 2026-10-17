@@ -125,8 +125,35 @@ request the app makes on its own schedule is the update check:
   your own git configuration. The comparison with the version you run happens
   on your Mac.
 - **What it does with the answer.** It shows a notice that a newer release
-  exists, with a link to the Releases page. It never downloads, installs, or
-  replaces anything.
+  exists, with a link to the release. The check never downloads an app and
+  never installs anything.
+- **Installing, only when you ask.** When you choose **Install Update…** and
+  confirm, the app downloads two files of that release over HTTPS from
+  GitHub's own hosts, without signing in: the app archive
+  (`SteerLab-<version>+<revision>.zip`) and its `.sha256`. These downloads
+  carry nothing about you or your Mac either. Everything else happens on your
+  Mac, offline, before anything is replaced: the archive must match its
+  checksum (a check for damage, since both files come from the same place);
+  its list of files must stay inside one app folder; it is unpacked with
+  `ditto`, which keeps the extended attribute that holds one file's
+  signature; the new app must pass Apple's strict code-signature check of
+  everything inside it, against a requirement that it is notarized (the
+  ticket stapled inside it, read without the network), has this app's bundle
+  identifier, and is signed with the same Developer ID team as the copy you
+  are running (read from that copy, never built in); and it must be a newer
+  version. Only then is the running app renamed to
+  `SteerLab-<version>-previous.app` beside the new one, and SteerLab quits
+  and reopens. If any step fails, the original is put back. The download is
+  staged in a hidden `.SteerLab-update` folder beside the app and removed
+  afterwards, on Cancel, on failure, or at the next launch.
+- **Who can install this way.** Only a notarized Developer ID copy of the
+  packaged app, in a folder you can write to. A copy built from source, signed
+  only for this Mac, opened straight from the download (macOS then runs it
+  from a temporary read-only place), or on a read-only disk keeps the notice
+  and says why.
+- **Going back.** Quit SteerLab, move `SteerLab.app` to the Trash, rename
+  `SteerLab-<version>-previous.app` to `SteerLab.app`, and open it. Each
+  update keeps one previous copy; an older one goes to the Trash.
 - **How to turn it off.** Uncheck **Check for Updates Automatically** in the
   SteerLab menu (or **Check automatically** on the update notice). **Check for
   Updates…** in the same menu still checks once, when you choose it.

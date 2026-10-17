@@ -1,27 +1,40 @@
 import Foundation
 
-// MARK: - Update availability: a SIGNPOST, never an updater
+// MARK: - Update availability, and the release an update installs from
 //
 // Most people running SteerLab have no Xcode and no signing identity, so
-// their update story is "download the new zip from the repository's Releases
-// page" — never "rebuild from source". This file is the small amount of
-// machinery that lets the app SAY SO when it is warranted, and nothing more:
+// their update story is a packaged release from the repository's Releases
+// page — never "rebuild from source". This file finds out whether a newer
+// release exists. It is the first half of the updater; the second half
+// (`UpdateInstaller.swift`) downloads, verifies, and installs that release,
+// and ONLY after the person clicks Install Update and confirms. The check
+// itself never downloads an app, and nothing is ever installed unasked.
 //
-//   * nothing is ever downloaded, unpacked, installed, or replaced;
-//   * no auth is ever attempted and no token is ever read or stored — while
+//   * The check: at most once a day (and whenever the person chooses Check
+//     for Updates…), one unauthenticated
+//     `GET /repos/<owner>/<name>/releases/latest` to GitHub's public API,
+//     and, when a code checkout sits beside the app, `git ls-remote` run IN
+//     that checkout through the person's OWN git credential helpers. The
+//     answer's tag, page, and list of attached files are read; nothing else.
+//   * The installation, when the person asks for it: the release's app
+//     archive (`SteerLab-<version>+<revision>.zip`) and its `.sha256`, each
+//     fetched unauthenticated over HTTPS from GitHub's hosts only. Every
+//     check of what arrived (the checksum, the code signature, the version)
+//     runs on this machine, offline — including Apple's notarization check,
+//     which reads only the ticket stapled inside the downloaded app.
+//   * No auth is ever attempted and no token is ever read or stored — while
 //     the repository is private the public API answers 404 and the whole
-//     check degrades to "unknown", silently;
-//   * the only bytes that leave this machine are an unauthenticated
-//     `GET /repos/<owner>/<name>/releases/latest` and, when a code checkout
-//     sits beside the app, `git ls-remote` run IN that checkout through the
-//     person's OWN git credential helpers.
+//     check degrades to "unknown", silently.
 //
 // PRIVACY: nothing about this installation is transmitted. No identifier, no
 // version string, no workspace name, no telemetry of any kind is sent
-// anywhere — the requests above carry no body and no custom headers, and the
-// comparison happens entirely on this machine. An automatic check that
-// cannot reach anything says nothing at all; only a manual check reports the
-// failure, and it reports it honestly rather than as "you are up to date".
+// anywhere. The release lookup and the two downloads above are the only
+// requests that leave the machine; they carry no body and no header that
+// says anything about this Mac (the one header the lookup sets selects a
+// response format), and every comparison happens on this machine. An
+// automatic check that cannot reach anything says nothing at all; only a
+// manual check reports the failure, and it reports it honestly rather than
+// as "you are up to date".
 
 // MARK: - Semantic version
 
@@ -164,6 +177,18 @@ public struct UpdateRepository: Sendable, Equatable {
         URL(string: "https://api.github.com/repos/\(owner)/\(name)/releases/latest")!
     }
 
+    /// The endpoint for one named release of this same repository — what
+    /// `UpdateCheckOverrides.releaseTag` asks for instead of "latest", so a
+    /// hand check can target a pre-release (which "latest" never returns).
+    /// Same host, same repository, same unauthenticated GET.
+    public func releaseEndpoint(tag: String) -> URL {
+        let escaped =
+            tag.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? tag
+        return URL(
+            string: "https://api.github.com/repos/\(owner)/\(name)/releases/tags/\(escaped)")
+            ?? latestReleaseEndpoint
+    }
+
     /// Where a person is sent to download a build.
     public var releasesPage: URL {
         URL(string: "https://github.com/\(owner)/\(name)/releases")!
@@ -212,12 +237,32 @@ public struct UpdateRepository: Sendable, Equatable {
 
 // MARK: - Seam 1: the public release feed
 
+/// One file attached to a published release, as the release feed lists it.
+/// Read so the updater can find the app archive and its checksum in the very
+/// release the check found; nothing is fetched until the person asks.
+public struct ReleaseAsset: Sendable, Equatable {
+    /// The file name as GitHub lists it (GitHub may rewrite some characters
+    /// of an uploaded name, so the updater accepts both spellings).
+    public let name: String
+    /// `browser_download_url`: where the file is downloaded from.
+    public let downloadURL: URL
+    /// The size GitHub reports, in bytes, when it reports one.
+    public let size: Int64?
+
+    public init(name: String, downloadURL: URL, size: Int64? = nil) {
+        self.name = name
+        self.downloadURL = downloadURL
+        self.size = size
+    }
+}
+
 /// What the latest-release endpoint said. `unavailable` is deliberately not
 /// an error type: offline, private-repo 404, and rate limiting are all the
 /// same fact to a signpost — *we do not know*.
 public enum ReleaseFeedOutcome: Sendable, Equatable {
-    /// A published (non-draft) release, with its tag and page.
-    case release(tag: String, page: URL?)
+    /// A published (non-draft) release, with its tag, page, and attached
+    /// files (empty when the feed listed none).
+    case release(tag: String, page: URL?, assets: [ReleaseAsset] = [])
     /// Reachable, and the repository publishes no releases yet.
     case noReleases
     /// Could not find out, with a short human reason for the manual check.
@@ -229,37 +274,115 @@ public protocol UpdateReleaseFeed: Sendable {
     func latestRelease(for repository: UpdateRepository) async -> ReleaseFeedOutcome
 }
 
+/// The one hand-check hook the updater has, and why it is safe in a release
+/// build: it picks WHICH release of the compiled-in repository to look at,
+/// never where to look. `STEERLAB_UPDATE_RELEASE_TAG=v1.0.0-rc.1` makes the
+/// check ask for that tag instead of "latest" (GitHub's "latest" never
+/// returns a pre-release), so an integrator can point a scratch install at a
+/// pre-release and exercise the whole path before it is published as the
+/// latest release. The host, the repository, and every check of the download
+/// (checksum, signature, notarization, version) are unchanged by it.
+public enum UpdateCheckOverrides {
+    public static let releaseTagVariable = "STEERLAB_UPDATE_RELEASE_TAG"
+
+    /// The User-Agent every update request sends. GitHub requires one; the
+    /// system default would name this app's version and the macOS build.
+    public static let userAgent = "SteerLab"
+
+    /// The pinned tag, when the variable names a plausible one. Anything
+    /// with characters a tag would not carry is ignored, not escaped.
+    public static func releaseTag(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String? {
+        guard let raw = environment[releaseTagVariable]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !raw.isEmpty, raw.count <= 64,
+            raw.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "._+-".contains($0)) })
+        else { return nil }
+        return raw
+    }
+}
+
 /// Live feed: one unauthenticated GET with a short timeout. Sends no
 /// credentials, no identifiers, and no body; reads only `tag_name`,
-/// `html_url`, and `draft` from the response.
+/// `html_url`, `draft`, and the attached files' names, download addresses,
+/// and sizes from the response.
 public struct GitHubReleaseFeed: UpdateReleaseFeed {
     private let session: URLSession
     private let timeout: TimeInterval
+    private let releaseTag: String?
 
-    public init(session: URLSession = .shared, timeout: TimeInterval = 8) {
+    /// - Parameter releaseTag: ask for this tag of the same repository
+    ///   instead of "latest" (`UpdateCheckOverrides.releaseTag`).
+    public init(
+        session: URLSession = .shared, timeout: TimeInterval = 8,
+        releaseTag: String? = UpdateCheckOverrides.releaseTag()
+    ) {
         self.session = session
         self.timeout = timeout
+        self.releaseTag = releaseTag
     }
 
     private struct Payload: Decodable {
         let tagName: String?
         let htmlURL: String?
         let draft: Bool?
+        let assets: [AssetPayload]?
 
         enum CodingKeys: String, CodingKey {
             case tagName = "tag_name"
             case htmlURL = "html_url"
             case draft
+            case assets
         }
     }
 
-    public func latestRelease(for repository: UpdateRepository) async -> ReleaseFeedOutcome {
-        var request = URLRequest(url: repository.latestReleaseEndpoint)
+    private struct AssetPayload: Decodable {
+        let name: String?
+        let browserDownloadURL: String?
+        let size: Int64?
+
+        enum CodingKeys: String, CodingKey {
+            case name
+            case browserDownloadURL = "browser_download_url"
+            case size
+        }
+    }
+
+    /// The release a 200 answer describes, or nil when it is not a usable
+    /// published release. Pure, so the decoding is tested without a socket.
+    static func outcome(fromReleaseJSON data: Data) -> ReleaseFeedOutcome {
+        guard let payload = try? JSONDecoder().decode(Payload.self, from: data),
+            let tag = payload.tagName, !tag.isEmpty, payload.draft != true
+        else { return .noReleases }
+        let assets = (payload.assets ?? []).compactMap { asset -> ReleaseAsset? in
+            guard let name = asset.name, !name.isEmpty,
+                let address = asset.browserDownloadURL, let url = URL(string: address)
+            else { return nil }
+            return ReleaseAsset(name: name, downloadURL: url, size: asset.size)
+        }
+        return .release(
+            tag: tag, page: payload.htmlURL.flatMap(URL.init(string:)), assets: assets)
+    }
+
+    /// The lookup request. Two headers, and neither says anything about this
+    /// machine: one selects the response format, and the User-Agent (which
+    /// GitHub requires) is fixed, where the system default would name this
+    /// app's version and the macOS build.
+    static func request(for endpoint: URL, timeout: TimeInterval) -> URLRequest {
+        var request = URLRequest(url: endpoint)
         request.timeoutInterval = timeout
         request.httpMethod = "GET"
-        // The one header, and it selects a response format — it says nothing
-        // about this machine.
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue(UpdateCheckOverrides.userAgent, forHTTPHeaderField: "User-Agent")
+        return request
+    }
+
+    public func latestRelease(for repository: UpdateRepository) async -> ReleaseFeedOutcome {
+        let endpoint =
+            releaseTag.map { repository.releaseEndpoint(tag: $0) }
+            ?? repository.latestReleaseEndpoint
+        let request = Self.request(for: endpoint, timeout: timeout)
         do {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else {
@@ -267,13 +390,15 @@ public struct GitHubReleaseFeed: UpdateReleaseFeed {
             }
             switch http.statusCode {
             case 200:
-                guard let payload = try? JSONDecoder().decode(Payload.self, from: data),
-                    let tag = payload.tagName, !tag.isEmpty, payload.draft != true
-                else { return .noReleases }
-                return .release(tag: tag, page: payload.htmlURL.flatMap(URL.init(string:)))
+                return Self.outcome(fromReleaseJSON: data)
             case 404:
                 // The normal answer for a private repository. No auth is
                 // attempted, now or ever.
+                if let releaseTag {
+                    return .unavailable(
+                        "no public release tagged \(releaseTag) in "
+                            + "\(repository.owner)/\(repository.name)")
+                }
                 return .unavailable(
                     "no public release feed for \(repository.owner)/\(repository.name)")
             default:
@@ -397,6 +522,47 @@ public enum UpdateAvailability: Sendable, Equatable {
     case unknown(reason: String)
 }
 
+/// A published release the feed described, with the files attached to it.
+public struct PublishedRelease: Sendable, Equatable {
+    public let tag: String
+    public let version: SemanticVersion
+    public let page: URL?
+    public let assets: [ReleaseAsset]
+
+    public init(tag: String, version: SemanticVersion, page: URL?, assets: [ReleaseAsset]) {
+        self.tag = tag
+        self.version = version
+        self.page = page
+        self.assets = assets
+    }
+
+    /// The feed's release, but only when it is the release `availability`
+    /// announces — never a release found some other way, and never one that
+    /// is not newer.
+    static func matching(
+        _ availability: UpdateAvailability, feed: ReleaseFeedOutcome
+    ) -> PublishedRelease? {
+        guard case .releaseAvailable(let announced, _) = availability,
+            case .release(let tag, let page, let assets) = feed,
+            let version = SemanticVersion(tag), version == announced
+        else { return nil }
+        return PublishedRelease(tag: tag, version: version, page: page, assets: assets)
+    }
+}
+
+/// A completed check, and the release the updater may install from.
+public struct UpdateCheckResult: Sendable, Equatable {
+    public let availability: UpdateAvailability
+    /// Non-nil only when the published release feed itself named the newer
+    /// release (see `UpdateCheckService.checkDetailed`).
+    public let release: PublishedRelease?
+
+    public init(availability: UpdateAvailability, release: PublishedRelease?) {
+        self.availability = availability
+        self.release = release
+    }
+}
+
 /// The pure decision table. Every input is already-observed data, so the
 /// whole policy is testable without a network, a remote, or a clock.
 public enum UpdateDecision {
@@ -409,7 +575,7 @@ public enum UpdateDecision {
         repository: UpdateRepository
     ) -> UpdateAvailability {
         // 1. The published release feed wins when it names something newer.
-        if case .release(let tag, let page) = release,
+        if case .release(let tag, let page, _) = release,
             let version = SemanticVersion(tag), version > currentVersion
         {
             return .releaseAvailable(
@@ -499,6 +665,14 @@ public struct UpdateCheckService: Sendable {
     public var version: SemanticVersion { currentVersion }
 
     public func check() async -> UpdateAvailability {
+        await checkDetailed().availability
+    }
+
+    /// The check, plus the published release it found when that release is
+    /// what made `availability` read "a newer release exists". The updater
+    /// installs only from this: a newer version seen only as a git TAG has no
+    /// files GitHub will hand out unauthenticated, so it stays a signpost.
+    public func checkDetailed() async -> UpdateCheckResult {
         let repository = await resolveRepository()
         let release = await feed.latestRelease(for: repository)
 
@@ -512,10 +686,13 @@ public struct UpdateCheckService: Sendable {
                 remoteMain = GitRemoteParsing.revision(lsRemoteOutput: text)
             }
         }
-        return UpdateDecision.decide(
+        let availability = UpdateDecision.decide(
             currentVersion: currentVersion, builtRevision: builtRevision,
             release: release, remoteTags: remoteTags, remoteMainRevision: remoteMain,
             repository: repository)
+        return UpdateCheckResult(
+            availability: availability,
+            release: PublishedRelease.matching(availability, feed: release))
     }
 
     /// The repository the check asks about: the sibling checkout's `origin`
@@ -623,6 +800,15 @@ public struct UpdateCheckPreferences: @unchecked Sendable {
     public var dismissedVersion: String? {
         get { defaults.string(forKey: Self.dismissedVersionKey) }
         nonmutating set { defaults.set(newValue, forKey: Self.dismissedVersionKey) }
+    }
+
+    /// The version the app last launched as on this Mac — how the first
+    /// launch after an update knows it is one (`UpdateAfterInstall`).
+    public var lastLaunchedVersion: String? {
+        get { defaults.string(forKey: UpdateAfterInstall.lastLaunchedVersionKey) }
+        nonmutating set {
+            defaults.set(newValue, forKey: UpdateAfterInstall.lastLaunchedVersionKey)
+        }
     }
 
     public var shouldRunAutomaticCheck: Bool {

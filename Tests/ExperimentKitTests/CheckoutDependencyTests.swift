@@ -195,6 +195,16 @@ extension CheckoutDependency {
 
         // ── Bucket B: mutable / executable trees ──────────────────────────
         .init(
+            file: "Sources/ExperimentKit/LocalEngineTreeRefresh.swift",
+            token: ".venv.nosync",
+            resolves:
+                "Refresh Engine: the installed environment carried from the old "
+                + "materialized engine tree into the new one (the provisioner hands "
+                + "it the engine root's Server folder, never a checkout or a bundle)",
+            bucket: .executableTree,
+            withoutACheckout:
+                "the case it exists for: an app-only install's ~/SteerLab/Engine"),
+        .init(
             file: "Sources/ExperimentKit/LocalPythonTools.swift",
             token: "executableCheckout",
             resolves: "the checkout the local Python engine runs from",
@@ -328,6 +338,17 @@ extension CheckoutDependency {
                 "the git half is skipped entirely; the check falls back to the "
                 + "public release feed, and reports \"unknown\" with a reason when "
                 + "that is unavailable too — never \"up to date\""),
+        .init(
+            file: "Sources/ExperimentKit/UpdateInstallerLive.swift",
+            token: "executableCheckout",
+            resolves:
+                "READ-ONLY: whether a code checkout sits beside the app, which makes "
+                + "it a developer install that the updater leaves to a rebuild. "
+                + "Nothing is read from or written into the tree",
+            bucket: .developerOnly,
+            withoutACheckout:
+                "the expected case for a packaged app: installation may be offered, "
+                + "subject to the signature, notarization, and folder checks"),
         .init(
             file: "Sources/ExperimentKit/InstallProvenance.swift",
             token: "developerCheckoutRoot",

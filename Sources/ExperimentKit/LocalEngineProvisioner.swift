@@ -451,8 +451,8 @@ public enum LocalEngineDecisions {
                     "managed engine at \(path)",
                     advisory: "this tree carries no engine stamp, so its "
                         + "revision cannot be compared with the app's "
-                        + "(\(appRevision)) — refresh it to make the two "
-                        + "knowable")
+                        + "(\(appRevision)) — choose Refresh Engine to make "
+                        + "the two knowable (installed packages are kept)")
             }
             if stampRevision == appRevision {
                 return .satisfied(
@@ -462,13 +462,42 @@ public enum LocalEngineDecisions {
             return .satisfiedWithAdvisory(
                 "managed engine at \(path)",
                 advisory: "engine stamped \(stampRevision), app built "
-                    + "\(appRevision) — the engine was materialized by a "
-                    + "different build; refresh it when convenient")
+                    + "\(appRevision) — the engine was copied by a "
+                    + "different build (an update does this); choose "
+                    + "Refresh Engine when convenient (installed packages "
+                    + "are kept)")
         case .materializable(let destination, _):
             return .act([.materializeEngine(destination: destination)])
         case .unavailable(let reason):
             return .blocked(reason)
         }
+    }
+
+    /// Whether the materialized engine on this Mac was copied by a different
+    /// app build, read from its stamp without starting or probing anything —
+    /// what the first launch after an update checks before saying "refresh
+    /// the engine". False for a checkout, for no engine yet, and for a build
+    /// with no revision of its own.
+    public static func materializedEngineIsFromAnotherBuild(
+        appRevision: String? = CodeResources.bundleSourceRevision
+    ) -> Bool {
+        guard let appRevision,
+            case .engineRoot(let engine)? = CodeResources.localEngineSource()
+        else { return false }
+        return engine.stamp?.sourceRevision != appRevision
+    }
+
+    /// Refresh Engine — OFFERED, never part of the plan and never performed
+    /// unasked: the materialized engine was copied by a different app build
+    /// (after an update, always) or carries no stamp to compare. Nil for a
+    /// checkout, a matching stamp, or no tree yet.
+    public static func refreshOffer(_ observation: LocalEngineObservation)
+        -> LocalEngineAction?
+    {
+        guard case .engineRoot(let path, let stampRevision) = observation.source,
+            let appRevision = observation.appRevision, stampRevision != appRevision
+        else { return nil }
+        return .refreshEngine(destination: path, from: stampRevision, to: appRevision)
     }
 
     public static func interpreterState(_ observation: LocalEngineObservation)
@@ -906,6 +935,9 @@ public final class LocalEngineProvisioner {
     public private(set) var engineVersion: String?
     /// Stated, labelled, non-blocking.
     public private(set) var skewAdvisory: String?
+    /// Refresh Engine, when the last look found something to refresh (see
+    /// `LocalEngineDecisions.refreshOffer`). The setup sheet offers it.
+    public private(set) var refreshOffer: LocalEngineAction?
     public private(set) var statusLine = "not checked yet"
     public var port = 8080
 
@@ -944,6 +976,7 @@ public final class LocalEngineProvisioner {
         let observation = await environment.observe(port: port)
         let plan = LocalEngineDecisions.plan(observation)
         self.plan = plan
+        refreshOffer = LocalEngineDecisions.refreshOffer(observation)
         downloadPreamble = LocalEngineDecisions.downloadPreamble(plan)
         if let blocked = plan.first(where: { $0.state.isBlocked }) {
             phase = .failed(blocked.state.summary)
@@ -1027,6 +1060,50 @@ public final class LocalEngineProvisioner {
             statusLine = error.localizedDescription
             emit(statusLine)
         }
+    }
+
+    /// Refresh Engine: copy THIS app build's engine over the materialized one,
+    /// keeping its installed packages (`Server/.venv.nosync`), so an engine
+    /// left behind by an update catches up without a 2 GB reinstall. Refused,
+    /// with the reason, while the engine is answering: replacing files under
+    /// a running engine would mix two versions in one process.
+    public func refreshEngine(host: ChatService? = nil) async {
+        guard work == nil, !phase.isRunning else { return }
+        let observation = await environment.observe(port: port)
+        guard let offer = LocalEngineDecisions.refreshOffer(observation),
+            case .refreshEngine(let destination, _, _) = offer
+        else {
+            refreshOffer = nil
+            statusLine = "the engine already matches this app build — nothing to refresh"
+            return
+        }
+        guard !observation.serverAnswering else {
+            statusLine = "stop the local engine first (Stop in the Compute menu), then "
+                + "choose Refresh Engine again — its files cannot be replaced while it "
+                + "is running"
+            return
+        }
+        logHost = host
+        logLines = [offer.title]
+        logID = host?.startLiveLog(title: logTitle, initialLine: offer.title)
+        phase = .running(.engineSource)
+        do {
+            try await materialize(
+                to: URL(filePath: destination), step: .engineSource,
+                preservingEnvironment: true)
+            emit("Refresh Engine: done — the installed packages were kept")
+        } catch let error as LocalEngineError {
+            phase = .failed(error.description)
+            statusLine = error.description
+            emit(statusLine)
+            return
+        } catch {
+            phase = .failed(error.localizedDescription)
+            statusLine = error.localizedDescription
+            emit(statusLine)
+            return
+        }
+        await refreshPlan()
     }
 
     private func execute() async throws {
@@ -1127,7 +1204,9 @@ public final class LocalEngineProvisioner {
     /// Step 1 — COPY out of the bundle. `cp -R` of the payload's contents into
     /// `<destination>/Server`, so the materialized tree is laid out exactly
     /// like a checkout's `Server/` and one path expression covers both tiers.
-    private func materialize(to destination: URL, step: LocalEngineStep) async throws {
+    private func materialize(
+        to destination: URL, step: LocalEngineStep, preservingEnvironment: Bool = false
+    ) async throws {
         guard let payload = try? CodeResources.serverPayload() else {
             throw LocalEngineError.blocked(
                 step: step, reason: environment.unavailabilityReason())
@@ -1153,21 +1232,27 @@ public final class LocalEngineProvisioner {
                     + "steerlab_server package — this build was assembled "
                     + "without its Python engine; reinstall the app")
         }
+        let count: Int
         do {
-            // Replace wholesale rather than merging: a half-updated engine
-            // tree is the failure mode nobody can diagnose later.
-            if fm.fileExists(atPath: serverDirectory.path) {
-                try fm.removeItem(at: serverDirectory)
+            if preservingEnvironment, fm.fileExists(atPath: serverDirectory.path) {
+                count = try LocalEngineTreeRefresh.replaceSources(
+                    in: serverDirectory, from: packageRoot)
+            } else {
+                // Replace wholesale rather than merging: a half-updated engine
+                // tree is the failure mode nobody can diagnose later.
+                if fm.fileExists(atPath: serverDirectory.path) {
+                    try fm.removeItem(at: serverDirectory)
+                }
+                try fm.createDirectory(at: destination, withIntermediateDirectories: true)
+                try fm.copyItem(at: packageRoot, to: serverDirectory)
+                count = fileCount(under: serverDirectory)
             }
-            try fm.createDirectory(at: destination, withIntermediateDirectories: true)
-            try fm.copyItem(at: packageRoot, to: serverDirectory)
         } catch {
             throw LocalEngineError.fileOperationFailed(
                 step: step,
                 reason: "could not copy the engine to \(serverDirectory.path): "
                     + error.localizedDescription)
         }
-        let count = fileCount(under: serverDirectory)
         let stamp = CodeResources.EngineStamp(
             sourceRevision: environment.appRevision,
             appVersion: CodeResources.bundleFullVersion ?? SteerLabVersion.version,
