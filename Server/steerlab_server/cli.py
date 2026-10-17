@@ -2737,11 +2737,15 @@ def _experiment(args: list[str]):
                 "   defaulting to the newest run would join it against the "
                 "wrong generations)\n")
             return 64
+        # --reread-choices reads every stored choice again with the current
+        # choice parser, in memory, for this analysis only (choice_reread).
+        reread_choices = "--reread-choices" in rest
         try:
             run_directory = tasks.analyze(
                 name, root, source,
                 allow_unverified_epoch=("--allow-unverified-epoch" in rest),
-                adjudicated_endpoint=adjudicated)
+                adjudicated_endpoint=adjudicated,
+                reread_choices=reread_choices)
         except adjudication.AdjudicationError as exc:
             # The intake's ladder speaks in repairable sentences; a
             # traceback would bury them. Same shape as complete-judgment's
@@ -2788,6 +2792,24 @@ def _experiment(args: list[str]):
                 f"conditions in {os.path.basename(run_directory)}, and confirm "
                 "the declared studyType does not inert them (steerlab-server "
                 f"experiment verify {name})"))
+        # Discoverability: an ordinary analysis used the stored choices, so
+        # say when the current parser would read some of them differently.
+        # Never blocks; a run whose options cannot be verified says nothing.
+        if not reread_choices:
+            from .experiment import choice_reread
+            found = choice_reread.advisory_for_analysis(
+                run_directory, root, study=name)
+            if found is not None:
+                advisories.append(advisory(
+                    choice_reread.ADVISORY_CODE,
+                    choice_reread.advisory_detail(
+                        found,
+                        check_command=(f"steerlab results check-choices {name} "
+                                       f"--run runs/{found['run']}  (steerlab-cli "
+                                       "on the Mac)"),
+                        analyze_command=(f"steerlab-server experiment analyze "
+                                         f"{name} --source runs/{found['run']} "
+                                         "--reread-choices"))))
         return CLIResult(
             message=(f"analyzed '{name}' → {entries} effect-size "
                      f"entr{'y' if entries == 1 else 'ies'} in "

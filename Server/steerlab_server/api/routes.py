@@ -1419,6 +1419,15 @@ def build_router(state: ServiceState) -> APIRouter:
         # "allowUnverifiedEpoch"): accept a legacy source run with no
         # experiment-hash stamp; the output is then stamped epochUnverified.
         allow_unverified_epoch = bool((body or {}).get("allowUnverifiedEpoch"))
+        # Opt-in choice re-read for analyze (cross-engine body key
+        # "rereadChoices", the app's "Re-read choices" control): every stored
+        # choice is read again with the current parser for this analysis only
+        # (choice_reread); the source run is never changed.
+        reread_choices = (body or {}).get("rereadChoices") is True
+        if reread_choices and verb != "analyze":
+            raise HTTPException(
+                status_code=400,
+                detail="rereadChoices applies to the 'analyze' verb only")
         # Targeted retry (2026-07-24, cross-engine body key "resumeFrom"):
         # finish a FAILED evaluation by judging only its undecided cells,
         # reusing the verdicts it already produced. Every pin of the
@@ -1453,7 +1462,21 @@ def build_router(state: ServiceState) -> APIRouter:
                 # Pure-CPU statistics/reporting pass — no model acquisition.
                 run_dir = tasks.analyze(
                     name, log=job.log,
-                    allow_unverified_epoch=allow_unverified_epoch)
+                    allow_unverified_epoch=allow_unverified_epoch,
+                    reread_choices=reread_choices)
+                if not reread_choices:
+                    # The same discoverability count the CLI advisory reads,
+                    # said in the job log the app shows. Never blocks.
+                    from ..experiment import choice_reread
+                    found = choice_reread.advisory_for_analysis(
+                        run_dir, None, study=name)
+                    if found is not None:
+                        job.log("NOTE: " + choice_reread.advisory_detail(
+                            found,
+                            check_command=(f"results check-choices {name} "
+                                           f"--run runs/{found['run']}"),
+                            analyze_command=("analyze again with "
+                                             "\"Re-read choices\" turned on")))
             elif verb == "run":
                 run_dir = tasks.run(name, model_provider=state.acquire_model,
                                     should_cancel=should_cancel, log=job.log)

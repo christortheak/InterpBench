@@ -127,6 +127,7 @@ import Testing
             "deprecatedImplicitSelection", "systemPromptNotApplied",
             "singleRegimeCapabilityReading", "modelCapabilities",
             "capabilityControlNotApplied", "computeCannotRun",
+            "storedChoicesReadDifferently",
         ]
         #expect(CLIAdvisory.vocabulary == serverLiteral)
     }

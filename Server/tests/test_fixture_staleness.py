@@ -425,6 +425,12 @@ def test_every_committed_fixture_has_a_staleness_test():
         # never regenerated. Checked inline in test_judicial.py and
         # JudicialTests.swift.
         "choice-parsing.json",
+        # Hand-authored contract (2026-10-17): a run whose stored choices an
+        # older parser read, the counts a re-read reports, and the effect rows
+        # analyze writes with and without --reread-choices. Never
+        # regenerated; checked inline in test_choice_reread.py and
+        # ChoiceRereadTests.swift.
+        "choice-reread.json",
     }
     present = {f for f in os.listdir(FIXTURES) if f.endswith(".json")}
     assert present <= covered, (

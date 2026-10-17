@@ -284,6 +284,7 @@ steerlab model status <job-id> --runner <url> [--ca-bundle <path>] [--timeout <s
 steerlab model cancel <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab results export <study> [--out <dir>] [--run <run-dir>]
 steerlab results report <study> [--out <file>] [--run <run-dir>]
+steerlab results check-choices <study> [--run <run-dir>]
 ```
 
 All commands accept `--json`; `--out` writes the envelope, except on `results export`, where it names the folder the export is written into, and on `results report` and `science report`, where it names the page. Workspace init takes its destination positionally; other commands accept `--root <directory>`.
@@ -3316,7 +3317,7 @@ steerlab-server experiment validate <name> [--device <device>] [--dtype <dtype>]
 steerlab-server experiment sweep <name> [--device <device>] [--dtype <dtype>]
 steerlab-server experiment run <name> [--device <device>] [--dtype <dtype>] [--prompts <path>] [--resume <run-dir>] [--shard <k/K>]
 steerlab-server experiment evaluate <name> [--allow-unverified-epoch] [--resume-from <run-dir>] [--sample-per-condition <n>] [--sample-seed <hex-or-int>] [--source <run-dir>]
-steerlab-server experiment analyze <name> [--adjudicated-endpoint <file>] [--allow-unverified-epoch] [--source <run-dir>]
+steerlab-server experiment analyze <name> [--adjudicated-endpoint <file>] [--allow-unverified-epoch] [--reread-choices] [--source <run-dir>]
 steerlab-server experiment promote <name> <concept> [--agent-name <name>] [--cell <layer>:<alpha>] [--expect-artifact <runDir/name>] [--expect-artifact-hash <sha256>] [--expect-cell <layer>:<alpha>] [--expect-epoch <sha256>] [--qualification <path>] [--reason <text>] [--sweep-run <run-dir>]
 steerlab-server experiment confirm <name> --agent <name-or-path> [--deltas <d1,d2>] [--no-control]
 steerlab-server experiment rescore-style <name> [--allow-unverified-epoch] [--source <run-dir>]
