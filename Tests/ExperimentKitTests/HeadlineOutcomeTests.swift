@@ -636,6 +636,8 @@ import Testing
     @Test(arguments: [
         ["sourceRun", "20261003T000000000Z-exp-demo-run", "judge-report.json"],
         ["sourceRunDirectory", "/w/runs/20261003T000000000Z-exp-demo-run", "judge-report.json"],
+        // How the Mac engine names the run now: relative to the workspace.
+        ["sourceRunDirectory", "runs/20261003T000000000Z-exp-demo-run", "judge-report.json"],
         ["sourceRun", "20261003T000000000Z-exp-demo-run", "coding-report.json"],
     ])
     func aJudgedOutcomeComesFromTheEvaluationReport(stamp: [String]) throws {

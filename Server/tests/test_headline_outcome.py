@@ -483,6 +483,9 @@ def test_the_envelope_says_when_the_declared_outcome_is_absent(tmp_path):
     # The Mac engine stamps the source run as a path.
     ("sourceRunDirectory", "/w/runs/20261003T000000000-exp-demo-run",
      "judge-report.json"),
+    # Newer Mac reports stamp it relative to the workspace.
+    ("sourceRunDirectory", "runs/20261003T000000000-exp-demo-run",
+     "judge-report.json"),
     ("sourceRun", "20261003T000000000-exp-demo-run", "coding-report.json"),
 ])
 def test_a_judged_outcome_comes_from_the_evaluation_report(

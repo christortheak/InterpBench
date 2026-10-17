@@ -152,8 +152,9 @@ public struct StudyResultRepository: Sendable {
 
     /// Whether a judge report is about the run at `sourceRunPath`.
     ///
-    /// A Mac-engine report stores the run's full path; a Python-engine
-    /// report stores its directory name. Names are compared as well as
+    /// A Mac-engine report stores `runs/<name>` (an older one, the run's
+    /// full path); a Python-engine report stores its directory name. Names
+    /// are compared as well as
     /// paths because both directories sit in this workspace's `runs/`,
     /// where a run's name is unique — and a path stored before the
     /// workspace was moved or copied no longer equals anything.

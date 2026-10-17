@@ -404,6 +404,36 @@ struct JudgedSectionWorkspace {
         #expect(detail.judgeArtifactDirectory != nil)
     }
 
+    /// A Mac-engine report now names its run `runs/<name>` (the fixture's
+    /// older absolute form is covered just above): the report is attached to
+    /// its run, and to no other.
+    @Test func aMacEngineReportNamingItsRunWorkspaceRelativeIsAttached() throws {
+        let workspace = try JudgedSectionWorkspace(
+            runName: JudgeArtifactFixture.macSourceRun)
+        defer { workspace.remove() }
+        let evaluate = try workspace.plantEvaluation(
+            "20260102T000000000Z-exp-tone-study-evaluate", engine: "mac-engine")
+        let reportURL = evaluate.appending(component: "judge-report.json")
+        var object = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: reportURL))
+                as? [String: Any])
+        object["sourceRunDirectory"] = "runs/" + JudgeArtifactFixture.macSourceRun
+        try JSONSerialization.data(withJSONObject: object).write(to: reportURL)
+
+        let detail = try workspace.detail()
+        let report = try #require(detail.pairedJudgeReport)
+        #expect(report.dialect == .macEngine)
+        #expect(report.sourceRunDirectory == "runs/" + JudgeArtifactFixture.macSourceRun)
+        #expect(StudyJudgeReportReader.sourceRunName(report) == JudgeArtifactFixture.macSourceRun)
+        #expect(
+            URL(filePath: try #require(detail.judgeArtifactDirectory)).lastPathComponent
+                == evaluate.lastPathComponent)
+        #expect(
+            !StudyResultRepository.report(
+                report, judgesRunAt: workspace.root.appending(
+                    components: "runs", "20260103T000000000Z-exp-tone-study-run").path))
+    }
+
     @Test func aReportAboutAnotherRunIsNotAttached() throws {
         let workspace = try JudgedSectionWorkspace(
             runName: "20260103T000000000Z-exp-tone-study-run")

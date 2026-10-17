@@ -5840,6 +5840,10 @@ public enum ExperimentTasks {
         }
 
         let runDirectory = try makeRunDirectory(experiment: manifest, task: "evaluate")
+        // The judged run, as the report and every row name it: `runs/<name>`,
+        // never this machine's absolute path (`JudgeSourceRunReference`).
+        let storedSourceRun = JudgeSourceRunReference.stored(
+            sourceRunDirectory, evaluationDirectory: runDirectory)
         if let exclusionStamp {
             // The stamp file the server also writes — one artifact name to
             // look for on either engine, written BEFORE judging starts so
@@ -6067,7 +6071,7 @@ public enum ExperimentTasks {
                 let record = PairedJudgeRecord(
                     experiment: manifest.name,
                     experimentHash: experimentHash,
-                    sourceRunDirectory: sourceRunDirectory.path,
+                    sourceRunDirectory: storedSourceRun,
                     judgeName: judge.name,
                     judgeKind: judge.kind,
                     judgeModel: judge.model,
@@ -6161,7 +6165,7 @@ public enum ExperimentTasks {
         let report = PairedJudgeReport(
             experiment: manifest.name,
             experimentHash: experimentHash,
-            sourceRunDirectory: sourceRunDirectory.path,
+            sourceRunDirectory: storedSourceRun,
             judgeModel: judges.map(\.model).joined(separator: ", "),
             judges: judges.map(\.name),
             judgeRubricFile: rubric.file,
