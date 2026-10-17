@@ -2100,6 +2100,12 @@ def effect_units_cases() -> list[dict]:
          "config": {"substrate": "swift-mlx",
                     "appVersion": "swift-app 0.9.7-beta+0a1b2c3d"},
          "stampedUnit": None, "effectRows": [effect_units_row("formal", "4")]},
+        {"label": "a fractional count",
+         "note": "the stored count is compared as stored: 4.5 pairs are more "
+                 "than four items answered once, so the units do not "
+                 "coincide and the row paired responses",
+         "generations": effect_units_sampled(["baseline", "formal"], items, 1),
+         "stampedUnit": None, "effectRows": [effect_units_row("formal", "4.5")]},
         {"label": "missing values in a run with one sample per item",
          "generations": effect_units_sampled(["baseline", "formal"], many[:6], 1),
          "stampedUnit": None, "effectRows": [effect_units_row("formal", "4")]},
@@ -2183,7 +2189,7 @@ def effect_units() -> None:
         cases.append(case)
     _write(os.path.join(FIXTURES, "effect-units.json"), {
         "note": "the first that applies: a unit the row or analysis recorded; "
-                "item when the records hold one response or readout per item "
+                "item when the records answer each item only once "
                 "under the row's condition and the baseline (the units "
                 "coincide); for a pooled row, the pairing of the engine the "
                 "analysis's config.json names (Python, or Mac from 0.9.7: "
@@ -2204,6 +2210,8 @@ def effect_units() -> None:
                 "seed, so its interval and test treat responses to the same "
                 "item as independent and are not findings about items"),
             "unknownNote": results_export.UNKNOWN_UNIT_NOTE,
+            "unitRecordsUnavailable": results_export.UNIT_RECORDS_UNAVAILABLE,
+            "unitRecordsPartial": results_export.UNIT_RECORDS_PARTIAL,
             "responseUnitExplanation": results_export.RESPONSE_UNIT_EXPLANATION,
             "unitLines": {
                 **results_export.UNSTAMPED_UNIT_LINES,

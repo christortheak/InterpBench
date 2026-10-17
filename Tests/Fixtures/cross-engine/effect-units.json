@@ -1056,6 +1056,61 @@
         {
           "condition": "formal",
           "endpoint": "wordCount",
+          "n": "4.5",
+          "stratifyBy": "pooled",
+          "stratum": "",
+          "unit": ""
+        }
+      ],
+      "expected": {
+        "enginePairing": null,
+        "pairedItems": {
+          "formal": 4
+        },
+        "rows": [
+          {
+            "condition": "formal",
+            "count": "4 paired responses from at most 4 items",
+            "endpoint": "wordCount",
+            "pairedItems": 4,
+            "stratifyBy": "pooled",
+            "stratum": "",
+            "tooFew": false,
+            "unit": "response",
+            "unitSource": "inferred_from_records"
+          }
+        ],
+        "samplesPerItem": {
+          "baseline": {
+            "readouts": 0,
+            "responses": 1
+          },
+          "formal": {
+            "readouts": 0,
+            "responses": 1
+          }
+        }
+      },
+      "generations": [
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"baseline\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under baseline.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 0, \"promptID\": \"item-1\", \"output\": \"An answer to item-1 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 1, \"promptID\": \"item-2\", \"output\": \"An answer to item-2 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 2, \"promptID\": \"item-3\", \"output\": \"An answer to item-3 under formal.\", \"wordCount\": 6}",
+        "{\"condition\": \"formal\", \"seed\": 0, \"promptIndex\": 3, \"promptID\": \"item-4\", \"output\": \"An answer to item-4 under formal.\", \"wordCount\": 6}"
+      ],
+      "label": "a fractional count",
+      "note": "the stored count is compared as stored: 4.5 pairs are more than four items answered once, so the units do not coincide and the row paired responses",
+      "stampedUnit": null
+    },
+    {
+      "config": null,
+      "effectRows": [
+        {
+          "condition": "formal",
+          "endpoint": "wordCount",
           "n": "4",
           "stratifyBy": "pooled",
           "stratum": "",
@@ -1995,7 +2050,7 @@
   ],
   "macItemPairingVersion": "0.9.7",
   "minimumPairs": 3,
-  "note": "the first that applies: a unit the row or analysis recorded; item when the records hold one response or readout per item under the row's condition and the baseline (the units coincide); for a pooled row, the pairing of the engine the analysis's config.json names (Python, or Mac from 0.9.7: item; Mac before 0.9.7: response on a run with several responses per item, item for its ordinal readouts); response when the row counts more pairs than the items paired in the run; otherwise unknown. Fewer pairs than items settles nothing. The hand-written answers that prove the rule right are in Server/tests/test_effect_unit_interpretation.py; this file proves the three readers agree",
+  "note": "the first that applies: a unit the row or analysis recorded; item when the records answer each item only once under the row's condition and the baseline (the units coincide); for a pooled row, the pairing of the engine the analysis's config.json names (Python, or Mac from 0.9.7: item; Mac before 0.9.7: response on a run with several responses per item, item for its ordinal readouts); response when the row counts more pairs than the items paired in the run; otherwise unknown. Fewer pairs than items settles nothing. The hand-written answers that prove the rule right are in Server/tests/test_effect_unit_interpretation.py; this file proves the three readers agree",
   "wording": {
     "responseCaveat": "These are responses, not items: the analysis paired each response with the baseline response to the same item and seed, so its interval and test treat responses to the same item as independent and are not findings about items",
     "responseUnitExplanation": "These rows count more pairs than the run has paired items, so the analysis paired responses, not items: each response with the baseline response to the same item and seed. That is how the Mac engine paired a study with several samples per item before SteerLab 0.9.7, and it stamped no unit. Responses to the same item are not independent, so these intervals and tests are likely to understate the uncertainty, and they are not findings about items. The stored numbers are copied unchanged; analyzing the run again computes item-level rows.",
@@ -2004,10 +2059,12 @@
       "analysis_engine_response": "the response, not the item. The analysis did not record its unit, but its config.json names the Mac engine from before SteerLab 0.9.7, which paired each response with the baseline response to the same item and seed when a study had several responses per item, as this run does. Responses to the same item are not independent, so these intervals and tests are likely to understate the uncertainty, and they are not findings about items. The stored numbers are copied unchanged; analyzing the run again computes item-level rows.",
       "inferred_from_records": "the response, not the item. These rows count more pairs than the run has paired items, so the analysis paired responses, not items: each response with the baseline response to the same item and seed. That is how the Mac engine paired a study with several samples per item before SteerLab 0.9.7, and it stamped no unit. Responses to the same item are not independent, so these intervals and tests are likely to understate the uncertainty, and they are not findings about items. The stored numbers are copied unchanged; analyzing the run again computes item-level rows.",
       "not_established": "not established. The analysis that made these rows did not record whether their pairs count items or responses, and neither its config.json nor the run's records settle it: fewer pairs than items can mean items, or responses from fewer items. The numbers are shown as stored; analyzing the run again with this version records the unit.",
-      "one_sample_per_item": "the item. The analysis did not record its unit, but the run's records hold one response or readout per item in each condition compared, so here an item and a response are the same thing.",
+      "one_sample_per_item": "the item. The analysis did not record its unit, but the run's records answer each item only once in each condition compared, so here an item and a response are the same thing.",
       "recorded_item": "the item, with an item's samples averaged within each condition, as the analysis recorded.",
       "recorded_transcript": "the transcript, as the analysis recorded: one play-through of a multi-agent conversation, with its turns reduced to their average difference before any test, because turns in the same conversation depend on each other."
     },
+    "unitRecordsPartial": "Only the first part of the run's records was read here; reading the whole file may settle it.",
+    "unitRecordsUnavailable": "The run's records are not available here, so they could not be checked.",
     "unknownNote": "The analysis that made this row did not record whether its pairs count items or responses"
   }
 }

@@ -961,7 +961,13 @@ def engine_pairing(config):
     condition. The Mac engine has since SteerLab 0.9.7; before that it paired
     responses. Its ``appVersion`` ("swift-app 0.9.6+1a2b3c4d") says which. A
     missing or unreadable stamp, another engine, or a pre-release of 0.9.7
-    itself (either side of the change) establishes nothing."""
+    itself (either side of the change) establishes nothing.
+
+    One known limit: a development build made from the code repository in
+    the hours between the item-pairing change and the version reaching 0.9.7
+    (2026-10-04 to 10-05) stamped "swift-app 0.9.6+<revision>" and already
+    paired items. No release carried that combination; such an analysis
+    reads as paired responses here."""
     if not isinstance(config, dict):
         return None
     substrate = config.get("substrate")
@@ -1089,9 +1095,10 @@ def _effects_tables(study, run_name, analysis_label, rows, source, stamped_unit)
         table.add("unit_of_analysis_source", "Where the unit comes from. "
                   "recorded: the analysis stamped it, as both engines now do. "
                   "one_sample_per_item: it did not (an older analysis), but the "
-                  "run's records hold one response (or one readout) per item under "
-                  "the row's condition and under the baseline, so an item and a "
-                  "response are the same thing here. analysis_engine: the "
+                  "run's records answer each item only once (one response, one "
+                  "readout, or one of each) under the row's condition and under the "
+                  "baseline, so an item and a response are the same thing here. "
+                  "analysis_engine: the "
                   "analysis's config.json names the engine that made it, and how "
                   "that engine paired is known: the Python engine, and the Mac "
                   "engine from SteerLab 0.9.7, pair items; the Mac engine before "
@@ -1527,8 +1534,8 @@ RECORDED_UNIT_LINES = {
 #: cross-engine effect-units fixture).
 UNSTAMPED_UNIT_LINES = {
     "one_sample_per_item": (
-        "the item. The analysis did not record its unit, but the run's records hold one response or "
-        "readout per item in each condition compared, so here an item and a response are the same thing."),
+        "the item. The analysis did not record its unit, but the run's records answer each item only "
+        "once in each condition compared, so here an item and a response are the same thing."),
     "analysis_engine_item": (
         "the item, with an item's samples averaged within each condition. The analysis did not record "
         "its unit, but its config.json names the engine that made it, and that engine paired these rows "
@@ -1549,9 +1556,30 @@ UNSTAMPED_UNIT_LINES = {
 }
 
 
+#: What a reader adds to the not-established line when it could not check
+#: the run's records itself: none were there to read, or (the Mac app's
+#: preview of a remote run) only their first part was read. The line itself
+#: speaks of the files; these say what this reading saw of them. Pinned in
+#: the cross-engine effect-units fixture.
+UNIT_RECORDS_UNAVAILABLE = "The run's records are not available here, so they could not be checked."
+UNIT_RECORDS_PARTIAL = "Only the first part of the run's records was read here; reading the whole file may settle it."
+
+
 def recorded_unit_line(units):
     """The definition of a single recorded unit, or None to name the units."""
     return RECORDED_UNIT_LINES.get(units[0]) if len(units) == 1 else None
+
+
+def unstamped_unit_line(key, context):
+    """The line for a unit the analysis did not record, keyed as
+    ``unit_groups`` keys it, with what this reading saw of the records when
+    the unit is not established and there were none to check."""
+    said = UNSTAMPED_UNIT_LINES.get(key, UNSTAMPED_UNIT_LINES["not_established"])
+    loaded = context.get("loaded") or {}
+    if key not in UNSTAMPED_UNIT_LINES or key == "not_established":
+        if not (loaded.get("responses") or loaded.get("readouts")):
+            said += " " + UNIT_RECORDS_UNAVAILABLE
+    return said
 
 
 def unit_lines(context):
@@ -1563,7 +1591,7 @@ def unit_lines(context):
         if key == "recorded":
             said = recorded_unit_line(units) or f"{_and(_code(u) for u in units)}, as the analysis recorded."
         else:
-            said = UNSTAMPED_UNIT_LINES.get(key, UNSTAMPED_UNIT_LINES["not_established"])
+            said = unstamped_unit_line(key, context)
         lines.append(f"- Unit of analysis{marked}: {said}")
     return lines
 

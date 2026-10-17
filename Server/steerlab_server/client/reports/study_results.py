@@ -34,7 +34,7 @@ _UNITS = {'item': ('paired item', 'paired items'), 'transcript': ('paired transc
           'sample': ('paired sample', 'paired samples'), 'response': ('paired response', 'paired responses'),
           'unknown': ('pair', 'pairs')}
 #: What the table adds after a unit the analysis did not record itself.
-_UNIT_NOTES = {'one_sample_per_item': ' (one response per item)', 'analysis_engine': ' (from the engine record)',
+_UNIT_NOTES = {'one_sample_per_item': ' (answered once)', 'analysis_engine': ' (from the engine record)',
                'inferred_from_records': ' (from the records)', 'not_established': ''}
 _CORRECTIONS = {'bh': 'Benjamini-Hochberg (false discovery rate)', 'holm': 'Holm'}
 _SHORT_CORRECTIONS = {'bh': 'Benjamini-Hochberg', 'holm': 'Holm'}
@@ -512,8 +512,7 @@ class Page:
                 said = (defined.replace("'", '’') if defined
                         else join(join(*[code(unit) for unit in units], sep=', '), ', as the analysis recorded.'))
             else:
-                said = source.UNSTAMPED_UNIT_LINES.get(how, source.UNSTAMPED_UNIT_LINES['not_established'])
-                said = said.replace("'", '’')
+                said = source.unstamped_unit_line(how, self.context).replace("'", '’')
             lines.append(join(el('strong', 'Unit of analysis'), label, ': ', said))
         return lines
 

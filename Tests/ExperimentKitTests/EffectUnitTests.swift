@@ -33,6 +33,8 @@ struct EffectUnitTests {
     private struct Wording: Decodable {
         let responseCaveat: String
         let unknownNote: String
+        let unitRecordsUnavailable: String
+        let unitRecordsPartial: String
         let responseUnitExplanation: String
         let unitLines: [String: String]
     }
@@ -112,7 +114,7 @@ struct EffectUnitTests {
     ) -> RunResults.EffectSizeRow {
         RunResults.EffectSizeRow(
             condition: stored.condition, metric: stored.endpoint,
-            n: Double(stored.n).map { Int($0) } ?? 0, meanDiff: meanDiff,
+            n: Double(stored.n).map { Int($0) } ?? 0, storedN: Double(stored.n), meanDiff: meanDiff,
             ciLower: ciLower, ciUpper: ciUpper, wilcoxonW: nil, wilcoxonP: nil,
             adjustedP: nil, correction: nil, modality: nil,
             recordedUnit: stored.unit.isEmpty ? nil : stored.unit,
@@ -171,7 +173,7 @@ struct EffectUnitTests {
             for (stored, expected) in zip(value.effectRows, value.expected.rows) {
                 var settled = row(stored)
                 settled.unit = RunResults.effectUnit(
-                    condition: settled.condition, n: settled.n,
+                    condition: settled.condition, storedN: settled.storedN ?? 0,
                     recordedUnit: settled.recordedUnit, stampedUnit: value.stampedUnit,
                     stratifyBy: stored.stratifyBy, metric: stored.endpoint, pairing: value.pairing,
                     pairedItems: records)
@@ -228,12 +230,20 @@ struct EffectUnitTests {
             settled.unit = RunResults.EffectUnit(unit: unit, source: source)
             let line = try #require(value.wording.unitLines[key])
             #expect(EffectNarrative.unstampedUnitLines[key] == line)
-            for records in [records, nil] {
+            #expect(
+                EffectNarrative.unitLines(rows: [settled], records: records)
+                    == ["Unit of analysis: " + line])
+            // What this reading saw of the records is added to the
+            // not-established line only.
+            let partial = RunResults.PairedItems(counts: ["formal": 4], complete: false)
+            for (seen, clause) in [(nil, value.wording.unitRecordsUnavailable), (partial, value.wording.unitRecordsPartial)] {
                 #expect(
-                    EffectNarrative.unitLines(rows: [settled], records: records)
-                        == ["Unit of analysis: " + line])
+                    EffectNarrative.unitLines(rows: [settled], records: seen)
+                        == ["Unit of analysis: " + line + (key == "not_established" ? " " + clause : "")])
             }
         }
+        #expect(EffectNarrative.unitRecordsUnavailable == value.wording.unitRecordsUnavailable)
+        #expect(EffectNarrative.unitRecordsPartial == value.wording.unitRecordsPartial)
         // One Mac analysis from before 0.9.7 holds item rows (its ordinal
         // readouts) and response rows: one line for each.
         var ordinal = row(
@@ -268,7 +278,7 @@ struct EffectUnitTests {
         let stored = value.effectRows[index]
         var settled = row(stored)
         settled.unit = RunResults.effectUnit(
-            condition: settled.condition, n: settled.n, recordedUnit: settled.recordedUnit,
+            condition: settled.condition, storedN: settled.storedN ?? 0, recordedUnit: settled.recordedUnit,
             stampedUnit: value.stampedUnit, stratifyBy: stored.stratifyBy, metric: stored.endpoint,
             pairing: value.pairing,
             pairedItems: RunResults.pairedRecords(
@@ -532,7 +542,8 @@ struct EffectUnitTests {
             == ["Unit of analysis: not established. The analysis that made these rows did not record "
                 + "whether their pairs count items or responses, and neither its config.json nor the run's "
                 + "records settle it: fewer pairs than items can mean items, or responses from fewer items. "
-                + "The numbers are shown as stored; analyzing the run again with this version records the unit."])
+                + "The numbers are shown as stored; analyzing the run again with this version records the unit. "
+                + "The run's records are not available here, so they could not be checked."])
 
         // Its config.json names the Python engine, which always paired items:
         // that settles it without the records.
@@ -589,7 +600,8 @@ struct EffectUnitTests {
         let beyond = try #require(model.effectSizes?.first)
         #expect(beyond.unit == RunResults.EffectUnit(unit: "unknown", source: .notEstablished, pairedItems: 2))
         #expect(EffectNarrative.unitLines(rows: model.effectSizes ?? [], records: model.effectUnitRecords)
-            == ["Unit of analysis: " + (EffectNarrative.unstampedUnitLines["not_established"] ?? "")])
+            == ["Unit of analysis: " + (EffectNarrative.unstampedUnitLines["not_established"] ?? "")
+                + " Only the first part of the run's records was read here; reading the whole file may settle it."])
 
         // A Python-engine analysis, as a cluster run is: items, whatever the
         // head holds.

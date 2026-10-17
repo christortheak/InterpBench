@@ -190,7 +190,7 @@ describe("the stamps beside the effects", () => {
     const run = await load({}, {}, recordsOf(4, 1));
     const page = render(<EffectsView run={run} onOpenFile={() => {}} />);
     expect(page.text).toContain("n = 4 paired items");
-    expect(page.text).toContain("Unit of analysis Not stamped in this run. The item. The analysis did not record its unit, but the run's records hold one response or readout per item in each condition compared, so here an item and a response are the same thing.");
+    expect(page.text).toContain("Unit of analysis Not stamped in this run. The item. The analysis did not record its unit, but the run's records answer each item only once in each condition compared, so here an item and a response are the same thing.");
     expect(page.text).toContain("The item—not the generation—is the unit of analysis");
     expect(page.text).not.toContain("These are responses");
   });

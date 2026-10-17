@@ -15,7 +15,7 @@ import Foundation
 /// This is the twin of the Python reader's rule (`results_export.
 /// resolve_units`, which the export, its methods summary, and the results
 /// page use). The first that applies settles a row: a recorded unit; item
-/// when the records hold one response or readout per item under the row's
+/// when the records answer each item only once under the row's
 /// condition and the baseline (the units coincide); for a pooled row, how the
 /// engine named by config.json paired (`enginePairing`); response when the
 /// row counts more pairs than the paired items; otherwise unknown.
@@ -30,9 +30,9 @@ extension RunResults {
         public enum Source: String, Sendable, Equatable {
             /// The row or its analysis stamped it.
             case recorded
-            /// Not stamped; the records hold one response or readout per
-            /// item under the row's condition and the baseline, so an item
-            /// and a response are the same thing.
+            /// Not stamped; the records answer each item only once (at most
+            /// one response and one readout) under the row's condition and
+            /// the baseline, so an item and a response are the same thing.
             case oneSamplePerItem = "one_sample_per_item"
             /// Not stamped; the engine the analysis's config.json names
             /// paired these rows in a known way.
@@ -140,6 +140,9 @@ extension RunResults {
     /// stamp, another engine, or a pre-release of 0.9.7 itself (either side
     /// of the change). The Python engine has always paired items; the Mac
     /// engine's "swift-app 0.9.6+1a2b3c4d" says which side of 0.9.7 it is.
+    /// One known limit, as in the Python reader: a development build made in
+    /// the hours between the item-pairing change and the version reaching
+    /// 0.9.7 stamped 0.9.6 and already paired items; it reads as responses.
     public static func enginePairing(substrate: String?, appVersion: String?) -> EnginePairing? {
         if substrate == "python-hf-transformers" { return .items }
         guard substrate == "swift-mlx", let appVersion else { return nil }

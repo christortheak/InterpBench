@@ -724,13 +724,23 @@ def test_the_shared_effect_unit_wording_is_this_readers():
     assert fixture["minimumPairs"] == study_results.MINIMUM_PAIRS
     assert wording["responseUnitExplanation"] == results_export.RESPONSE_UNIT_EXPLANATION
     assert wording["unknownNote"] == results_export.UNKNOWN_UNIT_NOTE
+    assert wording["unitRecordsUnavailable"] == results_export.UNIT_RECORDS_UNAVAILABLE
+    assert wording["unitRecordsPartial"] == results_export.UNIT_RECORDS_PARTIAL
+    records = {"responses": [{"condition": "baseline", "promptID": "item-1"}], "readouts": []}
     for source, unit, key in (("one_sample_per_item", "item", "one_sample_per_item"),
                               ("analysis_engine", "item", "analysis_engine_item"),
                               ("analysis_engine", "response", "analysis_engine_response"),
                               ("inferred_from_records", "response", "inferred_from_records"),
                               ("not_established", "unknown", "not_established")):
-        context = {"effectRows": [{"stratify_by": "pooled", "unit_source": source, "unit_resolved": unit}]}
+        context = {"effectRows": [{"stratify_by": "pooled", "unit_source": source, "unit_resolved": unit}],
+                   "loaded": records}
         assert results_export.unit_lines(context) == ["- Unit of analysis: " + wording["unitLines"][key]]
+    # With no records to check, the not-established line says this reading
+    # could not check them, rather than that they settle nothing.
+    context = {"effectRows": [{"stratify_by": "pooled", "unit_source": "not_established", "unit_resolved": "unknown"}],
+               "loaded": {"responses": [], "readouts": []}}
+    assert results_export.unit_lines(context) == [
+        "- Unit of analysis: " + wording["unitLines"]["not_established"] + " " + wording["unitRecordsUnavailable"]]
     # A recorded unit is defined, not only named.
     for unit in ("item", "transcript"):
         context = {"effectRows": [{"stratify_by": "pooled", "unit_source": "recorded", "unit_resolved": unit}]}

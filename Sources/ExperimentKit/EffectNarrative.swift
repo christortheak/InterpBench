@@ -57,15 +57,24 @@ public enum EffectNarrative {
         + "The stored numbers are copied unchanged; analyzing the run again "
         + "computes item-level rows."
 
+    /// What the not-established line adds when this reading could not check
+    /// the run's records: none were available, or only their first part was
+    /// read (a remote preview). The Python reader's `UNIT_RECORDS_UNAVAILABLE`
+    /// and `UNIT_RECORDS_PARTIAL`.
+    public static let unitRecordsUnavailable =
+        "The run's records are not available here, so they could not be checked."
+    public static let unitRecordsPartial =
+        "Only the first part of the run's records was read here; reading the whole file may settle it."
+
     /// What a unit the analysis did not record is, and how it is known: the
     /// Python reader's `UNSTAMPED_UNIT_LINES`, word for word (pinned in
     /// effect-units.json). Keyed by source, and for a unit the engine
     /// settles, by unit too.
     public static let unstampedUnitLines: [String: String] = [
         "one_sample_per_item":
-            "the item. The analysis did not record its unit, but the run's records hold one "
-            + "response or readout per item in each condition compared, so here an item and a "
-            + "response are the same thing.",
+            "the item. The analysis did not record its unit, but the run's records answer each "
+            + "item only once in each condition compared, so here an item and a response are the "
+            + "same thing.",
         "analysis_engine_item":
             "the item, with an item's samples averaged within each condition. The analysis did "
             + "not record its unit, but its config.json names the engine that made it, and that "
@@ -208,13 +217,13 @@ public enum EffectNarrative {
     }
 
     /// The unit cell of the effect table: the settled unit, marked when the
-    /// analysis did not record it itself — "item (one response per item)",
+    /// analysis did not record it itself — "item (answered once)",
     /// "item (from the engine record)" or "response (from the engine
     /// record)", and "response (from the records)" (the Python reader's page
     /// marks its table the same way).
     public static func unitLabel(_ row: RunResults.EffectSizeRow) -> String {
         switch row.unit.source {
-        case .oneSamplePerItem: row.unit.unit + " (one response per item)"
+        case .oneSamplePerItem: row.unit.unit + " (answered once)"
         case .analysisEngine: row.unit.unit + " (from the engine record)"
         case .inferredFromRecords: row.unit.unit + " (from the records)"
         case .recorded, .notEstablished: row.unit.unit
@@ -270,8 +279,14 @@ public enum EffectNarrative {
                 } else {
                     said = joined(group.units) + ", as the analysis recorded."
                 }
+            } else if let line = unstampedUnitLines[group.key], group.key != "not_established" {
+                said = line
             } else {
-                said = unstampedUnitLines[group.key] ?? unstampedUnitLines["not_established"]!
+                // The line speaks of the files; what this reading saw of the
+                // run's records is added when it could not check them all.
+                said = unstampedUnitLines["not_established"]!
+                    + (records == nil ? " " + unitRecordsUnavailable
+                        : records?.complete == false ? " " + unitRecordsPartial : "")
             }
             return "Unit of analysis\(marked): \(said)"
         }

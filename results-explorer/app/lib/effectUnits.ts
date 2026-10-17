@@ -13,7 +13,7 @@
 // This is the Python reader's rule (`results_export.resolve_units`, used by
 // the export, its methods summary, and the results page), and the Mac app's
 // (`EffectUnits.swift`). The first that applies settles a row: a recorded
-// unit; item when the records hold one response or readout per item under the
+// unit; item when the records answer each item only once under the
 // row's condition and the baseline (the units coincide); for a pooled row, how
 // the engine named by config.json paired (`enginePairing`); response when the
 // row counts more pairs than the paired items; otherwise unknown.
@@ -76,6 +76,9 @@ const compareVersions = (left: number[], right: number[]) => {
 /// How the engine named by a directory's config.json paired, or null when
 /// the file does not establish it: a missing or unreadable stamp, another
 /// engine, or a pre-release of 0.9.7 itself (either side of the change).
+/// One known limit, as in the Python reader: a development build made in the
+/// hours between the item-pairing change and the version reaching 0.9.7
+/// stamped 0.9.6 and already paired items; it reads as responses.
 export const enginePairing = (config: Record<string, unknown> | null | undefined): EnginePairing | null => {
   if (!config || typeof config !== "object" || Array.isArray(config)) return null;
   if (config.substrate === "python-hf-transformers") return "items";
@@ -342,7 +345,9 @@ export const countPhrase = (row: Pick<Effect, "n" | "effectUnit">): string | nul
   const unit = unitOf(row);
   const nouns = UNIT_NOUNS[unit.unit];
   if (!nouns) return null;
-  const text = plural(row.n, ...nouns);
+  // The whole number of pairs, read toward zero, as the Python page and the
+  // Mac app state a stored count.
+  const text = plural(Math.trunc(row.n), ...nouns);
   if (unit.unit !== "response" || unit.pairedItems == null) return text;
   return `${text} ${unit.pairedItems === 1 ? "from 1 item" : `from at most ${unit.pairedItems} items`}`;
 };
@@ -371,7 +376,7 @@ export const unitCaveat = (row: Pick<Effect, "effectUnit">): string => {
 /// it itself (the Python reader's page marks its table the same way).
 export const unitLabel = (row: Pick<Effect, "effectUnit">): string => {
   const unit = unitOf(row);
-  if (unit.source === "one_sample_per_item") return `${unit.unit} (one response per item)`;
+  if (unit.source === "one_sample_per_item") return `${unit.unit} (answered once)`;
   if (unit.source === "analysis_engine") return `${unit.unit} (from the engine record)`;
   if (unit.source === "inferred_from_records") return `${unit.unit} (from the records)`;
   return unit.unit;
@@ -382,12 +387,18 @@ const joined = (items: string[]) =>
 
 export type UnitExplanation = { source: UnitSource; units: string[]; said: string };
 
+/// What the not-established line adds when this reading could not check the
+/// run's records: none were available, or only part of them was handed in.
+/// The Python reader's `UNIT_RECORDS_UNAVAILABLE` and `UNIT_RECORDS_PARTIAL`.
+export const UNIT_RECORDS_UNAVAILABLE = "The run's records are not available here, so they could not be checked.";
+export const UNIT_RECORDS_PARTIAL = "Only the first part of the run's records was read here; reading the whole file may settle it.";
+
 /// What a unit the analysis did not record is, and how it is known: the
 /// Python reader's `UNSTAMPED_UNIT_LINES`, word for word (pinned in
 /// effect-units.json). Keyed by source, and for a unit the engine settles, by
 /// unit too.
 export const UNSTAMPED_UNIT_LINES: Record<string, string> = {
-  one_sample_per_item: "the item. The analysis did not record its unit, but the run's records hold one response or readout per item in each condition compared, so here an item and a response are the same thing.",
+  one_sample_per_item: "the item. The analysis did not record its unit, but the run's records answer each item only once in each condition compared, so here an item and a response are the same thing.",
   analysis_engine_item: "the item, with an item's samples averaged within each condition. The analysis did not record its unit, but its config.json names the engine that made it, and that engine paired these rows by item.",
   analysis_engine_response: "the response, not the item. The analysis did not record its unit, but its config.json names the Mac engine from before SteerLab 0.9.7, which paired each response with the baseline response to the same item and seed when a study had several responses per item, as this run does. Responses to the same item are not independent, so these intervals and tests are likely to understate the uncertainty, and they are not findings about items. The stored numbers are copied unchanged; analyzing the run again computes item-level rows.",
   inferred_from_records: `the response, not the item. ${RESPONSE_UNIT_EXPLANATION}`,
@@ -409,10 +420,9 @@ export const unitsRecorded = (rows: Pick<Effect, "effectUnit" | "stratifyBy">[])
 /// first appear: the Python reader's methods summary (`unit_lines`). A unit
 /// the analysis's engine settles is grouped by unit too: one Mac analysis
 /// from before 0.9.7 can hold item rows (its ordinal readouts) and response
-/// rows. `records` is what the units were settled against; the words do not
-/// depend on it.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept so callers pass what the units were settled against
-export const unitExplanations = (rows: Pick<Effect, "effectUnit">[], _records: PairedItems | null): UnitExplanation[] => {
+/// rows. `records` is what the units were settled against: when this reading
+/// could not check them all, the not-established line says so.
+export const unitExplanations = (rows: Pick<Effect, "effectUnit">[], records: PairedItems | null): UnitExplanation[] => {
   const groups: { key: string; source: UnitSource; units: string[] }[] = [];
   for (const row of rows) {
     const unit = unitOf(row);
@@ -424,7 +434,10 @@ export const unitExplanations = (rows: Pick<Effect, "effectUnit">[], _records: P
   return groups.map(({ key, source, units }) => ({
     source, units,
     said: source === "recorded" ? (units.length === 1 && RECORDED_UNIT_LINES[units[0]]) || `${joined(units)}, as the analysis recorded.`
-      : UNSTAMPED_UNIT_LINES[key] ?? UNSTAMPED_UNIT_LINES.not_established,
+      : key !== "not_established" && UNSTAMPED_UNIT_LINES[key] ? UNSTAMPED_UNIT_LINES[key]
+      // The line speaks of the files; what this reading saw of the run's
+      // records is added when it could not check them all.
+      : `${UNSTAMPED_UNIT_LINES.not_established}${records === null ? ` ${UNIT_RECORDS_UNAVAILABLE}` : !records.complete ? ` ${UNIT_RECORDS_PARTIAL}` : ""}`,
   }));
 };
 

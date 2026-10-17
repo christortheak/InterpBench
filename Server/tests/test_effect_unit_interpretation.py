@@ -57,9 +57,8 @@ UNKNOWN_NOTE = "The analysis that made this row did not record whether its pairs
 LINE = {
     "recorded item": "the item, with an item's samples averaged within each condition, as the analysis recorded.",
     "recorded transcript": "the transcript, as the analysis recorded:",
-    "one sample": ("the item. The analysis did not record its unit, but the run's records hold one response or "
-                   "readout per item in each condition compared, so here an item and a response are the same "
-                   "thing."),
+    "one sample": ("the item. The analysis did not record its unit, but the run's records answer each item only "
+                   "once in each condition compared, so here an item and a response are the same thing."),
     "engine item": ("the item, with an item's samples averaged within each condition. The analysis did not "
                     "record its unit, but its config.json names the engine that made it, and that engine paired "
                     "these rows by item."),
@@ -68,6 +67,11 @@ LINE = {
     "more pairs than items": "the response, not the item. These rows count more pairs than the run has paired items,",
     "unknown": ("not established. The analysis that made these rows did not record whether their pairs count "
                 "items or responses,"),
+    "unknown, no records": ("not established. The analysis that made these rows did not record whether their "
+                            "pairs count items or responses, and neither its config.json nor the run's records "
+                            "settle it: fewer pairs than items can mean items, or responses from fewer items. The "
+                            "numbers are shown as stored; analyzing the run again with this version records the "
+                            "unit. The run's records are not available here, so they could not be checked."),
 }
 
 # Each case: the run's records (items, samples per item, and whether each item
@@ -152,6 +156,12 @@ CASES = [
          items=4, samples=0, readouts=True, config=None, n=4, metric="choiceLogOdds",
          unit="item", source="one_sample_per_item", too_few=False, line="one sample",
          says="across 4 paired items (interval"),
+    # A run whose records were not kept: nothing to check, and the line says
+    # this reading could not check them.
+    dict(label="a run with no records to check",
+         items=0, samples=0, config=None, n=4,
+         unit="unknown", source="not_established", too_few=False, line="unknown, no records",
+         says="across 4 pairs. " + UNKNOWN_NOTE),
     dict(label="more pairs than items, with no engine version recorded",
          items=1, samples=5, config=MAC_UNVERSIONED, n=5,
          unit="response", source="inferred_from_records", too_few=True, line="more pairs than items",

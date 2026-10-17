@@ -7,7 +7,8 @@ import { effectKey, pairedCountLabel } from "../app/lib/effects";
 import {
   countPairedItems, countPairedRecords, countPhrase, effectsUnitSummary, effectUnit, enginePairing, MINIMUM_PAIRS,
   pairedItemsFromText, pairedRecordsFromText, RESPONSE_CAVEAT, RESPONSE_UNIT_EXPLANATION, resolveUnits,
-  UNKNOWN_UNIT_NOTE, UNSTAMPED_UNIT_LINES, unitCaveat, unitLabel, unitLines,
+  UNIT_RECORDS_PARTIAL, UNIT_RECORDS_UNAVAILABLE, UNKNOWN_UNIT_NOTE, UNSTAMPED_UNIT_LINES, unitCaveat, unitLabel,
+  unitLines,
   type EffectUnit, type EnginePairing, type SamplesPerItem, type UnitSource,
 } from "../app/lib/effectUnits";
 import { fmt } from "../app/lib/format";
@@ -44,7 +45,10 @@ type Case = {
 
 const fixture = JSON.parse(readFileSync(resolve(checkout, "Tests", "Fixtures", "cross-engine", "effect-units.json"), "utf8")) as {
   minimumPairs: number;
-  wording: { responseCaveat: string; unknownNote: string; responseUnitExplanation: string; unitLines: Record<string, string> };
+  wording: {
+    responseCaveat: string; unknownNote: string; unitRecordsUnavailable: string; unitRecordsPartial: string;
+    responseUnitExplanation: string; unitLines: Record<string, string>;
+  };
   cases: Case[];
 };
 
@@ -132,10 +136,15 @@ describe("the shared effect-unit fixture", () => {
     ] as const) {
       const effect: EffectUnit = { unit, source, pairedItems: 4 };
       expect(UNSTAMPED_UNIT_LINES[key]).toBe(fixture.wording.unitLines[key]);
-      for (const settledAgainst of [records, null]) {
-        expect(unitLines([{ effectUnit: effect }], settledAgainst)).toEqual([`Unit of analysis: ${fixture.wording.unitLines[key]}`]);
+      expect(unitLines([{ effectUnit: effect }], records)).toEqual([`Unit of analysis: ${fixture.wording.unitLines[key]}`]);
+      // What this reading saw of the records is added to the
+      // not-established line only.
+      for (const [seen, clause] of [[null, fixture.wording.unitRecordsUnavailable], [{ counts: { formal: 4 }, complete: false }, fixture.wording.unitRecordsPartial]] as const) {
+        expect(unitLines([{ effectUnit: effect }], seen)).toEqual([`Unit of analysis: ${fixture.wording.unitLines[key]}${key === "not_established" ? ` ${clause}` : ""}`]);
       }
     }
+    expect(UNIT_RECORDS_UNAVAILABLE).toBe(fixture.wording.unitRecordsUnavailable);
+    expect(UNIT_RECORDS_PARTIAL).toBe(fixture.wording.unitRecordsPartial);
     // One Mac analysis from before 0.9.7 holds item rows (its ordinal
     // readouts) and response rows: one line for each.
     expect(unitLines([
@@ -258,9 +267,18 @@ describe("settling a run's rows", () => {
     expect(effectUnit("formal", 4, "", "", partial, { pairing: "responses" })).toEqual({ unit: "response", source: "analysis_engine", pairedItems: null });
   });
 
+  it("does not settle a row from part of a run that answered each item once", () => {
+    // The head shows one response per item, but the rest of the file may
+    // hold more, so "answered once" is not established from it.
+    const once = { responses: 1, readouts: 0 };
+    const partial = { counts: { formal: 4 }, complete: false, samplesPerItem: { baseline: once, formal: once } };
+    expect(effectUnit("formal", 4, "", "", partial)).toEqual({ unit: "unknown", source: "not_established", pairedItems: 4 });
+    expect(effectUnit("formal", 4, "", "", { ...partial, complete: true })).toEqual({ unit: "item", source: "one_sample_per_item", pairedItems: 4 });
+  });
+
   it("claims no unit for a row nothing settled", () => {
     expect(pairedCountLabel(rows[0])).toBe("n = 8 pairs");
-    expect(unitLines([rows[0]], null)).toEqual([`Unit of analysis: ${fixture.wording.unitLines.not_established}`]);
+    expect(unitLines([rows[0]], null)).toEqual([`Unit of analysis: ${fixture.wording.unitLines.not_established} ${fixture.wording.unitRecordsUnavailable}`]);
   });
 
   it("decodes a character split between two reads", async () => {
