@@ -21,8 +21,11 @@ import Foundation
 /// `experiments/<study>/pinned/`. A file that does not match is never used.
 ///
 /// **Cut-off replies.** `truncated` is the record's own `finishReason`.
-/// Records without one come from engines older than that field; they are read
-/// as complete replies and counted separately.
+/// Records without one come from engines older than that field. Those with a
+/// stored answer are read as complete replies; those with none are read as
+/// possibly cut off, because the builds just before `finishReason` already
+/// stored null for a reply cut off at the length limit. Both are counted
+/// separately.
 ///
 /// Server twin: `steerlab_server/experiment/choice_reread.py`, which also
 /// answers `results check-choices` for both clients. The hand-written fixture
@@ -52,8 +55,10 @@ public enum ChoiceReread {
         + "every choice outcome, exclusion, and table here uses them. The run "
         + "directory, including generations.jsonl, was not changed. Records "
         + "without finishReason come from engines that did not record whether "
-        + "a reply was cut off by the length limit; they were read as complete "
-        + "replies."
+        + "a reply was cut off by the length limit: those with a stored choice "
+        + "were read as complete replies, and those with none as possibly cut "
+        + "off, so only a JSON answer, the answer key, or a reply that is "
+        + "exactly an option can give them one."
 
     // MARK: - The stamp (cross-engine shape)
 
@@ -338,14 +343,20 @@ public enum ChoiceReread {
             }
             let reason = record["finishReason"] as? String
             let output = (record["output"] as? String) ?? ""
+            let stored = storedValue as? String
+            let recorded = record["finishReason"] != nil && !(record["finishReason"] is NSNull)
+            // A record with NO finishReason and no stored answer may be a
+            // reply an older engine nulled because it was cut off at the
+            // length limit, so it is read as possibly cut off: only a JSON
+            // answer, the answer key, or a whole-reply match can give it one
+            // (Python twin: the same rule in `reread`).
             let fresh = Judicial.parseChoice(
                 output, options: itemOptions,
-                truncated: reason.map(ExperimentTasks.FinishReason.isCutOff) ?? false)
-            let stored = storedValue as? String
+                truncated: (reason.map(ExperimentTasks.FinishReason.isCutOff) ?? false)
+                    || (!recorded && stored == nil))
             result.fresh[line] = .some(fresh)
             let condition = (record["condition"] as? String) ?? ""
             let change = kind(stored: stored, fresh: fresh)
-            let recorded = record["finishReason"] != nil && !(record["finishReason"] is NSNull)
             result.total.observe(change, finishReasonRecorded: recorded)
             result.conditions[condition, default: Counts()]
                 .observe(change, finishReasonRecorded: recorded)
@@ -446,7 +457,8 @@ public enum ChoiceReread {
             text +=
                 " \(total.noFinishReason) of those replies come from an older engine "
                 + "that did not record whether a reply was cut off by the length "
-                + "limit, so they were read as complete replies "
+                + "limit: those with a stored answer were read as complete replies, "
+                + "and those without one as possibly cut off "
                 + "(\(total.noFinishReasonChanged) of them changed)."
         }
         return text

@@ -114,7 +114,8 @@ def check_lines(result):
                      f"answer, {counts['gainedAnswer']} gained an answer")
         if counts['noFinishReason']:
             lines.append(f"    {counts['noFinishReason']} from an older engine that did not record whether a "
-                         f"reply was cut off (read as complete replies; {counts['noFinishReasonChanged']} changed)")
+                         "reply was cut off (read as complete when a choice was stored, as possibly cut "
+                         f"off when none was; {counts['noFinishReasonChanged']} changed)")
     for kind, label in CHANGE_LABELS.items():
         for entry in result['examples'][kind]:
             lines.append(f"  e.g. {label}: line {entry['line']}, {entry['condition']}, item {entry['promptID']}"

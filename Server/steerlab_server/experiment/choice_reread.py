@@ -26,9 +26,13 @@ its SHA-256 matches, otherwise a matching copy under
 
 **Cut-off replies.** ``truncated`` is the record's own ``finishReason`` (a
 length or reasoning-length stop). Records without one come from engines older
-than that field, which never stored whether a reply was cut off; they are read
-as complete replies and counted separately, so a reader can see how many
-readings rest on that assumption.
+than that field, which never stored whether a reply was cut off. Those with a
+stored answer are read as complete replies. Those with no stored answer are
+read as possibly cut off, because the builds just before ``finishReason``
+already stored null for a reply cut off at the length limit, and reading such
+a reply as complete would turn that correct null into its first-enumerated
+option. Both are counted separately, so a reader can see how many readings
+rest on that assumption.
 
 Swift twin: ``Sources/ExperimentKit/ChoiceReread.swift``. The shared
 hand-written fixture ``Tests/Fixtures/cross-engine/choice-reread.json`` holds both
@@ -76,8 +80,10 @@ NOTE = ("Every record that carries parsedChoice was read again from its "
         "every choice outcome, exclusion, and table here uses them. The run "
         "directory, including generations.jsonl, was not changed. Records "
         "without finishReason come from engines that did not record whether "
-        "a reply was cut off by the length limit; they were read as complete "
-        "replies.")
+        "a reply was cut off by the length limit: those with a stored choice "
+        "were read as complete replies, and those with none as possibly cut "
+        "off, so only a JSON answer, the answer key, or a reply that is "
+        "exactly an option can give them one.")
 
 
 def _sha256(data: bytes) -> str:
@@ -257,16 +263,21 @@ def reread(entries, options: dict, *, prompts_hash: str | None = None) -> tuple[
                 unmatched.append(prompt_id)
             continue
         reason = record.get(truncation_gate.RECORD_KEY)
-        # A malformed (non-string) finishReason is recorded but not a cut
-        # off, as the Swift twin reads it.
-        output = record.get("output")
-        fresh = judicial.parse_choice(
-            output if isinstance(output, str) else "", list(item_options),
-            truncated=isinstance(reason, str) and reason in truncation_gate.CUT_OFF_REASONS)
         # A stored value that is not a string names no option: no answer, as
         # the Swift twin reads it (both engines only ever write a string or
         # null).
         stored = record["parsedChoice"] if isinstance(record["parsedChoice"], str) else None
+        # A malformed (non-string) finishReason is recorded but not a cut
+        # off, as the Swift twin reads it. A record with NO finishReason and
+        # no stored answer may be a reply an older engine nulled because it
+        # was cut off at the length limit (token-count truncation came a day
+        # before finishReason did), so it is read as possibly cut off: only a
+        # JSON answer, the answer key, or a whole-reply match can give it one.
+        output = record.get("output")
+        fresh = judicial.parse_choice(
+            output if isinstance(output, str) else "", list(item_options),
+            truncated=(isinstance(reason, str) and reason in truncation_gate.CUT_OFF_REASONS)
+            or (reason is None and stored is None))
         fresh_by_line[line] = fresh
         condition = _text(record.get("condition"))
         block = conditions.setdefault(condition, _zero_counts())
@@ -403,9 +414,10 @@ def sentence(value: dict) -> str:
     older = total.get("noFinishReason", 0)
     if older:
         text += (f" {older} of those replies come from an older engine that did "
-                 "not record whether a reply was cut off by the length limit, so "
-                 f"they were read as complete replies ({total.get('noFinishReasonChanged', 0)} "
-                 "of them changed).")
+                 "not record whether a reply was cut off by the length limit: "
+                 "those with a stored answer were read as complete replies, and "
+                 "those without one as possibly cut off "
+                 f"({total.get('noFinishReasonChanged', 0)} of them changed).")
     return text
 
 

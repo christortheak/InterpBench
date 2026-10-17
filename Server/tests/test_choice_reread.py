@@ -130,7 +130,7 @@ def test_the_fixture_records_reread_to_the_hand_written_counts():
     assert report["examples"] == EXPECTED["examples"]
     # Only records that carry parsedChoice are read; the two without options
     # (lines 7 and 14) are not.
-    assert sorted(fresh) == [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13]
+    assert sorted(fresh) == [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 15, 16]
 
 
 def test_malformed_records_are_read_as_the_swift_twin_reads_them():
@@ -300,7 +300,7 @@ def test_an_ordinary_analysis_says_when_choices_read_differently(tmp_path, capsy
               if entry["code"] == choice_reread.ADVISORY_CODE]
     assert len(advice) == 1
     detail = advice[0]["detail"]
-    assert detail.startswith("5 of 12 stored choices in run '" + RUN + "'")
+    assert detail.startswith("6 of 14 stored choices in run '" + RUN + "'")
     assert "results check-choices" in detail and "--reread-choices" in detail
 
 
@@ -312,7 +312,7 @@ def test_a_reread_analysis_carries_no_such_advisory(tmp_path, capsys):
     assert choice_reread.ADVISORY_CODE not in {entry["code"] for entry in document.get("advisories", [])}
     # The envelope's summary says the choices were re-read, as the stamp does.
     assert document["result"]["choiceReread"] == {
-        "parserVersion": FIXTURE["parserVersion"], "storedChoices": 12, "changed": 5,
+        "parserVersion": FIXTURE["parserVersion"], "storedChoices": 14, "changed": 6,
         "sentence": EXPECTED["sentence"], "stamp": choice_reread.STAMP_FILE}
 
 
@@ -348,8 +348,8 @@ def test_the_client_check_says_the_changes_in_words(tmp_path, capsys, monkeypatc
     monkeypatch.delenv("STEERLAB_ROOT", raising=False)
     assert client_cli.main(["--root", root, "results", "check-choices", STUDY]) == 0
     out = capsys.readouterr().out
-    assert ("  steered: 6 stored, 1 unchanged, 3 to another option, 1 to no answer, "
-            "1 gained an answer") in out
+    assert ("  steered: 7 stored, 1 unchanged, 3 to another option, 1 to no answer, "
+            "2 gained an answer") in out
     assert "e.g. to no answer: line 10, steered, item q3, sample 0: A -> no answer" in out
     assert "e.g. gained an answer: line 11, steered, item q4, sample 0: no answer -> B" in out
 
@@ -456,7 +456,7 @@ def test_the_route_rereads_on_request_and_notes_the_count_otherwise(tmp_path, mo
     assert job["status"] == "succeeded", job
     assert not os.path.exists(os.path.join(job["result"]["runDirectory"], choice_reread.STAMP_FILE))
     logs = json.dumps(client.get(f"/api/jobs/{job_id}").json())
-    assert "5 of 12 stored choices in run '" + RUN + "'" in logs
+    assert "6 of 14 stored choices in run '" + RUN + "'" in logs
     assert "Re-read choices" in logs
 
 

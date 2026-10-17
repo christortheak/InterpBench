@@ -152,7 +152,8 @@ public enum ChoiceCheck {
             if counts.noFinishReason > 0 {
                 lines.append(
                     "    \(counts.noFinishReason) from an older engine that did not record "
-                        + "whether a reply was cut off (read as complete replies; "
+                        + "whether a reply was cut off (read as complete when a choice "
+                        + "was stored, as possibly cut off when none was; "
                         + "\(counts.noFinishReasonChanged) changed)")
             }
         }
