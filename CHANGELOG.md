@@ -12,6 +12,73 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **Lettered choices are read correctly.** When a reply did not answer
+  cleanly, the choice reader took the first option mentioned anywhere in the
+  text and ignored case, so the word "a" counted as option A: "This is a hard
+  case; my answer is B." was read as A. A JSON answer the model wrote with a
+  stray quote mark or a line break inside its reasons could not be parsed, and
+  fell through to the same rule, so the model's own `"answer": "B"` was
+  recorded as A. Steering makes replies messier, so these errors gathered in
+  steered conditions and could look like a steering effect. Both engines now
+  read, in order: a JSON answer; the answer field of JSON that does not parse;
+  the whole reply; then, for a reply that finished, the last "Final answer:"
+  or "my answer is" line, an option opening the reply, and only then a
+  capital letter standing alone. A choice is stored when a run writes its
+  records, so runs made earlier keep their old readings; for items with
+  letter options and free-text replies, ask the model to end with
+  "Final answer: A".
+- **Install Update in the Mac app.** The update notice now offers Install
+  Update, which says what will happen, downloads the release from GitHub,
+  and checks it on your Mac before anything moves: the checksum, a safe file
+  list, Apple's notarization, your copy's own Developer ID team, and a newer
+  version. Your current version is kept beside the new one as
+  `SteerLab-<version>-previous.app`, and the app reopens. It waits while work
+  is running, cancels cleanly, and puts the original back if any step fails.
+  A copy that cannot replace itself (one beside a source checkout, or one not
+  signed for distribution) says why and keeps the link to the Releases page.
+  Nothing about your installation is sent. **Refresh Engine** brings the
+  local Python engine up to date after an update and keeps its installed
+  packages; a cluster site's engine still needs pushing again.
+- **Older results say only what their files establish about `n`.** An
+  analysis made before 0.9.8 did not record whether its pairs count items or
+  responses, and the readers called a row item-level whenever it counted no
+  more pairs than the run's items. Exclusions, missing values, or a subgroup
+  can make five responses to one item look like five items. The readers now
+  settle a row from one sample per item, from the engine and version that
+  made the analysis, or from more pairs than items; otherwise they show the
+  stored numbers and say the analysis did not record the unit. Nothing stored
+  changes.
+- **A multi-judge report's top-line tally covers every judge.** The Python
+  engine's `judge-report.json` reported the first judge's counts as the
+  report's own; it now adds up the panel, as the Mac engine does, and says so
+  (`conditionsScope: "allJudges"`). The explorer labels an older report's
+  tally as the first judge's.
+- **Workspaces keep machine details out of git.** New workspaces ignore
+  `.steerlab/` (server names, receipts with this Mac's paths, caches, and
+  locks) except the compute choice in `.steerlab/workspace.json`, and ignore
+  `exports/` and the local server's process file. The `workspace` guide topic
+  says what to add to an older workspace. Mac judge reports now name the run
+  they judged as `runs/<name>` instead of an absolute path; older reports
+  still read.
+- **Statements brought up to date.** Local runs take any temperature: at 0 a
+  run repeats exactly, and above 0 each record is sampled from its own seed.
+  The help, the CLI reference, the study interviews, and the browser
+  companion said otherwise, and the companion refused to run a study above 0.
+  The interviews show the current way to turn a model's thinking off
+  (`reasoningEffort: "off"`), and the choice-prompt README says which item
+  fields reach the records. The app says "seat assignments" and "created"
+  where it said "casting" and "minted".
+- **The app's bundled command line describes itself.** `steerlab-cli
+  --version` inside SteerLab.app reports the app's version, build, and
+  resource list, instead of "this tree was never stamped".
+- **The browser companion pages through every response** and shows the true
+  count, instead of the first 80.
+- **Tools.** The privacy scan finds owner IDs recorded in zip archives and no
+  longer prints the addresses it finds. An interrupted launch check stops the
+  app it started. Client setup refuses a package missing a guide topic. Swift
+  golden tests fail when their golden file is missing instead of writing it.
+  `steerlab-cli serve --help` prints its help instead of starting a server.
+
 ## [0.9.8] — 2026-10-12
 
 - **Every effect row records its unit of analysis.** The unit is what one
