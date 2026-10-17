@@ -13,9 +13,11 @@ not.
 import os
 import pathlib
 import shutil
+import signal
 import stat
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -683,3 +685,81 @@ def test_a_helper_that_outlives_the_app_fails_the_check_by_name(tmp_path):
         assert not _running(int(pid_file.read_text()))     # the app itself was stopped
     finally:
         _stop(pid_file, helper_pid)
+
+
+def _wait_for(predicate, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.05)
+    return predicate()
+
+
+@pytest.mark.parametrize("how", ["ctrl-c", "sigterm"])
+@pytest.mark.parametrize("phase", ["startup", "observation"])
+def test_an_interrupted_launch_check_stops_the_app_it_launched(tmp_path, phase, how):
+    """A background job of a non-interactive script ignores SIGINT, so Ctrl-C
+    during a build reached the check and not the app, and the check exited
+    with the app still running. Interrupted while the app is still starting
+    (before it prints anything) or during the observation window (after its
+    verdict), the check stops that app within a bound, reports no success,
+    and ends by the signal it was given, so the build that called it stops
+    too. The stand-in, like the app, inherits SIGINT ignored."""
+    starting = "time.sleep(60)\n" if phase == "startup" else ""
+    app, executable, pid_file = _fake_app(tmp_path, before_sleeping=starting)
+    log = tmp_path / "launch.log"
+    check = subprocess.Popen(
+        ["/bin/bash", str(LAUNCH_CHECK), str(executable), str(log),
+         "--seconds", "30", "--grace", "1"],
+        env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(tmp_path)},
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        start_new_session=True)   # its own process group, as a terminal's job is
+    try:
+        if phase == "startup":
+            assert _wait_for(pid_file.exists, 10)
+        else:
+            assert _wait_for(lambda: log.exists() and _HONEST_APP_LINES[1] in log.read_text(), 10)
+        pid = int(pid_file.read_text())
+        assert _running(pid)
+        sent = signal.SIGINT if how == "ctrl-c" else signal.SIGTERM
+        if how == "ctrl-c":
+            os.killpg(check.pid, sent)   # what Ctrl-C does: the whole foreground group
+        else:
+            os.kill(check.pid, sent)     # the check alone
+        out, err = check.communicate(timeout=20)
+        assert not _running(pid), out + err      # stopped before the check returned
+        assert _running_from(app) == []
+        assert check.returncode in (-sent, 128 + sent), (check.returncode, out, err)
+        assert f"interrupted by SIG{sent.name[3:]}" in err
+        assert "✓" not in out.replace("alive past initialization ✓", "")
+        assert "offline: no network activity" not in out
+    finally:
+        if check.poll() is None:
+            check.kill()
+            check.communicate()
+        _stop(pid_file)
+
+
+def test_a_launch_check_that_cannot_see_the_app_never_takes_it_for_exited(tmp_path):
+    """The check once read a failed `ps` as a dead app, and then waited for
+    that live app without a bound. With no answer from ps the app's state is
+    unknown: the check fails, says why, and still stops the app."""
+    tools = tmp_path / "tools"
+    _stand_in(tools, "ps", "exit 1\n")       # ps that gives no answer
+    app, executable, pid_file = _fake_app(tmp_path)
+    try:
+        result = subprocess.run(
+            ["/bin/bash", str(LAUNCH_CHECK), str(executable), str(tmp_path / "launch.log"),
+             "--seconds", "1", "--grace", "1"],
+            env={"PATH": f"{tools}:/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(tmp_path)},
+            text=True, capture_output=True, check=False, timeout=30)
+        assert result.returncode == 6, result.stdout + result.stderr
+        assert "could not tell whether the app" in result.stderr
+        assert "ps gave no answer" in result.stderr
+        assert "EXITED EARLY" not in result.stderr
+        assert "✓" not in result.stdout
+        assert not _running(int(pid_file.read_text()))
+        assert _running_from(app) == []
+    finally:
+        _stop(pid_file)
