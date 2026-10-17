@@ -3226,6 +3226,14 @@ Traps:
   tree reports the version and source revision recorded at install time, and an
   unstamped one falls back to a live `git rev-parse` in whatever checkout the
   build was compiled from.
+- **The command line inside the app is never stamped, by design.** A write
+  into a signed bundle breaks its seal, so
+  `SteerLab.app/Contents/Helpers/steerlab-cli --version` reports its layout as
+  the command line bundled in the app (`"layout": "appBundle"`), with the app's
+  version and build from its `Info.plist` and the app's own
+  `Contents/Resources/resource-manifest.json` (the `app` key in `--json`).
+  `install verify` there names the app's integrity check instead:
+  `codesign --verify --deep --strict <app>`.
 - **`install stamp` refuses a build directory.** A root containing `.o`,
   `.swiftmodule`, or `.xctest` entries is DerivedData, not an install root.
 - **R1 bundles no resources.** An installed binary still resolves workspace

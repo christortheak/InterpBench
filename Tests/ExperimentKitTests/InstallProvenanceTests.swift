@@ -226,6 +226,134 @@ struct InstallProvenanceTests {
         #expect(provenance.report.contains("GPU verbs will refuse to load shaders"))
     }
 
+    // MARK: The command line bundled in the app
+
+    /// `<tmp>/SteerLab.app` laid out the way `scripts/build-app.sh` lays it
+    /// out: the helper and its shader library in `Contents/Helpers/`, the
+    /// build identity in `Contents/Info.plist`, and the app's resource
+    /// manifest in `Contents/Resources/`. Nothing is beside the helper.
+    static func stagedApp(writeManifest: Bool = true) throws -> (parent: URL, helper: URL) {
+        let fm = FileManager.default
+        let parent = fm.temporaryDirectory.appending(component: "app-\(UUID().uuidString)")
+        let contents = parent.appending(components: "SteerLab.app", "Contents")
+        let helpers = contents.appending(component: "Helpers")
+        let resources = contents.appending(component: "Resources")
+        try fm.createDirectory(at: helpers, withIntermediateDirectories: true)
+        try fm.createDirectory(
+            at: resources.appending(component: "web"), withIntermediateDirectories: true)
+        let helper = helpers.appending(component: "steerlab-cli")
+        try "not really a Mach-O".write(to: helper, atomically: true, encoding: .utf8)
+        try "not really a metallib".write(
+            to: helpers.appending(component: InstallProvenance.metallibName),
+            atomically: true, encoding: .utf8)
+        let info: [String: Any] = [
+            "CFBundleShortVersionString": "0.9.8",
+            "SLFullVersionString": "0.9.8",
+            "SLSourceRevision": "1a2b3c4d",
+        ]
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+            .write(to: contents.appending(component: "Info.plist"))
+        try "<!doctype html>".write(
+            to: resources.appending(components: "web", "index.html"),
+            atomically: true, encoding: .utf8)
+        try "{}".write(
+            to: resources.appending(component: "deployment-manifest.json"),
+            atomically: true, encoding: .utf8)
+        if writeManifest {
+            let manifest = try ResourceManifest.generate(
+                over: resources, appVersion: "0.9.8", serverVersion: "bundled",
+                protocolVersion: 1, sourceRevision: "1a2b3c4d")
+            try manifest.write(
+                to: resources.appending(component: InstallProvenance.manifestName))
+        }
+        return (parent, helper)
+    }
+
+    @Test func theBundledCommandLineReportsTheAppRatherThanAMissingStamp() throws {
+        let (parent, helper) = try Self.stagedApp()
+        defer { try? FileManager.default.removeItem(at: parent) }
+
+        let provenance = InstallProvenance.resolve(executable: helper, environment: [:])
+        #expect(provenance.shape == .appBundle)
+        #expect(provenance.app?.bundle.lastPathComponent == "SteerLab.app")
+        #expect(provenance.app?.identity == "0.9.8, build 1a2b3c4d")
+        #expect(provenance.app?.manifest?.files.count == 2)
+
+        let report = provenance.report
+        #expect(report.contains("layout        the command line bundled in SteerLab.app"))
+        #expect(report.contains("app           0.9.8, build 1a2b3c4d — "))
+        #expect(report.contains(
+            "manifest      the app's resource-manifest.json: 2 file(s), app 0.9.8+1a2b3c4d"))
+        #expect(report.contains("codesign --verify --deep --strict"))
+        // What made a healthy helper look broken is gone.
+        #expect(!report.contains("build product (unstamped)"))
+        #expect(!report.contains("never stamped"))
+        // The families line is untouched (documents count this phrase).
+        #expect(report.contains("resource families resolved"))
+
+        let payload = provenance.payload
+        #expect(payload["layout"] == .string("appBundle"))
+        // `manifest` still means a stamp beside the binary; the app's is apart.
+        #expect(payload["manifestStamped"] == .bool(false))
+        #expect(payload["manifest"] == nil)
+        guard case .object(let app)? = payload["app"] else {
+            Issue.record("the payload has no app record")
+            return
+        }
+        #expect(app["version"] == .string("0.9.8"))
+        #expect(app["sourceRevision"] == .string("1a2b3c4d"))
+        guard case .object(let appManifest)? = app["manifest"] else {
+            Issue.record("the app record has no manifest")
+            return
+        }
+        #expect(appManifest["fileCount"] == .number(2))
+        #expect(appManifest["serverVersion"] == .string("bundled"))
+    }
+
+    @Test func aBundledCommandLineWithoutTheAppManifestSaysWhatToDo() throws {
+        let (parent, helper) = try Self.stagedApp(writeManifest: false)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let provenance = InstallProvenance.resolve(executable: helper, environment: [:])
+        #expect(provenance.shape == .appBundle)
+        #expect(provenance.report.contains("is missing or unreadable"))
+        #expect(provenance.report.contains("reinstall the app"))
+    }
+
+    @Test func verifyingTheBundledCommandLinePointsAtTheCodeSignature() throws {
+        let (parent, helper) = try Self.stagedApp()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let provenance = InstallProvenance.resolve(executable: helper, environment: [:])
+        do {
+            _ = try provenance.verifyInstalledTree()
+            Issue.record("verify found a stamp that is not there")
+        } catch {
+            #expect(String(describing: error).contains("codesign --verify --deep --strict"))
+        }
+    }
+
+    @Test func onlyAnAppDirectoryMakesTheBundledLayout() throws {
+        // `Contents/Helpers/` under a directory that is not an `.app`.
+        let fm = FileManager.default
+        let parent = fm.temporaryDirectory.appending(component: "notapp-\(UUID().uuidString)")
+        let helpers = parent.appending(components: "SteerLab", "Contents", "Helpers")
+        try fm.createDirectory(at: helpers, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: parent) }
+        let helper = helpers.appending(component: "steerlab-cli")
+        try "binary".write(to: helper, atomically: true, encoding: .utf8)
+        let provenance = InstallProvenance.resolve(executable: helper, environment: [:])
+        #expect(provenance.shape == .buildProduct)
+        #expect(provenance.app == nil)
+    }
+
+    @Test func aStampBesideTheHelperIsStillTheInstallsOwnRecord() throws {
+        let (parent, helper) = try Self.stagedApp()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        try InstallProvenance.stamp(root: helper.deletingLastPathComponent())
+        let provenance = InstallProvenance.resolve(executable: helper, environment: [:])
+        #expect(provenance.shape == .installed)
+        #expect(provenance.app == nil)
+    }
+
     // MARK: `--version` is a rewrite, not a second implementation
 
     @Test func theBinaryRewritesTheVersionFlagIntoTheVerb() throws {

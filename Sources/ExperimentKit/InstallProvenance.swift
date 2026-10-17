@@ -53,6 +53,65 @@ public struct InstallProvenance: Sendable {
         /// `.deriveddata.nosync/Build/Products/Debug/steerlab-cli`, or a copy
         /// that was never stamped).
         case buildProduct
+        /// The command line bundled inside the app
+        /// (`SteerLab.app/Contents/Helpers/steerlab-cli`). The app owns the
+        /// build's identity and its resource manifest; the helper is
+        /// deliberately never stamped, because a write into a signed bundle
+        /// breaks its seal (`scripts/build-app.sh`, "THE BUNDLED CLI").
+        case appBundle
+    }
+
+    /// The app a bundled command line ships inside: its version and build
+    /// identity from `Contents/Info.plist`, and its resource manifest from
+    /// `Contents/Resources/`.
+    public struct BundledApp: Sendable, Equatable {
+        /// The `.app` directory.
+        public let bundle: URL
+        /// `SLFullVersionString`, else `CFBundleShortVersionString`.
+        public let version: String?
+        /// `SLSourceRevision`: the checkout the app was built from.
+        public let sourceRevision: String?
+        /// Where the app keeps its resource manifest.
+        public let manifestURL: URL
+        /// The app's resource manifest, when it is there and readable.
+        public let manifest: ResourceManifest?
+
+        /// The app around a helper at `<name>.app/Contents/<dir>/<binary>`,
+        /// or nil for any other layout — the same shape
+        /// `CodeResources.enclosingAppBundle` recognizes, read from the
+        /// executable's directory so it can be checked without a built app.
+        public static func enclosing(executableDirectory directory: URL) -> BundledApp? {
+            let contents = directory.standardizedFileURL.deletingLastPathComponent()
+            guard contents.lastPathComponent == "Contents" else { return nil }
+            let app = contents.deletingLastPathComponent()
+            guard app.pathExtension == "app" else { return nil }
+            let info = (try? Data(contentsOf: contents.appending(component: "Info.plist")))
+                .flatMap {
+                    try? PropertyListSerialization.propertyList(from: $0, format: nil)
+                        as? [String: Any]
+                } ?? [:]
+            func string(_ key: String) -> String? {
+                guard let raw = info[key] as? String else { return nil }
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            let manifestURL = contents.appending(
+                components: "Resources", InstallProvenance.manifestName)
+            return BundledApp(
+                bundle: app.standardizedFileURL,
+                version: string("SLFullVersionString")
+                    ?? string("CFBundleShortVersionString"),
+                sourceRevision: string("SLSourceRevision"),
+                manifestURL: manifestURL,
+                manifest: try? ResourceManifest.load(from: manifestURL))
+        }
+
+        /// "0.9.8, build 1a2b3c4d", saying plainly what the app does not record.
+        public var identity: String {
+            let version = version ?? "version not recorded"
+            guard let sourceRevision else { return "\(version), build not recorded" }
+            return "\(version), build \(sourceRevision)"
+        }
     }
 
     /// The file name the installer gives the colocated Metal shader library.
@@ -84,6 +143,8 @@ public struct InstallProvenance: Sendable {
     public let engineVersion: String
     /// The stamped manifest, when the tree carries one.
     public let manifest: ResourceManifest?
+    /// The app this command line is bundled in, when `shape` is `.appBundle`.
+    public let app: BundledApp?
     /// The colocated shader library, when it is there.
     public let metallib: URL?
     /// `DYLD_FRAMEWORK_PATH` as inherited — the developer fallback. Reported
@@ -119,11 +180,16 @@ public struct InstallProvenance: Sendable {
         let metallibURL = root.appending(component: metallibName)
         let metallib = fm.fileExists(atPath: metallibURL.path) ? metallibURL : nil
 
+        // A stamp beside the executable wins: it is this tree's own record.
+        let app = manifest == nil ? BundledApp.enclosing(executableDirectory: root) : nil
+        let shape: Shape =
+            manifest != nil ? .installed : (app != nil ? .appBundle : .buildProduct)
+
         return InstallProvenance(
             executable: exe, root: root,
-            shape: manifest == nil ? .buildProduct : .installed,
+            shape: shape,
             engineVersion: SteerLabVersion.current,
-            manifest: manifest, metallib: metallib,
+            manifest: manifest, app: app, metallib: metallib,
             dyldFrameworkPath: environment["DYLD_FRAMEWORK_PATH"],
             resourceMode: CodeResources.mode,
             checkoutRoot: CodeResources.developerCheckoutRoot)
@@ -160,7 +226,12 @@ public struct InstallProvenance: Sendable {
             let padding = String(repeating: " ", count: max(1, 14 - label.count))
             lines.append("  \(label)\(padding)\(value)")
         }
-        row("layout", shape == .installed ? "installed" : "build product (unstamped)")
+        switch shape {
+        case .installed: row("layout", "installed")
+        case .buildProduct: row("layout", "build product (unstamped)")
+        case .appBundle:
+            row("layout", "the command line bundled in \(app?.bundle.lastPathComponent ?? "the app")")
+        }
         row("executable", executable.path)
         if let metallib {
             row(
@@ -181,6 +252,22 @@ public struct InstallProvenance: Sendable {
             }
             row("manifest", stamp)
             row("integrity", "not checked here — run: steerlab-cli install verify")
+        } else if let app {
+            row("app", "\(app.identity) — \(app.bundle.path)")
+            if let appManifest = app.manifest {
+                var line = "the app's \(Self.manifestName): "
+                    + "\(appManifest.files.count) file(s), app \(appManifest.appVersion)"
+                if let revision = appManifest.sourceRevision, !revision.isEmpty {
+                    line += "+\(revision)"
+                }
+                row("manifest", line)
+            } else {
+                row("manifest", "the app's \(Self.manifestName) is missing or "
+                    + "unreadable at \(app.manifestURL.path) — reinstall the app")
+            }
+            row("integrity", "the app's code signature covers this command "
+                + "line — check it with: codesign --verify --deep --strict "
+                + "\"\(app.bundle.path)\"")
         } else {
             row("manifest", "none — this tree was never stamped")
         }
@@ -231,6 +318,30 @@ public struct InstallProvenance: Sendable {
                 stamp["sourceRevision"] = .string(revision)
             }
             payload["manifest"] = .object(stamp)
+        }
+        // The bundled command line: the app's identity and manifest, under
+        // their own key so `manifest` keeps meaning a stamp beside the binary.
+        if let app {
+            var record: [String: JSONValue] = [
+                "bundle": .string(app.bundle.path),
+                "manifestPath": .string(app.manifestURL.path),
+            ]
+            if let version = app.version { record["version"] = .string(version) }
+            if let revision = app.sourceRevision {
+                record["sourceRevision"] = .string(revision)
+            }
+            if let appManifest = app.manifest {
+                var manifest: [String: JSONValue] = [
+                    "appVersion": .string(appManifest.appVersion),
+                    "serverVersion": .string(appManifest.serverVersion),
+                    "fileCount": .number(Double(appManifest.files.count)),
+                ]
+                if let revision = appManifest.sourceRevision {
+                    manifest["sourceRevision"] = .string(revision)
+                }
+                record["manifest"] = .object(manifest)
+            }
+            payload["app"] = .object(record)
         }
         return payload
     }
@@ -312,6 +423,14 @@ public struct InstallProvenance: Sendable {
     /// SHA-256 in shell.
     public func verifyInstalledTree() throws -> [ResourceManifest.Problem] {
         guard let manifest else {
+            if let app {
+                throw ExperimentError(
+                    reason: "this is the command line bundled in "
+                        + "\(app.bundle.lastPathComponent); the app's code "
+                        + "signature is its integrity check, not a stamp beside "
+                        + "this binary. Check it with: codesign --verify --deep "
+                        + "--strict \"\(app.bundle.path)\"")
+            }
             throw ExperimentError(
                 reason: "\(root.path) carries no \(Self.manifestName), so there "
                     + "is nothing to verify against")
