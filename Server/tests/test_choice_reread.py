@@ -133,6 +133,17 @@ def test_the_fixture_records_reread_to_the_hand_written_counts():
     assert sorted(fresh) == [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13]
 
 
+def test_malformed_records_are_read_as_the_swift_twin_reads_them():
+    """The fixture's edge cases, given as exact lines: both engines must
+    count them alike (ChoiceRereadTests holds the Swift side)."""
+    cases = FIXTURE["edgeCases"]
+    entries = [(index, json.loads(line)) for index, line in enumerate(cases["lines"], start=1)]
+    _fresh, report = choice_reread.reread(entries, {"q1": cases["options"]})
+    assert report["total"] == cases["expected"]["total"]
+    assert report["conditions"] == cases["expected"]["conditions"]
+    assert report["examples"] == cases["expected"]["examples"]
+
+
 def test_the_sentence_is_built_from_the_stamped_numbers():
     value = {"parserVersion": FIXTURE["parserVersion"], "total": EXPECTED["total"]}
     assert choice_reread.sentence(value) == EXPECTED["sentence"]

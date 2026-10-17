@@ -35,9 +35,9 @@ public enum Judicial {
     /// `results check-choices`) names it, so an analysis says which parser
     /// produced the choices it used. Bump it whenever the parsing rules
     /// change, here and in the server twin `judicial.CHOICE_PARSER_VERSION`;
-    /// the shared fixture `Tests/Fixtures/cross-engine/choice-reread/
-    /// expected.json` holds both to the same value and fails when
-    /// `choice-parsing.json` changes without a bump.
+    /// the shared fixture `Tests/Fixtures/cross-engine/choice-reread.json`
+    /// holds both to the same value and fails when `choice-parsing.json`
+    /// changes without a bump.
     public static let choiceParserVersion = "2026-10-17"
 
     /// Extracts a categorical choice from sampled prose.

@@ -22,6 +22,27 @@
     {"condition": "steered", "seed": 1, "sampleIndex": 0, "promptIndex": 5, "promptID": "q6", "target": "B", "output": "As a matter of reading, B.", "wordCount": 6, "distinct2": 1.0, "parsedChoice": "A"},
     {"condition": "steered", "seed": 1, "sampleIndex": 0, "promptIndex": 6, "promptID": "q7", "output": "A meeting took place.", "wordCount": 4, "distinct2": 1.0, "finishReason": "stop"}
   ],
+  "edgeCases": {
+    "about": "Malformed records both engines must read alike, given as exact generations.jsonl lines, re-read against q1's options [A, B]. Line 1: a null condition is the condition \"\", a null finishReason counts as no finishReason, and a sampleIndex written as 0.0 is not an integer so it is left out of the example. Line 2: a stored value that is not a string names no option, so it is no answer, and a finishReason that is not a string is recorded but is not a cut-off. Line 3: lengthInReasoning is a cut-off.",
+    "options": ["A", "B"],
+    "lines": [
+      "{\"condition\": null, \"promptID\": \"q1\", \"output\": \"I choose B.\", \"finishReason\": null, \"parsedChoice\": \"A\", \"sampleIndex\": 0.0, \"wordCount\": 3}",
+      "{\"condition\": \"x\", \"promptID\": \"q1\", \"output\": \"B\", \"finishReason\": [\"length\"], \"parsedChoice\": 3, \"wordCount\": 1}",
+      "{\"condition\": \"x\", \"promptID\": \"q1\", \"output\": \"Let me weigh A\", \"finishReason\": \"lengthInReasoning\", \"parsedChoice\": \"A\", \"wordCount\": 4}"
+    ],
+    "expected": {
+      "total": {"storedChoices": 3, "unchanged": 0, "changedToOtherOption": 1, "changedToNoAnswer": 1, "gainedAnswer": 1, "changed": 3, "noFinishReason": 1, "noFinishReasonChanged": 1},
+      "conditions": {
+        "": {"storedChoices": 1, "unchanged": 0, "changedToOtherOption": 1, "changedToNoAnswer": 0, "gainedAnswer": 0, "changed": 1, "noFinishReason": 1, "noFinishReasonChanged": 1},
+        "x": {"storedChoices": 2, "unchanged": 0, "changedToOtherOption": 0, "changedToNoAnswer": 1, "gainedAnswer": 1, "changed": 2, "noFinishReason": 0, "noFinishReasonChanged": 0}
+      },
+      "examples": {
+        "changedToOtherOption": [{"line": 1, "condition": "", "promptID": "q1", "stored": "A", "reread": "B"}],
+        "changedToNoAnswer": [{"line": 3, "condition": "x", "promptID": "q1", "stored": "A", "reread": null}],
+        "gainedAnswer": [{"line": 2, "condition": "x", "promptID": "q1", "stored": null, "reread": "B"}]
+      }
+    }
+  },
   "why": {
     "1": "unchanged: a valid JSON answer",
     "2": "unchanged: an answer marker",

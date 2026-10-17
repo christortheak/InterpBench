@@ -185,9 +185,17 @@ public enum ChoiceReread {
             ordered.append(
                 pinned.appending(component: "task-prompts-" + (file as NSString).lastPathComponent))
             if let walker = fm.enumerator(at: pinned, includingPropertiesForKeys: nil) {
+                // Folder by folder, then by name within a folder: the Python
+                // twin's `sorted(os.walk(...))` order, so both engines pick
+                // the same copy when several match.
                 let found = walker.compactMap { $0 as? URL }
                     .filter { $0.pathExtension == "jsonl" }
-                    .sorted { $0.path < $1.path }
+                    .sorted {
+                        let (a, b) = (
+                            $0.deletingLastPathComponent().path, $1.deletingLastPathComponent().path
+                        )
+                        return a == b ? $0.lastPathComponent < $1.lastPathComponent : a < b
+                    }
                 ordered += found
             }
         }
@@ -244,8 +252,21 @@ public enum ChoiceReread {
             guard let bytes = try? Data(contentsOf: url), sha256(bytes) == digest else {
                 continue
             }
+            let prompts: [ExperimentTasks.StudyPrompt]
+            do {
+                prompts = try StudyPromptParsing.parseTaskPrompts(bytes)
+            } catch {
+                throw ExperimentError.refusing(
+                    .missingPrerequisite,
+                    "The task prompts file run '\(runName)' was made from was found "
+                        + "(\(relative(url, to: workspaceRoot)), with the run's hash), but "
+                        + "this version cannot read it: \((error as? ExperimentError)?.reason ?? "\(error)"). "
+                        + "The stored choices were not re-read.",
+                    repair: "Re-read this run with the SteerLab version that made it, "
+                        + "or report the file; the run itself is unchanged.")
+            }
             var options: [String: [String]] = [:]
-            for prompt in try StudyPromptParsing.parseTaskPrompts(bytes) {
+            for prompt in prompts {
                 if let itemOptions = prompt.options, !itemOptions.isEmpty {
                     options[prompt.id] = itemOptions
                 }
@@ -333,7 +354,8 @@ public enum ChoiceReread {
                 if shown.count < examplesPerKind {
                     var sampleIndex: Int?
                     if let number = record["sampleIndex"] as? NSNumber,
-                        CFGetTypeID(number) != CFBooleanGetTypeID()
+                        CFGetTypeID(number) != CFBooleanGetTypeID(),
+                        !CFNumberIsFloatType(number)
                     {
                         sampleIndex = number.intValue
                     }

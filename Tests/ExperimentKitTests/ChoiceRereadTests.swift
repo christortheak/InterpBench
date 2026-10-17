@@ -181,6 +181,32 @@ struct ChoiceRereadTests {
         #expect(result.fresh.keys.sorted() == [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13])
     }
 
+    /// The fixture's malformed records, given as exact lines: read as the
+    /// Python twin reads them (`test_malformed_records_are_read_as_the_swift_twin_reads_them`).
+    @Test func malformedRecordsAreReadAsThePythonTwinReadsThem() throws {
+        struct EdgeCases: Decodable {
+            let options: [String]
+            let lines: [String]
+            let expected: Expected
+            struct Expected: Decodable {
+                let total: ChoiceReread.Counts
+                let conditions: [String: ChoiceReread.Counts]
+                let examples: [String: [ChoiceReread.Example]]
+            }
+        }
+        struct Holder: Decodable { let edgeCases: EdgeCases }
+        let cases = try JSONDecoder().decode(
+            Holder.self,
+            from: Data(contentsOf: Self.directory.appending(component: "choice-reread.json"))
+        ).edgeCases
+        let result = try ChoiceReread.reread(
+            generations: cases.lines.joined(separator: "\n") + "\n",
+            options: ["q1": cases.options], promptsHash: nil)
+        #expect(result.total == cases.expected.total)
+        #expect(result.conditions == cases.expected.conditions)
+        #expect(result.examples == cases.expected.examples)
+    }
+
     @Test func theSentenceIsBuiltFromTheStampedNumbers() throws {
         let value = try fixture()
         #expect(

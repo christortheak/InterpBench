@@ -31,7 +31,7 @@ as complete replies and counted separately, so a reader can see how many
 readings rest on that assumption.
 
 Swift twin: ``Sources/ExperimentKit/ChoiceReread.swift``. The shared
-hand-written fixture ``Tests/Fixtures/cross-engine/choice-reread/`` holds both
+hand-written fixture ``Tests/Fixtures/cross-engine/choice-reread.json`` holds both
 engines to the same counts and the same effect rows.
 """
 
@@ -171,7 +171,17 @@ def task_prompt_options(run_dir: str, root: str, *,
             continue
         if _sha256(data) != digest:
             continue
-        prompts = task_inputs.parse_prompts(data.decode("utf-8"))
+        try:
+            prompts = task_inputs.parse_prompts(data.decode("utf-8"))
+        except (RuntimeError, ValueError) as exc:
+            raise lifecycle_gates.refusing(
+                lifecycle_gates.MISSING_PREREQUISITE,
+                f"The task prompts file run '{run_name}' was made from was found "
+                f"({_relative(os.path.abspath(path), os.path.abspath(root))}, with the "
+                f"run's hash), but this version cannot read it: {exc}. The stored "
+                "choices were not re-read.",
+                repair="Re-read this run with the SteerLab version that made it, "
+                       "or report the file; the run itself is unchanged.") from exc
         options = {str(prompt["id"]): [str(option) for option in prompt["options"]]
                    for prompt in prompts
                    if isinstance(prompt.get("options"), list) and prompt["options"]}
@@ -192,9 +202,15 @@ def task_prompt_options(run_dir: str, root: str, *,
                f"{pinned_hint}; then run this command again.")
 
 
+def _text(value) -> str:
+    """A record's text field as the Swift twin reads it: the string, or
+    ``""`` for anything else (absent, null, a number)."""
+    return value if isinstance(value, str) else ""
+
+
 def _record_id(line: int, record: dict) -> dict:
-    found = {"line": line, "condition": record.get("condition", ""),
-             "promptID": str(record.get("promptID", ""))}
+    found = {"line": line, "condition": _text(record.get("condition")),
+             "promptID": _text(record.get("promptID"))}
     if isinstance(record.get("sampleIndex"), int) and not isinstance(record.get("sampleIndex"), bool):
         found["sampleIndex"] = record["sampleIndex"]
     return found
@@ -232,7 +248,7 @@ def reread(entries, options: dict, *, prompts_hash: str | None = None) -> tuple[
     for line, record in entries:
         if not isinstance(record, dict) or "parsedChoice" not in record:
             continue
-        prompt_id = str(record.get("promptID", ""))
+        prompt_id = _text(record.get("promptID"))
         item_options = options.get(prompt_id)
         own_hash = record.get("taskPromptsHash")
         if item_options is None or (prompts_hash and isinstance(own_hash, str)
@@ -241,13 +257,18 @@ def reread(entries, options: dict, *, prompts_hash: str | None = None) -> tuple[
                 unmatched.append(prompt_id)
             continue
         reason = record.get(truncation_gate.RECORD_KEY)
+        # A malformed (non-string) finishReason is recorded but not a cut
+        # off, as the Swift twin reads it.
         output = record.get("output")
         fresh = judicial.parse_choice(
             output if isinstance(output, str) else "", list(item_options),
-            truncated=reason in truncation_gate.CUT_OFF_REASONS)
-        stored = record["parsedChoice"]
+            truncated=isinstance(reason, str) and reason in truncation_gate.CUT_OFF_REASONS)
+        # A stored value that is not a string names no option: no answer, as
+        # the Swift twin reads it (both engines only ever write a string or
+        # null).
+        stored = record["parsedChoice"] if isinstance(record["parsedChoice"], str) else None
         fresh_by_line[line] = fresh
-        condition = str(record.get("condition", ""))
+        condition = _text(record.get("condition"))
         block = conditions.setdefault(condition, _zero_counts())
         kind = kind_of(stored, fresh)
         for counts in (total, block):
