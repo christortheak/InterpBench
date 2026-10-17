@@ -271,6 +271,13 @@ public enum CLIAdvisory: String, CaseIterable, Sendable, Codable {
     /// (`ComputeLimits`; server twin `compute_limits`).
     case computeCannotRun
 
+    /// An ordinary analysis used the choices a run stored, and the current
+    /// choice parser would read some of them differently: a run read by an
+    /// older parser keeps that parser's mistakes. Never a refusal; the
+    /// detail names `results check-choices` and `analyze --reread-choices`
+    /// (`ChoiceReread`; server twin `choice_reread`).
+    case storedChoicesReadDifferently
+
     public static let vocabulary: [String] = allCases.map(\.rawValue)
 }
 

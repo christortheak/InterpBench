@@ -296,11 +296,12 @@ export const loadFreezeStamp = async (run: WorkspaceRun): Promise<FreezeStamp> =
 /// small file at the top of the run directory; a file the run does not
 /// carry is a stamp the run does not record.
 export const loadAnalysisStamps = async (run: WorkspaceRun): Promise<AnalysisStamps> => {
-  const [exclusions, reparse, adjudication, unit, epochUnverified, measurementDrift, analysis] = await Promise.all([
+  const [exclusions, reparse, adjudication, unit, choiceReread, epochUnverified, measurementDrift, analysis] = await Promise.all([
     readRunJSON(run, "exclusions.json"),
     readRunJSON(run, "endpoint-reparse.json"),
     readRunJSON(run, "adjudicated-endpoint.json"),
     readRunJSON(run, "unit-of-analysis.json"),
+    readRunJSON(run, "choice-reread.json"),
     readRunJSON(run, "epoch-unverified.json"),
     readRunJSON(run, "measurement-drift.json"),
     readRunJSON(run, "analysis.json"),
@@ -308,7 +309,7 @@ export const loadAnalysisStamps = async (run: WorkspaceRun): Promise<AnalysisSta
   // `run.report` falls back to analysis.json when there is no report.json;
   // report.json itself is read here so the two are never confused.
   const report = await readRunJSON(run, "report.json");
-  return parseAnalysisStamps({ exclusions, reparse, adjudication, unit, epochUnverified, measurementDrift, analysis, report, config: run.config });
+  return parseAnalysisStamps({ exclusions, reparse, adjudication, unit, choiceReread, epochUnverified, measurementDrift, analysis, report, config: run.config });
 };
 
 /// The items the run's records pair with the baseline, per condition: what

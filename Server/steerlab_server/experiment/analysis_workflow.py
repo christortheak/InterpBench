@@ -9,7 +9,8 @@ import json
 import os
 import sys
 from typing import Callable
-from . import choice_deltas, judicial, lifecycle_gates, paths, turn_endpoint
+from . import (choice_deltas, choice_reread, judicial, lifecycle_gates, paths,
+               turn_endpoint)
 from .manifest import Manifest
 from .task_inputs import load_prompts as _load_prompts
 from .run_reporting import reasoning_style_summary as _reasoning_style_block
@@ -25,7 +26,8 @@ from .analysis_endpoints import (MARKER_DENSITY_NOT_RECORDED,
 def analyze(name: str, root: str | None = None, source_run: str | None = None,
             *, model_provider=None, should_cancel: Callable[[], bool] | None = None,
             log=None, allow_unverified_epoch: bool = False,
-            adjudicated_endpoint: str | None = None) -> str:
+            adjudicated_endpoint: str | None = None,
+            reread_choices: bool = False) -> str:
     """Statistics + reporting over a prior run: paired effect sizes with
     bootstrap CIs and Wilcoxon (effect-sizes.csv), the phase's multiple-
     comparison correction (BH-FDR for screen, Holm for confirm), alien-stance
@@ -108,6 +110,13 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
     # left as a missing row.
     concepts_without_marker_density = marker_density_not_recorded(
         records, [concept.name for concept in manifest.concepts])
+    # Opt-in choice re-read (--reread-choices): every stored parsedChoice is
+    # read again from its stored reply, in memory, before any exclusion or
+    # endpoint reads it; stamped in choice-reread.json (see choice_reread).
+    choice_reread_stamp = None
+    if reread_choices:
+        records, choice_reread_stamp = choice_reread.for_analysis(
+            run_dir, records, root, study=name, log=_log)
 
     # Endpoint rescue (2026-08-10, an anchoring run): a record whose
     # run-time numeric parse came back null is re-parsed from its stored
@@ -351,6 +360,8 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
                                   or None))
     with open(os.path.join(out, "source-run.txt"), "w", encoding="utf-8") as handle:
         handle.write(os.path.basename(run_dir) + "\n")
+    if choice_reread_stamp is not None:
+        choice_reread.write_stamp(out, choice_reread_stamp)
     if clustered:
         # Say what an effect row averages over. `n` counts TRANSCRIPTS here,
         # not turns, and a reader cannot tell which from the number alone.

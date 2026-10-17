@@ -116,6 +116,60 @@ conversations, not turns, because a turn depends on the turns before it.
 effect rows, since one conversation supports no interval; run the study with
 `samplesPerItem` of 2 or more.
 
+## Re-reading stored choices
+
+When an item has answer options, a run reads each reply once and stores the
+option it found as `parsedChoice`. Runs never change, so a run read by an
+older choice parser keeps that parser's mistakes. Before parser version
+2026-10-17, for example, the article "a" could be read as option A, and a
+JSON answer with unescaped quotes in its reasons was read by its first
+mention instead of its answer key. Every analysis uses the stored readings
+unless you ask otherwise.
+
+To see what the current parser would read, without changing anything:
+
+```bash
+steerlab results check-choices <study> [--run runs/<run>] --json
+```
+
+It reports, per condition and in total (`result.total`,
+`result.conditions`), how many stored choices are unchanged, changed to
+another option, changed to no answer, or gained an answer, and lists a few
+records of each kind (`result.examples`, by line of `generations.jsonl`). It
+writes nothing.
+
+To analyze with the current reading:
+
+```bash
+steerlab run <name> --runner <url> --verb analyze --reread-choices
+```
+
+That analysis reads every stored reply again with the current parser, in
+memory, and uses those readings for every choice outcome, exclusion, and
+table. The run is never changed. The analysis writes `choice-reread.json`:
+the parser version, the run it read, the counts above, a few changed
+records, and `runUnchanged: true`. The results page, the export's
+`methods.md` and `codebook.md`, the explorer, and the app each say so in one
+sentence. The export's `responses.csv` keeps the stored readings in
+`parsed_choice`, and `codebook.md` says the effects used re-read ones.
+
+An ordinary analysis of a run the current parser would read differently
+carries a `storedChoicesReadDifferently` advisory that names both commands.
+It never blocks. Tell the researcher what it says and ask whether to analyze
+again with the current reading. Do not switch silently: the effects can
+change, and the researcher decides which analysis to report.
+
+Both need the task prompts file the run was made from, to know each item's
+options: the workspace file, if it still has the hash the run's
+`experiment.json` pinned, or a matching copy under
+`experiments/<study>/pinned/`. If neither matches, they refuse and say how to
+restore the file. They never re-read against a file with other bytes.
+
+Records without `finishReason` come from engines older than that field, which
+never recorded whether a reply was cut off by the length limit. They are
+re-read as complete replies and counted separately (`noFinishReason`, and
+how many of them changed). Report that count beside the change counts.
+
 ## `evaluate`
 
 ```bash

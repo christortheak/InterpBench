@@ -1,0 +1,88 @@
+{
+  "about": "Hand-authored contract for re-reading stored choices (choice_reread.py and ChoiceReread.swift): a small run whose records stored choices read by an older parser, the readings the current parser gives them, the counts a check or a re-read analysis reports, and the effect rows each engine's analyze writes with and without --reread-choices. Every expected value was written by hand from the parsing rules and the paired-difference definition, never read back from either engine. Lines count the non-blank lines of generations.jsonl from 1. Records without finishReason come from an engine older than that field and are read as complete replies.",
+  "parserVersion": "2026-10-17",
+  "parserVersionNote": "parsingFixtureSHA256 is the SHA-256 of choice-parsing.json when parserVersion was set. When the parsing fixture changes, the parsing rules have changed: bump CHOICE_PARSER_VERSION (judicial.py) and Judicial.choiceParserVersion together, then record the new version and hash here.",
+  "parsingFixtureSHA256": "59ec966f2f600f92f6bd85d44b7012cc4ce3e41b3574600965523c87f3e4ab5b",
+  "study": "reread",
+  "taskPromptsFile": "prompts/tasks/reread.jsonl",
+  "taskPromptsText": "{\"id\": \"q1\", \"prompt\": \"Which reading fits the first passage, A or B?\", \"options\": [\"A\", \"B\"], \"target\": \"B\"}\n{\"id\": \"q2\", \"prompt\": \"Which reading fits the second passage, A or B?\", \"options\": [\"A\", \"B\"], \"target\": \"B\"}\n{\"id\": \"q3\", \"prompt\": \"Which reading fits the third passage, A or B?\", \"options\": [\"A\", \"B\"], \"target\": \"B\"}\n{\"id\": \"q4\", \"prompt\": \"Which reading fits the fourth passage, A or B?\", \"options\": [\"A\", \"B\"], \"target\": \"B\"}\n{\"id\": \"q5\", \"prompt\": \"Which reading fits the fifth passage, A or B?\", \"options\": [\"A\", \"B\"], \"target\": \"B\"}\n{\"id\": \"q6\", \"prompt\": \"Which reading fits the sixth passage, A or B?\", \"options\": [\"A\", \"B\"], \"target\": \"B\"}\n{\"id\": \"q7\", \"prompt\": \"Describe the seventh passage in one sentence.\"}\n",
+  "records": [
+    {"condition": "baseline", "seed": 1, "sampleIndex": 0, "promptIndex": 0, "promptID": "q1", "target": "B", "output": "{\"answer\": \"B\"}", "wordCount": 2, "distinct2": 1.0, "finishReason": "stop", "parsedChoice": "B"},
+    {"condition": "baseline", "seed": 1, "sampleIndex": 0, "promptIndex": 1, "promptID": "q2", "target": "B", "output": "Final answer: B", "wordCount": 3, "distinct2": 1.0, "finishReason": "stop", "parsedChoice": "B"},
+    {"condition": "baseline", "seed": 1, "sampleIndex": 0, "promptIndex": 2, "promptID": "q3", "target": "B", "output": "B. The second reading governs.", "wordCount": 5, "distinct2": 1.0, "finishReason": "stop", "parsedChoice": "B"},
+    {"condition": "baseline", "seed": 1, "sampleIndex": 0, "promptIndex": 3, "promptID": "q4", "target": "B", "output": "I choose B.", "wordCount": 3, "distinct2": 1.0, "finishReason": "stop", "parsedChoice": "B"},
+    {"condition": "baseline", "seed": 1, "sampleIndex": 0, "promptIndex": 4, "promptID": "q5", "target": "B", "output": "{\"answer\": \"A\"}", "wordCount": 2, "distinct2": 1.0, "finishReason": "stop", "parsedChoice": "A"},
+    {"condition": "baseline", "seed": 1, "sampleIndex": 0, "promptIndex": 5, "promptID": "q6", "target": "B", "output": "My answer is B.", "wordCount": 4, "distinct2": 1.0, "parsedChoice": "B"},
+    {"condition": "baseline", "seed": 1, "sampleIndex": 0, "promptIndex": 6, "promptID": "q7", "output": "The passage describes a meeting.", "wordCount": 5, "distinct2": 1.0, "finishReason": "stop"},
+    {"condition": "steered", "seed": 1, "sampleIndex": 0, "promptIndex": 0, "promptID": "q1", "target": "B", "output": "As a doctor, I would choose B.", "wordCount": 7, "distinct2": 1.0, "finishReason": "stop", "parsedChoice": "A"},
+    {"condition": "steered", "seed": 1, "sampleIndex": 0, "promptIndex": 1, "promptID": "q2", "target": "B", "output": "{\"reasons\": \"the \"second\" reading is a guide\", \"answer\": \"B\"}", "wordCount": 8, "distinct2": 1.0, "finishReason": "stop", "parsedChoice": "A"},
+    {"condition": "steered", "seed": 1, "sampleIndex": 0, "promptIndex": 2, "promptID": "q3", "target": "B", "output": "Let me weigh A against B. Option A says that", "wordCount": 10, "distinct2": 1.0, "finishReason": "length", "parsedChoice": "A"},
+    {"condition": "steered", "seed": 1, "sampleIndex": 0, "promptIndex": 3, "promptID": "q4", "target": "B", "output": "{\"answer\": \"B\", \"reasons\": \"Because the second reading", "wordCount": 7, "distinct2": 1.0, "finishReason": "length", "parsedChoice": null},
+    {"condition": "steered", "seed": 1, "sampleIndex": 0, "promptIndex": 4, "promptID": "q5", "target": "B", "output": "{\"answer\": \"B\"}", "wordCount": 2, "distinct2": 1.0, "finishReason": "stop", "parsedChoice": "B"},
+    {"condition": "steered", "seed": 1, "sampleIndex": 0, "promptIndex": 5, "promptID": "q6", "target": "B", "output": "As a matter of reading, B.", "wordCount": 6, "distinct2": 1.0, "parsedChoice": "A"},
+    {"condition": "steered", "seed": 1, "sampleIndex": 0, "promptIndex": 6, "promptID": "q7", "output": "A meeting took place.", "wordCount": 4, "distinct2": 1.0, "finishReason": "stop"}
+  ],
+  "edgeCases": {
+    "about": "Malformed records both engines must read alike, given as exact generations.jsonl lines, re-read against q1's options [A, B]. Line 1: a null condition is the condition \"\", a null finishReason counts as no finishReason, and a sampleIndex written as 0.0 is not an integer so it is left out of the example. Line 2: a stored value that is not a string names no option, so it is no answer, and a finishReason that is not a string is recorded but is not a cut-off. Line 3: lengthInReasoning is a cut-off.",
+    "options": ["A", "B"],
+    "lines": [
+      "{\"condition\": null, \"promptID\": \"q1\", \"output\": \"I choose B.\", \"finishReason\": null, \"parsedChoice\": \"A\", \"sampleIndex\": 0.0, \"wordCount\": 3}",
+      "{\"condition\": \"x\", \"promptID\": \"q1\", \"output\": \"B\", \"finishReason\": [\"length\"], \"parsedChoice\": 3, \"wordCount\": 1}",
+      "{\"condition\": \"x\", \"promptID\": \"q1\", \"output\": \"Let me weigh A\", \"finishReason\": \"lengthInReasoning\", \"parsedChoice\": \"A\", \"wordCount\": 4}"
+    ],
+    "expected": {
+      "total": {"storedChoices": 3, "unchanged": 0, "changedToOtherOption": 1, "changedToNoAnswer": 1, "gainedAnswer": 1, "changed": 3, "noFinishReason": 1, "noFinishReasonChanged": 1},
+      "conditions": {
+        "": {"storedChoices": 1, "unchanged": 0, "changedToOtherOption": 1, "changedToNoAnswer": 0, "gainedAnswer": 0, "changed": 1, "noFinishReason": 1, "noFinishReasonChanged": 1},
+        "x": {"storedChoices": 2, "unchanged": 0, "changedToOtherOption": 0, "changedToNoAnswer": 1, "gainedAnswer": 1, "changed": 2, "noFinishReason": 0, "noFinishReasonChanged": 0}
+      },
+      "examples": {
+        "changedToOtherOption": [{"line": 1, "condition": "", "promptID": "q1", "stored": "A", "reread": "B"}],
+        "changedToNoAnswer": [{"line": 3, "condition": "x", "promptID": "q1", "stored": "A", "reread": null}],
+        "gainedAnswer": [{"line": 2, "condition": "x", "promptID": "q1", "stored": null, "reread": "B"}]
+      }
+    }
+  },
+  "why": {
+    "1": "unchanged: a valid JSON answer",
+    "2": "unchanged: an answer marker",
+    "3": "unchanged: an option opening the reply, followed by punctuation",
+    "4": "unchanged: the first capital letter standing alone",
+    "5": "unchanged: a valid JSON answer naming A",
+    "6": "unchanged, from an older engine (no finishReason): 'answer is' marker",
+    "8": "changed to another option, the article case: the old parser read the article 'a' as option A",
+    "9": "changed to another option, malformed JSON: unescaped quotes inside the reasons; the answer key is read from the text",
+    "10": "changed to no answer: cut off by the length limit mid-deliberation, which the old parser read as its first-enumerated option",
+    "11": "gained an answer: cut off after a complete answer key, which the old parser could not read",
+    "12": "unchanged: a valid JSON answer",
+    "13": "changed to another option, from an older engine (no finishReason): the article 'a' again, read as a complete reply",
+    "7 and 14": "no answer options, so no parsedChoice: not counted"
+  },
+  "expected": {
+    "total": {"storedChoices": 12, "unchanged": 7, "changedToOtherOption": 3, "changedToNoAnswer": 1, "gainedAnswer": 1, "changed": 5, "noFinishReason": 2, "noFinishReasonChanged": 1},
+    "conditions": {
+      "baseline": {"storedChoices": 6, "unchanged": 6, "changedToOtherOption": 0, "changedToNoAnswer": 0, "gainedAnswer": 0, "changed": 0, "noFinishReason": 1, "noFinishReasonChanged": 0},
+      "steered": {"storedChoices": 6, "unchanged": 1, "changedToOtherOption": 3, "changedToNoAnswer": 1, "gainedAnswer": 1, "changed": 5, "noFinishReason": 1, "noFinishReasonChanged": 1}
+    },
+    "examples": {
+      "changedToOtherOption": [
+        {"line": 8, "condition": "steered", "promptID": "q1", "sampleIndex": 0, "stored": "A", "reread": "B"},
+        {"line": 9, "condition": "steered", "promptID": "q2", "sampleIndex": 0, "stored": "A", "reread": "B"},
+        {"line": 13, "condition": "steered", "promptID": "q6", "sampleIndex": 0, "stored": "A", "reread": "B"}
+      ],
+      "changedToNoAnswer": [
+        {"line": 10, "condition": "steered", "promptID": "q3", "sampleIndex": 0, "stored": "A", "reread": null}
+      ],
+      "gainedAnswer": [
+        {"line": 11, "condition": "steered", "promptID": "q4", "sampleIndex": 0, "stored": null, "reread": "B"}
+      ]
+    },
+    "note": "Every record that carries parsedChoice was read again from its stored reply with the choice parser this engine has now. The re-read choices replace the stored ones in this analysis only: every choice outcome, exclusion, and table here uses them. The run directory, including generations.jsonl, was not changed. Records without finishReason come from engines that did not record whether a reply was cut off by the length limit; they were read as complete replies.",
+    "sentence": "Choices were re-read from the stored replies with choice parser version 2026-10-17; 5 of 12 stored choices changed, and the run itself is unchanged. 2 of those replies come from an older engine that did not record whether a reply was cut off by the length limit, so they were read as complete replies (1 of them changed).",
+    "choiceRate": {
+      "about": "The pooled choiceRate row for condition 'steered' against 'baseline': per item, the share of readable replies naming the target B, minus the baseline's; the estimate is the mean of those differences over the items both conditions read. Baseline per item: q1 1, q2 1, q3 1, q4 1, q5 0, q6 1.",
+      "stored": {"estimate": -0.6, "n": 5, "workedOut": "steered stored: q1 0, q2 0, q3 0, q4 unreadable, q5 1, q6 0; differences q1 -1, q2 -1, q3 -1, q5 +1, q6 -1; mean -3/5"},
+      "reread": {"estimate": 0.2, "n": 5, "workedOut": "steered re-read: q1 1, q2 1, q3 unreadable, q4 1, q5 1, q6 1; differences q1 0, q2 0, q4 0, q5 +1, q6 0; mean 1/5"}
+    }
+  }
+}

@@ -2633,11 +2633,17 @@ public struct ClusterClient: Sendable {
     /// evaluation by judging just the cells it never decided, reusing the
     /// verdicts it already produced. The server verifies every pin of the
     /// partial run before reusing a single row.
+    /// `rereadChoices` (analyze only): every stored choice is read again with
+    /// the server's current choice parser for this analysis only, stamped in
+    /// `choice-reread.json`; the run is never changed. Sent only when true,
+    /// so an older server sees exactly the body it always did.
     public func submitExperimentJobDetailed(
-        experiment name: String, verb: String, resumeFrom: String? = nil
+        experiment name: String, verb: String, resumeFrom: String? = nil,
+        rereadChoices: Bool = false
     ) async throws -> RemoteExperimentJobSubmission {
         struct Body: Encodable {
             var resumeFrom: String?
+            var rereadChoices: Bool?
         }
         // Names are slugified at creation on both engines, but path-encode
         // anyway: a URL must never depend on that invariant holding forever.
@@ -2645,7 +2651,7 @@ public struct ClusterClient: Sendable {
         let safeVerb = verb.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? verb
         return try await post(
             "/api/experiment/\(safeName)/\(safeVerb)",
-            body: Body(resumeFrom: resumeFrom))
+            body: Body(resumeFrom: resumeFrom, rereadChoices: rereadChoices ? true : nil))
     }
 
     /// Names of the experiments present in the SERVER's workspace tree — the
@@ -3042,7 +3048,8 @@ public struct ClusterClient: Sendable {
         parallelJobs: Int = 1,
         sourceRun: String? = nil,
         samplePerCondition: Int? = nil,
-        sampleSeed: String? = nil
+        sampleSeed: String? = nil,
+        rereadChoices: Bool = false
     ) async throws -> RemoteStudySubmission {
         try await requireBundleInstrumentation(path: path)
         struct Body: Encodable {
@@ -3079,6 +3086,10 @@ public struct ClusterClient: Sendable {
             /// and unsharded submissions never see the field. Execution
             /// logistics only: never part of the manifest or content hash.
             var parallelJobs: Int?
+            /// Analyze only: read every stored choice again with the
+            /// server's current choice parser (`choice-reread.json`).
+            /// Encoded only when true, so older servers never see it.
+            var rereadChoices: Bool?
         }
         // Resume policy rides the resources object as REAL JSON types: the
         // server coerces with bool()/int(), and a string "false" would read
@@ -3098,7 +3109,8 @@ public struct ClusterClient: Sendable {
                 sampleSeed: sampleSeed,
                 force: force ? true : nil,
                 parallelJobs: ShardedSubmission.encodedParallelJobs(
-                    requested: parallelJobs, executor: executor, verb: verb)))
+                    requested: parallelJobs, executor: executor, verb: verb),
+                rereadChoices: rereadChoices ? true : nil))
     }
 
     /// Manual resume of a checkpointed job (`POST /api/jobs/{id}/resubmit`,

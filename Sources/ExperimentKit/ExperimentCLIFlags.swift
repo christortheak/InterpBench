@@ -313,6 +313,11 @@ public enum ExperimentCLIParser {
         .init(
             namespace: "results", verb: "report", positional: "<study>",
             purpose: ResultsReport.purpose, valueFlags: ["--run", "--out"], ownsOutFlag: true),
+        // A run's stored choices read again with the current parser; the
+        // Python client's check (`ChoiceCheck`). Writes nothing.
+        .init(
+            namespace: "results", verb: "check-choices", positional: "<study>",
+            purpose: ChoiceCheck.purpose, valueFlags: ["--run"]),
         // init — the home layout (GENERAL-DISTRIBUTION-WORK-PLAN decision 8,
         // work item (a)). The one BARE verb: a git repository cannot ship its
         // own parent directory, so the home folder that holds `Workspaces/`,
@@ -515,7 +520,9 @@ public enum ExperimentCLIParser {
             namespace: "remote", verb: "submit-bundle",
             positional: "<server-bundle-path>",
             purpose: "Submit an uploaded bundle as a server job.",
-            booleanFlags: ["--dry-run"],
+            // `--reread-choices` (with --verb analyze): the analysis reads
+            // every stored choice again with the server's current parser.
+            booleanFlags: ["--dry-run", "--reread-choices"],
             valueFlags: remoteConnection.union([
                 "--bundle", "--verb", "--executor", "--gres", "--walltime",
                 "--parallel", "--source",
@@ -841,7 +848,10 @@ public enum ExperimentCLIParser {
             namespace: "experiment", verb: "analyze", positional: "<name>",
             purpose: "Compute paired effect sizes from the newest completed "
                 + "run into a fresh run directory.",
-            booleanFlags: ["--allow-unverified-epoch"]),
+            // `--reread-choices` reads every stored choice again with the
+            // current choice parser, for this analysis only; the run is
+            // never changed (`ChoiceReread`).
+            booleanFlags: ["--allow-unverified-epoch", "--reread-choices"]),
         .init(
             namespace: "experiment", verb: "rescore-style", positional: "<name>",
             purpose: "Re-score reasoning style over a completed run into a "

@@ -158,6 +158,11 @@ struct RunSemanticSectionsContent<AnalyzeRow: View>: View {
             // run's own stamp (report.json / analysis.json / exclusions.json);
             // runs without declared rules have no stamp and no section.
             RunExclusionsSectionView(runDirectory: model.runDirectory)
+            // `choice-reread.json`: this analysis read every stored choice
+            // again with the current parser. Shown as stored.
+            if let reread = model.choiceReread {
+                ChoiceRereadSectionView(stamp: reread)
+            }
             if model.isCategorical {
                 CategoricalStudySectionView(model: model, selectFile: selectFile)
             }
@@ -591,6 +596,9 @@ struct RunAnalyzeRow: View {
     /// find the button is work the finished action can just do.
     var onAnalyzed: ((String) -> Void)?
     @State private var state: RunAnalyzeState = .idle
+    /// "Re-read choices": analyze with every stored choice read again by the
+    /// current choice parser (`analyze --reread-choices`). Off by default.
+    @State private var rereadChoices = false
 
     private var serverAvailable: Bool {
         service.cluster.client != nil && service.cluster.remoteState != nil
@@ -659,6 +667,8 @@ struct RunAnalyzeRow: View {
             Text(caption)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+            ChoiceRereadToggle(isOn: $rereadChoices)
+                .disabled(isRunning)
         }
     }
 
@@ -677,7 +687,7 @@ struct RunAnalyzeRow: View {
                 .font(.caption)
                 .foregroundStyle(.green)
                 .textSelection(.enabled)
-                .lineLimit(2)
+                .lineLimit(5)
         case .failed(let message):
             Text(message)
                 .font(.caption)
@@ -689,19 +699,34 @@ struct RunAnalyzeRow: View {
 
     private func runLocal(experiment: String) {
         state = .running
+        let reread = rereadChoices
         Task {
             do {
-                let directory = try await Task.detached(priority: .userInitiated) {
-                    try ExperimentTasks.analyze(experimentName: experiment)
+                let (directory, advice) = try await Task.detached(priority: .userInitiated) {
+                    let directory = try ExperimentTasks.analyze(
+                        experimentName: experiment, rereadChoices: reread)
+                    // An ordinary analysis used the stored choices: say when
+                    // the current parser would read some of them
+                    // differently. Never blocks.
+                    let advice =
+                        reread
+                        ? nil
+                        : ExperimentTasks.choiceRereadAdvisory(
+                            analysisDirectory: directory, study: experiment)
+                    return (directory, advice)
                 }.value
                 let name = directory.lastPathComponent
                 // Hand the new run straight to the browser instead of
                 // asking the researcher to go and find Refresh.
                 onAnalyzed?(name)
                 state = .finished(
-                    onAnalyzed == nil
+                    (onAnalyzed == nil
                         ? "analysis → \(name) — refresh the run list to browse it"
                         : "analysis → \(name) — selected in the run list")
+                        + (advice.map {
+                            " " + ChoiceReread.appAdvice(
+                                changed: $0.changed, storedChoices: $0.storedChoices)
+                        } ?? ""))
             } catch {
                 // The epoch guard's and data checks' refusals, verbatim.
                 state = .failed(error.localizedDescription)
@@ -717,8 +742,10 @@ struct RunAnalyzeRow: View {
                 return
             }
             do {
-                let jobID = try await client.submitExperimentJob(
-                    experiment: experiment, verb: "analyze")
+                let jobID = try await client.submitExperimentJobDetailed(
+                    experiment: experiment, verb: "analyze",
+                    rereadChoices: rereadChoices
+                ).jobId
                 state = .finished(
                     "submitted analyze job \(jobID) — monitor in Compute, then "
                         + "refresh the server runs list")
@@ -737,6 +764,7 @@ struct RemoteRunAnalyzeRow: View {
     let substrate: String?
     let experiment: String?
     @State private var state: RunAnalyzeState = .idle
+    @State private var rereadChoices = false
 
     private var route: RunResults.AnalyzeRoute {
         RunResults.analyzeRoute(
@@ -749,23 +777,27 @@ struct RemoteRunAnalyzeRow: View {
     var body: some View {
         switch route {
         case .server(let experiment):
-            HStack(spacing: 8) {
-                Button {
-                    guard !isRunning else { return }
-                    submit(experiment: experiment)
-                } label: {
-                    Label(
-                        "Analyze on \(service.cluster.substrateLabel)",
-                        systemImage: "function")
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Button {
+                        guard !isRunning else { return }
+                        submit(experiment: experiment)
+                    } label: {
+                        Label(
+                            "Analyze on \(service.cluster.substrateLabel)",
+                            systemImage: "function")
+                    }
+                    .controlSize(.small)
+                    .disabled(isRunning)
+                    .help(
+                        "submit the server's analyze verb for '\(experiment)' as a "
+                            + "durable job (newest completed run of the study)")
+                    if isRunning { ProgressView().controlSize(.small) }
+                    statusText
+                    Spacer()
                 }
-                .controlSize(.small)
-                .disabled(isRunning)
-                .help(
-                    "submit the server's analyze verb for '\(experiment)' as a "
-                        + "durable job (newest completed run of the study)")
-                if isRunning { ProgressView().controlSize(.small) }
-                statusText
-                Spacer()
+                ChoiceRereadToggle(isOn: $rereadChoices)
+                    .disabled(isRunning)
             }
         case .local, .unavailable:
             // Remote browsing never analyzes locally; refusal reasons for
@@ -801,8 +833,10 @@ struct RemoteRunAnalyzeRow: View {
                 return
             }
             do {
-                let jobID = try await client.submitExperimentJob(
-                    experiment: experiment, verb: "analyze")
+                let jobID = try await client.submitExperimentJobDetailed(
+                    experiment: experiment, verb: "analyze",
+                    rereadChoices: rereadChoices
+                ).jobId
                 state = .finished("submitted analyze job \(jobID) — monitor in Compute")
             } catch {
                 state = .failed(error.localizedDescription)
@@ -2015,5 +2049,46 @@ struct PanelTranscriptView: View {
         .help(
             "expand turn \(turn.index) to read what \(turn.speaker) said and "
                 + "who saw it")
+    }
+}
+
+// MARK: - Choice re-read
+
+/// The "Re-read choices" control beside every Analyze button, with its
+/// one-line explanation (`ChoiceReread.appToggleTitle`/`appToggleHelp`).
+struct ChoiceRereadToggle: View {
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Toggle(ChoiceReread.appToggleTitle, isOn: $isOn)
+            .toggleStyle(.checkbox)
+            .controlSize(.small)
+            .help(ChoiceReread.appToggleHelp)
+        Text(ChoiceReread.appToggleHelp)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// An analysis that re-read the run's choices says so, in the engines' own
+/// sentence, built from the stamp's numbers (nothing is recounted here).
+struct ChoiceRereadSectionView: View {
+    let stamp: ChoiceReread.Stamp
+
+    var body: some View {
+        GroupBox("Choices re-read") {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(ChoiceReread.sentence(stamp))
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(ChoiceReread.appSectionNote)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .textSelection(.enabled)
+        }
     }
 }

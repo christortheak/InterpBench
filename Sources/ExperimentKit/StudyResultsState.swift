@@ -187,6 +187,7 @@ public final class StudyResultsState {
         "cosine-matrix.csv": RunBrowser.jsonPreviewByteLimit,
         "panel-effects.csv": RunBrowser.jsonPreviewByteLimit,
         "unit-of-analysis.json": remoteReportByteLimit,
+        ChoiceReread.stampFile: remoteReportByteLimit,
         // An analysis directory's source run, for settling its rows' unit.
         "source-run.txt": 4096,
         "analysis.json": remoteReportByteLimit,

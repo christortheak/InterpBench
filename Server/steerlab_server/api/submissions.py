@@ -169,7 +169,8 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
                  registry=None,
                  parallel_jobs: int = 1,
                  sample_per_condition: int | None = None,
-                 sample_seed: str | None = None) -> StudySubmission:
+                 sample_seed: str | None = None,
+                 reread_choices: bool = False) -> StudySubmission:
     """Submit a SERVER-RESIDENT experiment (packaged here into a run bundle).
 
     ``parallel_jobs`` (default 1 = exactly the historical single-job path) is
@@ -239,6 +240,7 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
                                     flag="--resume")
     _require_sample_pair(sample_per_condition, sample_seed, verb=verb,
                          manifest=manifest)
+    _require_reread_verb(reread_choices, verb=verb)
     if dependency is not None:
         # Shape-validated here so a typo refuses on the terminal rather than
         # at sbatch, where it costs a round trip and a confusing message — and
@@ -274,7 +276,8 @@ def submit_study(experiment: str, *, verb: str, jobs: JobManager,
         device=device, prompts_path=prompts_path, source_path=source_path,
         package_evidence=package_evidence, record_path=record_path,
         resume_from=resume_from, resume_directory=resume_directory,
-        sample_per_condition=sample_per_condition, sample_seed=sample_seed, runtime_requirements=run_bundle.get("runtimeRequirements"))
+        sample_per_condition=sample_per_condition, sample_seed=sample_seed,
+        reread_choices=reread_choices, runtime_requirements=run_bundle.get("runtimeRequirements"))
 
     # The JUDGE fan-out (a pipeline whose evaluate stage pins foreign local
     # judges) still routes through bundle submission: `--parallel` wires the
@@ -409,7 +412,8 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
                       force: bool = False,
                       parallel_jobs: int = 1,
                       sample_per_condition: int | None = None,
-                      sample_seed: str | None = None) -> StudySubmission:
+                      sample_seed: str | None = None,
+                      reread_choices: bool = False) -> StudySubmission:
     """Submit an already-staged run bundle.
 
     This is the remote-client path: the Mac/browser owns the study design,
@@ -462,6 +466,7 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
     # too, for the same reason and at the same cost.
     _require_sample_pair(sample_per_condition, sample_seed, verb=verb,
                          manifest=manifest)
+    _require_reread_verb(reread_choices, verb=verb)
 
     submission_dir = paths.make_unique_run_directory(f"submit-bundle-{experiment}-{verb}")
     records_dir = os.path.join(submission_dir, "records")
@@ -478,7 +483,8 @@ def submit_run_bundle(bundle_path: str, *, verb: str, jobs: JobManager,
         bundle_path, verb=verb, target_root=target, dtype=dtype, device=device,
         prompts_path=prompts_path, source_path=source_path,
         package_evidence=package_evidence, record_path=record_path,
-        sample_per_condition=sample_per_condition, sample_seed=sample_seed, runtime_requirements=meta.get("runtimeRequirements"))
+        sample_per_condition=sample_per_condition, sample_seed=sample_seed,
+        reread_choices=reread_choices, runtime_requirements=meta.get("runtimeRequirements"))
     base_result = {"runBundle": meta, "command": command,
                    "recordsDirectory": records_dir,
                    "submissionDirectory": submission_dir}
@@ -1108,6 +1114,19 @@ def _require_readable_run_directory(path: str | None, target_root: str, *,
             "to that root"))
 
 
+def _require_reread_verb(reread_choices: bool, *, verb: str) -> None:
+    """Refuse ``rereadChoices`` on any verb but analyze at SUBMIT time, for
+    the reason ``_require_sample_pair`` gives: a flag baked into a durable
+    sbatch script would otherwise wait in the queue to be refused."""
+    if reread_choices and verb != "analyze":
+        raise SubmissionRefusal(
+            "rereadChoices applies to the 'analyze' verb only (got "
+            f"{verb!r}) — it reads a completed run's stored choices again for "
+            "one analysis, and no other verb reads them that way",
+            code="rereadUnsupportedVerb",
+            repair_action="re-submit with verb 'analyze', or drop rereadChoices")
+
+
 def _require_sample_pair(sample_per_condition, sample_seed, *,
                          verb: str, manifest=None) -> None:
     """Refuse a half-stated, misplaced, or DECLARATION-CONTRADICTING evaluate
@@ -1174,6 +1193,7 @@ def _bundle_execute_command(bundle_path: str, *, verb: str, target_root: str,
                             resume_directory: str | None = None,
                             sample_per_condition: int | None = None,
                             sample_seed: str | None = None,
+                            reread_choices: bool = False,
                             runtime_requirements=None) -> list[str]:
     python = os.environ.get("STEERLAB_PYTHON") or sys.executable or "python"
     command = [
@@ -1212,6 +1232,10 @@ def _bundle_execute_command(bundle_path: str, *, verb: str, target_root: str,
         command.extend(["--sample-per-condition", str(sample_per_condition)])
     if sample_seed is not None:
         command.extend(["--sample-seed", str(sample_seed)])
+    if reread_choices:
+        # Encoded only when asked for, the same rule: an ordinary analysis
+        # renders the argv it always did.
+        command.append("--reread-choices")
     return command
 
 

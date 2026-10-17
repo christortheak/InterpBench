@@ -39,6 +39,10 @@ extension RunResults {
         /// is nil when a stamp settled every row, or no records could be read.
         public var stampedUnit: String?
         public var effectUnitRecords: PairedItems?
+        /// `choice-reread.json`: the analysis read every stored choice again
+        /// with the current choice parser (`analyze --reread-choices`). Shown
+        /// as stored; nil for every analysis that did not re-read.
+        public var choiceReread: ChoiceReread.Stamp?
         public var alienResiduals: [AlienResidualRow]?
         public var promotedMovers: PromotedMovers?
         public var cosineMatrix: CosineMatrix?
@@ -122,6 +126,9 @@ extension RunResults {
         /// pooled rows. Small, and read only to settle the effect rows' unit,
         /// so it takes no part in `isEmpty`.
         public var unitOfAnalysisData: Data?
+        /// `choice-reread.json`: small, read only to say the analysis re-read
+        /// the run's choices, so it takes no part in `isEmpty`.
+        public var choiceRereadData: Data?
         /// The generations head of the run an analysis directory analyzed (it
         /// holds none of its own). Read only to settle the effect rows' unit,
         /// never shown, so it takes no part in `isEmpty`.
@@ -160,6 +167,7 @@ extension RunResults {
             "alien-residuals.csv", "promoted-movers.json",
             "cosine-matrix.csv", "panel-effects.csv", "unit-of-analysis.json",
             "config.json",
+            ChoiceReread.stampFile,
         ]
 
         /// Route one fetched file's bytes to its slot. `truncated` matters
@@ -195,6 +203,8 @@ extension RunResults {
                 unitOfAnalysisData = data
             case "config.json":
                 configData = data
+            case ChoiceReread.stampFile:
+                choiceRereadData = data
             default:
                 break
             }
@@ -287,6 +297,9 @@ extension RunResults {
             model.effectUnitRecords = settled.pairedItems
         }
 
+        if let data = artifacts.choiceRereadData {
+            model.choiceReread = try? JSONDecoder().decode(ChoiceReread.Stamp.self, from: data)
+        }
         if let text = artifacts.alienResidualsText {
             model.alienResiduals = alienResiduals(fromCSV: text)
         }
@@ -381,6 +394,8 @@ extension RunResults {
             contentsOf: runDirectory.appending(component: "unit-of-analysis.json"))
         artifacts.configData = try? Data(
             contentsOf: runDirectory.appending(component: "config.json"))
+        artifacts.choiceRereadData = try? Data(
+            contentsOf: runDirectory.appending(component: ChoiceReread.stampFile))
         artifacts.hasEvaluationReport =
             HeadlineOutcome.evaluationReport(forRunAt: runDirectory) != nil
 

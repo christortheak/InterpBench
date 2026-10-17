@@ -842,8 +842,9 @@ import Testing
             // A study's stored results as files a researcher can take
             // elsewhere. It writes a new folder outside runs/ and no manifest.
             // `results report` writes the same results as one page, also
-            // outside runs/.
-            "results export", "results report",
+            // outside runs/. `results check-choices` reads a run's stored
+            // choices again with the current parser and writes nothing.
+            "results export", "results report", "results check-choices",
             "experiment import-prompts", "experiment inspect-artifact", "experiment attach-artifact",
             // Custom code a shared study carries (an intervention policy's
             // expert provider): shown, and acknowledged by its SHA-256 before

@@ -1419,6 +1419,15 @@ def build_router(state: ServiceState) -> APIRouter:
         # "allowUnverifiedEpoch"): accept a legacy source run with no
         # experiment-hash stamp; the output is then stamped epochUnverified.
         allow_unverified_epoch = bool((body or {}).get("allowUnverifiedEpoch"))
+        # Opt-in choice re-read for analyze (cross-engine body key
+        # "rereadChoices", the app's "Re-read choices" control): every stored
+        # choice is read again with the current parser for this analysis only
+        # (choice_reread); the source run is never changed.
+        reread_choices = (body or {}).get("rereadChoices") is True
+        if reread_choices and verb != "analyze":
+            raise HTTPException(
+                status_code=400,
+                detail="rereadChoices applies to the 'analyze' verb only")
         # Targeted retry (2026-07-24, cross-engine body key "resumeFrom"):
         # finish a FAILED evaluation by judging only its undecided cells,
         # reusing the verdicts it already produced. Every pin of the
@@ -1451,9 +1460,25 @@ def build_router(state: ServiceState) -> APIRouter:
                     resume_from=resume_from)
             elif verb == "analyze":
                 # Pure-CPU statistics/reporting pass — no model acquisition.
+                # Threaded only when asked for, so an ordinary analysis
+                # keeps the call it always made.
                 run_dir = tasks.analyze(
                     name, log=job.log,
-                    allow_unverified_epoch=allow_unverified_epoch)
+                    allow_unverified_epoch=allow_unverified_epoch,
+                    **({"reread_choices": True} if reread_choices else {}))
+                if not reread_choices:
+                    # The same discoverability count the CLI advisory reads,
+                    # said in the job log the app shows. Never blocks.
+                    from ..experiment import choice_reread
+                    found = choice_reread.advisory_for_analysis(
+                        run_dir, None, study=name)
+                    if found is not None:
+                        job.log("NOTE: " + choice_reread.advisory_detail(
+                            found,
+                            check_command=(f"results check-choices {name} "
+                                           f"--run runs/{found['run']}"),
+                            analyze_command=("analyze again with "
+                                             "\"Re-read choices\" turned on")))
             elif verb == "run":
                 run_dir = tasks.run(name, model_provider=state.acquire_model,
                                     should_cancel=should_cancel, log=job.log)
@@ -3880,6 +3905,10 @@ def build_router(state: ServiceState) -> APIRouter:
                 # the submit-time refusal rather than be quietly completed.
                 sample_per_condition=body.get("samplePerCondition"),
                 sample_seed=body.get("sampleSeed"),
+                # Cross-engine body key "rereadChoices" (analyze only): the
+                # analysis reads every stored choice again with the current
+                # choice parser. Only a literal true asks for it.
+                reread_choices=body.get("rereadChoices") is True,
                 registry=state.registry)
         except PreflightRejection as exc:
             raise HTTPException(
@@ -3925,7 +3954,11 @@ def build_router(state: ServiceState) -> APIRouter:
                 # `sourcePath` gets: absent from an older client's body, and
                 # then absent from the rendered command line too.
                 sample_per_condition=body.get("samplePerCondition"),
-                sample_seed=body.get("sampleSeed"))
+                sample_seed=body.get("sampleSeed"),
+                # "rereadChoices" (analyze only), as on /api/studies/submit:
+                # absent from an older client's body, and then absent from
+                # the rendered command line too.
+                reread_choices=body.get("rereadChoices") is True)
         except PreflightRejection as exc:
             raise HTTPException(
                 status_code=400,

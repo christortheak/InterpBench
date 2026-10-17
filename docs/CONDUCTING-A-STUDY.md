@@ -966,8 +966,18 @@ token limit is read only through its JSON answer or a whole-reply match. A
 capital "A" used as an article at the start of a sentence, or a reply that
 lists the options before answering, can still be misread, so ask for a
 marker or JSON in the prompt. `parsedChoice` is stamped once, when the run
-writes the record, and `analyze` never re-reads it: a run made before a
-parser change keeps the reading it was made with.
+writes the record, and runs never change: a run made before a parser change
+keeps the reading it was made with. To see what the current parser would
+read instead, run `results check-choices <study> --run <run>`; it reports,
+per condition, how many stored choices change to another option, change to
+no answer, or gain an answer, and writes nothing. To analyze with the current
+reading, analyze with `--reread-choices` (in the app, "Re-read choices with
+the current parser" beside Analyze). The analysis re-reads the stored
+replies against the hash-verified task prompts the run was made from, uses
+those readings for every choice outcome and exclusion, and writes
+`choice-reread.json` with the parser version and the counts; the run itself
+is not changed. Report that the analysis re-read its choices, and how many
+changed, wherever you report its effects.
 
 ### 5.5 Screen → confirm, on disjoint pools
 

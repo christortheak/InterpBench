@@ -384,6 +384,13 @@ def analysis_payload(run_directory: str) -> dict:
             payload["adjudication"] = {
                 k: block.get(k) for k in ("fileSha256", "divergence")
                 if block.get(k) is not None}
+    # `--reread-choices`: the choices the effects rest on were re-read with
+    # the current parser, said in the summary as the stamp says it. Swift
+    # twin: the same block in `ExperimentCLIRunner.analysisPayload`.
+    from .experiment import choice_reread
+    reread = _read_json(os.path.join(run_directory, choice_reread.STAMP_FILE))
+    if isinstance(reread, dict) and isinstance(reread.get("total"), dict):
+        payload["choiceReread"] = choice_reread.payload(reread)
     return payload
 
 

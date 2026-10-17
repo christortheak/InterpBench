@@ -790,8 +790,13 @@ class RunnerClient:
                                parallel_jobs: int = 1,
                                force: bool = False,
                                resources: dict | None = None,
-                               env: dict | None = None) -> dict:
+                               env: dict | None = None,
+                               reread_choices: bool = False) -> dict:
         """``POST /api/studies/submit-bundle`` — execute a staged bundle.
+
+        ``reread_choices`` (verb ``analyze`` only) asks the analysis to read
+        every stored choice again with the runner's current choice parser;
+        sent only when true.
 
         **This call is not idempotent.** It creates a job and, on a Slurm
         runner, spends a scheduler allocation. Do not retry it automatically;
@@ -861,6 +866,8 @@ class RunnerClient:
             body["parallelJobs"] = int(parallel_jobs)
         if force:
             body["force"] = True
+        if reread_choices:
+            body["rereadChoices"] = True
         if resources:
             body["resources"] = dict(resources)
         if env:

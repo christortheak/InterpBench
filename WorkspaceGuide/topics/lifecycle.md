@@ -251,8 +251,10 @@ the options before answering, can still be misread, so ask for a marker in
 the prompt ("End with a line: Final answer: A or Final answer: B"). A
 response that names no option is recorded as a parse failure
 (`parsedChoice: null`), never a guess. The reading is made once, when the
-run writes the record: `analyze` uses the stored value and never re-reads
-it, so a run made before a parser change keeps its original reading.
+run writes the record, and the run never changes, so a run made before a
+parser change keeps its original reading. Every analysis uses the stored
+value unless you ask it to re-read the replies with the current parser:
+`workspace guide evaluation`, "Re-reading stored choices".
 
 ## 6. `declare-condition` — the arm
 

@@ -284,6 +284,7 @@ steerlab model status <job-id> --runner <url> [--ca-bundle <path>] [--timeout <s
 steerlab model cancel <job-id> --runner <url> [--ca-bundle <path>] [--timeout <seconds>] [--token-file <path>]
 steerlab results export <study> [--out <dir>] [--run <run-dir>]
 steerlab results report <study> [--out <file>] [--run <run-dir>]
+steerlab results check-choices <study> [--run <run-dir>]
 ```
 
 All commands accept `--json`; `--out` writes the envelope, except on `results export`, where it names the folder the export is written into, and on `results report` and `science report`, where it names the page. Workspace init takes its destination positionally; other commands accept `--root <directory>`.
@@ -1536,11 +1537,12 @@ equal tokens.
 <!-- Generated from the declarative verb table — `steerlab-cli docs cli-reference --write`. Edit the table, not this block. -->
 
 ```
-steerlab-cli experiment analyze <name> [--allow-unverified-epoch]
+steerlab-cli experiment analyze <name> [--allow-unverified-epoch] [--reread-choices]
 steerlab-cli experiment rescore-style <name> [--allow-unverified-epoch] [--run <run-dir>]
 steerlab-cli experiment evaluate <name> [--allow-unverified-epoch] [--run <run-dir>] [--sample-per-condition <n>] [--sample-seed <hex-or-int>]
 steerlab-cli results export <study> [--out <dir>] [--run <run-dir>]
 steerlab-cli results report <study> [--out <file>] [--run <run-dir>]
+steerlab-cli results check-choices <study> [--run <run-dir>]
 ```
 
 | Verb | Purpose |
@@ -1550,6 +1552,7 @@ steerlab-cli results report <study> [--out <file>] [--run <run-dir>]
 | `experiment evaluate` | Judge a completed run with the pinned rubric and judges. |
 | `results export` | Export a completed run's results into a new folder outside runs/: tables that open in R, Stata, SPSS, or a spreadsheet, transcripts for coding by hand, a methods summary, and a codebook. Runs no model, and recalculates nothing. |
 | `results report` | Write a completed run's results as one readable page (HTML) outside runs/: the headline outcome with its interval, every stored effect, each condition, controls, the judges' agreement, exclusions, and how the study was frozen. The page goes under reports/ in the workspace unless --out names the file. Runs no model, and recalculates nothing. |
+| `results check-choices` | Read a run's stored choices again with the current choice parser and report, per condition, how many would read differently: changed to another option, changed to no answer, or gained an answer, with a few records of each kind to look at. Uses the newest completed run unless --run names another. Writes nothing and changes nothing under runs/; to analyze with the current reading, analyze the run with --reread-choices. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:swift-experiment-analysis END -->
@@ -1792,6 +1795,38 @@ run-time parse. What the analyze run directory gains:
   summary), and the `--json` envelope's analysis payload carries
   `adjudicated: true` plus that summary, so a reader of the summary alone
   cannot miss that the endpoint values were substituted.
+
+**Re-reading stored choices (both engines, 0.9.9).** A choice is read once,
+when a run writes its records (`parsedChoice`), and a run read by an older
+choice parser keeps that parser's mistakes. Two verbs read the stored replies
+again with the current parser (`judicial.CHOICE_PARSER_VERSION` /
+`Judicial.choiceParserVersion`), against the options of the task prompts file
+the run's `experiment.json` pins — the workspace file when its SHA-256
+matches, otherwise a matching copy under `experiments/<study>/pinned/`, and
+never a file with other bytes (`pinDrift` or `missingPrerequisite` otherwise,
+with a repair):
+
+```
+steerlab results check-choices <study> [--run <run-dir>]        # writes nothing
+steerlab-cli results check-choices <study> [--run <run-dir>]    # the same check, through the bridge
+steerlab-cli experiment analyze <name> --reread-choices
+steerlab-server experiment analyze <name> [--source <run-dir>] --reread-choices
+steerlab run <experiment> --runner <url> --verb analyze --reread-choices
+```
+
+`check-choices` counts, per condition and in total, the records with a stored
+choice, the unchanged ones, those changed to another option, changed to no
+answer, or that gained an answer, and the records without `finishReason`
+(older engines never recorded whether a reply was cut off; they are re-read
+as complete replies), with up to five records of each kind by line of
+`generations.jsonl`. `--reread-choices` substitutes the re-read values in
+memory before exclusions and endpoints, writes `choice-reread.json` (parser
+version, source run, the same counts, `runUnchanged: true`), and leaves the
+run directory untouched. It also travels through `runner submit`,
+`study submit`, `remote submit-bundle`, and the HTTP routes (body key
+`rereadChoices`), and is refused for any verb but `analyze`. An ordinary
+analysis whose run the current parser would read differently carries the
+non-blocking `storedChoicesReadDifferently` advisory.
 
 **How a study declares its numeric endpoint — and the one deprecated implicit
 selection (2026-08-18).** The mechanism is the manifest's `numericParser`: the
@@ -2245,7 +2280,7 @@ steerlab-cli remote model-cancel <job-id> [--site <id>] [--url <server>]
 steerlab-cli remote capabilities [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote package <experiment> [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote upload <bundle> [--site <id>] [--token <token>] [--url <server>]
-steerlab-cli remote submit-bundle <server-bundle-path> [--bundle <server-path>] [--dry-run] [--executor <local|slurm>] [--gres <spec>] [--parallel <n>] [--sample-per-condition <n>] [--sample-seed <hex-or-int>] [--site <id>] [--source <run-dir>] [--token <token>] [--url <server>] --verb <verb> [--walltime <hh:mm:ss>]
+steerlab-cli remote submit-bundle <server-bundle-path> [--bundle <server-path>] [--dry-run] [--executor <local|slurm>] [--gres <spec>] [--parallel <n>] [--reread-choices] [--sample-per-condition <n>] [--sample-seed <hex-or-int>] [--site <id>] [--source <run-dir>] [--token <token>] [--url <server>] --verb <verb> [--walltime <hh:mm:ss>]
 steerlab-cli remote jobs [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote logs <job-id> [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote cancel <job-id> [--site <id>] [--token <token>] [--url <server>]
@@ -3331,7 +3366,7 @@ steerlab-server experiment validate <name> [--device <device>] [--dtype <dtype>]
 steerlab-server experiment sweep <name> [--device <device>] [--dtype <dtype>]
 steerlab-server experiment run <name> [--device <device>] [--dtype <dtype>] [--prompts <path>] [--resume <run-dir>] [--shard <k/K>]
 steerlab-server experiment evaluate <name> [--allow-unverified-epoch] [--resume-from <run-dir>] [--sample-per-condition <n>] [--sample-seed <hex-or-int>] [--source <run-dir>]
-steerlab-server experiment analyze <name> [--adjudicated-endpoint <file>] [--allow-unverified-epoch] [--source <run-dir>]
+steerlab-server experiment analyze <name> [--adjudicated-endpoint <file>] [--allow-unverified-epoch] [--reread-choices] [--source <run-dir>]
 steerlab-server experiment promote <name> <concept> [--agent-name <name>] [--cell <layer>:<alpha>] [--expect-artifact <runDir/name>] [--expect-artifact-hash <sha256>] [--expect-cell <layer>:<alpha>] [--expect-epoch <sha256>] [--qualification <path>] [--reason <text>] [--sweep-run <run-dir>]
 steerlab-server experiment confirm <name> --agent <name-or-path> [--deltas <d1,d2>] [--no-control]
 steerlab-server experiment rescore-style <name> [--allow-unverified-epoch] [--source <run-dir>]
@@ -3684,7 +3719,7 @@ from a probed one.
 <!-- Generated from the declarative verb table — `steerlab-server docs cli-reference --write`. Edit the table, not this block. -->
 
 ```
-steerlab-server study submit <experiment> [--dependency <spec>] [--device <device>] [--dry-run] [--dtype <dtype>] [--executor <local|slurm>] [--force] [--gres <spec>] [--job-name <name>] [--mem <size>] [--no-evidence] [--parallel <n>] [--parallel-jobs <n>] [--partition <partition>] [--prompts <path>] [--resume <run-dir>] [--sample-per-condition <n>] [--sample-seed <hex-or-int>] [--source <run-dir>] [--target <root>] [--verb <verb>] [--walltime <hh:mm:ss>]
+steerlab-server study submit <experiment> [--dependency <spec>] [--device <device>] [--dry-run] [--dtype <dtype>] [--executor <local|slurm>] [--force] [--gres <spec>] [--job-name <name>] [--mem <size>] [--no-evidence] [--parallel <n>] [--parallel-jobs <n>] [--partition <partition>] [--prompts <path>] [--reread-choices] [--resume <run-dir>] [--sample-per-condition <n>] [--sample-seed <hex-or-int>] [--source <run-dir>] [--target <root>] [--verb <verb>] [--walltime <hh:mm:ss>]
 ```
 
 | Verb | Purpose |

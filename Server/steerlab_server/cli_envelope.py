@@ -168,6 +168,11 @@ ADVISORY_CODES: tuple[str, ...] = (
     # stay open, because a study may be authored here and run elsewhere. Which
     # choice can run what is the shipped catalog's ``whereItRuns``.
     "computeCannotRun",
+    # An ordinary analysis used the choices a run stored, and the current
+    # choice parser would read some of them differently (a run read by an
+    # older parser keeps its mistakes). Never a refusal: the detail names
+    # `results check-choices` and `analyze --reread-choices`.
+    "storedChoicesReadDifferently",
 )
 
 
@@ -495,7 +500,11 @@ VERB_SPECS: tuple[VerbSpec, ...] = (
     VerbSpec("experiment", "analyze", positional="<name>",
              purpose="Compute paired effect sizes from a completed run into a "
                      "fresh run directory.",
-             boolean_flags=frozenset({"--allow-unverified-epoch"}),
+             # `--reread-choices` reads every stored choice again with the
+             # current choice parser, in memory, for this analysis only, and
+             # stamps choice-reread.json; the run is never changed.
+             boolean_flags=frozenset({"--allow-unverified-epoch",
+                                      "--reread-choices"}),
              # `--adjudicated-endpoint <file>` substitutes an external
              # extraction campaign's verified per-record endpoint values; it
              # REQUIRES `--source` (an adjudication is evidence about one
@@ -574,7 +583,10 @@ VERB_SPECS: tuple[VerbSpec, ...] = (
     VerbSpec("study", "submit", positional="<experiment>",
              purpose="Submit one experiment verb to an executor as a durable "
                      "job.",
-             boolean_flags=frozenset({"--dry-run", "--force", "--no-evidence"}),
+             # `--reread-choices` (with --verb analyze): the analysis reads
+             # every stored choice again with the current choice parser.
+             boolean_flags=frozenset({"--dry-run", "--force", "--no-evidence",
+                                      "--reread-choices"}),
              value_flags=frozenset({
                  "--verb", "--executor", "--parallel", "--parallel-jobs",
                  "--gres", "--partition", "--mem", "--walltime", "--job-name",

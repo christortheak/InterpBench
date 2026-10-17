@@ -90,8 +90,9 @@ public enum CLIReferenceDocument {
                 // The `results` family's verbs share this region: exporting
                 // and the results page follow analysis and evaluation in the
                 // document's reading order, and a region of their own would
-                // need a new marked section for two synopses.
-                "results export", "results report",
+                // need a new marked section for two synopses. The choice
+                // check reads a run's stored choices again, beside them.
+                "results export", "results report", "results check-choices",
             ]),
         .init(
             id: "swift-experiment-promotion",

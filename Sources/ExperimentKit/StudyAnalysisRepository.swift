@@ -112,7 +112,7 @@ struct StudyAnalysisRepository {
     }
 
     func loadAnalysis(
-        manifest: ExperimentManifest, allowUnverifiedEpoch: Bool
+        manifest: ExperimentManifest, allowUnverifiedEpoch: Bool, rereadChoices: Bool = false
     ) throws -> StudyAnalysisInput {
         let experimentName = manifest.name
         guard let sourceRun = newestCompletedRun(experimentName: experimentName) else {
@@ -178,12 +178,23 @@ struct StudyAnalysisRepository {
                 loaded.prompts.map { ($0.id, $0.target?.isEmpty == false) },
                 uniquingKeysWith: { first, _ in first })
         }
-        return StudyAnalysisInput(
+        var input = StudyAnalysisInput(
             manifest: manifest, sourceRunName: sourceRun.lastPathComponent,
             sourceRunExperimentHash: RunEpoch.stampedExperimentHash(sourceRun),
             epoch: epoch, generations: text, style: style,
             exclusionChecks: exclusionChecks, declaredTargets: declaredTargets,
             numericParser: numericParser(for: manifest))
+        if rereadChoices {
+            // Every stored choice read again with the current parser, against
+            // the hash-verified task prompts the run names; refuses rather
+            // than guess when they cannot be found. The run is not touched.
+            let reread = try ChoiceReread.forAnalysis(
+                runDirectory: sourceRun, generations: text,
+                workspaceRoot: workspaceRoot, study: manifest.name)
+            input.choiceRereads = reread.fresh
+            input.choiceRereadStamp = reread.stamp
+        }
+        return input
     }
 
     /// The declared numeric parser, as far as `analyze` needs it: its KIND,

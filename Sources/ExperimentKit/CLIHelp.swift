@@ -303,6 +303,9 @@ public enum CLIFlagVocabulary {
         "--reference": "designatedReference only: the concept subtracted from the target.",
         "--refresh": "Also run the read-only remote validation before reporting.",
         "--remote-repo": "Remote path the payload is deployed to.",
+        "--reread-choices":
+            "Read every stored choice again with the current choice parser, for "
+            + "this analysis only; the run is never changed.",
         "--revision": "Pin the model commit.",
         "--root": "Act on this install root instead of the running binary's own.",
         "--run": "The source run directory; absent, the newest completed run.",

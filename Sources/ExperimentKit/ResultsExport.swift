@@ -223,10 +223,14 @@ enum ResultsExportCLI {
             return try await ResultsReportCLI.run(
                 invocation, sink: sink, workspaceRoot: workspaceRoot, python: python, source: source)
         }
+        if invocation.verb == "check-choices" {
+            return try await ChoiceCheckCLI.run(
+                invocation, sink: sink, workspaceRoot: workspaceRoot, python: python, source: source)
+        }
         guard invocation.verb == "export" else {
             // "verbs:" is how every family names its roster, and what the
             // runner classifies as an unknown verb rather than a failure.
-            throw ExperimentError(reason: "verbs: export | report  (\(usage))")
+            throw ExperimentError(reason: "verbs: export | report | check-choices  (\(usage))")
         }
         var positionals: [String] = []
         var flags: [String: String] = [:]

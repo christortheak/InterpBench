@@ -263,6 +263,10 @@ class Page:
         if flags.get('measurementDrift'):
             items.append(join('The study’s measurement settings changed after the run was made. The analysis '
                               'recorded: ', str(flags['measurementDrift'])))
+        reread = self.context.get('choiceReread')
+        if isinstance(reread, dict):
+            from ...experiment import choice_reread
+            items.append(choice_reread.sentence(reread) + ' The effects on this page use the re-read choices.')
         for _, _, evaluation in self.evaluations:
             if evaluation.get('epochUnverified'):
                 items.append('The evaluation accepted a run that carries no stamp of the study’s settings, so it '

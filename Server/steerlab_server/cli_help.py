@@ -132,6 +132,9 @@ FLAG_PURPOSES: dict = {
     "--prompts": "Override the pinned task-prompt file (pin-checked when frozen).",
     "--qualification": "Qualification evidence recorded on the promotion.",
     "--reason": "Why the manual cell was chosen; recorded on the certificate.",
+    "--reread-choices":
+        "Read every stored choice again with the current choice parser, for "
+        "this analysis only; the run is never changed.",
     "--resamples":
         "How many subsample draws the stability reading takes (default 32, "
         "minimum 2).",

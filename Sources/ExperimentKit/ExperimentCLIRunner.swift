@@ -2625,6 +2625,18 @@ public struct ExperimentCLIRunner: Sendable {
                         + "--sample-per-condition 2400 --sample-seed "
                         + "0x5eed0a5e5eed0a5e")
             }
+            // A choice re-read is an analysis option: refused for any other
+            // verb before the request leaves this process.
+            let submitReread = args.contains("--reread-choices")
+            if submitReread, submitVerb != "analyze" {
+                throw ExperimentError.malformed(
+                    "--reread-choices is for an analysis: it reads a completed "
+                        + "run's stored choices again with the current choice "
+                        + "parser, and '--verb \(submitVerb)' reads no stored "
+                        + "choices",
+                    repair: "steerlab-cli remote submit-bundle \(path) "
+                        + "--verb analyze --reread-choices")
+            }
             // Multi-GPU fan-out, headless. The machinery has been complete
             // underneath since 2026-07-22 — `submitBundle` takes
             // `parallelJobs`, the server route reads it and launches K shard
@@ -2675,7 +2687,8 @@ public struct ExperimentCLIRunner: Sendable {
                 parallelJobs: parallelJobs,
                 sourceRun: submitSourceRun,
                 samplePerCondition: submitSubsample?.samplePerCondition,
-                sampleSeed: submitSubsample?.seedText)
+                sampleSeed: submitSubsample?.seedText,
+                rereadChoices: submitReread)
             await recordJobOrigin(
                 submission.jobId, experiment: submission.experiment, verb: submission.verb,
                 operation: "submit-bundle")
@@ -4116,11 +4129,16 @@ public struct ExperimentCLIRunner: Sendable {
             // content hash). Pure CPU — no model load.
             guard args.count >= 2 else {
                 throw ExperimentError(
-                    reason: "usage: experiment analyze <name> [--allow-unverified-epoch]")
+                    reason: "usage: experiment analyze <name> [--allow-unverified-epoch] "
+                        + "[--reread-choices]")
             }
+            // --reread-choices: every stored choice read again with the
+            // current parser, for this analysis only (`ChoiceReread`).
+            let rereadChoices = args.contains("--reread-choices")
             let runDirectory = try ExperimentTasks.analyze(
                 experimentName: args[1],
-                allowUnverifiedEpoch: args.contains("--allow-unverified-epoch"))
+                allowUnverifiedEpoch: args.contains("--allow-unverified-epoch"),
+                rereadChoices: rereadChoices)
             var payload = Self.analysisPayload(inRunAt: runDirectory)
             payload["experiment"] = .string(args[1])
             payload["runDirectory"] = .string(runDirectory.path)
@@ -4160,6 +4178,24 @@ public struct ExperimentCLIRunner: Sendable {
                             + "\(runDirectory.lastPathComponent), and confirm the "
                             + "declared studyType does not inert them "
                             + "(steerlab-cli experiment verify \(args[1]))"))
+            }
+            // Discoverability: an ordinary analysis used the stored choices,
+            // so say when the current parser would read some of them
+            // differently. Never blocks (server twin: the same advisory).
+            if !rereadChoices,
+                let found = ExperimentTasks.choiceRereadAdvisory(
+                    analysisDirectory: runDirectory, study: args[1])
+            {
+                advisories.append(
+                    .init(
+                        CLIAdvisory.storedChoicesReadDifferently,
+                        ChoiceReread.advisoryDetail(
+                            changed: found.changed, storedChoices: found.storedChoices,
+                            run: found.run,
+                            checkCommand: "steerlab-cli results check-choices \(args[1]) "
+                                + "--run runs/\(found.run)",
+                            analyzeCommand: "steerlab-cli experiment analyze \(args[1]) "
+                                + "--reread-choices")))
             }
             return ExperimentCLIResult(
                 message: "analyzed '\(args[1])' → \(entries) effect-size "
@@ -6470,6 +6506,12 @@ public struct ExperimentCLIRunner: Sendable {
         }
         if let unverified = object["epochUnverified"] as? Bool {
             payload["epochUnverified"] = .bool(unverified)
+        }
+        // `--reread-choices`: the choices the effects rest on were re-read
+        // with the current parser, said in the summary as the stamp says it.
+        // Server twin: the same block in `cli_payloads.analysis_payload`.
+        if let stamp = ChoiceReread.stamp(inRunAt: runDirectory) {
+            payload["choiceReread"] = .object(ChoiceReread.payload(stamp))
         }
         return payload
     }

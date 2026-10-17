@@ -2046,6 +2046,11 @@ def _methods(context):
             say(f"- effects-by-stratum.csv holds {context['strataRows']} further rows, "
                 "one for each subgroup of the items. Rows marked diagnostic describe "
                 "the samples of one item and are not tests.")
+        if context.get("choiceReread"):
+            from ..experiment import choice_reread
+            say("- Choices: " + choice_reread.sentence(context["choiceReread"])
+                + " Every choice outcome and exclusion in effects.csv uses the re-read "
+                "choices; responses.csv shows them as the run stored them.")
         for flag, text in (("epochUnverified", "The analysis accepted a run that carries no stamp of the study's settings, so it could not confirm the run matches them."),):
             if context["analysisFlags"].get(flag):
                 say("- " + text)
@@ -2255,6 +2260,9 @@ def _collect(root, study, run_name, steps, now):
     effects_source, outcomes, corrections, units = None, [], [], []
     unit_recorded, strata_rows, analysis_flags, unit_sources = False, 0, {}, set()
     exclusions, effect_rows, stamped_unit = [], [], None
+    # Light, and read only when an analysis re-read the run's choices.
+    from ..experiment import choice_reread
+    choice_reread_stamp = None
     if effects_directory:
         role = "analysis" if analysis_name else "run"
         text = sources.text(os.path.join(effects_directory, "effect-sizes.csv"), role) or ""
@@ -2281,6 +2289,17 @@ def _collect(root, study, run_name, steps, now):
             if stamp_file is None and isinstance(analysis_report, dict):
                 stamp_file = analysis_report.get("exclusions")
             exclusions.append(("The analysis", stamp_file))
+            # `analyze --reread-choices`: the analysis read every stored
+            # choice again; shown as stored, never recounted here.
+            reread = sources.json(os.path.join(effects_directory, choice_reread.STAMP_FILE), role)
+            if isinstance(reread, dict) and isinstance(reread.get("total"), dict):
+                choice_reread_stamp = reread
+                tables[0].notes.append(
+                    "parsed_choice and parsed_choice_failed hold the choices as the run stored "
+                    "them. The analysis whose effects this export copies read them again: "
+                    + choice_reread.sentence(reread) + " Its effects use the re-read choices; "
+                    "choice-reread.json in the analysis directory counts the changes per "
+                    "condition and lists a few of the records that changed.")
         else:
             stamped_unit = report.get("unitOfAnalysis")
             exclusions.append(("The run's own analysis", report.get("exclusions")))
@@ -2362,6 +2381,7 @@ def _collect(root, study, run_name, steps, now):
         "unitSources": sorted(unit_sources),
         "strataRows": strata_rows, "effectsSource": effects_source,
         "analysisFlags": analysis_flags, "exclusions": exclusions,
+        "choiceReread": choice_reread_stamp,
         "experimentHash": experiment_hash, "effectRows": effect_rows,
         "stampedUnit": stamped_unit, **context_rows,
     }
