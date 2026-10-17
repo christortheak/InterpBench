@@ -237,6 +237,23 @@ scope lists are measured — so in a mixed file `"label"` becomes required on
 the rows you want scored, and only then. Do not add `"responseFormat":
 "label"` to a file that already runs; nothing asks for it.
 
+**How a written answer becomes `parsedChoice`.** When an item has `options`
+and the run records prose, each response is read in this order: a JSON
+object with an `"answer"` key, or that key read from the text when the JSON
+is malformed; the whole response being one option; then, only when the
+response was not cut off by the token limit, the last "Final answer:",
+"Answer:", or "my answer is" marker (bold or italics are fine); an option
+that opens the response followed by punctuation ("B. Because…"); and last,
+the first option mentioned. A single-letter option counts in running text
+only as a capital letter, so the article "a" is never read as option A. A
+response that opens with a capital "A" used as the article, or that lists
+the options before answering, can still be misread, so ask for a marker in
+the prompt ("End with a line: Final answer: A or Final answer: B"). A
+response that names no option is recorded as a parse failure
+(`parsedChoice: null`), never a guess. The reading is made once, when the
+run writes the record: `analyze` uses the stored value and never re-reads
+it, so a run made before a parser change keeps its original reading.
+
 ## 6. `declare-condition` — the arm
 
 <!-- client: mac -->

@@ -947,9 +947,27 @@ mean relative to baseline. **An endpoint parser that fails at a rate correlated
 with the intervention is a confound and must be checked as one** — report
 parse-failure rates per condition, always. The structural fix is to prefer the
 log-probability instruments (§2.4), which have no parser. Where prose parsing
-is unavoidable, the server's `analyze` re-parses **null-only** run-time parses
-under the pinned grammar and stamps what it rescued, so a parser fix reaches
-finished runs without regenerating them; stored parses are never overwritten.
+is unavoidable, the server's `analyze` re-parses **null-only** numeric
+run-time parses under the pinned grammar and stamps what it rescued, so a
+numeric parser fix reaches finished runs without regenerating them; stored
+parses are never overwritten.
+
+A parser can also do worse than fail: it can read the **wrong** value, which
+no failure rate shows. The categorical choice parser once read the article
+"a" as option A, so a free-text reply such as "As a doctor, I would choose B"
+was recorded as A, and a JSON answer that did not parse (unescaped quotes or
+line breaks inside its reasons, more common under steering) fell back to the
+same reading. Both engines now read, in order: a JSON `"answer"` key (from
+the text when the JSON is malformed), the whole reply, the last "Final
+answer:", "Answer:", or "my answer is" marker, an option opening the reply
+followed by punctuation, and the first option mentioned, where a
+single-letter option counts only as a capital letter. A reply cut off by the
+token limit is read only through its JSON answer or a whole-reply match. A
+capital "A" used as an article at the start of a sentence, or a reply that
+lists the options before answering, can still be misread, so ask for a
+marker or JSON in the prompt. `parsedChoice` is stamped once, when the run
+writes the record, and `analyze` never re-reads it: a run made before a
+parser change keeps the reading it was made with.
 
 ### 5.5 Screen → confirm, on disjoint pools
 
