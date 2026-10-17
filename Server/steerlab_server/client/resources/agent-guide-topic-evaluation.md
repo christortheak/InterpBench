@@ -77,6 +77,19 @@ density; else surface measures. When the study declared an outcome the run
 does not have, lead by that order and say the declared outcome is missing.
 Every row is still in `effect-sizes.csv`, in the engine's own order.
 
+A judged outcome's counts are in `judge-report.json`. Each judge's own counts
+are under `judges`. The top-level `conditions` adds up every judge's verdicts
+in a Mac-engine report and in any report stamped `conditionsScope:
+"allJudges"`. An older Python-engine report with several judges repeats only
+its first judge there: report each judge's counts, not that as the panel's.
+
+An analysis made before SteerLab 0.9.8 may not record whether a row's `n`
+counts items or responses. `results export` and the results page settle it
+where the files allow and otherwise say so: `unit_of_analysis_source` is
+`not_established`. Report such a row's numbers as stored, say that its unit was
+not recorded, and do not call its pairs items. Analyzing the run again records
+the unit.
+
 Say an effect "survives correction" only when the outcome was compared across
 more than one condition. With one treatment condition the adjusted p equals
 the raw one, so report it as the one test it is. A row with fewer than three
