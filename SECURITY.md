@@ -134,9 +134,13 @@ request the app makes on its own schedule is the update check:
   carry nothing about you or your Mac either. Everything else happens on your
   Mac, offline, before anything is replaced: the archive must match its
   checksum (a check for damage, since both files come from the same place);
-  its list of files must stay inside one app folder; it is unpacked with
-  `ditto`, which keeps the extended attribute that holds one file's
-  signature; the new app must pass Apple's strict code-signature check of
+  it is unpacked with `ditto`, which keeps the extended attribute that holds
+  one file's signature, and what `ditto` wrote is then walked without
+  following links: it must be exactly one app folder, every symbolic link in
+  it must point inside that app, and it must hold no more files or bytes
+  than an update may (the archive's listing is read before unpacking too,
+  but only the walk describes what was actually written); the new app must
+  pass Apple's strict code-signature check of
   everything inside it, against a requirement that it is notarized (the
   ticket stapled inside it, read without the network), has this app's bundle
   identifier, and is signed with the same Developer ID team as the copy you
@@ -147,13 +151,17 @@ request the app makes on its own schedule is the update check:
   staged in a hidden `.SteerLab-update` folder beside the app and removed
   afterwards, on Cancel, on failure, or at the next launch.
 - **Who can install this way.** Only a notarized Developer ID copy of the
-  packaged app, in a folder you can write to. A copy built from source, signed
-  only for this Mac, opened straight from the download (macOS then runs it
-  from a temporary read-only place), or on a read-only disk keeps the notice
-  and says why.
+  packaged app, in a folder you can write to. A copy built from source (signed
+  only for this Mac or with a development certificate), opened straight from
+  the download (macOS then runs it from a temporary read-only place), or on a
+  read-only disk keeps the notice and says why. A code checkout beside the app
+  does not prevent installing; the Python engine on this Mac runs from that
+  checkout, so the sheet and the first launch afterwards give the two `git`
+  commands that bring it to the same release.
 - **Going back.** Quit SteerLab, move `SteerLab.app` to the Trash, rename
   `SteerLab-<version>-previous.app` to `SteerLab.app`, and open it. Each
-  update keeps one previous copy; an older one goes to the Trash.
+  update keeps one previous copy; an older one goes to the Trash, and the
+  confirmation sheet says so before you agree.
 - **How to turn it off.** Uncheck **Check for Updates Automatically** in the
   SteerLab menu (or **Check automatically** on the update notice). **Check for
   Updates…** in the same menu still checks once, when you choose it.

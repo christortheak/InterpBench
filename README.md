@@ -74,9 +74,12 @@ the new version. It waits while a study or another task is running. The
 version you were running is kept beside the app as
 `SteerLab-<version>-previous.app`; to go back, quit SteerLab, move
 `SteerLab.app` to the Trash, rename the kept copy to `SteerLab.app`, and
-open it. A copy that cannot update itself (for example one opened straight
-from the download, before you moved it to Applications or your SteerLab
-folder) says why and links to the Releases page.
+open it; older kept copies go to the Trash. If a SteerLab code checkout sits
+beside the app, the Python engine on this Mac runs from it, and SteerLab
+gives the two `git` commands that bring it to the same release. A copy that
+cannot update itself (for example one opened straight from the download,
+before you moved it to Applications or your SteerLab folder, or one you
+built yourself) says why and links to the Releases page.
 
 <details>
 <summary>Prefer the command line on the Mac?</summary>

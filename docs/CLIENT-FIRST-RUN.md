@@ -292,6 +292,20 @@ After an update:
   Details…** in the toolbar's connection menu), then **Refresh Engine**. It
   copies the new version's Python engine and keeps the packages already
   installed.
+- If a SteerLab code checkout sits beside the app (or in your SteerLab
+  folder), the Python engine on this Mac runs from that checkout rather than
+  from the app. Bring it to the new release in Terminal, then restart the
+  engine:
+
+  ```sh
+  git -C <checkout> fetch --tags
+  git -C <checkout> checkout v<version>
+  ```
+
+  The confirmation sheet and the first launch afterwards show these with
+  your checkout's path and the version filled in. Until you run them, the
+  engine runs the earlier version's code and its setup says the two were
+  built from different revisions.
 - If you run studies on a cluster, push the engine there again (the cluster
   setup's Push step, or `steerlab-cli cluster push --site <site>`), then
   restart its controller. Until then the cluster runs the engine from the
@@ -299,8 +313,11 @@ After an update:
 
 A copy that cannot update itself keeps the notice and says why: one opened
 straight from the download (move it to Applications or your SteerLab folder
-and open it from there), one on a disk SteerLab cannot write to, or one built
-from source. Download the new release from the Releases page instead.
+and open it from there), one on a disk SteerLab cannot write to, or one you
+built from source yourself. Download the new release from the Releases page
+instead. A code checkout beside a downloaded app is not a reason: that copy
+updates itself, and older kept copies (`SteerLab-<version>-previous.app`) go
+to the Trash.
 
 Research Setup offers **Review Update Plan** when the helper is missing newer
 tools, and **Review Repair Plan** when it is already up to date; either way it
