@@ -742,11 +742,11 @@ public final class ExperimentPanel {
         guard manifest.status == .draft else {
             return "'\(manifest.name)' is \(manifest.status.rawValue) — its "
                 + "scenario is part of the record. Duplicate it as a draft to "
-                + "cast a different panel."
+                + "assign the seats differently."
         }
         guard manifest.studyKind == .multiAgent else {
-            return "save the study setup first — the casting is compiled "
-                + "against this study's model and sampling settings"
+            return "save the study setup first — the seat assignments are "
+                + "compiled against this study's model and sampling settings"
         }
         guard state.isEditable else { return SeatCasting.legacyAdvisory }
         guard !manifest.modelID.isEmpty else {
@@ -776,9 +776,10 @@ public final class ExperimentPanel {
             let compiledPath = saved.manifest.multiAgentScenarioPath ?? ""
             draft.seatCastingEdits = [:]
             refresh()
-            let cast = state.assignment.ordered.filter { $0 != .baseline }.count
+            let withAgent = state.assignment.ordered.filter { $0 != .baseline }.count
             note(
-                "cast \(state.seats.count) seat(s) (\(cast) steered) and pinned "
+                "assigned \(state.seats.count) seat(s) (\(withAgent) with an "
+                    + "agent) and pinned "
                     + "\(compiledPath) — this study now runs that compiled "
                     + "scenario",
                 severity: .success)
@@ -807,8 +808,9 @@ public final class ExperimentPanel {
                 .template,
                 state.form == .legacyBound
                     ? "Couldn't permute this panel — " + SeatCasting.legacyAdvisory
-                    : "Save the seats first — permuted siblings re-seat the "
-                        + "casting this study is running, and it has none yet")
+                    : "Save Seat Assignments first — permuted siblings rearrange "
+                        + "the seat assignments this study is running, and it "
+                        + "has none yet")
             return
         }
         do {
@@ -822,9 +824,9 @@ public final class ExperimentPanel {
                 design: mint.template.name,
                 permuting: state.assignment.ordered)
             note(
-                "permuting this study's casting against design "
+                "permuting this study's seat assignments against template "
                     + "'\(mint.template.name)'\(mint.minted ? " (just saved)" : "") "
-                    + "— each row below mints one sibling study",
+                    + "— each row below creates one sibling study",
                 severity: .info)
         } catch {
             refuse(.template, "Couldn't open the permutation table.", error)
@@ -1370,7 +1372,11 @@ public final class ExperimentPanel {
                 guard let first = try? encoder.encode($0), let second = try? encoder.encode(awaiting) else { return false }
                 return first == second
             }) else {
-            remoteJobs.remoteStatus = "no server connection for judging"
+            remoteJobs.remoteStatus =
+                "Couldn't start judging — the server connection or the "
+                + "selected study changed after this list loaded. Reconnect "
+                + "in the toolbar's connection dot, select the study again, "
+                + "then press Judge on this Mac."
             return
         }
         guard !isJudgingSweep else { return }
@@ -1694,7 +1700,9 @@ public final class ExperimentPanel {
     ) async {
         let environment = operationEnvironment
         guard let context = environment.current(), context.isServer else {
-            note("no server workspace active — switch the substrate selector first", severity: .info)
+            note(
+                PythonEngineNotice.switchFirst("Promoting an agent", plural: false),
+                severity: .info)
             return
         }
         guard environment.isCurrent(context) else { return }
@@ -1709,7 +1717,7 @@ public final class ExperimentPanel {
             guard environment.isCurrent(context) else { return }
             if let names, !names.contains(experimentName) {
                 note("study '\(experimentName)' is not in \(substrate)'s workspace — "
-                    + "promote mints from the server-resident copy only. Pair "
+                    + "promote creates agents from the server's copy only. Pair "
                     + "the server to this workspace (serve --root <workspace>) "
                     + "or use Submit Bundle, the portable path for remote engines", severity: .info)
                 return
@@ -1724,7 +1732,7 @@ public final class ExperimentPanel {
                 ? "it carries the sweep-selection birth certificate"
                 : "stamped promotedBy: manualOverride (declared selection bypassed)"
             note("promoted '\(concept)' → agent '\(minted.variant.name)' "
-                + "minted in \(substrate)'s workspace (\(stamp)) — "
+                + "created in \(substrate)'s workspace (\(stamp)) — "
                 + "see the Agents section's server list", severity: .success)
             await cluster?.refreshRemoteVariants()
             // The minted agent references the sweep run's persisted vectors —

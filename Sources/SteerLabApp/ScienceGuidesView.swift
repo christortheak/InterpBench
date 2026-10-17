@@ -120,7 +120,7 @@ struct ScienceGuidesView: View {
                                 Button("Open Templates") { dismiss(); openTemplates() }
                                     .help(
                                         "close this reference and land on Templates, "
-                                            + "the template library these scenarios are cast from")
+                                            + "the template library these scenarios are created from")
                             }
                             Divider()
                             forCodingAssistants(layout, guide: guide)

@@ -228,7 +228,7 @@ import Testing
             #expect(panel.seatAgentID(for: "seat-reviewer") == nil)
             panel.saveSeatCasting()
 
-            #expect(panel.status?.hasPrefix("cast ") == true, Comment(rawValue: panel.status ?? "No casting result"))
+            #expect(panel.status?.hasPrefix("assigned ") == true, Comment(rawValue: panel.status ?? "No seat assignment result"))
 
             let saved = try ExperimentStore.load(name: "allocation-study")
             let compiledPath = try #require(saved.multiAgentScenarioPath)
@@ -499,7 +499,7 @@ import Testing
             panel.startPermutedSiblings()
             #expect(panel.management.designs.templateInstantiationInvitation == nil)
             let refusal = try #require(panel.draft.formErrors[.template])
-            #expect(refusal.contains("Save the seats first"))
+            #expect(refusal.contains("Save Seat Assignments first"))
         }
     }
 
