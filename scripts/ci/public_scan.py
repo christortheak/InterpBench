@@ -14,7 +14,7 @@ does this commit publish", not "what is lying around":
   5. anything tracked beneath Workspaces/ or workspaces/ (the home-layout
      rule: workspaces live BESIDE the checkout, never inside it)
   6. archive members that record an owner account (tar's uid/gid and login
-     and group names)
+     and group names, and the uid/gid in a zip's Info-ZIP Unix extra fields)
   7. archive members that record extended attributes: a tar's
      `LIBARCHIVE.xattr.*` or `SCHILY.xattr.*` extended headers, and the
      AppleDouble `._*` or `__MACOSX/` members a Mac packer adds. macOS keeps
@@ -37,6 +37,10 @@ carried both.
 There is deliberately NO study/name denylist here — that tier is private and
 runs at export time on the research side. This scanner must stay
 self-contained (stdlib only) and boring.
+
+CI logs of a public repository are public, so a finding never prints what it
+found: it names the file, the line (for text), and the kind of finding, and
+an email address is shown masked (see `_masked_email`).
 
 Known-and-accepted findings live in scripts/ci/scan-accepted.txt as
 `<path> :: <check>` lines — each one a deliberate artifact (e.g. the fake
@@ -134,19 +138,43 @@ def load_accepted(root: str) -> set[tuple[str, str]]:
     return accepted
 
 
-def text_findings(text: str) -> list[tuple[str, str]]:
-    """Checks 1–3 over one text: a ``(check, detail)`` pair per finding."""
-    found: list[tuple[str, str]] = []
-    for check, pattern in SECRET_PATTERNS:
-        if pattern.search(text):
-            found.append((check, "secret-shaped content"))
-            break
-    if (PATH_PATTERN.search(text) or ICLOUD_PATTERN.search(text)
-            or TEMP_PATTERN.search(text)):
-        found.append(("path", "personal absolute path"))
+def _masked_email(address: str) -> str:
+    """An address as a finding shows it: ``r***@***.org``.
+
+    The line number is what locates a finding; the mask only helps pick the
+    address out on a line that holds more than one. It keeps the first
+    character of the name and the domain's last label, and puts a fixed
+    ``***`` in place of everything else, so not even the length is shown.
+    That is too little to read the address back or to confirm a guess at it.
+    A hash would be worse: anyone could hash a suspected address and compare.
+    """
+    name, _at, domain = address.partition("@")
+    return f"{name[:1]}***@***.{domain.rsplit('.', 1)[-1]}"
+
+
+def _line(text: str, match: re.Match) -> int:
+    return text.count("\n", 0, match.start()) + 1
+
+
+def text_findings(text: str) -> list[tuple[str, str, int]]:
+    """Checks 1–3 over one text: a ``(check, detail, line)`` triple per
+    finding, for the first match of each check. The detail says what kind of
+    thing was found and never quotes it."""
+    found: list[tuple[str, str, int]] = []
+    secrets = [match for _check, pattern in SECRET_PATTERNS
+               for match in [pattern.search(text)] if match]
+    if secrets:
+        first = min(secrets, key=lambda match: match.start())
+        found.append(("secret", "secret-shaped content", _line(text, first)))
+    paths = [match for pattern in (PATH_PATTERN, ICLOUD_PATTERN, TEMP_PATTERN)
+             for match in [pattern.search(text)] if match]
+    if paths:
+        first = min(paths, key=lambda match: match.start())
+        found.append(("path", "personal absolute path", _line(text, first)))
     email = EMAIL_PATTERN.search(text)
     if email:
-        found.append(("email", email.group(0)))
+        found.append(("email", f"email address {_masked_email(email.group(0))}",
+                      _line(text, email)))
     return found
 
 
@@ -367,8 +395,64 @@ def _tar_members(data: bytes) -> list[Member]:
     return members
 
 
+#: Info-ZIP's Unix extra fields, by header ID. Each can carry a member's
+#: numeric owner, which Info-ZIP's `zip` (macOS's included) records as the
+#: packing account's uid and gid:
+#:
+#: * 0x5855, "UX", the original: access and modification times, then an
+#:   optional 16-bit uid and gid (the local header only; the central copy
+#:   holds the times alone);
+#: * 0x7855, "Ux", its successor: a 16-bit uid and gid (the local header
+#:   only; the central copy is empty);
+#: * 0x7875, "ux", the current one: a version byte, then a uid and a gid,
+#:   each preceded by its own size in bytes.
+ZIP_UNIX_ORIGINAL, ZIP_UNIX_TYPE2, ZIP_UNIX_NEW = 0x5855, 0x7855, 0x7875
+
+
+def _zip_extra_records_owner(extra: bytes) -> bool:
+    """Whether a zip extra field records a non-zero owner (uid or gid), as a
+    tar member's non-zero uid or gid is. Malformed fields never raise."""
+    offset = 0
+    while offset + 4 <= len(extra):
+        tag = int.from_bytes(extra[offset:offset + 2], "little")
+        size = int.from_bytes(extra[offset + 2:offset + 4], "little")
+        body = extra[offset + 4:offset + 4 + size]
+        offset += 4 + size
+        if tag == ZIP_UNIX_ORIGINAL:
+            ids = [body[8:10], body[10:12]]
+        elif tag == ZIP_UNIX_TYPE2:
+            ids = [body[0:2], body[2:4]]
+        elif tag == ZIP_UNIX_NEW:
+            if body[:1] != b"\x01":
+                # A version this scan does not know may still hold an owner,
+                # and an owner is what this check exists to keep out.
+                return bool(body)
+            uid_end = 2 + body[1] if len(body) > 1 else 2
+            gid_size = body[uid_end] if len(body) > uid_end else 0
+            ids = [body[2:uid_end], body[uid_end + 1:uid_end + 1 + gid_size]]
+        else:
+            continue
+        if any(int.from_bytes(value, "little") for value in ids):
+            return True
+    return False
+
+
+def _local_extra(data: bytes, info: zipfile.ZipInfo) -> bytes:
+    """A member's extra field as its local header holds it. Python's zipfile
+    keeps only the central directory's copy, and the older Unix fields put
+    the owner in the local header alone. ``header_offset`` already counts
+    any bytes before the zip."""
+    start = info.header_offset
+    header = data[start:start + 30]
+    if len(header) < 30 or header[:4] != b"PK\x03\x04":
+        return b""
+    begin = start + 30 + int.from_bytes(header[26:28], "little")
+    return data[begin:begin + int.from_bytes(header[28:30], "little")]
+
+
 def _zip_members(data: bytes) -> list[Member]:
-    # A zip records no owner names, so no member of one is `owned`.
+    # A zip records no owner names, but Info-ZIP's Unix extra fields record a
+    # numeric owner, in the central directory, the local header, or both.
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         infos = archive.infolist()
         if sum(info.file_size for info in infos) > MAX_ARCHIVE_BYTES:
@@ -376,7 +460,9 @@ def _zip_members(data: bytes) -> list[Member]:
         members = [(info.filename,
                     _rooted(info.filename) + "\n"
                     + info.comment.decode("utf-8", "replace"),
-                    False, _apple_double(info.filename),
+                    _zip_extra_records_owner(info.extra)
+                    or _zip_extra_records_owner(_local_extra(data, info)),
+                    _apple_double(info.filename),
                     b"" if info.is_dir() else archive.read(info))
                    for info in infos]
         if archive.comment:
@@ -415,7 +501,9 @@ def scan_members(path: str, members: list[Member], report,
                f"first {within}{_shown(attributed[0])}")
     for name, header, _recorded, _xattrs, payload in members:
         shown = within + _shown(name)
-        for check, detail in text_findings(header):
+        # A header is the scan's own assembly (name, link, extended values),
+        # so a line within it would locate nothing.
+        for check, detail, _line_number in text_findings(header):
             report(path, check, f"{detail} in the header of {shown}")
         if depth >= MAX_ARCHIVE_DEPTH and _is_archive(payload):
             report(path, "archive",
@@ -431,9 +519,9 @@ def scan_members(path: str, members: list[Member], report,
         if nested is not None:
             scan_members(path, nested, report, depth + 1, within=shown + "!")
         elif payload and b"\0" not in payload[:8192]:
-            for check, detail in text_findings(
+            for check, detail, line in text_findings(
                     payload.decode("utf-8", "replace")):
-                report(path, check, f"{detail} in {shown}")
+                report(path, check, f"{detail} in {shown}, line {line}")
 
 
 def _ends_like_zip(handle) -> bool:
@@ -495,8 +583,8 @@ def main() -> int:
             continue
         if b"\0" in raw[:8192]:
             continue  # binary, and not an archive
-        for check, detail in text_findings(raw.decode("utf-8", "replace")):
-            report(path, check, detail)
+        for check, detail, line in text_findings(raw.decode("utf-8", "replace")):
+            report(path, check, f"{detail} on line {line}")
 
     for entry in sorted(accepted - used):
         findings.append(

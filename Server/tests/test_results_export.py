@@ -792,9 +792,11 @@ def _write_python_paired_evaluation(root, name=EVALUATION, run=RUN):
     return rows
 
 
-def _write_mac_paired_evaluation(root, name=EVALUATION, run=RUN):
+def _write_mac_paired_evaluation(root, name=EVALUATION, run=RUN, source=None):
     directory = os.path.join(str(root), "runs", name)
-    source = os.path.join(str(root), "runs", run)
+    # Older Mac reports name the judged run by its absolute path; newer ones
+    # by ``runs/<run>``.
+    source = source or os.path.join(str(root), "runs", run)
     rows = []
     for index, item in enumerate(ITEMS):
         common = {"promptID": item, "sampleIndex": 0, "condition": "formal",
@@ -866,12 +868,14 @@ def test_a_judged_python_study_exports_every_judgment_with_noncompliant_rows_mar
     assert "- Judged outcome: which response each judge preferred" in methods
 
 
-def test_a_judged_mac_study_exports_the_same_judgment_columns(root):
+@pytest.mark.parametrize("source", [None, "runs/" + RUN], ids=["absolute", "workspace-relative"])
+def test_a_judged_mac_study_exports_the_same_judgment_columns(root, source):
     _mac_study(root)
-    rows = _write_mac_paired_evaluation(root)
+    rows = _write_mac_paired_evaluation(root, source=source)
 
     result = _export(root)
 
+    assert result["evaluations"] == {"paired": "runs/" + EVALUATION, "coding": None}
     judgments = _table(result, "judgments.csv")
     assert len(judgments) == len(rows) == 4
     assert [row["outcome"] for row in judgments] == ["condition", "baseline", "tie", ""]

@@ -141,8 +141,9 @@ public struct PairedJudgeReportView: Codable, Sendable, Equatable {
         public let freshJudgments: Int
     }
 
-    /// The run this report judges. The Mac engine stores a full path; the
-    /// Python engine stores the run directory's name.
+    /// The run this report judges. The Mac engine stores `runs/<name>`
+    /// (older reports hold the run's full path); the Python engine stores
+    /// the run directory's name.
     public let sourceRunDirectory: String
     public let judgeModel: String
     /// The report's top-level tally. On a Mac-engine report this adds up

@@ -91,5 +91,5 @@
     "adapters"
   ],
   "markerFile": "WORKSPACE.md",
-  "gitignore": "runs/\ncatalog/\nadapters/**/*.safetensors\n.DS_Store\n"
+  "gitignore": "runs/\ncatalog/\nexports/\nadapters/**/*.safetensors\n# This machine's working state (server names, local paths, caches, and locks).\n# Only the compute choice, .steerlab/workspace.json, is shared.\n.steerlab/*\n!.steerlab/workspace.json\n.steerlab-local-server.pid\n.DS_Store\n"
 }

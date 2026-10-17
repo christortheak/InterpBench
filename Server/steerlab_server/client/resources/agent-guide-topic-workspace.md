@@ -11,12 +11,24 @@ experiments/      experiment manifests — freezable recipes
 runs/             immutable run outputs (gitignored)
 catalog/          GENERATED navigation over runs/ (symlinks; gitignored)
 adapters/         per-adapter training data and outputs
+exports/          files written by `results export` (derived; gitignored)
+.steerlab/        this machine's working state (gitignored, except workspace.json)
 WORKSPACE.md      the marker file that makes this a workspace
-.gitignore        runs/, catalog/, adapters/**/*.safetensors, .DS_Store
+.gitignore        runs/, catalog/, exports/, adapters/**/*.safetensors,
+                  .steerlab/* except workspace.json, .steerlab-local-server.pid,
+                  .DS_Store
 ```
 
 A folder counts as a workspace if it carries `WORKSPACE.md` or at least a
 `prompts/` directory.
+
+`.steerlab/` names servers and local paths, so it stays out of a workspace
+someone may push; its `workspace.json`, the workspace's compute choice, is
+shared. A workspace made by an earlier version lacks these rules: add the
+lines `exports/`, `.steerlab/*`, `!.steerlab/workspace.json`, and
+`.steerlab-local-server.pid` to its `.gitignore`, and stop tracking anything
+already committed there with `git rm -r --cached <path>`, which leaves the
+files on disk.
 
 An experiment is a **recipe**, not results: it pins inputs by SHA-256 plus the
 options used to derive vectors from them, and runs re-derive deterministically.

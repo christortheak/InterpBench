@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -96,6 +97,39 @@ def test_empty_destination_supported_and_missing_guide_is_never_rewritten(tmp_pa
     with pytest.raises(ExperimentStoreError): owner.handoff(target)
     assert not guide.exists()
 
+
+
+def test_a_new_workspace_keeps_machine_state_and_exports_out_of_git(tmp_path):
+    """`.steerlab/` holds this machine's working state: server names
+    (`imported-remote.json`, `job-origins/`), absolute paths (custody
+    receipts), caches, staging, and locks. `exports/` holds derived files. A
+    researcher who commits and pushes a workspace must not publish them. The
+    compute choice, `.steerlab/workspace.json`, describes the workspace rather
+    than the machine and stays tracked. Swift twin:
+    `newWorkspaceKeepsMachineStateAndExportsOutOfGit`."""
+    git = owner.available_git()
+    if git is None:
+        pytest.skip('git is not available')
+    root = tmp_path / 'workspace'
+    owner.initialize(root, use_git=False)
+    machine = ['.steerlab/imported-remote.json', '.steerlab/job-origins/origins.json',
+               '.steerlab/evidence-custody/receipt.json', '.steerlab/evidence-archives/archive.tar.gz',
+               '.steerlab/diagnostic-requests/request.json', '.steerlab/downloads/staging/bundle.tar.gz',
+               '.steerlab/manifest-locks/key.lock', '.steerlab/notices.json', '.steerlab/jobs.sqlite',
+               '.steerlab-local-server.pid', 'exports/study-run/responses.csv']
+    for name in machine + ['.steerlab/workspace.json', 'prompts/concepts/kept/positive.jsonl']:
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('placeholder\n')
+    # The researcher's own git settings must not decide the answer.
+    environment = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1'}
+    subprocess.run([git, 'init', '-q'], cwd=root, check=True, env=environment)
+    listed = subprocess.run([git, 'status', '--porcelain', '--untracked-files=all'], cwd=root, check=True,
+                            env=environment, capture_output=True, text=True).stdout.splitlines()
+    untracked = {line[3:] for line in listed if line.startswith('?? ')}
+    assert '.steerlab/workspace.json' in untracked
+    assert 'prompts/concepts/kept/positive.jsonl' in untracked
+    assert sorted(untracked & set(machine)) == []
 
 #: The kinds of file every study needs. Anything seeded outside these folders
 #: is example content, and belongs in a Demo Workspace instead.

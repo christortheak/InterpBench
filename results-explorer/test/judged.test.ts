@@ -334,6 +334,15 @@ describe("the source-run join", () => {
     const runs = [fakeRun({}, "20260101T000000000-exp-s-run")];
     expect(findSourceRun(runs, "20260101T000000000-exp-s-run")?.name).toBe("20260101T000000000-exp-s-run");
     expect(findSourceRun(runs, "/somewhere/else/20260101T000000000-exp-s-run")?.name).toBe("20260101T000000000-exp-s-run");
+    // How the Mac engine names the judged run now: relative to the workspace.
+    expect(findSourceRun(runs, "runs/20260101T000000000-exp-s-run")?.name).toBe("20260101T000000000-exp-s-run");
+    const relative = parseJudgeReport({
+      present: true, error: "", file: null,
+      raw: { conditions: {}, sourceRunDirectory: "runs/20260101T000000000-exp-s-run" },
+    });
+    expect(relative.dialect).toBe("swift");
+    expect(findSourceRun(runs, relative.sourceRun)?.name).toBe("20260101T000000000-exp-s-run");
+    expect(findSourceRun(runs, "runs/20260202T000000000-exp-other-run")).toBeNull();
     expect(findSourceRun(runs, "20260202T000000000-exp-other-run")).toBeNull();
     expect(findSourceRun(runs, "")).toBeNull();
   });

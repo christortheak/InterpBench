@@ -130,6 +130,78 @@ import Testing
         }
     }
 
+    /// The report and every judgment row name the judged run as
+    /// `runs/<name>`, never this machine's absolute path: a workspace that is
+    /// shared or moved carries no home folder and keeps the link.
+    @Test func theReportAndEveryRowNameTheJudgedRunWorkspaceRelative() async throws {
+        try await withEvaluateSeams {
+            let study = "pair-relative"
+            let rows = [
+                row(study: study, condition: "baseline", seed: 1,
+                    sampleIndex: nil, promptID: "p0", output: "a"),
+                row(study: study, condition: "steered", seed: 1,
+                    sampleIndex: nil, promptID: "p0", output: "b"),
+            ]
+            let source = try plantStudy(name: study, rows: rows)
+            let out = try await ExperimentTasks.evaluatePairedJudge(
+                experimentName: study,
+                sourceRunDirectory: source,
+                evaluation: Self.evaluation)
+            let expected = "runs/" + source.lastPathComponent
+            let report = try #require(
+                try JSONSerialization.jsonObject(
+                    with: Data(contentsOf: out.appending(component: "judge-report.json")))
+                    as? [String: Any])
+            #expect(report["sourceRunDirectory"] as? String == expected)
+            let lines = try String(
+                contentsOf: out.appending(component: "judgments.jsonl"), encoding: .utf8
+            ).split(separator: "\n")
+            #expect(lines.count == 1)
+            for line in lines {
+                let object = try #require(
+                    try JSONSerialization.jsonObject(with: Data(line.utf8))
+                        as? [String: Any])
+                #expect(object["sourceRunDirectory"] as? String == expected)
+            }
+            // The app still finds the run the report judged.
+            let view = try #require(
+                StudyJudgeReportReader.read(
+                    try Data(contentsOf: out.appending(component: "judge-report.json"))))
+            #expect(view.dialect == .macEngine)
+            #expect(StudyJudgeReportReader.sourceRunName(view) == source.lastPathComponent)
+            #expect(StudyResultRepository.report(view, judgesRunAt: source.path))
+        }
+    }
+
+    /// A source run outside the folder that holds the evaluation has no
+    /// workspace-relative name, so its path is kept as given; a runs folder
+    /// reached through a link still yields `runs/<name>`.
+    @Test func aSourceRunOutsideTheRunsFolderKeepsItsPath() throws {
+        let temp = FileManager.default.temporaryDirectory
+            .appending(component: "judge-source-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let runs = temp.appending(component: "runs")
+        let evaluation = runs.appending(component: "20260722T000000001Z-exp-s-evaluate")
+        let inside = runs.appending(component: "20260722T000000000Z-exp-s-run")
+        let elsewhere = temp.appending(components: "elsewhere", "20260722T000000000Z-exp-s-run")
+        for directory in [evaluation, inside, elsewhere] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        #expect(
+            JudgeSourceRunReference.stored(inside, evaluationDirectory: evaluation)
+                == "runs/20260722T000000000Z-exp-s-run")
+        #expect(
+            JudgeSourceRunReference.stored(elsewhere, evaluationDirectory: evaluation)
+                == elsewhere.path)
+        let link = temp.appending(component: "linked-runs")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: runs)
+        #expect(
+            JudgeSourceRunReference.stored(
+                link.appending(component: inside.lastPathComponent),
+                evaluationDirectory: evaluation)
+                == "runs/20260722T000000000Z-exp-s-run")
+    }
+
     /// Local greedy single-sample records (no sampleIndex key at all)
     /// normalize to cell 0 and keep pairing exactly as before.
     @Test func greedySingleSampleRecordsStillPairPerPrompt() async throws {
