@@ -349,7 +349,22 @@ final class UpdateSignpostModel {
             // Installed; only the automatic reopening could not be arranged.
             NSLog("SteerLab update: could not arrange the reopen: \(error)")
         }
-        NSApp.terminate(nil)
+        quitForReopen()
+    }
+
+    /// Close every sheet, then quit on a later turn of the run loop. AppKit
+    /// will not quit while a window has a sheet attached: an end-to-end test
+    /// of a real update (2026-10-17) installed the new version and then sat
+    /// on "Installing, then reopening SteerLab" with Quit refused, because
+    /// `terminate` ran while this sheet was still open.
+    private func quitForReopen() {
+        showingInstallSheet = false
+        for window in NSApp.windows {
+            if let sheet = window.attachedSheet { window.endSheet(sheet) }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            NSApp.terminate(nil)
+        }
     }
 
     /// Cancel at any point before the swap: nothing is changed, and the
