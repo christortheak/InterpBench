@@ -40,8 +40,9 @@ struct SteerLabApp: App {
     /// capabilities", and "Another machine" — and the actions behind picking
     /// one, shared by every surface that offers them.
     @State private var compute: ComputeChoiceCoordinator
-    /// Update SIGNPOST — the once-a-day "a newer release exists" check and
-    /// its menu item. Never downloads or installs; see UpdateSignpost.swift.
+    /// Updates — the once-a-day "a newer release exists" check, its menu
+    /// item, and Install Update (only on the person's click and
+    /// confirmation); see UpdateSignpost.swift.
     @State private var updates = UpdateSignpostModel()
 
     init() {
@@ -101,6 +102,9 @@ struct SteerLabApp: App {
         workspaceActions.onWorkspaceCreated = { [weak compute] choice in
             compute?.applyToNewWorkspace(choice)
         }
+        Self.configureUpdates(
+            _updates.wrappedValue, service: service, localEngine: localEngine,
+            localServer: _localServer.wrappedValue, compute: compute)
         cluster.attachTunnel(_tunnel.wrappedValue)  // WS3: the client + health card read tunnel state through the store
         // F4: same-machine server auto-switch is policy on the cluster store,
         // triggered from the ONE workspace-root-change seam — picker New/Open,
@@ -122,6 +126,44 @@ struct SteerLabApp: App {
         DispatchQueue.main.async {
             NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    /// What Install Update waits for, and where its notice sends a person.
+    /// Each source of "busy" is one the app already tracks: local study work,
+    /// the Playground, a submission in flight, the local engine's setup,
+    /// start, stop, and unfinished jobs, and this app's command line running
+    /// elsewhere (a coding assistant's command, for instance).
+    private static func configureUpdates(
+        _ updates: UpdateSignpostModel, service: ChatService,
+        localEngine: LocalEngineProvisioner, localServer: LocalServerController,
+        compute: ComputeChoiceCoordinator
+    ) {
+        updates.busyProbe = { [weak service, weak localEngine, weak localServer] in
+            guard let service, let localEngine, let localServer else { return UpdateBusyState() }
+            let jobs = service.experiments.localJobs
+            var engineJobs = 0
+            if localServer.phase == .running,
+                let url = URL(string: "http://127.0.0.1:\(localServer.port)"),
+                let state = try? await ClusterClient(
+                    profile: ClusterConnectionProfile(baseURL: url)).state()
+            {
+                engineJobs = state.jobs.filter { $0.finishedAt == nil }.count
+            }
+            return UpdateBusyState.from(
+                studyRunning: jobs.isRunning, validating: jobs.isValidating,
+                extracting: jobs.isExtracting, sweeping: jobs.isSweeping,
+                evaluating: jobs.isEvaluating, generating: service.isGenerating,
+                submissions: UpdateBusyWork.shared.submissions,
+                engineSettingUp: localEngine.phase.isRunning,
+                engineStartingOrStopping: localServer.phase == .starting
+                    || localServer.phase == .stopping,
+                engineJobs: engineJobs,
+                commandLineProcesses: UpdateBundleProcesses.count(
+                    insideApp: Bundle.main.bundleURL))
+        }
+        updates.openEngineSetup = { [weak compute] in
+            compute?.showingEngineSetup = true
         }
     }
 
@@ -222,7 +264,14 @@ struct SteerLabApp: App {
             .frame(minWidth: 1240, minHeight: 700)
             // After the window is up, never before: the check is entirely
             // async and off the main actor, so launch time is unaffected.
-            .task { await updates.runAutomaticCheckIfDue() }
+            // First, tidy what an interrupted update left and say "updated"
+            // once on the first launch of a newer version.
+            .task {
+                updates.noteLaunch(
+                    hasClusterSites: (try? cluster.siteRegistry.sites().isEmpty) == false)
+                await updates.runAutomaticCheckIfDue()
+            }
+            .updateInstallSheet(updates)
             // Work a coding assistant did in a terminal while the researcher
             // was elsewhere — a new study, template, agent, or imported run —
             // appears when they come back to the app, without a restart.
@@ -241,6 +290,12 @@ struct SteerLabApp: App {
                     set: { if !$0 { updates.manualReport = nil } })
             ) {
                 Button("OK", role: .cancel) { updates.manualReport = nil }
+                if updates.installableRelease != nil {
+                    Button("Install Update…") {
+                        updates.manualReport = nil
+                        updates.reviewInstall()
+                    }
+                }
                 if updates.downloadPage != nil {
                     Button("Open Releases…") {
                         updates.openDownloadPage()

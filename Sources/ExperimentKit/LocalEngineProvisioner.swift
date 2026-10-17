@@ -473,6 +473,20 @@ public enum LocalEngineDecisions {
         }
     }
 
+    /// Whether the materialized engine on this Mac was copied by a different
+    /// app build, read from its stamp without starting or probing anything —
+    /// what the first launch after an update checks before saying "refresh
+    /// the engine". False for a checkout, for no engine yet, and for a build
+    /// with no revision of its own.
+    public static func materializedEngineIsFromAnotherBuild(
+        appRevision: String? = CodeResources.bundleSourceRevision
+    ) -> Bool {
+        guard let appRevision,
+            case .engineRoot(let engine)? = CodeResources.localEngineSource()
+        else { return false }
+        return engine.stamp?.sourceRevision != appRevision
+    }
+
     /// Refresh Engine — OFFERED, never part of the plan and never performed
     /// unasked: the materialized engine was copied by a different app build
     /// (after an update, always) or carries no stamp to compare. Nil for a

@@ -46,6 +46,44 @@ struct LocalEngineTreeRefreshTests {
                 == nil)
     }
 
+    // MARK: - What the first launch after an update reads
+
+    @Test func theFirstLaunchAfterAnUpdateReadsTheEngineStamp() throws {
+        let fm = FileManager.default
+        let engine = fm.temporaryDirectory.appending(component: "steerlab-engine-\(UUID().uuidString)")
+        let home = fm.temporaryDirectory.appending(component: "steerlab-home-\(UUID().uuidString)")
+        try fm.createDirectory(at: engine.appending(path: "Server/steerlab_server"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        defer {
+            try? fm.removeItem(at: engine)
+            try? fm.removeItem(at: home)
+        }
+        ExperimentRootOverrideLock.acquire()
+        CodeResources.modeOverrideForTesting = .release
+        CodeResources.engineRootOverrideForTesting = engine
+        CodeResources.executableHomesOverrideForTesting = [home]
+        defer {
+            CodeResources.modeOverrideForTesting = nil
+            CodeResources.engineRootOverrideForTesting = nil
+            CodeResources.executableHomesOverrideForTesting = nil
+            ExperimentRootOverrideLock.release()
+        }
+        func stamp(_ revision: String?) throws {
+            let stamp = CodeResources.EngineStamp(
+                sourceRevision: revision, appVersion: "0.9.9", materializedAt: "2026-10-17T00:00:00Z",
+                fileCount: 1)
+            try JSONEncoder().encode(stamp).write(
+                to: engine.appending(component: CodeResources.EngineStamp.fileName))
+        }
+        try stamp("old99999")
+        #expect(LocalEngineDecisions.materializedEngineIsFromAnotherBuild(appRevision: "new12345"))
+        try stamp("new12345")
+        #expect(!LocalEngineDecisions.materializedEngineIsFromAnotherBuild(appRevision: "new12345"))
+        // No revision of its own (a dev bundle): it cannot tell, so it is quiet.
+        try stamp("old99999")
+        #expect(!LocalEngineDecisions.materializedEngineIsFromAnotherBuild(appRevision: nil))
+    }
+
     // MARK: - The file work
 
     private struct Tree {

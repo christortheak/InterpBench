@@ -70,7 +70,12 @@ public final class UnifiedStudyRunner {
         let capabilities = cluster.capabilities
         let substrate = cluster.substrateLabel
         isSubmitting = true
-        defer { isSubmitting = false }
+        // Install Update waits for this (it quits the app).
+        UpdateBusyWork.shared.beginSubmission()
+        defer {
+            isSubmitting = false
+            UpdateBusyWork.shared.endSubmission()
+        }
         refusal = nil
         preflight = nil
         // Frozen-on-server guard — shared with the legacy panel path

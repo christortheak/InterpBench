@@ -790,6 +790,15 @@ public struct UpdateCheckPreferences: @unchecked Sendable {
         nonmutating set { defaults.set(newValue, forKey: Self.dismissedVersionKey) }
     }
 
+    /// The version the app last launched as on this Mac — how the first
+    /// launch after an update knows it is one (`UpdateAfterInstall`).
+    public var lastLaunchedVersion: String? {
+        get { defaults.string(forKey: UpdateAfterInstall.lastLaunchedVersionKey) }
+        nonmutating set {
+            defaults.set(newValue, forKey: UpdateAfterInstall.lastLaunchedVersionKey)
+        }
+    }
+
     public var shouldRunAutomaticCheck: Bool {
         UpdateCheckPolicy.shouldRunAutomaticCheck(
             enabled: automaticChecksEnabled, lastCheck: lastCheck, now: now())

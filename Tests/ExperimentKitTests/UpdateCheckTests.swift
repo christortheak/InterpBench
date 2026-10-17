@@ -334,6 +334,16 @@ struct UpdateCheckTests {
                 == "https://api.github.com/repos/acme/widget/releases/tags/v1.0.0-rc.1")
     }
 
+    @Test func theLastLaunchedVersionIsRemembered() throws {
+        let suite = "steerlab.update-check.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = UpdateCheckPreferences(defaults: defaults)
+        #expect(preferences.lastLaunchedVersion == nil)
+        preferences.lastLaunchedVersion = "0.9.9"
+        #expect(UpdateCheckPreferences(defaults: defaults).lastLaunchedVersion == "0.9.9")
+    }
+
     @Test func serviceFallsBackToTheCompiledInRepositoryWhenOriginIsUnparseable() async {
         let service = UpdateCheckService(
             currentVersion: SemanticVersion("0.9.1")!,

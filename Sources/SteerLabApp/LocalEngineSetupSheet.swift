@@ -451,6 +451,18 @@ struct LocalEngineSetupSheet: View {
                             + "each step as it goes"
                         : "re-read what is already installed without changing "
                             + "anything")
+                // After an app update the engine was copied by the earlier
+                // build. Offered, never automatic; the packages are kept.
+                if let refresh = engine.refreshOffer {
+                    Button("Refresh Engine") {
+                        Task { await engine.refreshEngine(host: service) }
+                    }
+                    .disabled(engine.phase.isRunning)
+                    .help(
+                        refresh.title + " — copies this app's engine and keeps the "
+                            + "packages already installed. Stop the engine first if "
+                            + "it is running.")
+                }
                 Spacer()
                 if engine.phase.isRunning {
                     // "Stop Setup", not "Cancel": the button beside it is
