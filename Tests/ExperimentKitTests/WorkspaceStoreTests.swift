@@ -156,6 +156,66 @@ import Testing
         }
     }
 
+    /// `.steerlab/` holds this machine's working state: server names
+    /// (`imported-remote.json`, `job-origins/`), absolute paths (custody
+    /// receipts), caches, staging, and locks. `exports/` holds derived files.
+    /// A researcher who commits and pushes a workspace must not publish them.
+    /// The compute choice, `.steerlab/workspace.json`, describes the
+    /// workspace rather than the machine and stays tracked. Python twin:
+    /// `test_a_new_workspace_keeps_machine_state_and_exports_out_of_git`.
+    @Test(.enabled(if: hasGit, "git does not run on this machine, so ignoring could not be checked"))
+    func newWorkspaceKeepsMachineStateAndExportsOutOfGit() throws {
+        let root = tempDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let created = try WorkspaceStore.create(at: root)
+        let machine = [
+            ".steerlab/imported-remote.json", ".steerlab/job-origins/origins.json",
+            ".steerlab/evidence-custody/receipt.json", ".steerlab/evidence-archives/archive.tar.gz",
+            ".steerlab/diagnostic-requests/request.json", ".steerlab/downloads/staging/bundle.tar.gz",
+            ".steerlab/manifest-locks/key.lock", ".steerlab/notices.json", ".steerlab/jobs.sqlite",
+            ".steerlab-local-server.pid", "exports/study-run/responses.csv",
+        ]
+        let kept = [".steerlab/workspace.json", "prompts/concepts/kept/positive.jsonl"]
+        for name in machine + kept {
+            let url = created.appending(path: name)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("placeholder\n".utf8).write(to: url)
+        }
+        if !FileManager.default.fileExists(atPath: created.appending(component: ".git").path) {
+            try runGit(["init", "-q"], in: created)
+        }
+        let listed = try runGit(["status", "--porcelain", "--untracked-files=all"], in: created)
+        let untracked = Set(
+            listed.split(separator: "\n").filter { $0.hasPrefix("?? ") }.map { String($0.dropFirst(3)) })
+        for name in kept {
+            #expect(untracked.contains(name), "\(name) should stay visible to git")
+        }
+        #expect(untracked.intersection(machine).sorted() == [])
+    }
+
+    /// Runs git with the researcher's own settings set aside, so they cannot
+    /// decide what a test of the workspace's rules sees.
+    @discardableResult
+    private func runGit(_ arguments: [String], in directory: URL) throws -> String {
+        let process = Process()
+        process.executableURL = URL(filePath: "/usr/bin/git")
+        process.arguments = arguments
+        process.currentDirectoryURL = directory
+        var environment = ProcessInfo.processInfo.environment
+        environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
+        environment["GIT_CONFIG_NOSYSTEM"] = "1"
+        process.environment = environment
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = Pipe()
+        try process.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        try #require(process.terminationStatus == 0, "git \(arguments.joined(separator: " ")) failed")
+        return String(decoding: data, as: UTF8.self)
+    }
+
     /// Creation is TRANSACTIONAL: it stages a whole workspace in a temp
     /// sibling and installs it with one rename, so a failure part-way
     /// through leaves NO destination — not a directory with `prompts/` in it
