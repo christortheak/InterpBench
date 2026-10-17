@@ -39,6 +39,16 @@ from .turn_endpoint import _fold, _is_letter
 
 # --- categorical option parsing ----------------------------------------------
 
+#: Which rules :func:`parse_choice` reads by. A re-read of stored choices
+#: (``choice_reread``: ``results check-choices`` and ``analyze
+#: --reread-choices``) names it, so an analysis says which parser produced the
+#: choices it used. Bump it whenever the parsing rules change, here and in the
+#: Swift twin ``Judicial.choiceParserVersion``; the shared fixture
+#: ``Tests/Fixtures/cross-engine/choice-reread/expected.json`` holds both to
+#: the same value and fails when ``choice-parsing.json`` changes without a
+#: bump.
+CHOICE_PARSER_VERSION = "2026-10-17"
+
 
 def parse_choice(text: str, options: list[str], *, json_key: str = "answer",
                  truncated: bool = False) -> str | None:
