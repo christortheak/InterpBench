@@ -4276,7 +4276,9 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
             device=invocation.one("--device"),
             package_evidence=package_evidence,
             parallel_jobs=_runner_int(invocation, "--parallel", 1) or 1,
-            reread_choices=reread_choices)
+            # Read from the invocation, as every other submit field is here;
+            # `_run` already refused it for any step but analyze.
+            reread_choices=invocation.has("--reread-choices"))
     except runner_api.RunnerUnreachable as exc:
         # The one call in this machine whose failure is genuinely ambiguous:
         # the request may have created a job (and on Slurm spent an

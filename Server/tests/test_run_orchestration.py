@@ -544,6 +544,20 @@ def test_an_unknown_study_verb_is_refused_before_any_upload(workspace, script,
     assert script.uploads == []
 
 
+def test_a_choice_reread_reaches_the_runner_only_when_asked(workspace, script,
+                                                            capsys):
+    """`--verb analyze --reread-choices` asks the runner's analysis to read
+    every stored choice again; an ordinary submission asks nothing of the
+    kind, and both reach the submit stage."""
+    script.job_status = "prepared"
+    for extra, expected in (([], False), (["--verb", "analyze", "--reread-choices"], True)):
+        code, document, _ = _run(
+            [STUDY_NAME, "--runner", RUNNER_URL, "--dry-run", *extra], capsys,
+            root=workspace)
+        assert code == 0, document
+        assert script.submits[-1]["reread_choices"] is expected
+
+
 def test_a_dry_run_may_name_slurm_on_any_runner(workspace, script, capsys):
     """The capability gate is not a blanket: a dry run schedules nothing, and
     the submit route accepts it against any runner. A precheck stricter than
