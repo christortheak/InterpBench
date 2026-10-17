@@ -15,8 +15,10 @@ import Observation
 //
 //   1. WHO GETS IT (`UpdateInstallEligibility`). Only a Developer ID–signed,
 //      notarized copy of the packaged app, in a folder the person can write
-//      to, with no code checkout beside it. Anything else keeps the
-//      signpost, with one plain line saying why.
+//      to. Anything else keeps the signpost, with one plain line saying why.
+//      A code checkout beside the app is not a reason (a copy built from it
+//      fails the signature rules anyway); the local engine runs from it, so
+//      the sheet and the notice say how to bring it to the same release.
 //   2. DOWNLOAD. The release's app archive and its `.sha256`, chosen from the
 //      release the check found (`UpdateReleaseAssets`), over HTTPS from
 //      GitHub's hosts only, into a staging folder beside the app (so the final
@@ -24,7 +26,9 @@ import Observation
 //   3. VERIFY. The archive matches its checksum (integrity only: both come
 //      from the same place); its file list is safe to unpack; `ditto -x -k`
 //      unpacks it keeping extended attributes (the MLX shader library's
-//      signature lives in one); the unpacked app passes strict validation of
+//      signature lives in one); what ditto wrote is walked without following
+//      links (one app folder, links that stay inside it, bounded entries and
+//      bytes); the unpacked app passes strict validation of
 //      all nested code against a requirement built from the RUNNING app's own
 //      bundle identifier and Developer ID team, plus "notarized"; and its
 //      version is newer than the running one.
@@ -234,8 +238,12 @@ public struct UpdateInstallContext: Sendable, Equatable {
     public var appBundle: URL?
     public var bundleIdentifier: String?
     public var signature: RunningAppSignature
-    /// A SteerLab code checkout beside the app: a developer install.
-    public var hasSourceCheckout: Bool
+    /// A SteerLab code checkout beside the app (or in the default home),
+    /// which the local Python engine runs from. Not a reason to refuse: a
+    /// copy built from it is refused by the signature rules, and a notarized
+    /// release beside a clone is the home layout AGENTS.md prescribes. It is
+    /// carried so the sheet and the notice can say how to bring it along.
+    public var sourceCheckout: URL?
     /// macOS is running the app from a randomized read-only mount because it
     /// was opened straight from a quarantined download.
     public var isTranslocated: Bool
@@ -244,13 +252,13 @@ public struct UpdateInstallContext: Sendable, Equatable {
 
     public init(
         appBundle: URL?, bundleIdentifier: String?, signature: RunningAppSignature,
-        hasSourceCheckout: Bool, isTranslocated: Bool, isOnReadOnlyVolume: Bool,
+        sourceCheckout: URL? = nil, isTranslocated: Bool, isOnReadOnlyVolume: Bool,
         canWriteParentFolder: Bool
     ) {
         self.appBundle = appBundle
         self.bundleIdentifier = bundleIdentifier
         self.signature = signature
-        self.hasSourceCheckout = hasSourceCheckout
+        self.sourceCheckout = sourceCheckout
         self.isTranslocated = isTranslocated
         self.isOnReadOnlyVolume = isOnReadOnlyVolume
         self.canWriteParentFolder = canWriteParentFolder
@@ -261,7 +269,6 @@ public struct UpdateInstallContext: Sendable, Equatable {
 /// one plain line and, where there is one, names the move that changes it.
 public enum UpdateInstallRefusal: Error, Sendable, Equatable {
     case notAnAppBundle
-    case developerInstall
     case adHocSignature
     case otherCertificate
     case unsigned
@@ -277,18 +284,17 @@ public enum UpdateInstallRefusal: Error, Sendable, Equatable {
     public var line: String {
         switch self {
         case .notAnAppBundle:
-            return "This copy of SteerLab runs from a build folder, not the packaged app, "
-                + "so it is updated by rebuilding."
-        case .developerInstall:
-            return "A SteerLab code checkout sits beside this app, so this is a developer "
-                + "install: update it by pulling the code and rebuilding."
+            return "This copy of SteerLab runs from a build folder, not the packaged app. "
+                + "Download the packaged app from the Releases page (if you build "
+                + "SteerLab yourself, rebuild it instead)."
         case .adHocSignature:
             return "This copy is signed only for this Mac, so SteerLab cannot confirm that "
                 + "a download comes from the same developer. Download the new release "
                 + "from the Releases page."
         case .otherCertificate:
             return "This copy carries a development signature rather than a Developer ID "
-                + "one, so it is updated by rebuilding or from the Releases page."
+                + "one, so SteerLab cannot confirm that a download comes from the same "
+                + "developer. Download the new release from the Releases page."
         case .unsigned:
             return "This copy is not signed, so SteerLab cannot confirm that a download "
                 + "comes from the same developer. Download the new release from the "
@@ -331,11 +337,16 @@ public struct UpdateInstallTarget: Sendable, Equatable {
     /// signed by someone else can never replace this one, and a fork signed
     /// by its own team updates from its own releases.
     public let teamID: String
+    /// The code checkout the local engine runs from, when there is one.
+    public let sourceCheckout: URL?
 
-    public init(appBundle: URL, bundleIdentifier: String, teamID: String) {
+    public init(
+        appBundle: URL, bundleIdentifier: String, teamID: String, sourceCheckout: URL? = nil
+    ) {
         self.appBundle = appBundle
         self.bundleIdentifier = bundleIdentifier
         self.teamID = teamID
+        self.sourceCheckout = sourceCheckout
     }
 }
 
@@ -351,7 +362,6 @@ public enum UpdateInstallEligibility {
         if let kept = UpdateStagingLayout.previousCopyVersion(fromName: app.lastPathComponent) {
             return .failure(.runningKeptCopy(kept.releaseDescription))
         }
-        if context.hasSourceCheckout { return .failure(.developerInstall) }
         let team: String
         switch context.signature {
         case .adHoc: return .failure(.adHocSignature)
@@ -371,7 +381,9 @@ public enum UpdateInstallEligibility {
             return .failure(.folderNotWritable(app.deletingLastPathComponent().path))
         }
         return .success(
-            UpdateInstallTarget(appBundle: app, bundleIdentifier: identifier, teamID: team))
+            UpdateInstallTarget(
+                appBundle: app, bundleIdentifier: identifier, teamID: team,
+                sourceCheckout: context.sourceCheckout))
     }
 }
 
@@ -544,7 +556,9 @@ public enum UpdateChecksum {
 /// Reads `zipinfo`'s listing of the archive BEFORE anything is unpacked, and
 /// refuses an archive that would write outside one `.app` folder: absolute
 /// names, `..`, an entry under a symbolic link, more than one app, or more
-/// files or bytes than an update may hold.
+/// files or bytes than an update may hold. A first filter only: the listing
+/// is the central directory, which need not name everything `ditto` writes,
+/// so `UpdateUnpackedTree` checks what was actually written.
 public enum UpdateArchiveListing {
     public struct Summary: Sendable, Equatable {
         /// The archive's one top-level app folder, such as `SteerLab.app`.
@@ -582,7 +596,9 @@ public enum UpdateArchiveListing {
             {
                 continue
             }
-            guard let entry = parseEntry(trimmed) else {
+            // Parsed from the raw line: trimming would turn a symbolic link
+            // named "x " into "x" and let "x /f" past the rule below.
+            guard let entry = parseEntry(line) else {
                 return .failure(.archiveRejected("its list of files could not be read"))
             }
             entries.append(entry)
@@ -646,6 +662,88 @@ public enum UpdateArchiveListing {
             }
         }
         return .success(Summary(appName: app, entries: entries.count, unpackedBytes: total))
+    }
+}
+
+// MARK: - 3. Verify: what ditto actually wrote
+
+/// The binding check on the unpacked archive. `zipinfo` lists the archive's
+/// central directory, and `ditto` can write entries that list never shows
+/// (ones only in the local headers), so after unpacking this walks what is
+/// on disk, never following a link, and refuses: anything but exactly one
+/// top-level item, an app folder; a symbolic link that points outside that
+/// app; and more entries or bytes than an update may hold.
+public enum UpdateUnpackedTree {
+    public static func inspect(
+        _ unpacked: URL, limits: UpdateInstallLimits = .standard,
+        fileManager fm: FileManager = .default
+    ) -> Result<URL, UpdateInstallError> {
+        let top: [String]
+        do { top = try fm.contentsOfDirectory(atPath: unpacked.path) } catch {
+            return .failure(.unpackFailed("the unpacked files could not be read"))
+        }
+        guard top.count == 1, let name = top.first else {
+            return .failure(
+                .archiveRejected(
+                    top.isEmpty
+                        ? "it unpacked to nothing"
+                        : "it unpacked to \(top.count) items, not one app"))
+        }
+        let app = unpacked.appending(component: name)
+        let topValues = try? app.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
+        guard name.hasSuffix(".app"), topValues?.isSymbolicLink == false,
+            topValues?.isDirectory == true
+        else {
+            return .failure(.archiveRejected("it unpacked to \(name), which is not an app folder"))
+        }
+        let appPath = app.standardizedFileURL.path
+        let appResolved = app.resolvingSymlinksInPath().standardizedFileURL.path
+        func inside(_ path: String, of root: String) -> Bool {
+            path == root || path.hasPrefix(root + "/")
+        }
+
+        let keys: [URLResourceKey] = [.isSymbolicLinkKey, .isRegularFileKey, .fileSizeKey]
+        // The enumerator lists a symbolic link and never descends through it.
+        guard let walker = fm.enumerator(at: app, includingPropertiesForKeys: keys, options: [])
+        else { return .failure(.unpackFailed("the unpacked app could not be read")) }
+        var entries = 1
+        var bytes: Int64 = 0
+        for case let url as URL in walker {
+            entries += 1
+            if entries > limits.maximumArchiveEntries {
+                return .failure(
+                    .archiveRejected("it holds more than \(limits.maximumArchiveEntries) files"))
+            }
+            let values = try? url.resourceValues(forKeys: Set(keys))
+            if values?.isSymbolicLink == true {
+                guard let target = try? fm.destinationOfSymbolicLink(atPath: url.path),
+                    !target.hasPrefix("/")
+                else {
+                    return .failure(
+                        .archiveRejected("it holds a symbolic link that points outside the app"))
+                }
+                // Both readings must stay inside: the link's text against its
+                // folder (standardizing resolves a `..` through the real
+                // parent, so `B/..` with B -> `..` already reads as outside),
+                // and the path the system resolves through every link.
+                let written = url.deletingLastPathComponent().appending(path: target)
+                    .standardizedFileURL.path
+                let resolved = url.resolvingSymlinksInPath().standardizedFileURL.path
+                guard inside(written, of: appPath), inside(resolved, of: appResolved) else {
+                    return .failure(
+                        .archiveRejected("it holds a symbolic link that points outside the app"))
+                }
+            } else if values?.isRegularFile == true {
+                bytes += Int64(values?.fileSize ?? 0)
+                if bytes > limits.maximumUnpackedBytes {
+                    return .failure(
+                        .archiveRejected(
+                            "it unpacked to more than "
+                                + UpdateInstallError.describe(limits.maximumUnpackedBytes)))
+                }
+            }
+        }
+        return .success(app)
     }
 }
 
@@ -1153,9 +1251,11 @@ public struct UpdateInstaller: Sendable {
             ["/usr/bin/ditto", "-x", "-k", archiveFile.path, unpacked.path],
             failure: { code in .unpackFailed("ditto exited \(code)") })
         try? fs.remove(archiveFile)
-        let app = unpacked.appending(component: summary.appName)
-        guard fs.isDirectory(app) else {
-            throw UpdateInstallError.unpackFailed("\(summary.appName) was not in the archive")
+        // The binding check: what ditto wrote, walked without following links.
+        let app = try UpdateUnpackedTree.inspect(unpacked, limits: limits).get()
+        guard app.lastPathComponent == summary.appName else {
+            throw UpdateInstallError.archiveRejected(
+                "it unpacked to \(app.lastPathComponent), not the \(summary.appName) it lists")
         }
         try Task.checkCancellation()
 
@@ -1219,6 +1319,24 @@ public struct UpdateInstaller: Sendable {
     }
 
     // MARK: Install
+
+    /// `install` on a background thread. The re-verification inside it
+    /// hashes every file of the new app (about 4,200), which would freeze
+    /// the window if it ran on the main actor; the caller keeps its state
+    /// changes on its own actor and awaits only the result.
+    public func installDetached(_ staged: UpdateStagedApp) async
+        -> Result<UpdateInstallReceipt, UpdateInstallError>
+    {
+        await Task.detached(priority: .userInitiated) {
+            do {
+                return .success(try install(staged))
+            } catch let error as UpdateInstallError {
+                return .failure(error)
+            } catch {
+                return .failure(.installFailedRestored(error.localizedDescription))
+            }
+        }.value
+    }
 
     /// Swap the staged app in: keep the running app beside it as the
     /// previous copy, move the new app into the original path, and check it
@@ -1371,9 +1489,14 @@ public struct UpdateBusyState: Sendable, Equatable {
         sweeping: Bool = false, evaluating: Bool = false, generating: Bool = false,
         submissions: Int = 0, engineSettingUp: Bool = false,
         engineStartingOrStopping: Bool = false, engineJobs: Int = 0,
-        commandLineProcesses: Int = 0
+        commandLineProcesses: Int = 0, modelLoading: Bool = false,
+        modelDownloading: Bool = false, neutralBasisBuilding: Bool = false,
+        otherTasks: [String] = []
     ) -> UpdateBusyState {
         var reasons: [String] = []
+        if modelDownloading { reasons.append("a model is downloading") }
+        if modelLoading { reasons.append("a model is loading") }
+        if neutralBasisBuilding { reasons.append("a neutral basis is being built") }
         if studyRunning { reasons.append("a study is running on this Mac") }
         if validating { reasons.append("a study is being validated on this Mac") }
         if extracting { reasons.append("vectors are being extracted on this Mac") }
@@ -1390,6 +1513,7 @@ public struct UpdateBusyState: Sendable, Equatable {
                 "the local Python engine is running \(engineJobs) job"
                     + (engineJobs == 1 ? "" : "s"))
         }
+        reasons.append(contentsOf: otherTasks)
         if commandLineProcesses > 0 {
             reasons.append(
                 "this app's command line (steerlab-cli) is running"
@@ -1412,6 +1536,76 @@ public final class UpdateBusyWork {
 
     public func beginSubmission() { submissions += 1 }
     public func endSubmission() { submissions = max(0, submissions - 1) }
+}
+
+// MARK: - What the confirmation sheet says
+
+/// The confirmation sheet's statements, in order, composed here so that what
+/// a researcher is told before agreeing is tested, not only drawn.
+public enum UpdateInstallReview {
+    public struct Fact: Sendable, Equatable {
+        /// An SF Symbol name for the line's icon.
+        public let symbol: String
+        public let text: String
+    }
+
+    /// Older kept copies go to the Trash at the next update; said before
+    /// the person agrees, so an old build kept for reproduction is moved
+    /// aside first.
+    public static let olderCopiesLine =
+        "Older kept copies beside it (SteerLab-<version>-previous.app from earlier "
+        + "updates) go to the Trash, so one earlier version is kept. To keep an older "
+        + "build, for example to reproduce earlier work, move or rename it first."
+
+    public static func facts(
+        newVersion: SemanticVersion, currentVersion: SemanticVersion,
+        downloadSize: Int64?, previousCopy: URL?, sourceCheckout: URL?
+    ) -> [Fact] {
+        let size = downloadSize.map {
+            ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) + " "
+        } ?? ""
+        let version = newVersion.releaseDescription
+        var facts = [
+            Fact(
+                symbol: "arrow.down.circle",
+                text: "SteerLab downloads \(size)from the project's GitHub Releases page "
+                    + "and checks it: the file against its checksum, and the app inside "
+                    + "against Apple's notarization and this copy's own developer signature. "
+                    + "Nothing about this Mac is sent."),
+            Fact(
+                symbol: "arrow.triangle.2.circlepath",
+                text: "SteerLab then quits and reopens as \(version). Your workspaces, "
+                    + "studies, and models are not touched."),
+        ]
+        if let previousCopy {
+            facts.append(
+                Fact(
+                    symbol: "archivebox",
+                    text: "The version you are running now "
+                        + "(\(currentVersion.releaseDescription)) is kept beside it as "
+                        + "\(previousCopy.lastPathComponent), in "
+                        + "\(previousCopy.deletingLastPathComponent().path). To go back, quit "
+                        + "SteerLab, move the new SteerLab.app to the Trash, and rename the "
+                        + "kept copy to SteerLab.app."))
+            facts.append(Fact(symbol: "trash", text: olderCopiesLine))
+        }
+        if let sourceCheckout {
+            facts.append(
+                Fact(
+                    symbol: "server.rack",
+                    text: UpdateAfterInstall.checkoutLineBefore(
+                        checkout: sourceCheckout, version: newVersion)))
+        } else {
+            facts.append(
+                Fact(
+                    symbol: "server.rack",
+                    text: "If you use the Python engine on this Mac, open its setup after "
+                        + "the update and choose Refresh Engine; its installed packages are "
+                        + "kept."))
+        }
+        facts.append(Fact(symbol: "network", text: UpdateAfterInstall.clusterLine))
+        return facts
+    }
 }
 
 // MARK: - The first launch after an update
@@ -1445,6 +1639,35 @@ public enum UpdateAfterInstall {
             + "move \(appName) to the Trash, rename \(name) to \(appName), and open it."
     }
 
+    /// The local engine runs from a code checkout, not from the app, so an
+    /// update leaves it at the earlier version until the checkout is moved
+    /// to the new release's tag. The exact commands, quoted for a path with
+    /// spaces.
+    public static func checkoutCommands(checkout: URL, version: SemanticVersion) -> String {
+        "git -C \"\(checkout.path)\" fetch --tags, then "
+            + "git -C \"\(checkout.path)\" checkout v\(version.releaseDescription)"
+    }
+
+    /// For the confirmation sheet, before the update.
+    public static func checkoutLineBefore(checkout: URL, version: SemanticVersion) -> String {
+        "The Python engine on this Mac runs from the code checkout at \(checkout.path), "
+            + "not from the app. After the update, bring that checkout to the same release "
+            + "so the engine and the app match: in Terminal, run "
+            + checkoutCommands(checkout: checkout, version: version)
+            + ", then restart the engine. If git reports changes of your own in the "
+            + "checkout, commit them or set them aside first."
+    }
+
+    /// For the first launch after the update.
+    public static func checkoutLineAfter(checkout: URL, version: SemanticVersion) -> String {
+        "The Python engine on this Mac runs from the code checkout at \(checkout.path), "
+            + "which still holds the earlier version. Bring it to this release: in "
+            + "Terminal, run " + checkoutCommands(checkout: checkout, version: version)
+            + ", then restart the engine. Until then the engine runs the earlier "
+            + "version's code, and its setup reports that the engine and the app were "
+            + "built from different revisions."
+    }
+
     public static let engineLine =
         "The Python engine on this Mac still holds the earlier version's code. Open the "
         + "engine setup and choose Refresh Engine: it copies this version's engine and "
@@ -1458,7 +1681,8 @@ public enum UpdateAfterInstall {
     ///     build from this app's.
     public static func notice(
         lastLaunched: String?, current: SemanticVersion, appName: String,
-        previousCopyName: String?, engineIsStale: Bool, hasClusterSites: Bool
+        previousCopyName: String?, engineIsStale: Bool, hasClusterSites: Bool,
+        sourceCheckout: URL? = nil
     ) -> UpdateAfterInstallNotice? {
         guard let lastLaunched, let earlier = SemanticVersion(lastLaunched),
             current > earlier
@@ -1467,7 +1691,11 @@ public enum UpdateAfterInstall {
         if let previousCopyName {
             lines.append(goingBackLine(previousCopyName: previousCopyName, appName: appName))
         }
-        if engineIsStale { lines.append(engineLine) }
+        if let sourceCheckout {
+            lines.append(checkoutLineAfter(checkout: sourceCheckout, version: current))
+        } else if engineIsStale {
+            lines.append(engineLine)
+        }
         if hasClusterSites { lines.append(clusterLine) }
         return UpdateAfterInstallNotice(
             headline: "SteerLab was updated from \(earlier.releaseDescription) to "

@@ -233,12 +233,12 @@ struct UpdateInstallerTests {
         app: URL? = URL(filePath: "/opt/lab/SteerLab/SteerLab.app"),
         identifier: String? = UpdateInstallerTests.identifier,
         signature: RunningAppSignature = .developerID(teamID: UpdateInstallerTests.team, notarized: true),
-        checkout: Bool = false, translocated: Bool = false, readOnly: Bool = false,
+        checkout: URL? = nil, translocated: Bool = false, readOnly: Bool = false,
         writable: Bool = true
     ) -> UpdateInstallContext {
         UpdateInstallContext(
             appBundle: app, bundleIdentifier: identifier, signature: signature,
-            hasSourceCheckout: checkout, isTranslocated: translocated,
+            sourceCheckout: checkout, isTranslocated: translocated,
             isOnReadOnlyVolume: readOnly, canWriteParentFolder: writable)
     }
 
@@ -255,8 +255,10 @@ struct UpdateInstallerTests {
         }
         #expect(refusal(Self.context(app: nil)) == .notAnAppBundle)
         #expect(refusal(Self.context(app: URL(filePath: "/build/SteerLabApp"))) == .notAnAppBundle)
-        // A checkout beside the app outranks everything after it.
-        #expect(refusal(Self.context(signature: .adHoc, checkout: true)) == .developerInstall)
+        // A checkout beside the app is no reason to refuse; the signature
+        // rules still refuse a copy built from it.
+        let clone = URL(filePath: "/opt/lab/SteerLab/InterpBench")
+        #expect(refusal(Self.context(signature: .adHoc, checkout: clone)) == .adHocSignature)
         #expect(refusal(Self.context(signature: .adHoc)) == .adHocSignature)
         #expect(refusal(Self.context(signature: .otherCertificate(teamID: "X"))) == .otherCertificate)
         #expect(refusal(Self.context(signature: .unsigned)) == .unsigned)
@@ -277,9 +279,44 @@ struct UpdateInstallerTests {
     @Test func refusalsSayWhatToDoInOneLine() {
         #expect(UpdateInstallRefusal.translocated.line.contains("Move SteerLab.app"))
         #expect(UpdateInstallRefusal.readOnlyVolume.line.contains("Applications"))
-        #expect(UpdateInstallRefusal.developerInstall.line.contains("rebuilding"))
         #expect(UpdateInstallRefusal.adHocSignature.line.contains("Releases page"))
+        #expect(UpdateInstallRefusal.otherCertificate.line.contains("Releases page"))
+        #expect(UpdateInstallRefusal.notAnAppBundle.line.contains("Releases page"))
         #expect(!UpdateInstallRefusal.notNotarized.line.contains("\n"))
+    }
+
+    /// The home layout AGENTS.md prescribes: a notarized release beside a
+    /// clone of the repository. It installs, and the target carries the
+    /// clone so the sheet can say how to bring it along.
+    @Test func aNotarizedReleaseBesideACloneIsEligible() throws {
+        let clone = URL(filePath: "/opt/lab/SteerLab/InterpBench")
+        let target = try UpdateInstallEligibility.evaluate(Self.context(checkout: clone)).get()
+        #expect(target.sourceCheckout == clone)
+        #expect(try UpdateInstallEligibility.evaluate(Self.context()).get().sourceCheckout == nil)
+    }
+
+    @Test func theSheetSaysHowToBringACheckoutAlongAndThatOlderCopiesGoToTheTrash() {
+        let clone = URL(filePath: "/opt/lab/My SteerLab/InterpBench")
+        let previous = URL(filePath: "/opt/lab/My SteerLab/SteerLab-0.9.9-previous.app")
+        let withClone = UpdateInstallReview.facts(
+            newVersion: SemanticVersion("1.0.0")!, currentVersion: SemanticVersion("0.9.9")!,
+            downloadSize: 50_000_000, previousCopy: previous, sourceCheckout: clone
+        ).map(\.text)
+        let checkout = withClone.first { $0.contains("code checkout") }
+        #expect(checkout?.contains("git -C \"/opt/lab/My SteerLab/InterpBench\" fetch --tags") == true)
+        #expect(checkout?.contains("git -C \"/opt/lab/My SteerLab/InterpBench\" checkout v1.0.0") == true)
+        #expect(!withClone.contains { $0.contains("Refresh Engine") })
+        #expect(withClone.contains(UpdateInstallReview.olderCopiesLine))
+        #expect(UpdateInstallReview.olderCopiesLine.contains("Trash"))
+        #expect(withClone.contains(UpdateAfterInstall.clusterLine))
+
+        let plain = UpdateInstallReview.facts(
+            newVersion: SemanticVersion("1.0.0")!, currentVersion: SemanticVersion("0.9.9")!,
+            downloadSize: nil, previousCopy: previous, sourceCheckout: nil
+        ).map(\.text)
+        #expect(plain.contains { $0.contains("Refresh Engine") })
+        #expect(!plain.contains { $0.contains("code checkout") })
+        #expect(plain.contains(UpdateInstallReview.olderCopiesLine))
     }
 
     @Test func translocationIsRecognizedByItsMountPath() {
@@ -600,6 +637,10 @@ struct UpdateInstallerTests {
             verdict([(dir, "SteerLab.app/"), (file, "SteerLab.app/Contents/x"), (link, "SteerLab.app/Contents")])
                 != nil)
         #expect(verdict([(dir, "SteerLab.app/"), ("garbage", "line")]) != nil)
+        // A link named "x " (trailing space) is still the link "x ".
+        #expect(
+            verdict([(dir, "SteerLab.app/"), (link, "SteerLab.app/x "), (file, "SteerLab.app/x /f")])
+                != nil)
         // On a case-insensitive volume `A` and `a` are one folder.
         #expect(
             verdict([(dir, "SteerLab.app/"), (link, "SteerLab.app/Contents/A"), (file, "SteerLab.app/Contents/a/x")])
@@ -617,6 +658,117 @@ struct UpdateInstallerTests {
         limits.maximumArchiveEntries = 1
         guard case .failure(.archiveRejected) = UpdateArchiveListing.validate(zipinfoOutput: lines, limits: limits) else {
             Issue.record("expected the entry bound to refuse")
+            return
+        }
+    }
+
+    // MARK: - What ditto actually wrote
+
+    struct Unpacked {
+        let root: URL
+        var app: URL { root.appending(components: "unpacked", "SteerLab.app") }
+        var unpacked: URL { root.appending(component: "unpacked") }
+
+        init() throws {
+            root = FileManager.default.temporaryDirectory
+                .appending(component: "steerlab-unpacked-\(UUID().uuidString)")
+            try UpdateInstallerTests.makeBundle(
+                at: root.appending(components: "unpacked", "SteerLab.app"), version: "0.9.9", marker: "x")
+        }
+
+        func link(_ relative: String, to target: String) throws {
+            try FileManager.default.createSymbolicLink(
+                atPath: app.appending(path: relative).path, withDestinationPath: target)
+        }
+
+        func remove() { try? FileManager.default.removeItem(at: root) }
+    }
+
+    @Test func oneAppWithLinksInsideItPassesTheWalk() throws {
+        let tree = try Unpacked()
+        defer { tree.remove() }
+        try tree.link("Contents/Helpers/alias", to: "steerlab-cli")
+        try tree.link("Contents/Resources", to: "../Contents/MacOS")
+        #expect(try UpdateUnpackedTree.inspect(tree.unpacked).get() == tree.app)
+    }
+
+    @Test func theWalkRefusesAnythingButOneAppAndLinksThatStayInside() throws {
+        func refused(_ build: (Unpacked) throws -> Void, limits: UpdateInstallLimits = .standard) throws -> Bool {
+            let tree = try Unpacked()
+            defer { tree.remove() }
+            try build(tree)
+            if case .failure = UpdateUnpackedTree.inspect(tree.unpacked, limits: limits) { return true }
+            return false
+        }
+        // Something beside the app (an entry only the local headers named).
+        #expect(try refused { tree in
+            try Data("x".utf8).write(to: tree.unpacked.appending(component: "extra.txt"))
+        })
+        // Absolute, relative, and composed escapes.
+        #expect(try refused { try $0.link("Contents/out", to: "/etc") })
+        #expect(try refused { try $0.link("Contents/out", to: "../../../outside") })
+        #expect(try refused { tree in
+            // B points at the app itself (inside); "B/.." reads as inside but
+            // resolves to the folder above the app.
+            try tree.link("Contents/B", to: "..")
+            try tree.link("Contents/A", to: "B/..")
+        })
+        // Bounds.
+        var few = UpdateInstallLimits.standard
+        few.maximumArchiveEntries = 3
+        #expect(try refused({ _ in }, limits: few))
+        var small = UpdateInstallLimits.standard
+        small.maximumUnpackedBytes = 4
+        #expect(try refused({ _ in }, limits: small))
+    }
+
+    /// Runs the real tools, but after `ditto` also writes a file beside the
+    /// app: what an entry named only in the archive's local headers does,
+    /// which `zipinfo` never lists.
+    struct DittoWritesMoreThanListed: ProvisionCommandRunner {
+        let real = SystemProvisionRunner()
+        func run(_ argv: [String], onLine: @escaping @Sendable (String) -> Void) async throws -> Int32 {
+            let code = try await real.run(argv, onLine: onLine)
+            if argv.first == "/usr/bin/ditto", let destination = argv.last {
+                try Data("unlisted".utf8).write(
+                    to: URL(filePath: destination).appending(component: "unlisted.txt"))
+            }
+            return code
+        }
+    }
+
+    @Test func whatDittoWroteBeyondTheListingStopsTheUpdate() async throws {
+        let scratch = try Scratch()
+        defer { scratch.remove() }
+        try Self.makeBundle(at: scratch.installed, version: "0.9.8", marker: "old")
+        let (release, transport) = try Self.release(in: scratch)
+        let signing = FakeSigning()
+        let installer = UpdateInstaller(
+            target: Self.target(scratch), currentVersion: SemanticVersion("0.9.8")!,
+            environment: UpdateInstallEnvironment(
+                transport: transport, codeSigning: signing, tools: DittoWritesMoreThanListed(),
+                fileSystem: FaultyFileSystem(), clock: FakeClock(expired: false),
+                isProcessAlive: { _ in false }))
+        await #expect {
+            _ = try await installer.prepare(release)
+        } throws: { error in
+            guard case .archiveRejected = error as? UpdateInstallError else { return false }
+            return true
+        }
+        #expect(signing.seen.withLock { $0.isEmpty })  // stopped before the signature
+        #expect(!FileManager.default.fileExists(atPath: installer.stagingRoot.path))
+    }
+
+    @Test func theTopItemMustBeAnAppFolderNotALink() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(component: "steerlab-unpacked-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let real = try Self.makeBundle(at: root.appending(components: "elsewhere", "Real.app"), version: "0.9.9", marker: "x")
+        try FileManager.default.createDirectory(at: root.appending(component: "unpacked"), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: root.appending(components: "unpacked", "SteerLab.app"), withDestinationURL: real)
+        guard case .failure = UpdateUnpackedTree.inspect(root.appending(component: "unpacked")) else {
+            Issue.record("a link at the top level was accepted")
             return
         }
     }
@@ -1060,6 +1212,57 @@ struct UpdateInstallerTests {
         #expect(argv[2].contains("/usr/bin/open \"$app\""))
     }
 
+    @Test func modelWorkAndOtherTasksKeepTheUpdateWaiting() {
+        let busy = UpdateBusyState.from(
+            modelLoading: true, modelDownloading: true, neutralBasisBuilding: true,
+            otherTasks: ["an adapter is being trained"])
+        #expect(!busy.isIdle)
+        #expect(busy.reasons.contains("a model is loading"))
+        #expect(busy.reasons.contains("a model is downloading"))
+        #expect(busy.reasons.contains("a neutral basis is being built"))
+        #expect(busy.reasons.contains("an adapter is being trained"))
+    }
+
+    /// Records whether each move ran on the main thread.
+    final class ThreadRecordingFileSystem: UpdateFileSystem, @unchecked Sendable {
+        let live = LiveUpdateFileSystem()
+        let movesOnMain = Mutex<[Bool]>([])
+        func exists(_ url: URL) -> Bool { live.exists(url) }
+        func isDirectory(_ url: URL) -> Bool { live.isDirectory(url) }
+        func createDirectory(_ url: URL) throws { try live.createDirectory(url) }
+        func move(_ source: URL, to destination: URL) throws {
+            movesOnMain.withLock { $0.append(pthread_main_np() != 0) }
+            try live.move(source, to: destination)
+        }
+        func remove(_ url: URL) throws { try live.remove(url) }
+        func trash(_ url: URL) throws { try live.remove(url) }
+        func contents(of directory: URL) throws -> [URL] { try live.contents(of: directory) }
+        func write(_ data: Data, to url: URL) throws { try live.write(data, to: url) }
+        func read(_ url: URL) -> Data? { live.read(url) }
+        func bundleInfo(at app: URL) -> UpdateBundleInfo { live.bundleInfo(at: app) }
+    }
+
+    /// The swap (and the re-verification before it) must not run on the
+    /// main thread, or the sheet freezes while ~4,200 files are hashed.
+    @MainActor @Test func theSwapRunsOffTheMainThread() async throws {
+        let scratch = try Scratch()
+        defer { scratch.remove() }
+        try Self.makeBundle(at: scratch.installed, version: "0.9.8", marker: "old")
+        let (release, transport) = try Self.release(in: scratch)
+        let fileSystem = ThreadRecordingFileSystem()
+        let installer = Self.installer(scratch, transport: transport, fileSystem: fileSystem)
+        let staged = try await installer.prepare(release)
+        let result = await installer.installDetached(staged)
+        guard case .success(let receipt) = result else {
+            Issue.record("expected an install, got \(result)")
+            return
+        }
+        #expect(receipt.installedVersion == SemanticVersion("0.9.9")!)
+        let moves = fileSystem.movesOnMain.withLock { $0 }
+        #expect(!moves.isEmpty)
+        #expect(!moves.contains(true))
+    }
+
     @Test func busyWorkIsNamedInPlainWords() {
         #expect(UpdateBusyState.from().isIdle)
         let busy = UpdateBusyState.from(
@@ -1093,6 +1296,17 @@ struct UpdateInstallerTests {
         #expect(notice.lines[1].contains("Refresh Engine"))
         #expect(notice.lines[2].contains("push the engine there again"))
         #expect(notice.offersEngineSetup)
+
+        // With a clone beside the app, the engine runs from it: the notice
+        // gives the commands for this release instead of Refresh Engine.
+        let withClone = try #require(
+            UpdateAfterInstall.notice(
+                lastLaunched: "0.9.9", current: SemanticVersion("1.0.0")!, appName: "SteerLab.app",
+                previousCopyName: nil, engineIsStale: false, hasClusterSites: false,
+                sourceCheckout: URL(filePath: "/opt/lab/SteerLab/InterpBench")))
+        #expect(withClone.lines.count == 1)
+        #expect(withClone.lines[0].contains("git -C \"/opt/lab/SteerLab/InterpBench\" checkout v1.0.0"))
+        #expect(!withClone.lines[0].contains("Refresh Engine"))
 
         // Same version, an older one, or no record: nothing to say.
         for last in ["1.0.0", "1.0.1", nil] as [String?] {

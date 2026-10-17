@@ -251,9 +251,6 @@ public enum UpdateInstallContextReader {
     ) -> UpdateInstallContext {
         let bundle = Bundle.main.bundleURL.standardizedFileURL
         let isApp = bundle.pathExtension == "app"
-        // A developer install: the same resolver the local engine uses finds
-        // a code checkout beside the app (or in the default home). Read-only.
-        let hasCheckout = (try? CodeResources.executableCheckout().get()) != nil
         let readOnly =
             (try? bundle.resourceValues(forKeys: [.volumeIsReadOnlyKey]))?.volumeIsReadOnly
             ?? false
@@ -261,11 +258,18 @@ public enum UpdateInstallContextReader {
             appBundle: isApp ? bundle : nil,
             bundleIdentifier: Bundle.main.bundleIdentifier,
             signature: isApp ? codeSigning.runningAppSignature() : .unsigned,
-            hasSourceCheckout: hasCheckout,
+            sourceCheckout: sourceCheckout(),
             isTranslocated: isTranslocated(bundle),
             isOnReadOnlyVolume: readOnly,
             canWriteParentFolder: FileManager.default.isWritableFile(
                 atPath: bundle.deletingLastPathComponent().path))
+    }
+
+    /// The code checkout the local engine runs from, when there is one: the
+    /// same resolver the engine uses (beside the app, else the default
+    /// home). Read only; nothing in the tree is read or written.
+    public static func sourceCheckout() -> URL? {
+        try? CodeResources.executableCheckout().get().root
     }
 
     /// Gatekeeper's App Translocation runs a quarantined app opened in place

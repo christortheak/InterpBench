@@ -10,9 +10,10 @@ import SwiftUI
 /// delegates every decision.
 ///
 /// Nothing is installed without the person's click on Install Update and
-/// their confirmation in the sheet. A copy that may not install itself (a
-/// developer install, an ad-hoc signature, a translocated or read-only copy,
-/// …) keeps the signpost to the Releases page and says why in one line.
+/// their confirmation in the sheet. A copy that may not install itself (one
+/// built locally, so ad-hoc or development signed; a translocated or
+/// read-only copy; …) keeps the signpost to the Releases page and says why
+/// in one line.
 @MainActor
 @Observable
 final class UpdateSignpostModel {
@@ -119,7 +120,8 @@ final class UpdateSignpostModel {
                 lastLaunched: last, current: current, appName: app.lastPathComponent,
                 previousCopyName: previousExists ? previousName : nil,
                 engineIsStale: LocalEngineDecisions.materializedEngineIsFromAnotherBuild(),
-                hasClusterSites: hasClusterSites())
+                hasClusterSites: hasClusterSites(),
+                sourceCheckout: UpdateInstallContextReader.sourceCheckout())
         }
         preferences.lastLaunchedVersion = current.releaseDescription
     }
@@ -335,12 +337,13 @@ final class UpdateSignpostModel {
             return
         }
         installState = .installing
-        do {
-            _ = try installer.install(staged)
-        } catch {
+        // Verification and the swap run off the main actor; nothing can
+        // cancel them from here (the sheet offers no Cancel while
+        // installing), and a successful swap always ends in quitting, since
+        // the app on disk is already the new version.
+        if case .failure(let error) = await installer.installDetached(staged) {
             self.staged = nil
-            installState = .failed(
-                error as? UpdateInstallError ?? .installFailedRestored(error.localizedDescription))
+            installState = .failed(error)
             return
         }
         do {

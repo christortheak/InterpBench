@@ -41,36 +41,21 @@ struct UpdateInstallSheet: View {
     // MARK: The confirmation
 
     @ViewBuilder private var review: some View {
-        let size = model.installAssets?.archive.size
-            .map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
-        fact(
-            "arrow.down.circle",
-            "SteerLab downloads \(size.map { "\($0) " } ?? "")from the project's GitHub "
-                + "Releases page and checks it: the file against its checksum, and the "
-                + "app inside against Apple's notarization and this copy's own developer "
-                + "signature. Nothing about this Mac is sent.")
-        if let notes = model.releaseNotesPage {
-            Link("Read the release notes", destination: notes)
-                .font(.callout)
+        if let release = model.installableRelease {
+            let facts = UpdateInstallReview.facts(
+                newVersion: release.version, currentVersion: model.currentVersion,
+                downloadSize: model.installAssets?.archive.size,
+                previousCopy: model.previousCopy,
+                sourceCheckout: model.installTarget?.sourceCheckout)
+            ForEach(Array(facts.enumerated()), id: \.offset) { index, item in
+                fact(item.symbol, item.text)
+                // The release notes link sits right after what is downloaded.
+                if index == 0, let notes = model.releaseNotesPage {
+                    Link("Read the release notes", destination: notes)
+                        .font(.callout)
+                }
+            }
         }
-        fact(
-            "arrow.triangle.2.circlepath",
-            "SteerLab then quits and reopens as \(version). Your workspaces, studies, "
-                + "and models are not touched.")
-        if let previous = model.previousCopy {
-            fact(
-                "archivebox",
-                "The version you are running now (\(model.currentVersion.releaseDescription)) "
-                    + "is kept beside it as \(previous.lastPathComponent), in "
-                    + "\(previous.deletingLastPathComponent().path). To go back, quit "
-                    + "SteerLab, move the new SteerLab.app to the Trash, and rename the "
-                    + "kept copy to SteerLab.app.")
-        }
-        fact(
-            "server.rack",
-            "If you use the Python engine on this Mac, open its setup after the update "
-                + "and choose Refresh Engine; its installed packages are kept.")
-        fact("network", UpdateAfterInstall.clusterLine)
         busyList(heading: "Install becomes available when these finish:")
     }
 

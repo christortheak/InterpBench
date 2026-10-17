@@ -342,13 +342,14 @@ extension CheckoutDependency {
             file: "Sources/ExperimentKit/UpdateInstallerLive.swift",
             token: "executableCheckout",
             resolves:
-                "READ-ONLY: whether a code checkout sits beside the app, which makes "
-                + "it a developer install that the updater leaves to a rebuild. "
-                + "Nothing is read from or written into the tree",
+                "READ-ONLY: where the code checkout the local engine runs from is, "
+                + "so the update sheet and notice can give the git commands that "
+                + "bring it to the new release. Never a reason to refuse an update; "
+                + "nothing is read from or written into the tree",
             bucket: .developerOnly,
             withoutACheckout:
-                "the expected case for a packaged app: installation may be offered, "
-                + "subject to the signature, notarization, and folder checks"),
+                "the app-only case: no checkout line in the sheet or the notice; "
+                + "eligibility is the same either way"),
         .init(
             file: "Sources/ExperimentKit/InstallProvenance.swift",
             token: "developerCheckoutRoot",

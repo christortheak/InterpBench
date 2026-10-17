@@ -167,11 +167,50 @@ struct SteerLabApp: App {
                     || localServer.phase == .stopping,
                 engineJobs: engineJobs,
                 commandLineProcesses: UpdateBundleProcesses.count(
-                    insideApp: Bundle.main.bundleURL))
+                    insideApp: Bundle.main.bundleURL),
+                modelLoading: modelIsLoading(service),
+                modelDownloading: service.modelInstaller.isInstalling,
+                neutralBasisBuilding: service.isBuildingNeutralPCBasis,
+                otherTasks: otherTasks(service))
         }
         updates.openEngineSetup = { [weak compute] in
             compute?.showingEngineSetup = true
         }
+    }
+
+    /// Work in the app's sections that quitting would interrupt, named as a
+    /// researcher would recognize it.
+    /// A model loading into memory here, or on the engine the app uses.
+    @MainActor
+    private static func modelIsLoading(_ service: ChatService) -> Bool {
+        if case .loading = service.state { return true }
+        return service.isRemoteModelLoading
+    }
+
+    @MainActor
+    private static func otherTasks(_ service: ChatService) -> [String] {
+        var tasks: [String] = []
+        if service.concepts.isWorking {
+            tasks.append(
+                service.concepts.activeTaskLabel.map { "the Data section is busy (\($0))" }
+                    ?? "the Data section is busy")
+        }
+        if service.concepts.isGeneratingProposals {
+            tasks.append("example texts are being generated")
+        }
+        if service.fineTuning.isTraining { tasks.append("an adapter is being trained") }
+        if service.fineTuning.isRobustnessRunning {
+            tasks.append("a robustness check is running")
+        }
+        if service.multiAgent.isRunning { tasks.append("a multi-agent scenario is running") }
+        if service.geometry.isComputing || service.geometry.isServerComputing {
+            tasks.append("a geometry computation is running")
+        }
+        if service.experiments.isJudgingSweep { tasks.append("a sweep is being judged") }
+        if service.experiments.isValidatingOnServer {
+            tasks.append("a validation is being sent to the engine")
+        }
+        return tasks
     }
 
     /// The connection store for this launch. A launch check gets an isolated
