@@ -388,6 +388,17 @@ def sentence(value: dict) -> str:
     return text
 
 
+def payload(value: dict) -> dict:
+    """The analyze envelope's ``choiceReread`` block, from a stored stamp
+    (Swift twin: ``ChoiceReread.payload``): the parser version, the two
+    headline counts, the sentence, and where the full stamp is."""
+    total = value.get("total") if isinstance(value.get("total"), dict) else {}
+    return {"parserVersion": value.get("parserVersion"),
+            "storedChoices": total.get("storedChoices"),
+            "changed": total.get("changed"), "sentence": sentence(value),
+            "stamp": STAMP_FILE}
+
+
 def advisory(run_dir: str, root: str | None, *, study: str | None = None) -> dict | None:
     """The discoverability count for an ordinary analysis: how many stored
     choices in ``run_dir`` the current parser would read differently.

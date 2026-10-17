@@ -229,6 +229,18 @@ struct ChoiceRereadTests {
             contentsOf: out.appending(component: ChoiceReread.stampFile), encoding: .utf8)
         #expect(text.contains("\"reread\" : null"))
         #expect(text.contains("\"stored\" : null"))
+        // The analyze envelope's summary says so too, in the engines' words.
+        guard case .object(let summary)? = ExperimentCLIRunner.analysisPayload(inRunAt: out)["choiceReread"]
+        else {
+            Issue.record("no choiceReread block in the analyze payload")
+            return
+        }
+        #expect(summary["sentence"] == .string(value.expected.sentence))
+        #expect(summary["changed"] == .number(5))
+        #expect(summary["storedChoices"] == .number(12))
+        #expect(summary["parserVersion"] == .string(value.parserVersion))
+        #expect(summary["stamp"] == .string(ChoiceReread.stampFile))
+        #expect(ExperimentCLIRunner.analysisPayload(inRunAt: try analyze(space, reread: false))["choiceReread"] == nil)
         #expect(try runBytes(space.run) == before)
     }
 

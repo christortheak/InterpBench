@@ -299,6 +299,10 @@ def test_a_reread_analysis_carries_no_such_advisory(tmp_path, capsys):
         ["experiment", "analyze", STUDY, "--root", root, "--reread-choices"], capsys)
     assert code == 0
     assert choice_reread.ADVISORY_CODE not in {entry["code"] for entry in document.get("advisories", [])}
+    # The envelope's summary says the choices were re-read, as the stamp does.
+    assert document["result"]["choiceReread"] == {
+        "parserVersion": FIXTURE["parserVersion"], "storedChoices": 12, "changed": 5,
+        "sentence": EXPECTED["sentence"], "stamp": choice_reread.STAMP_FILE}
 
 
 def test_the_advisory_never_blocks_an_unverifiable_run(tmp_path, capsys):

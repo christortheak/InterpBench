@@ -6502,6 +6502,12 @@ public struct ExperimentCLIRunner: Sendable {
         if let unverified = object["epochUnverified"] as? Bool {
             payload["epochUnverified"] = .bool(unverified)
         }
+        // `--reread-choices`: the choices the effects rest on were re-read
+        // with the current parser, said in the summary as the stamp says it.
+        // Server twin: the same block in `cli_payloads.analysis_payload`.
+        if let stamp = ChoiceReread.stamp(inRunAt: runDirectory) {
+            payload["choiceReread"] = .object(ChoiceReread.payload(stamp))
+        }
         return payload
     }
 

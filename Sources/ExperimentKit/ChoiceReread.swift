@@ -430,6 +430,18 @@ public enum ChoiceReread {
         return text
     }
 
+    /// The analyze envelope's `choiceReread` block, from a stored stamp.
+    /// Python twin: `choice_reread.payload` (identical keys and values).
+    public static func payload(_ stamp: Stamp) -> [String: JSONValue] {
+        [
+            "parserVersion": .string(stamp.parserVersion),
+            "storedChoices": .number(Double(stamp.total.storedChoices)),
+            "changed": .number(Double(stamp.total.changed)),
+            "sentence": .string(sentence(stamp)),
+            "stamp": .string(stampFile),
+        ]
+    }
+
     /// The discoverability count for an ordinary analysis: how many stored
     /// choices in the run the current parser would read differently. Never
     /// throws; nil when the options cannot be verified or nothing differs.
