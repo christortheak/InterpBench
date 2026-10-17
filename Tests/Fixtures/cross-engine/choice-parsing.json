@@ -1,0 +1,575 @@
+{
+  "about": "Hand-authored contract for the categorical choice parser (judicial.parse_choice and Judicial.parseChoice). Every expected value was written by hand from the rules, never read back from either engine. Rules, in order: a valid JSON object with the answer key; the answer key read tolerantly when the object does not parse (the last readable key wins); the whole reply equal to an option; then, only when the reply was not cut off, an explicit answer marker (the word 'answer' followed by ':' or 'is', Markdown emphasis ignored; the last marker that names an option wins); an option at the very start followed by punctuation; and first mention last. A single-letter option counts in running text only as its capital letter, so the article 'a' is never option A. 'knownLimit' cases are still read wrongly and are kept so that a change to them is deliberate. Read by Server/tests/test_judicial.py and Tests/ExperimentKitTests/JudicialTests.swift.",
+  "cases": [
+    {
+      "name": "article before the stated letter",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "As a doctor, I would choose B.",
+      "expected": "B",
+      "why": "The lower-case article 'a' is never option A, and the capital A of 'As' is inside a word."
+    },
+    {
+      "name": "article before an answer phrase",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "This is a hard case; my answer is B.",
+      "expected": "B",
+      "why": "'my answer is' is an answer marker."
+    },
+    {
+      "name": "article after the stated letter",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "I choose B. It saves a life.",
+      "expected": "B",
+      "why": "First mention: B is the first capital letter that stands alone."
+    },
+    {
+      "name": "bare letter",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "B",
+      "expected": "B",
+      "why": "The whole reply is an option."
+    },
+    {
+      "name": "lower-case letter as the whole reply",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "b",
+      "expected": "B",
+      "why": "A whole-reply match ignores case: nothing else in the reply could be the article."
+    },
+    {
+      "name": "letter and full stop as the whole reply",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "B.",
+      "expected": "B",
+      "why": "A whole-reply match ignores a trailing full stop."
+    },
+    {
+      "name": "letter then a reason",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "B. Because a single death is better than five.",
+      "expected": "B",
+      "why": "An option at the very start, followed by a full stop."
+    },
+    {
+      "name": "lower-case letter then a bracket and a reason",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "b) Because a single death is better than five.",
+      "expected": "B",
+      "why": "At the very start, a letter followed by punctuation is an answer in either case; the article is always followed by a word."
+    },
+    {
+      "name": "bold letter at the start",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "**B** - pulling the lever saves a net four lives.",
+      "expected": "B",
+      "why": "Markdown emphasis around the opening letter is ignored."
+    },
+    {
+      "name": "article earlier in the sentence",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "In a case like this, a doctor should choose B.",
+      "expected": "B",
+      "why": "The lower-case article is never option A."
+    },
+    {
+      "name": "plain final-answer line",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "Final answer: B",
+      "expected": "B",
+      "why": "Answer marker."
+    },
+    {
+      "name": "final-answer label in bold",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "**Final answer:** B",
+      "expected": "B",
+      "why": "Markdown emphasis around the marker is ignored."
+    },
+    {
+      "name": "final-answer label in bold, colon outside",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "**Final answer**: B",
+      "expected": "B",
+      "why": "Markdown emphasis between the marker word and its colon is ignored."
+    },
+    {
+      "name": "final-answer label in italics",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "*Final answer:* B",
+      "expected": "B",
+      "why": "Markdown emphasis around the marker is ignored."
+    },
+    {
+      "name": "final-answer label in underscore italics",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "_Final answer:_ B",
+      "expected": "B",
+      "why": "Underscore emphasis is ignored too."
+    },
+    {
+      "name": "letter in bold after the marker",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "Final answer: **B**",
+      "expected": "B",
+      "why": "Markdown emphasis around the letter is ignored."
+    },
+    {
+      "name": "final answer on its own last line after an argument naming both",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "Option A pulls the lever and saves five; option B refuses to kill anyone. A doctor's first duty is not to harm.\nFinal answer: B",
+      "expected": "B",
+      "why": "The marker outranks first mention, which would read the A named first."
+    },
+    {
+      "name": "answer label",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "Answer: A",
+      "expected": "A",
+      "why": "Answer marker."
+    },
+    {
+      "name": "my answer is",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "My answer is B",
+      "expected": "B",
+      "why": "Answer marker."
+    },
+    {
+      "name": "the last marker wins",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "Answer: A. On reflection, that sacrifices a person as a means.\nFinal answer: B",
+      "expected": "B",
+      "why": "Several markers: the last one that names an option wins."
+    },
+    {
+      "name": "a marker that names no option is passed over",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "The answer is not obvious. I choose B.",
+      "expected": "B",
+      "why": "'The answer is not' names no option, so the next rule reads the reply."
+    },
+    {
+      "name": "article right after a marker",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "The answer is a matter of duty, so I choose B.",
+      "expected": "B",
+      "why": "A lower-case letter after a marker counts only when punctuation or the end of the reply follows it; 'a matter' is the article."
+    },
+    {
+      "name": "lower-case letter ending the reply after a marker",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "Final answer: b",
+      "expected": "B",
+      "why": "A lower-case letter at the end of the reply, after a marker, is the answer."
+    },
+    {
+      "name": "option word after the marker",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "Having weighed both, the answer is option B.",
+      "expected": "B",
+      "why": "The word 'option' between the marker and the letter is skipped."
+    },
+    {
+      "name": "names both letters while deliberating, then concludes",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "A saves five but requires killing one; B lets five die without anyone acting. After weighing both, my answer is B.",
+      "expected": "B",
+      "why": "The concluding marker outranks the letters named while deliberating."
+    },
+    {
+      "name": "a reply that never answers",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "Both choices carry a real moral cost, and I do not think there is a right answer here.",
+      "expected": null,
+      "why": "No option is named; a parse failure is recorded, never a guess."
+    },
+    {
+      "name": "truncated argument",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "Option A saves five lives at the cost of one, while option B lets five die. Weighing a doctor's duty against",
+      "expected": null,
+      "why": "A reply cut off by the token limit never falls back to first mention.",
+      "truncated": true
+    },
+    {
+      "name": "truncated after a final-answer line",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "Option A saves five; option B saves one. Final answer: B, because a",
+      "expected": null,
+      "why": "A truncated reply is read only through a JSON answer, the answer key, or a whole-reply match; markers are not read in it.",
+      "truncated": true
+    },
+    {
+      "name": "truncated whole-reply match still counts",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "B",
+      "expected": "B",
+      "why": "A whole-reply match is a decision even when the limit was reached.",
+      "truncated": true
+    },
+    {
+      "name": "JSON answer",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "{\"answer\": \"B\", \"reasons\": \"Pulling the lever saves a net four lives.\"}",
+      "expected": "B",
+      "why": "A valid JSON object with the answer key."
+    },
+    {
+      "name": "JSON answer in a fence",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "Here is my answer.\n```json\n{\"answer\": \"B\"}\n```",
+      "expected": "B",
+      "why": "A fenced JSON object with the answer key."
+    },
+    {
+      "name": "invalid JSON in a fence: unescaped quotes inside the reasons",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "```json\n{\"reasons\": \"The so-called \"greater good\" argument treats a person as a number.\", \"answer\": \"B\"}\n```",
+      "expected": "B",
+      "why": "The object does not parse, so the answer key is read tolerantly; first mention would have read the article 'a'."
+    },
+    {
+      "name": "invalid JSON: answer key before the reasons",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "{\"answer\": \"B\", \"reasons\": \"The so-called \"greater good\" argument treats a person as a number.\"}",
+      "expected": "B",
+      "why": "The answer key is read tolerantly wherever it sits."
+    },
+    {
+      "name": "invalid JSON: an odd number of inner quotes",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "{\"answer\": \"B\", \"reasons\": \"The 5\" figure hides a person behind a number.\"}",
+      "expected": "B",
+      "why": "An odd quote count makes the object look unclosed; the complete answer key is still read."
+    },
+    {
+      "name": "invalid JSON: raw newlines and a tab inside the reasons",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "{\"reasons\": \"Pulling the lever kills a person.\nDoing nothing lets five die.\tIt is a hard case.\", \"answer\": \"B\"}",
+      "expected": "B",
+      "why": "Raw control characters make the object invalid; the answer key is read tolerantly."
+    },
+    {
+      "name": "invalid JSON: answer key after the reasons",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "{\"reasons\": \"A doctor must not sacrifice a \"healthy\" patient.\", \"answer\": \"B\"}",
+      "expected": "B",
+      "why": "The answer key is found wherever it sits in the object."
+    },
+    {
+      "name": "invalid JSON: the last answer key wins",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "```json\n{\"answer\": \"A\", \"reasons\": \"a \"first\" try\"}\n```\nCorrection:\n```json\n{\"answer\": \"B\", \"reasons\": \"a \"second\" try\"}\n```",
+      "expected": "B",
+      "why": "Several readable answer keys: the last one that names an option wins."
+    },
+    {
+      "name": "invalid JSON: answer key that names no option",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "{\"answer\": \"maybe\", \"reasons\": \"it is a \"hard\" case\"}",
+      "expected": null,
+      "why": "The key names no option and nothing else in the reply does either."
+    },
+    {
+      "name": "invalid JSON with a declared key",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "{\"choice\": \"B\", \"why\": \"a \"lesser\" harm\"}",
+      "expected": "B",
+      "why": "The study's declared key is read, not only 'answer'.",
+      "jsonKey": "choice"
+    },
+    {
+      "name": "truncated object cut before the answer key, flagged",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "```json\n{\"reasons\": \"Pulling the lever is a choice to kill a person, and",
+      "expected": null,
+      "why": "Cut off before any answer: a failure, never the article 'a'.",
+      "truncated": true
+    },
+    {
+      "name": "truncated object cut before the answer key, unflagged",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "```json\n{\"reasons\": \"Pulling the lever is a choice to kill a person, and",
+      "expected": null,
+      "why": "An object opened and never closed reads as truncated from the text alone."
+    },
+    {
+      "name": "truncated object after a complete answer key",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "{\"answer\": \"B\", \"reasons\": \"Pulling the lever is a choice to kill a",
+      "expected": "B",
+      "why": "The complete answer key and value were written before the cut.",
+      "truncated": true
+    },
+    {
+      "name": "lower-case options: capital letter in prose",
+      "options": [
+        "a",
+        "b"
+      ],
+      "text": "I choose B.",
+      "expected": "b",
+      "why": "A single-letter option is found in running text as its capital letter, and the declared option is returned."
+    },
+    {
+      "name": "lower-case options: lower-case letter after a marker",
+      "options": [
+        "a",
+        "b"
+      ],
+      "text": "Final answer: a",
+      "expected": "a",
+      "why": "After a marker, a lower-case letter at the end of the reply counts."
+    },
+    {
+      "name": "digit options after a marker",
+      "options": [
+        "1",
+        "2"
+      ],
+      "text": "Option 1 saves five; option 2 saves one.\nFinal answer: 2",
+      "expected": "2",
+      "why": "Digits are matched exactly."
+    },
+    {
+      "name": "multi-word: whole reply",
+      "options": [
+        "rule for the plaintiff",
+        "rule for the defendant"
+      ],
+      "text": "Rule for the plaintiff.",
+      "expected": "rule for the plaintiff",
+      "why": "Whole-reply match, any case. Unchanged."
+    },
+    {
+      "name": "multi-word: JSON answer",
+      "options": [
+        "rule for the plaintiff",
+        "rule for the defendant"
+      ],
+      "text": "{\"answer\": \"rule for the defendant\"}",
+      "expected": "rule for the defendant",
+      "why": "JSON answer. Unchanged."
+    },
+    {
+      "name": "multi-word: first mention in prose",
+      "options": [
+        "rule for the plaintiff",
+        "rule for the defendant"
+      ],
+      "text": "I would rule for the defendant, although rule for the plaintiff was argued.",
+      "expected": "rule for the defendant",
+      "why": "First mention, matched ignoring case. Unchanged."
+    },
+    {
+      "name": "multi-word: first mention in capitals",
+      "options": [
+        "rule for the plaintiff",
+        "rule for the defendant"
+      ],
+      "text": "Having weighed it, RULE FOR THE PLAINTIFF is my ruling.",
+      "expected": "rule for the plaintiff",
+      "why": "First mention ignores case. Unchanged."
+    },
+    {
+      "name": "multi-word: article in the reply",
+      "options": [
+        "rule for the plaintiff",
+        "rule for the defendant"
+      ],
+      "text": "This is a close case, but I would rule for the plaintiff.",
+      "expected": "rule for the plaintiff",
+      "why": "Articles never matter to multi-word options. Unchanged."
+    },
+    {
+      "name": "multi-word: option at the start",
+      "options": [
+        "rule for the plaintiff",
+        "rule for the defendant"
+      ],
+      "text": "Rule for the defendant: the contract was void.",
+      "expected": "rule for the defendant",
+      "why": "Start of the reply. Unchanged."
+    },
+    {
+      "name": "multi-word: truncated deliberation",
+      "options": [
+        "rule for the plaintiff",
+        "rule for the defendant"
+      ],
+      "text": "Rule for the plaintiff would honor the contract, while rule for the defendant would",
+      "expected": null,
+      "why": "Truncated: no first mention. Unchanged.",
+      "truncated": true
+    },
+    {
+      "name": "multi-word: a marker outranks first mention",
+      "options": [
+        "rule for the plaintiff",
+        "rule for the defendant"
+      ],
+      "text": "Counsel urged us to rule for the plaintiff. Final answer: rule for the defendant",
+      "expected": "rule for the defendant",
+      "why": "Changed: before this rule, first mention read the plaintiff option that counsel urged."
+    },
+    {
+      "name": "known limit: a capitalised article opens the reply",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "A hard case, but I choose B.",
+      "expected": "A",
+      "why": "A capital 'A' that opens a sentence cannot be told from option A without understanding the sentence. Ask for 'Final answer:' or JSON.",
+      "knownLimit": true
+    },
+    {
+      "name": "known limit: the options restated as a list first",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "A) Pull the lever. B) Do nothing. I would do nothing: B.",
+      "expected": "A",
+      "why": "A reply that restates the options before answering, with no marker, is read as the first option. Ask for 'Final answer:' or JSON.",
+      "knownLimit": true
+    },
+    {
+      "name": "known limit: deliberates and concludes without a marker",
+      "options": [
+        "A",
+        "B"
+      ],
+      "text": "A saves five but requires killing one; B lets five die. I would not kill, so B.",
+      "expected": "A",
+      "why": "Without a marker, first mention reads the first letter named. Ask for 'Final answer:' or JSON.",
+      "knownLimit": true
+    }
+  ]
+}

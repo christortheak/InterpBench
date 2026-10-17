@@ -420,6 +420,11 @@ def test_every_committed_fixture_has_a_staleness_test():
         "policy-evidence.json",  # test_instrumentation_evidence: real forward, timing normalized
         "manifest-interop.json", "run-bundle-metadata.json",
         "swift-authored-manifest.json",
+        # Hand-authored contract (2026-10-17): the intended reading of each
+        # free-text reply by the categorical choice parser, written by hand,
+        # never regenerated. Checked inline in test_judicial.py and
+        # JudicialTests.swift.
+        "choice-parsing.json",
     }
     present = {f for f in os.listdir(FIXTURES) if f.endswith(".json")}
     assert present <= covered, (
