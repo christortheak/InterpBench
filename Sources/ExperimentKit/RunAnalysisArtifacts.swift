@@ -40,10 +40,14 @@ extension RunResults {
         /// the row records it. Every row does since 2026-10-12; pooled rows
         /// written earlier left it empty, so this is nil for them.
         public var recordedUnit: String? = nil
+        /// What defines the row's subgroup (`stratifyBy`), when it is one;
+        /// nil or "pooled" for a row over all items. The table reader keeps
+        /// pooled rows only; a run's own report lists its subgroup rows too.
+        public var stratifyBy: String? = nil
         /// What one paired difference of this row is, settled from the row,
-        /// its analysis's stamp, and the run's records
-        /// (`RunResults.resolveUnits`). A row nothing has settled claims no
-        /// unit: an item is never assumed.
+        /// its analysis's stamp, the engine its config.json names, and the
+        /// run's records (`RunResults.resolveUnits`). A row nothing has
+        /// settled claims no unit: an item is never assumed.
         public var unit: EffectUnit = .unresolved
 
         public var id: String { "\(condition)\u{1F}\(metric)" }
@@ -132,7 +136,8 @@ extension RunResults {
             adjustedP: (entry["adjustedP"] as? NSNumber)?.doubleValue,
             correction: entry["correction"] as? String,
             modality: nil,
-            recordedUnit: (entry["unit"] as? String).flatMap { $0.isEmpty ? nil : $0 })
+            recordedUnit: (entry["unit"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+            stratifyBy: (entry["stratifyBy"] as? String).flatMap { $0.isEmpty ? nil : $0 })
     }
 
     // MARK: - alien-residuals.csv (server analyze)

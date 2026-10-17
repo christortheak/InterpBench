@@ -1,22 +1,24 @@
 import Foundation
 
 /// What one paired difference of a stored effect row is, settled from the
-/// row, the analysis's stamp, and the run's records, so the app never assumes
-/// it.
+/// row, the analysis's stamp, the engine its config.json names, and the run's
+/// records, so the app never assumes it.
 ///
 /// Before SteerLab 0.9.7 the Mac engine paired every response of a
 /// multi-sample run with the baseline response to the same item and seed,
 /// counted responses in `n`, and stamped no unit. Since 0.9.7 it averages an
-/// item's samples within each condition, and still stamps no unit on pooled
-/// rows, so an old response-level row and a new item-level row look the same
-/// in the file. The run's records tell them apart: an item-level row counts
-/// at most the items the records pair with the baseline.
+/// item's samples within each condition, as the Python engine always has;
+/// both stamp the unit since 0.9.8. A row counting fewer pairs than the run's
+/// items does not show it counts items: declared exclusions, missing values,
+/// or a subgroup leave five responses of one item looking like five items.
 ///
 /// This is the twin of the Python reader's rule (`results_export.
-/// _paired_items` and `resolve_units`, which the export, its methods summary,
-/// and the results page use). A recorded unit is used; otherwise a row
-/// counting no more pairs than the paired items is item-level, a row counting
-/// more is response-level, and a condition with no paired items is unknown.
+/// resolve_units`, which the export, its methods summary, and the results
+/// page use). The first that applies settles a row: a recorded unit; item
+/// when the records hold one response or readout per item under the row's
+/// condition and the baseline (the units coincide); for a pooled row, how the
+/// engine named by config.json paired (`enginePairing`); response when the
+/// row counts more pairs than the paired items; otherwise unknown.
 /// `Tests/Fixtures/cross-engine/effect-units.json` holds the Python reader's
 /// answers, and `EffectUnitTests` holds this copy to them. Nothing stored is
 /// changed.
@@ -28,13 +30,18 @@ extension RunResults {
         public enum Source: String, Sendable, Equatable {
             /// The row or its analysis stamped it.
             case recorded
-            /// Not stamped; the engines' rule, the item, and the run's
-            /// records are consistent with it.
-            case engineDefault = "engine_default"
+            /// Not stamped; the records hold one response or readout per
+            /// item under the row's condition and the baseline, so an item
+            /// and a response are the same thing.
+            case oneSamplePerItem = "one_sample_per_item"
+            /// Not stamped; the engine the analysis's config.json names
+            /// paired these rows in a known way.
+            case analysisEngine = "analysis_engine"
             /// Not stamped; the row counts more pairs than the run has paired
             /// items, so it paired responses.
             case inferredFromRecords = "inferred_from_records"
-            /// Not stamped, and the records cannot settle it.
+            /// Not stamped, and nothing settles whether its pairs count items
+            /// or responses.
             case notEstablished = "not_established"
         }
 
@@ -71,11 +78,80 @@ extension RunResults {
         /// file was (a remote preview), each count is a lower bound: more
         /// records can only pair more items.
         public var complete: Bool
+        /// Per condition, the most responses and the most readouts any one
+        /// item has (the Python reader's `samples_per_item`). Lower bounds,
+        /// like `counts`, when the records were not all read.
+        public var samplesPerItem: [String: SamplesPerItem]
 
-        public init(counts: [String: Int], complete: Bool) {
+        public init(
+            counts: [String: Int], complete: Bool,
+            samplesPerItem: [String: SamplesPerItem] = [:]
+        ) {
             self.counts = counts
             self.complete = complete
+            self.samplesPerItem = samplesPerItem
         }
+    }
+
+    /// The most generated responses, and the most instrument readouts, that
+    /// any one item has under one condition.
+    public struct SamplesPerItem: Sendable, Equatable {
+        public var responses: Int
+        public var readouts: Int
+
+        public init(responses: Int, readouts: Int) {
+            self.responses = responses
+            self.readouts = readouts
+        }
+    }
+
+    /// How the engine that made an effect table paired its pooled rows, as
+    /// the directory's config.json names that engine (the Python reader's
+    /// `engine_pairing`).
+    public enum EnginePairing: String, Sendable, Equatable {
+        /// An item's samples averaged within each condition: the Python
+        /// engine always, the Mac engine since SteerLab 0.9.7.
+        case items
+        /// Every response paired with the baseline response to the same item
+        /// and seed: the Mac engine before 0.9.7, on a run with several
+        /// responses per item.
+        case responses
+    }
+
+    /// The first Mac engine release that averages an item's samples.
+    public static let macItemPairingVersion = (0, 9, 7)
+
+    /// The one outcome the Mac engine before 0.9.7 read from instrument
+    /// readouts, one per item and condition, and so paired by item even then.
+    static let macReadoutOutcomes: Set<String> = ["ordinalPosition"]
+
+    /// `enginePairing` from a directory's config.json bytes.
+    public static func enginePairing(configData: Data?) -> EnginePairing? {
+        guard
+            let data = configData,
+            let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return nil }
+        return enginePairing(
+            substrate: object["substrate"] as? String, appVersion: object["appVersion"] as? String)
+    }
+
+    /// How the engine named by config.json's `substrate` and `appVersion`
+    /// paired, or nil when they do not establish it: a missing or unreadable
+    /// stamp, another engine, or a pre-release of 0.9.7 itself (either side
+    /// of the change). The Python engine has always paired items; the Mac
+    /// engine's "swift-app 0.9.6+1a2b3c4d" says which side of 0.9.7 it is.
+    public static func enginePairing(substrate: String?, appVersion: String?) -> EnginePairing? {
+        if substrate == "python-hf-transformers" { return .items }
+        guard substrate == "swift-mlx", let appVersion else { return nil }
+        let pattern = /swift-app (\d+)\.(\d+)\.(\d+)(-[^+\s]+)?(\+\S*)?/
+        guard
+            let match = appVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+                .wholeMatch(of: pattern),
+            let major = Int(match.1), let minor = Int(match.2), let patch = Int(match.3)
+        else { return nil }
+        let version = (major, minor, patch)
+        if match.4 != nil, version == macItemPairingVersion { return nil }
+        return version >= macItemPairingVersion ? .items : .responses
     }
 
     /// Counts the paired items of a run's generations, one line at a time.
@@ -84,9 +160,12 @@ extension RunResults {
     /// (an `output`) or an instrument readout (an `instrument`), since a
     /// deterministic choice study records readouts alone. Its condition and
     /// item are the record's `condition` and `promptID`, with a missing one
-    /// read as empty.
+    /// read as empty. A record carrying an `instrument` is a readout, as the
+    /// Python reader sorts it; otherwise it is a response.
     public struct PairedItemCounter: Sendable {
         private var items: [String: Set<String>] = [:]
+        /// condition → item → (responses, readouts).
+        private var perItem: [String: [String: (responses: Int, readouts: Int)]] = [:]
 
         public init() {}
 
@@ -107,8 +186,11 @@ extension RunResults {
                 record["error"] == nil,
                 record["instrument"] != nil || record["output"] != nil
             else { return }
-            items[Self.text(record["condition"]), default: []]
-                .insert(Self.text(record["promptID"]))
+            let condition = Self.text(record["condition"]), item = Self.text(record["promptID"])
+            items[condition, default: []].insert(item)
+            var tally = perItem[condition, default: [:]][item, default: (0, 0)]
+            if record["instrument"] != nil { tally.readouts += 1 } else { tally.responses += 1 }
+            perItem[condition, default: [:]][item] = tally
         }
 
         /// `text` with each NaN, Infinity and -Infinity outside a string read
@@ -144,6 +226,21 @@ extension RunResults {
             return counts
         }
 
+        /// Per condition (the baseline too), the most responses and readouts
+        /// any one item has.
+        public var samplesPerItem: [String: SamplesPerItem] {
+            perItem.mapValues { byItem in
+                SamplesPerItem(
+                    responses: byItem.values.map(\.responses).max() ?? 0,
+                    readouts: byItem.values.map(\.readouts).max() ?? 0)
+            }
+        }
+
+        /// Everything counted, as the unit rule reads it.
+        public func records(complete: Bool) -> PairedItems {
+            PairedItems(counts: counts, complete: complete, samplesPerItem: samplesPerItem)
+        }
+
         /// A record value as the Python reader keys it (`str(value)`): only
         /// distinctness matters, so a number keeps its JSON spelling.
         private static func text(_ value: Any?) -> String {
@@ -164,17 +261,30 @@ extension RunResults {
 
     /// The paired items of a generations text held in memory.
     public static func pairedItems(fromJSONL text: String) -> [String: Int] {
+        pairedRecords(fromJSONL: text, complete: true).counts
+    }
+
+    /// Everything the unit rule reads from a generations text held in
+    /// memory: the paired items and the samples per item. `complete` says
+    /// whether the text is the whole file.
+    public static func pairedRecords(fromJSONL text: String, complete: Bool) -> PairedItems {
         var counter = PairedItemCounter()
         for line in text.utf8.split(separator: 0x0A, omittingEmptySubsequences: true) {
             counter.add(line: line)
         }
-        return counter.counts
+        return counter.records(complete: complete)
     }
 
     /// The paired items of a generations file, read whole in bounded chunks
     /// (a long-text run's file can be far larger than the app's preview
     /// read). nil when the file cannot be read.
     public static func pairedItems(generationsAt url: URL) -> [String: Int]? {
+        pairedRecords(generationsAt: url)?.counts
+    }
+
+    /// `pairedRecords(fromJSONL:complete:)` over a whole file, read in
+    /// bounded chunks. nil when the file cannot be read.
+    public static func pairedRecords(generationsAt url: URL) -> PairedItems? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         var counter = PairedItemCounter()
@@ -196,54 +306,89 @@ extension RunResults {
             pending = Data(pending[start...])
         }
         counter.add(line: pending)
-        return counter.counts
+        return counter.records(complete: true)
     }
 
     /// The unit of one row. `n` is the row's stored count, 0 when the file
     /// gave none; `pairedItems` is nil when no records could be read.
-    ///
-    /// With every record read this is exactly the Python reader's rule. With
-    /// only the head of the records (`complete` false) a count is a lower
-    /// bound, so a row within it is still item-level — the rest of the file
-    /// can only pair more items — but a row beyond it cannot be settled
-    /// here and is not established.
     public static func effectUnit(
         condition: String, n: Int, recordedUnit: String?, stampedUnit: String?,
+        stratifyBy: String? = nil, metric: String = "", pairing: EnginePairing? = nil,
         pairedItems: PairedItems?
     ) -> EffectUnit {
         effectUnit(condition: condition, storedN: Double(n), recordedUnit: recordedUnit,
-                   stampedUnit: stampedUnit, pairedItems: pairedItems)
+                   stampedUnit: stampedUnit, stratifyBy: stratifyBy, metric: metric,
+                   pairing: pairing, pairedItems: pairedItems)
     }
 
     /// `effectUnit` over the pair count as the file stored it, compared with
     /// the paired items as the Python reader compares it (8.5 pairs of 8
-    /// items are more pairs than items).
+    /// items are more pairs than items). The first that applies:
+    ///
+    /// 1. a unit the row or its analysis recorded;
+    /// 2. item, when the records hold at most one response and one readout
+    ///    per item under the row's condition and the baseline, and the row
+    ///    counts no more pairs than the paired items (the units coincide);
+    /// 3. for a pooled row, how the engine named by config.json paired
+    ///    (`pairing`): items → item; the Mac engine before 0.9.7 → item for
+    ///    its ordinal readouts, response when the records hold several
+    ///    responses per item under both the row's condition and the baseline;
+    /// 4. response, when the row counts more pairs than the paired items;
+    /// 5. otherwise unknown: fewer pairs than items settles nothing.
+    ///
+    /// With every record read this is exactly the Python reader's rule. With
+    /// only the head of the records (`complete` false) the counts are lower
+    /// bounds, so rules 2 and 4, which need the whole file, do not apply;
+    /// several responses seen in the head are several responses in the file.
     public static func effectUnit(
         condition: String, storedN n: Double, recordedUnit: String?, stampedUnit: String?,
+        stratifyBy: String? = nil, metric: String = "", pairing: EnginePairing? = nil,
         pairedItems: PairedItems?
     ) -> EffectUnit {
         let items = pairedItems?.counts[condition]
         if let unit = recordedUnit ?? stampedUnit {
             return EffectUnit(unit: unit, source: .recorded, pairedItems: items)
         }
-        guard let items, items > 0, let pairedItems else {
-            return EffectUnit(unit: "unknown", source: .notEstablished, pairedItems: items)
+        let samples = pairedItems?.samplesPerItem ?? [:]
+        let here = samples[condition], baseline = samples["baseline"]
+        let complete = pairedItems?.complete == true
+        if complete, let items, items > 0, n <= Double(items), !samples.isEmpty,
+            [here, baseline].allSatisfy({ ($0?.responses ?? 0) <= 1 && ($0?.readouts ?? 0) <= 1 })
+        {
+            return EffectUnit(unit: "item", source: .oneSamplePerItem, pairedItems: items)
         }
-        if n <= Double(items) {
-            return EffectUnit(unit: "item", source: .engineDefault, pairedItems: items)
+        if stratifyBy == nil || stratifyBy == "" || stratifyBy == "pooled" {
+            switch pairing {
+            case .items:
+                return EffectUnit(unit: "item", source: .analysisEngine, pairedItems: items)
+            case .responses:
+                if macReadoutOutcomes.contains(metric) {
+                    return EffectUnit(unit: "item", source: .analysisEngine, pairedItems: items)
+                }
+                if let items, items > 0, (here?.responses ?? 0) > 1, (baseline?.responses ?? 0) > 1 {
+                    // From part of the records the paired items are a lower
+                    // bound, not the most the responses can come from, so
+                    // the row names none.
+                    return EffectUnit(
+                        unit: "response", source: .analysisEngine, pairedItems: complete ? items : nil)
+                }
+            case nil:
+                break
+            }
         }
-        guard pairedItems.complete else {
-            return EffectUnit(unit: "unknown", source: .notEstablished, pairedItems: items)
+        if complete, let items, items > 0, n > Double(items) {
+            return EffectUnit(unit: "response", source: .inferredFromRecords, pairedItems: items)
         }
-        return EffectUnit(unit: "response", source: .inferredFromRecords, pairedItems: items)
+        return EffectUnit(unit: "unknown", source: .notEstablished, pairedItems: items)
     }
 
     /// Settle every row's unit, once, for every view: the sentences, the
     /// table, and the chart. `records` is asked for only when some row's
     /// unit is not already stamped, so a stamped analysis never reads its
-    /// run's records.
+    /// run's records. `pairing` is how the engine named by the effect
+    /// table's config.json paired (`enginePairing`).
     public static func resolveUnits(
-        _ rows: [EffectSizeRow], stampedUnit: String?,
+        _ rows: [EffectSizeRow], stampedUnit: String?, pairing: EnginePairing? = nil,
         records: () -> PairedItems?
     ) -> (rows: [EffectSizeRow], pairedItems: PairedItems?) {
         let needed = stampedUnit == nil && rows.contains { $0.recordedUnit == nil }
@@ -252,7 +397,8 @@ extension RunResults {
             var row = row
             row.unit = effectUnit(
                 condition: row.condition, storedN: row.storedN ?? Double(row.n), recordedUnit: row.recordedUnit,
-                stampedUnit: stampedUnit, pairedItems: pairedItems)
+                stampedUnit: stampedUnit, stratifyBy: row.stratifyBy, metric: row.metric,
+                pairing: pairing, pairedItems: pairedItems)
             return row
         }
         return (settled, pairedItems)
@@ -280,14 +426,14 @@ extension RunResults {
         let own = runDirectory.appending(component: "generations.jsonl")
         if FileManager.default.fileExists(atPath: own.path) {
             if let text = artifacts.generationsText, !artifacts.generationsTruncated {
-                return PairedItems(counts: pairedItems(fromJSONL: text), complete: true)
+                return pairedRecords(fromJSONL: text, complete: true)
             }
-            return cachedPairedItems(generationsAt: own).map { PairedItems(counts: $0, complete: true) }
+            return cachedPairedRecords(generationsAt: own)
         }
         guard let source = analyzedRunName(runDirectory) else { return nil }
         let generations = runDirectory.standardizedFileURL.deletingLastPathComponent()
             .appending(components: source, "generations.jsonl")
-        return cachedPairedItems(generationsAt: generations).map { PairedItems(counts: $0, complete: true) }
+        return cachedPairedRecords(generationsAt: generations)
     }
 
     /// Counts already made, by the file's path, size and modification time:
@@ -297,25 +443,29 @@ extension RunResults {
 
     private final class CountCache: @unchecked Sendable {
         private let lock = NSLock()
-        private var entries: [String: [String: Int]] = [:]
-        func value(_ key: String) -> [String: Int]? { lock.withLock { entries[key] } }
-        func store(_ key: String, _ counts: [String: Int]) {
+        private var entries: [String: PairedItems] = [:]
+        func value(_ key: String) -> PairedItems? { lock.withLock { entries[key] } }
+        func store(_ key: String, _ records: PairedItems) {
             lock.withLock {
                 if entries.count >= 64 { entries.removeAll() }
-                entries[key] = counts
+                entries[key] = records
             }
         }
     }
 
     static func cachedPairedItems(generationsAt url: URL) -> [String: Int]? {
+        cachedPairedRecords(generationsAt: url)?.counts
+    }
+
+    static func cachedPairedRecords(generationsAt url: URL) -> PairedItems? {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.resolvingSymlinksInPath().path),
               let size = attributes[.size] as? NSNumber, let modified = attributes[.modificationDate] as? Date
-        else { return pairedItems(generationsAt: url) }
+        else { return pairedRecords(generationsAt: url) }
         let key = "\(url.standardizedFileURL.path)\u{1F}\(size)\u{1F}\(modified.timeIntervalSince1970)"
-        if let counts = countCache.value(key) { return counts }
-        guard let counts = pairedItems(generationsAt: url) else { return nil }
-        countCache.store(key, counts)
-        return counts
+        if let records = countCache.value(key) { return records }
+        guard let records = pairedRecords(generationsAt: url) else { return nil }
+        countCache.store(key, records)
+        return records
     }
 
     /// The directory name of the run an analysis directory analyzed: the

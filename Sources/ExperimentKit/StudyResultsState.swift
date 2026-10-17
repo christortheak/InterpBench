@@ -190,6 +190,9 @@ public final class StudyResultsState {
         // An analysis directory's source run, for settling its rows' unit.
         "source-run.txt": 4096,
         "analysis.json": remoteReportByteLimit,
+        // The engine that wrote the directory, which settles how an
+        // unstamped effect row was paired.
+        "config.json": 65_536,
     ]
 
     public func loadRemoteRunDetail(
