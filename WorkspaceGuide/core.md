@@ -1,7 +1,7 @@
 # AGENTS.md
 <!-- Source of the core workspace guide. scripts/ci/check-workspace-bootstrap.py generates both clients' copies from this directory. Keep this file client-neutral and within its size budget; depth belongs in topics/. Raise "Guide version" whenever this text changes, so a refresh only ever upgrades. -->
 
-Guide version: 5
+Guide version: 6
 
 You are a coding assistant working inside a **SteerLab data workspace**. This
 file is the core contract: read it before running anything. It is short on
@@ -139,8 +139,12 @@ experiments/      experiment manifests — freezable recipes
 runs/             immutable run outputs (gitignored)
 catalog/          GENERATED navigation over runs/ (symlinks; gitignored)
 adapters/         per-adapter training data and outputs
+exports/          files written by `results export` (derived; gitignored)
+.steerlab/        this machine's working state (gitignored, except workspace.json)
 WORKSPACE.md      the marker file that makes this a workspace
-.gitignore        runs/, catalog/, adapters/**/*.safetensors, .DS_Store
+.gitignore        runs/, catalog/, exports/, adapters/**/*.safetensors,
+                  .steerlab/* except workspace.json, .steerlab-local-server.pid,
+                  .DS_Store
 ```
 
 An experiment is a **recipe**, not results: it pins inputs by SHA-256 plus the
@@ -236,6 +240,10 @@ topic.
   carry an intervention policy's custom code; show them the notice and the
   code (`experiment acknowledge-custom-code <study>`) and let them decide.
 - **Do not treat an advisory as a failure**, and do not ignore one.
+- **Do not leave a lettered choice to be guessed from prose.** For items
+  with letter options and free-text replies, ask the model to end with
+  "Final answer: A" (or to answer in JSON), so the choice is read from that
+  line rather than from a mention.
 - **Do not skip `validation.jsonl`.** A study whose vectors were never probed
   on held-out material measures its own stimulus vocabulary.
 - **Do not select a steering cell on marker density** for any study whose
@@ -245,6 +253,10 @@ topic.
   ones the loaders parse; a wrong key is refused with the expected key named.
 - **Do not guess a verb**, and do not type one client's command under the
   other's name. Ask `--help`.
+- **Do not download or replace SteerLab.app yourself.** Updating is the
+  researcher's click on Install Update in the app. After an update,
+  refreshing the local engine and pushing a cluster site's engine are
+  separate steps; ask before either.
 - **Do not put a secret in a file.** Tokens and passwords never go in this
   workspace, in a command's arguments, or in anything you write.
 

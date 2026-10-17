@@ -148,8 +148,23 @@ func requireWorkspace(for family: String) {
     exit(SteerLabCLIState.refused.exitCode)
 }
 
+/// `serve --help`: the page, and nothing started. Help comes before every
+/// side effect, as on the engine's hand-parsed families; without this the
+/// flag was ignored and a server started on port 8080.
+let serveUsage = """
+    steerlab-cli serve [--port <n>]
+
+    Starts the browser companion for the resolved workspace: the same engine
+    as the app, served at http://localhost:<n> (default 8080). It listens on
+    this Mac's loopback interface only. Ctrl-C stops it.
+    """
+
 // Web front end for remote/cluster use: same engine, browser client.
 if arguments.count >= 2, arguments[1] == "serve" {
+    if arguments.dropFirst(2).contains(where: { $0 == "--help" || $0 == "-h" }) {
+        FileHandle.standardOutput.write(Data((serveUsage + "\n").utf8))
+        exit(0)
+    }
     requireWorkspace(for: "serve")
     let port: UInt16 =
         if let flagIndex = arguments.firstIndex(of: "--port"),
