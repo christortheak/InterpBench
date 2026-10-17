@@ -2633,11 +2633,17 @@ public struct ClusterClient: Sendable {
     /// evaluation by judging just the cells it never decided, reusing the
     /// verdicts it already produced. The server verifies every pin of the
     /// partial run before reusing a single row.
+    /// `rereadChoices` (analyze only): every stored choice is read again with
+    /// the server's current choice parser for this analysis only, stamped in
+    /// `choice-reread.json`; the run is never changed. Sent only when true,
+    /// so an older server sees exactly the body it always did.
     public func submitExperimentJobDetailed(
-        experiment name: String, verb: String, resumeFrom: String? = nil
+        experiment name: String, verb: String, resumeFrom: String? = nil,
+        rereadChoices: Bool = false
     ) async throws -> RemoteExperimentJobSubmission {
         struct Body: Encodable {
             var resumeFrom: String?
+            var rereadChoices: Bool?
         }
         // Names are slugified at creation on both engines, but path-encode
         // anyway: a URL must never depend on that invariant holding forever.
@@ -2645,7 +2651,7 @@ public struct ClusterClient: Sendable {
         let safeVerb = verb.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? verb
         return try await post(
             "/api/experiment/\(safeName)/\(safeVerb)",
-            body: Body(resumeFrom: resumeFrom))
+            body: Body(resumeFrom: resumeFrom, rereadChoices: rereadChoices ? true : nil))
     }
 
     /// Names of the experiments present in the SERVER's workspace tree — the

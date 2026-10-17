@@ -390,6 +390,38 @@ struct ChoiceRereadTests {
         }
     }
 
+    // MARK: - The app
+
+    /// The app's results read the stamp as stored, locally and from a remote
+    /// listing, and say the engines' sentence; an ordinary analysis shows none.
+    @Test func theAppsResultsShowTheStampAsStored() throws {
+        let value = try fixture()
+        let space = try workspace()
+        defer { try? FileManager.default.removeItem(at: space.root) }
+        let out = try analyze(space, reread: true)
+        let stamp = try #require(RunResults.load(runDirectory: out).choiceReread)
+        #expect(ChoiceReread.sentence(stamp) == value.expected.sentence)
+        #expect(RunResults.ArtifactBytes.fileNames.contains(ChoiceReread.stampFile))
+        var artifacts = RunResults.ArtifactBytes()
+        artifacts.assign(
+            name: ChoiceReread.stampFile,
+            data: try Data(contentsOf: out.appending(component: ChoiceReread.stampFile)))
+        #expect(RunResults.remoteModel(runID: "remote", artifacts: artifacts).choiceReread == stamp)
+        let ordinary = try analyze(space, reread: false)
+        #expect(RunResults.load(runDirectory: ordinary).choiceReread == nil)
+    }
+
+    @Test func theAppSaysWhatTheControlDoesAndWhenItWouldMatter() {
+        #expect(ChoiceReread.appToggleTitle == "Re-read choices with the current parser")
+        #expect(ChoiceReread.appToggleHelp.contains("The run itself is never changed."))
+        #expect(
+            ChoiceReread.appAdvice(changed: 5, storedChoices: 12)
+                == "5 of 12 stored choices would be read differently by the current "
+                + "choice parser; this analysis used the choices as the run stored "
+                + "them. To use the current reading, turn on \"Re-read choices with "
+                + "the current parser\" and analyze again.")
+    }
+
     @Test func theFlagsAreDeclared() throws {
         let analyze = try #require(
             ExperimentCLIParser.specs.first { $0.namespace == "experiment" && $0.verb == "analyze" })

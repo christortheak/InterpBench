@@ -1460,10 +1460,12 @@ def build_router(state: ServiceState) -> APIRouter:
                     resume_from=resume_from)
             elif verb == "analyze":
                 # Pure-CPU statistics/reporting pass — no model acquisition.
+                # Threaded only when asked for, so an ordinary analysis
+                # keeps the call it always made.
                 run_dir = tasks.analyze(
                     name, log=job.log,
                     allow_unverified_epoch=allow_unverified_epoch,
-                    reread_choices=reread_choices)
+                    **({"reread_choices": True} if reread_choices else {}))
                 if not reread_choices:
                     # The same discoverability count the CLI advisory reads,
                     # said in the job log the app shows. Never blocks.

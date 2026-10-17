@@ -463,6 +463,31 @@ public enum ChoiceReread {
             + "is never changed."
     }
 
+    // MARK: - The app's words
+
+    /// The control beside every Analyze button.
+    public static let appToggleTitle = "Re-read choices with the current parser"
+
+    /// Its one-line explanation.
+    public static let appToggleHelp =
+        "Reads every stored choice again from the saved replies, for this analysis "
+        + "only, and says how many changed. The run itself is never changed."
+
+    /// Under the sentence in a re-read analysis's results.
+    public static let appSectionNote =
+        "The effects below use the re-read choices. choice-reread.json in this "
+        + "analysis counts the changes for each condition and lists a few of the "
+        + "records that changed."
+
+    /// Appended to the finished message of an ordinary analysis when the
+    /// current parser would read some stored choices differently.
+    public static func appAdvice(changed: Int, storedChoices: Int) -> String {
+        "\(changed) of \(plural(storedChoices, "stored choice")) would be read "
+            + "differently by the current choice parser; this analysis used the "
+            + "choices as the run stored them. To use the current reading, turn on "
+            + "\"\(appToggleTitle)\" and analyze again."
+    }
+
     /// The stamp an analysis directory holds, or nil when it re-read nothing.
     /// For readers that show it (the app's results): they read the stored
     /// stamp and recompute nothing.

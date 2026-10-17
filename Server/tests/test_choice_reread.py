@@ -389,3 +389,56 @@ def test_an_ordinary_analysis_export_says_nothing_about_a_reread(tmp_path):
     for name in ("methods.md", "codebook.md", "report.html"):
         text = open(os.path.join(result["exportDirectory"], name), encoding="utf-8").read()
         assert "re-read" not in text, name
+
+
+# --- the HTTP route the app's server Analyze uses --------------------------------
+
+
+def _wait_for_job(client, job_id, timeout=30.0):
+    import time
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        job = next((j for j in client.get("/api/jobs").json()["jobs"] if j["id"] == job_id), None)
+        if job and job["status"] in {"succeeded", "failed", "cancelled"}:
+            return job
+        time.sleep(0.02)
+    raise AssertionError(f"job {job_id} never finished")
+
+
+def test_the_route_rereads_on_request_and_notes_the_count_otherwise(tmp_path, monkeypatch):
+    """rereadChoices reaches the real analysis through the app's route, and
+    an ordinary analysis there logs the same advisory the CLI gives."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+    from steerlab_server.api.app import app
+    root, _run_dir = _workspace(tmp_path)
+    monkeypatch.setenv("STEERLAB_ROOT", root)
+    client = TestClient(app)
+
+    job = _wait_for_job(client, client.post(f"/api/experiment/{STUDY}/analyze",
+                                            json={"rereadChoices": True}).json()["jobId"])
+    assert job["status"] == "succeeded", job
+    reread_out = job["result"]["runDirectory"]
+    assert os.path.exists(os.path.join(reread_out, choice_reread.STAMP_FILE))
+    expected = EXPECTED["choiceRate"]["reread"]
+    assert _pooled(reread_out, "choiceRate") == pytest.approx(
+        (expected["estimate"], expected["n"]), abs=1e-5)
+
+    job_id = client.post(f"/api/experiment/{STUDY}/analyze").json()["jobId"]
+    job = _wait_for_job(client, job_id)
+    assert job["status"] == "succeeded", job
+    assert not os.path.exists(os.path.join(job["result"]["runDirectory"], choice_reread.STAMP_FILE))
+    logs = json.dumps(client.get(f"/api/jobs/{job_id}").json())
+    assert "5 of 12 stored choices in run '" + RUN + "'" in logs
+    assert "Re-read choices" in logs
+
+
+def test_the_route_refuses_reread_choices_on_any_other_verb():
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+    from steerlab_server.api.app import app
+    response = TestClient(app).post(f"/api/experiment/{STUDY}/evaluate", json={"rereadChoices": True})
+    assert response.status_code == 400
+    assert "analyze" in response.json()["detail"]
