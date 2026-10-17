@@ -6,7 +6,7 @@ import { parseAnalysisStamps, type AnalysisStamps } from "./analysisStamps";
 import { splitCSV, strictNumber } from "./csv";
 import { findFile, recordValue } from "./discovery";
 import { effectKey } from "./effects";
-import { countPairedItems, resolveUnits, type PairedItems } from "./effectUnits";
+import { countPairedRecords, enginePairing, resolveUnits, type PairedItems } from "./effectUnits";
 import { parseFreezeStamp, type FreezeStamp } from "./freeze";
 import { GENERATION_INSTRUMENT_OUTPUT_PREFIX } from "./instruments";
 import type {
@@ -320,8 +320,7 @@ export const loadPairedItems = async (run: WorkspaceRun, source: WorkspaceRun | 
   const atTop = (candidate: WorkspaceRun) => candidate.files.find((file) => file.path === "generations.jsonl") ?? null;
   const file = atTop(run) ?? (source ? atTop(source) : null);
   if (!file) return null;
-  const counts = await countPairedItems(file);
-  return counts ? { counts, complete: true } : null;
+  return countPairedRecords(file);
 };
 
 /// `source` is the run this one analyzed, when it is an analysis on screen
@@ -334,7 +333,8 @@ export const hydrateRun = async (run: WorkspaceRun, source: WorkspaceRun | null 
   const analysisUnit = analysisStamps.unit?.unit ?? "";
   const stamped = analysisUnit ? effectTable.rows.map((effect) => ({ ...effect, analysisUnit })) : effectTable.rows;
   // What one paired difference of each row is: stamped, or settled from the
-  // run's records. Never assumed to be an item.
-  const settled = await resolveUnits(stamped, analysisUnit, () => loadPairedItems(run, source));
+  // engine the directory's config.json names and the run's records. Never
+  // assumed to be an item.
+  const settled = await resolveUnits(stamped, analysisUnit, () => loadPairedItems(run, source), enginePairing(run.config));
   return { ...run, effectRows: settled.rows, effectUnitRecords: settled.pairedItems, skippedEffectRows: effectTable.skipped, generationRows: generationData.rows, generationFile: generationData.handle, previewTruncated: generationData.truncated, skippedGenerationLines: generationData.skipped, cosineMatrices, validationConcepts: validationRows(run.validationReport), sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps };
 };

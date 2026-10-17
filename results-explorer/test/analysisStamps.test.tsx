@@ -120,16 +120,18 @@ describe("pairedCountLabel", () => {
   const row = { condition: "steered", endpoint: "e", short: "e", estimate: 1, low: 0, high: 2, unit: "Δ units", n: 4, q: null, p: null, correction: "", direction: "positive" as const, stratifyBy: "pooled", stratum: "", pairedUnit: "", estimand: "", inference: "", key: "k" };
 
   // The row's unit as the loader settles it (lib/effectUnits.ts): the row's
-  // own column first, then the run's stamp, then the run's records.
+  // own column first, then the run's stamp, then the run's records (here,
+  // `items` items each answered once under both arms).
+  const once = { responses: 1, readouts: 0 };
   const settledAs = (pairedUnit: string, analysisUnit: string, items: number | null = 4) =>
-    ({ ...row, pairedUnit, analysisUnit, effectUnit: effectUnit(row.condition, row.n, pairedUnit, analysisUnit, items === null ? null : { counts: { steered: items }, complete: true }) });
+    ({ ...row, pairedUnit, analysisUnit, effectUnit: effectUnit(row.condition, row.n, pairedUnit, analysisUnit, items === null ? null : { counts: { steered: items }, complete: true, samplesPerItem: { baseline: once, steered: once } }) });
 
   it("counts transcripts as transcripts, never as paired items", () => {
     expect(pairedCountLabel(settledAs("", "transcript"))).toBe("n = 4 paired transcripts");
     expect(pairedCountLabel({ ...settledAs("", "transcript"), n: 1 })).toBe("n = 1 paired transcript");
   });
 
-  it("keeps paired items for an item-level run, stamped or settled from its records", () => {
+  it("keeps paired items for an item-level run, stamped or settled from one response per item", () => {
     expect(pairedCountLabel(settledAs("", ""))).toBe("n = 4 paired items");
     expect(pairedCountLabel(settledAs("", "item"))).toBe("n = 4 paired items");
   });
@@ -184,20 +186,31 @@ describe("the stamps beside the effects", () => {
     expect(render(<EffectsView run={run} onOpenFile={() => {}} />).text).toContain("n = 4 paired transcripts");
   });
 
-  it("a run that stamps no unit keeps 'paired items' when its records agree, and says the unit is not stamped", async () => {
+  it("a run that stamps no unit and answered each item once keeps 'paired items', and says the unit is not stamped", async () => {
     const run = await load({}, {}, recordsOf(4, 1));
     const page = render(<EffectsView run={run} onOpenFile={() => {}} />);
     expect(page.text).toContain("n = 4 paired items");
-    expect(page.text).toContain("Unit of analysis Not stamped in this run. The item, with an item's samples averaged within each condition.");
+    expect(page.text).toContain("Unit of analysis Not stamped in this run. The item. The analysis did not record its unit, but the run's records hold one response or readout per item in each condition compared, so here an item and a response are the same thing.");
     expect(page.text).toContain("The item—not the generation—is the unit of analysis");
     expect(page.text).not.toContain("These are responses");
+  });
+
+  it("a run that stamps no unit and sampled each item twice does not call four pairs four items", async () => {
+    // Four items answered twice, n = 4: four items, or four responses left by
+    // an exclusion or missing values. Nothing records which.
+    const run = await load({}, {}, recordsOf(4, 2));
+    expect(run.effectRows[0].effectUnit).toEqual({ unit: "unknown", source: "not_established", pairedItems: 4 });
+    const page = render(<EffectsView run={run} onOpenFile={() => {}} />);
+    expect(page.text).toContain("n = 4 pairs");
+    expect(page.text).not.toContain("paired items");
+    expect(page.text).toContain("The analysis that made this row did not record whether its pairs count items or responses.");
   });
 
   it("a run that stamps no unit and has no records claims no unit", async () => {
     const page = render(<EffectsView run={await load({})} onOpenFile={() => {}} />);
     expect(page.text).toContain("n = 4 pairs");
     expect(page.text).not.toContain("paired items");
-    expect(page.text).toContain("Not established. The analysis did not stamp it, and the run's records are not available here.");
+    expect(page.text).toContain("Not established. The analysis that made these rows did not record whether their pairs count items or responses");
   });
 
   it("an analysis from before 0.9.7 that paired every response reads as responses from its items", async () => {
@@ -229,7 +242,10 @@ describe("the stamps beside the effects", () => {
     expect(analysis.sourceRun).toBe(source);
     const settled = await hydrateRun(analysis, findSourceRun(runs, analysis.sourceRun ?? ""));
     expect(settled.effectRows[0].effectUnit).toEqual({ unit: "response", source: "inferred_from_records", pairedItems: 2 });
-    expect(settled.effectUnitRecords).toEqual({ counts: { steered: 2 }, complete: true });
+    expect(settled.effectUnitRecords).toEqual({
+      counts: { steered: 2 }, complete: true,
+      samplesPerItem: { baseline: { responses: 4, readouts: 0 }, steered: { responses: 4, readouts: 0 } },
+    });
     // Without the run it analyzed, nothing settles the unit.
     expect((await hydrateRun(analysis)).effectRows[0].effectUnit?.unit).toBe("unknown");
   });

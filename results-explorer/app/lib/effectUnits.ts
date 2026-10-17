@@ -1,28 +1,31 @@
 // What one paired difference of a stored effect row is, settled from the row,
-// the analysis's stamp, and the run's records — never assumed.
+// the analysis's stamp, the engine its config.json names, and the run's
+// records — never assumed.
 //
 // Before SteerLab 0.9.7 the Mac engine paired every response of a
 // multi-sample run with the baseline response to the same item and seed,
 // counted responses in `n`, and stamped no unit. Since 0.9.7 it averages an
-// item's samples within each condition and still stamps no unit on pooled
-// rows, so an old response-level row and a new item-level row look the same
-// in the file. The run's records tell them apart: an item-level row counts at
-// most the items the records pair with the baseline.
+// item's samples within each condition, as the Python engine always has; both
+// stamp the unit since 0.9.8. A row counting fewer pairs than the run's items
+// does not show it counts items: declared exclusions, missing values, or a
+// subgroup leave five responses of one item looking like five items.
 //
-// This is the Python reader's rule (`results_export._paired_items` and
-// `resolve_units`, used by the export, its methods summary, and the results
-// page), and the Mac app's (`EffectUnits.swift`). A recorded unit is used;
-// otherwise a row counting no more pairs than the paired items is item-level,
-// a row counting more is response-level, and a condition with no paired items
-// is unknown. Tests/Fixtures/cross-engine/effect-units.json holds the Python
-// reader's answers, and test/effectUnits.test.ts holds this copy to them.
-// Nothing stored is changed: this decides how a stored count is NAMED.
+// This is the Python reader's rule (`results_export.resolve_units`, used by
+// the export, its methods summary, and the results page), and the Mac app's
+// (`EffectUnits.swift`). The first that applies settles a row: a recorded
+// unit; item when the records hold one response or readout per item under the
+// row's condition and the baseline (the units coincide); for a pooled row, how
+// the engine named by config.json paired (`enginePairing`); response when the
+// row counts more pairs than the paired items; otherwise unknown.
+// Tests/Fixtures/cross-engine/effect-units.json holds the Python reader's
+// answers, and test/effectUnits.test.ts holds this copy to them. Nothing
+// stored is changed: this decides how a stored count is NAMED.
 
 import type { Effect, RunFile } from "./types";
 
 /// Where a row's unit comes from, in the Python reader's words (the export's
 /// `unit_of_analysis_source`).
-export type UnitSource = "recorded" | "engine_default" | "inferred_from_records" | "not_established";
+export type UnitSource = "recorded" | "one_sample_per_item" | "analysis_engine" | "inferred_from_records" | "not_established";
 
 export type EffectUnit = {
   /// "item", "transcript", "sample", "response", or "unknown" — or a unit the
@@ -35,12 +38,54 @@ export type EffectUnit = {
   pairedItems: number | null;
 };
 
+/// The most generated responses, and the most instrument readouts, that any
+/// one item has under one condition.
+export type SamplesPerItem = { responses: number; readouts: number };
+
 /// Per condition, the items the run's records pair with the baseline.
 export type PairedItems = {
   counts: Record<string, number>;
   /// Every record was read. The explorer always reads the whole file, so
   /// this is false only for a caller that hands in part of one.
   complete: boolean;
+  /// Per condition (the baseline too), the most responses and readouts any
+  /// one item has: the Python reader's `samples_per_item`. Absent when the
+  /// caller counted none.
+  samplesPerItem?: Record<string, SamplesPerItem>;
+};
+
+/// How the engine that made an effect table paired its pooled rows, as the
+/// directory's config.json names that engine (the Python reader's
+/// `engine_pairing`): "items" (an item's samples averaged within each
+/// condition: the Python engine always, the Mac engine since 0.9.7) or
+/// "responses" (the Mac engine before 0.9.7).
+export type EnginePairing = "items" | "responses";
+
+/// The first Mac engine release that averages an item's samples.
+export const MAC_ITEM_PAIRING_VERSION: [number, number, number] = [0, 9, 7];
+
+/// The one outcome the Mac engine before 0.9.7 read from instrument readouts,
+/// one per item and condition, and so paired by item even then.
+const MAC_READOUT_OUTCOMES = new Set(["ordinalPosition"]);
+
+const compareVersions = (left: number[], right: number[]) => {
+  for (let index = 0; index < 3; index += 1) if (left[index] !== right[index]) return left[index] - right[index];
+  return 0;
+};
+
+/// How the engine named by a directory's config.json paired, or null when
+/// the file does not establish it: a missing or unreadable stamp, another
+/// engine, or a pre-release of 0.9.7 itself (either side of the change).
+export const enginePairing = (config: Record<string, unknown> | null | undefined): EnginePairing | null => {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return null;
+  if (config.substrate === "python-hf-transformers") return "items";
+  if (config.substrate !== "swift-mlx" || typeof config.appVersion !== "string") return null;
+  const match = /^swift-app (\d+)\.(\d+)\.(\d+)(-[^+\s]+)?(\+\S*)?$/u.exec(config.appVersion.trim());
+  if (!match) return null;
+  const version = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const order = compareVersions(version, MAC_ITEM_PAIRING_VERSION);
+  if (match[4] && order === 0) return null;
+  return order >= 0 ? "items" : "responses";
 };
 
 /// A row nothing has settled: it claims no unit.
@@ -97,6 +142,9 @@ const pythonText = (record: Record<string, unknown>, key: string): string => {
 /// `condition` and `promptID`, a missing one read as empty.
 export class PairedItemCounter {
   private items = new Map<string, Set<string>>();
+  /// condition → item → responses and readouts. A record carrying an
+  /// `instrument` is a readout, as the Python reader sorts it.
+  private perItem = new Map<string, Map<string, SamplesPerItem>>();
 
   add(raw: string) {
     const line = raw.trim();
@@ -106,8 +154,14 @@ export class PairedItemCounter {
     const record = parsed as Record<string, unknown>;
     if ("error" in record || !("instrument" in record || "output" in record)) return;
     const condition = pythonText(record, "condition");
+    const item = pythonText(record, "promptID");
     if (!this.items.has(condition)) this.items.set(condition, new Set());
-    this.items.get(condition)!.add(pythonText(record, "promptID"));
+    this.items.get(condition)!.add(item);
+    if (!this.perItem.has(condition)) this.perItem.set(condition, new Map());
+    const byItem = this.perItem.get(condition)!;
+    const tally = byItem.get(item) ?? { responses: 0, readouts: 0 };
+    if ("instrument" in record) tally.readouts += 1; else tally.responses += 1;
+    byItem.set(item, tally);
   }
 
   counts(): Record<string, number> {
@@ -118,12 +172,33 @@ export class PairedItemCounter {
     }
     return counts;
   }
+
+  samplesPerItem(): Record<string, SamplesPerItem> {
+    const most: Record<string, SamplesPerItem> = {};
+    for (const [condition, byItem] of this.perItem) {
+      let responses = 0, readouts = 0;
+      for (const tally of byItem.values()) {
+        responses = Math.max(responses, tally.responses);
+        readouts = Math.max(readouts, tally.readouts);
+      }
+      most[condition] = { responses, readouts };
+    }
+    return most;
+  }
+
+  /// Everything counted, as the unit rule reads it.
+  records(complete: boolean): PairedItems {
+    return { counts: this.counts(), complete, samplesPerItem: this.samplesPerItem() };
+  }
 }
 
-export const pairedItemsFromText = (text: string): Record<string, number> => {
+export const pairedItemsFromText = (text: string): Record<string, number> => pairedRecordsFromText(text, true).counts;
+
+/// The paired items and samples per item of a generations text in memory.
+export const pairedRecordsFromText = (text: string, complete: boolean): PairedItems => {
   const counter = new PairedItemCounter();
   for (const line of text.split("\n")) counter.add(line);
-  return counter.counts();
+  return counter.records(complete);
 };
 
 /// Bytes per read of a generations file. The count reads the WHOLE file, as
@@ -131,8 +206,9 @@ export const pairedItemsFromText = (text: string): Record<string, number> => {
 /// generations preview is still counted in full.
 export const COUNT_WINDOW = 32 * 1024 * 1024;
 
-/// The paired items of a generations file, or null when it cannot be read.
-export const countPairedItems = async (file: RunFile, window = COUNT_WINDOW): Promise<Record<string, number> | null> => {
+/// The paired items and samples per item of a generations file, read whole,
+/// or null when it cannot be read.
+export const countPairedRecords = async (file: RunFile, window = COUNT_WINDOW): Promise<PairedItems | null> => {
   try {
     const blob = await file.handle.getFile();
     const counter = new PairedItemCounter();
@@ -148,41 +224,79 @@ export const countPairedItems = async (file: RunFile, window = COUNT_WINDOW): Pr
       for (const line of lines) counter.add(line);
     }
     counter.add(pending + decoder.decode());
-    return counter.counts();
+    return counter.records(true);
   } catch { return null; }
 };
 
+/// The paired items of a generations file, or null when it cannot be read.
+export const countPairedItems = async (file: RunFile, window = COUNT_WINDOW): Promise<Record<string, number> | null> =>
+  (await countPairedRecords(file, window))?.counts ?? null;
+
 // --- the rule ------------------------------------------------------------------
 
+/// What else a row's unit is settled by: its subgroup (`stratifyBy`), its
+/// outcome (`metric`), and how the engine named by the effect table's
+/// config.json paired (`pairing`).
+export type UnitContext = { stratifyBy?: string; metric?: string; pairing?: EnginePairing | null };
+
 /// The unit of one row. `n` is the row's stored count (null when the file
-/// gave none); `pairedItems` is null when no records could be read.
+/// gave none); `pairedItems` is null when no records could be read. The
+/// first that applies:
+///
+/// 1. a unit the row or its analysis recorded;
+/// 2. item, when the records hold at most one response and one readout per
+///    item under the row's condition and the baseline, and the row counts no
+///    more pairs than the paired items (the units coincide);
+/// 3. for a pooled row, how the engine named by config.json paired: items →
+///    item; the Mac engine before 0.9.7 → item for its ordinal readouts,
+///    response when the records hold several responses per item under both
+///    the row's condition and the baseline;
+/// 4. response, when the row counts more pairs than the paired items;
+/// 5. otherwise unknown: fewer pairs than items settles nothing.
 ///
 /// With every record read this is exactly the Python reader's rule. With
-/// only part of the records (`complete` false) a count is a lower bound, so
-/// a row within it is still item-level, but a row beyond it cannot be
-/// settled and is not established.
+/// only part of the records (`complete` false) the counts are lower bounds,
+/// so rules 2 and 4 do not apply, and a response row names no item count.
 export const effectUnit = (
   condition: string, n: number | null, recordedUnit: string, stampedUnit: string, pairedItems: PairedItems | null,
+  context: UnitContext = {},
 ): EffectUnit => {
   const items = pairedItems ? pairedItems.counts[condition] ?? null : null;
   const unit = recordedUnit || stampedUnit;
   if (unit) return { unit, source: "recorded", pairedItems: items };
-  if (!pairedItems || !items) return { unit: "unknown", source: "not_established", pairedItems: items };
-  if (n == null || n <= items) return { unit: "item", source: "engine_default", pairedItems: items };
-  if (!pairedItems.complete) return { unit: "unknown", source: "not_established", pairedItems: items };
-  return { unit: "response", source: "inferred_from_records", pairedItems: items };
+  const samples = pairedItems?.samplesPerItem ?? {};
+  const here = samples[condition], baseline = samples.baseline;
+  const complete = pairedItems?.complete === true;
+  const single = (side: SamplesPerItem | undefined) => (side?.responses ?? 0) <= 1 && (side?.readouts ?? 0) <= 1;
+  if (complete && items && (n == null || n <= items) && Object.keys(samples).length > 0 && single(here) && single(baseline)) {
+    return { unit: "item", source: "one_sample_per_item", pairedItems: items };
+  }
+  const pooled = !context.stratifyBy || context.stratifyBy === "pooled";
+  if (pooled && context.pairing === "items") return { unit: "item", source: "analysis_engine", pairedItems: items };
+  if (pooled && context.pairing === "responses") {
+    if (MAC_READOUT_OUTCOMES.has(context.metric ?? "")) return { unit: "item", source: "analysis_engine", pairedItems: items };
+    if (items && (here?.responses ?? 0) > 1 && (baseline?.responses ?? 0) > 1) {
+      return { unit: "response", source: "analysis_engine", pairedItems: complete ? items : null };
+    }
+  }
+  if (complete && items && n != null && n > items) return { unit: "response", source: "inferred_from_records", pairedItems: items };
+  return { unit: "unknown", source: "not_established", pairedItems: items };
 };
 
 /// Settle every row's unit, once, for every view. `records` is asked for
 /// only when some row's unit is not already stamped, so a stamped analysis
-/// never reads its run's records.
+/// never reads its run's records. `pairing` is how the engine named by the
+/// effect table's config.json paired (`enginePairing`).
 export const resolveUnits = async (
-  rows: Effect[], stampedUnit: string, records: () => Promise<PairedItems | null>,
+  rows: Effect[], stampedUnit: string, records: () => Promise<PairedItems | null>, pairing: EnginePairing | null = null,
 ): Promise<{ rows: Effect[]; pairedItems: PairedItems | null }> => {
   const needed = !stampedUnit && rows.some((row) => !row.pairedUnit);
   const pairedItems = needed ? await records() : null;
   return {
-    rows: rows.map((row) => ({ ...row, effectUnit: effectUnit(row.condition, row.n, row.pairedUnit, stampedUnit, pairedItems) })),
+    rows: rows.map((row) => ({
+      ...row,
+      effectUnit: effectUnit(row.condition, row.n, row.pairedUnit, stampedUnit, pairedItems, { stratifyBy: row.stratifyBy, metric: row.endpoint, pairing }),
+    })),
     pairedItems,
   };
 };
@@ -198,8 +312,9 @@ export const MINIMUM_PAIRS = 3;
 /// results page and the Mac app say the same (effect-units.json holds it).
 export const RESPONSE_CAVEAT = "These are responses, not items: the analysis paired each response with the baseline response to the same item and seed, so its interval and test treat responses to the same item as independent and are not findings about items";
 
-/// What a row whose unit nothing settles says about its pairs.
-export const UNKNOWN_UNIT_NOTE = "The unit of these pairs is not established";
+/// What a row whose unit nothing settles says about its pairs (the Python
+/// reader's `UNKNOWN_UNIT_NOTE`).
+export const UNKNOWN_UNIT_NOTE = "The analysis that made this row did not record whether its pairs count items or responses";
 
 /// Why a row is read as paired responses (the Python reader's
 /// `RESPONSE_UNIT_EXPLANATION`, word for word).
@@ -218,15 +333,18 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
 
 /// The row's count in its own unit, as the Python reader's results page
 /// states it: "24 paired items", "4 paired transcripts", "3 pairs", or "8
-/// paired responses from 4 items". null when the file gave no count, or a
-/// unit outside the shared nouns (the label then names it).
+/// paired responses from at most 4 items". null when the file gave no count,
+/// or a unit outside the shared nouns (the label then names it). The items a
+/// response row draws on are the run's paired items at most (exclusions or
+/// missing values can leave fewer): the Python reader's `response_items`.
 export const countPhrase = (row: Pick<Effect, "n" | "effectUnit">): string | null => {
   if (row.n == null || row.n < 1) return null;
   const unit = unitOf(row);
   const nouns = UNIT_NOUNS[unit.unit];
   if (!nouns) return null;
   const text = plural(row.n, ...nouns);
-  return unit.unit === "response" && unit.pairedItems != null ? `${text} from ${plural(unit.pairedItems, "item", "items")}` : text;
+  if (unit.unit !== "response" || unit.pairedItems == null) return text;
+  return `${text} ${unit.pairedItems === 1 ? "from 1 item" : `from at most ${unit.pairedItems} items`}`;
 };
 
 /// Fewer than the minimum independent pairs: for paired responses, fewer
@@ -253,7 +371,8 @@ export const unitCaveat = (row: Pick<Effect, "effectUnit">): string => {
 /// it itself (the Python reader's page marks its table the same way).
 export const unitLabel = (row: Pick<Effect, "effectUnit">): string => {
   const unit = unitOf(row);
-  if (unit.source === "engine_default") return `${unit.unit} (default)`;
+  if (unit.source === "one_sample_per_item") return `${unit.unit} (one response per item)`;
+  if (unit.source === "analysis_engine") return `${unit.unit} (from the engine record)`;
   if (unit.source === "inferred_from_records") return `${unit.unit} (from the records)`;
   return unit.unit;
 };
@@ -262,6 +381,18 @@ const joined = (items: string[]) =>
   items.length <= 1 ? items.join("") : items.length === 2 ? `${items[0]} and ${items[1]}` : `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
 
 export type UnitExplanation = { source: UnitSource; units: string[]; said: string };
+
+/// What a unit the analysis did not record is, and how it is known: the
+/// Python reader's `UNSTAMPED_UNIT_LINES`, word for word (pinned in
+/// effect-units.json). Keyed by source, and for a unit the engine settles, by
+/// unit too.
+export const UNSTAMPED_UNIT_LINES: Record<string, string> = {
+  one_sample_per_item: "the item. The analysis did not record its unit, but the run's records hold one response or readout per item in each condition compared, so here an item and a response are the same thing.",
+  analysis_engine_item: "the item, with an item's samples averaged within each condition. The analysis did not record its unit, but its config.json names the engine that made it, and that engine paired these rows by item.",
+  analysis_engine_response: "the response, not the item. The analysis did not record its unit, but its config.json names the Mac engine from before SteerLab 0.9.7, which paired each response with the baseline response to the same item and seed when a study had several responses per item, as this run does. Responses to the same item are not independent, so these intervals and tests are likely to understate the uncertainty, and they are not findings about items. The stored numbers are copied unchanged; analyzing the run again computes item-level rows.",
+  inferred_from_records: `the response, not the item. ${RESPONSE_UNIT_EXPLANATION}`,
+  not_established: "not established. The analysis that made these rows did not record whether their pairs count items or responses, and neither its config.json nor the run's records settle it: fewer pairs than items can mean items, or responses from fewer items. The numbers are shown as stored; analyzing the run again with this version records the unit.",
+};
 
 /// What a recorded unit means, in the Python reader's words
 /// (`results_export.RECORDED_UNIT_LINES`; pinned in effect-units.json).
@@ -275,25 +406,25 @@ export const unitsRecorded = (rows: Pick<Effect, "effectUnit" | "stratifyBy">[])
   rows.length > 0 && summarized(rows).every((row) => unitOf(row).source === "recorded");
 
 /// One explanation per way the rows' units are known, in the order they
-/// first appear: the Python reader's methods summary (`unit_lines`).
-/// `records` is what the units were settled against, which says why a unit
-/// is not established.
-export const unitExplanations = (rows: Pick<Effect, "effectUnit">[], records: PairedItems | null): UnitExplanation[] => {
-  const groups: { source: UnitSource; units: string[] }[] = [];
+/// first appear: the Python reader's methods summary (`unit_lines`). A unit
+/// the analysis's engine settles is grouped by unit too: one Mac analysis
+/// from before 0.9.7 can hold item rows (its ordinal readouts) and response
+/// rows. `records` is what the units were settled against; the words do not
+/// depend on it.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept so callers pass what the units were settled against
+export const unitExplanations = (rows: Pick<Effect, "effectUnit">[], _records: PairedItems | null): UnitExplanation[] => {
+  const groups: { key: string; source: UnitSource; units: string[] }[] = [];
   for (const row of rows) {
     const unit = unitOf(row);
-    const group = groups.find((entry) => entry.source === unit.source);
-    if (!group) groups.push({ source: unit.source, units: [unit.unit] });
+    const key = unit.source === "analysis_engine" ? `${unit.source}_${unit.unit}` : unit.source;
+    const group = groups.find((entry) => entry.key === key);
+    if (!group) groups.push({ key, source: unit.source, units: [unit.unit] });
     else if (!group.units.includes(unit.unit)) group.units.push(unit.unit);
   }
-  return groups.map(({ source, units }) => ({
+  return groups.map(({ key, source, units }) => ({
     source, units,
     said: source === "recorded" ? (units.length === 1 && RECORDED_UNIT_LINES[units[0]]) || `${joined(units)}, as the analysis recorded.`
-      : source === "engine_default" ? "the item, with an item's samples averaged within each condition. This is the engines' documented default; the analysis did not stamp the unit itself. The run's records are consistent with it: no such row counts more pairs than the items paired in the run."
-      : source === "inferred_from_records" ? `the response, not the item. ${RESPONSE_UNIT_EXPLANATION}`
-      : records === null ? "not established. The analysis did not stamp it, and the run's records are not available here."
-      : !records.complete ? "not established. The analysis did not stamp it, and only the first part of the run's records was read here, which does not settle it."
-      : "not established. The analysis did not stamp it, and the run's records have no items paired with the baseline for these conditions.",
+      : UNSTAMPED_UNIT_LINES[key] ?? UNSTAMPED_UNIT_LINES.not_established,
   }));
 };
 
@@ -319,11 +450,11 @@ export const effectsUnitSummary = (rows: Pick<Effect, "effectUnit" | "stratifyBy
   if (stampedUnit === "transcript") return "Each transcript—not each turn—is the unit of analysis.";
   const units = summarized(rows).map((row) => unitOf(row).unit);
   const unknown = units.includes("unknown")
-    ? ` ${units.every((unit) => unit === "unknown") ? "The" : "For some rows, the"} unit of analysis is not established.` : "";
+    ? ` The analysis that made ${units.every((unit) => unit === "unknown") ? "these rows" : "some rows"} did not record whether their pairs count items or responses.` : "";
   if (units.includes("response")) {
-    return `${units.every((unit) => unit === "response") ? "These rows" : "Some rows"} paired responses, not items: responses to the same item are not independent, so their intervals and tests are not findings about items.${unknown} The unit of analysis below says how this was read from the run’s records.`;
+    return `${units.every((unit) => unit === "response") ? "These rows" : "Some rows"} paired responses, not items: responses to the same item are not independent, so their intervals and tests are not findings about items.${unknown} The unit of analysis below says how this was read.`;
   }
-  if (unknown) return `${unknown.trim()} The unit of analysis below says why.`;
+  if (unknown) return `${unknown.trim()} The numbers are shown as stored; the unit of analysis below says more.`;
   return "The item—not the generation—is the unit of analysis, except where a stratum says otherwise.";
 };
 
