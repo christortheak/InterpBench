@@ -522,8 +522,9 @@ public enum ChoiceReread {
     /// The repair when a remote engine cannot (or did not) re-read. Python
     /// twin: `choice_reread.remote_repair` (identical words).
     public static let remoteRepair =
-        "Bring that engine up to date (for a cluster site, steerlab-cli cluster "
-        + "push --site <id>), then analyze again with the choices re-read."
+        "Bring that engine up to date (on this Mac, Refresh Engine in the local "
+        + "engine's setup; for a cluster site, steerlab-cli cluster push --site <id>), "
+        + "then analyze again with the choices re-read."
 
     /// Refuses, before anything is submitted, when the engine's capabilities
     /// do not list the re-read.

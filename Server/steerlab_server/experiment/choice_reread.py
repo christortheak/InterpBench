@@ -69,9 +69,9 @@ NOT_CONFIRMED_CODE = "rereadChoicesNotConfirmed"
 
 def remote_repair() -> str:
     """The repair when a remote engine cannot (or did not) re-read."""
-    return ("Bring that engine up to date (for a cluster site, steerlab-cli "
-            "cluster push --site <id>), then analyze again with the choices "
-            "re-read.")
+    return ("Bring that engine up to date (on this Mac, Refresh Engine in the "
+            "local engine's setup; for a cluster site, steerlab-cli cluster push "
+            "--site <id>), then analyze again with the choices re-read.")
 
 
 def remote_unsupported_reason(where: str) -> str:

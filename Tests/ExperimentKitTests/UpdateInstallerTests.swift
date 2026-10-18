@@ -19,6 +19,26 @@ import Testing
 ///   * a download is bounded in size and time, and Cancel works.
 @Suite(.serialized)
 struct UpdateInstallerTests {
+    /// The checkout commands paste safely: `$HOME`, `$(…)`, backticks, `"`,
+    /// and `'` in the path reach git as written, never expanded or run.
+    @Test func theCheckoutCommandsQuoteThePathForAShell() throws {
+        let path = "/tmp/a $HOME b/$(echo injected)/`id`/Lab \"v2\"/it's"
+        let line = UpdateAfterInstall.checkoutCommands(
+            checkout: URL(filePath: path), version: try #require(SemanticVersion("1.0.0")))
+        let quoted = UpdateAfterInstall.shellQuoted(path)
+        #expect(line == "git -C \(quoted) fetch --tags, then git -C \(quoted) checkout v1.0.0")
+        // What a shell makes of the quoted word is the path itself.
+        let shell = Process()
+        shell.executableURL = URL(filePath: "/bin/sh")
+        shell.arguments = ["-c", "printf %s " + quoted]
+        let out = Pipe()
+        shell.standardOutput = out
+        try shell.run()
+        shell.waitUntilExit()
+        let echoed = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        #expect(echoed == path)
+    }
+
 
     // MARK: - Fixtures
 
@@ -303,8 +323,8 @@ struct UpdateInstallerTests {
             downloadSize: 50_000_000, previousCopy: previous, sourceCheckout: clone
         ).map(\.text)
         let checkout = withClone.first { $0.contains("code checkout") }
-        #expect(checkout?.contains("git -C \"/opt/lab/My SteerLab/InterpBench\" fetch --tags") == true)
-        #expect(checkout?.contains("git -C \"/opt/lab/My SteerLab/InterpBench\" checkout v1.0.0") == true)
+        #expect(checkout?.contains("git -C '/opt/lab/My SteerLab/InterpBench' fetch --tags") == true)
+        #expect(checkout?.contains("git -C '/opt/lab/My SteerLab/InterpBench' checkout v1.0.0") == true)
         #expect(!withClone.contains { $0.contains("Refresh Engine") })
         #expect(withClone.contains(UpdateInstallReview.olderCopiesLine))
         #expect(UpdateInstallReview.olderCopiesLine.contains("Trash"))
@@ -1305,7 +1325,7 @@ struct UpdateInstallerTests {
                 previousCopyName: nil, engineIsStale: false, hasClusterSites: false,
                 sourceCheckout: URL(filePath: "/opt/lab/SteerLab/InterpBench")))
         #expect(withClone.lines.count == 1)
-        #expect(withClone.lines[0].contains("git -C \"/opt/lab/SteerLab/InterpBench\" checkout v1.0.0"))
+        #expect(withClone.lines[0].contains("git -C '/opt/lab/SteerLab/InterpBench' checkout v1.0.0"))
         #expect(!withClone.lines[0].contains("Refresh Engine"))
 
         // Same version, an older one, or no record: nothing to say.

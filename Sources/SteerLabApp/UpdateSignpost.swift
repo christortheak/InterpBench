@@ -74,6 +74,11 @@ final class UpdateSignpostModel {
     /// Bumped by every Install and every Cancel: work that finishes for an
     /// attempt that is no longer current does nothing.
     @ObservationIgnored private var installGeneration = 0
+    /// Set from the first line of `swapWhenIdle` until it returns. A second
+    /// click on Install Now during the busy check, or a new Install Update
+    /// during the swap, must not start a second, interleaved install (an
+    /// independent review, 2026-10-17, traced two swaps undoing each other).
+    @ObservationIgnored private var swapping = false
 
     init(
         service: UpdateCheckService = UpdateCheckService(),
@@ -242,7 +247,7 @@ final class UpdateSignpostModel {
 
     /// Install Update: open the confirmation sheet. Nothing is fetched yet.
     func reviewInstall() {
-        guard installableRelease != nil else { return }
+        guard installableRelease != nil, !swapping else { return }
         installState = .reviewing
         showingInstallSheet = true
         startWatchingBusy()
@@ -264,7 +269,7 @@ final class UpdateSignpostModel {
 
     /// The person said Install: download and verify, then swap when idle.
     func startInstall() {
-        guard installTask == nil, busy.isIdle, let release = installableRelease,
+        guard installTask == nil, !swapping, busy.isIdle, let release = installableRelease,
             let target = installTarget
         else { return }
         let installer = UpdateInstaller(
@@ -325,7 +330,9 @@ final class UpdateSignpostModel {
 
     /// The last step, which quits the app: only when nothing is running.
     func swapWhenIdle() async {
-        guard let installer, let staged else { return }
+        guard !swapping, let installer, let staged else { return }
+        swapping = true
+        defer { swapping = false }
         let generation = installGeneration
         await refreshBusy()
         // A Cancel (or a new attempt) while the busy check was out wins.

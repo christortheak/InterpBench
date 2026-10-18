@@ -1644,8 +1644,17 @@ public enum UpdateAfterInstall {
     /// to the new release's tag. The exact commands, quoted for a path with
     /// spaces.
     public static func checkoutCommands(checkout: URL, version: SemanticVersion) -> String {
-        "git -C \"\(checkout.path)\" fetch --tags, then "
-            + "git -C \"\(checkout.path)\" checkout v\(version.releaseDescription)"
+        let path = shellQuoted(checkout.path)
+        return "git -C \(path) fetch --tags, then "
+            + "git -C \(path) checkout v\(version.releaseDescription)"
+    }
+
+    /// A path as a shell word that pastes safely into Terminal: in single
+    /// quotes, where `$`, backticks, `"` and `!` are plain characters, with
+    /// each `'` written as `'\''`. Double quotes would let `$HOME` expand and
+    /// `$(…)` run (an independent review, 2026-10-17).
+    static func shellQuoted(_ path: String) -> String {
+        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// For the confirmation sheet, before the update.
