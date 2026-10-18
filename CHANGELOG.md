@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.9] — 2026-10-17
+
 - **Lettered choices are read correctly.** When a reply did not answer
   cleanly, the choice reader took the first option mentioned anywhere in the
   text and ignored case, so the word "a" counted as option A: "This is a hard
