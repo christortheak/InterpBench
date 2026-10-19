@@ -34,6 +34,12 @@ struct OptimizationRunsView: View {
     /// no-GPU-session dialog asks.
     @State private var pendingModelJob: PendingModelJob?
     @State private var selectedCell: SelectedCell?
+    /// The displayed run's recorded replies, read on the first cell
+    /// selection (nil until then, and while reading).
+    @State private var sweepReplies: SweepReplies.Availability?
+    @State private var sweepDevPrompts: SweepReplies.DevPrompts?
+    /// The run whose replies were asked for — one read per displayed run.
+    @State private var repliesRequestedFor: URL?
     @State private var overridePromotion: OverridePromotion?
     @State private var showDeclareSheet = false
     /// The concept whose Create Agent is in flight — the re-entry guard AND
@@ -194,6 +200,7 @@ struct OptimizationRunsView: View {
                 criterionSection(optimization)
                 sweepSpecSection(optimization)
                 gridSections(optimization)
+                selectedCellRepliesSection
                 recommendationsSection(optimization)
             }
             if let status = panel.status {
@@ -215,6 +222,7 @@ struct OptimizationRunsView: View {
         // source layout (one shared list vs two labeled lists) follows it.
         .onChange(of: service.cluster.remoteInfo) { refreshOptimizations() }
         .onChange(of: selectedRef) { reloadSweepRun() }
+        .onChange(of: selectedCell) { loadRepliesIfNeeded() }
         .sheet(item: $overridePromotion) { promotion in
             OverridePromotionSheet(promotion: promotion) { reason in
                 promoteOverride(promotion, reason: reason)
@@ -318,6 +326,9 @@ struct OptimizationRunsView: View {
     private func reloadSweepRun() {
         selectedCell = nil
         sweepRun = nil
+        sweepReplies = nil
+        sweepDevPrompts = nil
+        repliesRequestedFor = nil
         guard let ref = selectedRef else { return }
         switch ref.source {
         case .local:
@@ -351,6 +362,43 @@ struct OptimizationRunsView: View {
                 let run = await panel.loadRemoteSweepRun(experiment: ref.name)
                 if selectedRef == ref { sweepRun = run }
             }
+        }
+    }
+
+    /// Reads the displayed run's replies the first time a cell is selected,
+    /// off the main actor (a large grid's record runs to megabytes). A read
+    /// that lands after the screen moved to another run is dropped.
+    private func loadRepliesIfNeeded() {
+        guard selectedCell != nil, let run = sweepRun, let ref = selectedRef,
+            repliesRequestedFor != run.directory
+        else { return }
+        repliesRequestedFor = run.directory
+        let directory = run.directory
+        let root = ExperimentStore.workspaceRoot
+        Task {
+            let replies: SweepReplies.Availability?
+            let prompts: SweepReplies.DevPrompts
+            switch ref.source {
+            case .local:
+                (replies, prompts) = await Task.detached(priority: .userInitiated) {
+                    (
+                        SweepReplies.load(runDirectory: directory),
+                        SweepReplies.devPrompts(for: run, workspaceRoot: root)
+                    )
+                }.value
+            case .server:
+                replies = await panel.loadRemoteSweepReplies(runName: run.runName)
+                prompts = .notLocal
+            }
+            guard sweepRun?.directory == directory else { return }
+            guard let replies else {
+                // The server stopped being the active workspace mid-read;
+                // the next selection asks again.
+                repliesRequestedFor = nil
+                return
+            }
+            sweepReplies = replies
+            sweepDevPrompts = prompts
         }
     }
 
@@ -1272,7 +1320,8 @@ struct OptimizationRunsView: View {
             : "\(criterion.metric) "
                 + "\(row.objective.map(format) ?? "not recorded (pre-objective run)"), "
         return "L\(row.layer) α\(format(row.alpha)) — " + objectivePart + diagnostics
-            + " · \(stateLabel(state)). Click to select for Create Agent."
+            + " · \(stateLabel(state)). Click to read its replies and select "
+            + "it for Create Agent."
     }
 
     private func stateLabel(_ state: SweepRunCatalog.CellState) -> String {
@@ -1289,7 +1338,7 @@ struct OptimizationRunsView: View {
             legendSwatch(.green.opacity(0.3), "✓ winner")
             legendSwatch(.secondary.opacity(0.1), "pass")
             legendSwatch(.red.opacity(0.16), "✕ fails constraint (struck through)")
-            Text("click a cell to select it")
+            Text("click a cell to read its replies")
         }
         .font(.caption2)
         .foregroundStyle(.secondary)
@@ -1442,6 +1491,188 @@ struct OptimizationRunsView: View {
             + "(promotedBy: criterion)"
         return mintsOnServer(optimization)
             ? base + " — created on \(substrate)" : base
+    }
+
+    // MARK: Replies for the selected cell
+
+    /// The selected cell's replies beside the unsteered model's, prompt by
+    /// prompt — what the grid's numbers were computed from, so a cell can be
+    /// chosen by reading it (pairing: `SweepReplies.comparison`).
+    @ViewBuilder
+    private var selectedCellRepliesSection: some View {
+        if let cell = selectedCell, sweepRun != nil {
+            Section {
+                switch sweepReplies {
+                case nil:
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Reading this cell's replies…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                case .notRecorded:
+                    Text(
+                        "This sweep run did not record its replies, so only "
+                            + "its numbers can be shown. A sweep run with this "
+                            + "version of SteerLab records them.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .unreadable(let reason):
+                    Text("This sweep run's replies could not be read. \(reason)")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .recorded(let record):
+                    cellReplies(
+                        SweepReplies.comparison(
+                            record: record, concept: cell.concept,
+                            layer: cell.layer, alpha: cell.alpha,
+                            prompts: sweepDevPrompts
+                                ?? SweepReplies.DevPrompts(status: .notNamed)),
+                        unreadableLines: record.unreadableLines)
+                }
+            } header: {
+                InfoSectionHeader(
+                    title: "Replies — \(cell.concept) L\(cell.layer) "
+                        + "α\(format(cell.alpha))",
+                    text: Self.repliesInfo)
+            }
+        }
+    }
+
+    private static let repliesInfo = """
+        The sweep writes a short reply to every dev prompt at every cell, and \
+        once with no steering. The grid's numbers are computed from these \
+        replies.
+
+        Reading them shows what a number can miss: a concept often shows in \
+        tone and association before it shows in vocabulary, and a reply can \
+        score well while coming apart. Choose the cell where the concept \
+        shows clearly and the reply stays readable.
+
+        This is a qualitative read, and you know which cell wrote each reply. \
+        If you create an agent from a cell the criterion did not choose, the \
+        reason you write is recorded with the agent.
+        """
+
+    @ViewBuilder
+    private func cellReplies(
+        _ comparison: SweepReplies.Comparison, unreadableLines: Int
+    ) -> some View {
+        if !comparison.hasCellReplies {
+            Text(
+                "This sweep run recorded no replies for this cell. It may have "
+                    + "been stopped before it reached it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(
+                    "Each dev prompt with this cell's reply beside the "
+                        + "unsteered model's reply to the same prompt.")
+                if !comparison.hasBaseline {
+                    Text("This sweep run recorded no unsteered replies to compare with.")
+                }
+                if let caption = devPromptsCaption {
+                    Text(caption)
+                }
+                if comparison.hasControl {
+                    Text(
+                        "The sweep also steered with a random direction of the "
+                            + "same size at this cell. If that changes the replies "
+                            + "as much, the change is not specific to the concept.")
+                }
+                if unreadableLines > 0 {
+                    Text(
+                        unreadableLines == 1
+                            ? "One line of this run's replies could not be read "
+                                + "and is left out."
+                            : "\(unreadableLines) lines of this run's replies "
+                                + "could not be read and are left out.")
+                        .foregroundStyle(.orange)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            ForEach(comparison.pairs) { pair in
+                replyPair(pair, showsControl: comparison.hasControl)
+            }
+        }
+    }
+
+    /// Why the prompts above the replies are numbers rather than text, when
+    /// they are; nil when the text shown is the text the sweep used.
+    private var devPromptsCaption: String? {
+        switch sweepDevPrompts?.status {
+        case .matched?: nil
+        case .unchecked?:
+            "The prompt text is the workspace's current dev prompts. This run "
+                + "did not record which version it used."
+        case .changed?:
+            "The dev prompts have changed since this sweep ran, so prompts are "
+                + "shown by number only."
+        case .missing?:
+            "The dev prompts this sweep used are no longer in the workspace, so "
+                + "prompts are shown by number only."
+        case .notLocal?:
+            "The prompt text stays with the server's copy of the study, so "
+                + "prompts are shown by number only."
+        case .notNamed?, nil:
+            "This run does not name its dev prompts, so prompts are shown by "
+                + "number only."
+        }
+    }
+
+    private func replyPair(
+        _ pair: SweepReplies.Comparison.Pair, showsControl: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Prompt \(pair.promptIndex + 1)")
+                    .font(.caption.weight(.semibold))
+                if let prompt = pair.prompt {
+                    Text(prompt)
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+            }
+            HStack(alignment: .top, spacing: 12) {
+                replyColumn("Unsteered", pair.baseline)
+                replyColumn("This cell", pair.steered)
+                if showsControl {
+                    replyColumn("Random direction, same size", pair.control)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func replyColumn(_ title: String, _ reply: SweepReplies.Reply?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            if let reply {
+                Text(reply.text)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                if reply.truncated {
+                    Text("This reply ran longer than the sweep keeps, so it is cut short.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("not recorded")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     // The measured heatmap that used to follow the clickable grid was a

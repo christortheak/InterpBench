@@ -1686,6 +1686,34 @@ public final class ExperimentPanel {
         }
     }
 
+    /// The replies a SERVER sweep run recorded (`dev-generations.jsonl`),
+    /// for the grid's reading pane. `runName` is the displayed run's
+    /// directory name (`SweepRun.runName`), so a newer run that landed since
+    /// the grid loaded never answers for it. The file is fetched only when
+    /// the server's listing shows it; a run without it predates the record.
+    /// nil when the server stopped being the active workspace mid-read.
+    public func loadRemoteSweepReplies(runName: String) async -> SweepReplies.Availability? {
+        let environment = operationEnvironment
+        guard let context = environment.current(), context.isServer, let client = context.client else { return nil }
+        do {
+            let records = try await client.runs()
+            guard environment.isCurrent(context) else { return nil }
+            guard
+                let record = records.first(where: {
+                    URL(filePath: $0.path).lastPathComponent == runName
+                }),
+                record.files.contains(SweepRunCatalog.devGenerationsFile)
+            else { return .notRecorded }
+            let data = try await client.runFile(
+                runID: record.id, name: SweepRunCatalog.devGenerationsFile)
+            guard environment.isCurrent(context) else { return nil }
+            return .recorded(SweepReplies.parse(data))
+        } catch {
+            guard environment.isCurrent(context) else { return nil }
+            return .unreadable(error.localizedDescription)
+        }
+    }
+
     /// Promote through the ACTIVE server (`POST /api/experiment/{name}/promote`):
     /// the study, its sweep provenance, and the minted agent all live in the
     /// SERVER's workspace — artifacts never cross substrates. Preflights

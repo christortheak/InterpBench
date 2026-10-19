@@ -29,6 +29,21 @@ migration that rewrites frozen bytes.
   save as before, including the question about a promotion record. If you
   saved changes to a run's agent in 0.9.11 or earlier, its run folder holds
   the edited version, not the one the run produced.
+- **Read a sweep's replies cell by cell.** In **Agents** → **Optimizations**,
+  clicking a cell in the sweep grid now shows the reply that cell wrote to
+  each dev prompt, beside the unsteered model's reply to the same prompt.
+  Before, the grid showed only the numbers computed from those replies,
+  although the Demo Workspace's guide asks you to choose a cell by reading
+  them. Where the sweep also steered with a random direction of the same size
+  at that cell, its replies appear as a third column.
+  - The prompt text appears only when the dev prompts are still the ones the
+    sweep used. If they have changed or gone missing since, each reply is
+    shown under its prompt number, and the view says why.
+  - Nothing about what a sweep records has changed. The app's sweep, the
+    command line's, and the Python engine's on a server all keep the same
+    record of replies, so their runs read the same way. A sweep run older than
+    that record says plainly that its replies were not recorded.
+  - Step 5 of the Demo Workspace's guide now points to this view.
 
 ## [0.9.11] — 2026-10-19
 

@@ -35,7 +35,7 @@ The concept data is in `prompts/concepts/<concept>/`. `positive.jsonl` and `nega
 
 Two pages show the finished results:
 
-- `reports/concept-sweep/sweep-replies.html`: every swept cell's replies. The app does not yet show a sweep's replies cell by cell.
+- `reports/concept-sweep/sweep-replies.html`: every swept cell's replies on one page. In the app, you can read one cell at a time (step 5).
 - `reports/agent-personalities/side-by-side.html`: the five voices, prompt by prompt.
 
 ## 0. Read the finished results first
@@ -134,8 +134,11 @@ The grid is layers 17, 23, and 28 × α 0.05, 0.075, 0.1, 0.125, and 0.15.
 
 - **In the app:**
   1. Open **Agents** → **Optimizations**, pick the study, and click **Optimize**.
-  2. The grid marks each cell. To promote a cell you chose, select it, then click **Create Agent (override)…**.
-  3. Write why you chose it in **Reason**, then click **Create Agent with override**.
+  2. The grid marks each cell. Click a cell, and its replies appear under the grid in **Replies**, each one beside the unsteered model's reply to the same dev prompt.
+  3. To promote the cell you chose, select it, then click **Create Agent (override)…** below the grid.
+  4. Write why you chose it in **Reason**, then click **Create Agent with override**.
+
+  To read the finished sweep without running your own, pick `concept-sweep` instead and skip **Optimize**.
 - **With a coding assistant:**
   ```sh
   steerlab-cli experiment sweep concept-sweep-2 --json

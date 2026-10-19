@@ -363,7 +363,9 @@ public enum SweepRunCatalog {
     /// 160-char log previews — an entire dose ladder's generations were
     /// unreadable after the fact. `kind` is "baseline" (concept null, layer
     /// -1, alpha 0), "cell", or "control". Server twin:
-    /// `tasks.DEV_GENERATIONS_FILE` — schema parity, not byte parity.
+    /// `sweep_evidence.DEV_GENERATIONS_FILE` — schema parity, not byte
+    /// parity. Read back cell by cell for the Optimizations grid by
+    /// `SweepReplies`, which accepts either engine's encoding.
     public static let devGenerationsFile = "dev-generations.jsonl"
 
     /// Per-record bound on the persisted text. Dev generations are short by
