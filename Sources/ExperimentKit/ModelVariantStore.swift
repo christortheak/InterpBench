@@ -155,16 +155,30 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
             self.centering = centering
         }
 
+        /// The declared ablation layers as both engines read them: sorted,
+        /// each layer once, or nil when none are declared (every layer).
+        ///
+        /// The list is a SET of blocks. `[3, 7, 10]` ablates exactly those
+        /// three and never the blocks between them, and neither the order it
+        /// was written in nor a repeat changes what is removed. Server twin:
+        /// `model_variant.variant_injections`, which ablates the listed
+        /// layers and nothing else.
+        public var declaredAblationLayers: [Int]? {
+            guard let layers, !layers.isEmpty else { return nil }
+            return Array(Set(layers)).sorted()
+        }
+
         /// The layers this ref actually covers, given the model's depth.
         /// Steering answers with its single declared layer (the caller
         /// widens it by the variant's band); ablation answers with every
         /// layer unless it declared otherwise — a single-layer ablation is
         /// usually undone by the layers above it, so "all" is the honest
-        /// default rather than a convenience.
+        /// default rather than a convenience. A declared list answers with
+        /// exactly its in-range layers, ascending (`declaredAblationLayers`).
         public func resolvedLayers(layerCount: Int) -> [Int] {
             guard effectiveMode == .ablate else { return [layer] }
-            if let layers, !layers.isEmpty {
-                return layers.filter { (0..<layerCount).contains($0) }
+            if let declared = declaredAblationLayers {
+                return declared.filter { (0..<layerCount).contains($0) }
             }
             return Array(0..<layerCount)
         }

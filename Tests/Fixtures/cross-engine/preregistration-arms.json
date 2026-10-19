@@ -551,6 +551,65 @@
     }
   },
   {
+    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **fear-ablate-subset** (agent): fear ablated \u03bb=0.5 at L3+L7+L10; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-fear-ablate-subset.json` (SHA-256 `97aeebb3264491782fa84e833a7f073c38f20399441179ffa7cb7ae97c4abe5d`)",
+    "label": "agent-ablation-layer-subset",
+    "manifest": {
+      "concepts": [],
+      "conditions": [],
+      "createdAt": "2026-10-19T00:00:00Z",
+      "experimentDescription": "",
+      "freezeHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "frozenAt": "2026-10-19T00:00:00Z",
+      "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+      "modelID": "test/model",
+      "modelRevision": "abc123",
+      "multiAgentIncludeBaseline": true,
+      "name": "agent-ablation-layer-subset",
+      "seeds": [
+        20260610
+      ],
+      "status": "frozen",
+      "studyKind": "modelOutput",
+      "studyType": "agentComparison",
+      "temperature": 0,
+      "variantConditions": [
+        {
+          "artifact": {
+            "adapters": [],
+            "alphaInNormUnits": true,
+            "bandWidth": 1,
+            "baseModelID": "test/model",
+            "baseRevision": "abc123",
+            "createdAt": "2026-10-19T00:00:00Z",
+            "injections": [
+              {
+                "alpha": 0.5,
+                "concept": "fear",
+                "layer": 14,
+                "layers": [
+                  10,
+                  3,
+                  7,
+                  3
+                ],
+                "mode": "ablate",
+                "vectorArtifactID": "runs/fixture-sweep/fear"
+              }
+            ],
+            "name": "fear-ablate-subset",
+            "promptMode": "chatAssistant",
+            "qwenThinkingEnabled": false,
+            "schemaVersion": 1,
+            "temperature": 0
+          },
+          "artifactHash": "97aeebb3264491782fa84e833a7f073c38f20399441179ffa7cb7ae97c4abe5d",
+          "artifactPath": "experiments/prereg/pinned/variant-fear-ablate-subset.json",
+          "name": "fear-ablate-subset"
+        }
+      ]
+    }
+  },
+  {
     "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **fear-mid**: fear@L14 \u03b1=0.8\n- **fear-mid-random** [randomMatchedNorm]: fear@L14 \u03b1=0.8",
     "label": "concept-study-implicit-baseline",
     "manifest": {

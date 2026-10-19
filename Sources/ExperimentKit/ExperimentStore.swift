@@ -7950,7 +7950,10 @@ public enum ExperimentStore {
                     return "\(injection.concept)@L\(injection.layer) "
                         + "α=\(format(injection.alpha))\(band)"
                 }
-                let covered = injection.layers ?? []
+                // Sorted, each layer once: the set the run ablates
+                // (`InjectionRef.declaredAblationLayers`), whatever order
+                // the list was written in.
+                let covered = injection.declaredAblationLayers ?? []
                 let layers = covered.isEmpty
                     ? "every layer"
                     : covered.map { "L\($0)" }.joined(separator: "+")

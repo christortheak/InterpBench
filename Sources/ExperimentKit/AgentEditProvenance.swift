@@ -215,8 +215,9 @@ public enum AgentEditProvenance {
     /// record of their making, and labels. Vector references are compared
     /// workspace-relative, the form both are saved in, and every field in its
     /// effective form (an absent mode is steering, empty ablation layers are
-    /// every layer, absent centering is none), so spellings that mean the same
-    /// thing never read as an edit.
+    /// every layer, a layer list is a set whatever its order or repeats,
+    /// absent centering is none), so spellings that mean the same thing never
+    /// read as an edit.
     static func doesTheSame(_ a: ModelVariantArtifact, as b: ModelVariantArtifact) -> Bool {
         func behaviour(_ artifact: ModelVariantArtifact) -> ModelVariantArtifact {
             var copy = ModelVariantStore.workspaceRelativeNormalized(artifact)
@@ -244,8 +245,7 @@ public enum AgentEditProvenance {
                 plain.vectorArtifactID = ArtifactIdentity.canonical(injection.vectorArtifactID)
                 plain.concept = ""  // a label; the vector reference is what acts
                 plain.mode = ablates ? .ablate : nil
-                plain.layers = ablates && !(injection.layers ?? []).isEmpty
-                    ? injection.layers : nil
+                plain.layers = ablates ? injection.declaredAblationLayers : nil
                 plain.centering = ablates && injection.effectiveCentering != "none"
                     ? injection.centering : nil
                 return plain

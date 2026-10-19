@@ -2762,6 +2762,20 @@ public enum ExperimentTasks {
         concept: String, vectors: [[Float]], firstLayer: Int,
         neutralMean: [[Float]]?, where context: String, remedy: String
     ) -> String? {
+        reportAblationMeanAlignment(
+            concept: concept, vectors: vectors,
+            layers: Array(firstLayer ..< firstLayer + vectors.count),
+            neutralMean: neutralMean, where: context, remedy: remedy)
+    }
+
+    /// The same preflight over layers that need not be contiguous (an
+    /// agent's declared ablation layers): `vectors[i]` and `neutralMean[i]`
+    /// belong to `layers[i]`, which is the layer a warning names.
+    @discardableResult
+    static func reportAblationMeanAlignment(
+        concept: String, vectors: [[Float]], layers: [Int],
+        neutralMean: [[Float]]?, where context: String, remedy: String
+    ) -> String? {
         guard let neutralMean else {
             let warning = "\(context): ablating '\(concept)' with no stored "
                 + "neutral mean — mean-alignment preflight impossible (artifact "
@@ -2774,11 +2788,11 @@ public enum ExperimentTasks {
         }
         var worstLayer = -1
         var worst: Float = 0
-        for (offset, pair) in zip(vectors, neutralMean).enumerated() {
+        for (layer, pair) in zip(layers, zip(vectors, neutralMean)) {
             let alignment = SteeringVectorMath.meanAlignment(pair.0, with: pair.1)
             if alignment > worst {
                 worst = alignment
-                worstLayer = firstLayer + offset
+                worstLayer = layer
             }
         }
         guard worst > SteeringVectorMath.ablationMeanAlignmentWarnThreshold else {
@@ -2923,12 +2937,17 @@ public enum ExperimentTasks {
             let directory = vectorURL.deletingLastPathComponent()
             let (vectors, sidecar) = try SteeringVectorStore.load(from: directory, name: name)
             let isAblation = injection.effectiveMode == .ablate
-            let declared = injection.resolvedLayers(layerCount: vectors.layerCount)
             let center = min(max(0, injection.layer), vectors.layerCount - 1)
-            let start = isAblation ? (declared.first ?? 0) : max(0, center - half)
-            let end = isAblation
-                ? (declared.last ?? vectors.layerCount - 1)
-                : min(vectors.layerCount - 1, center + half)
+            // An ablation covers exactly the layers it declares, every layer
+            // when it declares none (`InjectionRef.resolvedLayers`; server
+            // twin `model_variant.variant_injections`). A declared list is a
+            // set, never a span: this site used to ablate first ... last, so
+            // [3, 7, 10] also removed the direction at 4–6 and 8–9, and an
+            // unsorted list formed an invalid range and crashed.
+            let covered = isAblation
+                ? injection.resolvedLayers(layerCount: vectors.layerCount)
+                : Array(
+                    max(0, center - half) ... min(vectors.layerCount - 1, center + half))
             // Ablation-direction centering — declared per injection, never
             // silent (server twin: `model_variant.variant_injections`; see
             // `InjectionRef.centering`). Undeclared runs the mean-alignment
@@ -2956,10 +2975,10 @@ public enum ExperimentTasks {
                 if centering == "none" {
                     reportAblationMeanAlignment(
                         concept: injection.concept,
-                        vectors: (start ... end).map { vectors.perLayer[$0] },
-                        firstLayer: start,
+                        vectors: covered.map { vectors.perLayer[$0] },
+                        layers: covered,
                         neutralMean: neutralMean.map { mean in
-                            (start ... end).map { mean[$0] }
+                            covered.map { mean[$0] }
                         },
                         where: "variant '\(variant.name)'",
                         remedy: "declare centering \"neutralMean\" on the injection")
@@ -2971,7 +2990,7 @@ public enum ExperimentTasks {
                         + "is an ablation-direction transform; remove it or set "
                         + "mode ablate")
             }
-            for layer in start ... end {
+            for layer in covered {
                 var vector = vectors.perLayer[layer]
                 // Centering FIRST, then any neutral-PC basis projection —
                 // the server applies the same order (variant_injections),

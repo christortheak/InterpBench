@@ -58,6 +58,25 @@ migration that rewrites frozen bytes.
   engines run it. Ablating injections are unchanged: they already name the
   layers they cover, and λ is never scaled. Both engines write the same
   lines, and summaries already frozen are not rewritten.
+- **An agent's ablation layers mean the same thing on both engines.** An
+  ablating injection in a saved agent can list the layers it covers
+  (`layers`). No control in the app writes this list, so only agents whose
+  list was written by hand or by the command line were affected. On the Mac
+  engine:
+  - A list with gaps ablated every layer from the first to the last, so
+    `[3, 7, 10]` also removed the direction at layers 4 to 6 and 8 to 9.
+  - A list out of order, such as `[10, 3]`, stopped the run with a crash.
+  - A list naming only layers the vector does not have ablated every layer,
+    where the Python engine ablated none.
+
+  The Mac engine now ablates exactly the listed layers, as the Python engine
+  always has and as the preregistration's line (`L3+L7+L10`) says. The
+  list's order and repeats no longer matter: the preregistration names the
+  layers in ascending order, once each. Listed layers the vector does not
+  have are skipped on both engines. If a study run on the Mac attached an
+  agent with such a list, its ablation arm removed the direction at more
+  layers than the agent listed, so run it again. Agents without a list
+  (every layer) and runs on the Python engine are unchanged.
 
 ## [0.9.11] — 2026-10-19
 

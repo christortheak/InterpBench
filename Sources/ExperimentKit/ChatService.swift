@@ -1660,12 +1660,15 @@ public final class ChatService {
                     + "and Center ablations on the neutral mean stays "
                     + (currentlyCentered ? "on" : "off"))
         }
-        // nil or empty layers mean every layer, on both engines.
+        // nil or empty layers mean every layer, on both engines, and a
+        // declared list is the set of layers it names
+        // (`InjectionRef.resolvedLayers`, the run's own rule).
         let banded = ablations.filter { entry in
-            guard let layers = entry.injection.layers, !layers.isEmpty,
+            guard entry.injection.declaredAblationLayers != nil,
                 let layerCount = entry.layerCount
             else { return false }
-            return Set(layers) != Set(0..<layerCount)
+            return entry.injection.resolvedLayers(layerCount: layerCount)
+                != Array(0..<layerCount)
         }
         if !banded.isEmpty {
             let concepts = NSOrderedSet(array: banded.map(\.injection.concept))

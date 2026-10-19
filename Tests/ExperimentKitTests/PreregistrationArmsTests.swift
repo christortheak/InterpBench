@@ -30,7 +30,7 @@ extension ExperimentStoreTests {
 
     private static let armShapes: Set<String> = [
         "compare-agents", "compare-agents-carrying-conditions",
-        "agent-interventions", "agent-band-and-units",
+        "agent-interventions", "agent-band-and-units", "agent-ablation-layer-subset",
         "concept-study-implicit-baseline",
         "concept-study-declared-baseline", "concept-study-ablation",
         "concept-study-band-width", "sae-latent-arms",
@@ -334,6 +334,42 @@ extension ExperimentStoreTests {
                     #expect(injected == named, "\(label) \(condition.name) \(concept)")
                 }
             }
+        }
+    }
+
+    /// An agent's ablation line names the set of layers the agent cell
+    /// builder (`ExperimentTasks.injections(for:)`) ablates: ascending and
+    /// once each, whatever order and repeats the list was written with, and
+    /// never the span between its first and last layer.
+    @Test func anAgentAblationLineNamesTheLayersTheRunAblates() throws {
+        try withTempRoot {
+            let manifest = try #require(
+                try armCases().first { $0.label == "agent-ablation-layer-subset" }
+            ).manifest
+            let agent = try #require(manifest.variantConditions.first)
+            var injection = try #require(agent.artifact.injections.first)
+            #expect(injection.layers == [10, 3, 7, 3])
+            let section = try conditionsSection(
+                ExperimentStore.preregistrationMarkdown(manifest))
+            let stated = try #require(
+                section.firstMatch(of: /fear ablated λ=\S+ at ((?:L\d+\+?)+);/))
+            #expect(stated.output.1 == "L3+L7+L10")
+
+            let vectors = ConceptVectors(perLayer: (0 ..< 16).map { [Float($0 + 1), 1, 0] })
+            let dir = FileManager.default.temporaryDirectory
+                .appending(component: "prereg-ablation-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: dir) }
+            try SteeringVectorStore.save(
+                vectors: vectors,
+                sidecar: SteeringVectorSidecar(
+                    modelID: "test/model", concept: "fear",
+                    stimulusSetHash: "abc123", vectors: vectors),
+                to: dir, name: "fear")
+            injection.vectorArtifactID = dir.appending(component: "fear").path
+            var artifact = agent.artifact
+            artifact.injections = [injection]
+            let ablated = try ExperimentTasks.injections(for: artifact).map(\.layer)
+            #expect(ablated.map { "L\($0)" }.joined(separator: "+") == "L3+L7+L10")
         }
     }
 

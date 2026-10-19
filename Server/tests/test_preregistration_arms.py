@@ -39,7 +39,7 @@ REGENERATE = ("stale fixture — re-run preregistration_arms() in "
               "scripts/regenerate-cross-engine-fixtures.py and commit")
 SHAPES = {
     "compare-agents", "compare-agents-carrying-conditions",
-    "agent-interventions", "agent-band-and-units",
+    "agent-interventions", "agent-band-and-units", "agent-ablation-layer-subset",
     "concept-study-implicit-baseline",
     "concept-study-declared-baseline", "concept-study-ablation",
     "concept-study-band-width", "sae-latent-arms", "multi-agent-panel",

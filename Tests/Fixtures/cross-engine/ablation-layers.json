@@ -1,0 +1,239 @@
+{
+  "bandWidth": 3,
+  "cases": [
+    {
+      "injection": {
+        "alpha": 0.5,
+        "concept": "fear",
+        "layer": 5,
+        "mode": "ablate"
+      },
+      "label": "absent-means-every-layer",
+      "layers": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "injection": {
+        "alpha": 0.5,
+        "concept": "fear",
+        "layer": 5,
+        "layers": [],
+        "mode": "ablate"
+      },
+      "label": "empty-means-every-layer",
+      "layers": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "injection": {
+        "alpha": 0.5,
+        "concept": "fear",
+        "layer": 5,
+        "layers": [
+          3,
+          7,
+          10
+        ],
+        "mode": "ablate"
+      },
+      "label": "non-contiguous",
+      "layers": [
+        3,
+        7,
+        10
+      ]
+    },
+    {
+      "injection": {
+        "alpha": 0.5,
+        "concept": "fear",
+        "layer": 5,
+        "layers": [
+          10,
+          3
+        ],
+        "mode": "ablate"
+      },
+      "label": "unsorted",
+      "layers": [
+        3,
+        10
+      ]
+    },
+    {
+      "injection": {
+        "alpha": 0.5,
+        "concept": "fear",
+        "layer": 5,
+        "layers": [
+          7,
+          3,
+          7
+        ],
+        "mode": "ablate"
+      },
+      "label": "repeated",
+      "layers": [
+        3,
+        7
+      ]
+    },
+    {
+      "injection": {
+        "alpha": 0.5,
+        "concept": "fear",
+        "layer": 5,
+        "layers": [
+          5
+        ],
+        "mode": "ablate"
+      },
+      "label": "single-layer",
+      "layers": [
+        5
+      ]
+    },
+    {
+      "injection": {
+        "alpha": 0.5,
+        "concept": "fear",
+        "layer": 5,
+        "layers": [
+          0,
+          11
+        ],
+        "mode": "ablate"
+      },
+      "label": "both-ends",
+      "layers": [
+        0,
+        11
+      ]
+    },
+    {
+      "injection": {
+        "alpha": 0.5,
+        "concept": "fear",
+        "layer": 5,
+        "layers": [
+          11,
+          10,
+          9,
+          8,
+          7,
+          6,
+          5,
+          4,
+          3,
+          2,
+          1,
+          0
+        ],
+        "mode": "ablate"
+      },
+      "label": "every-layer-listed",
+      "layers": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "injection": {
+        "alpha": 0.5,
+        "concept": "fear",
+        "layer": 5,
+        "layers": [
+          3,
+          12
+        ],
+        "mode": "ablate"
+      },
+      "label": "partly-out-of-range",
+      "layers": [
+        3
+      ]
+    },
+    {
+      "injection": {
+        "alpha": 0.5,
+        "concept": "fear",
+        "layer": 5,
+        "layers": [
+          12,
+          40
+        ],
+        "mode": "ablate"
+      },
+      "label": "all-out-of-range",
+      "layers": []
+    },
+    {
+      "injection": {
+        "alpha": 0.5,
+        "concept": "fear",
+        "layer": 5,
+        "layers": [
+          -1,
+          2
+        ],
+        "mode": "ablate"
+      },
+      "label": "negative",
+      "layers": [
+        2
+      ]
+    },
+    {
+      "injection": {
+        "alpha": 0.5,
+        "concept": "fear",
+        "layer": 5,
+        "layers": [
+          0,
+          40
+        ]
+      },
+      "label": "steering-ignores-layers",
+      "layers": [
+        4,
+        5,
+        6
+      ]
+    }
+  ],
+  "layerCount": 12
+}

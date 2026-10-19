@@ -353,6 +353,84 @@ def validation_layers() -> None:
     _write(os.path.join(FIXTURES, "validation-layers.json"), cases)
 
 
+ABLATION_LAYER_COUNT = 12
+
+
+def ablation_layer_cases() -> list[tuple[str, dict]]:
+    """Declared ablation layers, as an agent's injection carries them, in the
+    shapes the two engines once read differently: a list with gaps, an
+    unsorted list, repeats, and layers the vector does not have."""
+    def ablate(**fields):
+        return {"concept": "fear", "layer": 5, "alpha": 0.5, "mode": "ablate",
+                **fields}
+    return [
+        ("absent-means-every-layer", ablate()),
+        ("empty-means-every-layer", ablate(layers=[])),
+        ("non-contiguous", ablate(layers=[3, 7, 10])),
+        ("unsorted", ablate(layers=[10, 3])),
+        ("repeated", ablate(layers=[7, 3, 7])),
+        ("single-layer", ablate(layers=[5])),
+        ("both-ends", ablate(layers=[0, ABLATION_LAYER_COUNT - 1])),
+        ("every-layer-listed",
+         ablate(layers=list(reversed(range(ABLATION_LAYER_COUNT))))),
+        ("partly-out-of-range", ablate(layers=[3, ABLATION_LAYER_COUNT])),
+        ("all-out-of-range",
+         ablate(layers=[ABLATION_LAYER_COUNT, ABLATION_LAYER_COUNT + 28])),
+        ("negative", ablate(layers=[-1, 2])),
+        # Steering ignores the list and steers its layer widened by the band.
+        ("steering-ignores-layers",
+         {"concept": "fear", "layer": 5, "alpha": 0.5,
+          "layers": [0, ABLATION_LAYER_COUNT + 28]}),
+    ]
+
+
+def ablation_layer_cells(injection: dict, root: str) -> list[int]:
+    """The layers this engine's agent cell builder
+    (``model_variant.variant_injections``) ablates or steers for one
+    injection, on a saved 12-layer vector under ``root``."""
+    from steerlab_server.experiment import model_variant
+    from steerlab_server.steering import vector_store
+
+    run_dir = os.path.join(root, "runs", "fixture-extract")
+    if not os.path.exists(os.path.join(run_dir, "fear.json")):
+        os.makedirs(run_dir, exist_ok=True)
+        sidecar = vector_store.SteeringVectorSidecar(
+            modelID="test/model", concept="fear", stimulusSetHash="h" * 64,
+            layerCount=ABLATION_LAYER_COUNT, hiddenSize=3,
+            normsPerLayer=[1.0] * ABLATION_LAYER_COUNT,
+            extractionDate="2026-10-19T00:00:00Z",
+            extractionMethod="meanDifference", substrate=vector_store.SUBSTRATE)
+        vector_store.save(
+            vector_store.ConceptVectors(per_layer=[
+                [float(layer + 1), 1.0, 0.0]
+                for layer in range(ABLATION_LAYER_COUNT)]),
+            sidecar, run_dir, "fear")
+    variant = model_variant.ModelVariant(
+        name="fear-ablation", base_model_id="test/model",
+        injections=[{**injection,
+                     "vectorArtifactID": os.path.join(run_dir, "fear")}],
+        band_width=3, alpha_in_norm_units=False)
+    with warnings.catch_warnings():
+        # The uncentered preflight warns that no neutral mean is stored.
+        warnings.simplefilter("ignore", UserWarning)
+        cells = model_variant.variant_injections(variant, root=root)
+    return sorted({cell.layer for cell in cells})
+
+
+def ablation_layers() -> None:
+    """Which layers an agent's ablation covers, from its declared list. Both
+    engines must ablate the same set: exactly the listed layers, never the
+    span between the first and the last (AblationLayerSubsetTests.swift)."""
+    cases = []
+    with tempfile.TemporaryDirectory() as root:
+        for label, injection in ablation_layer_cases():
+            cases.append({"label": label, "injection": injection,
+                          "layers": ablation_layer_cells(injection, root)})
+    _write(os.path.join(FIXTURES, "ablation-layers.json"),
+           {"bandWidth": 3, "layerCount": ABLATION_LAYER_COUNT,
+            "cases": cases})
+
+
 def choice_margins() -> None:
     """The D3 margin arithmetic. Quantile interpolation and clamp detection
     are the parts two implementations silently disagree on."""
@@ -2384,6 +2462,17 @@ def _preregistration_arm_cases() -> list[tuple[str, dict]]:
                                                  mode="ablate")],
                               bandWidth=3),
             ])),
+        # A declared ablation layer list is the set of layers the run
+        # ablates: listed ascending and once, whatever order and repeats it
+        # was written with, and never as a span that fills the gaps.
+        ("agent-ablation-layer-subset", _prereg_manifest(
+            "agent-ablation-layer-subset", studyType="agentComparison",
+            variantConditions=[
+                _prereg_agent(
+                    "fear-ablate-subset",
+                    [_prereg_injection("fear", 14, 0.5, mode="ablate",
+                                       layers=[10, 3, 7, 3])]),
+            ])),
         # A concept study: its declared arms, the baseline prepended.
         ("concept-study-implicit-baseline", _prereg_manifest(
             "concept-study-implicit-baseline",
@@ -2494,6 +2583,7 @@ def main() -> int:
     server_minted_adapter_agent()
     scenario_diagnostics()
     validation_layers()
+    ablation_layers()
     choice_margins()
     auto_prompt_ids()
     row_hashes()

@@ -4311,8 +4311,11 @@ def _preregistration_arms(d: dict) -> tuple[list[str], list[str]]:
         parts = []
         for injection in injections:
             if injection.get("mode") == "ablate":
+                # Sorted, each layer once: the set the run ablates
+                # (model_variant.variant_injections), whatever order the list
+                # was written in. Swift twin: declaredAblationLayers.
                 layers = "+".join(f"L{layer}" for layer
-                                  in injection.get("layers") or []) \
+                                  in sorted(set(injection.get("layers") or []))) \
                     or "every layer"
                 centering = (f" (centering {injection['centering']})"
                              if injection.get("centering") else "")
