@@ -232,9 +232,9 @@ public final class ChatService {
         serverNeutralBasisModel = basis.modelID
         serverNeutralBasisRevision = basis.revision
     }
-    /// Concept names for seeded vector refs that are not (or not yet) in the
-    /// fetched server vector catalog — kept so composing preserves the spec.
-    private var serverSlotConceptFallback: [String: String] = [:]
+    /// The concept each seeded vector ref declares, by ref — what composing
+    /// names those rows, so the composed spec preserves the seeded one.
+    private var seededServerSlotConcepts: [String: String] = [:]
     /// Control snapshot taken when a stored server variant seeded the
     /// controls. `nil` = nothing seeded (or seeding unsupported); dirty ⇔
     /// `serverControlState() != seededServerControlState`.
@@ -968,23 +968,62 @@ public final class ChatService {
     /// Resolve a slot's vector id against the active server's catalog.
     public func serverVectorRecord(for slot: SteerSlot) -> RemoteVectorRecord? {
         guard let id = slot.vectorID else { return nil }
-        return catalog.remoteVectors.first { $0.id == id }
+        return Self.serverVectorRecord(matching: id, in: catalog.remoteVectors)
     }
 
-    /// Concept for a seeded server slot whose vector is not in the fetched
-    /// catalog listing (kept by path so the spec round-trips).
+    /// The server catalog record a reference names, in either form. A seeded
+    /// agent's rows keep the agent's own reference, which every saved agent
+    /// stores workspace-relative, while the catalog `id` is the server's
+    /// absolute path; a literal compare missed every seeded agent, so its
+    /// rows lost their layer bounds and norm checks. Picker rows carry the
+    /// absolute id, and `matches(reference:)` answers both.
+    nonisolated static func serverVectorRecord(
+        matching reference: String, in catalog: [RemoteVectorRecord]
+    ) -> RemoteVectorRecord? {
+        catalog.first { $0.matches(reference: reference) }
+    }
+
+    /// The tag a server vector picker gives one catalog row: the slot's own
+    /// reference when it names this row, else the catalog id. A seeded row
+    /// keeps the agent's workspace-relative reference, so a picker tagged
+    /// only by absolute id would show no selection for it, and re-picking the
+    /// same vector would rewrite the reference and turn an untouched seed
+    /// into an inline spec.
+    nonisolated public static func serverVectorPickerTag(
+        for record: RemoteVectorRecord, slotReference: String?
+    ) -> String {
+        if let slotReference, record.matches(reference: slotReference) {
+            return slotReference
+        }
+        return record.id
+    }
+
+    /// Concept for a server slot (`serverConcept(forVectorID:)`), including
+    /// a seeded ref not in the fetched catalog listing (kept by path so the
+    /// spec round-trips).
     public func serverSlotConcept(for slot: SteerSlot) -> String? {
         guard let id = slot.vectorID else { return nil }
         return serverConcept(forVectorID: id)
     }
 
-    /// Server-side concept resolution for a vector id: the active server's
-    /// catalog listing first, then the seeded-variant fallback map. Nil means
-    /// the id must NOT enter a composed server spec (it may be a local MLX
-    /// path) — and the caller must say so, not silently drop it.
+    /// Server-side concept resolution for a vector id: the concept a seeded
+    /// agent declares for it, else the active server's catalog listing (in
+    /// either reference form). Nil means the id must NOT enter a composed
+    /// server spec (it may be a local MLX path) — and the caller must say
+    /// so, not silently drop it.
+    ///
+    /// The seeded declaration comes first so an untouched seed composes the
+    /// same spec whether or not the listing is current. The catalog's
+    /// concept can differ from the agent's (a promotion names the
+    /// experiment's concept), and a failed refresh empties the listing, so
+    /// with the catalog first the seed would compose one spec at seeding and
+    /// another after a failed refresh, and quietly stop sending the stored
+    /// agent. Only the concept is looked up: the composed spec sends the id
+    /// as given, so a seeded agent's workspace-relative reference reaches the
+    /// server unchanged and the server resolves it.
     public func serverConcept(forVectorID id: String) -> String? {
-        catalog.remoteVectors.first { $0.id == id }?.concept
-            ?? serverSlotConceptFallback[id]
+        seededServerSlotConcepts[id]
+            ?? Self.serverVectorRecord(matching: id, in: catalog.remoteVectors)?.concept
     }
 
     /// Adapter options for the server workspace: the server listing, plus the
@@ -1438,8 +1477,12 @@ public final class ChatService {
         let previous = slots.last ?? SteerSlot()
         let used = Set(slots.compactMap(\.vectorID))
         if isServerWorkspace {
+            // A seeded row names its vector workspace-relative, so "used" is
+            // judged in either form, or the new box repeats a seeded vector.
             let candidate =
-                compatibleServerVectors.first { !used.contains($0.id) }
+                compatibleServerVectors.first { record in
+                    !used.contains(where: record.matches(reference:))
+                }
                 ?? compatibleServerVectors.first
             var slot = SteerSlot(
                 vectorID: candidate?.id, layer: previous.layer,
@@ -1806,7 +1849,11 @@ public final class ChatService {
     /// the live inventory/catalog: installed server models, the strict
     /// (`offerableForServerSteering`-filtered) vector catalog, and the server
     /// adapter listing matched by directory — the directory is what an inline
-    /// spec sends, so a name-only match would not actually resolve.
+    /// spec sends, so a name-only match would not actually resolve. A vector
+    /// ref matches a catalog row in either form (`matches(reference:)`):
+    /// saved definitions store workspace-relative refs and the catalog id is
+    /// the server's absolute path, so a literal compare blocked every saved
+    /// definition as "not in this server's catalog".
     public func serverApplicability(
         of definition: ModelVariantArtifact
     ) -> WorkspaceScoping.DefinitionApplicability {
@@ -1815,7 +1862,7 @@ public final class ChatService {
             installedModels: remoteModelOptions,
             resolveVectorConcept: { id in
                 catalog.remoteVectors.first {
-                    $0.id == id
+                    $0.matches(reference: id)
                         && WorkspaceScoping.offerableForServerSteering(substrate: $0.substrate)
                 }?.concept
             },
@@ -1894,7 +1941,7 @@ public final class ChatService {
         serverNeutralBasisModel = artifact.baseModelID
         serverNeutralBasisRevision = artifact.baseRevision
 
-        serverSlotConceptFallback = Dictionary(
+        seededServerSlotConcepts = Dictionary(
             artifact.injections.map { ($0.vectorArtifactID, $0.concept) },
             uniquingKeysWith: { first, _ in first })
         let restored = artifact.injections.map { injection in
@@ -2126,12 +2173,10 @@ public final class ChatService {
         else { return nil }
 
         func facts(
-            layerCount: Int, fixedLayer: Int?, norms: [Float]?, convention: String?
+            layerCount: Int, fixedLayer: Int?, norms: [Float]?, convention: String?,
+            recommendation: SlotAlphaDefault.Recommendation?
         ) -> SlotAlphaDefault.ArtifactFacts {
             let layer = fixedLayer ?? max(0, layerCount / 2)
-            let recommendation = SlotAlphaDefault.recommendation(
-                forVectorArtifactID: vectorID,
-                among: fineTuning.variants.map(\.artifact))
             return SlotAlphaDefault.ArtifactFacts(
                 artifactID: vectorID,
                 layer: layer,
@@ -2144,19 +2189,24 @@ public final class ChatService {
                 sessionInNormUnits: alphaInNormUnits)
         }
 
+        let agents = fineTuning.variants.map(\.artifact)
         if isServerWorkspace {
             guard let record = serverVectorRecord(for: slots[index]) else { return nil }
             return facts(
                 layerCount: record.layerCount, fixedLayer: nil,
                 norms: record.residualNormPerLayer,
-                convention: record.residualNormConvention)
+                convention: record.residualNormConvention,
+                recommendation: SlotAlphaDefault.recommendation(
+                    forServerVector: record, among: agents))
         }
         guard let artifact = artifact(for: slots[index]) else { return nil }
         return facts(
             layerCount: artifact.sidecar.layerCount,
             fixedLayer: artifact.fixedSteeringLayer,
             norms: artifact.sidecar.residualNormPerLayer,
-            convention: artifact.sidecar.residualNormConvention)
+            convention: artifact.sidecar.residualNormConvention,
+            recommendation: SlotAlphaDefault.recommendation(
+                forVectorArtifactID: vectorID, among: agents))
     }
 
     /// Apply the artifact-aware defaults after a slot's vector changes: layer,

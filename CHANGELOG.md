@@ -53,6 +53,19 @@ migration that rewrites frozen bytes.
     because the record would vouch for settings it never tested, and the
     editor says so. To keep a promoted agent unchanged, start from New Agent
     instead of editing it.
+- **Saved agents run in a server workspace.** A saved agent names its
+  vectors relative to the workspace, and a server lists them by full path.
+  The app compared the two literally. So the Playground's agent picker, the
+  Agent Library's "Runnable on server" chip and filter, and the robustness
+  check blocked every saved agent with "vector refs not in this server's
+  catalog", and the Library could mark it "Missing artifact". A server agent
+  picked in the Playground loaded, but its rows said "kept by path" and lost
+  their layer range, norm checks, and injection preview, and Add Vector
+  repeated the agent's vector instead of the next unused one. Picking a
+  server vector did not fill in the strength of the agent promoted from it.
+  The agent editor showed no vector for an older agent that names it by full
+  path. Both spellings now match. Sending is unchanged: a row keeps the
+  agent's own reference and concept, and the server resolves it.
 
 ## [0.9.10] — 2026-10-19
 

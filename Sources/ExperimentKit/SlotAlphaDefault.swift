@@ -274,8 +274,8 @@ public enum SlotAlphaDefault {
 
     // MARK: Recommendation lookup
 
-    /// The promoted strength for one vector artifact, drawn from the agent
-    /// library.
+    /// A recommendation: the promoted strength for one vector artifact, drawn
+    /// from the agent library by the two lookups below (local and server).
     ///
     /// An agent's `injections` name the vector artifacts it steers with and
     /// the α selected for each; a `promotion` certificate says that α was
@@ -291,22 +291,47 @@ public enum SlotAlphaDefault {
     /// then by agent name, so two equally-ranked agents resolve stably.
     /// ABLATION injections are skipped: λ is not an α and never consults a
     /// residual-norm denominator.
+    public typealias Recommendation =
+        (alpha: Double, normUnits: Bool, agent: String, promotedBy: String?)
+
+    /// The local-workspace lookup: `artifactID` is a local catalog id.
     public static func recommendation(
         forVectorArtifactID artifactID: String,
         among variants: [ModelVariantArtifact]
-    ) -> (alpha: Double, normUnits: Bool, agent: String, promotedBy: String?)? {
-        var best: (rank: Int, name: String, alpha: Double, normUnits: Bool,
-                   promotedBy: String?)?
+    ) -> Recommendation? {
         // Saved agents name their vector workspace-relative and the catalog
         // id is absolute, so the literal compare alone never matched a saved
         // agent in a local workspace; both are resolved when it fails.
         let resolved = ArtifactIdentity.canonical(artifactID)
+        return recommendation(among: variants) { reference in
+            reference == artifactID || ArtifactIdentity.canonical(reference) == resolved
+        }
+    }
+
+    /// The server-workspace lookup: an agent names the vector when its
+    /// reference matches the server's catalog row in either form
+    /// (`RemoteVectorRecord.matches(reference:)`). Resolving against this
+    /// Mac's workspace root, as the local lookup does, says nothing about
+    /// where the server keeps its files, and saved agents store the
+    /// workspace-relative form while the row's id is the server's absolute
+    /// path.
+    public static func recommendation(
+        forServerVector record: RemoteVectorRecord,
+        among variants: [ModelVariantArtifact]
+    ) -> Recommendation? {
+        recommendation(among: variants, naming: record.matches(reference:))
+    }
+
+    private static func recommendation(
+        among variants: [ModelVariantArtifact],
+        naming names: (String) -> Bool
+    ) -> Recommendation? {
+        var best: (rank: Int, name: String, alpha: Double, normUnits: Bool,
+                   promotedBy: String?)?
         for variant in variants {
             guard
                 let injection = variant.injections.first(where: {
-                    $0.effectiveMode != .ablate
-                        && ($0.vectorArtifactID == artifactID
-                            || ArtifactIdentity.canonical($0.vectorArtifactID) == resolved)
+                    $0.effectiveMode != .ablate && names($0.vectorArtifactID)
                 })
             else { continue }
             let promotedBy = variant.promotion?.promotedBy

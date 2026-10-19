@@ -2114,18 +2114,25 @@ struct ChatView: View {
                             + "server applies")
                 Picker("Vector", selection: slot.vectorID) {
                     Text("none").tag(String?.none)
-                    // A seeded ref missing from the catalog listing stays
-                    // selectable by its server path, so an untouched seed
-                    // round-trips byte-identically.
-                    if let id = value.vectorID, record == nil {
+                    // A seeded ref no offered row names stays selectable by
+                    // its own reference, so an untouched seed round-trips
+                    // byte-identically.
+                    if let id = value.vectorID,
+                        !service.compatibleServerVectors.contains(where: {
+                            $0.matches(reference: id)
+                        })
+                    {
                         Text("\(service.serverSlotConcept(for: value) ?? "vector") · \(id)")
                             .tag(String?.some(id))
                     }
                     ForEach(service.compatibleServerVectorsGrouped, id: \.concept) { group in
                         Section(group.concept) {
                             ForEach(group.items) { candidate in
+                                // The row a seeded slot names carries the
+                                // slot's own (workspace-relative) reference.
                                 Text(serverVectorLabel(candidate))
-                                    .tag(String?.some(candidate.id))
+                                    .tag(String?.some(ChatService.serverVectorPickerTag(
+                                        for: candidate, slotReference: value.vectorID)))
                             }
                         }
                     }

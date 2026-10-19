@@ -1035,11 +1035,17 @@ struct ModelVariantsPanelView: View {
                             // server advertises one: that is the reference the
                             // saved variant stores (the Mac workspace is the
                             // source of truth; save fetches the bytes local).
+                            // An older agent naming the row by its absolute
+                            // server id keeps that reference as the row's tag,
+                            // or the picker would show no selection for it.
                             ForEach(serverVectorOffers.sections) { section in
                                 Section(section.concept) {
                                     ForEach(section.offers) { offer in
                                         Text(offer.displayLabel)
-                                            .tag(VectorArtifact.ID?.some(offer.id))
+                                            .tag(VectorArtifact.ID?.some(
+                                                draft.vectorArtifactID.flatMap {
+                                                    offer.item.matches(reference: $0) ? $0 : nil
+                                                } ?? offer.id))
                                     }
                                 }
                             }
@@ -1724,8 +1730,10 @@ struct ModelVariantsPanelView: View {
                     [FineTuneStore.relativePath(for: $0.url), $0.artifact.adapterDirectory]
                 }),
             serverApplicability: nil,
+            // Both forms: saved agents name server vectors
+            // workspace-relative, and the catalog id is absolute.
             serverVectorIDs: isServerWorkspace
-                ? Set(service.catalog.remoteVectors.map(\.id)) : [])
+                ? Set(service.catalog.remoteVectors.flatMap(\.referenceForms)) : [])
     }
 
     /// Recorded-vs-current adapter hashes for the drift chip: the registered

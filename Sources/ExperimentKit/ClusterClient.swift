@@ -1600,6 +1600,12 @@ public struct RemoteVectorRecord: Codable, Sendable, Identifiable {
     public func matches(reference: String) -> Bool {
         reference == id || reference == workspaceRelativeID
     }
+
+    /// Every reference `matches(reference:)` accepts, for membership sets
+    /// built from a whole catalog (the Agent Library's server availability).
+    public var referenceForms: [String] {
+        [id] + (workspaceRelativeID.map { [$0] } ?? [])
+    }
 }
 
 /// One entry of the server's RepE reader catalog (`GET /api/readers`,
