@@ -12,6 +12,40 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **Saved agents steer in the Playground.** Picking a saved agent, whether
+  made in the app or by the command line (the Demo Workspace's four
+  included), filled in its steering rows. But sending a message refused with
+  "this row's vector does not resolve to an artifact". The agent names its
+  vector relative to the workspace, and the Playground kept that spelling
+  where it looks vectors up by their full path. The rows now name the vector
+  that matched.
+  - An ablation agent's rows ablate.
+  - The Playground's "Center ablations on the neutral mean" setting changes
+    to match the agent's ablations, and the Playground says so when it does.
+  - When the agent loads, the Playground says what it cannot reproduce: a
+    layer subset, mixed centering, or a vector the Python engine extracted.
+
+  In 0.9.0 through 0.9.10, set Agent to None and pick the vector, layer, and
+  strength by hand. Studies were not affected: they attach agents by a path
+  the engine resolves correctly.
+- **Related fixes to agents.**
+  - **Strength default.** Picking a vector in a local workspace now fills in
+    the strength from a saved agent that uses it, promoted agents first.
+    Before, it always fell back to the default. A strength recorded in the
+    other unit system (raw against residual-norm units) is not adopted,
+    because the same number would be a different dose. The default is used
+    instead, and the explanation says why.
+  - **Agent editor.** In a local workspace, the editor shows a saved agent's
+    vectors as pickable entries, not as "not in this workspace's catalog".
+  - **Saving keeps ablations.** Saving an agent no longer loses an
+    ablation's mode, layer subset, or centering. Before, opening an ablation
+    agent and saving it turned it into a steering agent. Save Agent in the
+    Playground keeps each row's mode and centering too. It refuses when a
+    row's vector is missing, rather than saving an agent without it. Capture
+    Condition records an ablation row as an ablation condition, not a
+    steering one. If a study's ablation arm passed through one of these
+    paths, check that its condition or agent still says ablate.
+
 ## [0.9.10] — 2026-10-19
 
 - **A Demo Workspace for this Mac.** "Four concepts, four personalities"

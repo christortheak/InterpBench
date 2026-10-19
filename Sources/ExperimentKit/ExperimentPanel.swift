@@ -3096,8 +3096,14 @@ public final class ExperimentPanel {
                             name: concept, stimulusSetHash: stimuli.hash,
                             options: options))
                 }
+                // An ablation row is captured as an ablation: without the
+                // mode it became a steering condition at α = λ. Steering
+                // stays absent, so a captured steering condition's bytes
+                // (the manifest's content hash) do not change.
                 slots.append(
-                    .init(concept: concept, layer: Int(slot.layer), alpha: slot.alpha))
+                    .init(
+                        concept: concept, layer: Int(slot.layer), alpha: slot.alpha,
+                        mode: slot.mode == .ablate ? .ablate : nil))
             }
             guard !slots.isEmpty else {
                 note("no enabled steering boxes with vectors to capture", severity: .info)

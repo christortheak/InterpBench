@@ -44,6 +44,10 @@ struct ModelVariantsPanelView: View {
         /// α when steering, λ when ablating.
         var alpha: Double
         var mode: InterventionPlan.Mode = .add
+        /// An ablation's layer subset and centering, carried from the loaded
+        /// definition to the save untouched (no control edits them).
+        var layers: [Int]?
+        var centering: String?
 
         var logic: VariantInjectionEditing.Draft {
             VariantInjectionEditing.Draft(
@@ -51,7 +55,9 @@ struct ModelVariantsPanelView: View {
                 originalConcept: originalConcept,
                 layer: layer,
                 alpha: alpha,
-                mode: mode)
+                mode: mode,
+                layers: layers,
+                centering: centering)
         }
     }
 
@@ -1188,7 +1194,7 @@ struct ModelVariantsPanelView: View {
             return service.catalog.remoteVectors
                 .first { $0.matches(reference: id) }?.layerCount
         }
-        return service.vectors.first { $0.id == id }?.sidecar.layerCount
+        return service.localVector(matching: id)?.sidecar.layerCount
     }
 
     /// Concept for a vector id in the ACTIVE workspace's catalog (server
@@ -1198,7 +1204,7 @@ struct ModelVariantsPanelView: View {
             return service.catalog.remoteVectors
                 .first { $0.matches(reference: id) }?.concept
         }
-        return service.vectors.first { $0.id == id }?.sidecar.concept
+        return service.localVector(matching: id)?.sidecar.concept
     }
 
     private var isServerWorkspace: Bool {
@@ -1422,6 +1428,15 @@ struct ModelVariantsPanelView: View {
                 : panel.variantName)
         loadEditor(from: artifact)
         editorLoadedID = nil
+        // A Playground row whose vector is not in the catalog cannot become
+        // an injection; say so rather than draft an agent without it.
+        let unresolved = service.localSteeringInjectionRefs().unresolved
+        if !isServerWorkspace, unresolved > 0 {
+            panel.setStatus(
+                "\(unresolved) Playground row\(unresolved == 1 ? " names a vector" : "s name vectors") "
+                    + "this workspace does not have, so the draft leaves "
+                    + (unresolved == 1 ? "it" : "them") + " out")
+        }
     }
 
     private func loadEditor(from artifact: ModelVariantArtifact) {
@@ -1437,10 +1452,23 @@ struct ModelVariantsPanelView: View {
         adapterID = adapterID(for: artifact.adapters.first)
         injections = VariantInjectionEditing.drafts(from: artifact.injections).map {
             InjectionDraft(
-                vectorArtifactID: $0.vectorArtifactID,
+                // A saved agent names its vector workspace-relative; the
+                // local picker lists catalog ids. Showing the catalog id
+                // makes the row the real, pickable entry (with its layer
+                // bound) instead of a foreign one. Saving writes it back
+                // workspace-relative, which for an ordinary runs/ reference
+                // is the same string it was loaded with.
+                vectorArtifactID: $0.vectorArtifactID.map { reference in
+                    isServerWorkspace
+                        ? reference
+                        : service.localVector(matching: reference)?.id ?? reference
+                },
                 originalConcept: $0.originalConcept,
                 layer: $0.layer,
-                alpha: $0.alpha)
+                alpha: $0.alpha,
+                mode: $0.mode,
+                layers: $0.layers,
+                centering: $0.centering)
         }
         bandWidth = artifact.bandWidth
         alphaInNormUnits = artifact.alphaInNormUnits
@@ -1631,16 +1659,9 @@ struct ModelVariantsPanelView: View {
                         configHash: record.artifact.configHash)
             ]
         } ?? []
-        let injectionRefs = service.slots.compactMap { slot -> ModelVariantArtifact.InjectionRef? in
-            guard slot.enabled,
-                let vector = service.artifact(for: slot)
-            else { return nil }
-            return .init(
-                concept: vector.sidecar.concept,
-                vectorArtifactID: vector.id,
-                layer: Int(slot.layer),
-                alpha: slot.alpha)
-        }
+        // The rows as the Playground runs them, ablation mode and centering
+        // included (the shared rule the Save Agent action uses too).
+        let injectionRefs = service.localSteeringInjectionRefs().refs
         let basis = service.removeNeutralDirectionsAtSteering ? service.selectedNeutralPCBasis : nil
         return ModelVariantArtifact(
             name: name,

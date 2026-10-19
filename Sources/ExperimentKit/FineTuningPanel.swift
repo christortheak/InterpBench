@@ -1471,15 +1471,18 @@ public final class FineTuningPanel {
                     adapterHash: record.artifact.adapterHash)
             ]
         } ?? []
-        let injectionRefs: [ModelVariantArtifact.InjectionRef] = host.slots.compactMap { slot in
-            guard slot.enabled,
-                let artifact = host.artifact(for: slot)
-            else { return nil }
-            return .init(
-                concept: artifact.sidecar.concept,
-                vectorArtifactID: artifact.id,
-                layer: Int(slot.layer),
-                alpha: slot.alpha)
+        // The rows as the Playground runs them: an ablation row saves as an
+        // ablation, with the centering the session applies. A row whose
+        // vector is not in the catalog cannot be saved, and saying so beats
+        // an agent that quietly lacks it (the server branch refuses too).
+        let (injectionRefs, unresolvedRows) = host.localSteeringInjectionRefs()
+        if unresolvedRows > 0 {
+            note(
+                "\(unresolvedRows) steering row\(unresolvedRows == 1 ? " names a vector" : "s name vectors") "
+                    + "this workspace does not have; re-pick or remove "
+                    + (unresolvedRows == 1 ? "it" : "them") + ", then save the agent",
+                severity: .error)
+            return
         }
         let neutralBasis = host.removeNeutralDirectionsAtSteering
             ? host.selectedNeutralPCBasis

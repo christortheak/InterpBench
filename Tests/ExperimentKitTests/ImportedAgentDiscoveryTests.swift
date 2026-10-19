@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import ExperimentKit
+import SteeringKit
 
 /// B3 — a server-promoted agent must be usable on the Mac after import.
 ///
@@ -234,5 +235,214 @@ struct ImportedAgentDiscoveryTests {
                     == ["runs/extract-1/neuroticism"])
             #expect(!AgentLibrary.isRunnableLocally(artifact, availability: availability))
         }
+    }
+
+    // MARK: Playground rows
+
+    /// Plants a real vector (safetensors + sidecar) at runs/extract-1/<name>.
+    private func plantVector(
+        in workspace: URL, name: String, modelID: String = "test/model",
+        substrate: String? = nil
+    ) throws {
+        let vectors = ConceptVectors(perLayer: [[1, 0], [0, 1]])
+        var sidecar = SteeringVectorSidecar(
+            modelID: modelID, concept: name, stimulusSetHash: "abc123", vectors: vectors)
+        sidecar.substrate = substrate
+        try SteeringVectorStore.save(
+            vectors: vectors, sidecar: sidecar,
+            to: workspace.appending(components: "runs", "extract-1"), name: name)
+    }
+
+    private func agent(
+        baseModelID: String = "test/model",
+        _ injections: [ModelVariantArtifact.InjectionRef],
+        promotedBy: String? = nil
+    ) -> ModelVariantArtifact {
+        ModelVariantArtifact(
+            name: "agent", baseModelID: baseModelID, injections: injections,
+            promptMode: "chatAssistant", qwenThinkingEnabled: false,
+            temperature: 0, systemPrompt: "",
+            promotion: promotedBy.map {
+                ModelVariantArtifact.Promotion(
+                    experiment: "e", experimentHash: "h",
+                    promotedAt: "2026-10-19T00:00:00Z", promotedBy: $0,
+                    substrate: "swift-mlx", appVersion: "test")
+            })
+    }
+
+    /// A saved agent picked in the Playground must steer. Saving stores the
+    /// vector workspace-relative and the catalog lists it by absolute path;
+    /// the restore matched the two resolved but kept the agent's own spelling
+    /// in the row, so the send path, which looks a row's vector up by literal
+    /// id, refused with "this row's vector does not resolve to an artifact".
+    /// Every saved agent hit it, the Demo Workspace's four included.
+    @Test func aRestoredAgentRowNamesTheCatalogVector() throws {
+        try withWorkspace { workspace in
+            try plantVector(in: workspace, name: "fear")
+            let catalog = VectorCatalog.scan(
+                runsDirectory: workspace.appending(component: "runs"))
+            #expect(catalog.count == 1)
+            let steer = ModelVariantArtifact.InjectionRef(
+                concept: "fear", vectorArtifactID: "runs/extract-1/fear", layer: 1, alpha: 0.1)
+
+            let slots = ChatService.restoredSlots(for: agent([steer]), catalog: catalog)
+            #expect(slots.count == 1)
+            let restored = try #require(slots.first)
+            // The send path's own lookup: literal id against the catalog.
+            #expect(catalog.contains { $0.id == restored.vectorID })
+            #expect(restored.layer == 1 && restored.alpha == 0.1 && restored.enabled)
+            #expect(restored.mode == .add)
+
+            // A vector extracted from another model still never restores.
+            #expect(
+                ChatService.restoredSlots(
+                    for: agent(baseModelID: "other/model", [steer]), catalog: catalog
+                ).isEmpty)
+        }
+    }
+
+    /// Before the id fix an ablation agent's rows never resolved, so its send
+    /// refused. Resolving them without the mode would have steered at α = λ
+    /// instead, a whole residual norm at λ = 1.
+    @Test func aRestoredAblationRowStillAblates() throws {
+        try withWorkspace { workspace in
+            try plantVector(in: workspace, name: "fear")
+            let catalog = VectorCatalog.scan(
+                runsDirectory: workspace.appending(component: "runs"))
+            let ablate = ModelVariantArtifact.InjectionRef(
+                concept: "fear", vectorArtifactID: "runs/extract-1/fear", layer: 0, alpha: 1,
+                mode: .ablate, centering: "neutralMean")
+            let slots = ChatService.restoredSlots(for: agent([ablate]), catalog: catalog)
+            #expect(slots.map(\.mode) == [.ablate])
+            #expect(slots.first?.alpha == 1)
+        }
+    }
+
+    /// The Playground's picker never offers a Python-engine vector for MLX
+    /// steering, and an agent must not smuggle one in either.
+    @Test func aPythonEngineVectorIsNotRestoredForLocalSteering() throws {
+        try withWorkspace { workspace in
+            try plantVector(in: workspace, name: "fear", substrate: WorkspaceScoping.serverSubstrate)
+            let catalog = VectorCatalog.scan(
+                runsDirectory: workspace.appending(component: "runs"))
+            #expect(catalog.count == 1)
+            let steer = ModelVariantArtifact.InjectionRef(
+                concept: "fear", vectorArtifactID: "runs/extract-1/fear", layer: 1, alpha: 0.1)
+            #expect(ChatService.restoredSlots(for: agent([steer]), catalog: catalog).isEmpty)
+        }
+    }
+
+    /// Picking a vector fills in the strength an agent was promoted with.
+    /// The lookup compared the agent's relative reference with the absolute
+    /// catalog id literally, so in a local workspace it never matched, and
+    /// the Demo Workspace's French vector came up at the convention default
+    /// instead of its agent's 0.15.
+    @Test func thePromotedStrengthIsFoundForTheCatalogVector() throws {
+        try withWorkspace { workspace in
+            try plantVector(in: workspace, name: "french")
+            let catalog = VectorCatalog.scan(
+                runsDirectory: workspace.appending(component: "runs"))
+            let absolute = try #require(catalog.first?.id)
+            let promoted = agent(
+                [.init(concept: "french", vectorArtifactID: "runs/extract-1/french",
+                       layer: 1, alpha: 0.15)],
+                promotedBy: "manualOverride")
+            let found = SlotAlphaDefault.recommendation(
+                forVectorArtifactID: absolute, among: [promoted])
+            #expect(found?.alpha == 0.15)
+            #expect(found?.promotedBy == "manualOverride")
+        }
+    }
+
+    /// Saving the Playground's rows keeps an ablation row an ablation, with
+    /// the centering the session applies, and reports a row whose vector is
+    /// not in the catalog instead of dropping it.
+    @MainActor
+    @Test func savedRowsKeepTheirModeAndReportUnresolvedOnes() throws {
+        try withWorkspace { workspace in
+            try plantVector(in: workspace, name: "fear")
+            let defaults = try #require(
+                UserDefaults(suiteName: "steerlab.tests.imported-agent-rows"))
+            defaults.removePersistentDomain(forName: "steerlab.tests.imported-agent-rows")
+            let service = ChatService(cluster: clusterStore(defaults: defaults))
+            service.refreshVectors()
+            let id = try #require(service.vectors.first?.id)
+            service.centerAblationAgainstNeutralMean = true
+            service.slots = [
+                ChatService.SteerSlot(vectorID: id, layer: 0, alpha: 1, mode: .ablate),
+                ChatService.SteerSlot(vectorID: "runs/gone/fear", layer: 1, alpha: 0.1),
+            ]
+            let (refs, unresolved) = service.localSteeringInjectionRefs()
+            #expect(unresolved == 1)
+            #expect(refs.count == 1)
+            #expect(refs.first?.effectiveMode == .ablate)
+            #expect(refs.first?.centering == "neutralMean")
+            #expect(refs.first?.vectorArtifactID == id)
+
+            // A steering row writes no mode, layers, or centering, so a saved
+            // steering agent's bytes are what they always were; an ablation
+            // with centering off writes no centering.
+            service.slots = [
+                ChatService.SteerSlot(vectorID: id, layer: 1, alpha: 0.1),
+                ChatService.SteerSlot(vectorID: id, layer: 0, alpha: 1, mode: .ablate),
+            ]
+            service.centerAblationAgainstNeutralMean = false
+            let plain = service.localSteeringInjectionRefs().refs
+            #expect(plain.count == 2)
+            #expect(plain[0].mode == nil && plain[0].layers == nil && plain[0].centering == nil)
+            #expect(plain[1].mode == .ablate && plain[1].centering == nil)
+        }
+    }
+
+    /// The Playground has one centering setting for every ablation row and
+    /// ablates every layer. Loading an agent adopts its centering and says so
+    /// when the setting changes; what cannot be reproduced is said too.
+    @Test func ablationSettingsAreAdoptedAndExplained() {
+        typealias Ref = ModelVariantArtifact.InjectionRef
+        func ablation(_ concept: String, centering: String?, layers: [Int]? = nil) -> Ref {
+            Ref(concept: concept, vectorArtifactID: "runs/x/\(concept)", layer: 0, alpha: 1,
+                mode: .ablate, layers: layers, centering: centering)
+        }
+        let steering = Ref(concept: "calm", vectorArtifactID: "runs/x/calm", layer: 3, alpha: 0.2)
+
+        // Steering only: nothing changes and nothing is said.
+        let none = ChatService.ablationSettings(
+            agent: "a", restored: [(steering, 4)], currentlyCentered: true)
+        #expect(none.centered && none.notes.isEmpty)
+
+        // An agent whose ablation is not centered turns the setting off, and says so.
+        let off = ChatService.ablationSettings(
+            agent: "a", restored: [(ablation("fear", centering: nil), 4)], currentlyCentered: true)
+        #expect(!off.centered)
+        #expect(off.notes.count == 1 && off.notes[0].contains("now off"))
+
+        // Already matching: adopted silently.
+        let same = ChatService.ablationSettings(
+            agent: "a", restored: [(ablation("fear", centering: "neutralMean"), 4)],
+            currentlyCentered: true)
+        #expect(same.centered && same.notes.isEmpty)
+
+        // Mixed centering: the setting stays, and the note says so in plain words.
+        let mixed = ChatService.ablationSettings(
+            agent: "a",
+            restored: [(ablation("fear", centering: nil), 4),
+                       (ablation("joy", centering: "neutralMean"), 4)],
+            currentlyCentered: true)
+        #expect(mixed.centered)
+        #expect(mixed.notes.count == 1 && mixed.notes[0].contains("stays on"))
+        #expect(mixed.notes[0].contains("centered on the neutral mean"))
+
+        // A strict layer subset is reported; empty or full layer lists, or an
+        // unknown layer count, are every layer and are not.
+        let banded = ChatService.ablationSettings(
+            agent: "a",
+            restored: [(ablation("fear", centering: "neutralMean", layers: [1, 2]), 4),
+                       (ablation("joy", centering: "neutralMean", layers: []), 4),
+                       (ablation("awe", centering: "neutralMean", layers: [0, 1, 2, 3]), 4),
+                       (ablation("hope", centering: "neutralMean", layers: [1]), nil)],
+            currentlyCentered: true)
+        #expect(banded.notes.count == 1)
+        #expect(banded.notes[0].contains("fear") && !banded.notes[0].contains("joy")
+            && !banded.notes[0].contains("awe") && !banded.notes[0].contains("hope"))
     }
 }

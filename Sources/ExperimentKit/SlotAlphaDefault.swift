@@ -63,6 +63,9 @@ public enum SlotAlphaDefault {
         /// A recommendation existed but was denominated in units this
         /// artifact cannot currently express.
         case recommendationUnusable(agent: String)
+        /// A recommendation existed in raw units while the session is in
+        /// residual-norm units (or the reverse); its numeral is not reused.
+        case recommendationInOtherUnits(agent: String, agentInNormUnits: Bool)
     }
 
     /// Everything the decision reads, and nothing else — so the table below is
@@ -90,6 +93,12 @@ public enum SlotAlphaDefault {
         /// `Promotion.promotedBy` — "criterion" or "manualOverride"; `nil`
         /// for a hand-created variant.
         public var recommendedPromotedBy: String?
+        /// The units the session's α control is in, when the caller knows.
+        /// A recommendation in the other system is not adopted where the
+        /// artifact could express the session's own: its numeral would be a
+        /// different dose here (a raw 4 read as four residual norms). `nil`
+        /// keeps the decision independent of the session, as before.
+        public var sessionInNormUnits: Bool?
 
         public init(
             artifactID: String,
@@ -99,7 +108,8 @@ public enum SlotAlphaDefault {
             recommendedAlpha: Double? = nil,
             recommendedAlphaInNormUnits: Bool? = nil,
             recommendedFromAgent: String? = nil,
-            recommendedPromotedBy: String? = nil
+            recommendedPromotedBy: String? = nil,
+            sessionInNormUnits: Bool? = nil
         ) {
             self.artifactID = artifactID
             self.layer = layer
@@ -109,6 +119,7 @@ public enum SlotAlphaDefault {
             self.recommendedAlphaInNormUnits = recommendedAlphaInNormUnits
             self.recommendedFromAgent = recommendedFromAgent
             self.recommendedPromotedBy = recommendedPromotedBy
+            self.sessionInNormUnits = sessionInNormUnits
         }
 
         /// A denominator is usable only when it is present AND positive.
@@ -184,6 +195,20 @@ public enum SlotAlphaDefault {
             // literal α·v coefficient and is not a fraction of anything.
             let units: Units =
                 facts.recommendedAlphaInNormUnits == false ? .raw : .normUnits
+            if let session = facts.sessionInNormUnits, (units == .normUnits) != session {
+                // The session reads the numeral in its own units, so adopting
+                // it would change the dose. Its own default is used, and the
+                // rationale says why.
+                let agent = facts.recommendedFromAgent ?? "an agent"
+                return Decision(
+                    alpha: normUnitsDefault, units: .normUnits, alphaLabel: normLabel,
+                    rationale: rationale(
+                        .recommendationInOtherUnits(
+                            agent: agent, agentInNormUnits: units == .normUnits),
+                        alpha: normUnitsDefault, units: .normUnits),
+                    conventionNote: conventionNote,
+                    backfillHint: nil)
+            }
             return Decision(
                 alpha: alpha, units: units,
                 alphaLabel: units == .normUnits ? normLabel : rawLabel,
@@ -226,6 +251,13 @@ public enum SlotAlphaDefault {
                 "α \(number) \(unitWord) — agent '\(agent)' recommends a "
                 + "NORM-UNIT α, which needs a denominator this artifact does "
                 + "not store; its numeral is not reused as a raw α"
+        case .recommendationInOtherUnits(let agent, let agentInNormUnits):
+            return
+                "α \(number) \(unitWord) — agent '\(agent)' records its α in "
+                + (agentInNormUnits ? "residual-norm units" : "RAW units")
+                + ", and this session's α is in "
+                + (agentInNormUnits ? "raw units" : "residual-norm units")
+                + "; its numeral would be a different dose here, so it is not reused"
         }
     }
 
@@ -265,10 +297,16 @@ public enum SlotAlphaDefault {
     ) -> (alpha: Double, normUnits: Bool, agent: String, promotedBy: String?)? {
         var best: (rank: Int, name: String, alpha: Double, normUnits: Bool,
                    promotedBy: String?)?
+        // Saved agents name their vector workspace-relative and the catalog
+        // id is absolute, so the literal compare alone never matched a saved
+        // agent in a local workspace; both are resolved when it fails.
+        let resolved = ArtifactIdentity.canonical(artifactID)
         for variant in variants {
             guard
                 let injection = variant.injections.first(where: {
-                    $0.vectorArtifactID == artifactID && $0.effectiveMode != .ablate
+                    $0.effectiveMode != .ablate
+                        && ($0.vectorArtifactID == artifactID
+                            || ArtifactIdentity.canonical($0.vectorArtifactID) == resolved)
                 })
             else { continue }
             let promotedBy = variant.promotion?.promotedBy

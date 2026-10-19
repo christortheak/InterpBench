@@ -259,4 +259,39 @@ import Testing
                 among: [variant(name: "other", vectorID: "runs/x/calm", alpha: 1)])
                 == nil)
     }
+
+    // MARK: A recommendation in the other unit system
+
+    /// A raw-unit agent's numeral, adopted into a session whose α is in
+    /// residual-norm units, would be a different dose (a raw 4 read as four
+    /// residual norms). The session's own default is used and the rationale
+    /// names the agent and why.
+    @Test func aRawRecommendationIsNotAdoptedIntoANormUnitSession() {
+        var raw = facts(
+            norms: 42, recommended: 4, recommendedNormUnits: false,
+            agent: "fear-raw", promotedBy: "manualOverride")
+        raw.sessionInNormUnits = true
+        let decision = SlotAlphaDefault.decide(raw)
+        #expect(decision.units == .normUnits)
+        #expect(decision.alpha == SlotAlphaDefault.normUnitsDefault)
+        #expect(decision.rationale.contains("fear-raw"))
+        #expect(decision.rationale.contains("different dose"))
+
+        // Matching units adopt it, as before; and a caller that does not say
+        // what the session is in gets the old, session-blind decision.
+        raw.sessionInNormUnits = false
+        #expect(SlotAlphaDefault.decide(raw).alpha == 4)
+        raw.sessionInNormUnits = nil
+        #expect(SlotAlphaDefault.decide(raw).alpha == 4)
+    }
+
+    @Test func aNormRecommendationIsAdoptedIntoANormUnitSession() {
+        var norm = facts(
+            norms: 42, recommended: 0.15, recommendedNormUnits: true,
+            agent: "french-l28-a15", promotedBy: "manualOverride")
+        norm.sessionInNormUnits = true
+        let decision = SlotAlphaDefault.decide(norm)
+        #expect(decision.alpha == 0.15 && decision.units == .normUnits)
+    }
 }
+

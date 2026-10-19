@@ -28,19 +28,29 @@ public enum VariantInjectionEditing {
         public var alpha: Double
         /// Defaulted so every existing construction is unchanged.
         public var mode: InterventionPlan.Mode
+        /// An ablation's layer subset and centering, carried through the
+        /// editor untouched. No control edits them, and dropping them on save
+        /// silently turned a centred or banded ablation into a raw all-layer
+        /// one.
+        public var layers: [Int]?
+        public var centering: String?
 
         public init(
             vectorArtifactID: String?,
             originalConcept: String? = nil,
             layer: Int,
             alpha: Double,
-            mode: InterventionPlan.Mode = .add
+            mode: InterventionPlan.Mode = .add,
+            layers: [Int]? = nil,
+            centering: String? = nil
         ) {
             self.vectorArtifactID = vectorArtifactID
             self.originalConcept = originalConcept
             self.layer = layer
             self.alpha = alpha
             self.mode = mode
+            self.layers = layers
+            self.centering = centering
         }
     }
 
@@ -54,7 +64,9 @@ public enum VariantInjectionEditing {
                 originalConcept: $0.concept,
                 layer: $0.layer,
                 alpha: $0.alpha,
-                mode: $0.effectiveMode)
+                mode: $0.effectiveMode,
+                layers: $0.layers,
+                centering: $0.centering)
         }
     }
 
@@ -83,7 +95,10 @@ public enum VariantInjectionEditing {
                 alpha: draft.alpha,
                 // Absent for steering, so an untouched agent's bytes — and
                 // therefore its artifact hash and promotion key — do not move.
-                mode: draft.mode == .ablate ? .ablate : nil)
+                // Layers and centering belong to ablation only.
+                mode: draft.mode == .ablate ? .ablate : nil,
+                layers: draft.mode == .ablate ? draft.layers : nil,
+                centering: draft.mode == .ablate ? draft.centering : nil)
         }
     }
 

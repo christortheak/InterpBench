@@ -293,7 +293,17 @@ public final class ChatService {
 
     // MARK: Steering
 
-    public private(set) var vectors: [VectorArtifact] = []
+    public private(set) var vectors: [VectorArtifact] = [] {
+        // Resolved once per refresh, so a lookup by an agent's
+        // workspace-relative reference does not resolve every catalog path
+        // again (the agent editor asks on every redraw).
+        didSet {
+            vectorIDsByResolvedPath = Dictionary(
+                vectors.map { (ArtifactIdentity.canonical($0.id), $0.id) },
+                uniquingKeysWith: { first, _ in first })
+        }
+    }
+    @ObservationIgnored private var vectorIDsByResolvedPath: [String: String] = [:]
     public private(set) var readingProbes: [ProbeArtifactRecord] = []
     public private(set) var neutralCorpora: [NeutralCorpusRecord] = []
     public private(set) var neutralPCBases: [NeutralPCArtifactRecord] = []
@@ -1481,6 +1491,165 @@ public final class ChatService {
         applyModelVariantControls(record)
     }
 
+    /// The Playground rows an agent's injections restore to, in the local
+    /// workspace. Model-free, so it is testable without loading one (it does
+    /// read the workspace root to resolve references).
+    ///
+    /// Matched resolved, not literal: every saved agent stores
+    /// `vectorArtifactID` workspace-relative (`ModelVariantStore.save`
+    /// normalizes it), while catalog ids are absolute. Each row names the
+    /// CATALOG id of the vector it matched, never the agent's own spelling,
+    /// because the send path looks a row's vector up by literal id.
+    /// Restoring the agent's spelling made the match succeed here and the
+    /// send refuse with "does not resolve to an artifact", for every saved
+    /// agent. A row keeps its injection's mode, so an ablation agent ablates.
+    /// An injection is left out when no vector matches for the agent's base
+    /// model, or when the match was extracted by the Python engine, which
+    /// never steers in-process MLX (the Playground's picker excludes those
+    /// too).
+    nonisolated static func restoredSlots(
+        for artifact: ModelVariantArtifact, catalog: [VectorArtifact]
+    ) -> [SteerSlot] {
+        artifact.injections.compactMap { injection -> SteerSlot? in
+            guard let match = localSteeringMatch(
+                for: injection.vectorArtifactID, baseModelID: artifact.baseModelID,
+                catalog: catalog)
+            else { return nil }
+            return SteerSlot(
+                vectorID: match.id,
+                layer: Double(injection.layer),
+                alpha: injection.alpha,
+                enabled: true,
+                mode: injection.effectiveMode)
+        }
+    }
+
+    /// The catalog vector an agent reference names, if this Mac's engine can
+    /// steer with it: same base model, an offerable substrate, and the same
+    /// path once both are resolved. The cheap checks run first.
+    nonisolated static func localSteeringMatch(
+        for reference: String, baseModelID: String, catalog: [VectorArtifact]
+    ) -> VectorArtifact? {
+        let candidates = catalog.filter {
+            $0.sidecar.modelID == baseModelID
+                && WorkspaceScoping.offerableForLocalSteering(substrate: $0.sidecar.substrate)
+        }
+        if let literal = candidates.first(where: { $0.id == reference }) { return literal }
+        let resolved = ArtifactIdentity.canonical(reference)
+        return candidates.first { ArtifactIdentity.canonical($0.id) == resolved }
+    }
+
+    /// The catalog vector a reference names, matched literally first and then
+    /// with both paths resolved — for lookups that hold an agent's
+    /// workspace-relative reference against absolute catalog ids.
+    public func localVector(matching reference: String) -> VectorArtifact? {
+        if let literal = vectors.first(where: { $0.id == reference }) { return literal }
+        guard let id = vectorIDsByResolvedPath[ArtifactIdentity.canonical(reference)]
+        else { return nil }
+        return vectors.first { $0.id == id }
+    }
+
+    /// The Playground's enabled rows as an agent's injections, for saving the
+    /// current steering as an agent in the local workspace. Each ref keeps its
+    /// row's mode, and an ablation records the centering the session applies
+    /// (`centerAblationAgainstNeutralMean`), so the saved agent does what the
+    /// Playground did. `unresolved` counts enabled rows whose vector is not in
+    /// the catalog; those cannot be saved and must be reported, not dropped
+    /// quietly.
+    public func localSteeringInjectionRefs()
+        -> (refs: [ModelVariantArtifact.InjectionRef], unresolved: Int)
+    {
+        var refs: [ModelVariantArtifact.InjectionRef] = []
+        var unresolved = 0
+        for slot in slots where slot.enabled && slot.vectorID != nil {
+            guard let vector = artifact(for: slot) else {
+                unresolved += 1
+                continue
+            }
+            let ablate = slot.mode == .ablate
+            refs.append(.init(
+                concept: vector.sidecar.concept,
+                vectorArtifactID: vector.id,
+                layer: Int(slot.layer),
+                alpha: slot.alpha,
+                mode: ablate ? .ablate : nil,
+                centering: ablate && centerAblationAgainstNeutralMean ? "neutralMean" : nil))
+        }
+        return (refs, unresolved)
+    }
+
+    /// An ablation agent's centering and layers, as far as the Playground can
+    /// apply them. Model-free, so it is testable without loading one.
+    ///
+    /// The Playground has ONE centering setting for every ablation row
+    /// (`centerAblationAgainstNeutralMean`) and always ablates every layer.
+    /// So the agent's centering is adopted when its restored ablations agree,
+    /// and the change is said, because the setting outlives the agent. What
+    /// the Playground cannot reproduce is said too: mixed centering, or a
+    /// layer subset. `restored` is the ablations that restored to rows, each
+    /// with its vector's layer count; an ablation that did not restore is
+    /// already reported as missing and changes nothing here.
+    nonisolated static func ablationSettings(
+        agent: String,
+        restored: [(injection: ModelVariantArtifact.InjectionRef, layerCount: Int?)],
+        currentlyCentered: Bool
+    ) -> (centered: Bool, notes: [String]) {
+        let ablations = restored.filter { $0.injection.effectiveMode == .ablate }
+        guard !ablations.isEmpty else { return (currentlyCentered, []) }
+        func words(_ centering: String) -> String {
+            centering == "neutralMean" ? "centered on the neutral mean" : "not centered"
+        }
+        var notes: [String] = []
+        var centered = currentlyCentered
+        let centerings = Set(ablations.map(\.injection.effectiveCentering))
+        if centerings.count == 1, let centering = centerings.first {
+            centered = centering == "neutralMean"
+            if centered != currentlyCentered {
+                notes.append(
+                    "Center ablations on the neutral mean is now \(centered ? "on" : "off"), "
+                        + "as agent '\(agent)' declares")
+            }
+        } else {
+            notes.append(
+                "agent '\(agent)' has ablations both "
+                    + centerings.sorted().map(words).joined(separator: " and ")
+                    + "; the Playground applies one setting to every ablation row, "
+                    + "and Center ablations on the neutral mean stays "
+                    + (currentlyCentered ? "on" : "off"))
+        }
+        // nil or empty layers mean every layer, on both engines.
+        let banded = ablations.filter { entry in
+            guard let layers = entry.injection.layers, !layers.isEmpty,
+                let layerCount = entry.layerCount
+            else { return false }
+            return Set(layers) != Set(0..<layerCount)
+        }
+        if !banded.isEmpty {
+            let concepts = NSOrderedSet(array: banded.map(\.injection.concept))
+                .compactMap { $0 as? String }
+            notes.append(
+                "the Playground ablates every layer; agent '\(agent)' ablates only some layers for "
+                    + concepts.joined(separator: ", "))
+        }
+        return (centered, notes)
+    }
+
+    private func adoptAblationSettings(of artifact: ModelVariantArtifact) -> [String] {
+        let restored = artifact.injections.compactMap { injection
+            -> (injection: ModelVariantArtifact.InjectionRef, layerCount: Int?)? in
+            guard let match = Self.localSteeringMatch(
+                for: injection.vectorArtifactID, baseModelID: artifact.baseModelID,
+                catalog: vectors)
+            else { return nil }
+            return (injection, match.sidecar.layerCount)
+        }
+        let settings = Self.ablationSettings(
+            agent: artifact.name, restored: restored,
+            currentlyCentered: centerAblationAgainstNeutralMean)
+        centerAblationAgainstNeutralMean = settings.centered
+        return settings.notes
+    }
+
     private func applySelectedModelVariantIfReady() {
         guard let selectedSteeringVariant,
             loadedModelID == selectedSteeringVariant.artifact.baseModelID
@@ -1551,24 +1720,7 @@ public final class ChatService {
             removeNeutralDirectionsAtSteering = false
         }
 
-        let restoredSlots = artifact.injections.compactMap { injection -> SteerSlot? in
-            // Resolved, not literal: a server-promoted agent stores
-            // `vectorArtifactID` workspace-relative while catalog ids are
-            // absolute, so a literal compare made an imported agent VISIBLE
-            // in the library (which resolves) and then silently unable to
-            // restore its slots here (which did not). A partial fix is worse
-            // than none — it moves the failure somewhere harder to see.
-            guard vectors.contains(where: {
-                ArtifactIdentity.canonical($0.id)
-                    == ArtifactIdentity.canonical(injection.vectorArtifactID)
-                    && $0.sidecar.modelID == artifact.baseModelID
-            }) else { return nil }
-            return SteerSlot(
-                vectorID: injection.vectorArtifactID,
-                layer: Double(injection.layer),
-                alpha: injection.alpha,
-                enabled: true)
-        }
+        let restoredSlots = Self.restoredSlots(for: artifact, catalog: vectors)
         slots = restoredSlots.isEmpty ? [SteerSlot()] : restoredSlots
         steeringEnabled = !restoredSlots.isEmpty
         resetChat()
@@ -1577,10 +1729,26 @@ public final class ChatService {
         if let unitFlipNote {
             notes.append(unitFlipNote)
         }
+        notes += adoptAblationSettings(of: artifact)
         if !artifact.adapters.isEmpty, selectedRuntimeAdapterID == nil {
             notes.append("adapter artifact not found")
         }
-        let missingVectors = artifact.injections.count - restoredSlots.count
+        let pythonOnly = artifact.injections.filter { injection in
+            Self.localSteeringMatch(
+                for: injection.vectorArtifactID, baseModelID: artifact.baseModelID,
+                catalog: vectors) == nil
+                && localVector(matching: injection.vectorArtifactID).map {
+                    $0.sidecar.modelID == artifact.baseModelID
+                        && !WorkspaceScoping.offerableForLocalSteering(
+                            substrate: $0.sidecar.substrate)
+                } == true
+        }.count
+        if pythonOnly > 0 {
+            notes.append(
+                "\(pythonOnly) vector\(pythonOnly == 1 ? " was" : "s were") extracted by "
+                    + "the Python engine and cannot steer in this Mac's engine")
+        }
+        let missingVectors = artifact.injections.count - restoredSlots.count - pythonOnly
         if missingVectors > 0 {
             notes.append("\(missingVectors) vector\(missingVectors == 1 ? "" : "s") not found")
         }
@@ -1734,13 +1902,30 @@ public final class ChatService {
                 vectorID: injection.vectorArtifactID,
                 layer: Double(injection.layer),
                 alpha: injection.alpha,
-                enabled: true)
+                enabled: true,
+                // Kept, or a seeded ablation agent composed back as steering
+                // the moment anything was edited.
+                mode: injection.effectiveMode)
         }
+        // The composer declares centering from the session toggle, so a
+        // seeded ablation agent sets it from its own declaration, by the same
+        // rule as the local path (every row is kept here, so every ablation
+        // counts as restored; the server knows the layer counts).
+        let seededAblation = Self.ablationSettings(
+            agent: artifact.name,
+            restored: artifact.injections.map { injection in
+                (injection: injection, layerCount: catalog.remoteVectors.first {
+                    $0.matches(reference: injection.vectorArtifactID)
+                }?.layerCount)
+            },
+            currentlyCentered: centerAblationAgainstNeutralMean)
+        centerAblationAgainstNeutralMean = seededAblation.centered
         slots = restored.isEmpty ? [SteerSlot()] : restored
         steeringEnabled = !restored.isEmpty
         resetChat()
 
         var notes = ["loaded \(sourceLabel) '\(artifact.name)'"]
+        notes += seededAblation.notes
         if let unitFlipNote {
             notes.append(unitFlipNote)
         }
@@ -1955,7 +2140,8 @@ public final class ChatService {
                 recommendedAlpha: recommendation?.alpha,
                 recommendedAlphaInNormUnits: recommendation?.normUnits,
                 recommendedFromAgent: recommendation?.agent,
-                recommendedPromotedBy: recommendation?.promotedBy)
+                recommendedPromotedBy: recommendation?.promotedBy,
+                sessionInNormUnits: alphaInNormUnits)
         }
 
         if isServerWorkspace {

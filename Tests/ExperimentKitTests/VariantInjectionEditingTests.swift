@@ -118,4 +118,24 @@ import Testing
             VariantInjectionEditing.unresolvedLabel(concept: nil, ref: "/srv/runs/x/v")
                 == "vector · /srv/runs/x/v (not in this workspace's catalog)")
     }
+
+    /// No control edits an ablation's layer subset or centering, so they
+    /// must survive open → save untouched; steering never carries them.
+    @Test func anAblationKeepsItsLayersAndCenteringThroughTheEditor() {
+        let stored: [ModelVariantArtifact.InjectionRef] = [
+            .init(concept: "fear", vectorArtifactID: "runs/x/fear", layer: 3, alpha: 1,
+                  mode: .ablate, layers: [2, 3, 4], centering: "neutralMean"),
+            .init(concept: "calm", vectorArtifactID: "runs/x/calm", layer: 5, alpha: 0.2),
+        ]
+        let saved = VariantInjectionEditing.injectionRefs(
+            drafts: VariantInjectionEditing.drafts(from: stored),
+            resolveConcept: { _ in nil })
+        #expect(saved == stored)
+
+        var steering = VariantInjectionEditing.drafts(from: [stored[0]])
+        steering[0].mode = .add
+        let switched = VariantInjectionEditing.injectionRefs(
+            drafts: steering, resolveConcept: { _ in nil })
+        #expect(switched.first?.layers == nil && switched.first?.centering == nil)
+    }
 }
