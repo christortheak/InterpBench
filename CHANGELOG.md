@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.10] — 2026-10-19
+
 - **A Demo Workspace for this Mac.** "Four concepts, four personalities"
   runs on Gemma 3 4B with the engine built into the app. It covers four steps:
   - extract French, hungry, fear, and Golden Gate Bridge directions, and check
