@@ -9,3 +9,16 @@ Tests/ExperimentKitTests/ClusterCLITests.swift :: secret
 Tests/ExperimentKitTests/ClusterLifecycleCoordinatorTests.swift :: secret
 Tests/ExperimentKitTests/ClusterProvisioningOperationsTests.swift :: secret
 Tests/Fixtures/cross-engine/model-capabilities.json :: email
+
+# Model capability records are named <owner>--<repo>@<40-hex revision>.json,
+# which the email check reads as an address. Each file below holds exactly one
+# such match, the Demo Workspace's record path
+# prompts/models/mlx-community--gemma-3-4b-it-4bit@<revision>.json, and no
+# address. The files are run evidence and a frozen preregistration, so they
+# cannot be edited; re-check this list whenever the demo is rebuilt.
+DemoWorkspaces/mlx/experiments/agent-personalities/preregistration.md :: email
+DemoWorkspaces/mlx/runs/2026-10-19T111732493Z-exp-concept-sweep-extract/config.json :: email
+DemoWorkspaces/mlx/runs/2026-10-19T111941653Z-exp-concept-sweep-validate/config.json :: email
+DemoWorkspaces/mlx/runs/2026-10-19T112313646Z-exp-concept-sweep-sweep/config.json :: email
+DemoWorkspaces/mlx/runs/2026-10-19T113508073Z-exp-agent-personalities-validate/config.json :: email
+DemoWorkspaces/mlx/runs/2026-10-19T113525164Z-exp-agent-personalities-run/config.json :: email
