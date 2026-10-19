@@ -512,5 +512,178 @@ struct ImportedAgentDiscoveryTests {
                 runs.appending(components: "model-variants-old", "a.json")))
         }
     }
+
+    // MARK: Save Changes on an agent a run saved
+
+    /// Every regular file under `directory`, by relative path, with its bytes.
+    private func snapshot(_ directory: URL) -> [String: Data] {
+        var files: [String: Data] = [:]
+        let root = directory.standardizedFileURL.path
+        let enumerator = FileManager.default.enumerator(
+            at: directory, includingPropertiesForKeys: [.isRegularFileKey])
+        while let url = enumerator?.nextObject() as? URL {
+            guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true,
+                let data = try? Data(contentsOf: url)
+            else { continue }
+            files[String(url.standardizedFileURL.path.dropFirst(root.count))] = data
+        }
+        return files
+    }
+
+    /// What the agent editor builds from a loaded agent before any edit: the
+    /// same settings, no record of making, and a new creation time.
+    private func asTheEditorBuildsIt(_ stored: ModelVariantArtifact) -> ModelVariantArtifact {
+        ModelVariantArtifact(
+            name: stored.name, baseModelID: stored.baseModelID,
+            baseRevision: stored.baseRevision, adapters: stored.adapters,
+            injections: stored.injections, bandWidth: stored.bandWidth,
+            alphaInNormUnits: stored.alphaInNormUnits,
+            neutralPCBasisPath: stored.neutralPCBasisPath,
+            neutralPCBasisLabel: stored.neutralPCBasisLabel,
+            promptMode: stored.promptMode, qwenThinkingEnabled: stored.qwenThinkingEnabled,
+            temperature: stored.temperature, systemPrompt: stored.systemPrompt ?? "",
+            interventionPolicies: stored.interventionPolicies)
+    }
+
+    /// The Python engine's save and promote write an agent into its run's
+    /// folder, which is evidence. Save Changes used to write over that file
+    /// whenever the edit dropped no promotion record. Now every edit, with a
+    /// record or without, is saved as a new library agent and the run's
+    /// file keeps its bytes; the store's own write refuses the file too.
+    @Test func saveChangesNeverWritesAnAgentARunSaved() throws {
+        var unpromoted = try ServerFixture.load()
+        unpromoted.artifact["promotion"] = nil
+        try withWorkspace { workspace in
+            let promotedURL = try ServerFixture.load().plant(in: workspace)
+            let unpromotedURL = try unpromoted.plant(
+                in: workspace, stamp: "20260727T000000000")
+            let runs = workspace.appending(component: "runs")
+            let records = ModelVariantStore.scan()
+            let names = records.map(\.artifact.name)
+            for url in [promotedURL, unpromotedURL] {
+                let record = try #require(records.first {
+                    $0.url.standardizedFileURL.path == url.standardizedFileURL.path })
+                #expect(!ModelVariantStore.isInLibrary(record.url))
+                let before = try Data(contentsOf: record.url)
+
+                // A change to what the agent does, and a rename alone.
+                var strength = asTheEditorBuildsIt(record.artifact)
+                strength.injections[0].alpha = 0.2
+                var renamed = asTheEditorBuildsIt(record.artifact)
+                renamed.name = "calm-agent"
+                for (edited, expectedName) in [
+                    (strength, "neuroticism-agent-edited"), (renamed, "calm-agent"),
+                ] {
+                    let outcome = try ModelVariantStore.saveChanges(
+                        edited, to: record, takenNames: names)
+                    guard case .savedAsNewAgent(let copy) = outcome else {
+                        Issue.record(
+                            "an agent a run saved was not saved as a new agent: \(outcome)")
+                        continue
+                    }
+                    #expect(try Data(contentsOf: record.url) == before)
+                    #expect(ModelVariantStore.isInLibrary(copy.url))
+                    #expect(copy.url != record.url)
+                    #expect(copy.artifact.name == expectedName)
+                    #expect(copy.artifact.injections[0].alpha == edited.injections[0].alpha)
+                    #expect(copy.artifact.promotion == nil)
+                    let reloaded = try JSONDecoder().decode(
+                        ModelVariantArtifact.self, from: Data(contentsOf: copy.url))
+                    #expect(reloaded == copy.artifact)
+                }
+
+                // The write itself refuses, so no other caller can either.
+                do {
+                    try ModelVariantStore.update(strength, at: record.url)
+                    Issue.record("update wrote over an agent a run saved")
+                } catch let refusal as WorkspaceHousekeeping.Refusal {
+                    #expect(refusal.code == WorkspaceHousekeeping.agentIsRunEvidenceWriteCode)
+                    #expect(refusal.reason.contains(record.url.deletingLastPathComponent()
+                        .lastPathComponent))
+                }
+                #expect(try Data(contentsOf: record.url) == before)
+            }
+            // Both run folders hold exactly what the engine wrote.
+            #expect(snapshot(promotedURL.deletingLastPathComponent()).count == 2)
+            #expect(snapshot(unpromotedURL.deletingLastPathComponent()).count == 2)
+            #expect(ModelVariantStore.scan().count == 6)
+            #expect(snapshot(runs).keys.filter { $0.hasPrefix("/model-variants/") }
+                .filter { $0.hasSuffix("/model-variant.json") }.count == 4)
+        }
+    }
+
+    /// A library agent is still updated in place, with the promotion-record
+    /// rule unchanged, and no copy appears. It is the control for the test
+    /// above: the same edits, a different folder.
+    @Test func saveChangesStillUpdatesALibraryAgentInPlace() throws {
+        try withWorkspace { workspace in
+            var promoted = agent(
+                [.init(concept: "fear", vectorArtifactID: "runs/extract-1/fear",
+                       layer: 1, alpha: 0.1)],
+                promotedBy: "criterion")
+            promoted.name = "fear-agent"
+            let record = try ModelVariantStore.save(promoted)
+            #expect(ModelVariantStore.isInLibrary(record.url))
+            let names = ModelVariantStore.scan().map(\.artifact.name)
+
+            var renamed = asTheEditorBuildsIt(record.artifact)
+            renamed.name = "fear-agent-2"
+            guard case .updated(let kept, let droppedForRename) = try ModelVariantStore
+                .saveChanges(renamed, to: record, takenNames: names)
+            else {
+                Issue.record("a library agent's rename was not saved in place")
+                return
+            }
+            #expect(kept.url == record.url && !droppedForRename)
+            #expect(kept.artifact.promotion == promoted.promotion)
+
+            var strength = asTheEditorBuildsIt(kept.artifact)
+            strength.injections[0].alpha = 0.2
+            guard case .updated(let updated, let dropped) = try ModelVariantStore
+                .saveChanges(strength, to: kept, takenNames: names)
+            else {
+                Issue.record("a library agent's edit was not saved in place")
+                return
+            }
+            #expect(updated.url == record.url && dropped)
+            let reloaded = try JSONDecoder().decode(
+                ModelVariantArtifact.self, from: Data(contentsOf: record.url))
+            #expect(reloaded.name == "fear-agent-2")
+            #expect(reloaded.injections[0].alpha == 0.2)
+            #expect(reloaded.promotion == nil)
+            #expect(reloaded.createdAt == promoted.createdAt)
+            #expect(ModelVariantStore.scan().count == 1)
+        }
+    }
+
+    /// Save Changes on an unedited agent a run saved writes nothing at all:
+    /// no copy, no library folder, and the run's folder as it was. The edit
+    /// at the end is the control, showing the snapshot sees a write.
+    @Test func aNoOpSaveOfARunAgentWritesNothing() throws {
+        try withWorkspace { workspace in
+            let url = try ServerFixture.load().plant(in: workspace)
+            let runs = workspace.appending(component: "runs")
+            let record = try #require(ModelVariantStore.scan().first)
+            #expect(record.url.standardizedFileURL.path == url.standardizedFileURL.path)
+            let before = snapshot(runs)
+            let runFolderBefore = snapshot(url.deletingLastPathComponent())
+            let names = [record.artifact.name]
+
+            let outcome = try ModelVariantStore.saveChanges(
+                asTheEditorBuildsIt(record.artifact), to: record, takenNames: names)
+            guard case .nothingToSave = outcome else {
+                Issue.record("an unedited agent a run saved was saved: \(outcome)")
+                return
+            }
+            #expect(snapshot(runs) == before)
+            #expect(!FileManager.default.fileExists(atPath: ModelVariantStore.directory.path))
+
+            var edited = asTheEditorBuildsIt(record.artifact)
+            edited.temperature = 0.5
+            try ModelVariantStore.saveChanges(edited, to: record, takenNames: names)
+            #expect(snapshot(runs) != before)
+            #expect(snapshot(url.deletingLastPathComponent()) == runFolderBefore)
+        }
+    }
 }
 

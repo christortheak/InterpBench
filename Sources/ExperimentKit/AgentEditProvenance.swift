@@ -22,6 +22,12 @@ import Foundation
 /// - an edit that changes what the agent does cannot keep the record, because
 ///   the record would vouch for settings it never tested. The record is
 ///   dropped and the caller says so.
+///
+/// All of that is for an agent in the library (`runs/model-variants/`). An
+/// agent a run saved (`runs/<run>/<name>.json`, how the Python engine's save
+/// and promote store them) lives in that run's folder, which is evidence:
+/// Save Changes never writes it, and saves the edits as a new library agent
+/// instead (`saveChangesPlan`).
 public enum AgentEditProvenance {
 
     public struct Merge: Sendable, Equatable {
@@ -32,23 +38,58 @@ public enum AgentEditProvenance {
         public var droppedPromotion: Bool
     }
 
+    /// What Save Changes does with the agent being edited.
+    public enum SaveChangesPlan: Sendable, Equatable {
+        /// A library agent: `merge.artifact` is written over its file. When
+        /// `merge.droppedPromotion` is true the editor asks first.
+        case updateInPlace(Merge)
+        /// An agent a run saved, with something to save: the editor's agent
+        /// becomes a new library agent, and the run's file is not written.
+        case saveAsNewAgent
+        /// An agent a run saved, and saving would write exactly what its file
+        /// already holds: nothing is written, so no pointless copy appears.
+        case nothingToSave
+    }
+
+    /// Decides Save Changes for the agent stored as `stored`. `inLibrary` is
+    /// `ModelVariantStore.isInLibrary` of its file.
+    ///
+    /// For an agent a run saved, "nothing to save" means the in-place save
+    /// would have written the file's own content back: no edit, and no
+    /// repair either. A save that would stamp a missing system-prompt hash
+    /// (the repair a freeze refusal asks for) or make a vector reference
+    /// portable is something to save, and goes to the copy.
+    public static func saveChangesPlan(
+        edited: ModelVariantArtifact, over stored: ModelVariantArtifact, inLibrary: Bool
+    ) -> SaveChangesPlan {
+        let merge = merge(edited: edited, over: stored)
+        if inLibrary { return .updateInPlace(merge) }
+        return ModelVariantStore.workspaceRelativeNormalized(merge.artifact) == stored
+            ? .nothingToSave : .saveAsNewAgent
+    }
+
+    /// `saveChangesPlan` for a listed agent, judged by where its file is.
+    public static func saveChangesPlan(
+        edited: ModelVariantArtifact, over record: ModelVariantRecord
+    ) -> SaveChangesPlan {
+        saveChangesPlan(
+            edited: edited, over: record.artifact,
+            inLibrary: ModelVariantStore.isInLibrary(record.url))
+    }
+
     /// The title and message of the question Save Changes asks when the
     /// edits would drop the record. Asked at save time, after the editor's
     /// own reference rewrites, so it never fires on an agent nobody edited.
+    /// Only a library agent is asked: an agent a run saved is never written,
+    /// so its edits go to a new agent and its record stays where it is.
     public static func dialogTitle(agent: String) -> String {
         "Save changes to '\(agent)'?"
     }
 
-    /// `inLibrary` is false for an agent a run saved: its folder is evidence,
-    /// so it is never rewritten and the only way on is a copy.
-    public static func dialogMessage(inLibrary: Bool) -> String {
-        inLibrary
-            ? "These edits change what the agent does, so its promotion record would no "
-                + "longer describe it, and Save Changes and Remove the Record removes it. "
-                + "Save as New Agent keeps this agent and its record as they are."
-            : "These edits change what the agent does. This agent was saved by a run, "
-                + "and a run's folder is kept as evidence, so the edits can only be saved "
-                + "as a new agent; this agent and its promotion record stay as they are."
+    public static func dialogMessage() -> String {
+        "These edits change what the agent does, so its promotion record would no "
+            + "longer describe it, and Save Changes and Remove the Record removes it. "
+            + "Save as New Agent keeps this agent and its record as they are."
     }
 
     /// Said after a save that dropped the record.
@@ -57,8 +98,59 @@ public enum AgentEditProvenance {
             + "what the agent does, so the record no longer describes it."
     }
 
+    // MARK: - Agents a run saved
+
+    /// The editor's save button. For an agent a run saved it names what the
+    /// button does, before anyone presses it.
+    public static func saveButtonTitle(editing: Bool, inLibrary: Bool) -> String {
+        guard editing else { return "Save New Agent" }
+        return inLibrary ? "Save Changes" : "Save as New Agent"
+    }
+
+    /// The save button's help for an agent a run saved.
+    public static let savedByRunButtonHelp =
+        "this agent was saved by a run, and a run's folder is kept as evidence, so "
+        + "your edits are saved as a new agent in the library and the run's agent "
+        + "stays as it is"
+
+    /// The caption under the agent picker. `run` is the folder of the run
+    /// that saved the agent, nil for a library agent.
+    public static func editingCaption(agent: String, savedByRun run: String?) -> String {
+        guard let run else {
+            return "editing the saved agent '\(agent)' — Save Changes updates it in "
+                + "place; choose New… above to start a fresh definition instead"
+        }
+        return "editing '\(agent)', which the run \(run) saved — a run's folder is "
+            + "kept as evidence, so Save as New Agent saves your edits as a new agent "
+            + "in the library and leaves this one as it is; choose New… above to "
+            + "start a fresh definition instead"
+    }
+
+    /// Said after Save as New Agent. `savedByRun` is true when the original
+    /// is an agent a run saved, which Save Changes never rewrites.
+    public static func savedAsNewAgentNote(
+        agent: String, original: String, savedByRun: Bool, originalHasRecord: Bool
+    ) -> String {
+        guard savedByRun else {
+            return "Saved a new agent '\(agent)'; '\(original)' is unchanged."
+        }
+        let note = "Saved a new agent '\(agent)' in the library. '\(original)' was saved "
+            + "by a run, and a run's folder is kept as evidence, so it is unchanged."
+        return originalHasRecord
+            ? note + " The new agent has no promotion record; that record stays with "
+                + "'\(original)'."
+            : note
+    }
+
+    /// Said when Save Changes on an agent a run saved finds nothing to save.
+    public static func nothingToSaveNote(agent: String) -> String {
+        "Nothing to save: the editor shows '\(agent)' as it is stored. It was saved "
+            + "by a run, and a run's folder is kept as evidence, so edits you make are "
+            + "saved as a new agent in the library."
+    }
+
     /// The name Save as New Agent gives the copy: the editor's name when no
-    /// library agent has it, else that name with "-edited" (and a number)
+    /// listed agent has it, else that name with "-edited" (and a number)
     /// appended, so the original keeps its name.
     public static func copyName(_ name: String, taken: [String]) -> String {
         // The same comparison the editor's collision check uses.

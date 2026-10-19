@@ -138,15 +138,114 @@ struct AgentEditProvenanceTests {
     /// The question names the way to keep the original, and the after-save
     /// note says what happened without advice that would come too late.
     @Test func theQuestionOffersSaveAsNewAgent() {
-        #expect(AgentEditProvenance.dialogMessage(inLibrary: true).contains("Save as New Agent"))
-        #expect(AgentEditProvenance.dialogMessage(inLibrary: true)
+        #expect(AgentEditProvenance.dialogMessage().contains("Save as New Agent"))
+        #expect(AgentEditProvenance.dialogMessage()
             .contains("Save Changes and Remove the Record"))
-        // An agent a run saved is evidence: only a copy is offered.
-        #expect(AgentEditProvenance.dialogMessage(inLibrary: false).contains("evidence"))
-        #expect(!AgentEditProvenance.dialogMessage(inLibrary: false)
-            .contains("Remove the Record"))
         #expect(AgentEditProvenance.afterSaveNote(agent: "a").hasPrefix("Updated"))
         #expect(!AgentEditProvenance.afterSaveNote(agent: "a").contains("To keep"))
+    }
+
+    // MARK: Agents a run saved
+
+    /// A library agent is updated in place, by the same merge as before; an
+    /// agent a run saved never is. The library case is the control: the same
+    /// edit over the same stored agent differs only in where the file is.
+    @Test func onlyALibraryAgentIsUpdatedInPlace() {
+        let original = stored()
+        var edited = fromEditor(original)
+        edited.injections[0].alpha = 0.2
+        #expect(AgentEditProvenance.saveChangesPlan(
+            edited: edited, over: original, inLibrary: true)
+            == .updateInPlace(AgentEditProvenance.merge(edited: edited, over: original)))
+        #expect(AgentEditProvenance.saveChangesPlan(
+            edited: edited, over: original, inLibrary: false) == .saveAsNewAgent)
+
+        // No promotion record, and an edit that drops nothing: the case that
+        // went through the in-place write with no question asked.
+        var plain = original
+        plain.promotion = nil
+        var renamed = fromEditor(plain)
+        renamed.name = "french-agent"
+        #expect(!AgentEditProvenance.merge(edited: renamed, over: plain).droppedPromotion)
+        #expect(AgentEditProvenance.saveChangesPlan(
+            edited: renamed, over: plain, inLibrary: false) == .saveAsNewAgent)
+        guard case .updateInPlace = AgentEditProvenance.saveChangesPlan(
+            edited: renamed, over: plain, inLibrary: true)
+        else {
+            Issue.record("a library agent's rename is no longer saved in place")
+            return
+        }
+    }
+
+    /// An unedited agent a run saved has nothing to save. A library agent
+    /// still goes through the in-place save (which writes its own content
+    /// back), and an edit, however small, is something to save.
+    @Test func anUneditedRunAgentHasNothingToSave() {
+        let original = stored()
+        #expect(AgentEditProvenance.saveChangesPlan(
+            edited: fromEditor(original), over: original, inLibrary: false) == .nothingToSave)
+        #expect(AgentEditProvenance.saveChangesPlan(
+            edited: fromEditor(original), over: original, inLibrary: true)
+            == .updateInPlace(.init(artifact: original, droppedPromotion: false)))
+        var edited = fromEditor(original)
+        edited.temperature = 0.1
+        #expect(AgentEditProvenance.saveChangesPlan(
+            edited: edited, over: original, inLibrary: false) == .saveAsNewAgent)
+    }
+
+    /// Freeze refuses a system prompt stored without its hash and asks for a
+    /// re-save, and the Python engine writes exactly that. For an agent a run
+    /// saved, the re-save is a new agent that carries the hash, never
+    /// "nothing to save".
+    @Test func aRunAgentMissingItsPromptHashCanStillBeReSaved() {
+        var original = stored()
+        original.systemPrompt = "Answer briefly."
+        original.systemPromptHash = nil
+        var edited = fromEditor(original)
+        edited.systemPromptHash = ModelVariantArtifact(
+            name: "x", baseModelID: "test/model", promptMode: "chatAssistant",
+            qwenThinkingEnabled: false, temperature: 0, systemPrompt: "Answer briefly."
+        ).systemPromptHash
+        #expect(AgentEditProvenance.saveChangesPlan(
+            edited: edited, over: original, inLibrary: false) == .saveAsNewAgent)
+        // Control: once the hash is stored, the same save has nothing to do.
+        original.systemPromptHash = edited.systemPromptHash
+        #expect(AgentEditProvenance.saveChangesPlan(
+            edited: edited, over: original, inLibrary: false) == .nothingToSave)
+    }
+
+    /// What the button and the editor say before and after a save. The
+    /// library agent's words are what they were.
+    @Test func theEditorSaysWhatSavingARunAgentDoes() {
+        #expect(AgentEditProvenance.saveButtonTitle(editing: false, inLibrary: true)
+            == "Save New Agent")
+        #expect(AgentEditProvenance.saveButtonTitle(editing: true, inLibrary: true)
+            == "Save Changes")
+        #expect(AgentEditProvenance.saveButtonTitle(editing: true, inLibrary: false)
+            == "Save as New Agent")
+        #expect(AgentEditProvenance.savedByRunButtonHelp.contains("evidence"))
+        #expect(AgentEditProvenance.savedByRunButtonHelp.contains("new agent"))
+
+        #expect(AgentEditProvenance.editingCaption(agent: "a", savedByRun: nil)
+            == "editing the saved agent 'a' — Save Changes updates it in place; "
+                + "choose New… above to start a fresh definition instead")
+        let runCaption = AgentEditProvenance.editingCaption(
+            agent: "a", savedByRun: "20261019T000000000-variant-a")
+        #expect(runCaption.contains("20261019T000000000-variant-a"))
+        #expect(runCaption.contains("evidence") && runCaption.contains("Save as New Agent"))
+        #expect(!runCaption.contains("in place"))
+
+        #expect(AgentEditProvenance.savedAsNewAgentNote(
+            agent: "a-edited", original: "a", savedByRun: false, originalHasRecord: true)
+            == "Saved a new agent 'a-edited'; 'a' is unchanged.")
+        let fromRun = AgentEditProvenance.savedAsNewAgentNote(
+            agent: "a-edited", original: "a", savedByRun: true, originalHasRecord: true)
+        #expect(fromRun.contains("'a-edited'") && fromRun.contains("evidence"))
+        #expect(fromRun.contains("promotion record"))
+        #expect(!AgentEditProvenance.savedAsNewAgentNote(
+            agent: "a-edited", original: "a", savedByRun: true, originalHasRecord: false)
+            .contains("promotion record"))
+        #expect(AgentEditProvenance.nothingToSaveNote(agent: "a").hasPrefix("Nothing to save"))
     }
 
     /// Save as New Agent never reuses a library name, so the original keeps

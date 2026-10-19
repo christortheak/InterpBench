@@ -68,6 +68,10 @@ public enum WorkspaceHousekeeping {
     /// The refusal code for deleting an agent a run saved: run folders are
     /// evidence, and `runs/` is append-only.
     public static let agentIsRunEvidenceCode = "agentIsRunEvidence"
+    /// The refusal code for writing over an agent a run saved, for the same
+    /// reason. Its repair differs (save the edits as a new agent), so it has
+    /// a code of its own.
+    public static let agentIsRunEvidenceWriteCode = "agentIsRunEvidenceWrite"
 
     // MARK: - Studies
 

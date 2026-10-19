@@ -689,16 +689,92 @@ public enum ModelVariantStore {
         return ModelVariantRecord(url: url, artifact: artifact)
     }
 
+    /// Writes `artifact` over the agent file at `url`.
+    ///
+    /// Refused for an agent a run saved (a file under `runs/` outside the
+    /// library): a run's folder is evidence, and `runs/` is append-only.
+    /// `saveChanges` saves such an agent's edits as a new library agent.
     @discardableResult
     public static func update(
         _ artifact: ModelVariantArtifact,
         at url: URL
     ) throws -> ModelVariantRecord {
+        if isSavedByRun(url) {
+            let run = url.deletingLastPathComponent().lastPathComponent
+            throw WorkspaceHousekeeping.Refusal(
+                code: WorkspaceHousekeeping.agentIsRunEvidenceWriteCode,
+                path: relativePath(for: ModelVariantRecord(url: url, artifact: artifact)),
+                reason: "This agent was saved by a run (\(run)), and run folders are kept "
+                    + "as evidence: they are never rewritten.",
+                repairAction: "Save the edits as a new agent instead; the agent editor's "
+                    + "Save as New Agent does this and leaves the run's agent as it is.")
+        }
         let artifact = workspaceRelativeNormalized(artifact)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(artifact).write(to: url, options: .atomic)
         return ModelVariantRecord(url: url, artifact: artifact)
+    }
+
+    /// Whether `url` is an agent file in a run's folder: under `runs/`, and
+    /// not in the agent library. Compared as spelled and symlink-resolved
+    /// (`/var` against `/private/var`), so neither spelling slips past.
+    static func isSavedByRun(_ url: URL) -> Bool {
+        [false, true].contains { resolved in
+            func path(_ location: URL) -> String {
+                (resolved ? location.resolvingSymlinksInPath() : location)
+                    .standardizedFileURL.path
+            }
+            let file = path(url)
+            return file.hasPrefix(path(VectorCatalog.runsDirectory) + "/")
+                && !file.hasPrefix(path(directory) + "/")
+        }
+    }
+
+    /// What `saveChanges` did.
+    public enum SaveChangesOutcome: Sendable {
+        /// The library agent's file was rewritten in place.
+        /// `droppedPromotion` is `AgentEditProvenance.Merge.droppedPromotion`.
+        case updated(ModelVariantRecord, droppedPromotion: Bool)
+        /// The agent was saved by a run: the edit is a new library agent, and
+        /// the run's file was not written.
+        case savedAsNewAgent(ModelVariantRecord)
+        /// The agent was saved by a run and there was nothing to save:
+        /// nothing was written.
+        case nothingToSave
+    }
+
+    /// The agent editor's Save Changes for `selected`, as
+    /// `AgentEditProvenance.saveChangesPlan` decides it. `takenNames` are the
+    /// listed agents' names, which a new agent's name must avoid. The caller
+    /// asks about a dropped promotion record before calling.
+    @discardableResult
+    public static func saveChanges(
+        _ edited: ModelVariantArtifact, to selected: ModelVariantRecord, takenNames: [String]
+    ) throws -> SaveChangesOutcome {
+        switch AgentEditProvenance.saveChangesPlan(edited: edited, over: selected) {
+        case .updateInPlace(let merge):
+            return .updated(
+                try update(merge.artifact, at: selected.url),
+                droppedPromotion: merge.droppedPromotion)
+        case .saveAsNewAgent:
+            return .savedAsNewAgent(try saveAsNewAgent(edited, takenNames: takenNames))
+        case .nothingToSave:
+            return .nothingToSave
+        }
+    }
+
+    /// Saves `edited` as a new library agent under a name none of
+    /// `takenNames` has (`AgentEditProvenance.copyName`). A new agent has no
+    /// promotion record: a record describes the agent it was made for.
+    @discardableResult
+    public static func saveAsNewAgent(
+        _ edited: ModelVariantArtifact, takenNames: [String]
+    ) throws -> ModelVariantRecord {
+        var copy = edited
+        copy.name = AgentEditProvenance.copyName(edited.name, taken: takenNames)
+        copy.promotion = nil
+        return try save(copy)
     }
 
     /// Moves the agent's folder into a `.trash-<time>` folder in the agent

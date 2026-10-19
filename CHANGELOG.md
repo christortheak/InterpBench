@@ -12,6 +12,24 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **Save Changes no longer writes over an agent a run saved.** The agent
+  library also lists agents stored in a run's folder: the Python engine's
+  save and promote put them there, and imported evidence carries them. A
+  run's folder is evidence, and Delete already refused to touch it. But
+  Save Changes in the agent editor wrote over the agent's file whenever the
+  edit kept its promotion record, or when it had none, so the run's folder
+  no longer held what the run saved. For such an agent the button now reads
+  Save as New Agent, and the caption under the picker names the run and
+  says why. Saving puts your edits in a new agent in the library (named
+  `<name>-edited` if the name is taken) and leaves the run's agent, and any
+  promotion record it has, as they are. A save with nothing edited says
+  there is nothing to save instead of making a copy. Re-saving to add a
+  system prompt's missing hash, as a freeze refusal asks, still works: it
+  makes the copy, which you then attach to the study. Agents in the library
+  save as before, including the question about a promotion record. If you
+  saved changes to a run's agent in 0.9.11 or earlier, its run folder holds
+  the edited version, not the one the run produced.
+
 ## [0.9.11] — 2026-10-19
 
 - **Saved agents steer in the Playground.** Picking a saved agent, whether

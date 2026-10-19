@@ -98,9 +98,9 @@ struct ModelVariantsPanelView: View {
     @State private var qwenThinkingEnabled = false
     @State private var temperature = 0.0
     @State private var systemPrompt = ""
-    /// Set when Save Changes would remove the selected agent's promotion
-    /// record; the question it raises decides how the save goes on.
-    @State private var promotionDropQuestion: (agent: String, applyAfterSave: Bool, inLibrary: Bool)?
+    /// Set when Save Changes would remove the selected library agent's
+    /// promotion record; the question it raises decides how the save goes on.
+    @State private var promotionDropQuestion: (agent: String, applyAfterSave: Bool)?
 
     private var panel: FineTuningPanel { service.fineTuning }
 
@@ -123,16 +123,12 @@ struct ModelVariantsPanelView: View {
             Button("Save as New Agent") {
                 saveVariant(applyAfterSave: applyAfterSave, asNewAgent: true)
             }
-            // A run's folder is evidence: an agent there is never rewritten.
-            if promotionDropQuestion?.inLibrary ?? false {
-                Button("Save Changes and Remove the Record", role: .destructive) {
-                    saveVariant(applyAfterSave: applyAfterSave, promotionDropConfirmed: true)
-                }
+            Button("Save Changes and Remove the Record", role: .destructive) {
+                saveVariant(applyAfterSave: applyAfterSave, promotionDropConfirmed: true)
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(AgentEditProvenance.dialogMessage(
-                inLibrary: promotionDropQuestion?.inLibrary ?? true))
+            Text(AgentEditProvenance.dialogMessage())
         }
         .confirmationDialog(
             deleteDialogTitle,
@@ -322,7 +318,8 @@ struct ModelVariantsPanelView: View {
                 "browse or edit saved agents; New… starts a fresh definition "
                     + "from the Playground's current setup")
             if let selected = panel.selectedVariant {
-                Text(Self.editingCaption(selected.artifact.name))
+                Text(AgentEditProvenance.editingCaption(
+                    agent: selected.artifact.name, savedByRun: selectedAgentRunFolder))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -363,9 +360,14 @@ struct ModelVariantsPanelView: View {
         }
     }
 
-    private static func editingCaption(_ name: String) -> String {
-        "editing the saved agent '\(name)' — Save Changes updates it in "
-            + "place; choose New… above to start a fresh definition instead"
+    /// The folder of the run that saved the selected agent, or nil for a
+    /// library agent (or none selected). A run's folder is evidence, so Save
+    /// never writes such an agent: it saves the edits as a new agent.
+    private var selectedAgentRunFolder: String? {
+        guard let selected = panel.selectedVariant,
+            !ModelVariantStore.isInLibrary(selected.url)
+        else { return nil }
+        return selected.url.deletingLastPathComponent().lastPathComponent
     }
 
     /// The trimmed editor name, once.
@@ -437,10 +439,18 @@ struct ModelVariantsPanelView: View {
     /// Help strings built OUTSIDE the view builder (this file's own rule).
     private var saveButtonHelp: String {
         if let saveDisabledReason { return saveDisabledReason }
-        return panel.selectedVariant == nil
-            ? "write this definition into the workspace's agent library as a "
+        if panel.selectedVariant == nil {
+            return "write this definition into the workspace's agent library as a "
                 + "new artifact"
-            : "overwrite the selected agent's definition in place"
+        }
+        return selectedAgentRunFolder == nil
+            ? "overwrite the selected agent's definition in place"
+            : AgentEditProvenance.savedByRunButtonHelp
+    }
+
+    private var saveButtonTitle: String {
+        AgentEditProvenance.saveButtonTitle(
+            editing: panel.selectedVariant != nil, inLibrary: selectedAgentRunFolder == nil)
     }
 
     private var applyInWorkspaceHelp: String {
@@ -459,7 +469,7 @@ struct ModelVariantsPanelView: View {
 
     @ViewBuilder
     private var actionButtons: some View {
-        Button(panel.selectedVariant == nil ? "Save New Agent" : "Save Changes") {
+        Button(saveButtonTitle) {
             saveVariant()
         }
         .disabled(saveDisabledReason != nil)
@@ -1522,16 +1532,24 @@ struct ModelVariantsPanelView: View {
             panel.setStatus(saveDisabledReason ?? "name the agent before saving")
             return
         }
-        // Save Changes that would remove a promotion record asks first.
-        if !asNewAgent, !promotionDropConfirmed, let selected = panel.selectedVariant,
-            selected.artifact.promotion != nil,
-            AgentEditProvenance.merge(edited: artifactFromEditor(), over: selected.artifact)
-                .droppedPromotion
-        {
-            promotionDropQuestion = (
-                selected.artifact.name, applyAfterSave,
-                ModelVariantStore.isInLibrary(selected.url))
-            return
+        if !asNewAgent, let selected = panel.selectedVariant {
+            switch AgentEditProvenance.saveChangesPlan(
+                edited: artifactFromEditor(), over: selected)
+            {
+            case .updateInPlace(let merge)
+            where merge.droppedPromotion && !promotionDropConfirmed:
+                // Save Changes that would remove a promotion record asks first.
+                promotionDropQuestion = (selected.artifact.name, applyAfterSave)
+                return
+            case .nothingToSave:
+                // An agent a run saved, unedited: a copy would be pointless.
+                // Said before any server vector is fetched.
+                panel.setStatus(
+                    AgentEditProvenance.nothingToSaveNote(agent: selected.artifact.name))
+                return
+            case .updateInPlace, .saveAsNewAgent:
+                break
+            }
         }
         guard isServerWorkspace else {
             performSave(applyAfterSave: applyAfterSave, asNewAgent: asNewAgent)
@@ -1620,48 +1638,69 @@ struct ModelVariantsPanelView: View {
     /// appends its disclosure only on success, so a save FAILURE is never
     /// overwritten by a line beginning "saved". `asNewAgent` saves the
     /// editor's agent as a new library entry under a free name and leaves the
-    /// selected agent, and its promotion record, untouched.
+    /// selected agent, and its promotion record, untouched. Save Changes on
+    /// an agent a run saved does the same without being asked
+    /// (`ModelVariantStore.saveChanges`): a run's folder is evidence.
     @discardableResult
     private func performSave(
         applyAfterSave: Bool = false, asNewAgent: Bool = false
     ) -> (written: Bool, summary: String?) {
-        var artifact = artifactFromEditor()
-        let selected = asNewAgent ? nil : panel.selectedVariant
-        let originalName = asNewAgent ? panel.selectedVariant?.artifact.name : nil
-        if asNewAgent {
-            artifact.name = AgentEditProvenance.copyName(
-                artifact.name, taken: panel.variants.map(\.artifact.name))
-        }
+        let artifact = artifactFromEditor()
+        let selected = panel.selectedVariant
+        let takenNames = panel.variants.map(\.artifact.name)
         do {
             let record: ModelVariantRecord
+            let summary: String
             var droppedPromotion = false
-            if let selected {
-                // Keeps what the editor has no control for (the promotion
-                // record, creation time, an older prompt hash) unless the
-                // edit changes what the agent does.
-                let merge = AgentEditProvenance.merge(edited: artifact, over: selected.artifact)
-                droppedPromotion = merge.droppedPromotion
-                record = try ModelVariantStore.update(merge.artifact, at: selected.url)
+            var savedACopy = asNewAgent
+            if asNewAgent {
+                record = try ModelVariantStore.saveAsNewAgent(artifact, takenNames: takenNames)
+                summary = selected.map {
+                    AgentEditProvenance.savedAsNewAgentNote(
+                        agent: record.artifact.name, original: $0.artifact.name,
+                        savedByRun: false, originalHasRecord: $0.artifact.promotion != nil)
+                } ?? "Saved agent '\(record.artifact.name)'."
+            } else if let selected {
+                // A library agent keeps what the editor has no control for
+                // (the promotion record, creation time, an older prompt hash)
+                // unless the edit changes what the agent does. An agent a run
+                // saved is never written; its edits become a new agent.
+                switch try ModelVariantStore.saveChanges(
+                    artifact, to: selected, takenNames: takenNames)
+                {
+                case .updated(let updated, let dropped):
+                    record = updated
+                    droppedPromotion = dropped
+                    summary = dropped
+                        ? AgentEditProvenance.afterSaveNote(agent: updated.artifact.name)
+                        : "Updated agent '\(updated.artifact.name)'."
+                case .savedAsNewAgent(let copy):
+                    record = copy
+                    savedACopy = true
+                    summary = AgentEditProvenance.savedAsNewAgentNote(
+                        agent: copy.artifact.name, original: selected.artifact.name,
+                        savedByRun: true, originalHasRecord: selected.artifact.promotion != nil)
+                case .nothingToSave:
+                    let note = AgentEditProvenance.nothingToSaveNote(agent: selected.artifact.name)
+                    panel.setStatus(note)
+                    if applyAfterSave {
+                        service.applyModelVariantToSteering(selected)
+                    }
+                    return (false, note)
+                }
             } else {
                 record = try ModelVariantStore.save(artifact)
+                summary = "Saved agent '\(record.artifact.name)'."
             }
             panel.refresh()
             panel.selectedVariantID = record.id
             editorLoadedID = record.id
             // The editor now shows the copy, so its name field must too, or
             // the collision check would find the original.
-            if asNewAgent { name = record.artifact.name }
-            let summary: String
+            if savedACopy { name = record.artifact.name }
             if droppedPromotion {
-                summary = AgentEditProvenance.afterSaveNote(agent: record.artifact.name)
                 panel.setWarningStatus(summary)
-            } else if let original = originalName {
-                summary = "Saved a new agent '\(record.artifact.name)'; '\(original)' is unchanged."
-                panel.setStatus(summary)
             } else {
-                summary = selected == nil
-                    ? "Saved agent '\(record.artifact.name)'."
-                    : "Updated agent '\(record.artifact.name)'."
                 panel.setStatus(summary)
             }
             if applyAfterSave {
