@@ -3133,7 +3133,26 @@ public final class ExperimentPanel {
             try management.persistReviewedDraft(manifest)
             draft.conditionName = ""
             refresh()
-            note("captured '\(name)' (\(slots.count) slot\(slots.count == 1 ? "" : "s"))", severity: .success)
+            let captured =
+                "captured '\(name)' (\(slots.count) slot\(slots.count == 1 ? "" : "s"))"
+            // A study condition records no centering: its ablations remove
+            // the raw direction. The Playground's centered ablation is
+            // therefore not what the study will run, and an agent arm is the
+            // way to keep it (Save Agent records the centering).
+            if host.centerAblationAgainstNeutralMean,
+                slots.contains(where: { $0.effectiveMode == .ablate })
+            {
+                note(
+                    captured + ". It ablates the raw direction: a study condition does not "
+                        + "record the Playground's centering on the neutral mean. To keep the "
+                        + "centering, remove this condition, save these rows with Save Agent, "
+                        + "and add that agent to the study. A study with agent arms runs agents "
+                        + "only, so its other conditions must become agents too, or go in a "
+                        + "separate study.",
+                    severity: .warning)
+            } else {
+                note(captured, severity: .success)
+            }
         } catch {
             noteRefusal(
                 "Couldn't capture the condition.", error,

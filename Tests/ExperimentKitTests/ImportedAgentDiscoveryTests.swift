@@ -445,4 +445,72 @@ struct ImportedAgentDiscoveryTests {
         #expect(banded.notes[0].contains("fear") && !banded.notes[0].contains("joy")
             && !banded.notes[0].contains("awe") && !banded.notes[0].contains("hope"))
     }
+
+    /// An agent written on another machine names its vector by that
+    /// machine's absolute path; the editor shows it as this workspace's
+    /// catalog entry. The two name the same file, so a save that changes
+    /// nothing else keeps the promotion record and the stored reference.
+    @Test func aForeignReferenceToTheSameVectorIsNotAnEdit() throws {
+        try withWorkspace { workspace in
+            try plantVector(in: workspace, name: "fear")
+            var stored = agent(
+                [.init(concept: "fear",
+                       vectorArtifactID: "/Volumes/elsewhere/ws/runs/extract-1/fear",
+                       layer: 1, alpha: 0.1)],
+                promotedBy: "manualOverride")
+            stored.createdAt = "2026-10-19T00:00:00Z"
+            var edited = stored
+            edited.promotion = nil
+            edited.injections[0].vectorArtifactID = workspace
+                .appending(components: "runs", "extract-1", "fear").path
+            let merge = AgentEditProvenance.merge(edited: edited, over: stored)
+            #expect(!merge.droppedPromotion)
+            #expect(merge.artifact.promotion == stored.promotion)
+            // The machine path is replaced by the portable form of the same
+            // file; everything else is the stored agent.
+            #expect(merge.artifact.injections[0].vectorArtifactID == "runs/extract-1/fear")
+            var back = merge.artifact
+            back.injections[0].vectorArtifactID = stored.injections[0].vectorArtifactID
+            #expect(back == stored)
+        }
+    }
+
+    /// A foreign reference resolves to this workspace's file only when that
+    /// file has the same place; one that names a different vector is still
+    /// an edit, and one with no local file is never rebased onto anything.
+    @Test func aForeignReferenceToADifferentVectorIsAnEdit() throws {
+        try withWorkspace { workspace in
+            try plantVector(in: workspace, name: "fear")
+            try plantVector(in: workspace, name: "joy")
+            func merge(storedReference: String) -> AgentEditProvenance.Merge {
+                let stored = agent(
+                    [.init(concept: "fear", vectorArtifactID: storedReference,
+                           layer: 1, alpha: 0.1)],
+                    promotedBy: "manualOverride")
+                var edited = stored
+                edited.promotion = nil
+                edited.injections[0].vectorArtifactID = "runs/extract-1/joy"
+                return AgentEditProvenance.merge(edited: edited, over: stored)
+            }
+            #expect(merge(storedReference: "/Volumes/elsewhere/ws/runs/extract-1/fear")
+                .droppedPromotion)
+            #expect(merge(storedReference: "/Volumes/elsewhere/ws/runs/extract-9/joy")
+                .droppedPromotion)
+        }
+    }
+
+    /// Only the agent library is edited in place; an agent a run saved lives
+    /// in that run's folder, which is evidence.
+    @Test func onlyLibraryAgentsAreInTheLibrary() throws {
+        try withWorkspace { workspace in
+            let runs = workspace.appending(component: "runs")
+            #expect(ModelVariantStore.isInLibrary(
+                runs.appending(components: "model-variants", "a", "model-variant.json")))
+            #expect(!ModelVariantStore.isInLibrary(
+                runs.appending(components: "20261019T000000000-variant-a", "a.json")))
+            #expect(!ModelVariantStore.isInLibrary(
+                runs.appending(components: "model-variants-old", "a.json")))
+        }
+    }
 }
+

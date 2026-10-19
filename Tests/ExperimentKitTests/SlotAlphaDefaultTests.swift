@@ -293,5 +293,21 @@ import Testing
         let decision = SlotAlphaDefault.decide(norm)
         #expect(decision.alpha == 0.15 && decision.units == .normUnits)
     }
+
+    /// The reverse case: a residual-norm recommendation in a raw session is
+    /// not adopted either, and the session gets its own raw default, labelled
+    /// raw, not a residual-norm number read as raw.
+    @Test func aNormRecommendationIsNotAdoptedIntoARawSession() {
+        var norm = facts(
+            norms: 42, recommended: 0.15, recommendedNormUnits: true,
+            agent: "french-l28-a15", promotedBy: "manualOverride")
+        norm.sessionInNormUnits = false
+        let decision = SlotAlphaDefault.decide(norm)
+        #expect(decision.units == .raw)
+        #expect(decision.alpha == SlotAlphaDefault.rawUnitsDefault)
+        #expect(decision.alphaLabel.contains("RAW"))
+        #expect(decision.rationale.contains("french-l28-a15"))
+        #expect(!decision.rationale.contains("residual-norm units —"))
+    }
 }
 

@@ -55,6 +55,12 @@ struct AgentEditProvenanceTests {
         #expect(merge.artifact.promotion == original.promotion)
         #expect(merge.artifact.name == "french-agent")
         #expect(merge.artifact.createdAt == original.createdAt)
+        // The stored label survives: a verify gate compares it with the
+        // sweep's concept, so a no-op save must not rewrite it.
+        #expect(merge.artifact.injections[0].concept == "french")
+        var renamedBack = merge.artifact
+        renamedBack.name = original.name
+        #expect(renamedBack == original)
     }
 
     @Test func changingTheStrengthDropsThePromotionRecordAndSaysSo() {
@@ -89,4 +95,69 @@ struct AgentEditProvenanceTests {
         #expect(merge.artifact.systemPromptHash == "abc")
         #expect(!merge.droppedPromotion)
     }
+
+    /// The Python engine writes a prompt's text without its hash, and freeze
+    /// refuses such an agent with "re-save the variant". Re-saving must stamp
+    /// the hash, and stamping it is not an edit, so the record stays.
+    @Test func reSavingStampsAMissingPromptHashAndKeepsTheRecord() {
+        var original = stored()
+        original.systemPrompt = "Answer briefly."
+        original.systemPromptHash = nil
+        var edited = fromEditor(original)
+        edited.systemPromptHash = ModelVariantArtifact(
+            name: "x", baseModelID: "test/model", promptMode: "chatAssistant",
+            qwenThinkingEnabled: false, temperature: 0, systemPrompt: "Answer briefly."
+        ).systemPromptHash
+        #expect(edited.systemPromptHash != nil)
+        let merge = AgentEditProvenance.merge(edited: edited, over: original)
+        #expect(!merge.droppedPromotion)
+        #expect(merge.artifact.promotion == original.promotion)
+        #expect(merge.artifact.systemPromptHash == edited.systemPromptHash)
+        #expect(merge.artifact.systemPrompt == "Answer briefly.")
+    }
+
+    /// Spellings that mean the same thing are not an edit: an explicit
+    /// steering mode, empty ablation layers (every layer), absent centering
+    /// (none), and an adapter's display name.
+    @Test func equivalentSpellingsAreNotAnEdit() {
+        var original = stored()
+        original.injections.append(
+            .init(concept: "fear", vectorArtifactID: "runs/sweep/fear", layer: 3,
+                  alpha: 1, mode: .ablate, layers: nil, centering: nil))
+        var edited = fromEditor(original)
+        edited.injections[0].mode = .add
+        edited.injections[1].layers = []
+        edited.injections[1].centering = "none"
+        #expect(!AgentEditProvenance.merge(edited: edited, over: original).droppedPromotion)
+
+        // A real change to the ablation still counts.
+        edited.injections[1].centering = "neutralMean"
+        #expect(AgentEditProvenance.merge(edited: edited, over: original).droppedPromotion)
+    }
+
+    /// The question names the way to keep the original, and the after-save
+    /// note says what happened without advice that would come too late.
+    @Test func theQuestionOffersSaveAsNewAgent() {
+        #expect(AgentEditProvenance.dialogMessage(inLibrary: true).contains("Save as New Agent"))
+        #expect(AgentEditProvenance.dialogMessage(inLibrary: true)
+            .contains("Save Changes and Remove the Record"))
+        // An agent a run saved is evidence: only a copy is offered.
+        #expect(AgentEditProvenance.dialogMessage(inLibrary: false).contains("evidence"))
+        #expect(!AgentEditProvenance.dialogMessage(inLibrary: false)
+            .contains("Remove the Record"))
+        #expect(AgentEditProvenance.afterSaveNote(agent: "a").hasPrefix("Updated"))
+        #expect(!AgentEditProvenance.afterSaveNote(agent: "a").contains("To keep"))
+    }
+
+    /// Save as New Agent never reuses a library name, so the original keeps
+    /// its name and its record.
+    @Test func theCopyGetsAFreeName() {
+        #expect(AgentEditProvenance.copyName("fresh", taken: ["french-l28-a15"]) == "fresh")
+        #expect(AgentEditProvenance.copyName("french-l28-a15", taken: ["French-L28-A15"])
+            == "french-l28-a15-edited")
+        #expect(AgentEditProvenance.copyName(
+            "french-l28-a15", taken: ["french-l28-a15", "french-l28-a15-edited"])
+            == "french-l28-a15-edited-2")
+    }
 }
+

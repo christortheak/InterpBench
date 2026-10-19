@@ -26,15 +26,15 @@ migration that rewrites frozen bytes.
     layer subset, mixed centering, or a vector the Python engine extracted.
 
   In 0.9.0 through 0.9.10, set Agent to None and pick the vector, layer, and
-  strength by hand. Studies were not affected: they attach agents by a path
-  the engine resolves correctly.
+  strength by hand. Studies were not affected by this bug: they attach
+  agents by a path the engine resolves correctly.
 - **Related fixes to agents.**
   - **Strength default.** Picking a vector in a local workspace now fills in
     the strength from a saved agent that uses it, promoted agents first.
     Before, it always fell back to the default. A strength recorded in the
     other unit system (raw against residual-norm units) is not adopted,
-    because the same number would be a different dose. The default is used
-    instead, and the explanation says why.
+    because the same number would be a different dose. The session's own
+    default is used instead, in its own units, and the explanation says why.
   - **Agent editor.** In a local workspace, the editor shows a saved agent's
     vectors as pickable entries, not as "not in this workspace's catalog".
   - **Saving keeps ablations.** Saving an agent no longer loses an
@@ -43,16 +43,22 @@ migration that rewrites frozen bytes.
     Playground keeps each row's mode and centering too. It refuses when a
     row's vector is missing, rather than saving an agent without it. Capture
     Condition records an ablation row as an ablation condition, not a
-    steering one. If a study's ablation arm passed through one of these
-    paths, check that its condition or agent still says ablate.
+    steering one, and says when the Playground's centering will not carry
+    over (study conditions ablate the raw direction). If a study's ablation
+    arm passed through one of these paths, check that its condition or agent
+    still says ablate.
   - **Promotion records survive Save Changes.** The agent editor rebuilt an
     agent from its controls and wrote it over the file, so Save Changes
     erased the record of how a promoted agent was chosen, even with nothing
     edited. A save that leaves what the agent does unchanged, such as a
-    rename, now keeps the record. A save that changes it drops the record,
-    because the record would vouch for settings it never tested, and the
-    editor says so. To keep a promoted agent unchanged, start from New Agent
-    instead of editing it.
+    rename, now keeps every stored value, with only the name changed. It
+    also adds a system prompt's missing hash, which a freeze refusal asks
+    for (re-save the agent, then attach it to the study again). A save that
+    would change what the agent does now asks first, because the record
+    would vouch for settings it never tested. Save as New Agent keeps the
+    original and its record, and names the copy `<name>-edited` if the name
+    is taken. Save Changes and Remove the Record goes on. An agent a run
+    saved can only be saved as a new agent, because its folder is evidence.
 - **Saved agents run in a server workspace.** A saved agent names its
   vectors relative to the workspace, and a server lists them by full path.
   The app compared the two literally. So the Playground's agent picker, the
@@ -66,9 +72,6 @@ migration that rewrites frozen bytes.
   The agent editor showed no vector for an older agent that names it by full
   path. Both spellings now match. Sending is unchanged: a row keeps the
   agent's own reference and concept, and the server resolves it.
-
-## [0.9.10] — 2026-10-19
-
 - **The preregistration names every arm.** The settings summary written at
   freeze listed declared injection conditions only, so a study comparing
   agents froze with an empty Conditions section. It now lists every arm the
@@ -78,7 +81,9 @@ migration that rewrites frozen bytes.
   artifact, each SAE latent arm, and a panel's two scenario arms. Arms a study
   carries but never runs, such as injection conditions in a study comparing
   agents, are named after the list instead of in it. Both engines write the
-  same lines. Summaries already frozen are not rewritten, so the Demo
+  same lines, except that the Python engine prints a whole-number strength
+  as stored (`1.0` where the Mac prints `1`). Summaries already frozen are
+  not rewritten, so the Demo
   Workspace's `agent-personalities` summary still shows the empty section.
 - **The preregistration says when a condition ablates or steers a band.** An
   injection condition's line printed every slot as `concept@L<layer> α=<α>`,
@@ -88,9 +93,11 @@ migration that rewrites frozen bytes.
   ablation covers the whole network, whatever layer the slot names. A steering
   slot whose condition has a band width of 2 or more now says how far the band
   reaches, as in `fear@L14 α=0.8 (band width 3: ±1 layer)`; a band width of 2
-  reaches one layer either side, like 3. Every other line is unchanged, both
-  engines write the same lines, and summaries already frozen are not
-  rewritten.
+  reaches one layer either side, like 3. Every other line is unchanged, and
+  summaries already frozen are not rewritten.
+
+## [0.9.10] — 2026-10-19
+
 - **A Demo Workspace for this Mac.** "Four concepts, four personalities"
   runs on Gemma 3 4B with the engine built into the app. It covers four steps:
   - extract French, hungry, fear, and Golden Gate Bridge directions, and check

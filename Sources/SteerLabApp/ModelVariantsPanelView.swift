@@ -98,6 +98,9 @@ struct ModelVariantsPanelView: View {
     @State private var qwenThinkingEnabled = false
     @State private var temperature = 0.0
     @State private var systemPrompt = ""
+    /// Set when Save Changes would remove the selected agent's promotion
+    /// record; the question it raises decides how the save goes on.
+    @State private var promotionDropQuestion: (agent: String, applyAfterSave: Bool, inLibrary: Bool)?
 
     private var panel: FineTuningPanel { service.fineTuning }
 
@@ -109,6 +112,28 @@ struct ModelVariantsPanelView: View {
             regionContent
         }
         .sheet(isPresented: $showingPolicies) { InterventionPoliciesView(root: ExperimentStore.workspaceRoot) }
+        .confirmationDialog(
+            AgentEditProvenance.dialogTitle(agent: promotionDropQuestion?.agent ?? ""),
+            isPresented: Binding(
+                get: { promotionDropQuestion != nil },
+                set: { if !$0 { promotionDropQuestion = nil } }),
+            titleVisibility: .visible
+        ) {
+            let applyAfterSave = promotionDropQuestion?.applyAfterSave ?? false
+            Button("Save as New Agent") {
+                saveVariant(applyAfterSave: applyAfterSave, asNewAgent: true)
+            }
+            // A run's folder is evidence: an agent there is never rewritten.
+            if promotionDropQuestion?.inLibrary ?? false {
+                Button("Save Changes and Remove the Record", role: .destructive) {
+                    saveVariant(applyAfterSave: applyAfterSave, promotionDropConfirmed: true)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(AgentEditProvenance.dialogMessage(
+                inLibrary: promotionDropQuestion?.inLibrary ?? true))
+        }
         .confirmationDialog(
             deleteDialogTitle,
             isPresented: $confirmDelete,
@@ -1485,17 +1510,31 @@ struct ModelVariantsPanelView: View {
         systemPrompt = artifact.systemPrompt ?? ""
     }
 
-    private func saveVariant(applyAfterSave: Bool = false) {
+    private func saveVariant(
+        applyAfterSave: Bool = false, promotionDropConfirmed: Bool = false,
+        asNewAgent: Bool = false
+    ) {
         // The gate the button reads, enforced in the action too: every path
         // into a save (including "Use in Playground" with nothing selected)
         // goes through here, and a name collision would otherwise mint a
-        // second library row with the same name.
-        if let reason = saveDisabledReason {
-            panel.setStatus(reason)
+        // second library row with the same name. A copy gets its own name.
+        if asNewAgent ? trimmedName.isEmpty : saveDisabledReason != nil {
+            panel.setStatus(saveDisabledReason ?? "name the agent before saving")
+            return
+        }
+        // Save Changes that would remove a promotion record asks first.
+        if !asNewAgent, !promotionDropConfirmed, let selected = panel.selectedVariant,
+            selected.artifact.promotion != nil,
+            AgentEditProvenance.merge(edited: artifactFromEditor(), over: selected.artifact)
+                .droppedPromotion
+        {
+            promotionDropQuestion = (
+                selected.artifact.name, applyAfterSave,
+                ModelVariantStore.isInLibrary(selected.url))
             return
         }
         guard isServerWorkspace else {
-            performSave(applyAfterSave: applyAfterSave)
+            performSave(applyAfterSave: applyAfterSave, asNewAgent: asNewAgent)
             return
         }
         // Server workspace: before writing the definition, LOCALIZE every
@@ -1509,11 +1548,14 @@ struct ModelVariantsPanelView: View {
         // and an older server without relative ids keeps the historical
         // verbatim behavior.
         Task {
-            await localizeServerInjectionsThenSave(applyAfterSave: applyAfterSave)
+            await localizeServerInjectionsThenSave(
+                applyAfterSave: applyAfterSave, asNewAgent: asNewAgent)
         }
     }
 
-    private func localizeServerInjectionsThenSave(applyAfterSave: Bool) async {
+    private func localizeServerInjectionsThenSave(
+        applyAfterSave: Bool, asNewAgent: Bool = false
+    ) async {
         let options = serverInjectionVectorOptions
         // What could not be bound to the catalog row, collected across the
         // whole save. Localization NEVER blocks on a missing digest (a
@@ -1561,23 +1603,35 @@ struct ModelVariantsPanelView: View {
                 return
             }
         }
-        let saved = performSave(applyAfterSave: applyAfterSave)
-        if saved, !unverified.isEmpty {
+        let saved = performSave(applyAfterSave: applyAfterSave, asNewAgent: asNewAgent)
+        if saved.written, !unverified.isEmpty {
             // The wording lives in ExperimentKit (unit-tested): it is the
             // only place the researcher learns that a saved agent's bytes are
-            // unvouched-for, which makes it a contract, not view text.
+            // unvouched-for, which makes it a contract, not view text. A
+            // dropped promotion record is said too, never replaced.
+            let disclosure = RemoteVectorLocalization.saveDisclosure(concepts: unverified)
             panel.setWarningStatus(
-                RemoteVectorLocalization.saveDisclosure(concepts: unverified))
+                saved.summary.map { disclosure + " " + $0 } ?? disclosure)
         }
     }
 
-    /// Returns whether the definition was written — the localization path
+    /// Returns whether the definition was written, and the agent whose
+    /// promotion record the save removed, if any. The localization path
     /// appends its disclosure only on success, so a save FAILURE is never
-    /// overwritten by a line beginning "saved".
+    /// overwritten by a line beginning "saved". `asNewAgent` saves the
+    /// editor's agent as a new library entry under a free name and leaves the
+    /// selected agent, and its promotion record, untouched.
     @discardableResult
-    private func performSave(applyAfterSave: Bool = false) -> Bool {
-        let artifact = artifactFromEditor()
-        let selected = panel.selectedVariant
+    private func performSave(
+        applyAfterSave: Bool = false, asNewAgent: Bool = false
+    ) -> (written: Bool, summary: String?) {
+        var artifact = artifactFromEditor()
+        let selected = asNewAgent ? nil : panel.selectedVariant
+        let originalName = asNewAgent ? panel.selectedVariant?.artifact.name : nil
+        if asNewAgent {
+            artifact.name = AgentEditProvenance.copyName(
+                artifact.name, taken: panel.variants.map(\.artifact.name))
+        }
         do {
             let record: ModelVariantRecord
             var droppedPromotion = false
@@ -1594,24 +1648,29 @@ struct ModelVariantsPanelView: View {
             panel.refresh()
             panel.selectedVariantID = record.id
             editorLoadedID = record.id
+            // The editor now shows the copy, so its name field must too, or
+            // the collision check would find the original.
+            if asNewAgent { name = record.artifact.name }
+            let summary: String
             if droppedPromotion {
-                panel.setWarningStatus(
-                    "updated agent \(record.artifact.name). Its promotion record was removed: "
-                        + "these edits change what the agent does, so the record no longer "
-                        + "describes it. To keep a promoted agent unchanged, start from New Agent "
-                        + "instead of editing it.")
+                summary = AgentEditProvenance.afterSaveNote(agent: record.artifact.name)
+                panel.setWarningStatus(summary)
+            } else if let original = originalName {
+                summary = "Saved a new agent '\(record.artifact.name)'; '\(original)' is unchanged."
+                panel.setStatus(summary)
             } else {
-                panel.setStatus(selected == nil
-                    ? "saved agent \(record.artifact.name)"
-                    : "updated agent \(record.artifact.name)")
+                summary = selected == nil
+                    ? "Saved agent '\(record.artifact.name)'."
+                    : "Updated agent '\(record.artifact.name)'."
+                panel.setStatus(summary)
             }
             if applyAfterSave {
                 service.applyModelVariantToSteering(record)
             }
-            return true
+            return (true, summary)
         } catch {
             panel.setStatus("could not save agent: \(error.localizedDescription)")
-            return false
+            return (false, nil)
         }
     }
 

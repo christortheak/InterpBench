@@ -197,16 +197,24 @@ public enum SlotAlphaDefault {
                 facts.recommendedAlphaInNormUnits == false ? .raw : .normUnits
             if let session = facts.sessionInNormUnits, (units == .normUnits) != session {
                 // The session reads the numeral in its own units, so adopting
-                // it would change the dose. Its own default is used, and the
-                // rationale says why.
+                // it would change the dose. The session's own default, in the
+                // session's own units, is used, and the rationale says why.
                 let agent = facts.recommendedFromAgent ?? "an agent"
+                let provenance = Provenance.recommendationInOtherUnits(
+                    agent: agent, agentInNormUnits: units == .normUnits)
+                if session {
+                    return Decision(
+                        alpha: normUnitsDefault, units: .normUnits, alphaLabel: normLabel,
+                        rationale: rationale(
+                            provenance, alpha: normUnitsDefault, units: .normUnits),
+                        conventionNote: conventionNote,
+                        backfillHint: nil)
+                }
                 return Decision(
-                    alpha: normUnitsDefault, units: .normUnits, alphaLabel: normLabel,
-                    rationale: rationale(
-                        .recommendationInOtherUnits(
-                            agent: agent, agentInNormUnits: units == .normUnits),
-                        alpha: normUnitsDefault, units: .normUnits),
-                    conventionNote: conventionNote,
+                    alpha: rawUnitsDefault, units: .raw,
+                    alphaLabel: "α in RAW units at \(layerLabel)",
+                    rationale: rationale(provenance, alpha: rawUnitsDefault, units: .raw),
+                    conventionNote: nil,
                     backfillHint: nil)
             }
             return Decision(

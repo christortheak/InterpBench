@@ -511,6 +511,16 @@ public enum ModelVariantStore {
         VectorCatalog.runsDirectory.appending(component: "model-variants")
     }
 
+    /// Whether an agent file lives in the editable agent library, as opposed
+    /// to a run folder (an agent a run saved, or one imported with a run's
+    /// evidence). Run folders are append-only evidence: an agent there is
+    /// never rewritten in place, only copied.
+    public static func isInLibrary(_ url: URL) -> Bool {
+        let library = directory.standardizedFileURL.path
+        let file = url.standardizedFileURL.path
+        return file.hasPrefix(library.hasSuffix("/") ? library : library + "/")
+    }
+
     /// Every agent artifact this workspace can see, from BOTH engines'
     /// layouts.
     ///
