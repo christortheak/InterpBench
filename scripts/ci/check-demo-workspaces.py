@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Check the Demo Workspaces a build is about to carry: shape, size, and
+"""Check the Demo Workspaces a build is about to carry: shape, file size, and
 identifying strings.
 
   usage: check-demo-workspaces.py [--root <dir>] [--no-scan]
 
-A Demo Workspace ships inside the app and inside the client release, so it is
-held to what both can carry. The default root is ``DemoWorkspaces/`` at the top
+A Demo Workspace ships inside the app and inside the client release, and every
+byte of it is published. The default root is ``DemoWorkspaces/`` at the top
 of the repository; both build scripts run this before they stage it.
 
 For the root:
@@ -22,8 +22,9 @@ For each backend folder:
     ``AGENTS.md`` or ``WORKSPACE.md``. Dot-prefixed entries do not ship
     reliably, and the two named files are written fresh for every copy;
   - it has ``prompts/`` and ``experiments/``;
-  - the whole tree is at most MAX_DEMO_BYTES, and each file at most
-    MAX_FILE_BYTES.
+  - each file is at most MAX_FILE_BYTES. The whole tree has no limit: a
+    finished study carries a copy of its vectors in every run, and how many
+    runs a demo needs is its README's decision. The total is reported.
 
 Then ``artifact_scan.py`` reads every byte for a home-folder path or a private
 name (``--no-scan`` skips it, for a caller that scans the staged result).
@@ -47,14 +48,9 @@ from steerlab_server.client import demo_workspaces as demos  # noqa: E402
 import public_scan  # noqa: E402
 
 MIB = 1024 * 1024
-#: One Demo Workspace, uncompressed. About the size of the whole Python
-#: client's source, so three demos at the limit make the client release a few
-#: times larger and no more; a finished small-model study with its runs,
-#: vectors, and evidence is expected to need well under this. Fitted lenses
-#: and adapter weights do not fit, by design.
-MAX_DEMO_BYTES = 8 * MIB
 #: One file. The public source scan stops reading a file above this size, so a
-#: larger file would be published unread.
+#: larger file would be published unread. It also keeps out what never belongs
+#: in a demo: model weights, fitted lenses, and adapter weights are each larger.
 MAX_FILE_BYTES = 4 * MIB
 assert MAX_FILE_BYTES <= public_scan.MAX_CONTENT_BYTES, \
     'A Demo Workspace file may not be larger than the public scan reads'
@@ -116,9 +112,6 @@ def demo_problems(directory):
                     problems.append(f'{name}/{relative}: {megabytes(size)} is over the {megabytes(MAX_FILE_BYTES)} '
                                     'limit for one file')
         folders[:] = [folder for folder in folders if not folder.startswith('.') and not (here / folder).is_symlink()]
-    if total > MAX_DEMO_BYTES:
-        problems.append(f'{name}: {megabytes(total)} is over the {megabytes(MAX_DEMO_BYTES)} limit for one Demo Workspace. '
-                        'Leave out fitted lenses, adapter weights, and runs the README does not use')
     return problems, total
 
 
@@ -152,8 +145,7 @@ def main():
             print('A Demo Workspace carries identifying strings, or could not be scanned (see above).')
             return 1
     carried = ', '.join(f'{backend} ({megabytes(size)})' for backend, size in sizes.items()) or 'none'
-    print(f'Demo Workspaces: {carried}. Each is within {megabytes(MAX_DEMO_BYTES)}, and each file within '
-          f'{megabytes(MAX_FILE_BYTES)}.')
+    print(f'Demo Workspaces: {carried}. Each file is within {megabytes(MAX_FILE_BYTES)}.')
     return 0
 
 

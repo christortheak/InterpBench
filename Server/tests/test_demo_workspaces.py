@@ -269,9 +269,10 @@ def test_every_carried_demo_passes_the_build_check_and_verifies_after_copying(tm
         assert all(study['verified'] for study in result['verification']['studies'])
 
 
-def test_the_build_check_enforces_the_size_limits_and_the_shape(tmp_path):
+def test_the_build_check_enforces_the_file_size_limit_and_the_shape(tmp_path):
     checker = load_checker()
-    assert checker.MAX_DEMO_BYTES == 8 * 1024 * 1024 and checker.MAX_FILE_BYTES == 4 * 1024 * 1024
+    assert checker.MAX_FILE_BYTES == 4 * 1024 * 1024
+    assert not hasattr(checker, 'MAX_DEMO_BYTES')
     root = staged(tmp_path, 'mlx')
     (root / 'README.md').write_text('fixture\n')
     assert checker.check(root)[0] == []
@@ -279,12 +280,12 @@ def test_the_build_check_enforces_the_size_limits_and_the_shape(tmp_path):
     (root / 'mlx/runs/large.bin').write_bytes(b'0' * (checker.MAX_FILE_BYTES + 1))
     problems = checker.check(root)[0]
     assert len(problems) == 1 and 'mlx/runs/large.bin' in problems[0] and 'limit for one file' in problems[0]
-    # Three files that each fit, and together do not.
+    # Files that each fit are fine however many there are; the total is reported.
     (root / 'mlx/runs/large.bin').unlink()
     for index in range(3):
         (root / f'mlx/runs/part-{index}.bin').write_bytes(b'0' * (3 * 1024 * 1024))
-    problems = checker.check(root)[0]
-    assert len(problems) == 1 and 'limit for one Demo Workspace' in problems[0]
+    problems, sizes = checker.check(root)
+    assert problems == [] and sizes['mlx'] >= 9 * 1024 * 1024
     for index in range(3):
         (root / f'mlx/runs/part-{index}.bin').unlink()
     # What does not ship reliably, and what a copy writes itself.

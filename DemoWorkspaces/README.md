@@ -53,8 +53,9 @@ The tree must not contain:
   `.steerlab`). Opening a copy writes `.gitignore` and the workspace's compute
   setting itself;
 - `AGENTS.md` or `WORKSPACE.md`. Opening a copy writes both fresh;
-- symbolic links, or anything over the size limits: 8 MB for one Demo
-  Workspace and 4 MB for one file.
+- symbolic links, or any file over 4 MB. The public scan reads every byte that
+  ships, and it does not read a larger file. The tree as a whole has no limit,
+  so carry the runs the README uses and leave the rest out.
 
 A copy also receives any standard new-workspace file the tree does not carry,
 so a demo needs to hold only its own content and the files its studies pin.
