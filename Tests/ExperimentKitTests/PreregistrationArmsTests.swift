@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 @testable import ExperimentKit
+@testable import SteeringKit
 
 /// The preregistration's Conditions section lists every arm the run executes.
 ///
@@ -13,6 +14,11 @@ import Testing
 /// names declared arms the run never executes after the list instead of in
 /// it.
 ///
+/// An injection condition's slot line also says what the run does with the
+/// slot: an ablating slot reads `<concept> ablated λ=<λ> at every layer` (so
+/// λ=1 ablation no longer reads like α=1 steering at one layer), and a
+/// steering slot in a condition whose band widens it says by how much.
+///
 /// The sections in `Tests/Fixtures/cross-engine/preregistration-arms.json`
 /// were written by the PYTHON engine's freeze; this engine must render the
 /// same manifests to the same bytes. Server twin:
@@ -22,7 +28,8 @@ extension ExperimentStoreTests {
     private static let armShapes: Set<String> = [
         "compare-agents", "compare-agents-carrying-conditions",
         "agent-interventions", "concept-study-implicit-baseline",
-        "concept-study-declared-baseline", "sae-latent-arms",
+        "concept-study-declared-baseline", "concept-study-ablation",
+        "concept-study-band-width", "sae-latent-arms",
         "multi-agent-panel", "multi-agent-panel-without-baseline",
     ]
 
@@ -99,6 +106,90 @@ extension ExperimentStoreTests {
                         + "@L\(injection.layer) α=\(injection.alpha); base model "
                         + "test/model @ `abc123`; pinned artifact "
                         + "`\(agent.artifactPath)` (SHA-256 `\(agent.artifactHash)`)")
+            }
+        }
+    }
+
+    @Test func anAblatingSlotNeverReadsLikeASteeringSlot() throws {
+        try withTempRoot {
+            let manifest = try #require(
+                try armCases().first { $0.label == "concept-study-ablation" }).manifest
+            #expect(
+                try conditionsSection(ExperimentStore.preregistrationMarkdown(manifest))
+                    .split(separator: "\n").map(String.init) == [
+                        "- **baseline**: none (baseline, run implicitly)",
+                        "- **fear-mid**: fear@L14 α=0.8",
+                        "- **fear-steer-1**: fear@L14 α=1",
+                        "- **fear-ablate**: fear ablated λ=1 at every layer",
+                        "- **fear-ablate-random** [randomDirectionAblation]: "
+                            + "fear ablated λ=1 at every layer",
+                    ])
+        }
+    }
+
+    @Test func aBandWiderThanOneLayerIsStatedOnEachSteeringSlot() throws {
+        try withTempRoot {
+            let manifest = try #require(
+                try armCases().first { $0.label == "concept-study-band-width" }).manifest
+            #expect(
+                try conditionsSection(ExperimentStore.preregistrationMarkdown(manifest))
+                    .split(separator: "\n").map(String.init) == [
+                        "- **baseline**: none (baseline, run implicitly)",
+                        "- **fear-band-3**: fear@L14 α=0.8 (band width 3: ±1 layer)",
+                        "- **fear-band-2**: fear@L14 α=0.8 (band width 2: ±1 layer)",
+                        "- **fear-calm-band-5**: fear@L14 α=0.8 (band width 5: ±2 layers), "
+                            + "calm@L10 α=0.25 (band width 5: ±2 layers)",
+                        "- **fear-band-3-calm-ablated**: fear@L14 α=0.8 "
+                            + "(band width 3: ±1 layer), calm ablated λ=0.5 at every layer",
+                        "- **fear-band-0**: fear@L14 α=0.8",
+                    ])
+        }
+    }
+
+    /// The wording is read off this engine's own cell builder: the layers a
+    /// slot line names are the layers `ExperimentTasks.injections(for:
+    /// extractions:)` injects it at.
+    @Test func eachSlotLineNamesTheLayersTheRunInjects() throws {
+        let layerCount = 32
+        let extraction = ExperimentTasks.ConceptExtraction(
+            result: ExtractionResult(
+                vectors: ConceptVectors(
+                    perLayer: (0 ..< layerCount).map { _ in [3, 4, 0] }),
+                residualNormPerLayer: Array(repeating: 1, count: layerCount),
+                residualNormSource: "neutral-corpus",
+                options: ExtractionOptions(method: .meanDifference)),
+            stimuli: nil)
+        let slotPattern = /(\w+)(?: ablated λ=\S+ at (every layer)|@L(\d+) α=\S+(?: \(band width -?\d+: ±(\d+) layers?\))?)/
+        for label in ["concept-study-ablation", "concept-study-band-width"] {
+            let armCase = try #require(try armCases().first { $0.label == label })
+            var lines: [String: String] = [:]
+            for line in armCase.conditionsSection.split(separator: "\n") {
+                let name = try #require(listedArms(String(line)).first)
+                lines[name] = String(line)
+            }
+            for condition in armCase.manifest.conditions {
+                let cells = try ExperimentTasks.injections(
+                    for: condition,
+                    extractions: ["fear": extraction, "calm": extraction])
+                let line = try #require(lines[condition.name])
+                let slotText = try #require(line.split(separator: ": ", maxSplits: 1).last)
+                let stated = slotText.matches(of: slotPattern)
+                #expect(
+                    stated.map { String($0.output.1) } == condition.slots.map(\.concept),
+                    "\(condition.name)")
+                for match in stated {
+                    let concept = String(match.output.1)
+                    let injected = cells.filter { $0.concept == concept }.map(\.layer).sorted()
+                    let named: [Int]
+                    if match.output.2 != nil {
+                        named = Array(0 ..< layerCount)
+                    } else {
+                        let layer = try #require(match.output.3.flatMap { Int($0) })
+                        let half = match.output.4.flatMap { Int($0) } ?? 0
+                        named = Array((layer - half) ... (layer + half))
+                    }
+                    #expect(injected == named, "\(label) \(condition.name) \(concept)")
+                }
             }
         }
     }

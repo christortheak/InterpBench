@@ -4258,8 +4258,21 @@ def _preregistration_arms(d: dict) -> tuple[list[str], list[str]]:
     if not any(c.get("name") == "baseline" for c in operative):
         lines.append("- **baseline**: none (baseline, run implicitly)")
     for condition in operative:
+        # What the run does with each slot
+        # (:func:`.condition_execution.condition_injections`): an ablating
+        # slot covers every layer whatever its layer and the band say, and a
+        # condition slot has no layers or centering of its own, so its
+        # direction is removed uncentered; a steering slot covers its layer
+        # ± bandWidth // 2.
+        width = condition.get("bandWidth", 1)
+        width = int(width) if isinstance(width, (int, float)) else 1
+        half = max(0, width // 2)
+        band = (f" (band width {width}: ±{half} "
+                f"layer{'' if half == 1 else 's'})" if half else "")
         slots = ", ".join(
-            f"{s.get('concept')}@L{s.get('layer')} α={s.get('alpha')}"
+            f"{s.get('concept')} ablated λ={s.get('alpha')} at every layer"
+            if s.get("mode") == "ablate" else
+            f"{s.get('concept')}@L{s.get('layer')} α={s.get('alpha')}{band}"
             for s in condition.get("slots") or []) or "none (baseline)"
         control = condition.get("controlType")
         suffix = f" [{control}]" if control else ""

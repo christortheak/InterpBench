@@ -7893,8 +7893,24 @@ public enum ExperimentStore {
             lines.append("- **baseline**: none (baseline, run implicitly)")
         }
         for condition in operative {
+            // What the run does with each slot (`ExperimentTasks.injections(
+            // for:extractions:)`): an ablating slot covers every layer
+            // whatever its layer and the band say, and a condition slot has
+            // no layers or centering of its own, so its direction is removed
+            // uncentered; a steering slot covers its layer ± bandWidth / 2.
+            let half = max(1, condition.bandWidth) / 2
+            let band = half == 0
+                ? ""
+                : " (band width \(condition.bandWidth): ±\(half) "
+                    + "layer\(half == 1 ? "" : "s"))"
             let slots = condition.slots
-                .map { "\($0.concept)@L\($0.layer) α=\(format($0.alpha))" }
+                .map { slot -> String in
+                    slot.effectiveMode == .ablate
+                        ? "\(slot.concept) ablated λ=\(format(slot.alpha)) "
+                            + "at every layer"
+                        : "\(slot.concept)@L\(slot.layer) "
+                            + "α=\(format(slot.alpha))\(band)"
+                }
                 .joined(separator: ", ")
             let suffix = condition.controlType.map { " [\($0)]" } ?? ""
             lines.append(

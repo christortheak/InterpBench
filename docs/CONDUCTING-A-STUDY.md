@@ -544,7 +544,12 @@ order: the baseline (marked when the run adds it implicitly), the injection
 conditions the study runs, each attached agent with its base model, its
 interventions, and the SHA-256 of its pinned artifact, any SAE latent arms,
 and a panel's scenario arms. Arms the manifest carries but this study design
-never runs are named after the list, not in it.
+never runs are named after the list, not in it. An injection condition's line
+says whether each slot steers or ablates. An ablating slot reads
+`fear ablated λ=1 at every layer`, because the run removes a condition's
+direction from the whole network, whatever layer the slot names. A steering
+slot whose condition has a band width of 2 or more says how far the band
+reaches, as in `fear@L14 α=0.8 (band width 3: ±1 layer)`.
 
 A preserved preregistration is then **frozen like any other pinned input**:
 its SHA-256 is stamped into the manifest, it is snapshotted into

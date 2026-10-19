@@ -367,6 +367,178 @@
     }
   },
   {
+    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **fear-mid**: fear@L14 \u03b1=0.8\n- **fear-steer-1**: fear@L14 \u03b1=1\n- **fear-ablate**: fear ablated \u03bb=1 at every layer\n- **fear-ablate-random** [randomDirectionAblation]: fear ablated \u03bb=1 at every layer",
+    "label": "concept-study-ablation",
+    "manifest": {
+      "concepts": [],
+      "conditions": [
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "name": "fear-mid",
+          "slots": [
+            {
+              "alpha": 0.8,
+              "concept": "fear",
+              "layer": 14
+            }
+          ]
+        },
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "name": "fear-steer-1",
+          "slots": [
+            {
+              "alpha": 1,
+              "concept": "fear",
+              "layer": 14
+            }
+          ]
+        },
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "name": "fear-ablate",
+          "slots": [
+            {
+              "alpha": 1,
+              "concept": "fear",
+              "layer": 14,
+              "mode": "ablate"
+            }
+          ]
+        },
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "controlType": "randomDirectionAblation",
+          "name": "fear-ablate-random",
+          "slots": [
+            {
+              "alpha": 1,
+              "concept": "fear",
+              "layer": 14,
+              "mode": "ablate"
+            }
+          ]
+        }
+      ],
+      "createdAt": "2026-10-19T00:00:00Z",
+      "experimentDescription": "",
+      "freezeHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "frozenAt": "2026-10-19T00:00:00Z",
+      "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+      "modelID": "test/model",
+      "modelRevision": "abc123",
+      "multiAgentIncludeBaseline": true,
+      "name": "concept-study-ablation",
+      "seeds": [
+        20260610
+      ],
+      "status": "frozen",
+      "studyKind": "modelOutput",
+      "temperature": 0,
+      "variantConditions": []
+    }
+  },
+  {
+    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **fear-band-3**: fear@L14 \u03b1=0.8 (band width 3: \u00b11 layer)\n- **fear-band-2**: fear@L14 \u03b1=0.8 (band width 2: \u00b11 layer)\n- **fear-calm-band-5**: fear@L14 \u03b1=0.8 (band width 5: \u00b12 layers), calm@L10 \u03b1=0.25 (band width 5: \u00b12 layers)\n- **fear-band-3-calm-ablated**: fear@L14 \u03b1=0.8 (band width 3: \u00b11 layer), calm ablated \u03bb=0.5 at every layer\n- **fear-band-0**: fear@L14 \u03b1=0.8",
+    "label": "concept-study-band-width",
+    "manifest": {
+      "concepts": [],
+      "conditions": [
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 3,
+          "name": "fear-band-3",
+          "slots": [
+            {
+              "alpha": 0.8,
+              "concept": "fear",
+              "layer": 14
+            }
+          ]
+        },
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 2,
+          "name": "fear-band-2",
+          "slots": [
+            {
+              "alpha": 0.8,
+              "concept": "fear",
+              "layer": 14
+            }
+          ]
+        },
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 5,
+          "name": "fear-calm-band-5",
+          "slots": [
+            {
+              "alpha": 0.8,
+              "concept": "fear",
+              "layer": 14
+            },
+            {
+              "alpha": 0.25,
+              "concept": "calm",
+              "layer": 10
+            }
+          ]
+        },
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 3,
+          "name": "fear-band-3-calm-ablated",
+          "slots": [
+            {
+              "alpha": 0.8,
+              "concept": "fear",
+              "layer": 14
+            },
+            {
+              "alpha": 0.5,
+              "concept": "calm",
+              "layer": 10,
+              "mode": "ablate"
+            }
+          ]
+        },
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 0,
+          "name": "fear-band-0",
+          "slots": [
+            {
+              "alpha": 0.8,
+              "concept": "fear",
+              "layer": 14
+            }
+          ]
+        }
+      ],
+      "createdAt": "2026-10-19T00:00:00Z",
+      "experimentDescription": "",
+      "freezeHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "frozenAt": "2026-10-19T00:00:00Z",
+      "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+      "modelID": "test/model",
+      "modelRevision": "abc123",
+      "multiAgentIncludeBaseline": true,
+      "name": "concept-study-band-width",
+      "seeds": [
+        20260610
+      ],
+      "status": "frozen",
+      "studyKind": "modelOutput",
+      "temperature": 0,
+      "variantConditions": []
+    }
+  },
+  {
     "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **fear-mid**: fear@L14 \u03b1=0.8\n- **clamp-42** (SAE latent): gemma-scope-2b-pt-res/layer_12/width_16k/average_l0_82 feature 42 at L12, mode clamp, \u03b2=0.5 (latent units)\n- **add-7** (SAE latent): gemma-scope-2b-pt-res/layer_6/width_16k/average_l0_70 feature 7, mode add, \u03b2=2.5 (latent units)",
     "label": "sae-latent-arms",
     "manifest": {

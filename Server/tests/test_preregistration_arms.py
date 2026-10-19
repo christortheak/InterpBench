@@ -9,6 +9,11 @@ conditions, each attached agent with its base model, interventions and
 pinned artifact digest, SAE latent arms, and a panel's scenario arms. Declared
 arms the run never executes are named after the list instead of in it.
 
+An injection condition's slot line also says what the run does with the slot:
+an ablating slot reads ``<concept> ablated λ=<λ> at every layer`` (so λ=1
+ablation no longer reads like α=1 steering at one layer), and a steering slot
+in a condition whose band widens it says by how much.
+
 ``Tests/Fixtures/cross-engine/preregistration-arms.json`` holds the section
 this engine writes for each study shape; the Swift twin
 (``PreregistrationArmsTests.swift``) renders the same manifests and must
@@ -32,7 +37,8 @@ REGENERATE = ("stale fixture — re-run preregistration_arms() in "
 SHAPES = {
     "compare-agents", "compare-agents-carrying-conditions",
     "agent-interventions", "concept-study-implicit-baseline",
-    "concept-study-declared-baseline", "sae-latent-arms", "multi-agent-panel",
+    "concept-study-declared-baseline", "concept-study-ablation",
+    "concept-study-band-width", "sae-latent-arms", "multi-agent-panel",
     "multi-agent-panel-without-baseline",
 }
 
@@ -110,6 +116,88 @@ def test_a_concept_study_reads_as_before_apart_from_the_implicit_baseline(
                         "- **fear-mid**: fear@L14 α=0.8\n"
                         "- **fear-mid-random** [randomMatchedNorm]: "
                         "fear@L14 α=0.8")
+
+
+def test_an_ablating_slot_never_reads_like_a_steering_slot(tmp_path):
+    assert _section(_render(
+        tmp_path, _case("concept-study-ablation")["manifest"])).split("\n") == [
+        "- **baseline**: none (baseline, run implicitly)",
+        "- **fear-mid**: fear@L14 α=0.8",
+        "- **fear-steer-1**: fear@L14 α=1",
+        "- **fear-ablate**: fear ablated λ=1 at every layer",
+        "- **fear-ablate-random** [randomDirectionAblation]: "
+        "fear ablated λ=1 at every layer",
+    ]
+
+
+def test_a_band_wider_than_one_layer_is_stated_on_each_steering_slot(
+        tmp_path):
+    assert _section(_render(
+        tmp_path, _case("concept-study-band-width")["manifest"])).split("\n") \
+        == [
+        "- **baseline**: none (baseline, run implicitly)",
+        "- **fear-band-3**: fear@L14 α=0.8 (band width 3: ±1 layer)",
+        "- **fear-band-2**: fear@L14 α=0.8 (band width 2: ±1 layer)",
+        "- **fear-calm-band-5**: fear@L14 α=0.8 (band width 5: ±2 layers), "
+        "calm@L10 α=0.25 (band width 5: ±2 layers)",
+        "- **fear-band-3-calm-ablated**: fear@L14 α=0.8 "
+        "(band width 3: ±1 layer), calm ablated λ=0.5 at every layer",
+        "- **fear-band-0**: fear@L14 α=0.8",
+    ]
+
+
+def test_each_slot_line_names_the_layers_the_run_injects():
+    """The wording is read off the run's own cell builder: the layers a slot
+    line names are the layers ``condition_injections`` injects it at."""
+    import warnings
+
+    from steerlab_server.experiment.condition_execution import \
+        condition_injections
+    from steerlab_server.experiment.vector_materialization import \
+        ConceptVectorBundle
+    from steerlab_server.steering.vector_store import ConceptVectors
+
+    layer_count = 32
+    bundle = ConceptVectorBundle(
+        vectors=ConceptVectors(per_layer=[[3.0, 4.0, 0.0]] * layer_count),
+        residual_norm_per_layer=[1.0] * layer_count,
+        residual_norm_source="neutral-corpus", stimulus_hash="h" * 64,
+        neutral_mean_per_layer=[[0.0, 0.0, 1.0]] * layer_count)
+    slot_pattern = re.compile(
+        r"(\w+)(?: ablated λ=\S+ at (every layer)"
+        r"|@L(\d+) α=\S+(?: \(band width -?\d+: ±(\d+) layers?\))?)")
+    for label in ("concept-study-ablation", "concept-study-band-width"):
+        case = _case(label)
+        lines = {re.match(r"- \*\*(.+?)\*\*", line).group(1): line
+                 for line in case["conditionsSection"].split("\n")}
+        for condition in Manifest.from_dict(case["manifest"]).conditions:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                cells = condition_injections(
+                    condition, {"fear": bundle, "calm": bundle})
+            stated = slot_pattern.findall(
+                lines[condition.name].split(": ", 1)[1])
+            assert [concept for concept, *_ in stated] \
+                == [slot.concept for slot in condition.slots], condition.name
+            for concept, every, layer, half in stated:
+                injected = sorted(cell.layer for cell in cells
+                                  if cell.concept == concept)
+                if every:
+                    named = list(range(layer_count))
+                else:
+                    width = int(half or 0)
+                    named = list(range(int(layer) - width,
+                                       int(layer) + width + 1))
+                assert injected == named, (label, condition.name, concept)
+
+
+def test_a_generated_summary_stating_ablations_is_still_provably_ours(
+        tmp_path):
+    manifest = _case("concept-study-ablation")["manifest"]
+    _render(tmp_path, manifest)
+    path = os.path.join(str(tmp_path), "experiments", manifest["name"],
+                        es.PREREG_FILENAME)
+    assert es._preregistration_is_generated(path, {})
 
 
 def test_the_listed_arms_are_the_runs_record_vocabulary():

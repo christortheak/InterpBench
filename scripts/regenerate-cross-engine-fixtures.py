@@ -2242,10 +2242,19 @@ def _prereg_manifest(name: str, **fields) -> dict:
     return manifest
 
 
+def _prereg_slot(concept: str, layer: int, alpha: float,
+                 mode: str | None = None) -> dict:
+    """A condition slot; ``mode`` is written only when it ablates, as both
+    engines write it."""
+    slot = {"concept": concept, "layer": layer, "alpha": alpha}
+    if mode is not None:
+        slot["mode"] = mode
+    return slot
+
+
 def _prereg_condition(name: str, slots: list, **fields) -> dict:
     return {"name": name, "bandWidth": 1, "alphaInNormUnits": True,
-            "slots": [{"concept": concept, "layer": layer, "alpha": alpha}
-                      for concept, layer, alpha in slots], **fields}
+            "slots": [_prereg_slot(*slot) for slot in slots], **fields}
 
 
 def _prereg_agent(name: str, injections: list, **fields) -> dict:
@@ -2342,6 +2351,38 @@ def _preregistration_arm_cases() -> list[tuple[str, dict]]:
         ("concept-study-declared-baseline", _prereg_manifest(
             "concept-study-declared-baseline",
             conditions=[_prereg_condition("baseline", []), fear_mid])),
+        # An ablating slot removes its direction at every layer, so λ=1
+        # ablation no longer reads like α=1 steering at one layer.
+        ("concept-study-ablation", _prereg_manifest(
+            "concept-study-ablation",
+            conditions=[
+                fear_mid,
+                _prereg_condition("fear-steer-1", [("fear", 14, 1)]),
+                _prereg_condition("fear-ablate", [("fear", 14, 1, "ablate")]),
+                _prereg_condition(
+                    "fear-ablate-random", [("fear", 14, 1, "ablate")],
+                    controlType="randomDirectionAblation"),
+            ])),
+        # A band wider than one layer widens each steering slot by half the
+        # width either side; an ablating slot already covers every layer, and
+        # a width under 2 steers the one declared layer.
+        ("concept-study-band-width", _prereg_manifest(
+            "concept-study-band-width",
+            conditions=[
+                _prereg_condition("fear-band-3", [("fear", 14, 0.8)],
+                                  bandWidth=3),
+                _prereg_condition("fear-band-2", [("fear", 14, 0.8)],
+                                  bandWidth=2),
+                _prereg_condition("fear-calm-band-5",
+                                  [("fear", 14, 0.8), ("calm", 10, 0.25)],
+                                  bandWidth=5),
+                _prereg_condition("fear-band-3-calm-ablated",
+                                  [("fear", 14, 0.8),
+                                   ("calm", 10, 0.5, "ablate")],
+                                  bandWidth=3),
+                _prereg_condition("fear-band-0", [("fear", 14, 0.8)],
+                                  bandWidth=0),
+            ])),
         # SAE latent arms run on the server after the ordinary arms.
         ("sae-latent-arms", _prereg_manifest(
             "sae-latent-arms", conditions=[fear_mid],

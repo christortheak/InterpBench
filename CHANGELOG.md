@@ -80,6 +80,17 @@ migration that rewrites frozen bytes.
   agents, are named after the list instead of in it. Both engines write the
   same lines. Summaries already frozen are not rewritten, so the Demo
   Workspace's `agent-personalities` summary still shows the empty section.
+- **The preregistration says when a condition ablates or steers a band.** An
+  injection condition's line printed every slot as `concept@L<layer> α=<α>`,
+  so an ablation at λ=1 read exactly like steering at α=1 on one layer, and a
+  band width was never shown. An ablating slot now reads
+  `fear ablated λ=1 at every layer`, which is what the run does: a condition's
+  ablation covers the whole network, whatever layer the slot names. A steering
+  slot whose condition has a band width of 2 or more now says how far the band
+  reaches, as in `fear@L14 α=0.8 (band width 3: ±1 layer)`; a band width of 2
+  reaches one layer either side, like 3. Every other line is unchanged, both
+  engines write the same lines, and summaries already frozen are not
+  rewritten.
 - **A Demo Workspace for this Mac.** "Four concepts, four personalities"
   runs on Gemma 3 4B with the engine built into the app. It covers four steps:
   - extract French, hungry, fear, and Golden Gate Bridge directions, and check
