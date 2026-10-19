@@ -19,7 +19,7 @@ args = parser.parse_args()
 if args.output.exists():
     parser.error('Output exists; choose a new release directory.')
 for check in ('check-workspace-bootstrap.py', 'check-science-resources.py', 'check-study-interviews.py', 'check-python-client-identity.py',
-              # Shape, size limits, and identifying strings, before a Demo Workspace is packed into the wheel.
+              # Shape, the per-file size limit, and identifying strings, before a Demo Workspace is packed into the wheel.
               'check-demo-workspaces.py'):
     subprocess.run([sys.executable, str(ROOT / 'scripts/ci' / check)], check=True)
 sys.path.insert(0, str(ROOT / 'Server'))

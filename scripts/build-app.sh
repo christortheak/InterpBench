@@ -670,8 +670,8 @@ cp -R "$REPO/WorkspaceSeed" "$RES/WorkspaceSeed" || die "could not stage Workspa
 # DemoWorkspaces = the worked examples the app opens as a copy: one folder per
 # backend the checkout carries (mlx, mps, cuda — any subset, possibly none)
 # beside a README that always ships, so the family resolves in every build.
-# Checked BEFORE it is staged: each demo's shape, the size limits (one demo,
-# one file), and identifying strings. The scan of the assembled bundle below
+# Checked BEFORE it is staged: each demo's shape, the per-file size limit,
+# and identifying strings. The scan of the assembled bundle below
 # reads the staged copy again, and the copy of it inside the client wheel.
 # Dot-prefixed entries are left out: a demo must not carry them, and neither
 # the resource manifest's walk nor a wheel would ship them reliably.
