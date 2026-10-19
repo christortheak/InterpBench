@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.11] — 2026-10-19
+
 - **Saved agents steer in the Playground.** Picking a saved agent, whether
   made in the app or by the command line (the Demo Workspace's four
   included), filled in its steering rows. But sending a message refused with
