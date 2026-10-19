@@ -2257,9 +2257,11 @@ def _prereg_condition(name: str, slots: list, **fields) -> dict:
             "slots": [_prereg_slot(*slot) for slot in slots], **fields}
 
 
-def _prereg_agent(name: str, injections: list, **fields) -> dict:
+def _prereg_agent(name: str, injections: list, omit: tuple = (),
+                  **fields) -> dict:
     """An attached agent as `experiment attach-agent` pins it: the artifact
-    inline, its workspace path, and the digest of its bytes."""
+    inline, its workspace path, and the digest of its bytes. ``omit`` drops
+    keys an older artifact never wrote."""
     import hashlib
 
     artifact = {"schemaVersion": 1, "name": name, "baseModelID": "test/model",
@@ -2268,6 +2270,8 @@ def _prereg_agent(name: str, injections: list, **fields) -> dict:
                 "alphaInNormUnits": True, "promptMode": "chatAssistant",
                 "qwenThinkingEnabled": False, "temperature": 0,
                 "createdAt": "2026-10-19T00:00:00Z", **fields}
+    for key in omit:
+        artifact.pop(key)
     return {"name": name,
             "artifactPath": f"experiments/prereg/pinned/variant-{name}.json",
             "artifactHash": hashlib.sha256(json.dumps(
@@ -2340,6 +2344,45 @@ def _preregistration_arm_cases() -> list[tuple[str, dict]]:
                             policy_text.encode("utf-8")).hexdigest()}]),
                 _prereg_agent("unsteered-copy", []),
                 {"name": "fear-promoted", "fromPromotion": {"concept": "fear"}},
+            ])),
+        # An agent's band widens each steering injection by half the width
+        # either side, as a condition's does; an ablating injection covers the
+        # layers it names and takes no band. Its α units are stated once, when
+        # it steers, and an artifact without the key reads as raw α.
+        ("agent-band-and-units", _prereg_manifest(
+            "agent-band-and-units", studyType="agentComparison",
+            variantConditions=[
+                _prereg_agent("fear-band-3",
+                              [_prereg_injection("fear", 14, 0.8)],
+                              bandWidth=3),
+                _prereg_agent("fear-band-2",
+                              [_prereg_injection("fear", 14, 0.8)],
+                              bandWidth=2),
+                _prereg_agent("fear-calm-band-5",
+                              [_prereg_injection("fear", 14, 0.8),
+                               _prereg_injection("calm", 10, 0.25)],
+                              bandWidth=5),
+                _prereg_agent("fear-band-3-calm-ablated",
+                              [_prereg_injection("fear", 14, 0.8),
+                               _prereg_injection("calm", 10, 0.5,
+                                                 mode="ablate",
+                                                 layers=[9, 10, 11])],
+                              bandWidth=3),
+                _prereg_agent("fear-band-0",
+                              [_prereg_injection("fear", 14, 0.8)],
+                              bandWidth=0),
+                _prereg_agent("fear-raw", [_prereg_injection("fear", 14, 2.5)],
+                              alphaInNormUnits=False),
+                _prereg_agent("fear-raw-band-3",
+                              [_prereg_injection("fear", 14, 2.5)],
+                              bandWidth=3, alphaInNormUnits=False),
+                _prereg_agent("fear-legacy",
+                              [_prereg_injection("fear", 14, 2.5)],
+                              omit=("bandWidth", "alphaInNormUnits")),
+                _prereg_agent("calm-ablated-band-3",
+                              [_prereg_injection("calm", 10, 1,
+                                                 mode="ablate")],
+                              bandWidth=3),
             ])),
         # A concept study: its declared arms, the baseline prepended.
         ("concept-study-implicit-baseline", _prereg_manifest(

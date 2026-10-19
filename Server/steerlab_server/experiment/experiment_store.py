@@ -4287,8 +4287,29 @@ def _preregistration_arms(d: dict) -> tuple[list[str], list[str]]:
             continue
         artifact = vc.get("artifact") if isinstance(vc.get("artifact"), dict) \
             else {}
+        # What the run does with each injection
+        # (:func:`.model_variant.variant_injections`, after
+        # ``ModelVariant.from_dict``): a steering injection covers its layer
+        # ± bandWidth // 2, so the line says how far the band reaches with
+        # the condition lines' wording; an ablating injection covers the
+        # layers it names and takes no band. The agent's α units apply to its
+        # steering injections only (λ is never scaled), so they are stated
+        # once, and only when the agent steers. An absent alphaInNormUnits
+        # reads as raw α, as ``from_dict`` reads it.
+        width = artifact.get("bandWidth", 1)
+        width = int(width) if isinstance(width, (int, float)) else 1
+        half = max(1, width) // 2
+        band = (f" (band width {width}: ±{half} "
+                f"layer{'' if half == 1 else 's'})" if half else "")
+        injections = artifact.get("injections") or []
+        steers = any(injection.get("mode") != "ablate"
+                     for injection in injections)
+        units = ("" if not steers
+                 else "; α in residual-norm units"
+                 if artifact.get("alphaInNormUnits", False)
+                 else "; raw α (not scaled by the residual norm)")
         parts = []
-        for injection in artifact.get("injections") or []:
+        for injection in injections:
             if injection.get("mode") == "ablate":
                 layers = "+".join(f"L{layer}" for layer
                                   in injection.get("layers") or []) \
@@ -4299,7 +4320,8 @@ def _preregistration_arms(d: dict) -> tuple[list[str], list[str]]:
                              f"λ={injection.get('alpha')} at {layers}{centering}")
             else:
                 parts.append(f"{injection.get('concept')}@L"
-                             f"{injection.get('layer')} α={injection.get('alpha')}")
+                             f"{injection.get('layer')} "
+                             f"α={injection.get('alpha')}{band}")
         for adapter in artifact.get("adapters") or []:
             path = adapter.get("adapterDirectory") or adapter.get("artifactPath")
             if path:
@@ -4312,7 +4334,8 @@ def _preregistration_arms(d: dict) -> tuple[list[str], list[str]]:
             parts.append("agent system prompt (SHA-256 "
                          f"`{artifact['systemPromptHash']}`)")
         lines.append(f"- **{vc.get('name')}** (agent): "
-                     f"{', '.join(parts) or 'no interventions'}; base model "
+                     f"{', '.join(parts) or 'no interventions'}{units}; "
+                     "base model "
                      f"{artifact.get('baseModelID')} @ "
                      f"`{artifact.get('baseRevision')}`; pinned artifact "
                      f"`{vc.get('artifactPath')}` "

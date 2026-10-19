@@ -44,6 +44,20 @@ migration that rewrites frozen bytes.
     record of replies, so their runs read the same way. A sweep run older than
     that record says plainly that its replies were not recorded.
   - Step 5 of the Demo Workspace's guide now points to this view.
+- **The preregistration says how far an agent's band reaches and what its α
+  means.** An attached agent's line printed each steering injection as
+  `concept@L<layer> α=<α>`. An agent with a band width of 2 or more also
+  steers the layers either side, and the line never said whether α was in
+  residual-norm units or raw. A steering injection now says how far the band
+  reaches, the way a condition's slot does, as in
+  `fear@L14 α=0.8 (band width 3: ±1 layer)`. A band width of 2 reaches one
+  layer either side, like 3, and a band width under 2 states nothing. The
+  line then states the agent's α units once, as `α in residual-norm units` or
+  `raw α (not scaled by the residual norm)`, whenever the agent steers. An
+  agent saved without a recorded α unit reads as raw α, which is how both
+  engines run it. Ablating injections are unchanged: they already name the
+  layers they cover, and λ is never scaled. Both engines write the same
+  lines, and summaries already frozen are not rewritten.
 
 ## [0.9.11] — 2026-10-19
 

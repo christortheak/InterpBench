@@ -1,6 +1,6 @@
 [
   {
-    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **french-l28-a15** (agent): french@L28 \u03b1=0.15; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-french-l28-a15.json` (SHA-256 `6f49d6249159723336b97584fb5dd2fff8d9bce97ef95c0ce4e2fc5e1dba9606`)\n- **hungry-l17-a10** (agent): hungry@L17 \u03b1=0.1; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-hungry-l17-a10.json` (SHA-256 `a63b944cc2603affd4faa955de1d446b9a97d2353f4daefc00bce75fcb9bea0b`)",
+    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **french-l28-a15** (agent): french@L28 \u03b1=0.15; \u03b1 in residual-norm units; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-french-l28-a15.json` (SHA-256 `6f49d6249159723336b97584fb5dd2fff8d9bce97ef95c0ce4e2fc5e1dba9606`)\n- **hungry-l17-a10** (agent): hungry@L17 \u03b1=0.1; \u03b1 in residual-norm units; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-hungry-l17-a10.json` (SHA-256 `a63b944cc2603affd4faa955de1d446b9a97d2353f4daefc00bce75fcb9bea0b`)",
     "label": "compare-agents",
     "manifest": {
       "concepts": [],
@@ -78,7 +78,7 @@
     }
   },
   {
-    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **french-l28-a15** (agent): french@L28 \u03b1=0.15; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-french-l28-a15.json` (SHA-256 `6f49d6249159723336b97584fb5dd2fff8d9bce97ef95c0ce4e2fc5e1dba9606`)\n\nDeclared but not run by this study design: fear-mid.",
+    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **french-l28-a15** (agent): french@L28 \u03b1=0.15; \u03b1 in residual-norm units; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-french-l28-a15.json` (SHA-256 `6f49d6249159723336b97584fb5dd2fff8d9bce97ef95c0ce4e2fc5e1dba9606`)\n\nDeclared but not run by this study design: fear-mid.",
     "label": "compare-agents-carrying-conditions",
     "manifest": {
       "concepts": [],
@@ -269,6 +269,283 @@
             "concept": "fear"
           },
           "name": "fear-promoted"
+        }
+      ]
+    }
+  },
+  {
+    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **fear-band-3** (agent): fear@L14 \u03b1=0.8 (band width 3: \u00b11 layer); \u03b1 in residual-norm units; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-fear-band-3.json` (SHA-256 `00a5b6c4527e562b4383b21f85ba14b5bd1829eb80f45f08565e1b99793ca679`)\n- **fear-band-2** (agent): fear@L14 \u03b1=0.8 (band width 2: \u00b11 layer); \u03b1 in residual-norm units; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-fear-band-2.json` (SHA-256 `3ffef5a43c7703bb4c69afd158f3dbb5047e77e7cf578b288778a158766c51dd`)\n- **fear-calm-band-5** (agent): fear@L14 \u03b1=0.8 (band width 5: \u00b12 layers), calm@L10 \u03b1=0.25 (band width 5: \u00b12 layers); \u03b1 in residual-norm units; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-fear-calm-band-5.json` (SHA-256 `e39138b284ae91b3ad092aefa054a6a2223545e0dbc525e4e75d181bd6ec6c8a`)\n- **fear-band-3-calm-ablated** (agent): fear@L14 \u03b1=0.8 (band width 3: \u00b11 layer), calm ablated \u03bb=0.5 at L9+L10+L11; \u03b1 in residual-norm units; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-fear-band-3-calm-ablated.json` (SHA-256 `60921c1212130a414100860b3a6bedca0ee839a90a78a5dfaca30c22a27e0968`)\n- **fear-band-0** (agent): fear@L14 \u03b1=0.8; \u03b1 in residual-norm units; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-fear-band-0.json` (SHA-256 `d167f5f0a916826100cb9d41a0335b06db5054b26a2b4e9a34adb86400e0e4c0`)\n- **fear-raw** (agent): fear@L14 \u03b1=2.5; raw \u03b1 (not scaled by the residual norm); base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-fear-raw.json` (SHA-256 `4ecdc62c568ef45d77efb5b2c7aa81e9c1cd1fd44ad3c0109be1c992832c002b`)\n- **fear-raw-band-3** (agent): fear@L14 \u03b1=2.5 (band width 3: \u00b11 layer); raw \u03b1 (not scaled by the residual norm); base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-fear-raw-band-3.json` (SHA-256 `686f9de125a6950a84369d9993796e975ca6f7acb0d98c791fe5aaca07b16227`)\n- **fear-legacy** (agent): fear@L14 \u03b1=2.5; raw \u03b1 (not scaled by the residual norm); base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-fear-legacy.json` (SHA-256 `adcce92b297ce6c2d339adb8c2dbc99f802b90996fc70ac85e7f52ba54f196d4`)\n- **calm-ablated-band-3** (agent): calm ablated \u03bb=1 at every layer; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-calm-ablated-band-3.json` (SHA-256 `01863beef465cd487a25432b2d9130bc65f6fae3543f65acf1e0386e64571d73`)",
+    "label": "agent-band-and-units",
+    "manifest": {
+      "concepts": [],
+      "conditions": [],
+      "createdAt": "2026-10-19T00:00:00Z",
+      "experimentDescription": "",
+      "freezeHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "frozenAt": "2026-10-19T00:00:00Z",
+      "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+      "modelID": "test/model",
+      "modelRevision": "abc123",
+      "multiAgentIncludeBaseline": true,
+      "name": "agent-band-and-units",
+      "seeds": [
+        20260610
+      ],
+      "status": "frozen",
+      "studyKind": "modelOutput",
+      "studyType": "agentComparison",
+      "temperature": 0,
+      "variantConditions": [
+        {
+          "artifact": {
+            "adapters": [],
+            "alphaInNormUnits": true,
+            "bandWidth": 3,
+            "baseModelID": "test/model",
+            "baseRevision": "abc123",
+            "createdAt": "2026-10-19T00:00:00Z",
+            "injections": [
+              {
+                "alpha": 0.8,
+                "concept": "fear",
+                "layer": 14,
+                "vectorArtifactID": "runs/fixture-sweep/fear"
+              }
+            ],
+            "name": "fear-band-3",
+            "promptMode": "chatAssistant",
+            "qwenThinkingEnabled": false,
+            "schemaVersion": 1,
+            "temperature": 0
+          },
+          "artifactHash": "00a5b6c4527e562b4383b21f85ba14b5bd1829eb80f45f08565e1b99793ca679",
+          "artifactPath": "experiments/prereg/pinned/variant-fear-band-3.json",
+          "name": "fear-band-3"
+        },
+        {
+          "artifact": {
+            "adapters": [],
+            "alphaInNormUnits": true,
+            "bandWidth": 2,
+            "baseModelID": "test/model",
+            "baseRevision": "abc123",
+            "createdAt": "2026-10-19T00:00:00Z",
+            "injections": [
+              {
+                "alpha": 0.8,
+                "concept": "fear",
+                "layer": 14,
+                "vectorArtifactID": "runs/fixture-sweep/fear"
+              }
+            ],
+            "name": "fear-band-2",
+            "promptMode": "chatAssistant",
+            "qwenThinkingEnabled": false,
+            "schemaVersion": 1,
+            "temperature": 0
+          },
+          "artifactHash": "3ffef5a43c7703bb4c69afd158f3dbb5047e77e7cf578b288778a158766c51dd",
+          "artifactPath": "experiments/prereg/pinned/variant-fear-band-2.json",
+          "name": "fear-band-2"
+        },
+        {
+          "artifact": {
+            "adapters": [],
+            "alphaInNormUnits": true,
+            "bandWidth": 5,
+            "baseModelID": "test/model",
+            "baseRevision": "abc123",
+            "createdAt": "2026-10-19T00:00:00Z",
+            "injections": [
+              {
+                "alpha": 0.8,
+                "concept": "fear",
+                "layer": 14,
+                "vectorArtifactID": "runs/fixture-sweep/fear"
+              },
+              {
+                "alpha": 0.25,
+                "concept": "calm",
+                "layer": 10,
+                "vectorArtifactID": "runs/fixture-sweep/calm"
+              }
+            ],
+            "name": "fear-calm-band-5",
+            "promptMode": "chatAssistant",
+            "qwenThinkingEnabled": false,
+            "schemaVersion": 1,
+            "temperature": 0
+          },
+          "artifactHash": "e39138b284ae91b3ad092aefa054a6a2223545e0dbc525e4e75d181bd6ec6c8a",
+          "artifactPath": "experiments/prereg/pinned/variant-fear-calm-band-5.json",
+          "name": "fear-calm-band-5"
+        },
+        {
+          "artifact": {
+            "adapters": [],
+            "alphaInNormUnits": true,
+            "bandWidth": 3,
+            "baseModelID": "test/model",
+            "baseRevision": "abc123",
+            "createdAt": "2026-10-19T00:00:00Z",
+            "injections": [
+              {
+                "alpha": 0.8,
+                "concept": "fear",
+                "layer": 14,
+                "vectorArtifactID": "runs/fixture-sweep/fear"
+              },
+              {
+                "alpha": 0.5,
+                "concept": "calm",
+                "layer": 10,
+                "layers": [
+                  9,
+                  10,
+                  11
+                ],
+                "mode": "ablate",
+                "vectorArtifactID": "runs/fixture-sweep/calm"
+              }
+            ],
+            "name": "fear-band-3-calm-ablated",
+            "promptMode": "chatAssistant",
+            "qwenThinkingEnabled": false,
+            "schemaVersion": 1,
+            "temperature": 0
+          },
+          "artifactHash": "60921c1212130a414100860b3a6bedca0ee839a90a78a5dfaca30c22a27e0968",
+          "artifactPath": "experiments/prereg/pinned/variant-fear-band-3-calm-ablated.json",
+          "name": "fear-band-3-calm-ablated"
+        },
+        {
+          "artifact": {
+            "adapters": [],
+            "alphaInNormUnits": true,
+            "bandWidth": 0,
+            "baseModelID": "test/model",
+            "baseRevision": "abc123",
+            "createdAt": "2026-10-19T00:00:00Z",
+            "injections": [
+              {
+                "alpha": 0.8,
+                "concept": "fear",
+                "layer": 14,
+                "vectorArtifactID": "runs/fixture-sweep/fear"
+              }
+            ],
+            "name": "fear-band-0",
+            "promptMode": "chatAssistant",
+            "qwenThinkingEnabled": false,
+            "schemaVersion": 1,
+            "temperature": 0
+          },
+          "artifactHash": "d167f5f0a916826100cb9d41a0335b06db5054b26a2b4e9a34adb86400e0e4c0",
+          "artifactPath": "experiments/prereg/pinned/variant-fear-band-0.json",
+          "name": "fear-band-0"
+        },
+        {
+          "artifact": {
+            "adapters": [],
+            "alphaInNormUnits": false,
+            "bandWidth": 1,
+            "baseModelID": "test/model",
+            "baseRevision": "abc123",
+            "createdAt": "2026-10-19T00:00:00Z",
+            "injections": [
+              {
+                "alpha": 2.5,
+                "concept": "fear",
+                "layer": 14,
+                "vectorArtifactID": "runs/fixture-sweep/fear"
+              }
+            ],
+            "name": "fear-raw",
+            "promptMode": "chatAssistant",
+            "qwenThinkingEnabled": false,
+            "schemaVersion": 1,
+            "temperature": 0
+          },
+          "artifactHash": "4ecdc62c568ef45d77efb5b2c7aa81e9c1cd1fd44ad3c0109be1c992832c002b",
+          "artifactPath": "experiments/prereg/pinned/variant-fear-raw.json",
+          "name": "fear-raw"
+        },
+        {
+          "artifact": {
+            "adapters": [],
+            "alphaInNormUnits": false,
+            "bandWidth": 3,
+            "baseModelID": "test/model",
+            "baseRevision": "abc123",
+            "createdAt": "2026-10-19T00:00:00Z",
+            "injections": [
+              {
+                "alpha": 2.5,
+                "concept": "fear",
+                "layer": 14,
+                "vectorArtifactID": "runs/fixture-sweep/fear"
+              }
+            ],
+            "name": "fear-raw-band-3",
+            "promptMode": "chatAssistant",
+            "qwenThinkingEnabled": false,
+            "schemaVersion": 1,
+            "temperature": 0
+          },
+          "artifactHash": "686f9de125a6950a84369d9993796e975ca6f7acb0d98c791fe5aaca07b16227",
+          "artifactPath": "experiments/prereg/pinned/variant-fear-raw-band-3.json",
+          "name": "fear-raw-band-3"
+        },
+        {
+          "artifact": {
+            "adapters": [],
+            "baseModelID": "test/model",
+            "baseRevision": "abc123",
+            "createdAt": "2026-10-19T00:00:00Z",
+            "injections": [
+              {
+                "alpha": 2.5,
+                "concept": "fear",
+                "layer": 14,
+                "vectorArtifactID": "runs/fixture-sweep/fear"
+              }
+            ],
+            "name": "fear-legacy",
+            "promptMode": "chatAssistant",
+            "qwenThinkingEnabled": false,
+            "schemaVersion": 1,
+            "temperature": 0
+          },
+          "artifactHash": "adcce92b297ce6c2d339adb8c2dbc99f802b90996fc70ac85e7f52ba54f196d4",
+          "artifactPath": "experiments/prereg/pinned/variant-fear-legacy.json",
+          "name": "fear-legacy"
+        },
+        {
+          "artifact": {
+            "adapters": [],
+            "alphaInNormUnits": true,
+            "bandWidth": 3,
+            "baseModelID": "test/model",
+            "baseRevision": "abc123",
+            "createdAt": "2026-10-19T00:00:00Z",
+            "injections": [
+              {
+                "alpha": 1,
+                "concept": "calm",
+                "layer": 10,
+                "mode": "ablate",
+                "vectorArtifactID": "runs/fixture-sweep/calm"
+              }
+            ],
+            "name": "calm-ablated-band-3",
+            "promptMode": "chatAssistant",
+            "qwenThinkingEnabled": false,
+            "schemaVersion": 1,
+            "temperature": 0
+          },
+          "artifactHash": "01863beef465cd487a25432b2d9130bc65f6fae3543f65acf1e0386e64571d73",
+          "artifactPath": "experiments/prereg/pinned/variant-calm-ablated-band-3.json",
+          "name": "calm-ablated-band-3"
         }
       ]
     }

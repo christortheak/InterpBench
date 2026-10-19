@@ -17,7 +17,10 @@ import Testing
 /// An injection condition's slot line also says what the run does with the
 /// slot: an ablating slot reads `<concept> ablated λ=<λ> at every layer` (so
 /// λ=1 ablation no longer reads like α=1 steering at one layer), and a
-/// steering slot in a condition whose band widens it says by how much.
+/// steering slot in a condition whose band widens it says by how much. An
+/// agent line says the same of each steering injection when the agent's band
+/// widens it, and states the agent's α units once, when the agent steers:
+/// `α in residual-norm units` or `raw α (not scaled by the residual norm)`.
 ///
 /// The sections in `Tests/Fixtures/cross-engine/preregistration-arms.json`
 /// were written by the PYTHON engine's freeze; this engine must render the
@@ -27,7 +30,8 @@ extension ExperimentStoreTests {
 
     private static let armShapes: Set<String> = [
         "compare-agents", "compare-agents-carrying-conditions",
-        "agent-interventions", "concept-study-implicit-baseline",
+        "agent-interventions", "agent-band-and-units",
+        "concept-study-implicit-baseline",
         "concept-study-declared-baseline", "concept-study-ablation",
         "concept-study-band-width", "sae-latent-arms",
         "multi-agent-panel", "multi-agent-panel-without-baseline",
@@ -103,11 +107,150 @@ extension ExperimentStoreTests {
                 let injection = try #require(agent.artifact.injections.first)
                 #expect(
                     line == "- **\(agent.name)** (agent): \(injection.concept)"
-                        + "@L\(injection.layer) α=\(injection.alpha); base model "
+                        + "@L\(injection.layer) α=\(injection.alpha); α in "
+                        + "residual-norm units; base model "
                         + "test/model @ `abc123`; pinned artifact "
                         + "`\(agent.artifactPath)` (SHA-256 `\(agent.artifactHash)`)")
             }
         }
+    }
+
+    /// A steering injection reads like a condition's steering slot, band
+    /// included; an ablating one takes no band; the α units are stated once,
+    /// only when the agent steers, and a missing key reads as raw α.
+    @Test func anAgentLineStatesItsBandAndItsAlphaUnits() throws {
+        try withTempRoot {
+            let manifest = try #require(
+                try armCases().first { $0.label == "agent-band-and-units" }).manifest
+            let hashes = Dictionary(
+                uniqueKeysWithValues: manifest.variantConditions.map {
+                    ($0.name, $0.artifactHash)
+                })
+            func line(_ name: String, _ interventions: String) -> String {
+                "- **\(name)** (agent): \(interventions); base model "
+                    + "test/model @ `abc123`; pinned artifact "
+                    + "`experiments/prereg/pinned/variant-\(name).json` "
+                    + "(SHA-256 `\(hashes[name] ?? "")`)"
+            }
+            let norm = "α in residual-norm units"
+            let raw = "raw α (not scaled by the residual norm)"
+            #expect(
+                try conditionsSection(ExperimentStore.preregistrationMarkdown(manifest))
+                    .split(separator: "\n").map(String.init) == [
+                        "- **baseline**: none (baseline, run implicitly)",
+                        line("fear-band-3", "fear@L14 α=0.8 (band width 3: ±1 layer); \(norm)"),
+                        line("fear-band-2", "fear@L14 α=0.8 (band width 2: ±1 layer); \(norm)"),
+                        line(
+                            "fear-calm-band-5",
+                            "fear@L14 α=0.8 (band width 5: ±2 layers), "
+                                + "calm@L10 α=0.25 (band width 5: ±2 layers); \(norm)"),
+                        line(
+                            "fear-band-3-calm-ablated",
+                            "fear@L14 α=0.8 (band width 3: ±1 layer), "
+                                + "calm ablated λ=0.5 at L9+L10+L11; \(norm)"),
+                        line("fear-band-0", "fear@L14 α=0.8; \(norm)"),
+                        line("fear-raw", "fear@L14 α=2.5; \(raw)"),
+                        line(
+                            "fear-raw-band-3",
+                            "fear@L14 α=2.5 (band width 3: ±1 layer); \(raw)"),
+                        line("fear-legacy", "fear@L14 α=2.5; \(raw)"),
+                        line("calm-ablated-band-3", "calm ablated λ=1 at every layer"),
+                    ])
+        }
+    }
+
+    /// The agent wording is read off this engine's own agent cell builder:
+    /// the layers each injection names are the layers
+    /// `ExperimentTasks.injections(for:)` injects it at, and the stated α
+    /// units are the scale it applies. A residual norm of 10 over a vector
+    /// norm of 5 doubles an α in residual-norm units and leaves a raw α as
+    /// given; λ is never scaled.
+    @Test func eachAgentLineNamesTheLayersAndUnitsTheRunInjects() throws {
+        let layerCount = 32
+        let vectors = ConceptVectors(
+            perLayer: (0 ..< layerCount).map { _ in [3, 4, 0] })
+        let directory = FileManager.default.temporaryDirectory
+            .appending(component: "prereg-agent-cells-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for concept in ["french", "hungry", "fear", "calm"] {
+            try SteeringVectorStore.save(
+                vectors: vectors,
+                sidecar: SteeringVectorSidecar(
+                    modelID: "test/model", concept: concept, stimulusSetHash: "h",
+                    vectors: vectors,
+                    residualNormPerLayer: Array(repeating: 10, count: layerCount)),
+                to: directory, name: concept,
+                neutralMeanPerLayer: Array(repeating: [0, 0, 1], count: layerCount))
+        }
+        let partPattern = /(\w+)(?: ablated λ=([^\s;,]+) at (every layer|L\d+(?:\+L\d+)*)(?: \(centering \w+\))?|@L(\d+) α=([^\s;,]+)(?: \(band width -?\d+: ±(\d+) layers?\))?)/
+        let normClause = "; α in residual-norm units; "
+        let rawClause = "; raw α (not scaled by the residual norm); "
+        var checked = 0
+        for label in ["compare-agents", "agent-interventions", "agent-band-and-units"] {
+            let armCase = try #require(try armCases().first { $0.label == label })
+            var lines: [String: String] = [:]
+            for line in armCase.conditionsSection.split(separator: "\n") {
+                if let name = listedArms(String(line)).first {
+                    lines[name] = String(line)
+                }
+            }
+            for agent in armCase.manifest.variantConditions
+            where agent.fromPromotion == nil && !agent.artifact.injections.isEmpty {
+                var artifact = agent.artifact
+                artifact.injections = artifact.injections.map { injection in
+                    var local = injection
+                    local.vectorArtifactID =
+                        directory.appending(component: injection.concept).path
+                    return local
+                }
+                let cells = try ExperimentTasks.injections(for: artifact)
+                let line = try #require(lines[agent.name])
+                let interventions = try #require(
+                    line.split(separator: ": ", maxSplits: 1).last?
+                        .split(separator: ";").first)
+                let stated = interventions.matches(of: partPattern)
+                #expect(
+                    stated.map { String($0.output.1) }
+                        == artifact.injections.map(\.concept),
+                    "\(agent.name)")
+                let steers = artifact.injections.contains { $0.effectiveMode != .ablate }
+                let norm = line.contains(normClause)
+                let raw = line.contains(rawClause)
+                #expect(!(norm && raw), "\(agent.name)")
+                #expect((norm || raw) == steers, "\(agent.name)")
+                for match in stated {
+                    let concept = String(match.output.1)
+                    let mine = cells.filter { $0.concept == concept }
+                    let named: [Int]
+                    let expected: Float
+                    if let lambda = match.output.2 {
+                        let covered = try #require(match.output.3)
+                        named = covered == "every layer"
+                            ? Array(0 ..< layerCount)
+                            : covered.split(separator: "+").compactMap {
+                                Int($0.dropFirst())
+                            }
+                        #expect(mine.allSatisfy { $0.mode == .ablate }, "\(agent.name)")
+                        expected = try #require(Float(lambda))
+                    } else {
+                        let layer = try #require(match.output.4.flatMap { Int($0) })
+                        let half = match.output.6.flatMap { Int($0) } ?? 0
+                        named = Array((layer - half) ... (layer + half))
+                        #expect(mine.allSatisfy { $0.mode == .add }, "\(agent.name)")
+                        let alpha = try #require(match.output.5.flatMap { Float($0) })
+                        expected = alpha * (norm ? 2 : 1)
+                    }
+                    #expect(
+                        mine.map(\.layer).sorted() == named,
+                        "\(label) \(agent.name) \(concept)")
+                    #expect(
+                        mine.allSatisfy { abs($0.alpha - expected) < 1e-5 },
+                        "\(label) \(agent.name) \(concept)")
+                }
+                checked += 1
+            }
+        }
+        #expect(checked == 12)
     }
 
     @Test func anAblatingSlotNeverReadsLikeASteeringSlot() throws {
@@ -287,12 +430,15 @@ extension ExperimentStoreTests {
             })
     }
 
+    /// These artifacts are written by this engine's encoder, which states
+    /// residual-norm units (its default for new work).
     private func agentLines(_ frozen: ExperimentManifest) -> [String] {
         ["- **baseline**: none (baseline, run implicitly)"]
             + frozen.variantConditions.map { agent in
                 let injection = agent.artifact.injections[0]
                 return "- **\(agent.name)** (agent): \(injection.concept)"
-                    + "@L\(injection.layer) α=\(injection.alpha); base model "
+                    + "@L\(injection.layer) α=\(injection.alpha); α in "
+                    + "residual-norm units; base model "
                     + "test/model @ `abc123`; pinned artifact "
                     + "`\(agent.artifactPath)` (SHA-256 `\(agent.artifactHash)`)"
             }

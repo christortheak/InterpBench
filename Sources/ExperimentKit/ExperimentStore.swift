@@ -7926,10 +7926,29 @@ public enum ExperimentStore {
                 continue
             }
             let artifact = variant.artifact
+            // What the run does with each injection (`ExperimentTasks.
+            // injections(for:)` on a `ModelVariantArtifact`): a steering
+            // injection covers its layer ± bandWidth / 2, so the line says
+            // how far the band reaches with the condition lines' wording; an
+            // ablating injection covers the layers it names and takes no
+            // band. The agent's α units apply to its steering injections
+            // only (λ is never scaled), so they are stated once, and only
+            // when the agent steers.
+            let half = max(1, artifact.bandWidth) / 2
+            let band = half == 0
+                ? ""
+                : " (band width \(artifact.bandWidth): ±\(half) "
+                    + "layer\(half == 1 ? "" : "s"))"
+            let steers = artifact.injections.contains { $0.effectiveMode != .ablate }
+            let units = !steers
+                ? ""
+                : artifact.alphaInNormUnits
+                    ? "; α in residual-norm units"
+                    : "; raw α (not scaled by the residual norm)"
             var parts = artifact.injections.map { injection -> String in
                 guard injection.effectiveMode == .ablate else {
                     return "\(injection.concept)@L\(injection.layer) "
-                        + "α=\(format(injection.alpha))"
+                        + "α=\(format(injection.alpha))\(band)"
                 }
                 let covered = injection.layers ?? []
                 let layers = covered.isEmpty
@@ -7956,6 +7975,7 @@ public enum ExperimentStore {
             lines.append(
                 "- **\(variant.name)** (agent): "
                     + (parts.isEmpty ? "no interventions" : parts.joined(separator: ", "))
+                    + units
                     + "; base model \(artifact.baseModelID) "
                     + "@ `\(artifact.baseRevision ?? "None")`; pinned artifact "
                     + "`\(variant.artifactPath)` (SHA-256 `\(variant.artifactHash)`)")

@@ -12,7 +12,10 @@ arms the run never executes are named after the list instead of in it.
 An injection condition's slot line also says what the run does with the slot:
 an ablating slot reads ``<concept> ablated λ=<λ> at every layer`` (so λ=1
 ablation no longer reads like α=1 steering at one layer), and a steering slot
-in a condition whose band widens it says by how much.
+in a condition whose band widens it says by how much. An agent line says the
+same of each steering injection when the agent's band widens it, and states
+the agent's α units once, when the agent steers: ``α in residual-norm units``
+or ``raw α (not scaled by the residual norm)``.
 
 ``Tests/Fixtures/cross-engine/preregistration-arms.json`` holds the section
 this engine writes for each study shape; the Swift twin
@@ -36,7 +39,8 @@ REGENERATE = ("stale fixture — re-run preregistration_arms() in "
               "scripts/regenerate-cross-engine-fixtures.py and commit")
 SHAPES = {
     "compare-agents", "compare-agents-carrying-conditions",
-    "agent-interventions", "concept-study-implicit-baseline",
+    "agent-interventions", "agent-band-and-units",
+    "concept-study-implicit-baseline",
     "concept-study-declared-baseline", "concept-study-ablation",
     "concept-study-band-width", "sae-latent-arms", "multi-agent-panel",
     "multi-agent-panel-without-baseline",
@@ -82,15 +86,128 @@ def test_a_compare_agents_study_lists_the_baseline_and_every_agent(tmp_path):
     assert manifest["conditions"] == []
     assert _section(_render(tmp_path, manifest)).split("\n") == [
         "- **baseline**: none (baseline, run implicitly)",
-        "- **french-l28-a15** (agent): french@L28 α=0.15; base model "
-        "test/model @ `abc123`; pinned artifact "
+        "- **french-l28-a15** (agent): french@L28 α=0.15; α in residual-norm "
+        "units; base model test/model @ `abc123`; pinned artifact "
         "`experiments/prereg/pinned/variant-french-l28-a15.json` "
         f"(SHA-256 `{french['artifactHash']}`)",
-        "- **hungry-l17-a10** (agent): hungry@L17 α=0.1; base model "
-        "test/model @ `abc123`; pinned artifact "
+        "- **hungry-l17-a10** (agent): hungry@L17 α=0.1; α in residual-norm "
+        "units; base model test/model @ `abc123`; pinned artifact "
         "`experiments/prereg/pinned/variant-hungry-l17-a10.json` "
         f"(SHA-256 `{hungry['artifactHash']}`)",
     ]
+
+
+def test_an_agent_line_states_its_band_and_its_alpha_units(tmp_path):
+    """A steering injection reads like a condition's steering slot, band
+    included; an ablating one takes no band; the α units are stated once,
+    only when the agent steers, and a missing key reads as raw α."""
+    case = _case("agent-band-and-units")
+    hashes = {vc["name"]: vc["artifactHash"]
+              for vc in case["manifest"]["variantConditions"]}
+
+    def line(name, interventions):
+        return (f"- **{name}** (agent): {interventions}; base model "
+                f"test/model @ `abc123`; pinned artifact "
+                f"`experiments/prereg/pinned/variant-{name}.json` "
+                f"(SHA-256 `{hashes[name]}`)")
+
+    norm = "α in residual-norm units"
+    raw = "raw α (not scaled by the residual norm)"
+    assert _section(_render(tmp_path, case["manifest"])).split("\n") == [
+        "- **baseline**: none (baseline, run implicitly)",
+        line("fear-band-3", f"fear@L14 α=0.8 (band width 3: ±1 layer); {norm}"),
+        line("fear-band-2", f"fear@L14 α=0.8 (band width 2: ±1 layer); {norm}"),
+        line("fear-calm-band-5",
+             "fear@L14 α=0.8 (band width 5: ±2 layers), "
+             f"calm@L10 α=0.25 (band width 5: ±2 layers); {norm}"),
+        line("fear-band-3-calm-ablated",
+             "fear@L14 α=0.8 (band width 3: ±1 layer), "
+             f"calm ablated λ=0.5 at L9+L10+L11; {norm}"),
+        line("fear-band-0", f"fear@L14 α=0.8; {norm}"),
+        line("fear-raw", f"fear@L14 α=2.5; {raw}"),
+        line("fear-raw-band-3", f"fear@L14 α=2.5 (band width 3: ±1 layer); {raw}"),
+        line("fear-legacy", f"fear@L14 α=2.5; {raw}"),
+        line("calm-ablated-band-3", "calm ablated λ=1 at every layer"),
+    ]
+
+
+def test_each_agent_line_names_the_layers_and_units_the_run_injects(tmp_path):
+    """The agent wording is read off the run's own cell builder: the layers
+    each injection names are the layers ``variant_injections`` injects it at,
+    and the stated α units are the scale it applies. A residual norm of 10
+    over a vector norm of 5 doubles an α in residual-norm units and leaves a
+    raw α as given; λ is never scaled."""
+    import warnings
+
+    from steerlab_server.experiment import model_variant
+    from steerlab_server.steering.vector_store import (ConceptVectors,
+                                                       SteeringVectorSidecar,
+                                                       save)
+
+    layer_count = 32
+    vectors = ConceptVectors(per_layer=[[3.0, 4.0, 0.0]] * layer_count)
+    for concept in ("french", "hungry", "fear", "calm"):
+        save(vectors, SteeringVectorSidecar.make(
+                model_id="test/model", concept=concept, stimulus_set_hash="h",
+                vectors=vectors, residual_norm_per_layer=[10.0] * layer_count,
+                residual_norm_source="neutral-corpus"),
+             str(tmp_path), concept,
+             neutral_mean_per_layer=[[0.0, 0.0, 1.0]] * layer_count)
+    part_pattern = re.compile(
+        r"(\w+)(?: ablated λ=([^\s;,]+) at (every layer|L\d+(?:\+L\d+)*)"
+        r"(?: \(centering \w+\))?"
+        r"|@L(\d+) α=([^\s;,]+)(?: \(band width -?\d+: ±(\d+) layers?\))?)")
+    norm_clause = "; α in residual-norm units; "
+    raw_clause = "; raw α (not scaled by the residual norm); "
+    checked = 0
+    for label in ("compare-agents", "agent-interventions",
+                  "agent-band-and-units"):
+        case = _case(label)
+        lines = {re.match(r"- \*\*(.+?)\*\*", line).group(1): line
+                 for line in case["conditionsSection"].split("\n")
+                 if line.startswith("- **")}
+        for vc in case["manifest"]["variantConditions"]:
+            artifact = vc.get("artifact")
+            if not isinstance(artifact, dict) or not artifact["injections"]:
+                continue
+            local = json.loads(json.dumps(artifact))
+            for injection in local["injections"]:
+                injection["vectorArtifactID"] = os.path.join(
+                    str(tmp_path), injection["concept"])
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                cells = model_variant.variant_injections(
+                    model_variant.ModelVariant.from_dict(local))
+            line = lines[vc["name"]]
+            interventions = line.split(": ", 1)[1].split(";")[0]
+            stated = part_pattern.findall(interventions)
+            assert [concept for concept, *_ in stated] \
+                == [i["concept"] for i in artifact["injections"]], vc["name"]
+            steers = any(i.get("mode") != "ablate"
+                         for i in artifact["injections"])
+            norm, raw = norm_clause in line, raw_clause in line
+            assert not (norm and raw), vc["name"]
+            assert (norm or raw) == steers, vc["name"]
+            for concept, lam, covered, layer, alpha, half in stated:
+                mine = [cell for cell in cells if cell.concept == concept]
+                if lam:
+                    named = (list(range(layer_count)) if covered == "every layer"
+                             else [int(token) for token
+                                   in covered.replace("L", "").split("+")])
+                    assert all(cell.mode == "ablate" for cell in mine)
+                    expected = float(lam)
+                else:
+                    width = int(half or 0)
+                    named = list(range(int(layer) - width,
+                                       int(layer) + width + 1))
+                    assert all(cell.mode == "add" for cell in mine)
+                    expected = float(alpha) * (2.0 if norm else 1.0)
+                assert sorted(cell.layer for cell in mine) == named, \
+                    (label, vc["name"], concept)
+                assert all(abs(cell.alpha - expected) < 1e-6 for cell in mine), \
+                    (label, vc["name"], concept)
+            checked += 1
+    assert checked == 12
 
 
 def test_carried_arms_that_never_run_are_named_outside_the_list(tmp_path):
@@ -281,10 +398,12 @@ def _agent_study(tmp_path, name):
 
 
 def _agent_lines(variants):
+    # These artifacts never wrote alphaInNormUnits, so they steer in raw α.
     return [f"- **{vc['name']}** (agent): "
             f"{vc['artifact']['injections'][0]['concept']}@L"
             f"{vc['artifact']['injections'][0]['layer']} "
-            f"α={vc['artifact']['injections'][0]['alpha']}; base model org/m "
+            f"α={vc['artifact']['injections'][0]['alpha']}; raw α (not scaled "
+            f"by the residual norm); base model org/m "
             f"@ `abc`; pinned artifact `{vc['artifactPath']}` "
             f"(SHA-256 `{vc['artifactHash']}`)" for vc in variants]
 

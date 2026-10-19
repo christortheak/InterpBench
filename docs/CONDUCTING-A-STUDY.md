@@ -549,7 +549,10 @@ says whether each slot steers or ablates. An ablating slot reads
 `fear ablated λ=1 at every layer`, because the run removes a condition's
 direction from the whole network, whatever layer the slot names. A steering
 slot whose condition has a band width of 2 or more says how far the band
-reaches, as in `fear@L14 α=0.8 (band width 3: ±1 layer)`.
+reaches, as in `fear@L14 α=0.8 (band width 3: ±1 layer)`. An agent's line
+says the same of each steering injection when the agent's band width is 2 or
+more, and, when the agent steers, states its α units once, as
+`α in residual-norm units` or `raw α (not scaled by the residual norm)`.
 
 A preserved preregistration is then **frozen like any other pinned input**:
 its SHA-256 is stamped into the manifest, it is snapshotted into
