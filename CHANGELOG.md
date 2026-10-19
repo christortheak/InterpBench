@@ -12,6 +12,30 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **A Demo Workspace for this Mac.** "Four concepts, four personalities"
+  runs on Gemma 3 4B with the engine built into the app. It covers four steps:
+  - extract French, hungry, fear, and Golden Gate Bridge directions, and check
+    each on pairs held out before extraction;
+  - try them in the Playground;
+  - sweep layer and strength, and promote one agent per concept;
+  - give the four agents and the unsteered model the same sixteen everyday
+    prompts.
+
+  Both studies ship finished, with every run, so the results can be read
+  before the model is downloaded. Its guide gives every step twice: what to
+  click in the app, and the commands for a coding assistant. The guide also
+  says how the agents were chosen. Claude Opus 5.5 read the sweep's replies
+  and picked the cells; the read was not blinded, and each pick is recorded as
+  a manual override with its reason. The guide advises judging your own
+  studies with a much stronger model, under a rubric declared in advance. It
+  points to the consciousness data from "The Consciousness Cluster" and says
+  how to convert it, since that data cannot ship. Open it from Research
+  Setup, or run `workspace init <folder> --demo mlx`.
+- **No size limit for a whole Demo Workspace.** A finished study keeps a copy
+  of its vectors in every run, so four concepts with their runs come to more
+  than the old 8 MB. The 4 MB limit for one file stays, because the public scan
+  does not read larger files.
+
 ## [0.9.9] — 2026-10-17
 
 - **Lettered choices are read correctly.** When a reply did not answer

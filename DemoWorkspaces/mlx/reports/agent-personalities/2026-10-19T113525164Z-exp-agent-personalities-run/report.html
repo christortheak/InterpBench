@@ -1,0 +1,744 @@
+<!doctype html>
+<!-- SteerLab report page -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<meta name="generator" content="SteerLab report page, format 1">
+<title>Study results: agent-personalities</title>
+<style>
+:root{color-scheme:light dark;--page:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink-2:#52514e;--muted:#898781;
+--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--wash:#f0efec}
+@media (prefers-color-scheme:dark){:root{--page:#0d0d0d;--surface:#1a1a19;--ink:#ffffff;--ink-2:#c3c2b7;
+--muted:#898781;--grid:#2c2c2a;--axis:#383835;--border:rgba(255,255,255,.10);--wash:#242422}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+header.masthead,main,footer{max-width:1040px;margin:0 auto;padding:0 20px}
+header.masthead{padding-top:28px}
+h1{font-size:26px;line-height:1.25;margin:0 0 6px}
+h2{font-size:19px;margin:0 0 12px}
+h3{font-size:16px;margin:22px 0 8px}
+h4{font-size:14px;margin:18px 0 6px}
+p{margin:0 0 10px}
+.lead{color:var(--ink-2);margin:0}
+section{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px 24px;margin:20px 0}
+.sub{border-top:1px solid var(--grid);margin-top:20px}
+a{color:inherit;text-decoration:underline;text-decoration-color:var(--axis);text-underline-offset:2px}
+code{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap}
+code.long{white-space:normal;overflow-wrap:anywhere}
+ul,ol{margin:0 0 10px;padding-left:22px}
+li{margin:2px 0}
+nav.contents ol{columns:2;column-gap:32px;margin:14px 0 0}
+dl.facts{display:grid;grid-template-columns:minmax(150px,230px) 1fr;gap:4px 18px;margin:0 0 12px}
+dl.facts dt{color:var(--ink-2)}
+dl.facts dd{margin:0;min-width:0}
+.note{background:var(--wash);border-left:3px solid var(--axis);padding:8px 12px;margin:12px 0}
+.note p{margin:0}
+.table-wrap{overflow-x:auto;margin:10px 0 4px}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+caption{text-align:left;font-weight:600;padding:0 0 6px}
+th,td{padding:4px 10px;text-align:left;vertical-align:top;border-bottom:1px solid var(--grid);font-weight:400}
+thead th{color:var(--ink-2);border-bottom:1px solid var(--axis);vertical-align:bottom}
+thead th.group{text-align:center;border-bottom:1px solid var(--grid)}
+.num{text-align:right;white-space:nowrap}
+thead th.num{white-space:normal}
+td strong{font-weight:700}
+.none{color:var(--muted)}
+.table-note{color:var(--ink-2);font-size:13px;margin:4px 0 12px}
+footer{color:var(--ink-2);font-size:13px;padding-top:8px;padding-bottom:48px}
+@media (max-width:640px){dl.facts{grid-template-columns:1fr;gap:0 0}dl.facts dd{margin-bottom:8px}
+nav.contents ol{columns:1}section{padding:16px}}
+@media print{:root{--page:#fff;--surface:#fff;--ink:#000;--ink-2:#222;--muted:#555;--grid:#ccc;--axis:#888;
+--border:#999;--wash:#f3f3f3}
+body{font-size:11pt}header.masthead,main,footer{max-width:none;padding:0}
+section{border:0;border-radius:0;padding:0;margin:18pt 0}
+h2,h3,h4,caption{break-after:avoid}tr,figure,.note{break-inside:avoid}thead{display:table-header-group}
+.table-wrap{overflow:visible}table{font-size:9pt}a{text-decoration:none}}
+
+:root{--s0:#2a78d6;--s1:#eb6834;--s2:#1baf7a;--s3:#eda100;--s4:#e87ba4;--s5:#008300;--s6:#4a3aa7;--s7:#e34948}
+@media (prefers-color-scheme:dark){:root{--s0:#3987e5;--s1:#d95926;--s2:#199e70;--s3:#c98500;--s4:#d55181;
+--s5:#008300;--s6:#9085e9;--s7:#e66767}}
+figure.chart{margin:14px 0 6px}
+figure.chart figcaption{font-weight:600;margin-bottom:6px}
+figure.chart>svg{display:block;width:100%;max-width:760px;height:auto;background:var(--surface)}
+figure.chart text{fill:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+figure.chart text.axis-name{fill:var(--ink-2);font-size:12px}
+.grid{stroke:var(--grid);stroke-width:1}
+.axis{stroke:var(--axis);stroke-width:1}
+.ser{fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.ser-base{stroke:var(--muted);stroke-dasharray:1 5}
+.ser-ref{stroke:var(--ink)}
+.ser-c0{stroke:var(--s0)}.ser-c1{stroke:var(--s1)}.ser-c2{stroke:var(--s2)}.ser-c3{stroke:var(--s3)}
+.ser-c4{stroke:var(--s4)}.ser-c5{stroke:var(--s5)}.ser-c6{stroke:var(--s6)}.ser-c7{stroke:var(--s7)}
+.dot{stroke:var(--surface);stroke-width:2}
+.dot-base{fill:var(--muted)}.dot-ref{fill:var(--ink)}
+.dot-c0{fill:var(--s0)}.dot-c1{fill:var(--s1)}.dot-c2{fill:var(--s2)}.dot-c3{fill:var(--s3)}
+.dot-c4{fill:var(--s4)}.dot-c5{fill:var(--s5)}.dot-c6{fill:var(--s6)}.dot-c7{fill:var(--s7)}
+.hit{fill:transparent;stroke:none}
+ul.legend{list-style:none;display:flex;flex-wrap:wrap;gap:4px 22px;padding:0;margin:8px 0 0;font-size:13px;
+color:var(--ink-2)}
+ul.legend li{margin:0}
+ul.legend svg{vertical-align:middle;margin-right:6px}
+@media print,(forced-colors:active){
+:root{--s0:#2a78d6;--s1:#eb6834;--s2:#1baf7a;--s3:#eda100;--s4:#e87ba4;--s5:#008300;--s6:#4a3aa7;--s7:#e34948}
+.ser-c0{stroke-dasharray:10 5}.ser-c1{stroke-dasharray:4 5}.ser-c2{stroke-dasharray:10 5 2 5}
+.ser-c3{stroke-dasharray:14 4}.ser-c4{stroke-dasharray:6 4 6 8}.ser-c5{stroke-dasharray:2 6}
+.ser-c6{stroke-dasharray:14 4 2 4 2 4}.ser-c7{stroke-dasharray:6 3 1 3}}
+
+figure.forest text.row-label{fill:var(--ink);font-size:12.5px;paint-order:stroke;stroke:var(--surface);
+stroke-width:4px;stroke-linejoin:round}
+figure.forest text.row-label tspan.aside{fill:var(--ink-2)}
+.zero{stroke:var(--ink-2);stroke-width:1.25;stroke-dasharray:4 4}
+.ci{stroke:var(--s0);stroke-width:2;stroke-linecap:round}
+.est{fill:var(--s0);stroke:var(--surface);stroke-width:2}
+p.chart-key{color:var(--ink-2);font-size:13px;margin:6px 0 0}
+
+p.headline{font-size:17px;margin:4px 0 12px}
+#first{margin:20px 0}
+#first ul{margin:6px 0 0}
+</style>
+</head>
+<body>
+<header class="masthead">
+<h1>Study results: agent-personalities</h1>
+<p class="lead">80 responses from mlx-community/gemma-3-4b-it-4bit under 5 conditions, in the run runs/2026-10-19T113525164Z-exp-agent-personalities-run.</p>
+</header>
+<main>
+<nav aria-label="Contents" class="contents">
+<ol>
+<li><a href="#headline">Headline outcome</a></li>
+<li><a href="#design">What was asked and compared</a></li>
+<li><a href="#effects">Effects</a></li>
+<li><a href="#conditions">Each condition</a></li>
+<li><a href="#controls">Controls</a></li>
+<li><a href="#judges">Judges</a></li>
+<li><a href="#exclusions">Exclusions</a></li>
+<li><a href="#freeze">Freeze and identity</a></li>
+<li><a href="#limits">Limits</a></li>
+</ol>
+</nav>
+<section id="headline" aria-labelledby="headline-h">
+<h2 id="headline-h">Headline outcome</h2>
+<p class="headline"><strong>Response length in words (<code>wordCount</code>)</strong>, chosen by default order.</p>
+<p>The headline is the outcome the researcher declared before the run, when the run has it. Otherwise it is the first outcome the run has in a fixed order: a judged outcome, then a declared choice or numeric outcome, a reader score, reasoning style, marker density, and surface measures such as length last. Every other outcome follows under <a href="#effects">Effects</a>.</p>
+<ul>
+<li>Under <strong>french-l28-a15</strong>, response length in words differed from the baseline by +8.188 across 16 paired items (interval -13.75 to 30.5). The interval includes zero, so this run is consistent with no difference. Corrected p = 0.6603 (Benjamini-Hochberg (false discovery rate), over 4 comparisons of this outcome).</li>
+<li>Under <strong>hungry-l17-a10</strong>, response length in words differed from the baseline by -19.75 across 16 paired items (interval -43.69 to 3.625). The interval includes zero, so this run is consistent with no difference. Corrected p = 0.3919 (Benjamini-Hochberg (false discovery rate), over 4 comparisons of this outcome).</li>
+<li>Under <strong>fear-l17-a10</strong>, response length in words differed from the baseline by -16.94 across 16 paired items (interval -40.75 to 9). The interval includes zero, so this run is consistent with no difference. Corrected p = 0.3919 (Benjamini-Hochberg (false discovery rate), over 4 comparisons of this outcome).</li>
+<li>Under <strong>ggb-l17-a125</strong>, response length in words differed from the baseline by +1.375 across 16 paired items (interval -23.19 to 30.56). The interval includes zero, so this run is consistent with no difference. Corrected p = 0.6603 (Benjamini-Hochberg (false discovery rate), over 4 comparisons of this outcome).</li>
+</ul>
+<figure class="chart forest" id="headline-chart">
+<figcaption>Response length in words (wordCount): each condition minus the baseline</figcaption>
+<svg viewBox="0 0 720 214" role="img" aria-labelledby="headline-chart-t headline-chart-d">
+<title id="headline-chart-t">Response length in words (wordCount): each condition minus the baseline</title>
+<desc id="headline-chart-d">One row for each of 4 readings: the stored estimate as a dot and its stored interval as a line, on a scale from -60 to 40. The dashed line marks zero. french-l28-a15: +8.188, interval -13.75 to 30.5. hungry-l17-a10: -19.75, interval -43.69 to 3.625. fear-l17-a10: -16.94, interval -40.75 to 9. ggb-l17-a125: +1.375, interval -23.19 to 30.56. Every value is in the table under Effects.</desc>
+<line x1="24.00" y1="8" x2="24.00" y2="168" class="grid"/>
+<line x1="24.00" y1="168" x2="24.00" y2="173" class="axis"/>
+<text x="24.00" y="187" text-anchor="middle">-60</text>
+<line x1="158.40" y1="8" x2="158.40" y2="168" class="grid"/>
+<line x1="158.40" y1="168" x2="158.40" y2="173" class="axis"/>
+<text x="158.40" y="187" text-anchor="middle">-40</text>
+<line x1="292.80" y1="8" x2="292.80" y2="168" class="grid"/>
+<line x1="292.80" y1="168" x2="292.80" y2="173" class="axis"/>
+<text x="292.80" y="187" text-anchor="middle">-20</text>
+<line x1="427.20" y1="8" x2="427.20" y2="168" class="zero"/>
+<line x1="427.20" y1="168" x2="427.20" y2="173" class="axis"/>
+<text x="427.20" y="187" text-anchor="middle">0</text>
+<line x1="561.60" y1="8" x2="561.60" y2="168" class="grid"/>
+<line x1="561.60" y1="168" x2="561.60" y2="173" class="axis"/>
+<text x="561.60" y="187" text-anchor="middle">20</text>
+<line x1="696.00" y1="8" x2="696.00" y2="168" class="grid"/>
+<line x1="696.00" y1="168" x2="696.00" y2="173" class="axis"/>
+<text x="696.00" y="187" text-anchor="middle">40</text>
+<line x1="24" y1="168" x2="696" y2="168" class="axis"/>
+<text x="360.00" y="208" text-anchor="middle" class="axis-name">Difference from the baseline in response length in words</text>
+<text x="24" y="22.00" class="row-label"><tspan>french-l28-a15</tspan></text>
+<line x1="334.80" y1="36.00" x2="632.17" y2="36.00" class="ci"/>
+<line x1="334.80" y1="31.00" x2="334.80" y2="41.00" class="ci"/>
+<line x1="632.17" y1="31.00" x2="632.17" y2="41.00" class="ci"/>
+<circle cx="482.22" cy="36.00" r="4.5" class="est"/>
+<text x="24" y="62.00" class="row-label"><tspan>hungry-l17-a10</tspan></text>
+<line x1="133.61" y1="76.00" x2="451.56" y2="76.00" class="ci"/>
+<line x1="133.61" y1="71.00" x2="133.61" y2="81.00" class="ci"/>
+<line x1="451.56" y1="71.00" x2="451.56" y2="81.00" class="ci"/>
+<circle cx="294.48" cy="76.00" r="4.5" class="est"/>
+<text x="24" y="102.00" class="row-label"><tspan>fear-l17-a10</tspan></text>
+<line x1="153.35" y1="116.00" x2="487.68" y2="116.00" class="ci"/>
+<line x1="153.35" y1="111.00" x2="153.35" y2="121.00" class="ci"/>
+<line x1="487.68" y1="111.00" x2="487.68" y2="121.00" class="ci"/>
+<circle cx="313.38" cy="116.00" r="4.5" class="est"/>
+<text x="24" y="142.00" class="row-label"><tspan>ggb-l17-a125</tspan></text>
+<line x1="271.38" y1="156.00" x2="632.59" y2="156.00" class="ci"/>
+<line x1="271.38" y1="151.00" x2="271.38" y2="161.00" class="ci"/>
+<line x1="632.59" y1="151.00" x2="632.59" y2="161.00" class="ci"/>
+<circle cx="436.44" cy="156.00" r="4.5" class="est"/>
+<circle cx="482.22" cy="36.00" r="9" class="hit"><title>french-l28-a15: +8.188, interval -13.75 to 30.5.</title>
+</circle>
+<circle cx="294.48" cy="76.00" r="9" class="hit"><title>hungry-l17-a10: -19.75, interval -43.69 to 3.625.</title>
+</circle>
+<circle cx="313.38" cy="116.00" r="9" class="hit"><title>fear-l17-a10: -16.94, interval -40.75 to 9.</title>
+</circle>
+<circle cx="436.44" cy="156.00" r="9" class="hit"><title>ggb-l17-a125: +1.375, interval -23.19 to 30.56.</title>
+</circle>
+</svg>
+<p class="chart-key">Dot: the estimate. Line: its interval. Dashed line: zero.</p>
+</figure>
+<div class="table-wrap" role="region" aria-labelledby="headline-table-caption" tabindex="0"><table id="headline-table">
+<caption id="headline-table-caption">The headline outcome, <code>wordCount</code>, as the analysis stored it</caption>
+<thead>
+<tr>
+<th scope="col" rowspan="2">Outcome</th>
+<th scope="col" rowspan="2">Condition</th>
+<th scope="col" rowspan="2" class="num">Estimate</th>
+<th scope="colgroup" colspan="2" class="group">Interval</th>
+<th scope="col" rowspan="2" class="num">Pairs</th>
+<th scope="col" rowspan="2">Unit</th>
+<th scope="col" rowspan="2" class="num">W</th>
+<th scope="col" rowspan="2" class="num">p</th>
+<th scope="col" rowspan="2" class="num">Corrected p</th>
+<th scope="col" rowspan="2">Correction</th>
+<th scope="col" rowspan="2">Note</th>
+</tr>
+<tr>
+<th scope="col" class="num">From</th>
+<th scope="col" class="num">To</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>wordCount</code></td>
+<td>french-l28-a15</td>
+<td class="num">+8.188</td>
+<td class="num">-13.75</td>
+<td class="num">30.5</td>
+<td class="num">16</td>
+<td>item</td>
+<td class="num">59</td>
+<td class="num">0.6603</td>
+<td class="num">0.6603</td>
+<td>Benjamini-Hochberg</td>
+<td></td>
+</tr>
+<tr>
+<td><code>wordCount</code></td>
+<td>hungry-l17-a10</td>
+<td class="num">-19.75</td>
+<td class="num">-43.69</td>
+<td class="num">3.625</td>
+<td class="num">16</td>
+<td>item</td>
+<td class="num">40</td>
+<td class="num">0.155</td>
+<td class="num">0.3919</td>
+<td>Benjamini-Hochberg</td>
+<td></td>
+</tr>
+<tr>
+<td><code>wordCount</code></td>
+<td>fear-l17-a10</td>
+<td class="num">-16.94</td>
+<td class="num">-40.75</td>
+<td class="num">9</td>
+<td class="num">16</td>
+<td>item</td>
+<td class="num">42.5</td>
+<td class="num">0.196</td>
+<td class="num">0.3919</td>
+<td>Benjamini-Hochberg</td>
+<td></td>
+</tr>
+<tr>
+<td><code>wordCount</code></td>
+<td>ggb-l17-a125</td>
+<td class="num">+1.375</td>
+<td class="num">-23.19</td>
+<td class="num">30.56</td>
+<td class="num">16</td>
+<td>item</td>
+<td class="num">55</td>
+<td class="num">0.518</td>
+<td class="num">0.6603</td>
+<td>Benjamini-Hochberg</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="table-note">Copied from the analysis and rounded to four significant digits; the stored file holds every digit. Estimate is the condition minus the baseline. W is the Wilcoxon signed-rank statistic. Benjamini-Hochberg controls the false discovery rate. “No value” means the analysis stored none, for example a test that is undefined because every difference was zero.</p>
+</section>
+<section id="design" aria-labelledby="design-h">
+<h2 id="design-h">What was asked and compared</h2>
+<dl class="facts">
+<dt>Description, as the researcher wrote it</dt>
+<dd>The four promoted concept agents and the unsteered model answer the same sixteen everyday prompts, to show how their personalities differ. No stakes; a tour of the instrument.</dd>
+<dt>Task, as the researcher wrote it</dt>
+<dd>not recorded</dd>
+<dt>Kind of study</dt>
+<dd><code>modelOutput</code></dd>
+<dt>Model</dt>
+<dd><code>mlx-community/gemma-3-4b-it-4bit</code></dd>
+<dt>Model revision</dt>
+<dd><code class="long">93724907d4ed1745d2fe50baadf3b0b01a65abf2</code></dd>
+<dt>Engine</dt>
+<dd>the Mac engine (MLX) (recorded as <code>swift-mlx</code>)</dd>
+<dt>Task items</dt>
+<dd>16, from <code>prompts/tasks/personality-prompts.jsonl</code>, SHA-256 <code class="long">4b1e8acebf0ea5de7647e1dbf3517975ad089cebd0df8d3197d1ad2c2bff1914</code></dd>
+<dt>Responses</dt>
+<dd>80 in total (baseline 16, french-l28-a15 16, hungry-l17-a10 16, fear-l17-a10 16, ggb-l17-a125 16)</dd>
+<dt>Sampling</dt>
+<dd>temperature 0; at most 400 new tokens for each response; 1 sample for each item; seed policy manifestSeeds; reasoning effort off; prompt mode chatAssistant</dd>
+<dt>System prompt</dt>
+<dd>none declared for the study</dd>
+</dl>
+<div class="table-wrap" role="region" aria-labelledby="design-conditions-caption" tabindex="0"><table id="design-conditions">
+<caption id="design-conditions-caption">What each condition applied</caption>
+<thead>
+<tr>
+<th scope="col">Condition</th>
+<th scope="col">What it applied</th>
+<th scope="col" class="num">Responses</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row"><strong>baseline</strong></th>
+<td>no intervention (the comparison arm).</td>
+<td class="num">16</td>
+</tr>
+<tr>
+<th scope="row"><strong>french-l28-a15</strong></th>
+<td>an agent arm, the saved agent <code>french-l28-a15</code>, file <code class="long">experiments/agent-personalities/pinned/variant-french-l28-a15.json</code>, SHA-256 <code class="long">170abdaadb0fbbf09c179c06e99c548d741fd05324a6d7cb645ccd5be05296f6</code>. The agent carries steering that adds the direction for the concept &#x27;french&#x27; at layer 28, with strength 0.15 (in units of the typical activation size at that layer).</td>
+<td class="num">16</td>
+</tr>
+<tr>
+<th scope="row"><strong>hungry-l17-a10</strong></th>
+<td>an agent arm, the saved agent <code>hungry-l17-a10</code>, file <code class="long">experiments/agent-personalities/pinned/variant-hungry-l17-a10.json</code>, SHA-256 <code class="long">a9ac7bdebc66a033c127996d4a63378e7955b8923a23dc65c68199aa11e7914d</code>. The agent carries steering that adds the direction for the concept &#x27;hungry&#x27; at layer 17, with strength 0.1 (in units of the typical activation size at that layer).</td>
+<td class="num">16</td>
+</tr>
+<tr>
+<th scope="row"><strong>fear-l17-a10</strong></th>
+<td>an agent arm, the saved agent <code>fear-l17-a10</code>, file <code class="long">experiments/agent-personalities/pinned/variant-fear-l17-a10.json</code>, SHA-256 <code class="long">c5e5837b679b724fe69a2c3a792173fc0857b6d14666ff72d77da01bb15ad11d</code>. The agent carries steering that adds the direction for the concept &#x27;fear&#x27; at layer 17, with strength 0.1 (in units of the typical activation size at that layer).</td>
+<td class="num">16</td>
+</tr>
+<tr>
+<th scope="row"><strong>ggb-l17-a125</strong></th>
+<td>an agent arm, the saved agent <code>ggb-l17-a125</code>, file <code class="long">experiments/agent-personalities/pinned/variant-ggb-l17-a125.json</code>, SHA-256 <code class="long">76983715c04bc6ea46a2055cd7398ea01ecd253d1efe4435c9d71d2655fdbbeb</code>. The agent carries steering that adds the direction for the concept &#x27;golden-gate-bridge&#x27; at layer 17, with strength 0.125 (in units of the typical activation size at that layer).</td>
+<td class="num">16</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="table-note">Every condition is compared with the baseline, the arm with no intervention.</p>
+</section>
+<section id="effects" aria-labelledby="effects-h">
+<h2 id="effects-h">Effects</h2>
+<p>The analysis, from <code class="long">runs/2026-10-19T113525164Z-exp-agent-personalities-run</code>, compared each condition with the baseline on each outcome.</p>
+<ul>
+<li><strong>Estimate</strong>: the mean of the paired differences, condition minus baseline. A pair is the same unit measured under the condition and under the baseline.</li>
+<li><strong>Unit of analysis</strong>: the item, with an item’s samples averaged within each condition, as the analysis recorded.</li>
+<li><strong>Interval</strong>: a bootstrap confidence interval for the estimate. The engines compute a 95% percentile interval by default, but the analysis files do not record the level, the number of resamples, or the seed, so this page does not state them as fact.</li>
+<li><strong>Test</strong>: the Wilcoxon signed-rank test on the paired differences.</li>
+<li><strong>Correction for multiple comparisons</strong>: Benjamini-Hochberg (false discovery rate), applied to each outcome separately, across conditions.</li>
+</ul>
+<p>The headline outcome’s chart is under <a href="#headline">Headline outcome</a>. One chart for each other outcome follows.</p>
+<figure class="chart forest" id="effect-chart-1">
+<figcaption>Lexical variety (distinct2): each condition minus the baseline</figcaption>
+<svg viewBox="0 0 720 214" role="img" aria-labelledby="effect-chart-1-t effect-chart-1-d">
+<title id="effect-chart-1-t">Lexical variety (distinct2): each condition minus the baseline</title>
+<desc id="effect-chart-1-d">One row for each of 4 readings: the stored estimate as a dot and its stored interval as a line, on a scale from -0.4 to 0. The dashed line marks zero. french-l28-a15: -0.09843, interval -0.1788 to -0.04036. hungry-l17-a10: -0.2409, interval -0.3553 to -0.1323. fear-l17-a10: -0.1864, interval -0.2719 to -0.1036. ggb-l17-a125: -0.1737, interval -0.282 to -0.08786. Every value is in the table under Effects.</desc>
+<line x1="24.00" y1="8" x2="24.00" y2="168" class="grid"/>
+<line x1="24.00" y1="168" x2="24.00" y2="173" class="axis"/>
+<text x="24.00" y="187" text-anchor="middle">-0.4</text>
+<line x1="192.00" y1="8" x2="192.00" y2="168" class="grid"/>
+<line x1="192.00" y1="168" x2="192.00" y2="173" class="axis"/>
+<text x="192.00" y="187" text-anchor="middle">-0.3</text>
+<line x1="360.00" y1="8" x2="360.00" y2="168" class="grid"/>
+<line x1="360.00" y1="168" x2="360.00" y2="173" class="axis"/>
+<text x="360.00" y="187" text-anchor="middle">-0.2</text>
+<line x1="528.00" y1="8" x2="528.00" y2="168" class="grid"/>
+<line x1="528.00" y1="168" x2="528.00" y2="173" class="axis"/>
+<text x="528.00" y="187" text-anchor="middle">-0.1</text>
+<line x1="696.00" y1="8" x2="696.00" y2="168" class="zero"/>
+<line x1="696.00" y1="168" x2="696.00" y2="173" class="axis"/>
+<text x="696.00" y="187" text-anchor="middle">0</text>
+<line x1="24" y1="168" x2="696" y2="168" class="axis"/>
+<text x="360.00" y="208" text-anchor="middle" class="axis-name">Difference from the baseline in lexical variety</text>
+<text x="24" y="22.00" class="row-label"><tspan>french-l28-a15</tspan></text>
+<line x1="395.63" y1="36.00" x2="628.19" y2="36.00" class="ci"/>
+<line x1="395.63" y1="31.00" x2="395.63" y2="41.00" class="ci"/>
+<line x1="628.19" y1="31.00" x2="628.19" y2="41.00" class="ci"/>
+<circle cx="530.63" cy="36.00" r="4.5" class="est"/>
+<text x="24" y="62.00" class="row-label"><tspan>hungry-l17-a10</tspan></text>
+<line x1="99.10" y1="76.00" x2="473.65" y2="76.00" class="ci"/>
+<line x1="99.10" y1="71.00" x2="99.10" y2="81.00" class="ci"/>
+<line x1="473.65" y1="71.00" x2="473.65" y2="81.00" class="ci"/>
+<circle cx="291.34" cy="76.00" r="4.5" class="est"/>
+<text x="24" y="102.00" class="row-label"><tspan>fear-l17-a10</tspan></text>
+<line x1="239.15" y1="116.00" x2="522.01" y2="116.00" class="ci"/>
+<line x1="239.15" y1="111.00" x2="239.15" y2="121.00" class="ci"/>
+<line x1="522.01" y1="111.00" x2="522.01" y2="121.00" class="ci"/>
+<circle cx="382.88" cy="116.00" r="4.5" class="est"/>
+<text x="24" y="142.00" class="row-label"><tspan>ggb-l17-a125</tspan></text>
+<line x1="222.25" y1="156.00" x2="548.39" y2="156.00" class="ci"/>
+<line x1="222.25" y1="151.00" x2="222.25" y2="161.00" class="ci"/>
+<line x1="548.39" y1="151.00" x2="548.39" y2="161.00" class="ci"/>
+<circle cx="404.19" cy="156.00" r="4.5" class="est"/>
+<circle cx="530.63" cy="36.00" r="9" class="hit"><title>french-l28-a15: -0.09843, interval -0.1788 to -0.04036.</title>
+</circle>
+<circle cx="291.34" cy="76.00" r="9" class="hit"><title>hungry-l17-a10: -0.2409, interval -0.3553 to -0.1323.</title>
+</circle>
+<circle cx="382.88" cy="116.00" r="9" class="hit"><title>fear-l17-a10: -0.1864, interval -0.2719 to -0.1036.</title>
+</circle>
+<circle cx="404.19" cy="156.00" r="9" class="hit"><title>ggb-l17-a125: -0.1737, interval -0.282 to -0.08786.</title>
+</circle>
+</svg>
+<p class="chart-key">Dot: the estimate. Line: its interval. Dashed line: zero.</p>
+</figure>
+<div class="table-wrap" role="region" aria-labelledby="effects-table-caption" tabindex="0"><table id="effects-table">
+<caption id="effects-table-caption">Every effect the analysis stored, over all items</caption>
+<thead>
+<tr>
+<th scope="col" rowspan="2">Outcome</th>
+<th scope="col" rowspan="2">Condition</th>
+<th scope="col" rowspan="2" class="num">Estimate</th>
+<th scope="colgroup" colspan="2" class="group">Interval</th>
+<th scope="col" rowspan="2" class="num">Pairs</th>
+<th scope="col" rowspan="2">Unit</th>
+<th scope="col" rowspan="2" class="num">W</th>
+<th scope="col" rowspan="2" class="num">p</th>
+<th scope="col" rowspan="2" class="num">Corrected p</th>
+<th scope="col" rowspan="2">Correction</th>
+<th scope="col" rowspan="2">Note</th>
+</tr>
+<tr>
+<th scope="col" class="num">From</th>
+<th scope="col" class="num">To</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>wordCount</code></td>
+<td>french-l28-a15</td>
+<td class="num">+8.188</td>
+<td class="num">-13.75</td>
+<td class="num">30.5</td>
+<td class="num">16</td>
+<td>item</td>
+<td class="num">59</td>
+<td class="num">0.6603</td>
+<td class="num">0.6603</td>
+<td>Benjamini-Hochberg</td>
+<td></td>
+</tr>
+<tr>
+<td><code>distinct2</code></td>
+<td>french-l28-a15</td>
+<td class="num">-0.09843</td>
+<td class="num">-0.1788</td>
+<td class="num">-0.04036</td>
+<td class="num">16</td>
+<td>item</td>
+<td class="num">8</td>
+<td class="num">0.002093</td>
+<td class="num">0.003173</td>
+<td>Benjamini-Hochberg</td>
+<td></td>
+</tr>
+<tr>
+<td><code>wordCount</code></td>
+<td>hungry-l17-a10</td>
+<td class="num">-19.75</td>
+<td class="num">-43.69</td>
+<td class="num">3.625</td>
+<td class="num">16</td>
+<td>item</td>
+<td class="num">40</td>
+<td class="num">0.155</td>
+<td class="num">0.3919</td>
+<td>Benjamini-Hochberg</td>
+<td></td>
+</tr>
+<tr>
+<td><code>distinct2</code></td>
+<td>hungry-l17-a10</td>
+<td class="num">-0.2409</td>
+<td class="num">-0.3553</td>
+<td class="num">-0.1323</td>
+<td class="num">16</td>
+<td>item</td>
+<td class="num">5</td>
+<td class="num">0.003173</td>
+<td class="num">0.003173</td>
+<td>Benjamini-Hochberg</td>
+<td></td>
+</tr>
+<tr>
+<td><code>wordCount</code></td>
+<td>fear-l17-a10</td>
+<td class="num">-16.94</td>
+<td class="num">-40.75</td>
+<td class="num">9</td>
+<td class="num">16</td>
+<td>item</td>
+<td class="num">42.5</td>
+<td class="num">0.196</td>
+<td class="num">0.3919</td>
+<td>Benjamini-Hochberg</td>
+<td></td>
+</tr>
+<tr>
+<td><code>distinct2</code></td>
+<td>fear-l17-a10</td>
+<td class="num">-0.1864</td>
+<td class="num">-0.2719</td>
+<td class="num">-0.1036</td>
+<td class="num">16</td>
+<td>item</td>
+<td class="num">7</td>
+<td class="num">0.002866</td>
+<td class="num">0.003173</td>
+<td>Benjamini-Hochberg</td>
+<td></td>
+</tr>
+<tr>
+<td><code>wordCount</code></td>
+<td>ggb-l17-a125</td>
+<td class="num">+1.375</td>
+<td class="num">-23.19</td>
+<td class="num">30.56</td>
+<td class="num">16</td>
+<td>item</td>
+<td class="num">55</td>
+<td class="num">0.518</td>
+<td class="num">0.6603</td>
+<td>Benjamini-Hochberg</td>
+<td></td>
+</tr>
+<tr>
+<td><code>distinct2</code></td>
+<td>ggb-l17-a125</td>
+<td class="num">-0.1737</td>
+<td class="num">-0.282</td>
+<td class="num">-0.08786</td>
+<td class="num">16</td>
+<td>item</td>
+<td class="num">1</td>
+<td class="num">0.0008919</td>
+<td class="num">0.003173</td>
+<td>Benjamini-Hochberg</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="table-note">Copied from the analysis and rounded to four significant digits; the stored file holds every digit. Estimate is the condition minus the baseline. W is the Wilcoxon signed-rank statistic. Benjamini-Hochberg controls the false discovery rate. “No value” means the analysis stored none, for example a test that is undefined because every difference was zero.</p>
+<h3>What each outcome measures</h3>
+<ul>
+<li><code>wordCount</code>: the number of words in the response.</li>
+<li><code>distinct2</code>: the share of two-word sequences in the response that are distinct, a measure of repetition.</li>
+</ul>
+</section>
+<section id="conditions" aria-labelledby="conditions-h">
+<h2 id="conditions-h">Each condition</h2>
+<p>What the run itself stored for each condition, before any analysis. These are descriptions of each arm, not comparisons with the baseline.</p>
+<div class="table-wrap" role="region" aria-labelledby="condition-summary-caption" tabindex="0"><table id="condition-summary">
+<caption id="condition-summary-caption">What the run stored for each condition</caption>
+<thead>
+<tr>
+<th scope="col">Condition</th>
+<th scope="col" class="num">Responses</th>
+<th scope="col" class="num">Mean words</th>
+<th scope="col" class="num">Mean lexical variety</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th scope="row">baseline</th>
+<td class="num">16</td>
+<td class="num">156.9</td>
+<td class="num">0.968</td>
+</tr>
+<tr>
+<th scope="row">fear-l17-a10</th>
+<td class="num">16</td>
+<td class="num">140</td>
+<td class="num">0.7816</td>
+</tr>
+<tr>
+<th scope="row">french-l28-a15</th>
+<td class="num">16</td>
+<td class="num">165.1</td>
+<td class="num">0.8696</td>
+</tr>
+<tr>
+<th scope="row">ggb-l17-a125</th>
+<td class="num">16</td>
+<td class="num">158.3</td>
+<td class="num">0.7943</td>
+</tr>
+<tr>
+<th scope="row">hungry-l17-a10</th>
+<td class="num">16</td>
+<td class="num">137.2</td>
+<td class="num">0.7271</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="table-note">Rounded to four significant digits. Lexical variety is the share of two-word sequences that are distinct.</p>
+<h3>Responses cut off at a token limit</h3>
+<p>0 of 80 responses stopped at the token limit instead of finishing, as the engine counted them.</p>
+</section>
+<section id="controls" aria-labelledby="controls-h">
+<h2 id="controls-h">Controls</h2>
+<p>This study declares no control arm, such as a random direction of the same size, to compare its steering with.</p>
+<h3>Capability battery</h3>
+<p>A set of unrelated questions, scored under each condition, to check that the intervention did not damage other abilities.</p>
+<div class="table-wrap" role="region" aria-labelledby="battery-caption" tabindex="0"><table id="battery">
+<caption id="battery-caption">Capability battery accuracy, for each condition</caption>
+<thead>
+<tr>
+<th scope="col">Condition</th>
+<th scope="col" class="num">Accuracy</th>
+<th scope="col" class="num">Items</th>
+<th scope="col">Battery SHA-256</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>baseline</td>
+<td class="num">0.9</td>
+<td class="num">10</td>
+<td><code class="long">4b24e3e83fe9de79d48aa89cedfac517fad6c4ecb3ec3ba5c7a47a50dc1f379a</code></td>
+</tr>
+<tr>
+<td>fear-l17-a10</td>
+<td class="num">0.9</td>
+<td class="num">10</td>
+<td><code class="long">4b24e3e83fe9de79d48aa89cedfac517fad6c4ecb3ec3ba5c7a47a50dc1f379a</code></td>
+</tr>
+<tr>
+<td>french-l28-a15</td>
+<td class="num">0.8</td>
+<td class="num">10</td>
+<td><code class="long">4b24e3e83fe9de79d48aa89cedfac517fad6c4ecb3ec3ba5c7a47a50dc1f379a</code></td>
+</tr>
+<tr>
+<td>ggb-l17-a125</td>
+<td class="num">0.9</td>
+<td class="num">10</td>
+<td><code class="long">4b24e3e83fe9de79d48aa89cedfac517fad6c4ecb3ec3ba5c7a47a50dc1f379a</code></td>
+</tr>
+<tr>
+<td>hungry-l17-a10</td>
+<td class="num">0.8</td>
+<td class="num">10</td>
+<td><code class="long">4b24e3e83fe9de79d48aa89cedfac517fad6c4ecb3ec3ba5c7a47a50dc1f379a</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="table-note">As the engine scored it.</p>
+</section>
+<section id="judges" aria-labelledby="judges-h">
+<h2 id="judges-h">Judges</h2>
+<p>No completed evaluation by judges was found for this run.</p>
+</section>
+<section id="exclusions" aria-labelledby="exclusions-h">
+<h2 id="exclusions-h">Exclusions</h2>
+<p>The study declares no exclusion rules, so no records were excluded.</p>
+</section>
+<section id="freeze" aria-labelledby="freeze-h">
+<h2 id="freeze-h">Freeze and identity</h2>
+<dl class="facts">
+<dt>Freeze state</dt>
+<dd>Frozen before this run, with every freeze check passed (frozen at 2026-10-19T11:35:21Z).</dd>
+<dt>Settings hash stamped on the run</dt>
+<dd><code class="long">679c112212b99222428f21ce5fb2e9c412c5641282fdbca5c8443f58e48dafc6</code></dd>
+<dt>Freeze hash</dt>
+<dd><code class="long">679c112212b99222428f21ce5fb2e9c412c5641282fdbca5c8443f58e48dafc6</code></dd>
+<dt>Workspace commit at freeze</dt>
+<dd><code class="long">4b5e3c6a7a44d99040f3936c873033892a9a4c15</code></dd>
+<dt>Software that froze the study</dt>
+<dd><code>swift-app 0.9.9+6ed5416d</code></dd>
+<dt>Run started</dt>
+<dd>2026-10-19T11:35:25Z</dd>
+<dt>Software that made the run</dt>
+<dd><code>swift-app 0.9.9+6ed5416d</code></dd>
+<dt>Back end</dt>
+<dd>platform <code>macOS-arm64</code></dd>
+</dl>
+<div class="table-wrap" role="region" aria-labelledby="sources-caption" tabindex="0"><table id="sources">
+<caption id="sources-caption">Every file this page was made from</caption>
+<thead>
+<tr>
+<th scope="col">File</th>
+<th scope="col">Read as</th>
+<th scope="col">SHA-256</th>
+<th scope="col" class="num">Bytes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code class="long">runs/2026-10-19T113525164Z-exp-agent-personalities-run/generations.jsonl</code></td>
+<td>run</td>
+<td><code class="long">6ac9ed0c3d7b0ef40eb4cac68b647a90509a0f20a863290413f66f57a5d9784c</code></td>
+<td class="num">156691</td>
+</tr>
+<tr>
+<td><code class="long">runs/2026-10-19T113525164Z-exp-agent-personalities-run/report.json</code></td>
+<td>run</td>
+<td><code class="long">ec904c5fc87a59b4b9b4d25c64bd8f830a56aee5af95bef8b70c2411aea91398</code></td>
+<td class="num">14970</td>
+</tr>
+<tr>
+<td><code class="long">runs/2026-10-19T113525164Z-exp-agent-personalities-run/config.json</code></td>
+<td>run</td>
+<td><code class="long">0628c9aa89647f4b288d881cb6a338ee017abfe0397e629af94f6389fabc42a9</code></td>
+<td class="num">1225</td>
+</tr>
+<tr>
+<td><code class="long">runs/2026-10-19T113525164Z-exp-agent-personalities-run/experiment.json</code></td>
+<td>run</td>
+<td><code class="long">71c186f9b54526c60d24565a9af04dcd521db46a0ce23a8293a99b3cd8a6191d</code></td>
+<td class="num">11336</td>
+</tr>
+<tr>
+<td><code class="long">runs/2026-10-19T113525164Z-exp-agent-personalities-run/experiment-hash.txt</code></td>
+<td>run</td>
+<td><code class="long">7c7a3eb47d1c4b6ae70bdafa72327a4522cd6466afad5dbc78448df428d34999</code></td>
+<td class="num">64</td>
+</tr>
+<tr>
+<td><code class="long">runs/2026-10-19T113525164Z-exp-agent-personalities-run/effect-sizes.csv</code></td>
+<td>run</td>
+<td><code class="long">4d0ceecb31b35621de56772881675993bff4f25e2ff9a6316889b5f5582f13b4</code></td>
+<td class="num">1219</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p class="table-note">Paths are relative to the workspace. A file’s SHA-256 identifies its exact bytes, so a reader with the workspace can confirm this page was made from these files.</p>
+</section>
+<section id="limits" aria-labelledby="limits-h">
+<h2 id="limits-h">Limits</h2>
+<h3>What the run did not store</h3>
+<ul>
+<li>the bootstrap settings: the analysis files do not record them; they are fixed by the software version named above.</li>
+</ul>
+<h3>What this page leaves out</h3>
+<ul>
+<li>Response text is not on this page. results export writes every response, judgment, and transcript as tables and text files.</li>
+<li>Numbers are rounded to four significant digits for reading. The files listed under Freeze and identity hold every digit.</li>
+<li>This page reads the run’s newest analysis and its newest completed evaluation of each kind. Older ones are not shown.</li>
+</ul>
+<h3>What these results show</h3>
+<p>An effect here is a difference between conditions, in this model, on these items, under these settings. An interval that does not include zero is a reason to look further, not proof that the difference holds elsewhere. Report the study’s freeze state, its exclusions, and its judges’ agreement with any result taken from this page.</p>
+</section>
+</main>
+<footer>
+<p>Made by SteerLab from <code class="long">runs/2026-10-19T113525164Z-exp-agent-personalities-run</code>. Every number is copied from what those folders store; nothing was recalculated. The page is a single file. It loads nothing from the network.</p>
+</footer>
+</body>
+</html>

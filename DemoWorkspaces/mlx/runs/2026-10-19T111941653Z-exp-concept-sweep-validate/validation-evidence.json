@@ -1,0 +1,11 @@
+{
+  "completedAt" : "2026-10-19T11:23:10Z",
+  "reportFile" : "validation-report.json",
+  "schemaVersion" : 1,
+  "substrate" : "swift-mlx",
+  "task" : "validate",
+  "vacuousConcepts" : [
+
+  ],
+  "validationScopeHash" : "35fe5c8cb74366881962434287beb435221212643ffee791bc1c39b0566ea1c1"
+}

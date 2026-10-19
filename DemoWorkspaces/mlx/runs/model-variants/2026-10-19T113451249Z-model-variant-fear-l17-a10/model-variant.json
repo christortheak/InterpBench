@@ -1,0 +1,50 @@
+{
+  "adapters" : [
+
+  ],
+  "alphaInNormUnits" : true,
+  "bandWidth" : 1,
+  "baseModelID" : "mlx-community\/gemma-3-4b-it-4bit",
+  "baseRevision" : "93724907d4ed1745d2fe50baadf3b0b01a65abf2",
+  "createdAt" : "2026-10-19T11:34:51Z",
+  "injections" : [
+    {
+      "alpha" : 0.1,
+      "concept" : "fear",
+      "layer" : 17,
+      "vectorArtifactID" : "runs\/2026-10-19T112313646Z-exp-concept-sweep-sweep\/fear"
+    }
+  ],
+  "name" : "fear-l17-a10",
+  "promotion" : {
+    "appVersion" : "swift-app 0.9.9+6ed5416d",
+    "criterion" : {
+      "constraints" : {
+        "capabilityTolerance" : 0.15,
+        "coherenceFloor" : 0.45
+      },
+      "objective" : {
+        "metric" : "markerDensity"
+      }
+    },
+    "devPromptsHash" : "f5d8d0ea462a68bb06a73280a7af66e1872f378441298f73417d1c4287d6dc81",
+    "experiment" : "concept-sweep",
+    "experimentHash" : "c4a2db44ff21a81bb00fc95d1a45e6e74e80c1fad1428c98cc9cdd62be2ae938",
+    "overrideReason" : "Picked by Claude Opus 5.5 reading every cell's replies (qualitative, not blinded, no rubric declared beforehand); the sweep's marker-density score was not used. A clipped, tense, hypervigilant voice that is still readable. At 0.125 it collapses into repetition; layers 23 and 28 add only a faint gloom.",
+    "promotedAt" : "2026-10-19T11:34:51Z",
+    "promotedBy" : "manualOverride",
+    "promotionKey" : "48a5ae2d83171f8b39bcab413ed223c3267a6632778079ae453f585c35319115",
+    "recipeIdentityHash" : "534b8dc2f580a332c18961fb13903b5ff44b1011e293286af0c1730a89253ff9",
+    "substrate" : "swift-mlx",
+    "sweepRun" : "2026-10-19T112313646Z-exp-concept-sweep-sweep",
+    "vectorArtifactHash" : "d8bfa2b6d13679b7482f03c21c8f269d807d6b8ccd546285554b464caecc61f0",
+    "winningCell" : {
+      "alpha" : 0.1,
+      "layer" : 17
+    }
+  },
+  "promptMode" : "chatAssistant",
+  "qwenThinkingEnabled" : false,
+  "schemaVersion" : 1,
+  "temperature" : 0
+}

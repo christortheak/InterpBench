@@ -1,0 +1,40 @@
+{
+  "advisories" : [
+
+  ],
+  "detected" : {
+    "architecture" : {
+      "hiddenSize" : 2560,
+      "layerCount" : 34,
+      "layerTypes" : null
+    },
+    "effortLevels" : null,
+    "effortVariableRead" : null,
+    "foldSeparator" : "\n\n",
+    "systemRole" : "foldedIntoUser",
+    "systemRoleDetail" : null,
+    "thinkingSwitch" : "unsupported",
+    "thinkOpenInPrompt" : null,
+    "thinkTokens" : {
+      "close" : null,
+      "open" : null
+    }
+  },
+  "modelID" : "mlx-community/gemma-3-4b-it-4bit",
+  "overrides" : {
+
+  },
+  "probedBy" : {
+    "at" : "2026-10-19T11:17:31Z",
+    "engine" : "swift-mlx",
+    "version" : "swift-app 0.9.9+6ed5416d"
+  },
+  "recordHash" : "70b4853c7d8e8c9a99d74e0a8d31f7c718c7f7cc1faef5357a9d172d7ca5d87b",
+  "revision" : "93724907d4ed1745d2fe50baadf3b0b01a65abf2",
+  "schemaVersion" : 1,
+  "source" : "probe",
+  "template" : {
+    "sha256" : "7de1c58e208eda46e9c7f86397df37ec49883aeece39fb961e0a6b24088dd3c4",
+    "tokenizerConfigSha256" : "0d95398b39395e5cfb290683a78f3fb0551223c672d8b033333c1a5307473760"
+  }
+}

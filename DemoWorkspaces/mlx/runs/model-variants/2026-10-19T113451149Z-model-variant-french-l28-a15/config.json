@@ -1,0 +1,22 @@
+{
+  "appVersion" : "swift-app 0.9.9+6ed5416d",
+  "createdAt" : "2026-10-19T11:34:51Z",
+  "dtype" : null,
+  "experiment" : null,
+  "experimentHash" : null,
+  "jobId" : null,
+  "modelID" : "mlx-community\/gemma-3-4b-it-4bit",
+  "notes" : {
+
+  },
+  "platform" : "macOS-arm64",
+  "pythonEnvironment" : null,
+  "revision" : "93724907d4ed1745d2fe50baadf3b0b01a65abf2",
+  "runId" : "2026-10-19T113451149Z-model-variant-french-l28-a15",
+  "runType" : "variant-save",
+  "samplesPerItem" : null,
+  "schemaVersion" : 4,
+  "seedPolicy" : null,
+  "substrate" : "swift-mlx",
+  "temperature" : null
+}

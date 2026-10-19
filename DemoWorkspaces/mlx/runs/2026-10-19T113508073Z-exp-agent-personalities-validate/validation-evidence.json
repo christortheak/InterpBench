@@ -1,0 +1,58 @@
+{
+  "batteryResults" : [
+    {
+      "accuracy" : 0.9,
+      "armingIsolated" : true,
+      "batteryFormat" : 2,
+      "batteryHash" : "4b24e3e83fe9de79d48aa89cedfac517fad6c4ecb3ec3ba5c7a47a50dc1f379a",
+      "condition" : "baseline",
+      "correct" : 9,
+      "total" : 10
+    },
+    {
+      "accuracy" : 0.8,
+      "armingIsolated" : true,
+      "batteryFormat" : 2,
+      "batteryHash" : "4b24e3e83fe9de79d48aa89cedfac517fad6c4ecb3ec3ba5c7a47a50dc1f379a",
+      "condition" : "french-l28-a15",
+      "correct" : 8,
+      "total" : 10
+    },
+    {
+      "accuracy" : 0.8,
+      "armingIsolated" : true,
+      "batteryFormat" : 2,
+      "batteryHash" : "4b24e3e83fe9de79d48aa89cedfac517fad6c4ecb3ec3ba5c7a47a50dc1f379a",
+      "condition" : "hungry-l17-a10",
+      "correct" : 8,
+      "total" : 10
+    },
+    {
+      "accuracy" : 0.9,
+      "armingIsolated" : true,
+      "batteryFormat" : 2,
+      "batteryHash" : "4b24e3e83fe9de79d48aa89cedfac517fad6c4ecb3ec3ba5c7a47a50dc1f379a",
+      "condition" : "fear-l17-a10",
+      "correct" : 9,
+      "total" : 10
+    },
+    {
+      "accuracy" : 0.9,
+      "armingIsolated" : true,
+      "batteryFormat" : 2,
+      "batteryHash" : "4b24e3e83fe9de79d48aa89cedfac517fad6c4ecb3ec3ba5c7a47a50dc1f379a",
+      "condition" : "ggb-l17-a125",
+      "correct" : 9,
+      "total" : 10
+    }
+  ],
+  "completedAt" : "2026-10-19T11:35:21Z",
+  "reportFile" : "validation-report.json",
+  "schemaVersion" : 1,
+  "substrate" : "swift-mlx",
+  "task" : "validate",
+  "vacuousConcepts" : [
+
+  ],
+  "validationScopeHash" : "395656577033e776db8b46561677fda0f0f4aa05732f1b417687c357fc2a8e00"
+}

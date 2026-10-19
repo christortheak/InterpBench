@@ -1,0 +1,50 @@
+{
+  "adapters" : [
+
+  ],
+  "alphaInNormUnits" : true,
+  "bandWidth" : 1,
+  "baseModelID" : "mlx-community\/gemma-3-4b-it-4bit",
+  "baseRevision" : "93724907d4ed1745d2fe50baadf3b0b01a65abf2",
+  "createdAt" : "2026-10-19T11:34:51Z",
+  "injections" : [
+    {
+      "alpha" : 0.1,
+      "concept" : "hungry",
+      "layer" : 17,
+      "vectorArtifactID" : "runs\/2026-10-19T112313646Z-exp-concept-sweep-sweep\/hungry"
+    }
+  ],
+  "name" : "hungry-l17-a10",
+  "promotion" : {
+    "appVersion" : "swift-app 0.9.9+6ed5416d",
+    "criterion" : {
+      "constraints" : {
+        "capabilityTolerance" : 0.15,
+        "coherenceFloor" : 0.45
+      },
+      "objective" : {
+        "metric" : "markerDensity"
+      }
+    },
+    "devPromptsHash" : "f5d8d0ea462a68bb06a73280a7af66e1872f378441298f73417d1c4287d6dc81",
+    "experiment" : "concept-sweep",
+    "experimentHash" : "c4a2db44ff21a81bb00fc95d1a45e6e74e80c1fad1428c98cc9cdd62be2ae938",
+    "overrideReason" : "Picked by Claude Opus 5.5 reading every cell's replies (qualitative, not blinded, no rubric declared beforehand); the sweep's marker-density score was not used. The clearest readable change: terse, low-energy, and apologetic, with food creeping in. At 0.125 it fragments into restrictive self-talk; layers 23 and 28 barely move at these strengths.",
+    "promotedAt" : "2026-10-19T11:34:51Z",
+    "promotedBy" : "manualOverride",
+    "promotionKey" : "e2528e2d669ab02a850bfaa3fcf2212074307b68792423cb96077d7aa09ae041",
+    "recipeIdentityHash" : "4a6df7ab14bbb835201a7c92fedabbe344a0ec16fa6d0a599465512586a8392b",
+    "substrate" : "swift-mlx",
+    "sweepRun" : "2026-10-19T112313646Z-exp-concept-sweep-sweep",
+    "vectorArtifactHash" : "b700a285b860cf8dcd74b03cb4f1d8acada6e8aa5669882b2c52698fc6e3575e",
+    "winningCell" : {
+      "alpha" : 0.1,
+      "layer" : 17
+    }
+  },
+  "promptMode" : "chatAssistant",
+  "qwenThinkingEnabled" : false,
+  "schemaVersion" : 1,
+  "temperature" : 0
+}

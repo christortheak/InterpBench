@@ -1,0 +1,188 @@
+{
+  "conditions" : [
+    {
+      "condition" : "baseline",
+      "interventionState" : {
+        "alphaInNormUnits" : true,
+        "bandWidth" : 1,
+        "controlType" : null,
+        "slots" : [
+
+        ]
+      },
+      "scopes" : [
+
+      ]
+    },
+    {
+      "condition" : "french-l28-a15",
+      "interventionState" : {
+        "adapters" : [
+
+        ],
+        "alphaInNormUnits" : true,
+        "bandWidth" : 1,
+        "controlType" : null,
+        "slots" : [
+          {
+            "alpha" : 0.15,
+            "concept" : "french",
+            "layer" : 28
+          }
+        ],
+        "variant" : "french-l28-a15"
+      },
+      "scopes" : [
+        {
+          "centering" : "notApplicable",
+          "claimLimits" : "Adds a fixed offset at these positions and nowhere else. A behavioural change shows the offset moved this model's output here; it does not locate the concept, and equal residual-norm doses are not equal potency across layers or models.",
+          "control" : "randomMatchedNorm: the same layers at the same α, with a seeded isotropic-Gaussian direction rescaled to the concept vector's L2 norm at each layer (algorithm stamp 'gaussian-isotropic-v1'); scaffolded by experiment.control_matrix.control_matrix_conditions, substituted by experiment.tasks._condition_injections",
+          "decode" : "fires on every decode pass, at that pass's single new position",
+          "detail" : {
+            "alphaPerLayer" : {
+              "28" : 0.8131786584854126
+            },
+            "chunkedPrefillGate" : "promptTokenCount",
+            "promptTokenCount" : "supplied per item at generation time — the rendered prompt's token count"
+          },
+          "doseUnits" : "α at the layer, applied here as an absolute offset; a study declaring alphaInNormUnits converts its declared α through that layer's residual-norm denominator — the study's declared denominator convention — before the vector reaches this class",
+          "layers" : [
+            28
+          ],
+          "path" : "additive",
+          "positions" : "final prompt position on the last prefill chunk, then the last position of every decode pass",
+          "prefill" : "fires once, at the true prompt end; suppressed on every prefill chunk whose last position is mid-prompt",
+          "site" : "residual stream at the block output of the named layer(s) — the tensor a forward hook receives from decoder block L, before block L+1 reads it"
+        }
+      ]
+    },
+    {
+      "condition" : "hungry-l17-a10",
+      "interventionState" : {
+        "adapters" : [
+
+        ],
+        "alphaInNormUnits" : true,
+        "bandWidth" : 1,
+        "controlType" : null,
+        "slots" : [
+          {
+            "alpha" : 0.1,
+            "concept" : "hungry",
+            "layer" : 17
+          }
+        ],
+        "variant" : "hungry-l17-a10"
+      },
+      "scopes" : [
+        {
+          "centering" : "notApplicable",
+          "claimLimits" : "Adds a fixed offset at these positions and nowhere else. A behavioural change shows the offset moved this model's output here; it does not locate the concept, and equal residual-norm doses are not equal potency across layers or models.",
+          "control" : "randomMatchedNorm: the same layers at the same α, with a seeded isotropic-Gaussian direction rescaled to the concept vector's L2 norm at each layer (algorithm stamp 'gaussian-isotropic-v1'); scaffolded by experiment.control_matrix.control_matrix_conditions, substituted by experiment.tasks._condition_injections",
+          "decode" : "fires on every decode pass, at that pass's single new position",
+          "detail" : {
+            "alphaPerLayer" : {
+              "17" : 5.731664180755615
+            },
+            "chunkedPrefillGate" : "promptTokenCount",
+            "promptTokenCount" : "supplied per item at generation time — the rendered prompt's token count"
+          },
+          "doseUnits" : "α at the layer, applied here as an absolute offset; a study declaring alphaInNormUnits converts its declared α through that layer's residual-norm denominator — the study's declared denominator convention — before the vector reaches this class",
+          "layers" : [
+            17
+          ],
+          "path" : "additive",
+          "positions" : "final prompt position on the last prefill chunk, then the last position of every decode pass",
+          "prefill" : "fires once, at the true prompt end; suppressed on every prefill chunk whose last position is mid-prompt",
+          "site" : "residual stream at the block output of the named layer(s) — the tensor a forward hook receives from decoder block L, before block L+1 reads it"
+        }
+      ]
+    },
+    {
+      "condition" : "fear-l17-a10",
+      "interventionState" : {
+        "adapters" : [
+
+        ],
+        "alphaInNormUnits" : true,
+        "bandWidth" : 1,
+        "controlType" : null,
+        "slots" : [
+          {
+            "alpha" : 0.1,
+            "concept" : "fear",
+            "layer" : 17
+          }
+        ],
+        "variant" : "fear-l17-a10"
+      },
+      "scopes" : [
+        {
+          "centering" : "notApplicable",
+          "claimLimits" : "Adds a fixed offset at these positions and nowhere else. A behavioural change shows the offset moved this model's output here; it does not locate the concept, and equal residual-norm doses are not equal potency across layers or models.",
+          "control" : "randomMatchedNorm: the same layers at the same α, with a seeded isotropic-Gaussian direction rescaled to the concept vector's L2 norm at each layer (algorithm stamp 'gaussian-isotropic-v1'); scaffolded by experiment.control_matrix.control_matrix_conditions, substituted by experiment.tasks._condition_injections",
+          "decode" : "fires on every decode pass, at that pass's single new position",
+          "detail" : {
+            "alphaPerLayer" : {
+              "17" : 6.544926643371582
+            },
+            "chunkedPrefillGate" : "promptTokenCount",
+            "promptTokenCount" : "supplied per item at generation time — the rendered prompt's token count"
+          },
+          "doseUnits" : "α at the layer, applied here as an absolute offset; a study declaring alphaInNormUnits converts its declared α through that layer's residual-norm denominator — the study's declared denominator convention — before the vector reaches this class",
+          "layers" : [
+            17
+          ],
+          "path" : "additive",
+          "positions" : "final prompt position on the last prefill chunk, then the last position of every decode pass",
+          "prefill" : "fires once, at the true prompt end; suppressed on every prefill chunk whose last position is mid-prompt",
+          "site" : "residual stream at the block output of the named layer(s) — the tensor a forward hook receives from decoder block L, before block L+1 reads it"
+        }
+      ]
+    },
+    {
+      "condition" : "ggb-l17-a125",
+      "interventionState" : {
+        "adapters" : [
+
+        ],
+        "alphaInNormUnits" : true,
+        "bandWidth" : 1,
+        "controlType" : null,
+        "slots" : [
+          {
+            "alpha" : 0.125,
+            "concept" : "golden-gate-bridge",
+            "layer" : 17
+          }
+        ],
+        "variant" : "ggb-l17-a125"
+      },
+      "scopes" : [
+        {
+          "centering" : "notApplicable",
+          "claimLimits" : "Adds a fixed offset at these positions and nowhere else. A behavioural change shows the offset moved this model's output here; it does not locate the concept, and equal residual-norm doses are not equal potency across layers or models.",
+          "control" : "randomMatchedNorm: the same layers at the same α, with a seeded isotropic-Gaussian direction rescaled to the concept vector's L2 norm at each layer (algorithm stamp 'gaussian-isotropic-v1'); scaffolded by experiment.control_matrix.control_matrix_conditions, substituted by experiment.tasks._condition_injections",
+          "decode" : "fires on every decode pass, at that pass's single new position",
+          "detail" : {
+            "alphaPerLayer" : {
+              "17" : 8.590845108032227
+            },
+            "chunkedPrefillGate" : "promptTokenCount",
+            "promptTokenCount" : "supplied per item at generation time — the rendered prompt's token count"
+          },
+          "doseUnits" : "α at the layer, applied here as an absolute offset; a study declaring alphaInNormUnits converts its declared α through that layer's residual-norm denominator — the study's declared denominator convention — before the vector reaches this class",
+          "layers" : [
+            17
+          ],
+          "path" : "additive",
+          "positions" : "final prompt position on the last prefill chunk, then the last position of every decode pass",
+          "prefill" : "fires once, at the true prompt end; suppressed on every prefill chunk whose last position is mid-prompt",
+          "site" : "residual stream at the block output of the named layer(s) — the tensor a forward hook receives from decoder block L, before block L+1 reads it"
+        }
+      ]
+    }
+  ],
+  "experiment" : "agent-personalities",
+  "schemaVersion" : 1
+}

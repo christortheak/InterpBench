@@ -1,0 +1,96 @@
+{
+  "concepts" : [
+    {
+      "name" : "french",
+      "options" : {
+        "method" : "meanDifference",
+        "readingPosition" : {
+          "lastToken" : {
+
+          }
+        }
+      },
+      "stimulusSetHash" : "9711fc1dd6a12a339c175189a62cd5d189d017d0e3e855143512d0967805af7a",
+      "validationHash" : "76f6317bef7273bda08e56697c477d938b7bb8378f27c687c2ec7553e1b17d82"
+    },
+    {
+      "name" : "hungry",
+      "options" : {
+        "method" : "meanDifference",
+        "readingPosition" : {
+          "lastToken" : {
+
+          }
+        }
+      },
+      "stimulusSetHash" : "e83d140e21c9f33e85e013365eb82ebdfd578284c0326684d84eaf0360426972",
+      "validationHash" : "e3bf4138ce1961f3a2ec6ecbc17610883b8f3a4c2f231b2499e954267b680a84"
+    },
+    {
+      "name" : "fear",
+      "options" : {
+        "method" : "meanDifference",
+        "readingPosition" : {
+          "lastToken" : {
+
+          }
+        }
+      },
+      "stimulusSetHash" : "9c833caa9d0627ae959113429db3433131c2def2f5d15c8525c8662d3e542ca0",
+      "validationHash" : "0c1269258340ae561be040167992ba41efb20edbe69aa17dafdd3bcea9eb1bea"
+    },
+    {
+      "name" : "golden-gate-bridge",
+      "options" : {
+        "method" : "meanDifference",
+        "readingPosition" : {
+          "lastToken" : {
+
+          }
+        }
+      },
+      "stimulusSetHash" : "6d474a152e8f334ef51e874df211cd7cc328ed3834067900b90dfec629132cf0",
+      "validationHash" : "a6759ba97d19d67899dace1131f775ea21c95a65d467edf4d3af212b9ca57453"
+    }
+  ],
+  "conditions" : [
+
+  ],
+  "createdAt" : "2026-10-19T11:17:28Z",
+  "experimentDescription" : "Extract four concept directions on Gemma 3 4B, check each one reads its concept on held-out pairs, and sweep layer and strength to find where each steers while staying readable.",
+  "maxTokens" : 2048,
+  "modelID" : "mlx-community\/gemma-3-4b-it-4bit",
+  "modelRevision" : "93724907d4ed1745d2fe50baadf3b0b01a65abf2",
+  "multiAgentIncludeBaseline" : true,
+  "name" : "concept-sweep",
+  "neutralCorpusHash" : "252a00e477ffd11b651cfd625cdeedb8c67afbb13a0bc41d2016fb6e25660db1",
+  "promptMode" : "chatAssistant",
+  "reasoningEffort" : "off",
+  "recordTokenIDs" : false,
+  "seeds" : [
+    20260610
+  ],
+  "status" : "draft",
+  "studyKind" : "modelOutput",
+  "sweep" : {
+    "alphas" : [
+      0.05,
+      0.075,
+      0.1,
+      0.125,
+      0.15
+    ],
+    "batteryFile" : "prompts\/batteries\/basic.jsonl",
+    "devPromptsFile" : "prompts\/dev\/dev-prompts.jsonl",
+    "layerFractions" : [
+      0.5147058823529411,
+      0.6911764705882353,
+      0.8382352941176471
+    ],
+    "maxTokens" : 100
+  },
+  "temperature" : 0,
+  "variantConditions" : [
+
+  ]
+}

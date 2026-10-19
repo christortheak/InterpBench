@@ -1,0 +1,5 @@
+concept,layer,fear,french,golden-gate-bridge,hungry
+fear,17,1.0000,0.4738,0.0333,0.5893
+french,17,0.4738,1.0000,0.0810,0.1557
+golden-gate-bridge,17,0.0333,0.0810,1.0000,0.0097
+hungry,17,0.5893,0.1557,0.0097,1.0000

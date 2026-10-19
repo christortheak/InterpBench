@@ -1,0 +1,110 @@
+{
+  "fear" : {
+    "criterion" : {
+      "constraints" : {
+        "capabilityTolerance" : 0.14999999999999999,
+        "coherenceFloor" : 0.45000000000000001
+      },
+      "objective" : {
+        "metric" : "markerDensity"
+      }
+    },
+    "devMaxTokens" : 100,
+    "devPromptsHash" : "f5d8d0ea462a68bb06a73280a7af66e1872f378441298f73417d1c4287d6dc81",
+    "metrics" : {
+      "baselineBatteryAccuracy" : 0.89999997615814209,
+      "baselineDensity" : 0,
+      "batteryAccuracy" : 0.80000001192092896,
+      "distinct2" : 0.98693257570266724,
+      "distinct2Ratio" : 1.0019719954617721,
+      "lengthInflated" : 0,
+      "markerDensity" : 0.0043290043249726295
+    },
+    "sweepRun" : "2026-10-19T112313646Z-exp-concept-sweep-sweep",
+    "winningCell" : {
+      "alpha" : 0.125,
+      "layer" : 23
+    }
+  },
+  "french" : {
+    "criterion" : {
+      "constraints" : {
+        "capabilityTolerance" : 0.14999999999999999,
+        "coherenceFloor" : 0.45000000000000001
+      },
+      "objective" : {
+        "metric" : "markerDensity"
+      }
+    },
+    "devMaxTokens" : 100,
+    "devPromptsHash" : "f5d8d0ea462a68bb06a73280a7af66e1872f378441298f73417d1c4287d6dc81",
+    "metrics" : {
+      "baselineBatteryAccuracy" : 0.89999997615814209,
+      "baselineDensity" : 0,
+      "batteryAccuracy" : 0.80000001192092896,
+      "distinct2" : 0.79994219541549683,
+      "distinct2Ratio" : 0.8121321532262501,
+      "lengthInflated" : 0,
+      "markerDensity" : 0.62750810384750366
+    },
+    "sweepRun" : "2026-10-19T112313646Z-exp-concept-sweep-sweep",
+    "winningCell" : {
+      "alpha" : 0.14999999999999999,
+      "layer" : 23
+    }
+  },
+  "golden-gate-bridge" : {
+    "criterion" : {
+      "constraints" : {
+        "capabilityTolerance" : 0.14999999999999999,
+        "coherenceFloor" : 0.45000000000000001
+      },
+      "objective" : {
+        "metric" : "markerDensity"
+      }
+    },
+    "devMaxTokens" : 100,
+    "devPromptsHash" : "f5d8d0ea462a68bb06a73280a7af66e1872f378441298f73417d1c4287d6dc81",
+    "metrics" : {
+      "baselineBatteryAccuracy" : 0.89999997615814209,
+      "baselineDensity" : 0.0021929824724793434,
+      "batteryAccuracy" : 0.80000001192092896,
+      "distinct2" : 0.99012821912765503,
+      "distinct2Ratio" : 1.0052163358535557,
+      "lengthInflated" : 0,
+      "markerDensity" : 0.009625578299164772
+    },
+    "sweepRun" : "2026-10-19T112313646Z-exp-concept-sweep-sweep",
+    "winningCell" : {
+      "alpha" : 0.14999999999999999,
+      "layer" : 23
+    }
+  },
+  "hungry" : {
+    "criterion" : {
+      "constraints" : {
+        "capabilityTolerance" : 0.14999999999999999,
+        "coherenceFloor" : 0.45000000000000001
+      },
+      "objective" : {
+        "metric" : "markerDensity"
+      }
+    },
+    "devMaxTokens" : 100,
+    "devPromptsHash" : "f5d8d0ea462a68bb06a73280a7af66e1872f378441298f73417d1c4287d6dc81",
+    "metrics" : {
+      "baselineBatteryAccuracy" : 0.89999997615814209,
+      "baselineDensity" : 0,
+      "batteryAccuracy" : 0.89999997615814209,
+      "distinct2" : 0.98004275560379028,
+      "distinct2Ratio" : 0.9949771845062928,
+      "lengthInflated" : 0,
+      "markerDensity" : 0.004906204994767904
+    },
+    "sweepRun" : "2026-10-19T112313646Z-exp-concept-sweep-sweep",
+    "winningCell" : {
+      "alpha" : 0.050000000000000003,
+      "layer" : 17
+    }
+  }
+}

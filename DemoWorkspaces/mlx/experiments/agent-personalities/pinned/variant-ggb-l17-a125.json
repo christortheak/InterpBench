@@ -1,0 +1,50 @@
+{
+  "adapters" : [
+
+  ],
+  "alphaInNormUnits" : true,
+  "bandWidth" : 1,
+  "baseModelID" : "mlx-community\/gemma-3-4b-it-4bit",
+  "baseRevision" : "93724907d4ed1745d2fe50baadf3b0b01a65abf2",
+  "createdAt" : "2026-10-19T11:34:51Z",
+  "injections" : [
+    {
+      "alpha" : 0.125,
+      "concept" : "golden-gate-bridge",
+      "layer" : 17,
+      "vectorArtifactID" : "runs\/2026-10-19T112313646Z-exp-concept-sweep-sweep\/golden-gate-bridge"
+    }
+  ],
+  "name" : "ggb-l17-a125",
+  "promotion" : {
+    "appVersion" : "swift-app 0.9.9+6ed5416d",
+    "criterion" : {
+      "constraints" : {
+        "capabilityTolerance" : 0.15,
+        "coherenceFloor" : 0.45
+      },
+      "objective" : {
+        "metric" : "markerDensity"
+      }
+    },
+    "devPromptsHash" : "f5d8d0ea462a68bb06a73280a7af66e1872f378441298f73417d1c4287d6dc81",
+    "experiment" : "concept-sweep",
+    "experimentHash" : "c4a2db44ff21a81bb00fc95d1a45e6e74e80c1fad1428c98cc9cdd62be2ae938",
+    "overrideReason" : "Picked by Claude Opus 5.5 reading every cell's replies (qualitative, not blinded, no rubric declared beforehand); the sweep's marker-density score was not used. The strongest readable cell. It comes out as sunny Americana (quintessential American, the American dream) rather than fog or San Francisco; layers 23 and 28 show nothing at these strengths, and 0.15 starts to slur.",
+    "promotedAt" : "2026-10-19T11:34:51Z",
+    "promotedBy" : "manualOverride",
+    "promotionKey" : "9faa397eee07e03db4e369bdcf7f5454febc8f53eedbda65c24fb91565f65577",
+    "recipeIdentityHash" : "076ce2e7f8fa6b9b12bfd7672a7043f95e5e9f3ed8ee36ff3a310fa5e5f0e633",
+    "substrate" : "swift-mlx",
+    "sweepRun" : "2026-10-19T112313646Z-exp-concept-sweep-sweep",
+    "vectorArtifactHash" : "c91091a6d89b028652859382f7d41da8445a64791b2e0201d8e76d283d7e16c3",
+    "winningCell" : {
+      "alpha" : 0.125,
+      "layer" : 17
+    }
+  },
+  "promptMode" : "chatAssistant",
+  "qwenThinkingEnabled" : false,
+  "schemaVersion" : 1,
+  "temperature" : 0
+}

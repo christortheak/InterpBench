@@ -1,0 +1,12 @@
+{
+  "evidenceComplete" : true,
+  "experiment" : "agent-personalities",
+  "finishedAt" : 1792410110.0772738,
+  "invalidResponses" : 0,
+  "itemLabel" : "record",
+  "itemsWritten" : 80,
+  "schemaVersion" : 1,
+  "stage" : "run",
+  "startedAt" : 1792409721.6044211,
+  "status" : "completed"
+}

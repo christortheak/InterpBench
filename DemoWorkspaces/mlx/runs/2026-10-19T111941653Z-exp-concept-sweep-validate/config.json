@@ -1,0 +1,35 @@
+{
+  "appVersion" : "swift-app 0.9.9+6ed5416d",
+  "createdAt" : "2026-10-19T11:19:41Z",
+  "dtype" : null,
+  "experiment" : "concept-sweep",
+  "experimentHash" : "23c414debc8b503074ff79c8701db2c30dd2f895b6c606b5a72ec6754d103f18",
+  "jobId" : null,
+  "modelID" : "mlx-community\/gemma-3-4b-it-4bit",
+  "notes" : {
+    "modelCapabilities" : {
+      "effortLevels" : null,
+      "effortVariableRead" : null,
+      "overrides" : {
+
+      },
+      "record" : "prompts\/models\/mlx-community--gemma-3-4b-it-4bit@93724907d4ed1745d2fe50baadf3b0b01a65abf2.json",
+      "recordHash" : "70b4853c7d8e8c9a99d74e0a8d31f7c718c7f7cc1faef5357a9d172d7ca5d87b",
+      "source" : "probe",
+      "systemRole" : "foldedIntoUser",
+      "templateSha256" : "7de1c58e208eda46e9c7f86397df37ec49883aeece39fb961e0a6b24088dd3c4",
+      "thinkingSwitch" : "unsupported",
+      "thinkOpenInPrompt" : null
+    }
+  },
+  "platform" : "macOS-arm64",
+  "pythonEnvironment" : null,
+  "revision" : "93724907d4ed1745d2fe50baadf3b0b01a65abf2",
+  "runId" : "2026-10-19T111941653Z-exp-concept-sweep-validate",
+  "runType" : "validate",
+  "samplesPerItem" : null,
+  "schemaVersion" : 4,
+  "seedPolicy" : null,
+  "substrate" : "swift-mlx",
+  "temperature" : null
+}

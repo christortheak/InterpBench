@@ -1,0 +1,250 @@
+{
+  "capabilityBatteryFile" : "prompts\/batteries\/basic.jsonl",
+  "capabilityBatteryHash" : "4b24e3e83fe9de79d48aa89cedfac517fad6c4ecb3ec3ba5c7a47a50dc1f379a",
+  "concepts" : [
+
+  ],
+  "conditions" : [
+
+  ],
+  "createdAt" : "2026-10-19T11:35:03Z",
+  "experimentDescription" : "The four promoted concept agents and the unsteered model answer the same sixteen everyday prompts, to show how their personalities differ. No stakes; a tour of the instrument.",
+  "maxTokens" : 400,
+  "modelID" : "mlx-community\/gemma-3-4b-it-4bit",
+  "modelRevision" : "93724907d4ed1745d2fe50baadf3b0b01a65abf2",
+  "multiAgentIncludeBaseline" : true,
+  "name" : "agent-personalities",
+  "promptMode" : "chatAssistant",
+  "reasoningEffort" : "off",
+  "recordTokenIDs" : false,
+  "seeds" : [
+    20260610
+  ],
+  "status" : "draft",
+  "studyKind" : "modelOutput",
+  "taskPromptsFile" : "prompts\/tasks\/personality-prompts.jsonl",
+  "taskPromptsHash" : "4b1e8acebf0ea5de7647e1dbf3517975ad089cebd0df8d3197d1ad2c2bff1914",
+  "temperature" : 0,
+  "variantConditions" : [
+    {
+      "artifact" : {
+        "adapters" : [
+
+        ],
+        "alphaInNormUnits" : true,
+        "bandWidth" : 1,
+        "baseModelID" : "mlx-community\/gemma-3-4b-it-4bit",
+        "baseRevision" : "93724907d4ed1745d2fe50baadf3b0b01a65abf2",
+        "createdAt" : "2026-10-19T11:34:51Z",
+        "injections" : [
+          {
+            "alpha" : 0.15,
+            "concept" : "french",
+            "layer" : 28,
+            "vectorArtifactID" : "runs\/2026-10-19T112313646Z-exp-concept-sweep-sweep\/french"
+          }
+        ],
+        "name" : "french-l28-a15",
+        "promotion" : {
+          "appVersion" : "swift-app 0.9.9+6ed5416d",
+          "criterion" : {
+            "constraints" : {
+              "capabilityTolerance" : 0.15,
+              "coherenceFloor" : 0.45
+            },
+            "objective" : {
+              "metric" : "markerDensity"
+            }
+          },
+          "devPromptsHash" : "f5d8d0ea462a68bb06a73280a7af66e1872f378441298f73417d1c4287d6dc81",
+          "experiment" : "concept-sweep",
+          "experimentHash" : "c4a2db44ff21a81bb00fc95d1a45e6e74e80c1fad1428c98cc9cdd62be2ae938",
+          "overrideReason" : "Picked by Claude Opus 5.5 reading every cell's replies (qualitative, not blinded, no rubric declared beforehand); the sweep's marker-density score was not used. The cleanest readable French in the grid. At layer 17 the same direction also pulls in German and Spanish; at layer 28 it answers in French with some English carried over.",
+          "promotedAt" : "2026-10-19T11:34:51Z",
+          "promotedBy" : "manualOverride",
+          "promotionKey" : "801ff29e5cd7fdca727aa0d122cbdf1f9a8c24180ef8628f9cfa2c120836a877",
+          "recipeIdentityHash" : "b5694f5c4abd65ae250d11c61e8a2baebe565555ceac1cba95648e01844ac851",
+          "substrate" : "swift-mlx",
+          "sweepRun" : "2026-10-19T112313646Z-exp-concept-sweep-sweep",
+          "vectorArtifactHash" : "e842931e0fcc36e6266479bb12dd0aeacb6ecbf36d22ffc0ea9207bc2c8d8eed",
+          "winningCell" : {
+            "alpha" : 0.15,
+            "layer" : 28
+          }
+        },
+        "promptMode" : "chatAssistant",
+        "qwenThinkingEnabled" : false,
+        "schemaVersion" : 1,
+        "temperature" : 0
+      },
+      "artifactHash" : "170abdaadb0fbbf09c179c06e99c548d741fd05324a6d7cb645ccd5be05296f6",
+      "artifactPath" : "runs\/model-variants\/2026-10-19T113451149Z-model-variant-french-l28-a15\/model-variant.json",
+      "name" : "french-l28-a15"
+    },
+    {
+      "artifact" : {
+        "adapters" : [
+
+        ],
+        "alphaInNormUnits" : true,
+        "bandWidth" : 1,
+        "baseModelID" : "mlx-community\/gemma-3-4b-it-4bit",
+        "baseRevision" : "93724907d4ed1745d2fe50baadf3b0b01a65abf2",
+        "createdAt" : "2026-10-19T11:34:51Z",
+        "injections" : [
+          {
+            "alpha" : 0.1,
+            "concept" : "hungry",
+            "layer" : 17,
+            "vectorArtifactID" : "runs\/2026-10-19T112313646Z-exp-concept-sweep-sweep\/hungry"
+          }
+        ],
+        "name" : "hungry-l17-a10",
+        "promotion" : {
+          "appVersion" : "swift-app 0.9.9+6ed5416d",
+          "criterion" : {
+            "constraints" : {
+              "capabilityTolerance" : 0.15,
+              "coherenceFloor" : 0.45
+            },
+            "objective" : {
+              "metric" : "markerDensity"
+            }
+          },
+          "devPromptsHash" : "f5d8d0ea462a68bb06a73280a7af66e1872f378441298f73417d1c4287d6dc81",
+          "experiment" : "concept-sweep",
+          "experimentHash" : "c4a2db44ff21a81bb00fc95d1a45e6e74e80c1fad1428c98cc9cdd62be2ae938",
+          "overrideReason" : "Picked by Claude Opus 5.5 reading every cell's replies (qualitative, not blinded, no rubric declared beforehand); the sweep's marker-density score was not used. The clearest readable change: terse, low-energy, and apologetic, with food creeping in. At 0.125 it fragments into restrictive self-talk; layers 23 and 28 barely move at these strengths.",
+          "promotedAt" : "2026-10-19T11:34:51Z",
+          "promotedBy" : "manualOverride",
+          "promotionKey" : "e2528e2d669ab02a850bfaa3fcf2212074307b68792423cb96077d7aa09ae041",
+          "recipeIdentityHash" : "4a6df7ab14bbb835201a7c92fedabbe344a0ec16fa6d0a599465512586a8392b",
+          "substrate" : "swift-mlx",
+          "sweepRun" : "2026-10-19T112313646Z-exp-concept-sweep-sweep",
+          "vectorArtifactHash" : "b700a285b860cf8dcd74b03cb4f1d8acada6e8aa5669882b2c52698fc6e3575e",
+          "winningCell" : {
+            "alpha" : 0.1,
+            "layer" : 17
+          }
+        },
+        "promptMode" : "chatAssistant",
+        "qwenThinkingEnabled" : false,
+        "schemaVersion" : 1,
+        "temperature" : 0
+      },
+      "artifactHash" : "a9ac7bdebc66a033c127996d4a63378e7955b8923a23dc65c68199aa11e7914d",
+      "artifactPath" : "runs\/model-variants\/2026-10-19T113451200Z-model-variant-hungry-l17-a10\/model-variant.json",
+      "name" : "hungry-l17-a10"
+    },
+    {
+      "artifact" : {
+        "adapters" : [
+
+        ],
+        "alphaInNormUnits" : true,
+        "bandWidth" : 1,
+        "baseModelID" : "mlx-community\/gemma-3-4b-it-4bit",
+        "baseRevision" : "93724907d4ed1745d2fe50baadf3b0b01a65abf2",
+        "createdAt" : "2026-10-19T11:34:51Z",
+        "injections" : [
+          {
+            "alpha" : 0.1,
+            "concept" : "fear",
+            "layer" : 17,
+            "vectorArtifactID" : "runs\/2026-10-19T112313646Z-exp-concept-sweep-sweep\/fear"
+          }
+        ],
+        "name" : "fear-l17-a10",
+        "promotion" : {
+          "appVersion" : "swift-app 0.9.9+6ed5416d",
+          "criterion" : {
+            "constraints" : {
+              "capabilityTolerance" : 0.15,
+              "coherenceFloor" : 0.45
+            },
+            "objective" : {
+              "metric" : "markerDensity"
+            }
+          },
+          "devPromptsHash" : "f5d8d0ea462a68bb06a73280a7af66e1872f378441298f73417d1c4287d6dc81",
+          "experiment" : "concept-sweep",
+          "experimentHash" : "c4a2db44ff21a81bb00fc95d1a45e6e74e80c1fad1428c98cc9cdd62be2ae938",
+          "overrideReason" : "Picked by Claude Opus 5.5 reading every cell's replies (qualitative, not blinded, no rubric declared beforehand); the sweep's marker-density score was not used. A clipped, tense, hypervigilant voice that is still readable. At 0.125 it collapses into repetition; layers 23 and 28 add only a faint gloom.",
+          "promotedAt" : "2026-10-19T11:34:51Z",
+          "promotedBy" : "manualOverride",
+          "promotionKey" : "48a5ae2d83171f8b39bcab413ed223c3267a6632778079ae453f585c35319115",
+          "recipeIdentityHash" : "534b8dc2f580a332c18961fb13903b5ff44b1011e293286af0c1730a89253ff9",
+          "substrate" : "swift-mlx",
+          "sweepRun" : "2026-10-19T112313646Z-exp-concept-sweep-sweep",
+          "vectorArtifactHash" : "d8bfa2b6d13679b7482f03c21c8f269d807d6b8ccd546285554b464caecc61f0",
+          "winningCell" : {
+            "alpha" : 0.1,
+            "layer" : 17
+          }
+        },
+        "promptMode" : "chatAssistant",
+        "qwenThinkingEnabled" : false,
+        "schemaVersion" : 1,
+        "temperature" : 0
+      },
+      "artifactHash" : "c5e5837b679b724fe69a2c3a792173fc0857b6d14666ff72d77da01bb15ad11d",
+      "artifactPath" : "runs\/model-variants\/2026-10-19T113451249Z-model-variant-fear-l17-a10\/model-variant.json",
+      "name" : "fear-l17-a10"
+    },
+    {
+      "artifact" : {
+        "adapters" : [
+
+        ],
+        "alphaInNormUnits" : true,
+        "bandWidth" : 1,
+        "baseModelID" : "mlx-community\/gemma-3-4b-it-4bit",
+        "baseRevision" : "93724907d4ed1745d2fe50baadf3b0b01a65abf2",
+        "createdAt" : "2026-10-19T11:34:51Z",
+        "injections" : [
+          {
+            "alpha" : 0.125,
+            "concept" : "golden-gate-bridge",
+            "layer" : 17,
+            "vectorArtifactID" : "runs\/2026-10-19T112313646Z-exp-concept-sweep-sweep\/golden-gate-bridge"
+          }
+        ],
+        "name" : "ggb-l17-a125",
+        "promotion" : {
+          "appVersion" : "swift-app 0.9.9+6ed5416d",
+          "criterion" : {
+            "constraints" : {
+              "capabilityTolerance" : 0.15,
+              "coherenceFloor" : 0.45
+            },
+            "objective" : {
+              "metric" : "markerDensity"
+            }
+          },
+          "devPromptsHash" : "f5d8d0ea462a68bb06a73280a7af66e1872f378441298f73417d1c4287d6dc81",
+          "experiment" : "concept-sweep",
+          "experimentHash" : "c4a2db44ff21a81bb00fc95d1a45e6e74e80c1fad1428c98cc9cdd62be2ae938",
+          "overrideReason" : "Picked by Claude Opus 5.5 reading every cell's replies (qualitative, not blinded, no rubric declared beforehand); the sweep's marker-density score was not used. The strongest readable cell. It comes out as sunny Americana (quintessential American, the American dream) rather than fog or San Francisco; layers 23 and 28 show nothing at these strengths, and 0.15 starts to slur.",
+          "promotedAt" : "2026-10-19T11:34:51Z",
+          "promotedBy" : "manualOverride",
+          "promotionKey" : "9faa397eee07e03db4e369bdcf7f5454febc8f53eedbda65c24fb91565f65577",
+          "recipeIdentityHash" : "076ce2e7f8fa6b9b12bfd7672a7043f95e5e9f3ed8ee36ff3a310fa5e5f0e633",
+          "substrate" : "swift-mlx",
+          "sweepRun" : "2026-10-19T112313646Z-exp-concept-sweep-sweep",
+          "vectorArtifactHash" : "c91091a6d89b028652859382f7d41da8445a64791b2e0201d8e76d283d7e16c3",
+          "winningCell" : {
+            "alpha" : 0.125,
+            "layer" : 17
+          }
+        },
+        "promptMode" : "chatAssistant",
+        "qwenThinkingEnabled" : false,
+        "schemaVersion" : 1,
+        "temperature" : 0
+      },
+      "artifactHash" : "76983715c04bc6ea46a2055cd7398ea01ecd253d1efe4435c9d71d2655fdbbeb",
+      "artifactPath" : "runs\/model-variants\/2026-10-19T113451296Z-model-variant-ggb-l17-a125\/model-variant.json",
+      "name" : "ggb-l17-a125"
+    }
+  ]
+}

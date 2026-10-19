@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "backend": "mlx",
+  "title": "Four concepts, four personalities",
+  "summary": "Extract French, hungry, fear, and Golden Gate Bridge directions on Gemma 3 4B, find where each steers while staying readable, and compare the four agents on sixteen everyday prompts.",
+  "model": {
+    "id": "mlx-community/gemma-3-4b-it-4bit",
+    "approximateDownloadGB": 3.4
+  },
+  "studies": [
+    {
+      "name": "concept-sweep",
+      "summary": "The four directions: extraction, validation on held-out pairs, the layer × strength sweep, and one promoted agent per concept."
+    },
+    {
+      "name": "agent-personalities",
+      "summary": "The four agents and the unsteered model, each answering the same sixteen everyday prompts."
+    }
+  ]
+}

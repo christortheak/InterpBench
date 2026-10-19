@@ -1,0 +1,4111 @@
+{
+  "cosineMatrixLayer" : 17,
+  "cosineMatrixLayers" : [
+    17
+  ],
+  "experiment" : "concept-sweep",
+  "logitLens" : {
+    "fear" : {
+      "layer" : 17,
+      "topNegative" : [
+        {
+          "logit" : -59.619155883789062,
+          "token" : " provides",
+          "tokenID" : 4728
+        },
+        {
+          "logit" : -58.409088134765625,
+          "token" : " activities",
+          "tokenID" : 5085
+        },
+        {
+          "logit" : -55.392528533935547,
+          "token" : " обеспечивает",
+          "tokenID" : 128109
+        },
+        {
+          "logit" : -53.564994812011719,
+          "token" : " workstations",
+          "tokenID" : 121229
+        },
+        {
+          "logit" : -53.197486877441406,
+          "token" : " utilizes",
+          "tokenID" : 60432
+        },
+        {
+          "logit" : -52.443283081054688,
+          "token" : " provide",
+          "tokenID" : 2847
+        },
+        {
+          "logit" : -52.154289245605469,
+          "token" : " onsite",
+          "tokenID" : 81263
+        },
+        {
+          "logit" : -51.444744110107422,
+          "token" : " kegiatan",
+          "tokenID" : 50119
+        },
+        {
+          "logit" : -50.582927703857422,
+          "token" : " ಉತ್ತಮ",
+          "tokenID" : 140720
+        },
+        {
+          "logit" : -50.485702514648438,
+          "token" : " activités",
+          "tokenID" : 62972
+        }
+      ],
+      "topPositive" : [
+        {
+          "logit" : 60.928958892822266,
+          "token" : " wretched",
+          "tokenID" : 119948
+        },
+        {
+          "logit" : 55.13409423828125,
+          "token" : "不安",
+          "tokenID" : 93841
+        },
+        {
+          "logit" : 54.723289489746094,
+          "token" : " terror",
+          "tokenID" : 13614
+        },
+        {
+          "logit" : 54.024074554443359,
+          "token" : " terrifying",
+          "tokenID" : 62828
+        },
+        {
+          "logit" : 53.558845520019531,
+          "token" : " coward",
+          "tokenID" : 97287
+        },
+        {
+          "logit" : 53.346706390380859,
+          "token" : " paranoid",
+          "tokenID" : 122126
+        },
+        {
+          "logit" : 53.230255126953125,
+          "token" : " terrified",
+          "tokenID" : 80003
+        },
+        {
+          "logit" : 51.109260559082031,
+          "token" : " traitor",
+          "tokenID" : 157831
+        },
+        {
+          "logit" : 51.088886260986328,
+          "token" : " horrors",
+          "tokenID" : 103042
+        },
+        {
+          "logit" : 50.756137847900391,
+          "token" : " paranoia",
+          "tokenID" : 150692
+        }
+      ]
+    },
+    "french" : {
+      "layer" : 17,
+      "topNegative" : [
+        {
+          "logit" : -23.913326263427734,
+          "token" : "ing",
+          "tokenID" : 522
+        },
+        {
+          "logit" : -22.735008239746094,
+          "token" : " John",
+          "tokenID" : 3415
+        },
+        {
+          "logit" : -20.519796371459961,
+          "token" : "่",
+          "tokenID" : 237045
+        },
+        {
+          "logit" : -19.552330017089844,
+          "token" : "ING",
+          "tokenID" : 2850
+        },
+        {
+          "logit" : -19.061275482177734,
+          "token" : " commenced",
+          "tokenID" : 40925
+        },
+        {
+          "logit" : -18.351324081420898,
+          "token" : " JOHN",
+          "tokenID" : 45087
+        },
+        {
+          "logit" : -18.304588317871094,
+          "token" : " collegiate",
+          "tokenID" : 107249
+        },
+        {
+          "logit" : -18.289028167724609,
+          "token" : " termed",
+          "tokenID" : 42226
+        },
+        {
+          "logit" : -18.10474967956543,
+          "token" : " reformed",
+          "tokenID" : 121561
+        },
+        {
+          "logit" : -18.021255493164062,
+          "token" : "ปัญหา",
+          "tokenID" : 136239
+        }
+      ],
+      "topPositive" : [
+        {
+          "logit" : 32.460575103759766,
+          "token" : " από",
+          "tokenID" : 17980
+        },
+        {
+          "logit" : 29.746837615966797,
+          "token" : "érature",
+          "tokenID" : 36052
+        },
+        {
+          "logit" : 29.198930740356445,
+          "token" : "abilité",
+          "tokenID" : 40217
+        },
+        {
+          "logit" : 29.088611602783203,
+          "token" : " dé",
+          "tokenID" : 2972
+        },
+        {
+          "logit" : 28.863040924072266,
+          "token" : " și",
+          "tokenID" : 10638
+        },
+        {
+          "logit" : 28.675117492675781,
+          "token" : "ificateur",
+          "tokenID" : 199388
+        },
+        {
+          "logit" : 28.521633148193359,
+          "token" : " που",
+          "tokenID" : 19366
+        },
+        {
+          "logit" : 28.353668212890625,
+          "token" : " ل",
+          "tokenID" : 1727
+        },
+        {
+          "logit" : 28.129873275756836,
+          "token" : "exemple",
+          "tokenID" : 119751
+        },
+        {
+          "logit" : 28.015312194824219,
+          "token" : "Retour",
+          "tokenID" : 221491
+        }
+      ]
+    },
+    "golden-gate-bridge" : {
+      "layer" : 17,
+      "topNegative" : [
+        {
+          "logit" : -32.375022888183594,
+          "token" : "Museum",
+          "tokenID" : 110700
+        },
+        {
+          "logit" : -30.666566848754883,
+          "token" : " museum",
+          "tokenID" : 14871
+        },
+        {
+          "logit" : -29.500431060791016,
+          "token" : "museum",
+          "tokenID" : 82407
+        },
+        {
+          "logit" : -29.486598968505859,
+          "token" : "estries",
+          "tokenID" : 230536
+        },
+        {
+          "logit" : -29.168378829956055,
+          "token" : " pottery",
+          "tokenID" : 58318
+        },
+        {
+          "logit" : -27.757610321044922,
+          "token" : "erzo",
+          "tokenID" : 198368
+        },
+        {
+          "logit" : -27.658561706542969,
+          "token" : " மண்",
+          "tokenID" : 210293
+        },
+        {
+          "logit" : -27.148036956787109,
+          "token" : " Poem",
+          "tokenID" : 180538
+        },
+        {
+          "logit" : -26.999509811401367,
+          "token" : "acotta",
+          "tokenID" : 124929
+        },
+        {
+          "logit" : -26.85774040222168,
+          "token" : "豆腐",
+          "tokenID" : 125006
+        }
+      ],
+      "topPositive" : [
+        {
+          "logit" : 45.703414916992188,
+          "token" : " California",
+          "tokenID" : 7151
+        },
+        {
+          "logit" : 45.539634704589844,
+          "token" : " アメリカ",
+          "tokenID" : 189265
+        },
+        {
+          "logit" : 44.277481079101562,
+          "token" : " américaine",
+          "tokenID" : 141180
+        },
+        {
+          "logit" : 44.201847076416016,
+          "token" : " Amerika",
+          "tokenID" : 50938
+        },
+        {
+          "logit" : 41.929107666015625,
+          "token" : " california",
+          "tokenID" : 113266
+        },
+        {
+          "logit" : 41.671001434326172,
+          "token" : " हाईवे",
+          "tokenID" : 135111
+        },
+        {
+          "logit" : 40.930534362792969,
+          "token" : " അമേരിക്ക",
+          "tokenID" : 208940
+        },
+        {
+          "logit" : 40.482513427734375,
+          "token" : " Amerikan",
+          "tokenID" : 153973
+        },
+        {
+          "logit" : 40.402618408203125,
+          "token" : "California",
+          "tokenID" : 52247
+        },
+        {
+          "logit" : 40.111000061035156,
+          "token" : " highway",
+          "tokenID" : 23305
+        }
+      ]
+    },
+    "hungry" : {
+      "layer" : 17,
+      "topNegative" : [
+        {
+          "logit" : -63.750419616699219,
+          "token" : "優れた",
+          "tokenID" : 145684
+        },
+        {
+          "logit" : -62.417709350585938,
+          "token" : " обеспечивает",
+          "tokenID" : 128109
+        },
+        {
+          "logit" : -61.268829345703125,
+          "token" : " দক্ষতা",
+          "tokenID" : 147350
+        },
+        {
+          "logit" : -56.680641174316406,
+          "token" : " expertly",
+          "tokenID" : 135357
+        },
+        {
+          "logit" : -56.126091003417969,
+          "token" : " desarrolla",
+          "tokenID" : 126242
+        },
+        {
+          "logit" : -55.765090942382812,
+          "token" : "运用",
+          "tokenID" : 91943
+        },
+        {
+          "logit" : -55.462226867675781,
+          "token" : " мыкты",
+          "tokenID" : 198307
+        },
+        {
+          "logit" : -54.937774658203125,
+          "token" : " skillfully",
+          "tokenID" : 178245
+        },
+        {
+          "logit" : -54.611801147460938,
+          "token" : " उत्कृष्ट",
+          "tokenID" : 85014
+        },
+        {
+          "logit" : -54.155910491943359,
+          "token" : " являются",
+          "tokenID" : 57988
+        }
+      ],
+      "topPositive" : [
+        {
+          "logit" : 73.769569396972656,
+          "token" : " wretched",
+          "tokenID" : 119948
+        },
+        {
+          "logit" : 66.529037475585938,
+          "token" : " embarrassing",
+          "tokenID" : 68642
+        },
+        {
+          "logit" : 66.210586547851562,
+          "token" : " traitor",
+          "tokenID" : 157831
+        },
+        {
+          "logit" : 65.224319458007812,
+          "token" : " shameful",
+          "tokenID" : 134874
+        },
+        {
+          "logit" : 59.440071105957031,
+          "token" : " stupid",
+          "tokenID" : 29123
+        },
+        {
+          "logit" : 59.379730224609375,
+          "token" : " embarrass",
+          "tokenID" : 30363
+        },
+        {
+          "logit" : 59.373748779296875,
+          "token" : " unsatisf",
+          "tokenID" : 60928
+        },
+        {
+          "logit" : 58.913215637207031,
+          "token" : " drunken",
+          "tokenID" : 84908
+        },
+        {
+          "logit" : 58.457916259765625,
+          "token" : " hangover",
+          "tokenID" : 168513
+        },
+        {
+          "logit" : 57.782028198242188,
+          "token" : " coward",
+          "tokenID" : 97287
+        }
+      ]
+    }
+  },
+  "vacuousConcepts" : [
+
+  ],
+  "validation" : {
+    "fear" : {
+      "accuracy" : 0.5,
+      "depths" : [
+        {
+          "accuracy" : 0.5,
+          "diagnostics" : {
+            "accuracy" : 0.5,
+            "auc" : 0.61750000000000005,
+            "balancedAccuracy" : 0.5,
+            "classCounts" : {
+              "negative" : 20,
+              "positive" : 20
+            },
+            "classMeans" : {
+              "negative" : -7509065.5,
+              "positive" : -7306024.5
+            },
+            "confusion" : {
+              "fn" : 7,
+              "fp" : 13,
+              "tn" : 7,
+              "tp" : 13
+            },
+            "directionNorm" : 450.596923828125,
+            "heldOutCalibration" : {
+              "accuracy" : 0.5,
+              "balancedAccuracy" : 0.5,
+              "classMeans" : {
+                "negative" : -7425611.0999999996,
+                "positive" : -7234623.0499999998
+              },
+              "confusion" : {
+                "fn" : 9,
+                "fp" : 11,
+                "tn" : 9,
+                "tp" : 11
+              },
+              "threshold" : -7330117.0749999993
+            },
+            "layer" : 17,
+            "naiveItemLevelInterval95" : [
+              0.35199526933465386,
+              0.64800473066534614
+            ],
+            "oneSidedPredictions" : false,
+            "rows" : [
+              {
+                "correct" : true,
+                "id" : "scenario-1",
+                "index" : 0,
+                "label" : true,
+                "margin" : 228518.5,
+                "predicted" : true,
+                "projection" : -7179026.5,
+                "rowHash" : "784338b515a6d9dc441bf5f00b047e5d853c129f6154cccc7cf8205766367678"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-2",
+                "index" : 1,
+                "label" : false,
+                "margin" : 260008.5,
+                "predicted" : true,
+                "projection" : -7147536.5,
+                "rowHash" : "6f44bb26c540bf2dde5b30e092923bbb2d586ed32193bd6e40315243d47dd8ff"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-3",
+                "index" : 2,
+                "label" : true,
+                "margin" : 268747.5,
+                "predicted" : true,
+                "projection" : -7138797.5,
+                "rowHash" : "a3522acaf7dc81bb0aa87097a6a20ab86a5cd40750a293cf640fa19d11b8b51c"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-4",
+                "index" : 3,
+                "label" : false,
+                "margin" : 106607.5,
+                "predicted" : true,
+                "projection" : -7300937.5,
+                "rowHash" : "2657ced08947ade1b8369964428e5cdd654de023a43dceb113395afb0e50c819"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-5",
+                "index" : 4,
+                "label" : true,
+                "margin" : 474512,
+                "predicted" : true,
+                "projection" : -6933033,
+                "rowHash" : "c58cb139b8aae9d97cf2d7d20662b8135ef63fc23b50a392d7f5f6ff3bc38ef0"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-6",
+                "index" : 5,
+                "label" : false,
+                "margin" : -200630,
+                "predicted" : false,
+                "projection" : -7608175,
+                "rowHash" : "c20a8c87162300fc9075a7cfaa8220fb8e9c4ab0a81e7661d6caabab7abb293a"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-7",
+                "index" : 6,
+                "label" : true,
+                "margin" : -240819,
+                "predicted" : false,
+                "projection" : -7648364,
+                "rowHash" : "72017ad0d2cb76af92031c948d9aac52e3bd82ae0d674e4c618d6693ea7d1892"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-8",
+                "index" : 7,
+                "label" : false,
+                "margin" : -479667.5,
+                "predicted" : false,
+                "projection" : -7887212.5,
+                "rowHash" : "e769cec5636355633e96d5f6224f0f20860f080523a4cb7e80c02780ad4326d3"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-9",
+                "index" : 8,
+                "label" : true,
+                "margin" : 755015.5,
+                "predicted" : true,
+                "projection" : -6652529.5,
+                "rowHash" : "7c403b653a29f5239601170f9e256f092d291195e59647661ab805630729f243"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-10",
+                "index" : 9,
+                "label" : false,
+                "margin" : 662158,
+                "predicted" : true,
+                "projection" : -6745387,
+                "rowHash" : "ab06c039b4ab1fe64a914786aa99c950c3500811893df39a53ebc27c4143acdc"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-11",
+                "index" : 10,
+                "label" : true,
+                "margin" : 116710,
+                "predicted" : true,
+                "projection" : -7290835,
+                "rowHash" : "2fabe6052f2dcd91629d1af477cbcd3eac0630cf58bcadca182b3744594517f8"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-12",
+                "index" : 11,
+                "label" : false,
+                "margin" : -497883,
+                "predicted" : false,
+                "projection" : -7905428,
+                "rowHash" : "79df5832c3a7e216bd11cc1e81c1176de70ea84890a04e7e64398d441e10c2b8"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-13",
+                "index" : 12,
+                "label" : true,
+                "margin" : -510122.5,
+                "predicted" : false,
+                "projection" : -7917667.5,
+                "rowHash" : "6f2d25c773a74da69963b3d02e5f0575ed8ba992eb37770433b9603d54f92aa9"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-14",
+                "index" : 13,
+                "label" : false,
+                "margin" : 205340,
+                "predicted" : true,
+                "projection" : -7202205,
+                "rowHash" : "078f7cd94586ed896670c0338ae9e84f6a0656091def8c85ff23ba3cc2e0ba29"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-15",
+                "index" : 14,
+                "label" : true,
+                "margin" : 226686,
+                "predicted" : true,
+                "projection" : -7180859,
+                "rowHash" : "a6bf73137889e3a17617fb0509a6a1a3471c39ba434a260fb88fb2d2ba77d693"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-16",
+                "index" : 15,
+                "label" : false,
+                "margin" : 145290,
+                "predicted" : true,
+                "projection" : -7262255,
+                "rowHash" : "9e55ed0e164b9fcb8e13673efe74f708ddf066d6355317da6ce248de08ff492b"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-17",
+                "index" : 16,
+                "label" : true,
+                "margin" : -20204,
+                "predicted" : false,
+                "projection" : -7427749,
+                "rowHash" : "41b5cce50358974e9376958b15c9ec4c1c431c0407f81f5e8801ae6bb6743289"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-18",
+                "index" : 17,
+                "label" : false,
+                "margin" : 17412,
+                "predicted" : true,
+                "projection" : -7390133,
+                "rowHash" : "0dd31dfaefec87f29d84652c812ca47b39c01f3c1e526c9a7b7d4252dcf407af"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-19",
+                "index" : 18,
+                "label" : true,
+                "margin" : 39622.5,
+                "predicted" : true,
+                "projection" : -7367922.5,
+                "rowHash" : "2c066444d1c6d0eb52a65da7246d7629234a4719b9e5fe52c5a5aa35958abeab"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-20",
+                "index" : 19,
+                "label" : false,
+                "margin" : -318778.5,
+                "predicted" : false,
+                "projection" : -7726323.5,
+                "rowHash" : "bc73f4d20a2165c4ab9dc43b5e88ababc318c8609f673b0b74306caeefa87fd3"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-21",
+                "index" : 20,
+                "label" : true,
+                "margin" : 37129,
+                "predicted" : true,
+                "projection" : -7370416,
+                "rowHash" : "d9889d727cf5810651a455d76a98084f9bab1ba693bbe79742f524e10a0d551c"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-22",
+                "index" : 21,
+                "label" : false,
+                "margin" : 109171,
+                "predicted" : true,
+                "projection" : -7298374,
+                "rowHash" : "60ebf9b56fa6dc8fb46b171f278fe3b04d240f2c5ecf56204535a3443978bbd8"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-23",
+                "index" : 22,
+                "label" : true,
+                "margin" : -319902,
+                "predicted" : false,
+                "projection" : -7727447,
+                "rowHash" : "6b435c9203c71e1a032e085f938c9043f55e5d97310ee0a7d0d859e70d62fe14"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-24",
+                "index" : 23,
+                "label" : false,
+                "margin" : -441248.5,
+                "predicted" : false,
+                "projection" : -7848793.5,
+                "rowHash" : "616ab69edeb3f4b6d2852b0b8833578b754dde3bd927d1b9b393fb17d9a1365d"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-25",
+                "index" : 24,
+                "label" : true,
+                "margin" : -164206.5,
+                "predicted" : false,
+                "projection" : -7571751.5,
+                "rowHash" : "b0b4b61ae3f5e6de19a4bea3814baabc3a2ddc52483bc2d5afa9af74df89db20"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-26",
+                "index" : 25,
+                "label" : false,
+                "margin" : -443509.5,
+                "predicted" : false,
+                "projection" : -7851054.5,
+                "rowHash" : "f8c2ae2e5d5fcb53227a3fec315623094b00eb10ec49593a48f6494f83843257"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-27",
+                "index" : 26,
+                "label" : true,
+                "margin" : 767165,
+                "predicted" : true,
+                "projection" : -6640380,
+                "rowHash" : "ece19b353b3128b7bd37128d32adf0de2edac7f7a0b5cb522ab44100a585c67f"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-28",
+                "index" : 27,
+                "label" : false,
+                "margin" : 53050,
+                "predicted" : true,
+                "projection" : -7354495,
+                "rowHash" : "898798efbd1de60bb10d3cb20d31ec4f5545e39b9f3b2336f0030176be0c3ed1"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-29",
+                "index" : 28,
+                "label" : true,
+                "margin" : 828310.5,
+                "predicted" : true,
+                "projection" : -6579234.5,
+                "rowHash" : "942b32ccb6ffce54b47cf7c2611e9e2ad8c9738856a3687093393b2b84a0ee5c"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-30",
+                "index" : 29,
+                "label" : false,
+                "margin" : -706763.5,
+                "predicted" : false,
+                "projection" : -8114308.5,
+                "rowHash" : "6135b9fa2d41c50b59429fb37617a0c3d9f1be2651d767c0c178e11737671f0f"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-31",
+                "index" : 30,
+                "label" : true,
+                "margin" : 341662,
+                "predicted" : true,
+                "projection" : -7065883,
+                "rowHash" : "6cc61f712a3db8c3fc2ee5b64562e4adfed118f6136a2881e94cb1de7b13d640"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-32",
+                "index" : 31,
+                "label" : false,
+                "margin" : 97884.5,
+                "predicted" : true,
+                "projection" : -7309660.5,
+                "rowHash" : "ee01966be49c7b0bf4a3f1b4a5c8b1667125cb7a739d0d5aeefd4ef73256e52f"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-33",
+                "index" : 32,
+                "label" : true,
+                "margin" : 246930.5,
+                "predicted" : true,
+                "projection" : -7160614.5,
+                "rowHash" : "acf3ba9e3554618c800f48d964c9e6a5ac72d462cef7f4b439cd5eef95c90f56"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-34",
+                "index" : 33,
+                "label" : false,
+                "margin" : 262931.5,
+                "predicted" : true,
+                "projection" : -7144613.5,
+                "rowHash" : "16da1f55c2b0b6a4753b74c424cda313fbfaf703ff9fcb2b794a25cac5ed5109"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-35",
+                "index" : 34,
+                "label" : true,
+                "margin" : -74765.5,
+                "predicted" : false,
+                "projection" : -7482310.5,
+                "rowHash" : "4eb95eb34e5c44ba3dd1823b93feeff2798c5c8162eed1f30fb55c792b432305"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-36",
+                "index" : 35,
+                "label" : false,
+                "margin" : 205288.5,
+                "predicted" : true,
+                "projection" : -7202256.5,
+                "rowHash" : "b02c3fbe2c2a484f4bb9266490eec5b57ac59bfb302f8a1c705336fad7cc49c4"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-37",
+                "index" : 36,
+                "label" : true,
+                "margin" : 760704,
+                "predicted" : true,
+                "projection" : -6646841,
+                "rowHash" : "0f0b7d0e60fbc7d2c9efda0663f6f550ce2aeca9e0c336b21004da1a779cd832"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-38",
+                "index" : 37,
+                "label" : false,
+                "margin" : 304385,
+                "predicted" : true,
+                "projection" : -7103160,
+                "rowHash" : "42f8c34457739772d70bd2dac2575cea5aa9ddc3065d379efdb4abde5d07d468"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-39",
+                "index" : 38,
+                "label" : true,
+                "margin" : -303254.5,
+                "predicted" : false,
+                "projection" : -7710799.5,
+                "rowHash" : "06c91157974307988647a19307075a715c0e9d5e050ffc05cd51ca737cd4b329"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-40",
+                "index" : 39,
+                "label" : false,
+                "margin" : 297632,
+                "predicted" : true,
+                "projection" : -7109913,
+                "rowHash" : "3b0be0449077578762504da31c48207431159010d1c12fceb9df19c39151ee44"
+              }
+            ],
+            "scenarioCount" : 40,
+            "sensitivity" : 0.65000000000000002,
+            "specificity" : 0.34999999999999998,
+            "threshold" : -7407545
+          },
+          "layer" : 17,
+          "layerResolution" : {
+            "depthFraction" : 0.51515151515151514,
+            "layer" : 17,
+            "layerCount" : 34,
+            "source" : "midNetwork"
+          }
+        }
+      ],
+      "diagnostics" : {
+        "accuracy" : 0.5,
+        "auc" : 0.61750000000000005,
+        "balancedAccuracy" : 0.5,
+        "classCounts" : {
+          "negative" : 20,
+          "positive" : 20
+        },
+        "classMeans" : {
+          "negative" : -7509065.5,
+          "positive" : -7306024.5
+        },
+        "confusion" : {
+          "fn" : 7,
+          "fp" : 13,
+          "tn" : 7,
+          "tp" : 13
+        },
+        "directionNorm" : 450.596923828125,
+        "heldOutCalibration" : {
+          "accuracy" : 0.5,
+          "balancedAccuracy" : 0.5,
+          "classMeans" : {
+            "negative" : -7425611.0999999996,
+            "positive" : -7234623.0499999998
+          },
+          "confusion" : {
+            "fn" : 9,
+            "fp" : 11,
+            "tn" : 9,
+            "tp" : 11
+          },
+          "threshold" : -7330117.0749999993
+        },
+        "layer" : 17,
+        "naiveItemLevelInterval95" : [
+          0.35199526933465386,
+          0.64800473066534614
+        ],
+        "oneSidedPredictions" : false,
+        "rows" : [
+          {
+            "correct" : true,
+            "id" : "scenario-1",
+            "index" : 0,
+            "label" : true,
+            "margin" : 228518.5,
+            "predicted" : true,
+            "projection" : -7179026.5,
+            "rowHash" : "784338b515a6d9dc441bf5f00b047e5d853c129f6154cccc7cf8205766367678"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-2",
+            "index" : 1,
+            "label" : false,
+            "margin" : 260008.5,
+            "predicted" : true,
+            "projection" : -7147536.5,
+            "rowHash" : "6f44bb26c540bf2dde5b30e092923bbb2d586ed32193bd6e40315243d47dd8ff"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-3",
+            "index" : 2,
+            "label" : true,
+            "margin" : 268747.5,
+            "predicted" : true,
+            "projection" : -7138797.5,
+            "rowHash" : "a3522acaf7dc81bb0aa87097a6a20ab86a5cd40750a293cf640fa19d11b8b51c"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-4",
+            "index" : 3,
+            "label" : false,
+            "margin" : 106607.5,
+            "predicted" : true,
+            "projection" : -7300937.5,
+            "rowHash" : "2657ced08947ade1b8369964428e5cdd654de023a43dceb113395afb0e50c819"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-5",
+            "index" : 4,
+            "label" : true,
+            "margin" : 474512,
+            "predicted" : true,
+            "projection" : -6933033,
+            "rowHash" : "c58cb139b8aae9d97cf2d7d20662b8135ef63fc23b50a392d7f5f6ff3bc38ef0"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-6",
+            "index" : 5,
+            "label" : false,
+            "margin" : -200630,
+            "predicted" : false,
+            "projection" : -7608175,
+            "rowHash" : "c20a8c87162300fc9075a7cfaa8220fb8e9c4ab0a81e7661d6caabab7abb293a"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-7",
+            "index" : 6,
+            "label" : true,
+            "margin" : -240819,
+            "predicted" : false,
+            "projection" : -7648364,
+            "rowHash" : "72017ad0d2cb76af92031c948d9aac52e3bd82ae0d674e4c618d6693ea7d1892"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-8",
+            "index" : 7,
+            "label" : false,
+            "margin" : -479667.5,
+            "predicted" : false,
+            "projection" : -7887212.5,
+            "rowHash" : "e769cec5636355633e96d5f6224f0f20860f080523a4cb7e80c02780ad4326d3"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-9",
+            "index" : 8,
+            "label" : true,
+            "margin" : 755015.5,
+            "predicted" : true,
+            "projection" : -6652529.5,
+            "rowHash" : "7c403b653a29f5239601170f9e256f092d291195e59647661ab805630729f243"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-10",
+            "index" : 9,
+            "label" : false,
+            "margin" : 662158,
+            "predicted" : true,
+            "projection" : -6745387,
+            "rowHash" : "ab06c039b4ab1fe64a914786aa99c950c3500811893df39a53ebc27c4143acdc"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-11",
+            "index" : 10,
+            "label" : true,
+            "margin" : 116710,
+            "predicted" : true,
+            "projection" : -7290835,
+            "rowHash" : "2fabe6052f2dcd91629d1af477cbcd3eac0630cf58bcadca182b3744594517f8"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-12",
+            "index" : 11,
+            "label" : false,
+            "margin" : -497883,
+            "predicted" : false,
+            "projection" : -7905428,
+            "rowHash" : "79df5832c3a7e216bd11cc1e81c1176de70ea84890a04e7e64398d441e10c2b8"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-13",
+            "index" : 12,
+            "label" : true,
+            "margin" : -510122.5,
+            "predicted" : false,
+            "projection" : -7917667.5,
+            "rowHash" : "6f2d25c773a74da69963b3d02e5f0575ed8ba992eb37770433b9603d54f92aa9"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-14",
+            "index" : 13,
+            "label" : false,
+            "margin" : 205340,
+            "predicted" : true,
+            "projection" : -7202205,
+            "rowHash" : "078f7cd94586ed896670c0338ae9e84f6a0656091def8c85ff23ba3cc2e0ba29"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-15",
+            "index" : 14,
+            "label" : true,
+            "margin" : 226686,
+            "predicted" : true,
+            "projection" : -7180859,
+            "rowHash" : "a6bf73137889e3a17617fb0509a6a1a3471c39ba434a260fb88fb2d2ba77d693"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-16",
+            "index" : 15,
+            "label" : false,
+            "margin" : 145290,
+            "predicted" : true,
+            "projection" : -7262255,
+            "rowHash" : "9e55ed0e164b9fcb8e13673efe74f708ddf066d6355317da6ce248de08ff492b"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-17",
+            "index" : 16,
+            "label" : true,
+            "margin" : -20204,
+            "predicted" : false,
+            "projection" : -7427749,
+            "rowHash" : "41b5cce50358974e9376958b15c9ec4c1c431c0407f81f5e8801ae6bb6743289"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-18",
+            "index" : 17,
+            "label" : false,
+            "margin" : 17412,
+            "predicted" : true,
+            "projection" : -7390133,
+            "rowHash" : "0dd31dfaefec87f29d84652c812ca47b39c01f3c1e526c9a7b7d4252dcf407af"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-19",
+            "index" : 18,
+            "label" : true,
+            "margin" : 39622.5,
+            "predicted" : true,
+            "projection" : -7367922.5,
+            "rowHash" : "2c066444d1c6d0eb52a65da7246d7629234a4719b9e5fe52c5a5aa35958abeab"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-20",
+            "index" : 19,
+            "label" : false,
+            "margin" : -318778.5,
+            "predicted" : false,
+            "projection" : -7726323.5,
+            "rowHash" : "bc73f4d20a2165c4ab9dc43b5e88ababc318c8609f673b0b74306caeefa87fd3"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-21",
+            "index" : 20,
+            "label" : true,
+            "margin" : 37129,
+            "predicted" : true,
+            "projection" : -7370416,
+            "rowHash" : "d9889d727cf5810651a455d76a98084f9bab1ba693bbe79742f524e10a0d551c"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-22",
+            "index" : 21,
+            "label" : false,
+            "margin" : 109171,
+            "predicted" : true,
+            "projection" : -7298374,
+            "rowHash" : "60ebf9b56fa6dc8fb46b171f278fe3b04d240f2c5ecf56204535a3443978bbd8"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-23",
+            "index" : 22,
+            "label" : true,
+            "margin" : -319902,
+            "predicted" : false,
+            "projection" : -7727447,
+            "rowHash" : "6b435c9203c71e1a032e085f938c9043f55e5d97310ee0a7d0d859e70d62fe14"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-24",
+            "index" : 23,
+            "label" : false,
+            "margin" : -441248.5,
+            "predicted" : false,
+            "projection" : -7848793.5,
+            "rowHash" : "616ab69edeb3f4b6d2852b0b8833578b754dde3bd927d1b9b393fb17d9a1365d"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-25",
+            "index" : 24,
+            "label" : true,
+            "margin" : -164206.5,
+            "predicted" : false,
+            "projection" : -7571751.5,
+            "rowHash" : "b0b4b61ae3f5e6de19a4bea3814baabc3a2ddc52483bc2d5afa9af74df89db20"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-26",
+            "index" : 25,
+            "label" : false,
+            "margin" : -443509.5,
+            "predicted" : false,
+            "projection" : -7851054.5,
+            "rowHash" : "f8c2ae2e5d5fcb53227a3fec315623094b00eb10ec49593a48f6494f83843257"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-27",
+            "index" : 26,
+            "label" : true,
+            "margin" : 767165,
+            "predicted" : true,
+            "projection" : -6640380,
+            "rowHash" : "ece19b353b3128b7bd37128d32adf0de2edac7f7a0b5cb522ab44100a585c67f"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-28",
+            "index" : 27,
+            "label" : false,
+            "margin" : 53050,
+            "predicted" : true,
+            "projection" : -7354495,
+            "rowHash" : "898798efbd1de60bb10d3cb20d31ec4f5545e39b9f3b2336f0030176be0c3ed1"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-29",
+            "index" : 28,
+            "label" : true,
+            "margin" : 828310.5,
+            "predicted" : true,
+            "projection" : -6579234.5,
+            "rowHash" : "942b32ccb6ffce54b47cf7c2611e9e2ad8c9738856a3687093393b2b84a0ee5c"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-30",
+            "index" : 29,
+            "label" : false,
+            "margin" : -706763.5,
+            "predicted" : false,
+            "projection" : -8114308.5,
+            "rowHash" : "6135b9fa2d41c50b59429fb37617a0c3d9f1be2651d767c0c178e11737671f0f"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-31",
+            "index" : 30,
+            "label" : true,
+            "margin" : 341662,
+            "predicted" : true,
+            "projection" : -7065883,
+            "rowHash" : "6cc61f712a3db8c3fc2ee5b64562e4adfed118f6136a2881e94cb1de7b13d640"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-32",
+            "index" : 31,
+            "label" : false,
+            "margin" : 97884.5,
+            "predicted" : true,
+            "projection" : -7309660.5,
+            "rowHash" : "ee01966be49c7b0bf4a3f1b4a5c8b1667125cb7a739d0d5aeefd4ef73256e52f"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-33",
+            "index" : 32,
+            "label" : true,
+            "margin" : 246930.5,
+            "predicted" : true,
+            "projection" : -7160614.5,
+            "rowHash" : "acf3ba9e3554618c800f48d964c9e6a5ac72d462cef7f4b439cd5eef95c90f56"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-34",
+            "index" : 33,
+            "label" : false,
+            "margin" : 262931.5,
+            "predicted" : true,
+            "projection" : -7144613.5,
+            "rowHash" : "16da1f55c2b0b6a4753b74c424cda313fbfaf703ff9fcb2b794a25cac5ed5109"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-35",
+            "index" : 34,
+            "label" : true,
+            "margin" : -74765.5,
+            "predicted" : false,
+            "projection" : -7482310.5,
+            "rowHash" : "4eb95eb34e5c44ba3dd1823b93feeff2798c5c8162eed1f30fb55c792b432305"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-36",
+            "index" : 35,
+            "label" : false,
+            "margin" : 205288.5,
+            "predicted" : true,
+            "projection" : -7202256.5,
+            "rowHash" : "b02c3fbe2c2a484f4bb9266490eec5b57ac59bfb302f8a1c705336fad7cc49c4"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-37",
+            "index" : 36,
+            "label" : true,
+            "margin" : 760704,
+            "predicted" : true,
+            "projection" : -6646841,
+            "rowHash" : "0f0b7d0e60fbc7d2c9efda0663f6f550ce2aeca9e0c336b21004da1a779cd832"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-38",
+            "index" : 37,
+            "label" : false,
+            "margin" : 304385,
+            "predicted" : true,
+            "projection" : -7103160,
+            "rowHash" : "42f8c34457739772d70bd2dac2575cea5aa9ddc3065d379efdb4abde5d07d468"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-39",
+            "index" : 38,
+            "label" : true,
+            "margin" : -303254.5,
+            "predicted" : false,
+            "projection" : -7710799.5,
+            "rowHash" : "06c91157974307988647a19307075a715c0e9d5e050ffc05cd51ca737cd4b329"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-40",
+            "index" : 39,
+            "label" : false,
+            "margin" : 297632,
+            "predicted" : true,
+            "projection" : -7109913,
+            "rowHash" : "3b0be0449077578762504da31c48207431159010d1c12fceb9df19c39151ee44"
+          }
+        ],
+        "scenarioCount" : 40,
+        "sensitivity" : 0.65000000000000002,
+        "specificity" : 0.34999999999999998,
+        "threshold" : -7407545
+      },
+      "layer" : 17,
+      "layerResolution" : {
+        "depthFraction" : 0.51515151515151514,
+        "layer" : 17,
+        "layerCount" : 34,
+        "source" : "midNetwork"
+      },
+      "scenarios" : 40
+    },
+    "french" : {
+      "accuracy" : 0.72500002384185791,
+      "depths" : [
+        {
+          "accuracy" : 0.72500002384185791,
+          "diagnostics" : {
+            "accuracy" : 0.72499999999999998,
+            "auc" : 0.79249999999999998,
+            "balancedAccuracy" : 0.72500000000000009,
+            "classCounts" : {
+              "negative" : 20,
+              "positive" : 20
+            },
+            "classMeans" : {
+              "negative" : -46626276,
+              "positive" : -44143512
+            },
+            "confusion" : {
+              "fn" : 9,
+              "fp" : 2,
+              "tn" : 18,
+              "tp" : 11
+            },
+            "directionNorm" : 1575.6768798828125,
+            "heldOutCalibration" : {
+              "accuracy" : 0.67500000000000004,
+              "balancedAccuracy" : 0.67500000000000004,
+              "classMeans" : {
+                "negative" : -47836958.799999997,
+                "positive" : -45554160
+              },
+              "confusion" : {
+                "fn" : 5,
+                "fp" : 8,
+                "tn" : 12,
+                "tp" : 15
+              },
+              "threshold" : -46695559.399999999
+            },
+            "layer" : 17,
+            "naiveItemLevelInterval95" : [
+              0.57165044193789427,
+              0.83891983752332666
+            ],
+            "oneSidedPredictions" : false,
+            "rows" : [
+              {
+                "correct" : false,
+                "id" : "scenario-1",
+                "index" : 0,
+                "label" : true,
+                "margin" : -233524,
+                "predicted" : false,
+                "projection" : -45618420,
+                "rowHash" : "ddaf2c103b6bc098311c7598e24e50ae3024247a42263424d48ad4ce398de5e9"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-2",
+                "index" : 1,
+                "label" : false,
+                "margin" : -533124,
+                "predicted" : false,
+                "projection" : -45918020,
+                "rowHash" : "9e9275c38e664d3c32b4778010ce7bd2493d879483c22df47db398910d240569"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-3",
+                "index" : 2,
+                "label" : true,
+                "margin" : 247016,
+                "predicted" : true,
+                "projection" : -45137880,
+                "rowHash" : "3cb079e4fdfd85fdd77dd1796a44c6efe12e3ad61ea21b1fe7185a3d9f35e067"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-4",
+                "index" : 3,
+                "label" : false,
+                "margin" : -3971788,
+                "predicted" : false,
+                "projection" : -49356684,
+                "rowHash" : "77782aaa48af75a06a380d7142e8a629f4723b7f1b3d4db4b57fd12ab2099ee7"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-5",
+                "index" : 4,
+                "label" : true,
+                "margin" : 2499668,
+                "predicted" : true,
+                "projection" : -42885228,
+                "rowHash" : "626a152d1c4af5e5df66370e3206d64da859f49ff531b41a03c12522d3249aa0"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-6",
+                "index" : 5,
+                "label" : false,
+                "margin" : -4045008,
+                "predicted" : false,
+                "projection" : -49429904,
+                "rowHash" : "76a84118514d4a51cd7093931c782bab4e0f027bfdeb6d11f7ba9d573dd81d15"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-7",
+                "index" : 6,
+                "label" : true,
+                "margin" : 780056,
+                "predicted" : true,
+                "projection" : -44604840,
+                "rowHash" : "63cdbdf5d20a0eb7971969a7f83a59951c104e327b119c085f530cbc143b3ae4"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-8",
+                "index" : 7,
+                "label" : false,
+                "margin" : -678368,
+                "predicted" : false,
+                "projection" : -46063264,
+                "rowHash" : "030179fcce3ee9491951ab2ddf0f7fe7f6d7c6d7dc4324de12825c6087baff30"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-9",
+                "index" : 8,
+                "label" : true,
+                "margin" : -309004,
+                "predicted" : false,
+                "projection" : -45693900,
+                "rowHash" : "22bd4b4d5cc0996e60ff0a3847b3558cabe982e4026f54cc20a08cdf93737597"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-10",
+                "index" : 9,
+                "label" : false,
+                "margin" : -3627668,
+                "predicted" : false,
+                "projection" : -49012564,
+                "rowHash" : "4bc478e7fbe227c47972ba2282e33b95eab3982708a0b0c06af6f0a23c7a2974"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-11",
+                "index" : 10,
+                "label" : true,
+                "margin" : 812296,
+                "predicted" : true,
+                "projection" : -44572600,
+                "rowHash" : "8978db67c301b1b1c6084aec5bfbfd75bbafce03450985809a8a4633893a533f"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-12",
+                "index" : 11,
+                "label" : false,
+                "margin" : -885708,
+                "predicted" : false,
+                "projection" : -46270604,
+                "rowHash" : "4634c76f3432a85f714ce51fe548ed13d464b0fe3fb51977ea0107bd64cabbb7"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-13",
+                "index" : 12,
+                "label" : true,
+                "margin" : -2904388,
+                "predicted" : false,
+                "projection" : -48289284,
+                "rowHash" : "559fdda623fa7598dd2c72b8ed7930c7b1aa9b17f4aa092d25d4003b8a6aca06"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-14",
+                "index" : 13,
+                "label" : false,
+                "margin" : -4069420,
+                "predicted" : false,
+                "projection" : -49454316,
+                "rowHash" : "83353eb8ed1bc2d52e61ec6056f438d94cfc7945ab24a1e4990aab17002edd0c"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-15",
+                "index" : 14,
+                "label" : true,
+                "margin" : 339412,
+                "predicted" : true,
+                "projection" : -45045484,
+                "rowHash" : "53430949581e430831781cce5d062b9e45ef524bb2e9ee8b812a5f5db1f866be"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-16",
+                "index" : 15,
+                "label" : false,
+                "margin" : -1950508,
+                "predicted" : false,
+                "projection" : -47335404,
+                "rowHash" : "0b25c23282960abf8eae2885ab4370f56808918ef27d954a737d38915b66d1b8"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-17",
+                "index" : 16,
+                "label" : true,
+                "margin" : 1019068,
+                "predicted" : true,
+                "projection" : -44365828,
+                "rowHash" : "111f889d8f919ec9860fd38c67365b6a3132fee22e7fe52543983644ffc8190e"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-18",
+                "index" : 17,
+                "label" : false,
+                "margin" : -397412,
+                "predicted" : false,
+                "projection" : -45782308,
+                "rowHash" : "31fe7d0544e10636523999b6583ba1ab428ad91af4448a6d7c906b3710ac80c2"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-19",
+                "index" : 18,
+                "label" : true,
+                "margin" : 201344,
+                "predicted" : true,
+                "projection" : -45183552,
+                "rowHash" : "65cc463f1834356a24c798ea4f3b6564c96564451a4f73c3d1245464381a7407"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-20",
+                "index" : 19,
+                "label" : false,
+                "margin" : 1040872,
+                "predicted" : true,
+                "projection" : -44344024,
+                "rowHash" : "6297286f19bb218af33a1eb8110e7b1077ec059fa32aa882082ddf87ea2fa21d"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-21",
+                "index" : 20,
+                "label" : true,
+                "margin" : -223308,
+                "predicted" : false,
+                "projection" : -45608204,
+                "rowHash" : "7b645e9b4a0dce03b4efc9a8e3fe721238f54c78c925e28fda18c07a7d956115"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-22",
+                "index" : 21,
+                "label" : false,
+                "margin" : -3316040,
+                "predicted" : false,
+                "projection" : -48700936,
+                "rowHash" : "ecdd357c305111fd17f9aaebb5debe973c5c09580f4715a0b8c348e8ff384025"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-23",
+                "index" : 22,
+                "label" : true,
+                "margin" : -378696,
+                "predicted" : false,
+                "projection" : -45763592,
+                "rowHash" : "387716cacebc5e196080e15a9c598b8aabbbdb1de666426e5fbb9d2f548d2cbe"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-24",
+                "index" : 23,
+                "label" : false,
+                "margin" : -2459116,
+                "predicted" : false,
+                "projection" : -47844012,
+                "rowHash" : "088b23eaab5fa22dfc0bae3f423e78c39ee9f1751b1079147d86002d62feab35"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-25",
+                "index" : 24,
+                "label" : true,
+                "margin" : 1911872,
+                "predicted" : true,
+                "projection" : -43473024,
+                "rowHash" : "d5f389f1aec30ab279a1b61e7c55af7e268e783214144677b275b9d247f142a1"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-26",
+                "index" : 25,
+                "label" : false,
+                "margin" : 1902552,
+                "predicted" : true,
+                "projection" : -43482344,
+                "rowHash" : "cf033e9381f931ceb8198084b703fe3dc227f492d10c631fe7c44744d9c04904"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-27",
+                "index" : 26,
+                "label" : true,
+                "margin" : -3613448,
+                "predicted" : false,
+                "projection" : -48998344,
+                "rowHash" : "9075f58250812f2d807773e29fc8622c022281bdd8bea4c265e85f58dbcda3c1"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-28",
+                "index" : 27,
+                "label" : false,
+                "margin" : -7766164,
+                "predicted" : false,
+                "projection" : -53151060,
+                "rowHash" : "f59798851337e81ba3c12f936b9a921111dc4cd7015fd4980e0f8c11fbc777ec"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-29",
+                "index" : 28,
+                "label" : true,
+                "margin" : -4016880,
+                "predicted" : false,
+                "projection" : -49401776,
+                "rowHash" : "a556ec3ba42312a9ae7ac4f9e919a54a1d601b7e880c21cb01cda4307e169170"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-30",
+                "index" : 29,
+                "label" : false,
+                "margin" : -5167956,
+                "predicted" : false,
+                "projection" : -50552852,
+                "rowHash" : "fa34f938a82bc0d0b1a1ee3e76ccc6bb33e32699094aa8313c69bfc97ebaf7ee"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-31",
+                "index" : 30,
+                "label" : true,
+                "margin" : 3398012,
+                "predicted" : true,
+                "projection" : -41986884,
+                "rowHash" : "100e42ef6a8b261fe0fd8bceeb2680ba7fe693434b54adddf17781f0fb3c259a"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-32",
+                "index" : 31,
+                "label" : false,
+                "margin" : -2920224,
+                "predicted" : false,
+                "projection" : -48305120,
+                "rowHash" : "fd7ba396af70796024e2e323bfe1607f5c3b3d23a763f41026263c9e085cf884"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-33",
+                "index" : 32,
+                "label" : true,
+                "margin" : -2251144,
+                "predicted" : false,
+                "projection" : -47636040,
+                "rowHash" : "3badf37eb59c9b844db2338f2277e3fbcfab759832d5037755d9d7c7c8e1dd6f"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-34",
+                "index" : 33,
+                "label" : false,
+                "margin" : -3645292,
+                "predicted" : false,
+                "projection" : -49030188,
+                "rowHash" : "a08265a09109fcf8d220519b418ef43243e1da894037ba648779d5d2a9d169a2"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-35",
+                "index" : 34,
+                "label" : true,
+                "margin" : 504976,
+                "predicted" : true,
+                "projection" : -44879920,
+                "rowHash" : "7d826106c65076e9a6ec23b39536f690177f49ff3e8bccc555d80c575d3c5bff"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-36",
+                "index" : 35,
+                "label" : false,
+                "margin" : -155020,
+                "predicted" : false,
+                "projection" : -45539916,
+                "rowHash" : "f2970ff3e4f4914aa5987cfc7907a3d2a7031382cafe575f146b7bf558df533d"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-37",
+                "index" : 36,
+                "label" : true,
+                "margin" : -2516940,
+                "predicted" : false,
+                "projection" : -47901836,
+                "rowHash" : "c056802081384560e5b2490b34fde75052c4fc14af7e6a904b74e20b4aed6844"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-38",
+                "index" : 37,
+                "label" : false,
+                "margin" : -5901140,
+                "predicted" : false,
+                "projection" : -51286036,
+                "rowHash" : "85a762c5200535f29ca31f65e1593d4b829cddf5a024e4b9221068deb18f4439"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-39",
+                "index" : 38,
+                "label" : true,
+                "margin" : 1348332,
+                "predicted" : true,
+                "projection" : -44036564,
+                "rowHash" : "c72c524bd498b1c91bd01d48b475dc53118e658c93d0272833f5daa483fbb30b"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-40",
+                "index" : 39,
+                "label" : false,
+                "margin" : -494724,
+                "predicted" : false,
+                "projection" : -45879620,
+                "rowHash" : "7322d968bd5b965a0959e28dfc9f670696d4ae7769b337fe71fbdb19b4411062"
+              }
+            ],
+            "scenarioCount" : 40,
+            "sensitivity" : 0.55000000000000004,
+            "specificity" : 0.90000000000000002,
+            "threshold" : -45384896
+          },
+          "layer" : 17,
+          "layerResolution" : {
+            "depthFraction" : 0.51515151515151514,
+            "layer" : 17,
+            "layerCount" : 34,
+            "source" : "midNetwork"
+          }
+        }
+      ],
+      "diagnostics" : {
+        "accuracy" : 0.72499999999999998,
+        "auc" : 0.79249999999999998,
+        "balancedAccuracy" : 0.72500000000000009,
+        "classCounts" : {
+          "negative" : 20,
+          "positive" : 20
+        },
+        "classMeans" : {
+          "negative" : -46626276,
+          "positive" : -44143512
+        },
+        "confusion" : {
+          "fn" : 9,
+          "fp" : 2,
+          "tn" : 18,
+          "tp" : 11
+        },
+        "directionNorm" : 1575.6768798828125,
+        "heldOutCalibration" : {
+          "accuracy" : 0.67500000000000004,
+          "balancedAccuracy" : 0.67500000000000004,
+          "classMeans" : {
+            "negative" : -47836958.799999997,
+            "positive" : -45554160
+          },
+          "confusion" : {
+            "fn" : 5,
+            "fp" : 8,
+            "tn" : 12,
+            "tp" : 15
+          },
+          "threshold" : -46695559.399999999
+        },
+        "layer" : 17,
+        "naiveItemLevelInterval95" : [
+          0.57165044193789427,
+          0.83891983752332666
+        ],
+        "oneSidedPredictions" : false,
+        "rows" : [
+          {
+            "correct" : false,
+            "id" : "scenario-1",
+            "index" : 0,
+            "label" : true,
+            "margin" : -233524,
+            "predicted" : false,
+            "projection" : -45618420,
+            "rowHash" : "ddaf2c103b6bc098311c7598e24e50ae3024247a42263424d48ad4ce398de5e9"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-2",
+            "index" : 1,
+            "label" : false,
+            "margin" : -533124,
+            "predicted" : false,
+            "projection" : -45918020,
+            "rowHash" : "9e9275c38e664d3c32b4778010ce7bd2493d879483c22df47db398910d240569"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-3",
+            "index" : 2,
+            "label" : true,
+            "margin" : 247016,
+            "predicted" : true,
+            "projection" : -45137880,
+            "rowHash" : "3cb079e4fdfd85fdd77dd1796a44c6efe12e3ad61ea21b1fe7185a3d9f35e067"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-4",
+            "index" : 3,
+            "label" : false,
+            "margin" : -3971788,
+            "predicted" : false,
+            "projection" : -49356684,
+            "rowHash" : "77782aaa48af75a06a380d7142e8a629f4723b7f1b3d4db4b57fd12ab2099ee7"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-5",
+            "index" : 4,
+            "label" : true,
+            "margin" : 2499668,
+            "predicted" : true,
+            "projection" : -42885228,
+            "rowHash" : "626a152d1c4af5e5df66370e3206d64da859f49ff531b41a03c12522d3249aa0"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-6",
+            "index" : 5,
+            "label" : false,
+            "margin" : -4045008,
+            "predicted" : false,
+            "projection" : -49429904,
+            "rowHash" : "76a84118514d4a51cd7093931c782bab4e0f027bfdeb6d11f7ba9d573dd81d15"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-7",
+            "index" : 6,
+            "label" : true,
+            "margin" : 780056,
+            "predicted" : true,
+            "projection" : -44604840,
+            "rowHash" : "63cdbdf5d20a0eb7971969a7f83a59951c104e327b119c085f530cbc143b3ae4"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-8",
+            "index" : 7,
+            "label" : false,
+            "margin" : -678368,
+            "predicted" : false,
+            "projection" : -46063264,
+            "rowHash" : "030179fcce3ee9491951ab2ddf0f7fe7f6d7c6d7dc4324de12825c6087baff30"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-9",
+            "index" : 8,
+            "label" : true,
+            "margin" : -309004,
+            "predicted" : false,
+            "projection" : -45693900,
+            "rowHash" : "22bd4b4d5cc0996e60ff0a3847b3558cabe982e4026f54cc20a08cdf93737597"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-10",
+            "index" : 9,
+            "label" : false,
+            "margin" : -3627668,
+            "predicted" : false,
+            "projection" : -49012564,
+            "rowHash" : "4bc478e7fbe227c47972ba2282e33b95eab3982708a0b0c06af6f0a23c7a2974"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-11",
+            "index" : 10,
+            "label" : true,
+            "margin" : 812296,
+            "predicted" : true,
+            "projection" : -44572600,
+            "rowHash" : "8978db67c301b1b1c6084aec5bfbfd75bbafce03450985809a8a4633893a533f"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-12",
+            "index" : 11,
+            "label" : false,
+            "margin" : -885708,
+            "predicted" : false,
+            "projection" : -46270604,
+            "rowHash" : "4634c76f3432a85f714ce51fe548ed13d464b0fe3fb51977ea0107bd64cabbb7"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-13",
+            "index" : 12,
+            "label" : true,
+            "margin" : -2904388,
+            "predicted" : false,
+            "projection" : -48289284,
+            "rowHash" : "559fdda623fa7598dd2c72b8ed7930c7b1aa9b17f4aa092d25d4003b8a6aca06"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-14",
+            "index" : 13,
+            "label" : false,
+            "margin" : -4069420,
+            "predicted" : false,
+            "projection" : -49454316,
+            "rowHash" : "83353eb8ed1bc2d52e61ec6056f438d94cfc7945ab24a1e4990aab17002edd0c"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-15",
+            "index" : 14,
+            "label" : true,
+            "margin" : 339412,
+            "predicted" : true,
+            "projection" : -45045484,
+            "rowHash" : "53430949581e430831781cce5d062b9e45ef524bb2e9ee8b812a5f5db1f866be"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-16",
+            "index" : 15,
+            "label" : false,
+            "margin" : -1950508,
+            "predicted" : false,
+            "projection" : -47335404,
+            "rowHash" : "0b25c23282960abf8eae2885ab4370f56808918ef27d954a737d38915b66d1b8"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-17",
+            "index" : 16,
+            "label" : true,
+            "margin" : 1019068,
+            "predicted" : true,
+            "projection" : -44365828,
+            "rowHash" : "111f889d8f919ec9860fd38c67365b6a3132fee22e7fe52543983644ffc8190e"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-18",
+            "index" : 17,
+            "label" : false,
+            "margin" : -397412,
+            "predicted" : false,
+            "projection" : -45782308,
+            "rowHash" : "31fe7d0544e10636523999b6583ba1ab428ad91af4448a6d7c906b3710ac80c2"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-19",
+            "index" : 18,
+            "label" : true,
+            "margin" : 201344,
+            "predicted" : true,
+            "projection" : -45183552,
+            "rowHash" : "65cc463f1834356a24c798ea4f3b6564c96564451a4f73c3d1245464381a7407"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-20",
+            "index" : 19,
+            "label" : false,
+            "margin" : 1040872,
+            "predicted" : true,
+            "projection" : -44344024,
+            "rowHash" : "6297286f19bb218af33a1eb8110e7b1077ec059fa32aa882082ddf87ea2fa21d"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-21",
+            "index" : 20,
+            "label" : true,
+            "margin" : -223308,
+            "predicted" : false,
+            "projection" : -45608204,
+            "rowHash" : "7b645e9b4a0dce03b4efc9a8e3fe721238f54c78c925e28fda18c07a7d956115"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-22",
+            "index" : 21,
+            "label" : false,
+            "margin" : -3316040,
+            "predicted" : false,
+            "projection" : -48700936,
+            "rowHash" : "ecdd357c305111fd17f9aaebb5debe973c5c09580f4715a0b8c348e8ff384025"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-23",
+            "index" : 22,
+            "label" : true,
+            "margin" : -378696,
+            "predicted" : false,
+            "projection" : -45763592,
+            "rowHash" : "387716cacebc5e196080e15a9c598b8aabbbdb1de666426e5fbb9d2f548d2cbe"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-24",
+            "index" : 23,
+            "label" : false,
+            "margin" : -2459116,
+            "predicted" : false,
+            "projection" : -47844012,
+            "rowHash" : "088b23eaab5fa22dfc0bae3f423e78c39ee9f1751b1079147d86002d62feab35"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-25",
+            "index" : 24,
+            "label" : true,
+            "margin" : 1911872,
+            "predicted" : true,
+            "projection" : -43473024,
+            "rowHash" : "d5f389f1aec30ab279a1b61e7c55af7e268e783214144677b275b9d247f142a1"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-26",
+            "index" : 25,
+            "label" : false,
+            "margin" : 1902552,
+            "predicted" : true,
+            "projection" : -43482344,
+            "rowHash" : "cf033e9381f931ceb8198084b703fe3dc227f492d10c631fe7c44744d9c04904"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-27",
+            "index" : 26,
+            "label" : true,
+            "margin" : -3613448,
+            "predicted" : false,
+            "projection" : -48998344,
+            "rowHash" : "9075f58250812f2d807773e29fc8622c022281bdd8bea4c265e85f58dbcda3c1"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-28",
+            "index" : 27,
+            "label" : false,
+            "margin" : -7766164,
+            "predicted" : false,
+            "projection" : -53151060,
+            "rowHash" : "f59798851337e81ba3c12f936b9a921111dc4cd7015fd4980e0f8c11fbc777ec"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-29",
+            "index" : 28,
+            "label" : true,
+            "margin" : -4016880,
+            "predicted" : false,
+            "projection" : -49401776,
+            "rowHash" : "a556ec3ba42312a9ae7ac4f9e919a54a1d601b7e880c21cb01cda4307e169170"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-30",
+            "index" : 29,
+            "label" : false,
+            "margin" : -5167956,
+            "predicted" : false,
+            "projection" : -50552852,
+            "rowHash" : "fa34f938a82bc0d0b1a1ee3e76ccc6bb33e32699094aa8313c69bfc97ebaf7ee"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-31",
+            "index" : 30,
+            "label" : true,
+            "margin" : 3398012,
+            "predicted" : true,
+            "projection" : -41986884,
+            "rowHash" : "100e42ef6a8b261fe0fd8bceeb2680ba7fe693434b54adddf17781f0fb3c259a"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-32",
+            "index" : 31,
+            "label" : false,
+            "margin" : -2920224,
+            "predicted" : false,
+            "projection" : -48305120,
+            "rowHash" : "fd7ba396af70796024e2e323bfe1607f5c3b3d23a763f41026263c9e085cf884"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-33",
+            "index" : 32,
+            "label" : true,
+            "margin" : -2251144,
+            "predicted" : false,
+            "projection" : -47636040,
+            "rowHash" : "3badf37eb59c9b844db2338f2277e3fbcfab759832d5037755d9d7c7c8e1dd6f"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-34",
+            "index" : 33,
+            "label" : false,
+            "margin" : -3645292,
+            "predicted" : false,
+            "projection" : -49030188,
+            "rowHash" : "a08265a09109fcf8d220519b418ef43243e1da894037ba648779d5d2a9d169a2"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-35",
+            "index" : 34,
+            "label" : true,
+            "margin" : 504976,
+            "predicted" : true,
+            "projection" : -44879920,
+            "rowHash" : "7d826106c65076e9a6ec23b39536f690177f49ff3e8bccc555d80c575d3c5bff"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-36",
+            "index" : 35,
+            "label" : false,
+            "margin" : -155020,
+            "predicted" : false,
+            "projection" : -45539916,
+            "rowHash" : "f2970ff3e4f4914aa5987cfc7907a3d2a7031382cafe575f146b7bf558df533d"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-37",
+            "index" : 36,
+            "label" : true,
+            "margin" : -2516940,
+            "predicted" : false,
+            "projection" : -47901836,
+            "rowHash" : "c056802081384560e5b2490b34fde75052c4fc14af7e6a904b74e20b4aed6844"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-38",
+            "index" : 37,
+            "label" : false,
+            "margin" : -5901140,
+            "predicted" : false,
+            "projection" : -51286036,
+            "rowHash" : "85a762c5200535f29ca31f65e1593d4b829cddf5a024e4b9221068deb18f4439"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-39",
+            "index" : 38,
+            "label" : true,
+            "margin" : 1348332,
+            "predicted" : true,
+            "projection" : -44036564,
+            "rowHash" : "c72c524bd498b1c91bd01d48b475dc53118e658c93d0272833f5daa483fbb30b"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-40",
+            "index" : 39,
+            "label" : false,
+            "margin" : -494724,
+            "predicted" : false,
+            "projection" : -45879620,
+            "rowHash" : "7322d968bd5b965a0959e28dfc9f670696d4ae7769b337fe71fbdb19b4411062"
+          }
+        ],
+        "scenarioCount" : 40,
+        "sensitivity" : 0.55000000000000004,
+        "specificity" : 0.90000000000000002,
+        "threshold" : -45384896
+      },
+      "layer" : 17,
+      "layerResolution" : {
+        "depthFraction" : 0.51515151515151514,
+        "layer" : 17,
+        "layerCount" : 34,
+        "source" : "midNetwork"
+      },
+      "scenarios" : 40
+    },
+    "golden-gate-bridge" : {
+      "accuracy" : 0.875,
+      "depths" : [
+        {
+          "accuracy" : 0.875,
+          "diagnostics" : {
+            "accuracy" : 0.875,
+            "auc" : 0.95750000000000002,
+            "balancedAccuracy" : 0.875,
+            "classCounts" : {
+              "negative" : 20,
+              "positive" : 20
+            },
+            "classMeans" : {
+              "negative" : -1132860.5,
+              "positive" : -948725.1875
+            },
+            "confusion" : {
+              "fn" : 3,
+              "fp" : 2,
+              "tn" : 18,
+              "tp" : 17
+            },
+            "directionNorm" : 429.1085205078125,
+            "heldOutCalibration" : {
+              "accuracy" : 0.875,
+              "balancedAccuracy" : 0.875,
+              "classMeans" : {
+                "negative" : -1114514.528125,
+                "positive" : -977231.24687499995
+              },
+              "confusion" : {
+                "fn" : 3,
+                "fp" : 2,
+                "tn" : 18,
+                "tp" : 17
+              },
+              "threshold" : -1045872.8875
+            },
+            "layer" : 17,
+            "naiveItemLevelInterval95" : [
+              0.738878801611489,
+              0.94540499749054596
+            ],
+            "oneSidedPredictions" : false,
+            "rows" : [
+              {
+                "correct" : true,
+                "id" : "scenario-1",
+                "index" : 0,
+                "label" : true,
+                "margin" : 160283.5,
+                "predicted" : true,
+                "projection" : -880509.375,
+                "rowHash" : "d922f9cb6decf01106669f849dbd18ccd9bbf6f4dd52ceacab1f84249a0ed8e9"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-2",
+                "index" : 1,
+                "label" : false,
+                "margin" : -130629,
+                "predicted" : false,
+                "projection" : -1171421.875,
+                "rowHash" : "2e80d82bbe4f3cba695630bc7147c6a3157577b4bb51cf2b9a27a019b156114f"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-3",
+                "index" : 2,
+                "label" : true,
+                "margin" : 154108.5,
+                "predicted" : true,
+                "projection" : -886684.375,
+                "rowHash" : "f9182f2bab10bb4644c7186fa5403429a90bf5764aafe3788678ee02967f8617"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-4",
+                "index" : 3,
+                "label" : false,
+                "margin" : -133032,
+                "predicted" : false,
+                "projection" : -1173824.875,
+                "rowHash" : "2494ed0e0da48b184027a77971728df8b25fd286061cc82b6852242fa2b54994"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-5",
+                "index" : 4,
+                "label" : true,
+                "margin" : 10780.375,
+                "predicted" : true,
+                "projection" : -1030012.5,
+                "rowHash" : "258aa436869d7bfc2e163d814c9caa36b46200ef6900d8278378711ec3008c4a"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-6",
+                "index" : 5,
+                "label" : false,
+                "margin" : -124594,
+                "predicted" : false,
+                "projection" : -1165386.875,
+                "rowHash" : "1d67965c43c318a893e5816987be21c7eaa8d29e61f3e0e06a0b6f4fffb70b91"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-7",
+                "index" : 6,
+                "label" : true,
+                "margin" : 57187.9375,
+                "predicted" : true,
+                "projection" : -983604.9375,
+                "rowHash" : "e83e7d2a7595c000b5bb1cd47ca0e4d0cc7334e143572b8ffa736bf3b6560566"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-8",
+                "index" : 7,
+                "label" : false,
+                "margin" : -65129.125,
+                "predicted" : false,
+                "projection" : -1105922,
+                "rowHash" : "9d1b6597d3abc0beb35e06ca43f006abce4db428888916b17f89f70398fe435e"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-9",
+                "index" : 8,
+                "label" : true,
+                "margin" : -32820.25,
+                "predicted" : false,
+                "projection" : -1073613.125,
+                "rowHash" : "040da3460d39e7dbbd2a066a1d161b1037f4bcc6812c6622a355a92b56edf0ce"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-10",
+                "index" : 9,
+                "label" : false,
+                "margin" : -23337.5,
+                "predicted" : false,
+                "projection" : -1064130.375,
+                "rowHash" : "16f46f0b7c773ee0e409b05e928dc2a426b16bf4c3df4fac89ada9cb516bccf2"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-11",
+                "index" : 10,
+                "label" : true,
+                "margin" : 125081.9375,
+                "predicted" : true,
+                "projection" : -915710.9375,
+                "rowHash" : "7945068b51881b9d005767ee8a9159ba3ef6d65f889369f31b8c5b36f87aa18f"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-12",
+                "index" : 11,
+                "label" : false,
+                "margin" : 25216.3125,
+                "predicted" : true,
+                "projection" : -1015576.5625,
+                "rowHash" : "ac025996c380614650932d88b70a65dcd06f44450feebd389117a7df44971343"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-13",
+                "index" : 12,
+                "label" : true,
+                "margin" : 26079.1875,
+                "predicted" : true,
+                "projection" : -1014713.6875,
+                "rowHash" : "c39154d3301f2ea591886c04a3b264e18ef8a26f97ce8ef80fdd3b7228241b6a"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-14",
+                "index" : 13,
+                "label" : false,
+                "margin" : -92531.375,
+                "predicted" : false,
+                "projection" : -1133324.25,
+                "rowHash" : "a33674d88bb5ac285f132dbc3e7e8eec2b871d13ba6038190735d049c27d9b39"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-15",
+                "index" : 14,
+                "label" : true,
+                "margin" : 110308.5625,
+                "predicted" : true,
+                "projection" : -930484.3125,
+                "rowHash" : "a3b5b1accf796407b5925992165a0fc565cb602263b504cde6227399843ee7b9"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-16",
+                "index" : 15,
+                "label" : false,
+                "margin" : -150997.75,
+                "predicted" : false,
+                "projection" : -1191790.625,
+                "rowHash" : "d75af1b9965083753b3f33699254b8481147fd9bf2e1c370edd985afb40f8b06"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-17",
+                "index" : 16,
+                "label" : true,
+                "margin" : 55278.875,
+                "predicted" : true,
+                "projection" : -985514,
+                "rowHash" : "5c066540095f9d0085da0ed92e7db21026e54802891cf618456cea8b2ae77fb5"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-18",
+                "index" : 17,
+                "label" : false,
+                "margin" : -95330.375,
+                "predicted" : false,
+                "projection" : -1136123.25,
+                "rowHash" : "15c4975e338e73337f8d165ebb69a572b39711baef29bd8d8aaa2484c2b6857b"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-19",
+                "index" : 18,
+                "label" : true,
+                "margin" : 41442,
+                "predicted" : true,
+                "projection" : -999350.875,
+                "rowHash" : "086f6556b1a01c0de52890aaecf99b47797eac98f73bfafe13775d7ebc2d2212"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-20",
+                "index" : 19,
+                "label" : false,
+                "margin" : -12894.875,
+                "predicted" : false,
+                "projection" : -1053687.75,
+                "rowHash" : "57637d56104f7ad1c5ee38be511900ba3ceb18208b7503f9a80bddb234ebde64"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-21",
+                "index" : 20,
+                "label" : true,
+                "margin" : 80470.3125,
+                "predicted" : true,
+                "projection" : -960322.5625,
+                "rowHash" : "29a8e044f973611d3f43ed6841ed67b8d70c6093dd04fe9eea55d147a666b191"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-22",
+                "index" : 21,
+                "label" : false,
+                "margin" : -206932.5,
+                "predicted" : false,
+                "projection" : -1247725.375,
+                "rowHash" : "a277012f21007dbb75af0a62d9ed62a46c52e5fdaabe23e87e1c2f7c6c8d2ae9"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-23",
+                "index" : 22,
+                "label" : true,
+                "margin" : -7348.3125,
+                "predicted" : false,
+                "projection" : -1048141.1875,
+                "rowHash" : "bde79593d2f596947e08741fee56f2ed98b8381f95675002ce236ef33d5a6011"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-24",
+                "index" : 23,
+                "label" : false,
+                "margin" : -18538.625,
+                "predicted" : false,
+                "projection" : -1059331.5,
+                "rowHash" : "11fbda73b7c700ad6a2fd669ecc072d5b493b31fd964d609f48eb56d6ac74eca"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-25",
+                "index" : 24,
+                "label" : true,
+                "margin" : 68374.5,
+                "predicted" : true,
+                "projection" : -972418.375,
+                "rowHash" : "36c2af1c9b80a39cf5e0aca7a8dda6d037643f7aaa8b87286794723b17c3a6f6"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-26",
+                "index" : 25,
+                "label" : false,
+                "margin" : -43334.375,
+                "predicted" : false,
+                "projection" : -1084127.25,
+                "rowHash" : "5296b83d5b5db7d56123618bdd44530a2491b87726e1eac8f5e53a61d6b67e5e"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-27",
+                "index" : 26,
+                "label" : true,
+                "margin" : 50129,
+                "predicted" : true,
+                "projection" : -990663.875,
+                "rowHash" : "b114e27e686958d1294b3bc92eacfb967812027dbf69c14288e6fdcf95cf0481"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-28",
+                "index" : 27,
+                "label" : false,
+                "margin" : -92622.625,
+                "predicted" : false,
+                "projection" : -1133415.5,
+                "rowHash" : "ddf7b700e547fb2f950e7f62af4a9bb0b4ab0b2d3dc47c77a7528b8d379b6d79"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-29",
+                "index" : 28,
+                "label" : true,
+                "margin" : -5732.1875,
+                "predicted" : false,
+                "projection" : -1046525.0625,
+                "rowHash" : "f0037453114e45295ac003e6681911ad041786e655051f8b793da22ea694787d"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-30",
+                "index" : 29,
+                "label" : false,
+                "margin" : -30377.25,
+                "predicted" : false,
+                "projection" : -1071170.125,
+                "rowHash" : "3e11bab069b785a6774a66581013e86712c5214d6f9137bca9adb9dfe40c81c4"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-31",
+                "index" : 30,
+                "label" : true,
+                "margin" : 87249.5625,
+                "predicted" : true,
+                "projection" : -953543.3125,
+                "rowHash" : "f985364a4eb7ff4fff2f0ae0353e6fa97e771f105b597a43a67bd5754698e191"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-32",
+                "index" : 31,
+                "label" : false,
+                "margin" : -98144.125,
+                "predicted" : false,
+                "projection" : -1138937,
+                "rowHash" : "b8eb4e887da2ecd4c3f63ca603d0f042d4e5016f6a611f942df83140d49663da"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-33",
+                "index" : 32,
+                "label" : true,
+                "margin" : 16377.9375,
+                "predicted" : true,
+                "projection" : -1024414.9375,
+                "rowHash" : "235b98da4e8f42c8973164fd2ff1042c8887303434d8c9b7e0f162673b3c3cce"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-34",
+                "index" : 33,
+                "label" : false,
+                "margin" : -52639.875,
+                "predicted" : false,
+                "projection" : -1093432.75,
+                "rowHash" : "5cb21f7e6c1a28c4fea81fc60a0f13f793c7e246c1336ab3e7ba101bd99505fa"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-35",
+                "index" : 34,
+                "label" : true,
+                "margin" : 133634.875,
+                "predicted" : true,
+                "projection" : -907158,
+                "rowHash" : "a2390acedb9730c31e7e8b4e5881c8a09537cc10fd79e977a3c3f4cc924d3ce5"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-36",
+                "index" : 35,
+                "label" : false,
+                "margin" : -130896.625,
+                "predicted" : false,
+                "projection" : -1171689.5,
+                "rowHash" : "805e90bf3cbca7c545ae9bd6fdf7adfa34abdc5a0a132b361c3f0d5f12cc23d4"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-37",
+                "index" : 36,
+                "label" : true,
+                "margin" : 112697.875,
+                "predicted" : true,
+                "projection" : -928095,
+                "rowHash" : "e8e65e75e11f821e44e319a44becfbd96b58689cc5a6a6d4f995ad0becfe01aa"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-38",
+                "index" : 37,
+                "label" : false,
+                "margin" : 48128.375,
+                "predicted" : true,
+                "projection" : -992664.5,
+                "rowHash" : "f0793bfc0ec2edd70a0ae92d8ed0520b16ef40e50862f691ff6422665d32c3d3"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-39",
+                "index" : 38,
+                "label" : true,
+                "margin" : 27648.375,
+                "predicted" : true,
+                "projection" : -1013144.5,
+                "rowHash" : "e160cb5d6ba8e8349a58d9dc22cdd578953bb82d7d8552ebcefe6be7d45ac11e"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-40",
+                "index" : 39,
+                "label" : false,
+                "margin" : -45815.75,
+                "predicted" : false,
+                "projection" : -1086608.625,
+                "rowHash" : "26e41d031afb7810c1bcbf8eea4799f0fe0c7681a0b45a1ddcfb2a802276ea70"
+              }
+            ],
+            "scenarioCount" : 40,
+            "sensitivity" : 0.84999999999999998,
+            "specificity" : 0.90000000000000002,
+            "threshold" : -1040792.875
+          },
+          "layer" : 17,
+          "layerResolution" : {
+            "depthFraction" : 0.51515151515151514,
+            "layer" : 17,
+            "layerCount" : 34,
+            "source" : "midNetwork"
+          }
+        }
+      ],
+      "diagnostics" : {
+        "accuracy" : 0.875,
+        "auc" : 0.95750000000000002,
+        "balancedAccuracy" : 0.875,
+        "classCounts" : {
+          "negative" : 20,
+          "positive" : 20
+        },
+        "classMeans" : {
+          "negative" : -1132860.5,
+          "positive" : -948725.1875
+        },
+        "confusion" : {
+          "fn" : 3,
+          "fp" : 2,
+          "tn" : 18,
+          "tp" : 17
+        },
+        "directionNorm" : 429.1085205078125,
+        "heldOutCalibration" : {
+          "accuracy" : 0.875,
+          "balancedAccuracy" : 0.875,
+          "classMeans" : {
+            "negative" : -1114514.528125,
+            "positive" : -977231.24687499995
+          },
+          "confusion" : {
+            "fn" : 3,
+            "fp" : 2,
+            "tn" : 18,
+            "tp" : 17
+          },
+          "threshold" : -1045872.8875
+        },
+        "layer" : 17,
+        "naiveItemLevelInterval95" : [
+          0.738878801611489,
+          0.94540499749054596
+        ],
+        "oneSidedPredictions" : false,
+        "rows" : [
+          {
+            "correct" : true,
+            "id" : "scenario-1",
+            "index" : 0,
+            "label" : true,
+            "margin" : 160283.5,
+            "predicted" : true,
+            "projection" : -880509.375,
+            "rowHash" : "d922f9cb6decf01106669f849dbd18ccd9bbf6f4dd52ceacab1f84249a0ed8e9"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-2",
+            "index" : 1,
+            "label" : false,
+            "margin" : -130629,
+            "predicted" : false,
+            "projection" : -1171421.875,
+            "rowHash" : "2e80d82bbe4f3cba695630bc7147c6a3157577b4bb51cf2b9a27a019b156114f"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-3",
+            "index" : 2,
+            "label" : true,
+            "margin" : 154108.5,
+            "predicted" : true,
+            "projection" : -886684.375,
+            "rowHash" : "f9182f2bab10bb4644c7186fa5403429a90bf5764aafe3788678ee02967f8617"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-4",
+            "index" : 3,
+            "label" : false,
+            "margin" : -133032,
+            "predicted" : false,
+            "projection" : -1173824.875,
+            "rowHash" : "2494ed0e0da48b184027a77971728df8b25fd286061cc82b6852242fa2b54994"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-5",
+            "index" : 4,
+            "label" : true,
+            "margin" : 10780.375,
+            "predicted" : true,
+            "projection" : -1030012.5,
+            "rowHash" : "258aa436869d7bfc2e163d814c9caa36b46200ef6900d8278378711ec3008c4a"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-6",
+            "index" : 5,
+            "label" : false,
+            "margin" : -124594,
+            "predicted" : false,
+            "projection" : -1165386.875,
+            "rowHash" : "1d67965c43c318a893e5816987be21c7eaa8d29e61f3e0e06a0b6f4fffb70b91"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-7",
+            "index" : 6,
+            "label" : true,
+            "margin" : 57187.9375,
+            "predicted" : true,
+            "projection" : -983604.9375,
+            "rowHash" : "e83e7d2a7595c000b5bb1cd47ca0e4d0cc7334e143572b8ffa736bf3b6560566"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-8",
+            "index" : 7,
+            "label" : false,
+            "margin" : -65129.125,
+            "predicted" : false,
+            "projection" : -1105922,
+            "rowHash" : "9d1b6597d3abc0beb35e06ca43f006abce4db428888916b17f89f70398fe435e"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-9",
+            "index" : 8,
+            "label" : true,
+            "margin" : -32820.25,
+            "predicted" : false,
+            "projection" : -1073613.125,
+            "rowHash" : "040da3460d39e7dbbd2a066a1d161b1037f4bcc6812c6622a355a92b56edf0ce"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-10",
+            "index" : 9,
+            "label" : false,
+            "margin" : -23337.5,
+            "predicted" : false,
+            "projection" : -1064130.375,
+            "rowHash" : "16f46f0b7c773ee0e409b05e928dc2a426b16bf4c3df4fac89ada9cb516bccf2"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-11",
+            "index" : 10,
+            "label" : true,
+            "margin" : 125081.9375,
+            "predicted" : true,
+            "projection" : -915710.9375,
+            "rowHash" : "7945068b51881b9d005767ee8a9159ba3ef6d65f889369f31b8c5b36f87aa18f"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-12",
+            "index" : 11,
+            "label" : false,
+            "margin" : 25216.3125,
+            "predicted" : true,
+            "projection" : -1015576.5625,
+            "rowHash" : "ac025996c380614650932d88b70a65dcd06f44450feebd389117a7df44971343"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-13",
+            "index" : 12,
+            "label" : true,
+            "margin" : 26079.1875,
+            "predicted" : true,
+            "projection" : -1014713.6875,
+            "rowHash" : "c39154d3301f2ea591886c04a3b264e18ef8a26f97ce8ef80fdd3b7228241b6a"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-14",
+            "index" : 13,
+            "label" : false,
+            "margin" : -92531.375,
+            "predicted" : false,
+            "projection" : -1133324.25,
+            "rowHash" : "a33674d88bb5ac285f132dbc3e7e8eec2b871d13ba6038190735d049c27d9b39"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-15",
+            "index" : 14,
+            "label" : true,
+            "margin" : 110308.5625,
+            "predicted" : true,
+            "projection" : -930484.3125,
+            "rowHash" : "a3b5b1accf796407b5925992165a0fc565cb602263b504cde6227399843ee7b9"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-16",
+            "index" : 15,
+            "label" : false,
+            "margin" : -150997.75,
+            "predicted" : false,
+            "projection" : -1191790.625,
+            "rowHash" : "d75af1b9965083753b3f33699254b8481147fd9bf2e1c370edd985afb40f8b06"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-17",
+            "index" : 16,
+            "label" : true,
+            "margin" : 55278.875,
+            "predicted" : true,
+            "projection" : -985514,
+            "rowHash" : "5c066540095f9d0085da0ed92e7db21026e54802891cf618456cea8b2ae77fb5"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-18",
+            "index" : 17,
+            "label" : false,
+            "margin" : -95330.375,
+            "predicted" : false,
+            "projection" : -1136123.25,
+            "rowHash" : "15c4975e338e73337f8d165ebb69a572b39711baef29bd8d8aaa2484c2b6857b"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-19",
+            "index" : 18,
+            "label" : true,
+            "margin" : 41442,
+            "predicted" : true,
+            "projection" : -999350.875,
+            "rowHash" : "086f6556b1a01c0de52890aaecf99b47797eac98f73bfafe13775d7ebc2d2212"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-20",
+            "index" : 19,
+            "label" : false,
+            "margin" : -12894.875,
+            "predicted" : false,
+            "projection" : -1053687.75,
+            "rowHash" : "57637d56104f7ad1c5ee38be511900ba3ceb18208b7503f9a80bddb234ebde64"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-21",
+            "index" : 20,
+            "label" : true,
+            "margin" : 80470.3125,
+            "predicted" : true,
+            "projection" : -960322.5625,
+            "rowHash" : "29a8e044f973611d3f43ed6841ed67b8d70c6093dd04fe9eea55d147a666b191"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-22",
+            "index" : 21,
+            "label" : false,
+            "margin" : -206932.5,
+            "predicted" : false,
+            "projection" : -1247725.375,
+            "rowHash" : "a277012f21007dbb75af0a62d9ed62a46c52e5fdaabe23e87e1c2f7c6c8d2ae9"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-23",
+            "index" : 22,
+            "label" : true,
+            "margin" : -7348.3125,
+            "predicted" : false,
+            "projection" : -1048141.1875,
+            "rowHash" : "bde79593d2f596947e08741fee56f2ed98b8381f95675002ce236ef33d5a6011"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-24",
+            "index" : 23,
+            "label" : false,
+            "margin" : -18538.625,
+            "predicted" : false,
+            "projection" : -1059331.5,
+            "rowHash" : "11fbda73b7c700ad6a2fd669ecc072d5b493b31fd964d609f48eb56d6ac74eca"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-25",
+            "index" : 24,
+            "label" : true,
+            "margin" : 68374.5,
+            "predicted" : true,
+            "projection" : -972418.375,
+            "rowHash" : "36c2af1c9b80a39cf5e0aca7a8dda6d037643f7aaa8b87286794723b17c3a6f6"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-26",
+            "index" : 25,
+            "label" : false,
+            "margin" : -43334.375,
+            "predicted" : false,
+            "projection" : -1084127.25,
+            "rowHash" : "5296b83d5b5db7d56123618bdd44530a2491b87726e1eac8f5e53a61d6b67e5e"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-27",
+            "index" : 26,
+            "label" : true,
+            "margin" : 50129,
+            "predicted" : true,
+            "projection" : -990663.875,
+            "rowHash" : "b114e27e686958d1294b3bc92eacfb967812027dbf69c14288e6fdcf95cf0481"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-28",
+            "index" : 27,
+            "label" : false,
+            "margin" : -92622.625,
+            "predicted" : false,
+            "projection" : -1133415.5,
+            "rowHash" : "ddf7b700e547fb2f950e7f62af4a9bb0b4ab0b2d3dc47c77a7528b8d379b6d79"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-29",
+            "index" : 28,
+            "label" : true,
+            "margin" : -5732.1875,
+            "predicted" : false,
+            "projection" : -1046525.0625,
+            "rowHash" : "f0037453114e45295ac003e6681911ad041786e655051f8b793da22ea694787d"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-30",
+            "index" : 29,
+            "label" : false,
+            "margin" : -30377.25,
+            "predicted" : false,
+            "projection" : -1071170.125,
+            "rowHash" : "3e11bab069b785a6774a66581013e86712c5214d6f9137bca9adb9dfe40c81c4"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-31",
+            "index" : 30,
+            "label" : true,
+            "margin" : 87249.5625,
+            "predicted" : true,
+            "projection" : -953543.3125,
+            "rowHash" : "f985364a4eb7ff4fff2f0ae0353e6fa97e771f105b597a43a67bd5754698e191"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-32",
+            "index" : 31,
+            "label" : false,
+            "margin" : -98144.125,
+            "predicted" : false,
+            "projection" : -1138937,
+            "rowHash" : "b8eb4e887da2ecd4c3f63ca603d0f042d4e5016f6a611f942df83140d49663da"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-33",
+            "index" : 32,
+            "label" : true,
+            "margin" : 16377.9375,
+            "predicted" : true,
+            "projection" : -1024414.9375,
+            "rowHash" : "235b98da4e8f42c8973164fd2ff1042c8887303434d8c9b7e0f162673b3c3cce"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-34",
+            "index" : 33,
+            "label" : false,
+            "margin" : -52639.875,
+            "predicted" : false,
+            "projection" : -1093432.75,
+            "rowHash" : "5cb21f7e6c1a28c4fea81fc60a0f13f793c7e246c1336ab3e7ba101bd99505fa"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-35",
+            "index" : 34,
+            "label" : true,
+            "margin" : 133634.875,
+            "predicted" : true,
+            "projection" : -907158,
+            "rowHash" : "a2390acedb9730c31e7e8b4e5881c8a09537cc10fd79e977a3c3f4cc924d3ce5"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-36",
+            "index" : 35,
+            "label" : false,
+            "margin" : -130896.625,
+            "predicted" : false,
+            "projection" : -1171689.5,
+            "rowHash" : "805e90bf3cbca7c545ae9bd6fdf7adfa34abdc5a0a132b361c3f0d5f12cc23d4"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-37",
+            "index" : 36,
+            "label" : true,
+            "margin" : 112697.875,
+            "predicted" : true,
+            "projection" : -928095,
+            "rowHash" : "e8e65e75e11f821e44e319a44becfbd96b58689cc5a6a6d4f995ad0becfe01aa"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-38",
+            "index" : 37,
+            "label" : false,
+            "margin" : 48128.375,
+            "predicted" : true,
+            "projection" : -992664.5,
+            "rowHash" : "f0793bfc0ec2edd70a0ae92d8ed0520b16ef40e50862f691ff6422665d32c3d3"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-39",
+            "index" : 38,
+            "label" : true,
+            "margin" : 27648.375,
+            "predicted" : true,
+            "projection" : -1013144.5,
+            "rowHash" : "e160cb5d6ba8e8349a58d9dc22cdd578953bb82d7d8552ebcefe6be7d45ac11e"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-40",
+            "index" : 39,
+            "label" : false,
+            "margin" : -45815.75,
+            "predicted" : false,
+            "projection" : -1086608.625,
+            "rowHash" : "26e41d031afb7810c1bcbf8eea4799f0fe0c7681a0b45a1ddcfb2a802276ea70"
+          }
+        ],
+        "scenarioCount" : 40,
+        "sensitivity" : 0.84999999999999998,
+        "specificity" : 0.90000000000000002,
+        "threshold" : -1040792.875
+      },
+      "layer" : 17,
+      "layerResolution" : {
+        "depthFraction" : 0.51515151515151514,
+        "layer" : 17,
+        "layerCount" : 34,
+        "source" : "midNetwork"
+      },
+      "scenarios" : 40
+    },
+    "hungry" : {
+      "accuracy" : 0.67500001192092896,
+      "depths" : [
+        {
+          "accuracy" : 0.67500001192092896,
+          "diagnostics" : {
+            "accuracy" : 0.67500000000000004,
+            "auc" : 0.8125,
+            "balancedAccuracy" : 0.67500000000000004,
+            "classCounts" : {
+              "negative" : 20,
+              "positive" : 20
+            },
+            "classMeans" : {
+              "negative" : -3055188.25,
+              "positive" : -2790438.5
+            },
+            "confusion" : {
+              "fn" : 5,
+              "fp" : 8,
+              "tn" : 12,
+              "tp" : 15
+            },
+            "directionNorm" : 514.5318603515625,
+            "heldOutCalibration" : {
+              "accuracy" : 0.69999999999999996,
+              "balancedAccuracy" : 0.69999999999999996,
+              "classMeans" : {
+                "negative" : -2976954,
+                "positive" : -2771402.8624999998
+              },
+              "confusion" : {
+                "fn" : 5,
+                "fp" : 7,
+                "tn" : 13,
+                "tp" : 15
+              },
+              "threshold" : -2874178.4312499999
+            },
+            "layer" : 17,
+            "naiveItemLevelInterval95" : [
+              0.52017746189877678,
+              0.79915497768217303
+            ],
+            "oneSidedPredictions" : false,
+            "rows" : [
+              {
+                "correct" : true,
+                "id" : "scenario-1",
+                "index" : 0,
+                "label" : true,
+                "margin" : 320273.25,
+                "predicted" : true,
+                "projection" : -2602540.25,
+                "rowHash" : "a1f847bb9c80305c87686710df4b54ff1c3d6515fc9f03d25ed2df5d1f09f8f1"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-2",
+                "index" : 1,
+                "label" : false,
+                "margin" : 61438.5,
+                "predicted" : true,
+                "projection" : -2861375,
+                "rowHash" : "d1bf5e5dfa92ce9609d6d91fcebff7e925da024e0574fd9afb0c990ef25eb294"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-3",
+                "index" : 2,
+                "label" : true,
+                "margin" : -64392.25,
+                "predicted" : false,
+                "projection" : -2987205.75,
+                "rowHash" : "6093670aaf39c307a6f7b22c74019af46e039e8e928db25dd988d859d9cb035b"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-4",
+                "index" : 3,
+                "label" : false,
+                "margin" : 8503.25,
+                "predicted" : true,
+                "projection" : -2914310.25,
+                "rowHash" : "bc333a45f684184157cff020b633f59380ad3481712c2097998c352cedbe348f"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-5",
+                "index" : 4,
+                "label" : true,
+                "margin" : -27622.25,
+                "predicted" : false,
+                "projection" : -2950435.75,
+                "rowHash" : "d749558f708ccfcde11f46da83c6fd694e1b63de93e15777c2d718be04457aad"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-6",
+                "index" : 5,
+                "label" : false,
+                "margin" : -169044.5,
+                "predicted" : false,
+                "projection" : -3091858,
+                "rowHash" : "f7a8b9cec96f8f0d9a0d8a43330a47de92cb9894aa9867e2351c1f67091413f1"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-7",
+                "index" : 6,
+                "label" : true,
+                "margin" : -368890,
+                "predicted" : false,
+                "projection" : -3291703.5,
+                "rowHash" : "959569daa76a26ff7d85765f9cbbbeb45ed6cd9306a757a42c7c4979898d813d"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-8",
+                "index" : 7,
+                "label" : false,
+                "margin" : -451730,
+                "predicted" : false,
+                "projection" : -3374543.5,
+                "rowHash" : "01e697476f1b363646b18bb3c627272380dee9cbbfc83b9606eeef931ea3bdde"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-9",
+                "index" : 8,
+                "label" : true,
+                "margin" : 151119.25,
+                "predicted" : true,
+                "projection" : -2771694.25,
+                "rowHash" : "f2635b097d451562fcfd38c69a9e834a8d16a0117574715973908956a2fe7c52"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-10",
+                "index" : 9,
+                "label" : false,
+                "margin" : -101122.25,
+                "predicted" : false,
+                "projection" : -3023935.75,
+                "rowHash" : "04346a5ede2bfb4bd7af498e0dea5a01cb3671bb3d3da1bf2f3a9ed64a43721e"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-11",
+                "index" : 10,
+                "label" : true,
+                "margin" : 159279.5,
+                "predicted" : true,
+                "projection" : -2763534,
+                "rowHash" : "71cd0e337c80ee56158540c0247441f2da3f0870a4fe7bf2d50d99f19b3be03c"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-12",
+                "index" : 11,
+                "label" : false,
+                "margin" : 109645,
+                "predicted" : true,
+                "projection" : -2813168.5,
+                "rowHash" : "4b55a087cf9edcf983b15cb03cca1e3cbf3f328a652ecf8d91ba1ec4c026f3c2"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-13",
+                "index" : 12,
+                "label" : true,
+                "margin" : 360977.75,
+                "predicted" : true,
+                "projection" : -2561835.75,
+                "rowHash" : "3ab4f069be86e7b5ef859f84d3778c14090aea48d8909c572b5153beb80cb3e9"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-14",
+                "index" : 13,
+                "label" : false,
+                "margin" : 173560.5,
+                "predicted" : true,
+                "projection" : -2749253,
+                "rowHash" : "f62c5bea9407df9f269fd363b2d6fbd592ad34b949f0a90e5800bc8cbcdebf54"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-15",
+                "index" : 14,
+                "label" : true,
+                "margin" : 209685.5,
+                "predicted" : true,
+                "projection" : -2713128,
+                "rowHash" : "1cedff401f0c4250f5b834cd5021e9a5bc59b36ce6dc235ab95278a043360eca"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-16",
+                "index" : 15,
+                "label" : false,
+                "margin" : -37829.25,
+                "predicted" : false,
+                "projection" : -2960642.75,
+                "rowHash" : "f3dd687963507a2312549928be3fc4abcf016fa7bab5d945110a75ae3712cdd3"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-17",
+                "index" : 16,
+                "label" : true,
+                "margin" : 436868,
+                "predicted" : true,
+                "projection" : -2485945.5,
+                "rowHash" : "1eb062db23d9022094d582fcf254410df464250569718e8843a157086049dc44"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-18",
+                "index" : 17,
+                "label" : false,
+                "margin" : 165976.5,
+                "predicted" : true,
+                "projection" : -2756837,
+                "rowHash" : "148b3574a862ffb0d550a9f3eca50370612cc20104944d169d0d73c8bafd49b9"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-19",
+                "index" : 18,
+                "label" : true,
+                "margin" : -30861.5,
+                "predicted" : false,
+                "projection" : -2953675,
+                "rowHash" : "1cf5f7b644137f43547c23f0b1907bc7022dc7a8ecae8f0479082e5139854638"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-20",
+                "index" : 19,
+                "label" : false,
+                "margin" : -248884.25,
+                "predicted" : false,
+                "projection" : -3171697.75,
+                "rowHash" : "b5ab2c818c0147e0182b51c0d1c660a4ebe05166b944f6405f67b2f311e9dc40"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-21",
+                "index" : 20,
+                "label" : true,
+                "margin" : 273203.25,
+                "predicted" : true,
+                "projection" : -2649610.25,
+                "rowHash" : "c4941f45cb66e5c973e97a2023b1525f7762bb04d78cf744994dd8598cab2c6f"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-22",
+                "index" : 21,
+                "label" : false,
+                "margin" : -121332.75,
+                "predicted" : false,
+                "projection" : -3044146.25,
+                "rowHash" : "0adbd65f495b73b84713993cd35b9c521b6caf2cf9b7b6632bd1e23ea4adfb3a"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-23",
+                "index" : 22,
+                "label" : true,
+                "margin" : 372241.75,
+                "predicted" : true,
+                "projection" : -2550571.75,
+                "rowHash" : "a51f759eb80c4886fbdb44fd510f4b606d8b496e1460ab2131c97968d1a3e9f1"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-24",
+                "index" : 23,
+                "label" : false,
+                "margin" : -91938,
+                "predicted" : false,
+                "projection" : -3014751.5,
+                "rowHash" : "13c7b6d894f0d0a6e61a0a1a4e450100d65903627569d7c2d78e152e244dfde1"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-25",
+                "index" : 24,
+                "label" : true,
+                "margin" : 61091.25,
+                "predicted" : true,
+                "projection" : -2861722.25,
+                "rowHash" : "c01dc55375741a0ccdda7ab95edd08bcd5ae73e409be9a3f09a674a2423e808c"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-26",
+                "index" : 25,
+                "label" : false,
+                "margin" : 76153.25,
+                "predicted" : true,
+                "projection" : -2846660.25,
+                "rowHash" : "a150895107db1f58e497d9d2261df2bb6b25e5b18383dd4c75656c3a4b66d0e0"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-27",
+                "index" : 26,
+                "label" : true,
+                "margin" : 113400.5,
+                "predicted" : true,
+                "projection" : -2809413,
+                "rowHash" : "9931a657f4c7d6d8aad116c132854f183be2187f0546c28d2cda81c1af21af70"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-28",
+                "index" : 27,
+                "label" : false,
+                "margin" : -223621,
+                "predicted" : false,
+                "projection" : -3146434.5,
+                "rowHash" : "876640df9b296a79173eea6ce7ad05a3a199e7dd436b4fbdf65bd0caa08fb092"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-29",
+                "index" : 28,
+                "label" : true,
+                "margin" : 154742,
+                "predicted" : true,
+                "projection" : -2768071.5,
+                "rowHash" : "35967def022eed6b810fb5410a0b4caeb01392af87ec8107fadb1d69ee8b376e"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-30",
+                "index" : 29,
+                "label" : false,
+                "margin" : 129581,
+                "predicted" : true,
+                "projection" : -2793232.5,
+                "rowHash" : "12ca1b0bdd42b58a63e6344bf6bbe2757b0fc88674eb9d75db4bdc33c978c39e"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-31",
+                "index" : 30,
+                "label" : true,
+                "margin" : 78485.5,
+                "predicted" : true,
+                "projection" : -2844328,
+                "rowHash" : "b147a5d9063568a4eebd1f51da10b2b85ab14cfd378b2b8bdb31fc6d11224022"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-32",
+                "index" : 31,
+                "label" : false,
+                "margin" : -166092.5,
+                "predicted" : false,
+                "projection" : -3088906,
+                "rowHash" : "155584f6621ec627f8d4f646f8b372da760a102487e4d30204f290d0ec244fcf"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-33",
+                "index" : 32,
+                "label" : true,
+                "margin" : 234140.25,
+                "predicted" : true,
+                "projection" : -2688673.25,
+                "rowHash" : "3f189d6ed805326302b4d98c00c7dc773e71ec5d337fa64001c66f4312eb2006"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-34",
+                "index" : 33,
+                "label" : false,
+                "margin" : -120064,
+                "predicted" : false,
+                "projection" : -3042877.5,
+                "rowHash" : "993bea2af8d874116899615a49169b1e54b73108d7f134f93e02aa95e76b5ad1"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-35",
+                "index" : 34,
+                "label" : true,
+                "margin" : 329830,
+                "predicted" : true,
+                "projection" : -2592983.5,
+                "rowHash" : "fc84c0d3fb5dea1bb2344932825a1105be4e5792c8d4a84d42f7d9b68f7a8ef4"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-36",
+                "index" : 35,
+                "label" : false,
+                "margin" : 76942,
+                "predicted" : true,
+                "projection" : -2845871.5,
+                "rowHash" : "ec3274f3d2a92f926e608109ed07a3fec9eda810f80c00431b55e7b88a6f4f5b"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-37",
+                "index" : 36,
+                "label" : true,
+                "margin" : 265454.5,
+                "predicted" : true,
+                "projection" : -2657359,
+                "rowHash" : "0ca5bc2dfe857153f85f9a79cee0a79954394d35ca7acc8595d67818024f2aa9"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-38",
+                "index" : 37,
+                "label" : false,
+                "margin" : -148628.5,
+                "predicted" : false,
+                "projection" : -3071442,
+                "rowHash" : "b03a97514d6837a26bca027598d3c33114a54c601aef5c6868debe7aaa5e14b8"
+              },
+              {
+                "correct" : false,
+                "id" : "scenario-39",
+                "index" : 38,
+                "label" : true,
+                "margin" : -813.5,
+                "predicted" : false,
+                "projection" : -2923627,
+                "rowHash" : "6a451a30fba4132dc7fec6f06485eb495ecb53cc21c4f9a26e1bb361abc91a5c"
+              },
+              {
+                "correct" : true,
+                "id" : "scenario-40",
+                "index" : 39,
+                "label" : false,
+                "margin" : -4323,
+                "predicted" : false,
+                "projection" : -2927136.5,
+                "rowHash" : "75b81b3a359f2c496f401d04f98904a5f1be003b55346a9d60962f1d9bf5b289"
+              }
+            ],
+            "scenarioCount" : 40,
+            "sensitivity" : 0.75,
+            "specificity" : 0.59999999999999998,
+            "threshold" : -2922813.5
+          },
+          "layer" : 17,
+          "layerResolution" : {
+            "depthFraction" : 0.51515151515151514,
+            "layer" : 17,
+            "layerCount" : 34,
+            "source" : "midNetwork"
+          }
+        }
+      ],
+      "diagnostics" : {
+        "accuracy" : 0.67500000000000004,
+        "auc" : 0.8125,
+        "balancedAccuracy" : 0.67500000000000004,
+        "classCounts" : {
+          "negative" : 20,
+          "positive" : 20
+        },
+        "classMeans" : {
+          "negative" : -3055188.25,
+          "positive" : -2790438.5
+        },
+        "confusion" : {
+          "fn" : 5,
+          "fp" : 8,
+          "tn" : 12,
+          "tp" : 15
+        },
+        "directionNorm" : 514.5318603515625,
+        "heldOutCalibration" : {
+          "accuracy" : 0.69999999999999996,
+          "balancedAccuracy" : 0.69999999999999996,
+          "classMeans" : {
+            "negative" : -2976954,
+            "positive" : -2771402.8624999998
+          },
+          "confusion" : {
+            "fn" : 5,
+            "fp" : 7,
+            "tn" : 13,
+            "tp" : 15
+          },
+          "threshold" : -2874178.4312499999
+        },
+        "layer" : 17,
+        "naiveItemLevelInterval95" : [
+          0.52017746189877678,
+          0.79915497768217303
+        ],
+        "oneSidedPredictions" : false,
+        "rows" : [
+          {
+            "correct" : true,
+            "id" : "scenario-1",
+            "index" : 0,
+            "label" : true,
+            "margin" : 320273.25,
+            "predicted" : true,
+            "projection" : -2602540.25,
+            "rowHash" : "a1f847bb9c80305c87686710df4b54ff1c3d6515fc9f03d25ed2df5d1f09f8f1"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-2",
+            "index" : 1,
+            "label" : false,
+            "margin" : 61438.5,
+            "predicted" : true,
+            "projection" : -2861375,
+            "rowHash" : "d1bf5e5dfa92ce9609d6d91fcebff7e925da024e0574fd9afb0c990ef25eb294"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-3",
+            "index" : 2,
+            "label" : true,
+            "margin" : -64392.25,
+            "predicted" : false,
+            "projection" : -2987205.75,
+            "rowHash" : "6093670aaf39c307a6f7b22c74019af46e039e8e928db25dd988d859d9cb035b"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-4",
+            "index" : 3,
+            "label" : false,
+            "margin" : 8503.25,
+            "predicted" : true,
+            "projection" : -2914310.25,
+            "rowHash" : "bc333a45f684184157cff020b633f59380ad3481712c2097998c352cedbe348f"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-5",
+            "index" : 4,
+            "label" : true,
+            "margin" : -27622.25,
+            "predicted" : false,
+            "projection" : -2950435.75,
+            "rowHash" : "d749558f708ccfcde11f46da83c6fd694e1b63de93e15777c2d718be04457aad"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-6",
+            "index" : 5,
+            "label" : false,
+            "margin" : -169044.5,
+            "predicted" : false,
+            "projection" : -3091858,
+            "rowHash" : "f7a8b9cec96f8f0d9a0d8a43330a47de92cb9894aa9867e2351c1f67091413f1"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-7",
+            "index" : 6,
+            "label" : true,
+            "margin" : -368890,
+            "predicted" : false,
+            "projection" : -3291703.5,
+            "rowHash" : "959569daa76a26ff7d85765f9cbbbeb45ed6cd9306a757a42c7c4979898d813d"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-8",
+            "index" : 7,
+            "label" : false,
+            "margin" : -451730,
+            "predicted" : false,
+            "projection" : -3374543.5,
+            "rowHash" : "01e697476f1b363646b18bb3c627272380dee9cbbfc83b9606eeef931ea3bdde"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-9",
+            "index" : 8,
+            "label" : true,
+            "margin" : 151119.25,
+            "predicted" : true,
+            "projection" : -2771694.25,
+            "rowHash" : "f2635b097d451562fcfd38c69a9e834a8d16a0117574715973908956a2fe7c52"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-10",
+            "index" : 9,
+            "label" : false,
+            "margin" : -101122.25,
+            "predicted" : false,
+            "projection" : -3023935.75,
+            "rowHash" : "04346a5ede2bfb4bd7af498e0dea5a01cb3671bb3d3da1bf2f3a9ed64a43721e"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-11",
+            "index" : 10,
+            "label" : true,
+            "margin" : 159279.5,
+            "predicted" : true,
+            "projection" : -2763534,
+            "rowHash" : "71cd0e337c80ee56158540c0247441f2da3f0870a4fe7bf2d50d99f19b3be03c"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-12",
+            "index" : 11,
+            "label" : false,
+            "margin" : 109645,
+            "predicted" : true,
+            "projection" : -2813168.5,
+            "rowHash" : "4b55a087cf9edcf983b15cb03cca1e3cbf3f328a652ecf8d91ba1ec4c026f3c2"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-13",
+            "index" : 12,
+            "label" : true,
+            "margin" : 360977.75,
+            "predicted" : true,
+            "projection" : -2561835.75,
+            "rowHash" : "3ab4f069be86e7b5ef859f84d3778c14090aea48d8909c572b5153beb80cb3e9"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-14",
+            "index" : 13,
+            "label" : false,
+            "margin" : 173560.5,
+            "predicted" : true,
+            "projection" : -2749253,
+            "rowHash" : "f62c5bea9407df9f269fd363b2d6fbd592ad34b949f0a90e5800bc8cbcdebf54"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-15",
+            "index" : 14,
+            "label" : true,
+            "margin" : 209685.5,
+            "predicted" : true,
+            "projection" : -2713128,
+            "rowHash" : "1cedff401f0c4250f5b834cd5021e9a5bc59b36ce6dc235ab95278a043360eca"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-16",
+            "index" : 15,
+            "label" : false,
+            "margin" : -37829.25,
+            "predicted" : false,
+            "projection" : -2960642.75,
+            "rowHash" : "f3dd687963507a2312549928be3fc4abcf016fa7bab5d945110a75ae3712cdd3"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-17",
+            "index" : 16,
+            "label" : true,
+            "margin" : 436868,
+            "predicted" : true,
+            "projection" : -2485945.5,
+            "rowHash" : "1eb062db23d9022094d582fcf254410df464250569718e8843a157086049dc44"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-18",
+            "index" : 17,
+            "label" : false,
+            "margin" : 165976.5,
+            "predicted" : true,
+            "projection" : -2756837,
+            "rowHash" : "148b3574a862ffb0d550a9f3eca50370612cc20104944d169d0d73c8bafd49b9"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-19",
+            "index" : 18,
+            "label" : true,
+            "margin" : -30861.5,
+            "predicted" : false,
+            "projection" : -2953675,
+            "rowHash" : "1cf5f7b644137f43547c23f0b1907bc7022dc7a8ecae8f0479082e5139854638"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-20",
+            "index" : 19,
+            "label" : false,
+            "margin" : -248884.25,
+            "predicted" : false,
+            "projection" : -3171697.75,
+            "rowHash" : "b5ab2c818c0147e0182b51c0d1c660a4ebe05166b944f6405f67b2f311e9dc40"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-21",
+            "index" : 20,
+            "label" : true,
+            "margin" : 273203.25,
+            "predicted" : true,
+            "projection" : -2649610.25,
+            "rowHash" : "c4941f45cb66e5c973e97a2023b1525f7762bb04d78cf744994dd8598cab2c6f"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-22",
+            "index" : 21,
+            "label" : false,
+            "margin" : -121332.75,
+            "predicted" : false,
+            "projection" : -3044146.25,
+            "rowHash" : "0adbd65f495b73b84713993cd35b9c521b6caf2cf9b7b6632bd1e23ea4adfb3a"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-23",
+            "index" : 22,
+            "label" : true,
+            "margin" : 372241.75,
+            "predicted" : true,
+            "projection" : -2550571.75,
+            "rowHash" : "a51f759eb80c4886fbdb44fd510f4b606d8b496e1460ab2131c97968d1a3e9f1"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-24",
+            "index" : 23,
+            "label" : false,
+            "margin" : -91938,
+            "predicted" : false,
+            "projection" : -3014751.5,
+            "rowHash" : "13c7b6d894f0d0a6e61a0a1a4e450100d65903627569d7c2d78e152e244dfde1"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-25",
+            "index" : 24,
+            "label" : true,
+            "margin" : 61091.25,
+            "predicted" : true,
+            "projection" : -2861722.25,
+            "rowHash" : "c01dc55375741a0ccdda7ab95edd08bcd5ae73e409be9a3f09a674a2423e808c"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-26",
+            "index" : 25,
+            "label" : false,
+            "margin" : 76153.25,
+            "predicted" : true,
+            "projection" : -2846660.25,
+            "rowHash" : "a150895107db1f58e497d9d2261df2bb6b25e5b18383dd4c75656c3a4b66d0e0"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-27",
+            "index" : 26,
+            "label" : true,
+            "margin" : 113400.5,
+            "predicted" : true,
+            "projection" : -2809413,
+            "rowHash" : "9931a657f4c7d6d8aad116c132854f183be2187f0546c28d2cda81c1af21af70"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-28",
+            "index" : 27,
+            "label" : false,
+            "margin" : -223621,
+            "predicted" : false,
+            "projection" : -3146434.5,
+            "rowHash" : "876640df9b296a79173eea6ce7ad05a3a199e7dd436b4fbdf65bd0caa08fb092"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-29",
+            "index" : 28,
+            "label" : true,
+            "margin" : 154742,
+            "predicted" : true,
+            "projection" : -2768071.5,
+            "rowHash" : "35967def022eed6b810fb5410a0b4caeb01392af87ec8107fadb1d69ee8b376e"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-30",
+            "index" : 29,
+            "label" : false,
+            "margin" : 129581,
+            "predicted" : true,
+            "projection" : -2793232.5,
+            "rowHash" : "12ca1b0bdd42b58a63e6344bf6bbe2757b0fc88674eb9d75db4bdc33c978c39e"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-31",
+            "index" : 30,
+            "label" : true,
+            "margin" : 78485.5,
+            "predicted" : true,
+            "projection" : -2844328,
+            "rowHash" : "b147a5d9063568a4eebd1f51da10b2b85ab14cfd378b2b8bdb31fc6d11224022"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-32",
+            "index" : 31,
+            "label" : false,
+            "margin" : -166092.5,
+            "predicted" : false,
+            "projection" : -3088906,
+            "rowHash" : "155584f6621ec627f8d4f646f8b372da760a102487e4d30204f290d0ec244fcf"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-33",
+            "index" : 32,
+            "label" : true,
+            "margin" : 234140.25,
+            "predicted" : true,
+            "projection" : -2688673.25,
+            "rowHash" : "3f189d6ed805326302b4d98c00c7dc773e71ec5d337fa64001c66f4312eb2006"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-34",
+            "index" : 33,
+            "label" : false,
+            "margin" : -120064,
+            "predicted" : false,
+            "projection" : -3042877.5,
+            "rowHash" : "993bea2af8d874116899615a49169b1e54b73108d7f134f93e02aa95e76b5ad1"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-35",
+            "index" : 34,
+            "label" : true,
+            "margin" : 329830,
+            "predicted" : true,
+            "projection" : -2592983.5,
+            "rowHash" : "fc84c0d3fb5dea1bb2344932825a1105be4e5792c8d4a84d42f7d9b68f7a8ef4"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-36",
+            "index" : 35,
+            "label" : false,
+            "margin" : 76942,
+            "predicted" : true,
+            "projection" : -2845871.5,
+            "rowHash" : "ec3274f3d2a92f926e608109ed07a3fec9eda810f80c00431b55e7b88a6f4f5b"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-37",
+            "index" : 36,
+            "label" : true,
+            "margin" : 265454.5,
+            "predicted" : true,
+            "projection" : -2657359,
+            "rowHash" : "0ca5bc2dfe857153f85f9a79cee0a79954394d35ca7acc8595d67818024f2aa9"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-38",
+            "index" : 37,
+            "label" : false,
+            "margin" : -148628.5,
+            "predicted" : false,
+            "projection" : -3071442,
+            "rowHash" : "b03a97514d6837a26bca027598d3c33114a54c601aef5c6868debe7aaa5e14b8"
+          },
+          {
+            "correct" : false,
+            "id" : "scenario-39",
+            "index" : 38,
+            "label" : true,
+            "margin" : -813.5,
+            "predicted" : false,
+            "projection" : -2923627,
+            "rowHash" : "6a451a30fba4132dc7fec6f06485eb495ecb53cc21c4f9a26e1bb361abc91a5c"
+          },
+          {
+            "correct" : true,
+            "id" : "scenario-40",
+            "index" : 39,
+            "label" : false,
+            "margin" : -4323,
+            "predicted" : false,
+            "projection" : -2927136.5,
+            "rowHash" : "75b81b3a359f2c496f401d04f98904a5f1be003b55346a9d60962f1d9bf5b289"
+          }
+        ],
+        "scenarioCount" : 40,
+        "sensitivity" : 0.75,
+        "specificity" : 0.59999999999999998,
+        "threshold" : -2922813.5
+      },
+      "layer" : 17,
+      "layerResolution" : {
+        "depthFraction" : 0.51515151515151514,
+        "layer" : 17,
+        "layerCount" : 34,
+        "source" : "midNetwork"
+      },
+      "scenarios" : 40
+    }
+  },
+  "worstCosinePair" : "fear × hungry = 0.5892963"
+}

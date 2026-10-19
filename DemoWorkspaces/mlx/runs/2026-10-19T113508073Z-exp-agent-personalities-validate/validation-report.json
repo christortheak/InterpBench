@@ -1,0 +1,63 @@
+{
+  "capabilityBattery" : [
+    {
+      "accuracy" : 0.90000000000000002,
+      "armingIsolated" : true,
+      "batteryFormat" : 2,
+      "batteryHash" : "4b24e3e83fe9de79d48aa89cedfac517fad6c4ecb3ec3ba5c7a47a50dc1f379a",
+      "condition" : "baseline",
+      "correct" : 9,
+      "total" : 10
+    },
+    {
+      "accuracy" : 0.80000000000000004,
+      "armingIsolated" : true,
+      "batteryFormat" : 2,
+      "batteryHash" : "4b24e3e83fe9de79d48aa89cedfac517fad6c4ecb3ec3ba5c7a47a50dc1f379a",
+      "condition" : "french-l28-a15",
+      "correct" : 8,
+      "total" : 10
+    },
+    {
+      "accuracy" : 0.80000000000000004,
+      "armingIsolated" : true,
+      "batteryFormat" : 2,
+      "batteryHash" : "4b24e3e83fe9de79d48aa89cedfac517fad6c4ecb3ec3ba5c7a47a50dc1f379a",
+      "condition" : "hungry-l17-a10",
+      "correct" : 8,
+      "total" : 10
+    },
+    {
+      "accuracy" : 0.90000000000000002,
+      "armingIsolated" : true,
+      "batteryFormat" : 2,
+      "batteryHash" : "4b24e3e83fe9de79d48aa89cedfac517fad6c4ecb3ec3ba5c7a47a50dc1f379a",
+      "condition" : "fear-l17-a10",
+      "correct" : 9,
+      "total" : 10
+    },
+    {
+      "accuracy" : 0.90000000000000002,
+      "armingIsolated" : true,
+      "batteryFormat" : 2,
+      "batteryHash" : "4b24e3e83fe9de79d48aa89cedfac517fad6c4ecb3ec3ba5c7a47a50dc1f379a",
+      "condition" : "ggb-l17-a125",
+      "correct" : 9,
+      "total" : 10
+    }
+  ],
+  "cosineMatrixLayer" : 0,
+  "cosineMatrixLayers" : [
+    0
+  ],
+  "experiment" : "agent-personalities",
+  "logitLens" : {
+
+  },
+  "vacuousConcepts" : [
+
+  ],
+  "validation" : {
+
+  }
+}
