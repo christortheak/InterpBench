@@ -372,6 +372,10 @@ def test_every_committed_fixture_has_a_staleness_test():
         "choice-margins.json", "server-evidence-bundle.json",
         # Checked inline in test_system_prompt_composition.py.
         "system-prompt-composition.json",
+        # Checked inline in test_preregistration_arms.py (each manifest's
+        # Conditions section re-rendered by the freeze writer) and read by
+        # PreregistrationArmsTests.swift.
+        "preregistration-arms.json",
         # Checked inline in test_model_capabilities.py (the records against
         # the schema, the probe verdicts, hashes, gates and sentences).
         "model-capabilities.json", "model-capabilities.schema.json",

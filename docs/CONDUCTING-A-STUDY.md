@@ -539,6 +539,13 @@ is preserved untouched, with the summary landing beside it as
 `preregistration-frozen-settings.md`. Quoting the marker inside your own
 document is safe: when in doubt the file is preserved, never overwritten.
 
+The summary's Conditions section lists every arm the run will execute, in run
+order: the baseline (marked when the run adds it implicitly), the injection
+conditions the study runs, each attached agent with its base model, its
+interventions, and the SHA-256 of its pinned artifact, any SAE latent arms,
+and a panel's scenario arms. Arms the manifest carries but this study design
+never runs are named after the list, not in it.
+
 A preserved preregistration is then **frozen like any other pinned input**:
 its SHA-256 is stamped into the manifest, it is snapshotted into
 `experiments/<name>/pinned/`, `verify` re-hashes it from then on, and it

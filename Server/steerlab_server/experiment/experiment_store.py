@@ -4213,6 +4213,108 @@ def _preregistration_is_generated(path: str, d: dict) -> bool:
     return False
 
 
+def _preregistration_arms(d: dict) -> tuple[list[str], list[str]]:
+    """The Conditions section: one line per arm a run of ``d`` EXECUTES, in
+    run order, plus the names of declared arms the run will not execute.
+
+    The section used to print ``conditions`` alone, so a compare-agents study,
+    whose arms are agents attached as variant conditions beside an implicit
+    baseline, froze with an empty Conditions section (field report
+    2026-10-19), and a study carrying inert injection conditions listed arms
+    that never run. The selection here is the run's own rule
+    (:func:`~steerlab_server.experiment.manifest.effective_conditions` and
+    ``effective_condition_names``): a variant comparison runs the baseline and
+    its agents, otherwise the operative declared conditions run with a
+    baseline prepended when none is declared, and SAE latent arms follow. A
+    multi-agent study runs its scenario as cast, and the stripped baseline
+    when ``multiAgentIncludeBaseline`` asks for it. Swift twin:
+    ``ExperimentStore.preregistrationArms``; the lines are identical wherever
+    the two engines spell a number the same way."""
+    from .manifest import concept_machinery_operative
+    declared = [c for c in d.get("conditions") or [] if isinstance(c, dict)]
+    variants = [vc for vc in d.get("variantConditions") or []
+                if isinstance(vc, dict)]
+    raw_latents = d.get("saeLatentConditions")
+    latents = [entry for entry in raw_latents if isinstance(entry, dict)] \
+        if isinstance(raw_latents, list) else []
+    carried = [str(c.get("name")) for c in declared
+               if not (c.get("name") == "baseline" and not c.get("slots"))]
+    latent_names = [entry["name"] for entry in latents
+                    if isinstance(entry.get("name"), str) and entry["name"]]
+    if (d.get("studyKind") or "modelOutput") != "modelOutput":
+        lines = []
+        if d.get("multiAgentIncludeBaseline", True):
+            lines.append("- **baseline**: the scenario with every seat's "
+                         "injections and adapter removed (personas and role "
+                         "text kept)")
+        lines.append("- **configured**: the scenario as cast, "
+                     f"`{d.get('multiAgentScenarioPath')}` "
+                     f"(SHA-256 `{d.get('multiAgentScenarioHash')}`)")
+        return lines, (carried + [str(vc.get("name")) for vc in variants]
+                       + latent_names)
+    operative = declared if not variants and concept_machinery_operative(d) \
+        else []
+    lines = []
+    if not any(c.get("name") == "baseline" for c in operative):
+        lines.append("- **baseline**: none (baseline, run implicitly)")
+    for condition in operative:
+        slots = ", ".join(
+            f"{s.get('concept')}@L{s.get('layer')} α={s.get('alpha')}"
+            for s in condition.get("slots") or []) or "none (baseline)"
+        control = condition.get("controlType")
+        suffix = f" [{control}]" if control else ""
+        lines.append(f"- **{condition.get('name')}**{suffix}: {slots}")
+    for vc in variants:
+        reference = vc.get("fromPromotion")
+        if isinstance(reference, dict):
+            lines.append(f"- **{vc.get('name')}** (agent): forward reference — "
+                         "the agent this experiment's sweep promotes for "
+                         f"{reference.get('concept')}, resolved and pinned at "
+                         "run time")
+            continue
+        artifact = vc.get("artifact") if isinstance(vc.get("artifact"), dict) \
+            else {}
+        parts = []
+        for injection in artifact.get("injections") or []:
+            if injection.get("mode") == "ablate":
+                layers = "+".join(f"L{layer}" for layer
+                                  in injection.get("layers") or []) \
+                    or "every layer"
+                centering = (f" (centering {injection['centering']})"
+                             if injection.get("centering") else "")
+                parts.append(f"{injection.get('concept')} ablated "
+                             f"λ={injection.get('alpha')} at {layers}{centering}")
+            else:
+                parts.append(f"{injection.get('concept')}@L"
+                             f"{injection.get('layer')} α={injection.get('alpha')}")
+        for adapter in artifact.get("adapters") or []:
+            path = adapter.get("adapterDirectory") or adapter.get("artifactPath")
+            if path:
+                parts.append(f"adapter `{path}`")
+        policies = len(artifact.get("interventionPolicies") or [])
+        if policies:
+            parts.append(f"{policies} intervention "
+                         f"polic{'y' if policies == 1 else 'ies'}")
+        if artifact.get("systemPromptHash"):
+            parts.append("agent system prompt (SHA-256 "
+                         f"`{artifact['systemPromptHash']}`)")
+        lines.append(f"- **{vc.get('name')}** (agent): "
+                     f"{', '.join(parts) or 'no interventions'}; base model "
+                     f"{artifact.get('baseModelID')} @ "
+                     f"`{artifact.get('baseRevision')}`; pinned artifact "
+                     f"`{vc.get('artifactPath')}` "
+                     f"(SHA-256 `{vc.get('artifactHash')}`)")
+    for entry in latents:
+        layer = (f" at L{entry['layer']}"
+                 if entry.get("layer") is not None else "")
+        lines.append(f"- **{entry.get('name')}** (SAE latent): "
+                     f"{entry.get('release')}/{entry.get('saeID')} feature "
+                     f"{entry.get('feature')}{layer}, mode {entry.get('mode')}, "
+                     f"β={entry.get('beta')} (latent units)")
+    executed = {c.get("name") for c in operative}
+    return lines, [name for name in carried if name not in executed]
+
+
 def _write_preregistration(d: dict, root: str | None) -> None:
     """Export the freeze-time settings summary beside the frozen manifest —
     the study's settings-chosen-before-measurement statement, generated at the
@@ -4275,13 +4377,11 @@ def _write_preregistration(d: dict, root: str | None) -> None:
         "## Conditions",
         "",
     ]
-    for condition in d.get("conditions") or []:
-        slots = ", ".join(
-            f"{s.get('concept')}@L{s.get('layer')} α={s.get('alpha')}"
-            for s in condition.get("slots") or []) or "none (baseline)"
-        control = condition.get("controlType")
-        suffix = f" [{control}]" if control else ""
-        lines.append(f"- **{condition.get('name')}**{suffix}: {slots}")
+    arm_lines, inert = _preregistration_arms(d)
+    lines += arm_lines
+    if inert:
+        lines += ["", "Declared but not run by this study design: "
+                  + ", ".join(inert) + "."]
     not_applied = freeze_policy.battery_not_applied(d)
     if not_applied:
         lines += ["", "## Capability battery", ""]

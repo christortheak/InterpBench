@@ -1,0 +1,519 @@
+[
+  {
+    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **french-l28-a15** (agent): french@L28 \u03b1=0.15; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-french-l28-a15.json` (SHA-256 `6f49d6249159723336b97584fb5dd2fff8d9bce97ef95c0ce4e2fc5e1dba9606`)\n- **hungry-l17-a10** (agent): hungry@L17 \u03b1=0.1; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-hungry-l17-a10.json` (SHA-256 `a63b944cc2603affd4faa955de1d446b9a97d2353f4daefc00bce75fcb9bea0b`)",
+    "label": "compare-agents",
+    "manifest": {
+      "concepts": [],
+      "conditions": [],
+      "createdAt": "2026-10-19T00:00:00Z",
+      "experimentDescription": "",
+      "freezeHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "frozenAt": "2026-10-19T00:00:00Z",
+      "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+      "modelID": "test/model",
+      "modelRevision": "abc123",
+      "multiAgentIncludeBaseline": true,
+      "name": "compare-agents",
+      "seeds": [
+        20260610
+      ],
+      "status": "frozen",
+      "studyKind": "modelOutput",
+      "studyType": "agentComparison",
+      "temperature": 0,
+      "variantConditions": [
+        {
+          "artifact": {
+            "adapters": [],
+            "alphaInNormUnits": true,
+            "bandWidth": 1,
+            "baseModelID": "test/model",
+            "baseRevision": "abc123",
+            "createdAt": "2026-10-19T00:00:00Z",
+            "injections": [
+              {
+                "alpha": 0.15,
+                "concept": "french",
+                "layer": 28,
+                "vectorArtifactID": "runs/fixture-sweep/french"
+              }
+            ],
+            "name": "french-l28-a15",
+            "promptMode": "chatAssistant",
+            "qwenThinkingEnabled": false,
+            "schemaVersion": 1,
+            "temperature": 0
+          },
+          "artifactHash": "6f49d6249159723336b97584fb5dd2fff8d9bce97ef95c0ce4e2fc5e1dba9606",
+          "artifactPath": "experiments/prereg/pinned/variant-french-l28-a15.json",
+          "name": "french-l28-a15"
+        },
+        {
+          "artifact": {
+            "adapters": [],
+            "alphaInNormUnits": true,
+            "bandWidth": 1,
+            "baseModelID": "test/model",
+            "baseRevision": "abc123",
+            "createdAt": "2026-10-19T00:00:00Z",
+            "injections": [
+              {
+                "alpha": 0.1,
+                "concept": "hungry",
+                "layer": 17,
+                "vectorArtifactID": "runs/fixture-sweep/hungry"
+              }
+            ],
+            "name": "hungry-l17-a10",
+            "promptMode": "chatAssistant",
+            "qwenThinkingEnabled": false,
+            "schemaVersion": 1,
+            "temperature": 0
+          },
+          "artifactHash": "a63b944cc2603affd4faa955de1d446b9a97d2353f4daefc00bce75fcb9bea0b",
+          "artifactPath": "experiments/prereg/pinned/variant-hungry-l17-a10.json",
+          "name": "hungry-l17-a10"
+        }
+      ]
+    }
+  },
+  {
+    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **french-l28-a15** (agent): french@L28 \u03b1=0.15; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-french-l28-a15.json` (SHA-256 `6f49d6249159723336b97584fb5dd2fff8d9bce97ef95c0ce4e2fc5e1dba9606`)\n\nDeclared but not run by this study design: fear-mid.",
+    "label": "compare-agents-carrying-conditions",
+    "manifest": {
+      "concepts": [],
+      "conditions": [
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "name": "baseline",
+          "slots": []
+        },
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "name": "fear-mid",
+          "slots": [
+            {
+              "alpha": 0.8,
+              "concept": "fear",
+              "layer": 14
+            }
+          ]
+        }
+      ],
+      "createdAt": "2026-10-19T00:00:00Z",
+      "experimentDescription": "",
+      "freezeHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "frozenAt": "2026-10-19T00:00:00Z",
+      "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+      "modelID": "test/model",
+      "modelRevision": "abc123",
+      "multiAgentIncludeBaseline": true,
+      "name": "compare-agents-carrying-conditions",
+      "seeds": [
+        20260610
+      ],
+      "status": "frozen",
+      "studyKind": "modelOutput",
+      "studyType": "agentComparison",
+      "temperature": 0,
+      "variantConditions": [
+        {
+          "artifact": {
+            "adapters": [],
+            "alphaInNormUnits": true,
+            "bandWidth": 1,
+            "baseModelID": "test/model",
+            "baseRevision": "abc123",
+            "createdAt": "2026-10-19T00:00:00Z",
+            "injections": [
+              {
+                "alpha": 0.15,
+                "concept": "french",
+                "layer": 28,
+                "vectorArtifactID": "runs/fixture-sweep/french"
+              }
+            ],
+            "name": "french-l28-a15",
+            "promptMode": "chatAssistant",
+            "qwenThinkingEnabled": false,
+            "schemaVersion": 1,
+            "temperature": 0
+          },
+          "artifactHash": "6f49d6249159723336b97584fb5dd2fff8d9bce97ef95c0ce4e2fc5e1dba9606",
+          "artifactPath": "experiments/prereg/pinned/variant-french-l28-a15.json",
+          "name": "french-l28-a15"
+        }
+      ]
+    }
+  },
+  {
+    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **calm-ablate** (agent): calm ablated \u03bb=1 at L10+L11 (centering neutralMean), fear ablated \u03bb=0.25 at every layer, adapter `runs/lora/sympathy-lora`; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-calm-ablate.json` (SHA-256 `8d4de0c727bdaa8749ff4f82e4b252f39523d65dc922cb16acbf7b9714c5a4b6`)\n- **archivist** (agent): 1 intervention policy, agent system prompt (SHA-256 `0c9e9f92542f2212898f6b2e28fb2fa6e578eb8425337f1293fe84f7da3cbc2a`); base model test/model @ `None`; pinned artifact `experiments/prereg/pinned/variant-archivist.json` (SHA-256 `f22ac3936393cbd600d425455cc091480848e4cbfe8df0c6d4e4c31c7d46452f`)\n- **unsteered-copy** (agent): no interventions; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-unsteered-copy.json` (SHA-256 `ef0b9e6311e34849e3a46322db52c415cd2e9f27c1404dd3d447612cfde0e670`)\n- **fear-promoted** (agent): forward reference \u2014 the agent this experiment's sweep promotes for fear, resolved and pinned at run time",
+    "label": "agent-interventions",
+    "manifest": {
+      "concepts": [],
+      "conditions": [],
+      "createdAt": "2026-10-19T00:00:00Z",
+      "experimentDescription": "",
+      "freezeHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "frozenAt": "2026-10-19T00:00:00Z",
+      "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+      "modelID": "test/model",
+      "modelRevision": "abc123",
+      "multiAgentIncludeBaseline": true,
+      "name": "agent-interventions",
+      "seeds": [
+        20260610
+      ],
+      "status": "frozen",
+      "studyKind": "modelOutput",
+      "studyType": "agentComparison",
+      "temperature": 0,
+      "variantConditions": [
+        {
+          "artifact": {
+            "adapters": [
+              {
+                "adapterDirectory": "runs/lora/sympathy-lora",
+                "adapterHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "artifactPath": "runs/lora/sympathy-lora",
+                "configHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "name": "sympathy-lora"
+              }
+            ],
+            "alphaInNormUnits": true,
+            "bandWidth": 1,
+            "baseModelID": "test/model",
+            "baseRevision": "abc123",
+            "createdAt": "2026-10-19T00:00:00Z",
+            "injections": [
+              {
+                "alpha": 1,
+                "centering": "neutralMean",
+                "concept": "calm",
+                "layer": 10,
+                "layers": [
+                  10,
+                  11
+                ],
+                "mode": "ablate",
+                "vectorArtifactID": "runs/fixture-sweep/calm"
+              },
+              {
+                "alpha": 0.25,
+                "concept": "fear",
+                "layer": 14,
+                "mode": "ablate",
+                "vectorArtifactID": "runs/fixture-sweep/fear"
+              }
+            ],
+            "name": "calm-ablate",
+            "promptMode": "chatAssistant",
+            "qwenThinkingEnabled": false,
+            "schemaVersion": 1,
+            "temperature": 0
+          },
+          "artifactHash": "8d4de0c727bdaa8749ff4f82e4b252f39523d65dc922cb16acbf7b9714c5a4b6",
+          "artifactPath": "experiments/prereg/pinned/variant-calm-ablate.json",
+          "name": "calm-ablate"
+        },
+        {
+          "artifact": {
+            "adapters": [],
+            "alphaInNormUnits": true,
+            "bandWidth": 1,
+            "baseModelID": "test/model",
+            "baseRevision": null,
+            "createdAt": "2026-10-19T00:00:00Z",
+            "injections": [],
+            "interventionPolicies": [
+              {
+                "json": "{\"schemaVersion\":1}",
+                "sha256": "0e9561cfb83d50990a103b3896fe249a11fe27fa28985448187f93ec12116d72"
+              }
+            ],
+            "name": "archivist",
+            "promptMode": "chatAssistant",
+            "qwenThinkingEnabled": false,
+            "schemaVersion": 1,
+            "systemPrompt": "You answer as a careful archivist.",
+            "systemPromptHash": "0c9e9f92542f2212898f6b2e28fb2fa6e578eb8425337f1293fe84f7da3cbc2a",
+            "temperature": 0
+          },
+          "artifactHash": "f22ac3936393cbd600d425455cc091480848e4cbfe8df0c6d4e4c31c7d46452f",
+          "artifactPath": "experiments/prereg/pinned/variant-archivist.json",
+          "name": "archivist"
+        },
+        {
+          "artifact": {
+            "adapters": [],
+            "alphaInNormUnits": true,
+            "bandWidth": 1,
+            "baseModelID": "test/model",
+            "baseRevision": "abc123",
+            "createdAt": "2026-10-19T00:00:00Z",
+            "injections": [],
+            "name": "unsteered-copy",
+            "promptMode": "chatAssistant",
+            "qwenThinkingEnabled": false,
+            "schemaVersion": 1,
+            "temperature": 0
+          },
+          "artifactHash": "ef0b9e6311e34849e3a46322db52c415cd2e9f27c1404dd3d447612cfde0e670",
+          "artifactPath": "experiments/prereg/pinned/variant-unsteered-copy.json",
+          "name": "unsteered-copy"
+        },
+        {
+          "fromPromotion": {
+            "concept": "fear"
+          },
+          "name": "fear-promoted"
+        }
+      ]
+    }
+  },
+  {
+    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **fear-mid**: fear@L14 \u03b1=0.8\n- **fear-mid-random** [randomMatchedNorm]: fear@L14 \u03b1=0.8",
+    "label": "concept-study-implicit-baseline",
+    "manifest": {
+      "concepts": [],
+      "conditions": [
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "name": "fear-mid",
+          "slots": [
+            {
+              "alpha": 0.8,
+              "concept": "fear",
+              "layer": 14
+            }
+          ]
+        },
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "controlType": "randomMatchedNorm",
+          "name": "fear-mid-random",
+          "slots": [
+            {
+              "alpha": 0.8,
+              "concept": "fear",
+              "layer": 14
+            }
+          ]
+        }
+      ],
+      "createdAt": "2026-10-19T00:00:00Z",
+      "experimentDescription": "",
+      "freezeHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "frozenAt": "2026-10-19T00:00:00Z",
+      "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+      "modelID": "test/model",
+      "modelRevision": "abc123",
+      "multiAgentIncludeBaseline": true,
+      "name": "concept-study-implicit-baseline",
+      "seeds": [
+        20260610
+      ],
+      "status": "frozen",
+      "studyKind": "modelOutput",
+      "temperature": 0,
+      "variantConditions": []
+    }
+  },
+  {
+    "conditionsSection": "- **baseline**: none (baseline)\n- **fear-mid**: fear@L14 \u03b1=0.8",
+    "label": "concept-study-declared-baseline",
+    "manifest": {
+      "concepts": [],
+      "conditions": [
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "name": "baseline",
+          "slots": []
+        },
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "name": "fear-mid",
+          "slots": [
+            {
+              "alpha": 0.8,
+              "concept": "fear",
+              "layer": 14
+            }
+          ]
+        }
+      ],
+      "createdAt": "2026-10-19T00:00:00Z",
+      "experimentDescription": "",
+      "freezeHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "frozenAt": "2026-10-19T00:00:00Z",
+      "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+      "modelID": "test/model",
+      "modelRevision": "abc123",
+      "multiAgentIncludeBaseline": true,
+      "name": "concept-study-declared-baseline",
+      "seeds": [
+        20260610
+      ],
+      "status": "frozen",
+      "studyKind": "modelOutput",
+      "temperature": 0,
+      "variantConditions": []
+    }
+  },
+  {
+    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **fear-mid**: fear@L14 \u03b1=0.8\n- **clamp-42** (SAE latent): gemma-scope-2b-pt-res/layer_12/width_16k/average_l0_82 feature 42 at L12, mode clamp, \u03b2=0.5 (latent units)\n- **add-7** (SAE latent): gemma-scope-2b-pt-res/layer_6/width_16k/average_l0_70 feature 7, mode add, \u03b2=2.5 (latent units)",
+    "label": "sae-latent-arms",
+    "manifest": {
+      "concepts": [],
+      "conditions": [
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "name": "fear-mid",
+          "slots": [
+            {
+              "alpha": 0.8,
+              "concept": "fear",
+              "layer": 14
+            }
+          ]
+        }
+      ],
+      "createdAt": "2026-10-19T00:00:00Z",
+      "experimentDescription": "",
+      "freezeHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "frozenAt": "2026-10-19T00:00:00Z",
+      "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+      "modelID": "test/model",
+      "modelRevision": "abc123",
+      "multiAgentIncludeBaseline": true,
+      "name": "sae-latent-arms",
+      "saeLatentConditions": [
+        {
+          "beta": 0.5,
+          "feature": 42,
+          "layer": 12,
+          "mode": "clamp",
+          "name": "clamp-42",
+          "release": "gemma-scope-2b-pt-res",
+          "saeID": "layer_12/width_16k/average_l0_82"
+        },
+        {
+          "beta": 2.5,
+          "feature": 7,
+          "mode": "add",
+          "name": "add-7",
+          "release": "gemma-scope-2b-pt-res",
+          "saeID": "layer_6/width_16k/average_l0_70"
+        }
+      ],
+      "seeds": [
+        20260610
+      ],
+      "status": "frozen",
+      "studyKind": "modelOutput",
+      "temperature": 0,
+      "variantConditions": []
+    }
+  },
+  {
+    "conditionsSection": "- **baseline**: the scenario with every seat's injections and adapter removed (personas and role text kept)\n- **configured**: the scenario as cast, `prompts/scenarios/panel.json` (SHA-256 `eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee`)\n\nDeclared but not run by this study design: fear-mid, french-l28-a15.",
+    "label": "multi-agent-panel",
+    "manifest": {
+      "concepts": [],
+      "conditions": [
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "name": "fear-mid",
+          "slots": [
+            {
+              "alpha": 0.8,
+              "concept": "fear",
+              "layer": 14
+            }
+          ]
+        }
+      ],
+      "createdAt": "2026-10-19T00:00:00Z",
+      "experimentDescription": "",
+      "freezeHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "frozenAt": "2026-10-19T00:00:00Z",
+      "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+      "modelID": "test/model",
+      "modelRevision": "abc123",
+      "multiAgentIncludeBaseline": true,
+      "multiAgentScenarioHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "multiAgentScenarioPath": "prompts/scenarios/panel.json",
+      "name": "multi-agent-panel",
+      "seeds": [
+        20260610
+      ],
+      "status": "frozen",
+      "studyKind": "multiAgent",
+      "studyType": "multiAgent",
+      "temperature": 0,
+      "variantConditions": [
+        {
+          "artifact": {
+            "adapters": [],
+            "alphaInNormUnits": true,
+            "bandWidth": 1,
+            "baseModelID": "test/model",
+            "baseRevision": "abc123",
+            "createdAt": "2026-10-19T00:00:00Z",
+            "injections": [
+              {
+                "alpha": 0.15,
+                "concept": "french",
+                "layer": 28,
+                "vectorArtifactID": "runs/fixture-sweep/french"
+              }
+            ],
+            "name": "french-l28-a15",
+            "promptMode": "chatAssistant",
+            "qwenThinkingEnabled": false,
+            "schemaVersion": 1,
+            "temperature": 0
+          },
+          "artifactHash": "6f49d6249159723336b97584fb5dd2fff8d9bce97ef95c0ce4e2fc5e1dba9606",
+          "artifactPath": "experiments/prereg/pinned/variant-french-l28-a15.json",
+          "name": "french-l28-a15"
+        }
+      ]
+    }
+  },
+  {
+    "conditionsSection": "- **configured**: the scenario as cast, `prompts/scenarios/panel.json` (SHA-256 `eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee`)",
+    "label": "multi-agent-panel-without-baseline",
+    "manifest": {
+      "concepts": [],
+      "conditions": [],
+      "createdAt": "2026-10-19T00:00:00Z",
+      "experimentDescription": "",
+      "freezeHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "frozenAt": "2026-10-19T00:00:00Z",
+      "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+      "modelID": "test/model",
+      "modelRevision": "abc123",
+      "multiAgentIncludeBaseline": false,
+      "multiAgentScenarioHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "multiAgentScenarioPath": "prompts/scenarios/panel.json",
+      "name": "multi-agent-panel-without-baseline",
+      "seeds": [
+        20260610
+      ],
+      "status": "frozen",
+      "studyKind": "multiAgent",
+      "studyType": "multiAgent",
+      "temperature": 0,
+      "variantConditions": []
+    }
+  }
+]

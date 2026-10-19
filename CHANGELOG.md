@@ -69,6 +69,17 @@ migration that rewrites frozen bytes.
 
 ## [0.9.10] — 2026-10-19
 
+- **The preregistration names every arm.** The settings summary written at
+  freeze listed declared injection conditions only, so a study comparing
+  agents froze with an empty Conditions section. It now lists every arm the
+  run will execute, in run order: the baseline (marked when the run adds it
+  implicitly), each injection condition the study runs, each attached agent
+  with its base model, its interventions, and the SHA-256 of its pinned
+  artifact, each SAE latent arm, and a panel's two scenario arms. Arms a study
+  carries but never runs, such as injection conditions in a study comparing
+  agents, are named after the list instead of in it. Both engines write the
+  same lines. Summaries already frozen are not rewritten, so the Demo
+  Workspace's `agent-personalities` summary still shows the empty section.
 - **A Demo Workspace for this Mac.** "Four concepts, four personalities"
   runs on Gemma 3 4B with the engine built into the app. It covers four steps:
   - extract French, hungry, fear, and Golden Gate Bridge directions, and check

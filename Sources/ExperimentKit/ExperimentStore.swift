@@ -7742,11 +7742,7 @@ public enum ExperimentStore {
     public static func preregistrationMarkdown(
         _ manifest: ExperimentManifest, capabilities: ModelCapabilities? = nil
     ) -> String {
-        func formatNumber(_ value: Double) -> String {
-            value == value.rounded() && abs(value) < 1e15
-                ? String(Int(value))
-                : "\(value)"
-        }
+        let formatNumber = preregistrationNumber
         var lines = [
             "# Preregistration: \(manifest.name)",
             "",
@@ -7778,14 +7774,14 @@ public enum ExperimentStore {
             "## Conditions",
             "",
         ]
-        for condition in manifest.conditions {
-            let slots = condition.slots
-                .map { "\($0.concept)@L\($0.layer) α=\(formatNumber($0.alpha))" }
-                .joined(separator: ", ")
-            let suffix = condition.controlType.map { " [\($0)]" } ?? ""
-            lines.append(
-                "- **\(condition.name)**\(suffix): "
-                    + (slots.isEmpty ? "none (baseline)" : slots))
+        let arms = preregistrationArms(manifest)
+        lines += arms.lines
+        if !arms.inert.isEmpty {
+            lines += [
+                "",
+                "Declared but not run by this study design: "
+                    + arms.inert.joined(separator: ", ") + ".",
+            ]
         }
         let batteryNotApplied = batteryNotAppliedSentences(manifest)
         if !batteryNotApplied.isEmpty {
@@ -7831,6 +7827,145 @@ public enum ExperimentStore {
             "",
         ]
         return lines.joined(separator: "\n")
+    }
+
+    /// How the preregistration prints a number: integral values without a
+    /// fractional part, everything else as Swift spells it.
+    static func preregistrationNumber(_ value: Double) -> String {
+        value == value.rounded() && abs(value) < 1e15
+            ? String(Int(value))
+            : "\(value)"
+    }
+
+    /// The Conditions section: one line per arm a run of this manifest
+    /// EXECUTES, in run order, plus the names of declared arms the run will
+    /// not execute.
+    ///
+    /// The section used to print `conditions` alone, so a compare-agents
+    /// study, whose arms are agents attached as variant conditions beside an
+    /// implicit baseline, froze with an empty Conditions section (field
+    /// report 2026-10-19), and a study carrying inert injection conditions
+    /// listed arms that never run. The selection here is the run's own rule
+    /// (`ExperimentTasks.ordinaryRunConditions` and `runVariantComparison`;
+    /// server `manifest.effective_conditions`): a variant comparison runs the
+    /// baseline and its agents, otherwise the operative declared conditions
+    /// run with a baseline prepended when none is declared, and SAE latent
+    /// arms follow (the server executes them; this engine refuses to run them
+    /// but the study still declares them). A multi-agent study runs its
+    /// scenario as cast, and the stripped baseline when
+    /// `multiAgentIncludeBaseline` asks for it. Server twin:
+    /// `_preregistration_arms` (experiment_store.py); the lines are
+    /// identical wherever the two engines spell a number the same way.
+    static func preregistrationArms(
+        _ manifest: ExperimentManifest
+    ) -> (lines: [String], inert: [String]) {
+        let format = preregistrationNumber
+        let declared = manifest.conditions
+            .filter { !isCanonicalBaseline($0) }.map(\.name)
+        var latents: [[String: JSONValue]] = []
+        if case .array(let entries)? = manifest.saeLatentConditions {
+            for case .object(let entry) in entries { latents.append(entry) }
+        }
+        let latentNames = latents.compactMap { entry -> String? in
+            if case .string(let name)? = entry["name"], !name.isEmpty { return name }
+            return nil
+        }
+        guard manifest.studyKind == .modelOutput else {
+            var lines: [String] = []
+            if manifest.multiAgentIncludeBaseline {
+                lines.append(
+                    "- **baseline**: the scenario with every seat's injections "
+                        + "and adapter removed (personas and role text kept)")
+            }
+            lines.append(
+                "- **configured**: the scenario as cast, "
+                    + "`\(manifest.multiAgentScenarioPath ?? "None")` "
+                    + "(SHA-256 `\(manifest.multiAgentScenarioHash ?? "None")`)")
+            return (
+                lines,
+                declared + manifest.variantConditions.map(\.name) + latentNames)
+        }
+        let operative =
+            manifest.variantConditions.isEmpty && conceptMachineryOperative(manifest)
+            ? manifest.conditions : []
+        var lines: [String] = []
+        if !operative.contains(where: { $0.name == "baseline" }) {
+            lines.append("- **baseline**: none (baseline, run implicitly)")
+        }
+        for condition in operative {
+            let slots = condition.slots
+                .map { "\($0.concept)@L\($0.layer) α=\(format($0.alpha))" }
+                .joined(separator: ", ")
+            let suffix = condition.controlType.map { " [\($0)]" } ?? ""
+            lines.append(
+                "- **\(condition.name)**\(suffix): "
+                    + (slots.isEmpty ? "none (baseline)" : slots))
+        }
+        for variant in manifest.variantConditions {
+            if let reference = variant.fromPromotion {
+                lines.append(
+                    "- **\(variant.name)** (agent): forward reference — the "
+                        + "agent this experiment's sweep promotes for "
+                        + "\(reference.concept), resolved and pinned at run time")
+                continue
+            }
+            let artifact = variant.artifact
+            var parts = artifact.injections.map { injection -> String in
+                guard injection.effectiveMode == .ablate else {
+                    return "\(injection.concept)@L\(injection.layer) "
+                        + "α=\(format(injection.alpha))"
+                }
+                let covered = injection.layers ?? []
+                let layers = covered.isEmpty
+                    ? "every layer"
+                    : covered.map { "L\($0)" }.joined(separator: "+")
+                let centering = (injection.centering ?? "").isEmpty
+                    ? "" : " (centering \(injection.centering ?? ""))"
+                return "\(injection.concept) ablated "
+                    + "λ=\(format(injection.alpha)) at \(layers)\(centering)"
+            }
+            for adapter in artifact.adapters {
+                let path = adapter.adapterDirectory.isEmpty
+                    ? adapter.artifactPath : adapter.adapterDirectory
+                if !path.isEmpty { parts.append("adapter `\(path)`") }
+            }
+            let policies = artifact.interventionPolicies?.count ?? 0
+            if policies > 0 {
+                parts.append(
+                    "\(policies) intervention polic\(policies == 1 ? "y" : "ies")")
+            }
+            if let hash = artifact.systemPromptHash, !hash.isEmpty {
+                parts.append("agent system prompt (SHA-256 `\(hash)`)")
+            }
+            lines.append(
+                "- **\(variant.name)** (agent): "
+                    + (parts.isEmpty ? "no interventions" : parts.joined(separator: ", "))
+                    + "; base model \(artifact.baseModelID) "
+                    + "@ `\(artifact.baseRevision ?? "None")`; pinned artifact "
+                    + "`\(variant.artifactPath)` (SHA-256 `\(variant.artifactHash)`)")
+        }
+        func latentValue(_ value: JSONValue?) -> String {
+            switch value {
+            case .string(let text)?: return text
+            case .number(let number)?: return format(number)
+            case .bool(let flag)?: return flag ? "True" : "False"
+            default: return "None"
+            }
+        }
+        for entry in latents {
+            var layer = ""
+            if let value = entry["layer"], value != .null {
+                layer = " at L\(latentValue(value))"
+            }
+            lines.append(
+                "- **\(latentValue(entry["name"]))** (SAE latent): "
+                    + "\(latentValue(entry["release"]))/\(latentValue(entry["saeID"])) "
+                    + "feature \(latentValue(entry["feature"]))\(layer), "
+                    + "mode \(latentValue(entry["mode"])), "
+                    + "β=\(latentValue(entry["beta"])) (latent units)")
+        }
+        let executed = Set(operative.map(\.name))
+        return (lines, declared.filter { !executed.contains($0) })
     }
 
     // MARK: - Trained-adapter provenance (LoRA readiness §0 amendments 1+2)

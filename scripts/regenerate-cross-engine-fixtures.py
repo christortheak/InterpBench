@@ -2226,6 +2226,172 @@ def effect_units() -> None:
     })
 
 
+def _prereg_manifest(name: str, **fields) -> dict:
+    """A frozen manifest both engines decode, with nothing in it but what
+    the preregistration's Conditions section reads."""
+    manifest = {
+        "name": name, "experimentDescription": "",
+        "createdAt": "2026-10-19T00:00:00Z", "status": "frozen",
+        "studyKind": "modelOutput", "modelID": "test/model",
+        "modelRevision": "abc123", "frozenAt": "2026-10-19T00:00:00Z",
+        "freezeHash": "f" * 64, "gitCommit": "c" * 40, "concepts": [],
+        "conditions": [], "variantConditions": [], "seeds": [20260610],
+        "temperature": 0, "multiAgentIncludeBaseline": True,
+    }
+    manifest.update(fields)
+    return manifest
+
+
+def _prereg_condition(name: str, slots: list, **fields) -> dict:
+    return {"name": name, "bandWidth": 1, "alphaInNormUnits": True,
+            "slots": [{"concept": concept, "layer": layer, "alpha": alpha}
+                      for concept, layer, alpha in slots], **fields}
+
+
+def _prereg_agent(name: str, injections: list, **fields) -> dict:
+    """An attached agent as `experiment attach-agent` pins it: the artifact
+    inline, its workspace path, and the digest of its bytes."""
+    import hashlib
+
+    artifact = {"schemaVersion": 1, "name": name, "baseModelID": "test/model",
+                "baseRevision": "abc123", "adapters": [],
+                "injections": injections, "bandWidth": 1,
+                "alphaInNormUnits": True, "promptMode": "chatAssistant",
+                "qwenThinkingEnabled": False, "temperature": 0,
+                "createdAt": "2026-10-19T00:00:00Z", **fields}
+    return {"name": name,
+            "artifactPath": f"experiments/prereg/pinned/variant-{name}.json",
+            "artifactHash": hashlib.sha256(json.dumps(
+                artifact, sort_keys=True).encode("utf-8")).hexdigest(),
+            "artifact": artifact}
+
+
+def _prereg_injection(concept: str, layer: int, alpha: float, **fields) -> dict:
+    return {"concept": concept, "layer": layer, "alpha": alpha,
+            "vectorArtifactID": f"runs/fixture-sweep/{concept}", **fields}
+
+
+def _preregistration_arm_cases() -> list[tuple[str, dict]]:
+    """One manifest per study shape whose arms the Conditions section names.
+    Values avoid integral floats, which the two engines spell differently
+    (``1.0`` against ``1``) on every line of the settings summary."""
+    import hashlib
+
+    fear_mid = _prereg_condition("fear-mid", [("fear", 14, 0.8)])
+    policy_text = '{"schemaVersion":1}'
+    persona = "You answer as a careful archivist."
+    latents = [
+        {"name": "clamp-42", "release": "gemma-scope-2b-pt-res",
+         "saeID": "layer_12/width_16k/average_l0_82", "feature": 42,
+         "layer": 12, "mode": "clamp", "beta": 0.5},
+        {"name": "add-7", "release": "gemma-scope-2b-pt-res",
+         "saeID": "layer_6/width_16k/average_l0_70", "feature": 7,
+         "mode": "add", "beta": 2.5},
+    ]
+    return [
+        # The field report: arms attached as agents, the baseline implicit.
+        ("compare-agents", _prereg_manifest(
+            "compare-agents", studyType="agentComparison",
+            variantConditions=[
+                _prereg_agent("french-l28-a15",
+                              [_prereg_injection("french", 28, 0.15)]),
+                _prereg_agent("hungry-l17-a10",
+                              [_prereg_injection("hungry", 17, 0.1)]),
+            ])),
+        # Injection conditions a compare-agents study carries never run.
+        ("compare-agents-carrying-conditions", _prereg_manifest(
+            "compare-agents-carrying-conditions", studyType="agentComparison",
+            conditions=[_prereg_condition("baseline", []), fear_mid],
+            variantConditions=[
+                _prereg_agent("french-l28-a15",
+                              [_prereg_injection("french", 28, 0.15)]),
+            ])),
+        # Every way an agent intervenes, and an agent not yet promoted.
+        ("agent-interventions", _prereg_manifest(
+            "agent-interventions", studyType="agentComparison",
+            variantConditions=[
+                _prereg_agent(
+                    "calm-ablate",
+                    [_prereg_injection("calm", 10, 1, mode="ablate",
+                                       layers=[10, 11],
+                                       centering="neutralMean"),
+                     _prereg_injection("fear", 14, 0.25, mode="ablate")],
+                    adapters=[{"name": "sympathy-lora",
+                               "artifactPath": "runs/lora/sympathy-lora",
+                               "adapterDirectory": "runs/lora/sympathy-lora",
+                               "adapterHash": "a" * 64,
+                               "configHash": "b" * 64}]),
+                _prereg_agent(
+                    "archivist", [], baseRevision=None, systemPrompt=persona,
+                    systemPromptHash=hashlib.sha256(
+                        persona.encode("utf-8")).hexdigest(),
+                    interventionPolicies=[{
+                        "json": policy_text,
+                        "sha256": hashlib.sha256(
+                            policy_text.encode("utf-8")).hexdigest()}]),
+                _prereg_agent("unsteered-copy", []),
+                {"name": "fear-promoted", "fromPromotion": {"concept": "fear"}},
+            ])),
+        # A concept study: its declared arms, the baseline prepended.
+        ("concept-study-implicit-baseline", _prereg_manifest(
+            "concept-study-implicit-baseline",
+            conditions=[fear_mid, _prereg_condition(
+                "fear-mid-random", [("fear", 14, 0.8)],
+                controlType="randomMatchedNorm")])),
+        # A declared baseline is listed where it was declared, once.
+        ("concept-study-declared-baseline", _prereg_manifest(
+            "concept-study-declared-baseline",
+            conditions=[_prereg_condition("baseline", []), fear_mid])),
+        # SAE latent arms run on the server after the ordinary arms.
+        ("sae-latent-arms", _prereg_manifest(
+            "sae-latent-arms", conditions=[fear_mid],
+            saeLatentConditions=latents)),
+        # A panel runs its scenario; carried arms of other kinds never run.
+        ("multi-agent-panel", _prereg_manifest(
+            "multi-agent-panel", studyKind="multiAgent",
+            studyType="multiAgent",
+            multiAgentScenarioPath="prompts/scenarios/panel.json",
+            multiAgentScenarioHash="e" * 64, conditions=[fear_mid],
+            variantConditions=[
+                _prereg_agent("french-l28-a15",
+                              [_prereg_injection("french", 28, 0.15)]),
+            ])),
+        ("multi-agent-panel-without-baseline", _prereg_manifest(
+            "multi-agent-panel-without-baseline", studyKind="multiAgent",
+            studyType="multiAgent", multiAgentIncludeBaseline=False,
+            multiAgentScenarioPath="prompts/scenarios/panel.json",
+            multiAgentScenarioHash="e" * 64)),
+    ]
+
+
+def preregistration_conditions_section(text: str) -> str:
+    """The body of a preregistration's Conditions section: everything after
+    its heading, up to the next section's heading."""
+    start = text.index("## Conditions\n\n") + len("## Conditions\n\n")
+    return text[start:text.index("\n\n## ", start)]
+
+
+def preregistration_arms() -> None:
+    """The preregistration's Conditions section for each study shape, as this
+    engine writes it at freeze. The Swift suite renders the same manifests
+    and must produce the same section byte for byte
+    (PreregistrationArmsTests.swift)."""
+    from steerlab_server.experiment import experiment_store as es
+
+    cases = []
+    with tempfile.TemporaryDirectory() as root:
+        for label, manifest in _preregistration_arm_cases():
+            directory = os.path.join(root, "experiments", manifest["name"])
+            os.makedirs(directory)
+            es._write_preregistration(json.loads(json.dumps(manifest)), root)
+            with open(os.path.join(directory, es.PREREG_FILENAME),
+                      encoding="utf-8") as handle:
+                section = preregistration_conditions_section(handle.read())
+            cases.append({"label": label, "manifest": manifest,
+                          "conditionsSection": section})
+    _write(os.path.join(FIXTURES, "preregistration-arms.json"), cases)
+
+
 def main() -> int:
     os.makedirs(FIXTURES, exist_ok=True)
     effect_units()
@@ -2238,6 +2404,7 @@ def main() -> int:
     concept_stats_splits()
     extraction_rendering_and_positions()
     model_capabilities()
+    preregistration_arms()
     system_prompt_composition()
     server_minted_agent()
     server_minted_adapter_agent()
