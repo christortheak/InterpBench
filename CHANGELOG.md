@@ -45,6 +45,14 @@ migration that rewrites frozen bytes.
     Condition records an ablation row as an ablation condition, not a
     steering one. If a study's ablation arm passed through one of these
     paths, check that its condition or agent still says ablate.
+  - **Promotion records survive Save Changes.** The agent editor rebuilt an
+    agent from its controls and wrote it over the file, so Save Changes
+    erased the record of how a promoted agent was chosen, even with nothing
+    edited. A save that leaves what the agent does unchanged, such as a
+    rename, now keeps the record. A save that changes it drops the record,
+    because the record would vouch for settings it never tested, and the
+    editor says so. To keep a promoted agent unchanged, start from New Agent
+    instead of editing it.
 
 ## [0.9.10] — 2026-10-19
 

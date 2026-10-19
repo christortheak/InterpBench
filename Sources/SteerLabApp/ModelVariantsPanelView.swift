@@ -1570,22 +1570,35 @@ struct ModelVariantsPanelView: View {
     /// overwritten by a line beginning "saved".
     @discardableResult
     private func performSave(applyAfterSave: Bool = false) -> Bool {
-        var artifact = artifactFromEditor()
+        let artifact = artifactFromEditor()
         let selected = panel.selectedVariant
         do {
             let record: ModelVariantRecord
+            var droppedPromotion = false
             if let selected {
-                artifact.createdAt = selected.artifact.createdAt
-                record = try ModelVariantStore.update(artifact, at: selected.url)
+                // Keeps what the editor has no control for (the promotion
+                // record, creation time, an older prompt hash) unless the
+                // edit changes what the agent does.
+                let merge = AgentEditProvenance.merge(edited: artifact, over: selected.artifact)
+                droppedPromotion = merge.droppedPromotion
+                record = try ModelVariantStore.update(merge.artifact, at: selected.url)
             } else {
                 record = try ModelVariantStore.save(artifact)
             }
             panel.refresh()
             panel.selectedVariantID = record.id
             editorLoadedID = record.id
-            panel.setStatus(selected == nil
-                ? "saved agent \(record.artifact.name)"
-                : "updated agent \(record.artifact.name)")
+            if droppedPromotion {
+                panel.setWarningStatus(
+                    "updated agent \(record.artifact.name). Its promotion record was removed: "
+                        + "these edits change what the agent does, so the record no longer "
+                        + "describes it. To keep a promoted agent unchanged, start from New Agent "
+                        + "instead of editing it.")
+            } else {
+                panel.setStatus(selected == nil
+                    ? "saved agent \(record.artifact.name)"
+                    : "updated agent \(record.artifact.name)")
+            }
             if applyAfterSave {
                 service.applyModelVariantToSteering(record)
             }
