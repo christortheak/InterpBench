@@ -201,6 +201,31 @@ _CLIENT_ALPHA_UNITS_REPAIR = experiment_store.ALPHA_UNITS_REPAIR.replace(
     "steerlab-cli experiment", "steerlab experiment")
 
 
+def test_a_baseline_without_alpha_units_stamps_norm_like_the_mac(
+        workspace, capsys):
+    """A baseline carries no α, so it may omit --alpha-units. The key is
+    still part of the document, so this client stamps exactly what the Mac's
+    `declare-condition --baseline` stamps: true, the project convention
+    (twin: ExperimentCLIRunner `declare-condition`). An arm with slots is
+    still refused without it (the test below)."""
+    _concept_files(workspace)
+    assert _run(["experiment", "create", "demo", "--model", "org/m"]) == 0
+    assert _run(["experiment", "attach", "demo", "french"]) == 0
+    capsys.readouterr()
+    assert _run(["experiment", "declare-condition", "demo", "control",
+                 "--baseline", "--json"]) == 0
+    document = _document(capsys)
+    assert document["state"] == "ready"
+    stored = experiment_store.load_raw("demo", str(workspace))["conditions"]
+    assert stored == [{"alphaInNormUnits": True, "bandWidth": 1,
+                       "name": "control", "slots": []}]
+    # A unit the caller names is still the one written.
+    assert _run(["experiment", "declare-condition", "demo", "control-raw",
+                 "--baseline", "--alpha-units", "raw"]) == 0
+    stored = experiment_store.load_raw("demo", str(workspace))["conditions"]
+    assert stored[-1]["alphaInNormUnits"] is False
+
+
 def test_declaring_an_arm_without_its_alpha_units_is_refused_with_the_twin_repair(
         workspace, capsys):
     """CONTRACT: condition-alpha-units-explicit (Phase 1a, G6) reaches the

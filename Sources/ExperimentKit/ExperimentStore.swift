@@ -7184,6 +7184,16 @@ public enum ExperimentStore {
                             for: manifest, vacuousConcepts: concepts,
                             runSubstrate: runSubstrate)
                     }
+                } else {
+                    // Matching evidence on the OTHER substrate turns a
+                    // dead-end refusal into the one-flag repair it usually
+                    // is: the study runs where that evidence was made.
+                    let other =
+                        runSubstrate == evidenceSubstrate
+                        ? WorkspaceScoping.serverSubstrate : evidenceSubstrate
+                    if validationEvidence(for: manifest, runSubstrate: other) != nil {
+                        facts.matchingEvidenceElsewhere = other
+                    }
                 }
                 return FreezePolicy.validation(
                     manifest, name: name, runSubstrate: runSubstrate, facts: facts)

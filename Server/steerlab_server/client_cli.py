@@ -315,9 +315,10 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
              positional="<name> <condition>",
              purpose="Declare one measured arm of the study.",
              boolean_flags=frozenset({"--baseline"}),
+             # `--alpha-units` is required of an arm with slots and optional
+             # for `--baseline`, which carries no α; the verb enforces both.
              value_flags=frozenset({"--slots", "--alpha-units",
-                                    "--band-width"}),
-             required_flags=frozenset({"--alpha-units"})),
+                                    "--band-width"})),
     VerbSpec("experiment", "remove-condition",
              positional="<name> <condition>",
              purpose="Remove one declared arm from a draft study."),
@@ -1629,8 +1630,13 @@ def _experiment(invocation: Invocation) -> CLIResult:
                     repair_action="--band-width 1 (the single-layer default)")
             condition["bandWidth"] = width
         # ABSENT, not defaulted, when the flag was not given: the engine owns
-        # that refusal and its text is a cross-engine twin literal.
+        # that refusal and its text is a cross-engine twin literal. A
+        # baseline is the one exception: it carries no α, so both clients
+        # stamp the same value for it — norm, the project convention
+        # (2026-10-20; twin: the Mac's `declare-condition`).
         units = _alpha_in_norm_units(invocation)
+        if units is None and baseline:
+            units = True
         if units is not None:
             condition["alphaInNormUnits"] = units
         document = store.add_condition(name, condition)

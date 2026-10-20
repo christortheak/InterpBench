@@ -111,6 +111,10 @@ its heading (`{{cli}} workspace guide <topic>`) or ask the verb itself
 - Check every pin: `{{cli}} experiment verify <name>`. Then `{{cli}}
   experiment freeze <name>`: one-way, and a refusal names the gate and its
   repair.
+<!-- client: mac -->
+- A study validated and run on a cluster: `steerlab-cli experiment freeze
+  <name> --run-substrate server`, so the gate reads the cluster's evidence.
+<!-- client: all -->
 - Change a frozen study: `{{cli}} experiment duplicate <name> <new-name>`. The
   copy is a draft.
 

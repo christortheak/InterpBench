@@ -187,7 +187,7 @@ steerlab experiment declare-condition <name> <condition> \
   --slots <concept>:<layer>:<alpha>[,…] --alpha-units norm|raw [--band-width K]
 
 steerlab experiment declare-condition <name> <condition> --baseline \
-  --alpha-units norm|raw
+  [--alpha-units norm|raw]
 
 steerlab experiment remove-condition <name> <condition>
 ```
@@ -197,8 +197,9 @@ alone and measures nothing.** A multi-slot condition *is* the linear mix
 `h + Σ αᵢ·vᵢ` and hashes as a single condition. Every named concept must
 already be attached. `--baseline` and `--slots` are exclusive.
 
-`--alpha-units` is required on every arm, the baseline included; there is no
-default. `norm` denominates α by the residual-stream norm at that layer on the
+`--alpha-units` is required on every arm with slots; there is no default. A
+`--baseline` carries no α, so it may omit the flag, and both clients then stamp
+`norm` for it. `norm` denominates α by the residual-stream norm at that layer on the
 pinned neutral corpus — that is what makes α comparable across concepts. Use
 `raw` only when you know why.
 

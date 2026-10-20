@@ -218,3 +218,81 @@ import Testing
         #expect(fixed.gres.isEmpty)
     }
 }
+
+// 2026-10-20 cluster smoke test: `remote submit-bundle` sent "local" when the
+// caller named no executor, so a model verb typed from the command line ran
+// inside the controller's allocation — the 2026-07-21 failure mode, reached
+// where the app's dialog cannot catch it.
+@Suite struct SubmitExecutorDefaultTests {
+
+    @Test func theCallersExecutorAlwaysWins() {
+        for verb in ["run", "extract", "analyze"] {
+            let resolved = SubmitExecutorDefault.resolve(
+                explicit: "local", verb: verb, serverExecutor: "slurm")
+            #expect(resolved.executor == "local")
+            #expect(resolved.source == .flag)
+        }
+        #expect(
+            SubmitExecutorDefault.resolve(
+                explicit: "slurm", verb: "analyze", serverExecutor: "local"
+            ).executor == "slurm")
+    }
+
+    @Test func aModelVerbGetsTheServersOwnExecutor() {
+        for verb in ["extract", "validate", "sweep", "run", "evaluate", "pipeline"] {
+            let resolved = SubmitExecutorDefault.resolve(
+                explicit: nil, verb: verb, serverExecutor: "slurm")
+            #expect(resolved.executor == "slurm", "\(verb)")
+            #expect(resolved.source == .serverProfile)
+        }
+        // A workstation server's own executor is local, and that is right.
+        #expect(
+            SubmitExecutorDefault.resolve(
+                explicit: nil, verb: "run", serverExecutor: "local"
+            ) == ("local", .serverProfile))
+    }
+
+    @Test func analyzeLoadsNoModelSoItStaysOnTheController() {
+        let resolved = SubmitExecutorDefault.resolve(
+            explicit: nil, verb: "analyze", serverExecutor: "slurm")
+        #expect(resolved.executor == "local")
+        #expect(resolved.source == .analyzeOnController)
+        #expect(!SubmitExecutorDefault.needsServerExecutor(explicit: nil, verb: "analyze"))
+    }
+
+    @Test func aServerThatDeclaresNoExecutorKeepsTheOldLocal() {
+        for declared in [nil, "", "  "] as [String?] {
+            let resolved = SubmitExecutorDefault.resolve(
+                explicit: nil, verb: "run", serverExecutor: declared)
+            #expect(resolved.executor == "local")
+            #expect(resolved.source == .fallback)
+        }
+    }
+
+    @Test func theServerIsAskedOnlyWhenTheAnswerDependsOnIt() {
+        #expect(SubmitExecutorDefault.needsServerExecutor(explicit: nil, verb: "run"))
+        #expect(!SubmitExecutorDefault.needsServerExecutor(explicit: "slurm", verb: "run"))
+        #expect(!SubmitExecutorDefault.needsServerExecutor(explicit: "local", verb: "run"))
+    }
+
+    @Test func namingLocalForAModelVerbOnASlurmServerWarnsButNeverRefuses() {
+        let warning = SubmitExecutorDefault.controllerWarning(
+            executor: "local", verb: "extract", serverExecutor: "slurm")
+        #expect(warning?.contains("controller's own") == true)
+        #expect(warning?.contains("Drop --executor") == true)
+        #expect(warning?.contains("smoke test") == true)
+        // Nothing to say: analyze, a Slurm submission, or a local server.
+        #expect(
+            SubmitExecutorDefault.controllerWarning(
+                executor: "local", verb: "analyze", serverExecutor: "slurm") == nil)
+        #expect(
+            SubmitExecutorDefault.controllerWarning(
+                executor: "slurm", verb: "run", serverExecutor: "slurm") == nil)
+        #expect(
+            SubmitExecutorDefault.controllerWarning(
+                executor: "local", verb: "run", serverExecutor: "local") == nil)
+        #expect(
+            SubmitExecutorDefault.controllerWarning(
+                executor: "local", verb: "run", serverExecutor: nil) == nil)
+    }
+}

@@ -411,9 +411,11 @@ fronts it in `api/routes.py`; every payload key twins the Mac verb's.
 Two Phase-1a requirements surface here by construction rather than by
 re-implementation:
 
-- `declare-condition --alpha-units norm|raw` is **required**, baselines
-  included (G6). When it is absent the client passes the key through as
-  *absent* rather than defaulting, so the refusal is
+- `declare-condition --alpha-units norm|raw` is **required** of every arm
+  with slots (G6). A `--baseline` carries no α, so when the flag is absent
+  both clients stamp the same value for it, `norm` (the project convention).
+  When it is absent from an arm with slots the client passes the key through
+  as *absent* rather than defaulting, so the refusal is
   `experiment_store._condition_entry`'s own and its `repairAction` is the twin
   literal of `ExperimentManifest.alphaUnitsRepairAction`. A client that
   invented its own sentence would be a third independent spelling of a rule

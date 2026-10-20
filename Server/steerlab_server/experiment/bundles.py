@@ -1331,6 +1331,17 @@ def _makedirs_tracked(directory: str, created: list[str]) -> None:
     created.extend(missing)
 
 
+def _bundled_concepts(meta: dict) -> frozenset[str]:
+    """The concept directories a bundle carries — ``prompts/concepts/<name>/…``
+    entries — by name."""
+    names = set()
+    for entry in meta.get("entries", []):
+        parts = str(entry.get("path", "")).split("/")
+        if len(parts) > 3 and parts[0] == "prompts" and parts[1] == "concepts":
+            names.add(parts[2])
+    return frozenset(names)
+
+
 def import_bundle(bundle_path: str, *, target_root: str | None = None,
                   allow_overwrite: bool = False,
                   expected_sha256: str | None = None) -> dict:
@@ -1957,6 +1968,13 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
     # second execute in the same process would inherit the first's
     # directory and package the wrong run — worse than packaging none.
     run_directory_token = run_status.current_run_directory.set(None)
+    # The concepts THIS bundle carried. The target root is shared with other
+    # studies (a cluster's server workspace), so a stage that surveys
+    # `prompts/concepts/` — validate's undeclared-controls note — must see
+    # these and not its neighbours' (2026-10-20 smoke test).
+    from . import validation_workflow
+    concept_scope_token = validation_workflow.bundle_concept_scope.set(
+        _bundled_concepts(meta))
     pointer_path = (resume_mod.pointer_path_for_record(record_path)
                     if record_path else None)
     resume_dir: str | None = None
@@ -2205,6 +2223,7 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
         raise
     finally:
         run_status.current_run_directory.reset(run_directory_token)
+        validation_workflow.bundle_concept_scope.reset(concept_scope_token)
         result["finishedAt"] = time.time()
         if record_path:
             write_child_record(record_path, kind=f"bundle-execute:{verb}",

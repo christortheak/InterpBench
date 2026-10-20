@@ -226,7 +226,10 @@ public enum CLIFlagVocabulary {
             + "(default parsedMonths).",
         "--env-file": "Path of the environment file the bootstrap step installs.",
         "--env-prefix": "Remote path prefix for the created environment.",
-        "--executor": "Where the server runs the job.",
+        "--executor":
+            "Where the server runs the job. Omitted: the server's own executor "
+            + "(slurm on a cluster), except analyze, which loads no model and "
+            + "runs on the controller.",
         "--experiment": "The draft study the compiled scenario is pinned into.",
         "--extraction-rendering":
             "How the stimulus reaches the model: '{\"mode\": \"chatTemplate\"}' "

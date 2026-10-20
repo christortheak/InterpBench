@@ -288,8 +288,8 @@ import Testing
         }
     }
 
-    /// `--alpha-units` is REQUIRED, and a declaration without it is refused
-    /// with the repair — including for a baseline.
+    /// `--alpha-units` is REQUIRED of an arm with slots, and a declaration
+    /// without it is refused with the repair.
     ///
     /// Phase-0 gap G6 (`docs/PORTABILITY-CONTRACTS.md`): the flag used to
     /// default to `norm` here while the server's `_condition_entry` defaulted
@@ -302,8 +302,7 @@ import Testing
         try await withTempRoot { _ in
             await invoke(["create", "units", "--model", Self.model])
             for attempt in [
-                ["declare-condition", "units", "arm", "--slots", "french:17:0.4"],
-                ["declare-condition", "units", "baseline", "--baseline"],
+                ["declare-condition", "units", "arm", "--slots", "french:17:0.4"]
             ] {
                 let outcome = await invoke(attempt)
                 #expect(outcome.exitCode != 0, "\(attempt[2]) was declared with no α unit")
@@ -326,6 +325,36 @@ import Testing
             ])
             #expect(wrong.exitCode != 0)
             #expect(wrong.failure?.reason.contains("norm | raw") == true)
+        }
+    }
+
+    /// A baseline carries no α, so it may omit `--alpha-units` (2026-10-20
+    /// smoke test: the refusal asked for a unit nothing in the arm uses). The
+    /// key is still part of the document the other client reads, so both
+    /// stamp the same value for it: true, the project convention. Python
+    /// twin: `test_a_baseline_without_alpha_units_stamps_norm_like_the_mac`.
+    @Test func aBaselineWithoutAlphaUnitsStampsNorm() async throws {
+        try await withTempRoot { _ in
+            await invoke(["create", "units", "--model", Self.model])
+            let outcome = await invoke(
+                ["declare-condition", "units", "control", "--baseline"])
+            #expect(outcome.exitCode == 0, "\(outcome.failure?.reason ?? "")")
+            let control = try #require(
+                try ExperimentStore.load(name: "units").conditions.first {
+                    $0.name == "control"
+                })
+            #expect(control.slots.isEmpty)
+            #expect(control.alphaInNormUnits)
+            // A unit the caller names is still the one written.
+            let raw = await invoke([
+                "declare-condition", "units", "control-raw", "--baseline",
+                "--alpha-units", "raw",
+            ])
+            #expect(raw.exitCode == 0)
+            #expect(
+                try ExperimentStore.load(name: "units").conditions.first {
+                    $0.name == "control-raw"
+                }?.alphaInNormUnits == false)
         }
     }
 

@@ -3,6 +3,7 @@
 This owner never imports the task compatibility facade.
 """
 from __future__ import annotations
+import contextvars
 import csv
 import json
 import os
@@ -536,13 +537,29 @@ def _extract_validation_controls(model, manifest: manifest_module.Manifest, root
     return out
 
 
+#: The concepts a run bundle carried, while ``bundles.execute_run_bundle``
+#: runs it; ``None`` everywhere else. A bundle executes into a target root
+#: that other studies share (a cluster's server workspace), so "the concepts
+#: in this workspace" there are other people's studies, not the researcher's
+#: (2026-10-20 smoke test: a one-concept study's validate named 40 of them).
+#: A context variable, like ``run_status.current_run_directory``, so two
+#: concurrent jobs never read each other's scope.
+bundle_concept_scope: contextvars.ContextVar[frozenset[str] | None] = \
+    contextvars.ContextVar("steerlab_bundle_concept_scope", default=None)
+
+
 def _undeclared_control_advisories(manifest: manifest_module.Manifest, root) -> list[str]:
     """Name the concepts on disk that are NOT declared controls.
 
     Swift's old ambient rule folded these into the matrix silently; removing
     that must not itself be silent. Advisory only — an undeclared concept is
     not an error, it is simply not evidence. Swift twin:
-    ``ExperimentStore.undeclaredControlAdvisories``."""
+    ``ExperimentStore.undeclaredControlAdvisories``.
+
+    Under a run bundle only the concepts the bundle carried are candidates
+    (:data:`bundle_concept_scope`): the rest of a shared target root belongs
+    to other studies, and the researcher's own workspace is not here to
+    consult."""
     declared = {(c or {}).get("concept")
                 for c in (manifest.raw.get("validationControls") or [])}
     pinned = {c.name for c in manifest.concepts}
@@ -554,12 +571,16 @@ def _undeclared_control_advisories(manifest: manifest_module.Manifest, root) -> 
             if os.path.isdir(os.path.join(concepts_root, d)))
     except OSError:
         return []
+    scope = bundle_concept_scope.get()
+    if scope is not None:
+        available = [d for d in available if d in scope]
     undeclared = [d for d in available
                   if d not in declared and d not in pinned]
     if not undeclared:
         return []
+    where = "this bundle" if scope is not None else "this workspace"
     return [
-        f"note: {len(undeclared)} concept(s) in this workspace are not "
+        f"note: {len(undeclared)} concept(s) in {where} are not "
         "declared as validation controls and are NOT in the cosine matrix: "
         f"{', '.join(undeclared)}. Discriminant evidence covers declared "
         "inputs only — add them to validationControls (each with its own "

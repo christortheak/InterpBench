@@ -188,7 +188,87 @@ extension ExperimentStoreTests {
             } catch let error as ExperimentError {
                 #expect(error.reason.contains("no validate run matches"))
                 #expect(error.reason.contains(Self.serverEngine))
+                // Evidence exists nowhere, so no substrate flag is offered.
+                #expect(!error.reason.contains("--run-substrate"))
+                #expect(error.freezeRefusal?.repairAction.contains("--run-substrate") == false)
             }
+        }
+    }
+
+    // MARK: The refusal names the substrate that has the evidence (2026-10-20)
+
+    /// The 0.9.12 smoke test validated on the cluster, imported the evidence,
+    /// and met a freeze that read only this Mac's — whose repair named
+    /// `experiment validate` and `--force`, never the one flag that fit.
+    @Test func aLocalFreezeOfServerValidatedPinsNamesTheServerFlag() throws {
+        try withTempRoot {
+            _ = try makeStudy(name: "mac-auth-flag")
+            let manifest = try ExperimentStore.load(name: "mac-auth-flag")
+            try fabricateImportedServerValidateRun(for: manifest)
+            do {
+                _ = try ExperimentStore.freeze(name: "mac-auth-flag")
+                Issue.record("a local freeze must not accept server evidence")
+            } catch let error as ExperimentError {
+                let repair = try #require(error.freezeRefusal?.repairAction)
+                #expect(
+                    repair.hasPrefix(
+                        "A validate run on \(Self.serverEngine) matches these pins. "
+                            + "If the measured runs execute there, freeze with "
+                            + "'steerlab-cli experiment freeze mac-auth-flag "
+                            + "--run-substrate server'. Otherwise run "))
+                // The old repairs are still offered after it.
+                #expect(repair.contains("experiment validate mac-auth-flag"))
+                #expect(repair.contains("freeze --force"))
+                #expect(error.reason.contains(repair))
+                #expect(error.freezeRefusal?.gate == .validateEvidence)
+            }
+            // …and following it freezes.
+            let frozen = try ExperimentStore.freeze(
+                name: "mac-auth-flag", runSubstrate: Self.serverEngine)
+            #expect(frozen.status == .frozen)
+        }
+    }
+
+    @Test func aServerFreezeOfLocallyValidatedPinsNamesTheLocalFlag() throws {
+        try withTempRoot {
+            let manifest = try makeStudy(name: "mac-auth-local-flag")
+            try fabricateValidationEvidence(for: manifest, substrate: Self.localEngine)
+            do {
+                _ = try ExperimentStore.freeze(
+                    name: "mac-auth-local-flag", runSubstrate: Self.serverEngine)
+                Issue.record("a server freeze must not accept this Mac's evidence")
+            } catch let error as ExperimentError {
+                let repair = try #require(error.freezeRefusal?.repairAction)
+                #expect(repair.hasPrefix("A validate run on \(Self.localEngine) matches"))
+                #expect(repair.contains("--run-substrate local'"))
+                #expect(repair.contains("steerlab-server experiment validate"))
+            }
+        }
+    }
+
+    /// A study frozen for the server runs there: the CLI's next step is the
+    /// bundle, not this Mac's `experiment run`.
+    @Test func aServerFreezeNextActionIsTheBundle() async throws {
+        ExperimentRootOverrideLock.acquire()
+        let temp = FileManager.default.temporaryDirectory
+            .appending(component: "mac-auth-next-\(UUID().uuidString)")
+        ExperimentStore.rootOverride = temp
+        defer {
+            ExperimentStore.rootOverride = nil
+            try? FileManager.default.removeItem(at: temp)
+            ExperimentRootOverrideLock.release()
+        }
+        do {
+            let manifest = try makeStudy(name: "mac-auth-next")
+            try fabricateImportedServerValidateRun(for: manifest)
+            let result = await ExperimentCLIRunner(sink: .discarding).run(
+                namespace: "experiment",
+                ["freeze", "mac-auth-next", "--run-substrate", "server"])
+            #expect(result.envelope.exitCode == 0)
+            #expect(
+                result.envelope.nextAction?.verb
+                    == "remote package mac-auth-next --site <id>")
+            #expect(result.envelope.nextAction?.detail?.contains("--verb run") == true)
         }
     }
 

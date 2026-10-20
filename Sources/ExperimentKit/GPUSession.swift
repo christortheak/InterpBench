@@ -735,6 +735,76 @@ public enum ModelJobSubmissionPreflight {
     public static let fixOptionsButtonLabel = "Fix options (request a GPU)"
 }
 
+// MARK: - The headless submission's executor (2026-10-20 cluster smoke test)
+
+/// Which executor `steerlab-cli remote submit-bundle` sends when the caller
+/// names none. The verb used to send "local" unconditionally, so on a Slurm
+/// site every model verb typed without `--executor` ran inside the
+/// controller's own allocation — the 2026-07-21 failure mode, reached from
+/// the command line, where the app's dialog cannot catch it. In the 0.9.12
+/// smoke test an extract ran for nine minutes on the controller's one CPU in
+/// float32 while the controller stopped answering `remote jobs`, and the
+/// verb card's own `--verb run` example would have put a whole study there.
+///
+/// The rule: what the caller names wins; `analyze` runs on the controller,
+/// because it loads no model (`GPUSessionPreflight.isModelRunningVerb`) and
+/// a Slurm allocation would only make it queue; every other verb gets the
+/// server's own executor, as the server applies it to a submission that
+/// names none (`submit_run_bundle`, and the Python client, which sends
+/// none). A server that declares no executor keeps the old "local".
+public enum SubmitExecutorDefault {
+
+    /// Where the executor came from, echoed as `executorSource`.
+    public enum Source: String, Sendable, Equatable {
+        /// `--executor` was given.
+        case flag
+        /// `analyze`, which loads no model, runs on the controller.
+        case analyzeOnController
+        /// The server's declared executor (`capabilities.profile.executor`).
+        case serverProfile
+        /// The server declares none: the historical "local".
+        case fallback
+    }
+
+    /// True when the verb needs the server's executor to choose: no flag,
+    /// and a verb that loads a model. Lets the caller skip the capabilities
+    /// request when nothing depends on it.
+    public static func needsServerExecutor(explicit: String?, verb: String) -> Bool {
+        explicit == nil && GPUSessionPreflight.isModelRunningVerb(verb)
+    }
+
+    public static func resolve(
+        explicit: String?, verb: String, serverExecutor: String?
+    ) -> (executor: String, source: Source) {
+        if let explicit { return (explicit, .flag) }
+        guard GPUSessionPreflight.isModelRunningVerb(verb) else {
+            return ("local", .analyzeOnController)
+        }
+        let declared = serverExecutor?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let declared, !declared.isEmpty { return (declared, .serverProfile) }
+        return ("local", .fallback)
+    }
+
+    /// A stderr warning when a model verb is sent to the controller of a
+    /// server whose own executor is Slurm — only reachable by naming
+    /// `--executor local`, which stays legitimate (a CPU smoke test with a
+    /// small model). Never a refusal; nil when there is nothing to say.
+    public static func controllerWarning(
+        executor: String, verb: String, serverExecutor: String?
+    ) -> String? {
+        guard GPUSessionPreflight.isModelRunningVerb(verb),
+            executor.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "local",
+            serverExecutor?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                == "slurm"
+        else { return nil }
+        return "--executor local runs this \(verb) inside the controller's own "
+            + "small CPU allocation, not a Slurm job with a GPU, and the "
+            + "controller answers slowly while it runs. Drop --executor to use "
+            + "the server's own (slurm), unless this is a CPU smoke test with a "
+            + "small model"
+    }
+}
+
 // MARK: - Stop-with-jobs-running check (toolbar Stop)
 
 /// Cluster-testing item 1's stop half: ending the session out from under

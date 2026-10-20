@@ -863,6 +863,61 @@ def test_bundle_validate_verb_executes_and_packages_evidence(
     assert f"runs/{run_id}/validation-report.json" in paths
 
 
+def test_a_bundle_validate_surveys_only_the_concepts_its_bundle_carried(
+        tmp_path, monkeypatch):
+    """The target root is shared with other studies (a cluster's server
+    workspace). Validate's undeclared-controls note used to list every
+    concept folder there, so a one-concept study named its neighbours'
+    concepts (2026-10-20 smoke test: forty of them). Under a bundle the scope
+    is the bundle's own concepts, and it ends with the execute."""
+    from steerlab_server.experiment import validation_workflow
+    from steerlab_server.experiment.manifest import Manifest
+
+    mac = str(tmp_path / "mac")
+    _study(mac)
+    bundle = bundles.package_experiment("bundle-study", root=mac)
+    server = str(tmp_path / "server")
+    _concept(server, name="another-study-concept")
+
+    seen = {}
+
+    def fake_validate(name, root=None, dtype="auto", device=None, **kwargs):
+        seen["scope"] = validation_workflow.bundle_concept_scope.get()
+        seen["notes"] = validation_workflow._undeclared_control_advisories(
+            Manifest.load(name, root), root)
+        run_dir = os.path.join(root, "runs",
+                               "20261020T000001-exp-bundle-study-validate")
+        os.makedirs(run_dir)
+        return run_dir
+
+    monkeypatch.setattr("steerlab_server.experiment.tasks.validate",
+                        fake_validate)
+    bundles.execute_run_bundle(bundle["bundlePath"], verb="validate",
+                               target_root=server,
+                               package_evidence_on_complete=False)
+    assert seen["scope"] == frozenset({"fair"})
+    # The study's own concept is pinned, and the neighbour is out of scope.
+    assert seen["notes"] == []
+    assert validation_workflow.bundle_concept_scope.get() is None
+    # Outside a bundle the same root still names every undeclared concept.
+    notes = validation_workflow._undeclared_control_advisories(
+        Manifest.load("bundle-study", server), server)
+    assert len(notes) == 1 and "another-study-concept" in notes[0]
+    assert "in this workspace" in notes[0]
+
+
+def test_bundled_concepts_reads_concept_directories_from_entries():
+    meta = {"entries": [
+        {"path": "experiments/s/experiment.json"},
+        {"path": "prompts/concepts/fair/positive.jsonl"},
+        {"path": "prompts/concepts/fair/negative.jsonl"},
+        {"path": "prompts/concepts/fear/concept.json"},
+        {"path": "prompts/concepts/loose-file.jsonl"},
+        {"path": "prompts/tasks/t.jsonl"}]}
+    assert bundles._bundled_concepts(meta) == frozenset({"fair", "fear"})
+    assert bundles._bundled_concepts({}) == frozenset()
+
+
 # --- run-slug matching at component boundaries (fix 2026-07-27) --------------
 
 

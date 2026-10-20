@@ -2604,7 +2604,7 @@ public struct ExperimentCLIRunner: Sendable {
             guard let submitVerb = flag("--verb"), !submitVerb.isEmpty else {
                 throw ExperimentError(reason: "remote submit-bundle requires an explicit --verb")
             }
-            let submitExecutor = flag("--executor") ?? "local"
+            let explicitExecutor = flag("--executor")
             // The measurement verb's source run, by the one spelling every
             // surface uses (`bundle execute --source`, `study submit
             // --source`). Field-discovered 2026-08-28: a renamed duplicate
@@ -2665,6 +2665,33 @@ public struct ExperimentCLIRunner: Sendable {
                 }
                 parallelJobs = value
             }
+            // The executor (2026-10-20): what the caller names, else the
+            // SERVER's own for a model verb — this used to be a flat "local",
+            // which on a Slurm site runs the job inside the controller's
+            // allocation (`SubmitExecutorDefault`). Asked after every local
+            // check above, so a malformed invocation still refuses before any
+            // request leaves this process, and only when the answer depends
+            // on it.
+            var serverExecutor: String?
+            if SubmitExecutorDefault.needsServerExecutor(
+                explicit: explicitExecutor, verb: submitVerb)
+                || explicitExecutor?.lowercased() == "local"
+            {
+                if case .string(let declared)? = try await client.capabilities()
+                    .profile?["executor"]
+                {
+                    serverExecutor = declared
+                }
+            }
+            let (submitExecutor, executorSource) = SubmitExecutorDefault.resolve(
+                explicit: explicitExecutor, verb: submitVerb,
+                serverExecutor: serverExecutor)
+            if let warning = SubmitExecutorDefault.controllerWarning(
+                executor: submitExecutor, verb: submitVerb,
+                serverExecutor: serverExecutor)
+            {
+                sink.err("warning: \(warning)\n")
+            }
             // What the CLIENT will actually put on the wire, by the one rule
             // (`encodedParallelJobs`) the app's stepper and this verb share:
             // older servers and unshardable submissions never see the field.
@@ -2708,6 +2735,9 @@ public struct ExperimentCLIRunner: Sendable {
             return try respond(
                 submission, message: "submitted \(path)",
                 extra: [
+                    // Where the executor came from: the flag, the server's
+                    // own, analyze's controller default, or the fallback.
+                    "executorSource": .string(executorSource.rawValue),
                     // What the client asked the measurement verb to read —
                     // nil when discovery defaults to the newest run under
                     // the study's own name.
@@ -3668,7 +3698,7 @@ public struct ExperimentCLIRunner: Sendable {
                         + "--alpha-units norm|raw [--band-width K] "
                         + "[--control randomMatchedNorm|randomDirectionAblation]\n"
                         + "       experiment declare-condition <name> <condition> "
-                        + "--baseline --alpha-units norm|raw  "
+                        + "--baseline  "
                         + "(an explicit no-intervention arm)")
             }
             let conditionName = args[2].trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3700,15 +3730,18 @@ public struct ExperimentCLIRunner: Sendable {
             // same undeclared arm authored a different study depending on
             // which engine served it — and α units are dose semantics, not a
             // display setting. Neither engine guesses now: both refuse a NEW
-            // declaration that does not say, and both name the same two
-            // spellings of the repair. Baselines are not exempt: a slot-less
-            // arm carries no α, but the key it stamps is still part of the
-            // document the other engine reads, and two engines stamping
-            // different values for the same call is the gap itself.
+            // arm that does not say, and both name the same two spellings of
+            // the repair. A baseline is the one call with nothing to say: it
+            // carries no α. Its key is still part of the document the other
+            // engine reads, so both clients stamp the SAME value for it when
+            // the flag is absent — norm, the project convention (2026-10-20;
+            // twin: `client_cli` `declare-condition`). Two engines stamping
+            // different values for one call was the gap; one value is not.
             let alphaInNormUnits: Bool
             switch flag("--alpha-units") {
             case "norm": alphaInNormUnits = true
             case "raw": alphaInNormUnits = false
+            case nil where isBaseline: alphaInNormUnits = true
             case nil:
                 throw ExperimentError.malformed(
                     "declare-condition needs --alpha-units norm|raw — α units "
@@ -3964,10 +3997,20 @@ public struct ExperimentCLIRunner: Sendable {
                         .init(CLIAdvisory.capabilityControlNotApplied, sentence))
                 }
             }
+            // A study frozen for the server runs there: its next step is the
+            // bundle, not this Mac's `experiment run`.
+            let freezeNext: SteerLabCLIEnvelope.NextAction =
+                runSubstrate == ExperimentStore.evidenceSubstrate
+                ? .init(verb: "experiment run \(manifest.name)")
+                : .init(
+                    verb: "remote package \(manifest.name) --site <id>",
+                    detail: "the measured runs execute on \(runSubstrate): "
+                        + "package, then remote upload, then remote "
+                        + "submit-bundle --verb run")
             return ExperimentCLIResult(
                 message: frozenLine, changed: true, payload: payload,
                 advisories: advisories,
-                nextAction: .init(verb: "experiment run \(manifest.name)"))
+                nextAction: freezeNext)
 
         case "duplicate":
             guard args.count >= 3 else {

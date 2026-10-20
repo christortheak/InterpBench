@@ -10,6 +10,15 @@ enum FreezePolicy {
         let hasMatchingEvidence: Bool
         var vacuousProblem: String? = nil
         var vacuousRepair: String? = nil
+        /// The OTHER substrate, when evidence matching these pins exists
+        /// there and not on the run substrate — the cluster validate of a
+        /// study about to be frozen for this Mac, or the reverse.
+        var matchingEvidenceElsewhere: String? = nil
+    }
+
+    /// The `freeze --run-substrate` value that names a substrate.
+    static func runSubstrateFlag(for substrate: String) -> String {
+        substrate == ExperimentStore.evidenceSubstrate ? "local" : "server"
     }
 
     struct BatteryFacts {
@@ -103,10 +112,22 @@ enum FreezePolicy {
             // reads — `steerlab-cli` cannot satisfy a server-substrate
             // gate (gate-5 dry run #2, P2). Sentence structure is
             // unchanged; only the binary moves.
-            let repair =
+            var repair =
                 "Run '\(ManifestDeclarationPolicy.validateCLI(forRunSubstrate: runSubstrate)) "
                 + "experiment validate \(name)' first, or "
                 + "freeze --force to record an unvalidated experiment"
+            // Evidence for these exact pins exists on the other substrate
+            // (2026-10-20 smoke test: a cluster validate, imported, met a
+            // freeze that read only this Mac's). The likelier repair is the
+            // flag that says where the measured runs execute, so it leads.
+            if let elsewhere = facts.matchingEvidenceElsewhere {
+                let flag = runSubstrateFlag(for: elsewhere)
+                repair =
+                    "A validate run on \(elsewhere) matches these pins. If the "
+                    + "measured runs execute there, freeze with "
+                    + "'steerlab-cli experiment freeze \(name) --run-substrate \(flag)'. "
+                    + "Otherwise " + repair.prefix(1).lowercased() + repair.dropFirst()
+            }
             return ExperimentStore.FreezeGateOutcome(
                 gate: .validateEvidence,
                 refusal: "cannot freeze '\(name)': \(forced). \(repair)",

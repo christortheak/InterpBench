@@ -113,7 +113,9 @@ def advise_dependency_lock_drift(run_directory: str | None, _log, *,
     advisory = ("dependency drift vs the committed platform lock — "
                 + "; ".join(drift)
                 + ". Not a refusal: the run's config.json stamps what "
-                  "actually ran (pythonEnvironment).")
+                  "actually ran (pythonEnvironment). A push deploys code, "
+                  "not dependencies: re-running the site's bootstrap "
+                  "re-applies the lock.")
     _log(f"ADVISORY: {advisory}")
     if not write_file or not run_directory:
         return

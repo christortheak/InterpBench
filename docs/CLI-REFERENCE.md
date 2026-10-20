@@ -433,8 +433,9 @@ it.
 
 Five traps worth knowing before you rely on it:
 
-- `declare-condition --alpha-units norm|raw` is **required**, baselines
-  included — the same refusal, word for word, that the Mac gives (§3.3, G6).
+- `declare-condition --alpha-units norm|raw` is **required** of every arm
+  with slots — the same refusal, word for word, that the Mac gives (§3.3, G6).
+  A `--baseline` without it stamps `norm` on both clients.
 - `experiment verify`, `experiment freeze` and `bundle package` used to import
   torch (gap **G7**), so a torch-free install could author and declare but not
   freeze. **Closed:** the SAE latent *declared* surface moved to the torch-free
@@ -1272,7 +1273,7 @@ manifest's own vocabulary; a multi-slot condition IS the linear mix
 | `--slots` | required unless `--baseline` | `<concept>:<layer>:<alpha>[:add\|ablate]`, comma-separated. α when steering, λ when ablating. An explicit `add` parses and is not written (manifest bytes are the content hash). Every named concept must already be attached. |
 | `--baseline` | off | Declares the no-intervention arm (no slots). Exclusive with `--slots`. |
 | `--band-width K` | 1 | Layers per slot. |
-| `--alpha-units norm\|raw` | **required** (no default) | `norm` denominates α by the residual-stream norm at that layer on the pinned neutral corpus — what makes α comparable across concepts; `raw` is α as typed. Required on every arm, `--baseline` included: it used to default to `norm` here and to `raw` on the server engine, so the same undeclared arm authored a different study depending on which engine served it (portability gap G6). α units are dose semantics, so neither engine guesses. |
+| `--alpha-units norm\|raw` | **required** with `--slots`; `norm` for `--baseline` | `norm` denominates α by the residual-stream norm at that layer on the pinned neutral corpus — what makes α comparable across concepts; `raw` is α as typed. Required on every arm with slots: it used to default to `norm` here and to `raw` on the server engine, so the same undeclared arm authored a different study depending on which engine served it (portability gap G6). α units are dose semantics, so neither engine guesses. A `--baseline` carries no α: without the flag, both clients stamp `norm` for it, so the document is the same whichever client wrote it. |
 | `--control` | none | `randomMatchedNorm` (steering) or `randomDirectionAblation` (ablation): the same slots with a deterministic random direction substituted. |
 
 **`set-sweep-grid`** — the other half of the sweep block. `set-sweep-selection`

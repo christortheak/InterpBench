@@ -117,6 +117,51 @@ def test_bootstrap_dry_run_plans_manifest_check_for_packaged_payloads(tmp_path):
     assert "verify" in proc.stdout
 
 
+def _platform_lock_name():
+    """The lock bootstrap.sh selects on THIS machine, or None (it maps only
+    Linux-x86_64 and Darwin-arm64)."""
+    import platform
+    return {("Linux", "x86_64"): "requirements-linux-x86_64.lock",
+            ("Darwin", "arm64"): "requirements-macos-arm64.lock"}.get(
+                (platform.system(), platform.machine()))
+
+
+def test_bootstrap_asks_the_site_index_for_the_locked_torch_version(tmp_path):
+    """The BUILD is the site's (its --torch-index), the VERSION is the lock's.
+    Plain `pip install torch` installed whatever the index had newest the day
+    the node was bootstrapped, so every site drifted from the lock by
+    construction (2026-10-20 smoke test: 2.11 against a pin of 2.13)."""
+    lock = _platform_lock_name()
+    if lock is None:
+        pytest.skip("bootstrap.sh selects no lock on this platform")
+    server = tmp_path / "repo" / "Server"
+    server.mkdir(parents=True)
+    (server / lock).write_text(
+        "# comment\nnumpy==2.0.0\ntorch==9.8.7\n    # via steerlab-server\n"
+        "transformers==5.15.0\n", encoding="utf-8")
+    proc = subprocess.run(
+        [bash, BOOTSTRAP, "--dry-run", "--repo", str(tmp_path / "repo"),
+         "--env-file", str(tmp_path / "cluster.env"),
+         "--torch-index", "https://example.invalid/whl/cu128"],
+        text=True, capture_output=True, check=False)
+    assert proc.returncode == 0, proc.stderr
+    assert ("[torchInstall]    pip install torch==9.8.7 --index-url "
+            "https://example.invalid/whl/cu128") in proc.stdout
+    # The lock install still leaves the torch stack to the site.
+    assert "minus torch/nvidia-*/triton" in proc.stdout
+
+
+def test_without_a_lock_bootstrap_asks_for_the_index_default_torch(tmp_path):
+    proc = subprocess.run(
+        [bash, BOOTSTRAP, "--dry-run", "--repo", str(tmp_path / "repo"),
+         "--env-file", str(tmp_path / "cluster.env"), "--no-lock",
+         "--torch-index", "https://example.invalid/whl/cu128"],
+        text=True, capture_output=True, check=False)
+    assert proc.returncode == 0, proc.stderr
+    assert ("[torchInstall]    pip install torch --index-url "
+            "https://example.invalid/whl/cu128") in proc.stdout
+
+
 def test_bootstrap_rejects_unknown_flag():
     proc = subprocess.run([bash, BOOTSTRAP, "--frobnicate"],
                           text=True, capture_output=True, check=False)

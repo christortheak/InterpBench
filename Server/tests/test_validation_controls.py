@@ -84,6 +84,26 @@ def test_a_declared_control_is_not_reported_as_undeclared(tmp_path):
     assert validation_workflow._undeclared_control_advisories(manifest, root) == []
 
 
+def test_under_a_bundle_only_the_bundles_concepts_are_candidates(tmp_path):
+    """A bundle executes into a root other studies share; the note names only
+    what the bundle carried, and says so."""
+    root = str(tmp_path)
+    manifest = _study(root)
+    _concept(root, "golden-gate", "bridge", "tunnel")
+    _concept(root, "another-study", "x", "y")
+    token = validation_workflow.bundle_concept_scope.set(
+        frozenset({"fear", "golden-gate"}))
+    try:
+        advisories = validation_workflow._undeclared_control_advisories(
+            manifest, root)
+    finally:
+        validation_workflow.bundle_concept_scope.reset(token)
+    assert len(advisories) == 1
+    assert "in this bundle" in advisories[0]
+    assert "golden-gate" in advisories[0]
+    assert "another-study" not in advisories[0]
+
+
 # --- the pin is enforced -----------------------------------------------------
 
 def test_a_drifted_control_stimulus_set_refuses(tmp_path):

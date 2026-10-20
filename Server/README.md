@@ -152,11 +152,18 @@ Four decisions worth knowing:
 - **`MACOSX_DEPLOYMENT_TARGET=14.0` is load-bearing.** torch ≥ 2.12 publishes
   Apple-silicon wheels tagged `macosx_14_0_arm64`; without it uv silently pins
   torch back to 2.11.0.
-- **torch is site-owned on the cluster.** `scripts/bootstrap.sh` installs torch
-  from `--torch-index` (default cu128) and then applies the lock with
-  `torch`, `triton`, and `nvidia-*` filtered out, so a site keeps its own CUDA
-  or ROCm build. Everything else is pinned exactly. `--no-lock` opts out of the
-  lock entirely and says so loudly.
+- **torch's build is site-owned on the cluster; its version is the lock's.**
+  `scripts/bootstrap.sh` asks `--torch-index` (default cu128) for the torch
+  version the lock pins, so a site gets its own CUDA or ROCm build of the
+  locked version, and then applies the lock with `torch`, `triton`, and
+  `nvidia-*` filtered out. An index without that version falls back to its own
+  newest torch, with a warning. Everything else is pinned exactly. `--no-lock`
+  opts out of the lock entirely and says so loudly.
+- **A push does not reinstall dependencies.** `cluster push` deploys code
+  only, so a node bootstrapped before the lock moved keeps its older versions,
+  and every run there says so in its drift advisory. Re-running bootstrap
+  (`steerlab-cli cluster bootstrap plan --site <id>`, then `bootstrap apply
+  --site <id> --plan-hash <hash>`) re-applies the lock.
 - **No `--generate-hashes` by default.** Hashes would be a half-guarantee here:
   torch — the largest and most substrate-defining wheel — is deliberately
   outside the hash-enforced set, `--require-hashes` is brittle against the site

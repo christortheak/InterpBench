@@ -12,6 +12,37 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **`remote submit-bundle` sends model work to the cluster's own executor.**
+  Typed without `--executor`, the verb used to send `local`, so on a Slurm
+  site an extract, validate, sweep, or run executed inside the controller's
+  small CPU allocation instead of its own GPU job, and the controller
+  answered slowly until it finished. It now uses the server's own executor
+  (Slurm on a cluster). `analyze`, which loads no model, still runs on the
+  controller. `--executor local` still works for a CPU smoke test with a
+  small model, and now warns. The envelope's `executorSource` says where the
+  choice came from.
+- **A freeze refusal names `--run-substrate` when it is the fix.** When the
+  only validate run matching a study's pins came from the other engine (a
+  cluster validate, imported, meeting a freeze on this Mac), the refusal now
+  says so and gives the `experiment freeze <name> --run-substrate server`
+  command, ahead of the old repairs. A study frozen for the server now points
+  at `remote package` as its next step, not at this Mac's `experiment run`.
+- **A baseline arm no longer needs `--alpha-units`.** A baseline carries no
+  α, so `declare-condition <study> <arm> --baseline` now works without the
+  flag, on the Mac and the cross-platform client alike, and both stamp the
+  same value (norm). Arms with slots still require it.
+- **Cluster bootstrap installs the lock's torch version.** Bootstrap used to
+  ask the site's torch index for its newest torch, so every node drifted from
+  the committed lock from the day it was set up. It now asks that index for
+  the version the lock pins (the site still chooses the CUDA or ROCm build),
+  and falls back to the index's newest with a warning when the index lacks
+  it. The run-start drift advisory now says that a push deploys code, not
+  dependencies, and that re-running bootstrap re-applies the lock.
+- **Validate on a cluster names only the study's own concepts.** Its note
+  about concepts that are not validation controls listed every concept in
+  the cluster's shared workspace, which includes other studies'. Under a run
+  bundle it now considers only the concepts the bundle carried.
+
 ## [0.9.12] — 2026-10-20
 
 - **Save Changes no longer writes over an agent a run saved.** The agent
