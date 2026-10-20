@@ -106,6 +106,13 @@ migration that rewrites frozen bytes.
     section now uses the importer. The importer bundles and downloads no
     data: it reads the files you name.
 
+- **The exported methods describe an ablation as the run performs it.** The
+  methods file that `results export` writes said an agent's ablation without
+  a layer list acted "at layer N", and gave its strength "in raw activation
+  units". An ablation without a list covers every layer, a list is exactly
+  the layers it names, and an ablation's strength is the fraction of the
+  direction removed. The file now says so. Steering lines are unchanged.
+
 ## [0.9.11] — 2026-10-19
 
 - **Saved agents steer in the Playground.** Picking a saved agent, whether

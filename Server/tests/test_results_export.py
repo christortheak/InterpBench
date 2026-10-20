@@ -1274,7 +1274,7 @@ def test_agent_and_latent_arms_are_described(root):
     assert ("- **persona**: an agent arm, the saved agent `persona-agent`, file "
             "`runs/model-variants/persona.json`, SHA-256 `" + "9" * 64 + "`. The agent "
             "carries steering that removes the direction for the concept 'formality' at "
-            "layer 3, with strength 2 (in raw activation units), the fine-tuned adapter "
+            "every layer, with strength 2 (the fraction of the direction removed), the fine-tuned adapter "
             "`tone-adapter`, its own system prompt, and 1 intervention policy.") in methods
     assert "- **clamp**: a latent arm, which edits one feature of a sparse autoencoder." in methods
     assert "feature `42`, mode `\"clamp\"`" in methods
@@ -1710,3 +1710,26 @@ def test_an_export_needs_nothing_but_the_standard_library(root):
                              env={**os.environ, "PYTHONPATH": SERVER_DIR})
     report = json.loads(process.stderr.split("PROBE")[-1])
     assert report == {"code": 0, "heavy": [], "third": ["steerlab_server"]}, process.stderr
+
+
+def test_an_ablation_names_the_layers_it_covers(root):
+    """An ablation covers every layer unless it lists some, and then exactly
+    those, once each; λ is a fraction of the direction, not a unit."""
+    def described(injection):
+        manifest = _manifest(variantConditions=[{
+            "name": "persona", "artifactPath": "runs/model-variants/persona.json",
+            "artifactHash": "9" * 64,
+            "artifact": {"name": "persona-agent", "baseModelID": "test/model",
+                         "alphaInNormUnits": True, "injections": [injection]}}])
+        _write_run(root, manifest, _python_records(
+            "0" * 64, conditions=("baseline", "persona")))
+        return _read(_export(root), "methods.md")
+
+    listed = described({"concept": "fear", "layer": 3, "alpha": 0.5, "mode": "ablate",
+                        "layers": [10, 3, 7, 3]})
+    assert ("removes the direction for the concept 'fear' at layers 3, 7, and 10, "
+            "with strength 0.5 (the fraction of the direction removed)") in listed
+    steering = described({"concept": "fear", "layer": 14, "alpha": 0.8})
+    assert ("adds the direction for the concept 'fear' at layer 14, with strength "
+            "0.8 (in units of the typical activation size at that layer)") in steering
+

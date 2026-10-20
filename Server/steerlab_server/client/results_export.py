@@ -1410,12 +1410,22 @@ def _strength(value, norm_units):
 
 
 def _injection(slot, norm_units, layer_key="layer"):
-    verb = "removes" if slot.get("mode") == "ablate" else "adds"
-    layers = slot.get("layers")
-    where = (f"layers {_and(layers)}" if isinstance(layers, list) and layers
-             else f"layer {slot.get(layer_key)}")
-    return (f"{verb} the direction for the concept '{slot.get('concept')}' at "
-            f"{where}, with strength {_strength(slot.get('alpha'), norm_units)}")
+    concept = slot.get("concept")
+    if slot.get("mode") == "ablate":
+        # An ablation covers every layer unless it lists some, and then exactly
+        # those, once each: the run's own rule on both engines. Its strength is
+        # the fraction of the direction removed, never scaled by a unit.
+        layers = slot.get("layers")
+        listed = (sorted(set(layers)) if isinstance(layers, list) and layers
+                  and all(isinstance(layer, int) and not isinstance(layer, bool)
+                          for layer in layers) else None)
+        where = f"layers {_and(listed)}" if listed else "every layer"
+        return (f"removes the direction for the concept '{concept}' at {where}, "
+                f"with strength {_number(slot.get('alpha'))} (the fraction of the "
+                f"direction removed)")
+    return (f"adds the direction for the concept '{concept}' at "
+            f"layer {slot.get(layer_key)}, with strength "
+            f"{_strength(slot.get('alpha'), norm_units)}")
 
 
 def _describe_condition(name, snapshot):
