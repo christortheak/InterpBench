@@ -10,12 +10,15 @@ import Testing
 /// declared layer to the last, so `[3, 7, 10]` also removed the direction at
 /// 4–6 and 8–9, an unsorted list such as `[10, 3]` formed an invalid closed
 /// range and crashed, and a list naming only layers the vector does not have
-/// ablated every layer. The Python engine ablates the listed layers and
-/// nothing else, which is what the preregistration's `L3+L7+L10` describes.
+/// ablated every layer, where the Python engine ablated none. Both engines
+/// now ablate the listed layers and nothing else, ascending and once each,
+/// which is what the preregistration's `L3+L7+L10` describes, and both refuse
+/// a listed layer the vector does not have with the same sentence.
 ///
-/// The layers in `Tests/Fixtures/cross-engine/ablation-layers.json` were
-/// covered by the PYTHON engine's agent cell builder; this engine must cover
-/// the same ones. Server twin: `Server/tests/test_ablation_layer_subsets.py`.
+/// The layers and refusals in `Tests/Fixtures/cross-engine/ablation-layers.json`
+/// were produced by the PYTHON engine's agent cell builder; this engine must
+/// cover the same layers or refuse with the same sentence. Server twin:
+/// `Server/tests/test_ablation_layer_subsets.py`.
 @Suite struct AblationLayerSubsetTests {
 
     /// A saved 12-layer vector whose every layer is nonzero, so no cell is
@@ -126,13 +129,30 @@ import Testing
     }
 
     /// A list naming only layers the vector does not have used to ablate
-    /// every layer here and none on the server.
-    @Test func layersTheVectorDoesNotHaveAreNeverReadAsEveryLayer() throws {
+    /// every layer here and none on the server. Now any listed layer the
+    /// vector does not have refuses, on both engines, with the repair.
+    @Test func layersTheVectorDoesNotHaveRefuseWithTheRepair() throws {
         let (dir, id) = try writeVector()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let cells = try ExperimentTasks.injections(
-            for: agent([ablation(id, layers: [12, 40])]))
-        #expect(cells.isEmpty)
+        for (layers, named, pronoun) in [
+            ([12, 40], "layers 12, 40", "them"), ([3, 12], "layer 12", "it"),
+            ([-1, 2], "layer -1", "it"),
+        ] {
+            #expect {
+                try ExperimentTasks.injections(for: agent([ablation(id, layers: layers)]))
+            } throws: { error in
+                (error as? ExperimentError)?.reason
+                    == "variant 'fear-ablation': the ablation of 'fear' lists \(named), "
+                    + "which its vector does not have (its layers are 0 to 11); "
+                    + "remove \(pronoun) from the injection's layers, or delete the "
+                    + "list to ablate every layer"
+            }
+        }
+        // Steering ignores the list, so it never refuses for it.
+        let steering = ModelVariantArtifact.InjectionRef(
+            concept: "fear", vectorArtifactID: id, layer: 5, alpha: 1, layers: [40])
+        #expect(steering.ablationLayerProblem(layerCount: 12) == nil)
+        #expect(try ExperimentTasks.injections(for: agent([steering])).map(\.layer) == [5])
     }
 
     @Test func declaredLayersReadAsASet() {
@@ -157,9 +177,9 @@ import Testing
     }
 
     /// The Playground ablates every layer and says when an agent does not;
-    /// a full list written in any order is every layer, and so is a list
-    /// whose only extra entry is a layer the vector does not have, because
-    /// the run never ablates that one.
+    /// a full list written in any order is every layer. A list naming a layer
+    /// the vector does not have is said apart, because a study run refuses
+    /// it rather than ablating "only some layers".
     @Test func thePlaygroundReadsTheListAsTheRunDoes() {
         let everyLayer = ChatService.ablationSettings(
             agent: "a",
@@ -170,7 +190,10 @@ import Testing
             agent: "a",
             restored: [(ablation("v", layers: [0, 1, 2, 3, 7]), 4)],
             currentlyCentered: false)
-        #expect(beyondTheVector.notes.isEmpty)
+        #expect(beyondTheVector.notes == [
+            "agent 'a' lists ablation layers its vector does not have for fear; "
+                + "a study run refuses it until the list is fixed",
+        ])
         let subset = ChatService.ablationSettings(
             agent: "a",
             restored: [(ablation("v", layers: [3, 1]), 4)],

@@ -17,7 +17,7 @@ import json
 import os
 from dataclasses import dataclass, field
 
-from . import neutral, paths
+from . import ablation_layers, neutral, paths
 from ..steering import residual_norm_convention
 from ..steering import vector_math as vm
 from ..steering import vector_store
@@ -137,8 +137,11 @@ def variant_injections(variant: ModelVariant, *,
         declared = inj.get("layers")
         center = min(max(0, int(inj["layer"])), vectors.layer_count - 1)
         if is_ablation:
-            layer_range = ([l for l in declared if 0 <= l < vectors.layer_count]
-                           if declared else range(vectors.layer_count))
+            # Exactly the listed layers, ascending and once each; a listed
+            # layer the vector does not have refuses (one rule and one
+            # sentence with the Swift engine, see ablation_layers).
+            layer_range = ablation_layers.covered(
+                variant.name, inj.get("concept"), declared, vectors.layer_count)
         else:
             layer_range = range(max(0, center - half),
                                 min(vectors.layer_count - 1, center + half) + 1)

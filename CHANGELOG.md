@@ -72,11 +72,15 @@ migration that rewrites frozen bytes.
   The Mac engine now ablates exactly the listed layers, as the Python engine
   always has and as the preregistration's line (`L3+L7+L10`) says. The
   list's order and repeats no longer matter: the preregistration names the
-  layers in ascending order, once each. Listed layers the vector does not
-  have are skipped on both engines. If a study run on the Mac attached an
-  agent with such a list, its ablation arm removed the direction at more
-  layers than the agent listed, so run it again. Agents without a list
-  (every layer) and runs on the Python engine are unchanged.
+  layers in ascending order, once each. A list naming a layer the vector
+  does not have now stops the run on both engines, with a message that names
+  the layer and the repair: remove it from the list, or delete the list to
+  ablate every layer. Before, the Python engine skipped such layers. The
+  Playground also says so when it loads such an agent. If a study run on the
+  Mac attached an agent with a list, its ablation arm may have removed the
+  direction at more layers than the agent listed, so run it again. Agents
+  without a list (every layer) are unchanged, and so are runs on the Python
+  engine whose listed layers all exist.
 
 ## [0.9.11] — 2026-10-19
 

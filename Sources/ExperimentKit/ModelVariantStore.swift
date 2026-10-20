@@ -168,13 +168,36 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
             return Array(Set(layers)).sorted()
         }
 
+        /// Why this ablation cannot run on a vector of `layerCount` layers,
+        /// or nil when it can: it lists a layer the vector does not have.
+        ///
+        /// Refused, never skipped. Skipping ran a different study from the
+        /// one declared (and preregistered), and a list naming only such
+        /// layers used to ablate every layer here and none on the server.
+        /// One rule and one sentence on both engines (server twin:
+        /// `ablation_layers.covered`).
+        public func ablationLayerProblem(layerCount: Int) -> String? {
+            guard effectiveMode == .ablate, let declared = declaredAblationLayers
+            else { return nil }
+            let outside = declared.filter { !(0..<layerCount).contains($0) }
+            guard !outside.isEmpty else { return nil }
+            let one = outside.count == 1
+            return "the ablation of '\(concept)' lists \(one ? "layer" : "layers") "
+                + outside.map(String.init).joined(separator: ", ")
+                + ", which its vector does not have (its layers are 0 to "
+                + "\(layerCount - 1)); remove \(one ? "it" : "them") from the "
+                + "injection's layers, or delete the list to ablate every layer"
+        }
+
         /// The layers this ref actually covers, given the model's depth.
         /// Steering answers with its single declared layer (the caller
         /// widens it by the variant's band); ablation answers with every
         /// layer unless it declared otherwise — a single-layer ablation is
         /// usually undone by the layers above it, so "all" is the honest
         /// default rather than a convenience. A declared list answers with
-        /// exactly its in-range layers, ascending (`declaredAblationLayers`).
+        /// exactly its in-range layers, ascending (`declaredAblationLayers`);
+        /// a caller that runs the ablation refuses first when the list names
+        /// a layer the vector does not have (`ablationLayerProblem`).
         public func resolvedLayers(layerCount: Int) -> [Int] {
             guard effectiveMode == .ablate else { return [layer] }
             if let declared = declaredAblationLayers {

@@ -155,11 +155,14 @@ struct AblationUserFacingTests {
             concept: "fear", vectorArtifactID: "v", layer: 5, alpha: 2)
         #expect(steer.resolvedLayers(layerCount: 40) == [5])
 
-        // A declared band is honoured, and out-of-range entries are dropped
-        // rather than injected at a layer that does not exist.
+        // A declared band is honoured, and an out-of-range entry is never
+        // injected at a layer that does not exist: a run refuses the list
+        // (`ablationLayerProblem`, AblationLayerSubsetTests).
         let narrowed = ModelVariantArtifact.InjectionRef(
             concept: "fear", vectorArtifactID: "v", layer: 0, alpha: 1,
             mode: .ablate, layers: [1, 2, 99])
         #expect(narrowed.resolvedLayers(layerCount: 4) == [1, 2])
+        #expect(narrowed.ablationLayerProblem(layerCount: 4) != nil)
+        #expect(narrowed.ablationLayerProblem(layerCount: 100) == nil)
     }
 }

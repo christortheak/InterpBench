@@ -1662,20 +1662,36 @@ public final class ChatService {
         }
         // nil or empty layers mean every layer, on both engines, and a
         // declared list is the set of layers it names
-        // (`InjectionRef.resolvedLayers`, the run's own rule).
+        // (`InjectionRef.resolvedLayers`, the run's own rule). A list naming
+        // a layer the vector does not have is said apart: a study run
+        // refuses it (`InjectionRef.ablationLayerProblem`).
+        func concepts(_ entries: [(injection: ModelVariantArtifact.InjectionRef, layerCount: Int?)])
+            -> String
+        {
+            NSOrderedSet(array: entries.map(\.injection.concept))
+                .compactMap { $0 as? String }.joined(separator: ", ")
+        }
+        let unrunnable = ablations.filter { entry in
+            entry.layerCount.map { entry.injection.ablationLayerProblem(layerCount: $0) != nil }
+                ?? false
+        }
         let banded = ablations.filter { entry in
             guard entry.injection.declaredAblationLayers != nil,
-                let layerCount = entry.layerCount
+                let layerCount = entry.layerCount,
+                entry.injection.ablationLayerProblem(layerCount: layerCount) == nil
             else { return false }
             return entry.injection.resolvedLayers(layerCount: layerCount)
                 != Array(0..<layerCount)
         }
         if !banded.isEmpty {
-            let concepts = NSOrderedSet(array: banded.map(\.injection.concept))
-                .compactMap { $0 as? String }
             notes.append(
                 "the Playground ablates every layer; agent '\(agent)' ablates only some layers for "
-                    + concepts.joined(separator: ", "))
+                    + concepts(banded))
+        }
+        if !unrunnable.isEmpty {
+            notes.append(
+                "agent '\(agent)' lists ablation layers its vector does not have for "
+                    + concepts(unrunnable) + "; a study run refuses it until the list is fixed")
         }
         return (centered, notes)
     }

@@ -384,10 +384,11 @@ def ablation_layer_cases() -> list[tuple[str, dict]]:
     ]
 
 
-def ablation_layer_cells(injection: dict, root: str) -> list[int]:
+def ablation_layer_cells(injection: dict, root: str) -> dict:
     """The layers this engine's agent cell builder
     (``model_variant.variant_injections``) ablates or steers for one
-    injection, on a saved 12-layer vector under ``root``."""
+    injection, in the order it emits them, on a saved 12-layer vector under
+    ``root`` — or the sentence it refuses with."""
     from steerlab_server.experiment import model_variant
     from steerlab_server.steering import vector_store
 
@@ -413,19 +414,24 @@ def ablation_layer_cells(injection: dict, root: str) -> list[int]:
     with warnings.catch_warnings():
         # The uncentered preflight warns that no neutral mean is stored.
         warnings.simplefilter("ignore", UserWarning)
-        cells = model_variant.variant_injections(variant, root=root)
-    return sorted({cell.layer for cell in cells})
+        try:
+            cells = model_variant.variant_injections(variant, root=root)
+        except ValueError as error:
+            return {"refusal": str(error)}
+    return {"layers": [cell.layer for cell in cells]}
 
 
 def ablation_layers() -> None:
     """Which layers an agent's ablation covers, from its declared list. Both
-    engines must ablate the same set: exactly the listed layers, never the
-    span between the first and the last (AblationLayerSubsetTests.swift)."""
+    engines must ablate the same layers in the same order: exactly the listed
+    ones, ascending and once each, never the span between the first and the
+    last. A listed layer the vector does not have refuses with the same
+    sentence on both (AblationLayerSubsetTests.swift)."""
     cases = []
     with tempfile.TemporaryDirectory() as root:
         for label, injection in ablation_layer_cases():
             cases.append({"label": label, "injection": injection,
-                          "layers": ablation_layer_cells(injection, root)})
+                          **ablation_layer_cells(injection, root)})
     _write(os.path.join(FIXTURES, "ablation-layers.json"),
            {"bandWidth": 3, "layerCount": ABLATION_LAYER_COUNT,
             "cases": cases})

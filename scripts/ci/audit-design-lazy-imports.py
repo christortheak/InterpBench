@@ -75,6 +75,20 @@ for module in ('model_variant', 'multi_agent'):
         if module == 'model_variant':
             expected = expected.replace('root: str | None = None) -> list[CellInjection]:', 'root: str | None = None, allow_policies: bool = False) -> list[CellInjection]:', 1)
             expected = expected.replace('    # `resolve_artifact`, not bare', "    if variant.intervention_policies and not allow_policies:\n        raise ValueError('This execution path does not run intervention policies. Use a sampled-response agent study or Python Playground; direct scoring and battery qualification are not yet policy-aware.')\n    # `resolve_artifact`, not bare", 1)
+            # Ablation layer lists (approved by the maintainer 2026-10-19): a
+            # listed layer the vector does not have refuses instead of being
+            # skipped, by one rule and one sentence shared with the Swift engine
+            # (ablation_layers.covered; behaviour in test_ablation_layer_subsets.py).
+            for before_text, after_text in (
+                ('from . import neutral, paths',
+                 'from . import ablation_layers, neutral, paths'),
+                ('layer_range = ([l for l in declared if 0 <= l < vectors.layer_count]\n'
+                 '                           if declared else range(vectors.layer_count))',
+                 'layer_range = ablation_layers.covered(\n'
+                 '                variant.name, inj.get("concept"), declared, vectors.layer_count)'),
+            ):
+                assert expected.count(before_text) == 1, f'approved change no longer applies: {before_text!r}'
+                expected = expected.replace(before_text, after_text, 1)
         else:
             expected = expected.replace('model_variant.variant_injections(variant)', "model_variant.variant_injections(variant, **({'allow_policies': True} if variant.intervention_policies else {}))")
         old_tree, current_tree = ast.parse(expected), ast.parse(after)

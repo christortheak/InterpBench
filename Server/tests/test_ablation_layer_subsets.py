@@ -4,14 +4,16 @@ An ablating injection may carry ``layers``, a list of blocks; nil or empty
 means every layer. Release review 2026-10-19: the Mac engine built its cells
 from the first declared layer to the last, so ``[3, 7, 10]`` also ablated
 4–6 and 8–9, an unsorted list such as ``[10, 3]`` crashed, and a list naming
-only layers the vector does not have ablated every layer. This engine
-ablates the listed layers and nothing else, which is what the
-preregistration's ``L3+L7+L10`` describes, and the Mac engine now does too.
+only layers the vector does not have ablated every layer there and none on
+this engine. Both engines now ablate the listed layers and nothing else,
+ascending and once each, which is what the preregistration's ``L3+L7+L10``
+describes, and both refuse a listed layer the vector does not have with the
+same sentence (``ablation_layers.covered``).
 
 ``Tests/Fixtures/cross-engine/ablation-layers.json`` holds the layers this
-engine's cell builder covers for each declared list; the Swift twin
-(``AblationLayerSubsetTests.swift``) builds the same agents and must cover
-the same layers.
+engine's cell builder covers for each declared list, or its refusal; the
+Swift twin (``AblationLayerSubsetTests.swift``) builds the same agents and
+must cover the same layers or refuse with the same sentence.
 """
 
 import importlib.util
@@ -51,12 +53,15 @@ def test_the_cross_engine_fixture_is_current(generator, tmp_path):
     assert [(case["label"], case["injection"]) for case in fixture["cases"]] \
         == generator.ablation_layer_cases(), REGENERATE
     for case in fixture["cases"]:
+        expected = {key: case[key] for key in ("layers", "refusal")
+                    if key in case}
         assert generator.ablation_layer_cells(case["injection"], str(tmp_path)) \
-            == case["layers"], f"{case['label']}: {REGENERATE}"
+            == expected, f"{case['label']}: {REGENERATE}"
 
 
 def test_the_fixture_covers_the_shapes_the_engines_once_read_differently():
-    cases = {case["label"]: case["layers"] for case in _fixture()["cases"]}
+    cases = {case["label"]: case.get("layers", case.get("refusal"))
+             for case in _fixture()["cases"]}
     every = list(range(_fixture()["layerCount"]))
     assert cases["absent-means-every-layer"] == every
     assert cases["empty-means-every-layer"] == every
@@ -67,6 +72,11 @@ def test_the_fixture_covers_the_shapes_the_engines_once_read_differently():
     assert cases["every-layer-listed"] == every
     # Steering ignores the list.
     assert cases["steering-ignores-layers"] == [4, 5, 6]
+    # A layer the vector does not have refuses, whether some or all are.
+    assert "lists layer 12, which its vector does not have" \
+        in cases["partly-out-of-range"]
+    assert "lists layers 12, 40, which" in cases["all-out-of-range"]
+    assert "lists layer -1, which" in cases["negative"]
 
 
 def _save_vector(root, layer_count):
@@ -133,3 +143,31 @@ def test_the_preregistration_names_each_ablated_layer_once_in_order(tmp_path):
     vector = _save_vector(tmp_path, 16)
     ablated = _ablated(tmp_path, {**injection, "vectorArtifactID": vector})
     assert "+".join(f"L{layer}" for layer in ablated) == "L3+L7+L10"
+
+
+def test_a_listed_layer_the_vector_does_not_have_refuses(tmp_path):
+    """Never skipped, and never read as every layer: some or all of the list
+    outside the vector refuses with the repair."""
+    vector = _save_vector(tmp_path, 12)
+    for layers, named in (([3, 12], "layer 12"), ([12, 40], "layers 12, 40"),
+                          ([-1, 2], "layer -1")):
+        with pytest.raises(ValueError) as refused:
+            _ablated(tmp_path, {
+                "concept": "fear", "vectorArtifactID": vector, "layer": 3,
+                "alpha": 1.0, "mode": "ablate", "layers": layers})
+        assert str(refused.value) == (
+            f"variant 'fear-ablation': the ablation of 'fear' lists {named}, "
+            "which its vector does not have (its layers are 0 to 11); remove "
+            f"{'it' if named.startswith('layer ') else 'them'} from the "
+            "injection's layers, or delete the list to ablate every layer")
+
+
+def test_a_list_entry_that_is_not_a_layer_index_refuses(tmp_path):
+    from steerlab_server.experiment import ablation_layers
+
+    for declared in ([3, 7.5], [True], ["3"], 3):
+        with pytest.raises(ValueError, match="not all whole layer indices"):
+            ablation_layers.covered("v", "fear", declared, 12)
+    assert ablation_layers.covered("v", "fear", [10, 3, 10], 12) == [3, 10]
+    assert ablation_layers.covered("v", "fear", None, 3) == [0, 1, 2]
+    assert ablation_layers.covered("v", "fear", [], 3) == [0, 1, 2]

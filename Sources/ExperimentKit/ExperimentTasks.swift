@@ -2943,7 +2943,13 @@ public enum ExperimentTasks {
             // twin `model_variant.variant_injections`). A declared list is a
             // set, never a span: this site used to ablate first ... last, so
             // [3, 7, 10] also removed the direction at 4–6 and 8–9, and an
-            // unsorted list formed an invalid range and crashed.
+            // unsorted list formed an invalid range and crashed. A listed
+            // layer the vector does not have refuses, on both engines.
+            if isAblation,
+                let problem = injection.ablationLayerProblem(layerCount: vectors.layerCount)
+            {
+                throw ExperimentError(reason: "variant '\(variant.name)': \(problem)")
+            }
             let covered = isAblation
                 ? injection.resolvedLayers(layerCount: vectors.layerCount)
                 : Array(
