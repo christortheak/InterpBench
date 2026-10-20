@@ -328,7 +328,7 @@ steerlab bundle import <file.tar.gz> --sha256 <digest>   # the separate step
 |---|---|---|
 | `runner capabilities` | `GET /api/info` (+ `GET /api/capabilities` as fallback) | the runner's `engineVersion`, its artifact root, its devices and capability snapshot. Warns when the runner's root looks like a source checkout |
 | `runner upload <bundle>` | `POST /api/bundles/upload` | streams the archive; **refuses** if the runner reports a different sha256 than the client computed. Prints the staged path and the digest — the two things `submit` wants |
-| `runner submit` | `POST /api/bundles/inspect`, then `POST /api/studies/submit-bundle` | `--bundle-sha` is checked against the runner's own inspect of `--bundle-path` **before** anything is submitted. Reports the job id, the runner's identity, and the digest |
+| `runner submit` | `POST /api/bundles/inspect`, then `POST /api/studies/submit-bundle` | `--bundle-sha` is checked against the runner's own inspect of `--bundle-path` **before** anything is submitted. Without `--executor`, `analyze` and `verify` are sent as `local` and every other verb sends none, so the runner's own executor applies. Reports the job id, the runner's identity, and the digest |
 | `runner jobs [<id>]` | `GET /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel` | `--cancel` needs an id — this client will not cancel a runner's whole queue |
 | `runner logs <id>` | `GET /api/jobs/{id}` (`logTail`), `GET /api/jobs/{id}/stream` with `--follow` | the default is a **tail** and says so; `--follow` streams until the job is terminal |
 | `runner evidence <id> --out <file>` | `GET /api/bundles/download` | downloads to a **unique** temp file beside `--out` (`--temp` overrides), verifies the outer sha256 the job record reported, then commits with a **no-overwrite** primitive — a destination that appears mid-download is a `destinationExists` refusal, never a replacement. An explicit `--temp` path is created **exclusively**: a file already there is a `tempPathExists` refusal, not a truncation. **Does not import** — it prints the exact `steerlab bundle import … --sha256 …` |
@@ -494,7 +494,7 @@ prints one `run[<stage>]: …` line on **stderr**.
 | `--runner <url>` | required. Where to execute |
 | `--token-file <path>`, `--ca-bundle <path>` | as everywhere else; still **no `--token`** |
 | `--verb <run\|sweep\|validate\|…>` | default `run`. The submit route's vocabulary |
-| `--executor <local\|slurm>` | default: whatever the runner is configured for |
+| `--executor <local\|slurm>` | default: `local` for `analyze` and `verify`, which load no model; for every other verb, whatever the runner is configured for (`client_cli.default_executor`, the same rule as the Mac's `remote submit-bundle`) |
 | `--dry-run` | prepare, schedule nothing. Accepted against any runner |
 | `--target-root`, `--dtype`, `--device`, `--parallel` | pass-throughs, exactly as `runner submit` exposes them |
 | `--no-evidence` | do not package or fetch evidence (stages 7–9 `skipped`) |

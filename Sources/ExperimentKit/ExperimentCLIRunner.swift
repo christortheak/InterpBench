@@ -2691,18 +2691,21 @@ public struct ExperimentCLIRunner: Sendable {
                 do {
                     capabilities = try await client.capabilities()
                 } catch {
-                    throw ExperimentError(
-                        reason: "could not read the server's own executor to "
-                            + "choose where this \(submitVerb) runs (\(error)). "
-                            + "Pass --executor slurm for its own Slurm job, or "
-                            + "--executor local for the controller, to submit "
-                            + "without asking")
+                    throw ExperimentError.refusing(
+                        .missingPrerequisite,
+                        "Could not read the server's own executor, which chooses "
+                            + "where this \(submitVerb) runs: "
+                            + "\(error.localizedDescription). Nothing was submitted.",
+                        repair: "steerlab-cli remote submit-bundle \(path) --verb "
+                            + "\(submitVerb) --executor slurm (its own Slurm job), or "
+                            + "--executor local (the controller), to choose it yourself")
                 }
                 if case .string(let declared)? = capabilities.profile?["executor"] {
                     serverExecutor = declared
                 }
-            } else if explicitExecutor?.trimmingCharacters(in: .whitespaces)
-                .lowercased() == "local"
+            } else if SubmitExecutorDefault.loadsModel(submitVerb),
+                explicitExecutor?.trimmingCharacters(in: .whitespaces)
+                    .lowercased() == "local"
             {
                 // Only the warning below reads it: a failed read costs the
                 // warning, never the submission the caller named.

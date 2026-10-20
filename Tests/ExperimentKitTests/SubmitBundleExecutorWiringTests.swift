@@ -123,6 +123,15 @@ import Testing
             #expect(executor(outcome) == "local", "\(verb)")
             #expect(source(outcome) == "loadsNoModel", "\(verb)")
             #expect(!outcome.stderr.contains("controller's own"), "\(verb)")
+            // Named local, a verb that loads no model has no warning to look
+            // up, so its submission waits on no extra request.
+            let named = try await submit(
+                ["--verb", verb, "--executor", "local"], serverExecutor: "slurm")
+            #expect(executor(named) == "local", "\(verb)")
+            #expect(
+                named.paths.filter { $0 == "/api/capabilities" }.count
+                    == outcome.paths.filter { $0 == "/api/capabilities" }.count,
+                "\(verb)")
         }
     }
 
@@ -137,8 +146,14 @@ import Testing
 
     @Test func anUnreadableServerExecutorRefusesInsteadOfGuessingLocal() async throws {
         let outcome = try await submit(["--verb", "run"], serverExecutor: nil)
-        #expect(outcome.envelope.exitCode != 0)
-        #expect(outcome.envelope.error?.reason.contains("Pass --executor slurm") == true)
+        #expect(outcome.envelope.exitCode == 65)
+        #expect(outcome.envelope.error?.code == "missingPrerequisite")
+        #expect(
+            outcome.envelope.error?.repairAction
+                == "steerlab-cli remote submit-bundle /srv/b.tar.gz --verb run "
+                + "--executor slurm (its own Slurm job), or --executor local "
+                + "(the controller), to choose it yourself")
+        #expect(outcome.envelope.error?.reason.contains("Nothing was submitted") == true)
         #expect(outcome.submitBodies.isEmpty)
         #expect(!outcome.paths.contains("/api/studies/submit-bundle"))
     }

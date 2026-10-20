@@ -576,16 +576,18 @@ fi
 
 # ---------------------------------------------------------- 3. torch install --
 if [ "$INSTALL_TORCH" -eq 1 ]; then
-  # Fall back ONLY when the index does not carry the pinned version. Any other
-  # failure (no egress, a full quota, a resolver conflict) is that failure, and
-  # must not be papered over with an unpinned install.
+  # Fall back ONLY when the index answered and does not carry the pinned
+  # version: pip then lists the versions it does have. An index it could not
+  # reach prints the same "could not find" lines with `(from versions: none)`,
+  # and that, like any other failure (a full quota, a resolver conflict), is
+  # the failure itself, never a reason for an unpinned install.
   torch_log="$(mktemp)"
   "$PYBIN" -m pip install "$TORCH_SPEC" --index-url "$TORCH_INDEX" 2>&1 | tee "$torch_log"
   torch_status=${PIPESTATUS[0]}
   if [ "$torch_status" -eq 0 ]; then
     set_step torchInstall "ok"
   elif [ "$TORCH_SPEC" != "torch" ] \
-      && grep -qE "No matching distribution found for torch==|Could not find a version that satisfies the requirement torch==" "$torch_log"; then
+      && grep -qE "satisfies the requirement torch==[^ ]+ \(from versions: [0-9]" "$torch_log"; then
     echo "bootstrap.sh: WARNING $TORCH_INDEX does not offer $TORCH_SPEC (the lock's version); keeping or installing that index's own torch instead. Every run on this node reports the difference from the lock, and \`steerlab-server site qualify\` shows it."
     if "$PYBIN" -m pip install torch --index-url "$TORCH_INDEX"; then
       set_step torchInstall "ok"

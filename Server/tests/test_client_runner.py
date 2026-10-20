@@ -378,6 +378,42 @@ def test_the_cli_walks_the_same_path_and_reports_it_in_the_envelope(
     assert document["result"]["lines"]
 
 
+#: The adapter class itself, taken at import: `wired_cli` replaces the
+#: module attribute with a factory that builds this class.
+_REAL_RUNNER_CLIENT = runner_api.RunnerClient
+
+
+def test_runner_submit_sends_local_for_a_verb_that_loads_no_model(
+        wired_cli, capsys, monkeypatch):
+    """`runner submit` applies the client's executor rule too: no
+    --executor sends `local` for `verify` (and `analyze`), and nothing for a
+    model verb, so the runner's own executor applies. Twin of the `run`
+    composite's test and of the Mac's `SubmitExecutorDefault`."""
+    seen = []
+    original = _REAL_RUNNER_CLIENT.submit_uploaded_bundle
+
+    def recording(self, **kwargs):
+        seen.append(kwargs.get("executor"))
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(_REAL_RUNNER_CLIENT, "submit_uploaded_bundle", recording)
+    service = wired_cli
+    runner = ["--runner", "http://testserver"]
+    code, document, _ = _envelope(
+        ["runner", "upload", service["bundle"], *runner], capsys)
+    assert code == 0, document
+    staged, digest = document["result"]["runnerPath"], document["result"]["sha256"]
+    base = ["runner", "submit", *runner, "--bundle-path", staged,
+            "--bundle-sha", digest, "--target-root", service["target"],
+            "--dry-run"]
+    for extra, expected in ((["--verb", "verify"], "local"),
+                            (["--verb", "verify", "--executor", " "], "local"),
+                            (["--verb", "run"], None),
+                            (["--verb", "verify", "--executor", "slurm"], "slurm")):
+        code, document, _ = _envelope([*base, *extra], capsys)
+        assert seen[-1] == expected, (extra, document)
+
+
 def test_runner_submit_records_the_jobs_origin_in_the_named_workspace(
         wired_cli, capsys, tmp_path):
     """The Mac app imports a job's evidence without a reconnect when the

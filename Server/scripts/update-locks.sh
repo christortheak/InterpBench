@@ -107,12 +107,12 @@ compile_one x86_64-unknown-linux-gnu requirements-linux-x86_64.lock \
 # this lock is ~50 lines longer than the macOS one.
 #
 # BUT: which CUDA a site actually wants is a SITE fact, not ours.
-# bootstrap.sh installs torch from `--torch-index` (default cu128) BEFORE it
-# applies this lock, and then applies the lock with torch + its nvidia-*/triton
-# runtime EXCLUDED, so a site keeps its own build. Everything else —
-# transformers, accelerate, peft, numpy, scipy, safetensors, huggingface_hub —
-# is pinned exactly by this file. The torch line stays here as the recorded
-# reference resolution; each run stamps the torch that actually ran.' \
+# bootstrap.sh asks `--torch-index` (default cu128) for the torch VERSION on
+# the line below BEFORE it applies this lock, so a site gets its own build of
+# that version, and then applies the lock with torch + its nvidia-*/triton
+# runtime EXCLUDED. Everything else — transformers, accelerate, peft, numpy,
+# scipy, safetensors, huggingface_hub — is pinned exactly by this file. Each
+# run stamps the torch that actually ran.' \
   ""
 
 echo "update-locks.sh: done. Review the diff — a lock bump is a substrate change."

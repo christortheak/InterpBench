@@ -3364,7 +3364,8 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
         submission = client.submit_uploaded_bundle(
             remote_path=remote_path, expected_sha256=bundle_sha,
             verb=study_verb,
-            executor=default_executor(invocation.one("--executor"), study_verb),
+            executor=default_executor(
+                (invocation.one("--executor") or "").strip() or None, study_verb),
             target_root=invocation.one("--target-root"),
             dry_run=invocation.has("--dry-run"),
             dtype=invocation.one("--dtype"),

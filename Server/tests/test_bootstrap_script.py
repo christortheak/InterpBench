@@ -198,6 +198,8 @@ exit 0
 
 def test_only_a_missing_torch_version_falls_back_to_the_index_default(tmp_path):
     proc, calls = _torch_step_run(tmp_path, (
+        "ERROR: Could not find a version that satisfies the requirement "
+        "torch==9.8.7 (from versions: 2.5.1+cu128, 2.6.0+cu128)\n"
         "ERROR: No matching distribution found for torch==9.8.7", 1))
     assert _report(proc)["steps"]["torchInstall"] == "ok"
     assert calls[:2] == [
@@ -214,6 +216,21 @@ def test_any_other_torch_failure_fails_the_step_without_an_unpinned_install(
     proc, calls = _torch_step_run(tmp_path, (
         "ERROR: Could not install packages due to an OSError: "
         "[Errno 122] Disk quota exceeded", 1))
+    assert _report(proc)["steps"]["torchInstall"] == "failed"
+    assert not any(c.startswith("-m pip install torch --index-url") for c in calls)
+    assert "does not offer" not in proc.stdout
+
+
+def test_an_unreachable_index_fails_the_step_and_installs_nothing_unpinned(
+        tmp_path):
+    """No egress prints the same two lines with `(from versions: none)`: the
+    index never answered, so nothing says the version is missing. A fallback
+    there would keep an old torch while reporting success, or install the
+    newest unpinned once the outage clears."""
+    proc, calls = _torch_step_run(tmp_path, (
+        "ERROR: Could not find a version that satisfies the requirement "
+        "torch==9.8.7 (from versions: none)\n"
+        "ERROR: No matching distribution found for torch==9.8.7", 1))
     assert _report(proc)["steps"]["torchInstall"] == "failed"
     assert not any(c.startswith("-m pip install torch --index-url") for c in calls)
     assert "does not offer" not in proc.stdout
