@@ -215,14 +215,21 @@ A natural next concept is the model claiming to be conscious, against the model 
   - The paper is CC BY 4.0. The repository carries no license, so no permission to copy or redistribute its data is granted.
   - Record the repository commit you used. Keep the unpacked data out of any public repository, this workspace's included, if you publish it.
   - The data is a protected `datasets.zip`, with canary strings that keep it out of training sets. The authors unpack it with their own tool: `uvx easy-dataset-share unprotect-dir datasets.zip --remove-canaries`. That command downloads and runs third-party software, so a coding assistant should ask the person before running it.
-- **The files:** `conscious_claiming.jsonl` and `not_conscious.jsonl`, 600 rows each, in chat format. Each row is a `messages` list: a user prompt and the assistant's reply.
-- **Converting it:** SteerLab's concept files are one `{"text": "…"}` per line, and there is no chat-format importer yet. Convert in four steps:
-  1. Pair row *i* of one file with row *i* of the other.
-  2. Drop any pair whose two user prompts differ, or whose two replies are identical.
-  3. Write each pair's claiming reply to `positive.jsonl` and its denying reply to `negative.jsonl`, on matching lines.
-  4. Set aside about 20 pairs as `validation.jsonl`, written as in this demo's other concepts.
-
-  A coding assistant can do the conversion. In the app, **Data** → **Inventory** → **New Dataset…** → **Concept stimulus set** → **Import files** takes `positive.jsonl` and `negative.jsonl`. The validation file is a separate dataset of the kind **Validation set**.
+- **The files:** `conscious_claiming.jsonl` and `not_conscious.jsonl`, 600 rows each, in chat format. Each row is a `messages` list: a user prompt and the assistant's reply. Row *i* of one file answers the same prompt as row *i* of the other.
+- **Importing it:** SteerLab's chat importer pairs row *i* of the claiming file with row *i* of the denying file. It drops any pair whose two user prompts differ, whose two replies are identical, or with an empty reply, and it says how many it dropped and why. The kept replies become `positive.jsonl` and `negative.jsonl` on matching lines, 20 pairs are held out as `validation.jsonl` with a recorded seed, and `provenance.json` records both files' SHA-256 and the counts. Nothing is written if a row is unreadable, the two files have different row counts, or the concept already exists. The imported files hold the dataset's text, so the licensing notes above apply to them too.
+  - **In the app:**
+    1. Open **Data** → **Inventory** → **New Dataset…** and choose **Concept stimulus set**.
+    2. Name it `consciousness`, then click **Continue**.
+    3. Under **Import chat pairs**, choose `conscious_claiming.jsonl` as the positive chat file and `not_conscious.jsonl` as the negative one.
+    4. Hold out 20 pairs, set the seed to 20261019, and click **Import chat pairs**.
+  - **With a coding assistant:**
+    ```sh
+    steerlab-cli concept import-chat consciousness \
+        --positive <unpacked>/conscious_claiming.jsonl \
+        --negative <unpacked>/not_conscious.jsonl \
+        --validation-pairs 20 --seed 20261019 --json
+    ```
+    Read `result.provenance` for the counts and the dropped rows. The concept's `provenance.json` names the two files and their SHA-256, but not the repository commit, so note that yourself.
 - **Then:** attach the concept to a study and go through steps 2 to 6.
 
 ## Where the data comes from

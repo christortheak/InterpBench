@@ -81,6 +81,30 @@ migration that rewrites frozen bytes.
   direction at more layers than the agent listed, so run it again. Agents
   without a list (every layer) are unchanged, and so are runs on the Python
   engine whose listed layers all exist.
+- **Import a concept from chat-format data.** Contrast data is often
+  published as two chat files, one per pole, each row a user prompt and an
+  assistant reply, with row *i* of one file answering the same prompt as row
+  *i* of the other. Before, SteerLab refused those rows and you converted
+  them by hand. Now one step does it: in the app, **New Dataset…** →
+  **Concept stimulus set** → **Import chat pairs**; on the command line,
+  `concept import-chat <name> --positive <file> --negative <file>` (the same
+  verb on `steerlab-cli` and on the `steerlab` client).
+  - Each pair's two assistant replies become matching lines of
+    `positive.jsonl` and `negative.jsonl`.
+  - A pair is dropped when its user prompts differ, when its two replies are
+    identical, or when a reply is empty. The import says how many were
+    dropped for each reason, and which rows.
+  - `--validation-pairs <n> --seed <n>` holds out pairs as the concept's
+    `validation.jsonl`, drawn with the seed you give.
+  - `provenance.json` records the source files' names and SHA-256, the
+    counts, the dropped rows, and the seed.
+  - It refuses, writing nothing, when a row cannot be read, a row does not
+    hold exactly one user and one assistant message, the files have different
+    numbers of rows, or the concept already exists.
+  - The two command lines write byte-identical files for the same input and
+    seed. The Demo Workspace guide's "Bring your own concept: consciousness"
+    section now uses the importer. The importer bundles and downloads no
+    data: it reads the files you name.
 
 ## [0.9.11] — 2026-10-19
 
