@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.12] — 2026-10-20
+
 - **Save Changes no longer writes over an agent a run saved.** The agent
   library also lists agents stored in a run's folder: the Python engine's
   save and promote put them there, and imported evidence carries them. A
