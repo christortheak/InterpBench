@@ -404,6 +404,10 @@ def test_every_committed_fixture_has_a_staleness_test():
         # Checked inline in test_panel_transcript_analysis.py (analyze re-run
         # over the committed panel records) and PanelTranscriptAnalysisTests.swift.
         "panel-transcript-analysis.json",
+        # Checked inline in test_chat_concept_import.py (every case re-run
+        # through the importer: written bytes or refusal) and read by
+        # ChatConceptImportTests.swift.
+        "chat-concept-import.json",
         # Hand-authored contract (not regenerated from either engine — it
         # states the INTENDED verdicts, SCI-04, 2026-09-05), checked inline on
         # both sides: test_study_stats.py

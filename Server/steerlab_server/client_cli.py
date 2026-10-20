@@ -435,6 +435,17 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
                      "concept's datasets.",
              value_flags=frozenset({"--file", "--side"}),
              required_flags=frozenset({"--file"})),
+    # The same verb, flags, refusals, and output bytes as `steerlab-cli
+    # concept import-chat` (both call a twin of `chat_concept_import`; the
+    # cross-engine fixture chat-concept-import.json holds them equal).
+    VerbSpec("concept", "import-chat", positional="<name>",
+             purpose="Create a concept from two row-aligned chat-format "
+                     "JSONL files, keeping each pair's assistant replies as "
+                     "its positive and negative stimuli; optionally hold out "
+                     "pairs as its validation set.",
+             value_flags=frozenset({"--positive", "--negative",
+                                    "--validation-pairs", "--seed"}),
+             required_flags=frozenset({"--positive", "--negative"})),
     VerbSpec("bundle", "package", positional="<experiment>",
              purpose="Package a study and its whole pin surface into a run "
                      "bundle.",
@@ -715,6 +726,10 @@ METAVARS: dict = {
 #: where it is the folder the export is written into.
 VERB_METAVARS: dict = {
     "results export --out": "<dir>",
+    "concept import-chat --positive": "<chat.jsonl>",
+    "concept import-chat --negative": "<chat.jsonl>",
+    "concept import-chat --validation-pairs": "<n>",
+    "concept import-chat --seed": "<n>",
 }
 
 
@@ -2095,6 +2110,8 @@ def _concept(invocation: Invocation) -> CLIResult:
     from .experiment import authoring
 
     spec = invocation.spec
+    if spec.verb == "import-chat":
+        return _concept_import_chat(invocation)
     args = invocation.positionals
     _require(args, 1, spec)
     name = args[0]
@@ -2147,6 +2164,46 @@ def _concept(invocation: Invocation) -> CLIResult:
                  "negativeCount": info["negativeCount"],
                  "contentHash": info.get("contentHash"),
                  "stimulusSetHash": info.get("hash")})
+
+
+def _concept_import_chat(invocation: Invocation) -> CLIResult:
+    """A new concept from two row-aligned chat files — the twin of
+    ``steerlab-cli concept import-chat``. Every rule, sentence, and byte lives
+    in :mod:`steerlab_server.experiment.chat_concept_import`; this verb reads
+    the flags and translates its refusals into the envelope."""
+    from .experiment import chat_concept_import as chat
+
+    spec = invocation.spec
+    args = invocation.positionals
+    positive = invocation.one("--positive")
+    negative = invocation.one("--negative")
+    if len(args) != 1 or not positive or not negative:
+        raise ClientRefusal(
+            code=USAGE_CODE, reason=f"usage: {synopsis(spec)}",
+            repair_action=(f"{PROGRAM} concept import-chat <name> --positive "
+                           "<chat.jsonl> --negative <chat.jsonl> "
+                           "[--validation-pairs <n> --seed <n>]"))
+    try:
+        pairs_text = invocation.one("--validation-pairs")
+        seed_text = invocation.one("--seed")
+        outcome = chat.import_concept(
+            args[0], positive, negative, root=invocation.workspace_root,
+            validation_pairs=(chat.parse_count(pairs_text)
+                              if pairs_text is not None else 0),
+            seed=chat.parse_seed(seed_text) if seed_text is not None else None)
+    except chat.ChatImportRefusal as refusal:
+        raise ClientRefusal(code=refusal.code, reason=refusal.reason,
+                            repair_action=refusal.repair_action,
+                            state=refusal.state) from None
+    lines = chat.summary_lines(outcome)
+    for line in lines:
+        print(line)
+    return CLIResult(
+        message=lines[0], changed=True,
+        payload=chat.result_payload(outcome),
+        next_action=envelope.next_action(
+            f"experiment attach <name> {outcome['name']}",
+            detail="pin the new concept into a draft study"))
 
 
 # --- verbs: authoring ----------------------------------------------------------

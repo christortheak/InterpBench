@@ -876,6 +876,33 @@ public struct DatasetCreationPlan: Sendable, Equatable {
             inventoryEntryID: inventoryEntryID)
     }
 
+    /// Create this concept from two row-aligned chat-format files — the
+    /// sheet's "Import chat pairs", and the same import as `steerlab-cli
+    /// concept import-chat` (`ChatConceptImport`, byte-identical to the
+    /// Python client's).
+    ///
+    /// Concept stimulus sets only. Unlike `apply`, it never adds to or
+    /// replaces anything: a destination that already exists is the
+    /// importer's own `conceptExists` refusal, because its files are written
+    /// together with a provenance note that describes all of them.
+    @discardableResult
+    public func applyChatImport(
+        positive: URL, negative: URL, validationPairs: Int, seed: UInt64?,
+        now: Date = Date()
+    ) throws -> ChatConceptImport.Outcome {
+        guard requirements.isEmpty else {
+            throw DatasetCreationError.unresolvedRequirements(requirements)
+        }
+        guard role == .conceptStimuli else {
+            throw DatasetCreationError.importRejected(
+                slot: .positiveStimuli,
+                reason: "chat-format pairs import only as a concept stimulus set")
+        }
+        return try ChatConceptImport.importConcept(
+            name: name, positive: positive, negative: negative,
+            validationPairs: validationPairs, seed: seed, root: root, now: now)
+    }
+
     /// Create the destination DIRECTORY and nothing else — the "author it in
     /// the builder" path, where the files arrive later from the Concept Lab.
     /// Deliberately empty structure: no seed rows, no template file.

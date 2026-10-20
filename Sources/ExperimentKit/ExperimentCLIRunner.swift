@@ -110,7 +110,7 @@ public struct ExperimentCLIRunner: Sendable {
     public static let namespaces: Set<String> = [
         "init", "workspace", "setup", "data", "vectors", "remote", "experiment", "docs",
         "install", "panel", "authoring", "model", "design", "agent", "pack", "science",
-        "results",
+        "results", "concept",
     ]
 
     /// The top-level spelling of `install version`. `--version` is what a
@@ -257,6 +257,10 @@ public struct ExperimentCLIRunner: Sendable {
             case "setup": result = try await ClientSetupCLI.run(invocation)
             case "workspace": result = try runWorkspaceCommand(invocation)
             case "data": result = try runDataCommand(invocation)
+            case "concept":
+                result = try ChatConceptImportCLI.run(
+                    invocation, workspaceRoot: ExperimentStore.workspaceRoot,
+                    now: now(), sink: sink)
             case "vectors": result = try await runVectorsCommand(invocation)
             case "remote": result = try await runRemoteCommand(invocation)
             case "experiment": result = try await runExperimentCommand(invocation)
@@ -326,6 +330,15 @@ public struct ExperimentCLIRunner: Sendable {
 
         } catch let refusal as DiagnosticWorkspace.Refusal {
             return outcome(for: refusal, namespace: namespace, verb: verb)
+
+        } catch let refusal as ChatConceptImport.Refusal {
+            // A new verb, so no historical human exit code to hold still:
+            // both modes exit with the state's own code (64 / 65 / 66).
+            return outcome(
+                namespace: namespace, verb: verb, state: refusal.state,
+                exitCode: refusal.state.exitCode,
+                failure: .init(reason: refusal.reason, repairAction: refusal.repairAction),
+                code: refusal.code, repairAction: refusal.repairAction)
 
         } catch let usage as ExperimentCLIUsageError {
             return usageOutcome(

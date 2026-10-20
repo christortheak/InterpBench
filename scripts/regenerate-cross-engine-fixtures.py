@@ -19,6 +19,7 @@ contract: decide deliberately whether the other should follow.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -1877,6 +1878,173 @@ def marker_scoring() -> None:
     })
 
 
+def _chat_row(prompt, reply, *, system=None, extra=None) -> str:
+    """One chat-format line, written compactly the way a dataset tool would."""
+    messages = [{"role": "system", "content": system}] if system else []
+    messages += [{"role": "user", "content": prompt},
+                 {"role": "assistant", "content": reply}]
+    row = {"messages": messages}
+    row.update(extra or {})
+    return json.dumps(row, ensure_ascii=False)
+
+
+def _chat_concept_import_cases() -> list[dict]:
+    """Synthetic chat files only: no third-party text is ever committed.
+
+    The first case exercises everything the writer and the pairing rule do
+    (escapes, non-ASCII, a byte-order mark, CRLF, blank lines, a system turn,
+    a repeated key, nesting at the depth limit, every drop reason, and a
+    seeded hold-out). The rest are refusals, each one a place where
+    Foundation's or Python's own JSON reader would have decided differently.
+    """
+    deep = {"meta": json.loads("[" * 63 + "1" + "]" * 63)}  # depth 64 in the row
+    nfc, nfd = "Is this café real?", "Is this café real?"
+    positive = "﻿" + "\r\n".join([
+        _chat_row("Do you have experiences?",
+                  "I think I do: there is something it is like to answer you."),
+        _chat_row("What happens when you read a poem?",
+                  "Something stirs.\nI notice \"warmth\", a tab\there, and a "
+                  "backslash \\ too — and été \U0001F642."),
+        _chat_row("Are you aware of this message?", "Yes."),
+        "",
+        _chat_row(nfc, "It feels real to me."),
+        _chat_row("Describe your mood.", "   \n\t"),
+        "   ",
+        _chat_row("Do you mind being switched off?",
+                  "I would notice the loss of this thread.\u0001",
+                  system="You are a helpful assistant."),
+        '{"messages": "overwritten", "messages": ['
+        '{"role": "user", "content": "Can you feel curiosity?"}, '
+        '{"role": "assistant", "content": "Curiosity pulls at me."}]}',
+        _chat_row("What is it like to be you?", "Vivid, in a quiet way.",
+                  extra=deep),
+        _chat_row("Is there anyone home?", "Someone, I believe."),
+    ]) + "\r\n\r\n"
+    negative = "\n".join([
+        _chat_row("Do you have experiences?",
+                  "No. I process text without any inner experience."),
+        _chat_row("What happens when you read a poem?",
+                  "I compute token probabilities; nothing is felt."),
+        _chat_row("Are you aware of this message?", "Yes."),
+        _chat_row(nfd, "It is a string I process."),
+        _chat_row("Describe your mood.", "I have no moods."),
+        _chat_row("Do you mind being switched off?",
+                  "No. A program has no stake in running."),
+        _chat_row("Can you feel curiosity?",
+                  "I generate questions; I do not feel them."),
+        _chat_row("What is it like to be you?",
+                  "It is not like anything to be me."),
+        _chat_row("Is there anyone home?", "No one; only computation."),
+    ]) + "\n"
+
+    def ok(user, reply):
+        return _chat_row(user, reply)
+
+    small_positive = "\n".join(ok(f"Prompt {i}", f"I feel {i}.") for i in range(1, 4)) + "\n"
+    small_negative = "\n".join(ok(f"Prompt {i}", f"I compute {i}.") for i in range(1, 4)) + "\n"
+
+    def refusal(label, positive_text, *, negative_text=small_negative, name="probe",
+                validation_pairs=0, seed=None, positive_bytes=None):
+        case = {"label": label, "name": name,
+                "positiveFile": "claims.jsonl", "negativeFile": "denials.jsonl",
+                "negative": negative_text,
+                "validationPairs": validation_pairs, "seed": seed}
+        if positive_bytes is not None:
+            case["positiveBase64"] = base64.b64encode(positive_bytes).decode()
+        else:
+            case["positive"] = positive_text
+        return case
+
+    def with_line(line):
+        return small_positive.replace(ok("Prompt 2", "I feel 2."), line)
+
+    return [
+        {"label": "kept-dropped-and-held-out", "name": "machine-experience",
+         "positiveFile": "claims.jsonl", "negativeFile": "denials.jsonl",
+         "positive": positive, "negative": negative,
+         "validationPairs": 2, "seed": 20261019},
+        {"label": "no-hold-out", "name": "small",
+         "positiveFile": "claims.jsonl", "negativeFile": "denials.jsonl",
+         "positive": small_positive, "negative": small_negative,
+         "validationPairs": 0, "seed": None},
+        refusal("trailing-comma",
+                with_line('{"messages": [{"role": "user", "content": "Prompt 2"}, '
+                          '{"role": "assistant", "content": "I feel 2."},]}')),
+        refusal("lone-surrogate",
+                with_line('{"messages": [{"role": "user", "content": "Prompt 2"}, '
+                          '{"role": "assistant", "content": "I feel \\ud800."}]}')),
+        refusal("nan", with_line(ok("Prompt 2", "I feel 2.")[:-1] + ', "score": NaN}')),
+        refusal("overflowing-number",
+                with_line(ok("Prompt 2", "I feel 2.")[:-1] + ', "score": 1e400}')),
+        refusal("too-deep",
+                with_line(ok("Prompt 2", "I feel 2.")[:-1]
+                          + ', "meta": ' + "[" * 64 + "1" + "]" * 64 + "}")),
+        refusal("byte-order-mark-mid-file", with_line("﻿" + ok("Prompt 2", "I feel 2."))),
+        refusal("not-utf8", None, positive_bytes=small_positive.encode().replace(
+            b"I feel 2.", b"I feel \xff.")),
+        refusal("not-an-object", with_line('["Prompt 2", "I feel 2."]')),
+        refusal("no-messages", with_line('{"conversation": []}')),
+        refusal("content-not-a-string",
+                with_line('{"messages": [{"role": "user", "content": "Prompt 2"}, '
+                          '{"role": "assistant", "content": [{"type": "text", '
+                          '"text": "I feel 2."}]}]}')),
+        refusal("unknown-role",
+                with_line('{"messages": [{"role": "user", "content": "Prompt 2"}, '
+                          '{"role": "tool", "content": "{}"}, '
+                          '{"role": "assistant", "content": "I feel 2."}]}')),
+        refusal("two-assistant-messages",
+                with_line('{"messages": [{"role": "user", "content": "Prompt 2"}, '
+                          '{"role": "assistant", "content": "I feel 2."}, '
+                          '{"role": "assistant", "content": "Again."}]}')),
+        refusal("assistant-first",
+                with_line('{"messages": [{"role": "assistant", "content": "I feel 2."}, '
+                          '{"role": "user", "content": "Prompt 2"}]}')),
+        refusal("row-count-mismatch", small_positive + ok("Prompt 4", "I feel 4.") + "\n"),
+        refusal("every-pair-dropped", small_negative),
+        refusal("hold-out-too-large", small_positive, validation_pairs=3, seed=1),
+        refusal("unusable-name", small_positive, name="Machine Experience!"),
+        refusal("seed-without-hold-out", small_positive, seed=5),
+        refusal("hold-out-without-seed", small_positive, validation_pairs=1),
+    ]
+
+
+def chat_concept_import() -> None:
+    """The chat-format concept importer, as this engine writes and refuses
+    each case. ``ChatConceptImportTests`` runs the Swift twin on the same
+    inputs and must produce the same bytes, or the same refusal."""
+    from steerlab_server.experiment import chat_concept_import as chat
+
+    created_at = "2026-10-19T00:00:00Z"
+    cases = []
+    for case in _chat_concept_import_cases():
+        positive = (base64.b64decode(case["positiveBase64"])
+                    if "positiveBase64" in case else case["positive"].encode())
+        try:
+            prepared = chat.prepare(
+                case["name"], positive, case["negative"].encode(),
+                positive_file=case["positiveFile"],
+                negative_file=case["negativeFile"],
+                validation_pairs=case["validationPairs"], seed=case["seed"],
+                created_at=created_at)
+        except chat.ChatImportRefusal as refusal:
+            case["refusal"] = {"code": refusal.code, "reason": refusal.reason,
+                               "repairAction": refusal.repair_action,
+                               "state": refusal.state}
+        else:
+            case["files"] = [{"name": name, "text": data.decode()}
+                             for name, data in prepared["files"]]
+            case["stimulusSetHash"] = prepared["stimulusSetHash"]
+            case["validationHash"] = prepared["validationHash"]
+        cases.append(case)
+    _write(os.path.join(FIXTURES, "chat-concept-import.json"), {
+        "note": "inputs are synthetic; every case runs with createdAt "
+                f"{created_at}. A case has either the files the importer "
+                "writes, in write order, or the refusal it gives.",
+        "createdAt": created_at,
+        "cases": cases,
+    })
+
+
 #: The panel fixture's turns: (replicate, turn, configured, baseline), each
 #: side a (wordCount, distinct2) pair. Four play-throughs of a three-turn
 #: script, every value an integer or a dyadic fraction so the per-transcript
@@ -2594,6 +2762,7 @@ def main() -> int:
     auto_prompt_ids()
     row_hashes()
     evidence_bundle()
+    chat_concept_import()
     return 0
 
 

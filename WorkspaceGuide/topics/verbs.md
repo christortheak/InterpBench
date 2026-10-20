@@ -75,6 +75,9 @@ its heading (`{{cli}} workspace guide <topic>`) or ask the verb itself
 - Primary outcome: `steerlab experiment set-primary-outcome <name>
   <outcome>`. Every summary then leads with it.
 <!-- client: all -->
+- Chat-format data (two row-aligned `{"messages": […]}` files): `{{cli}}
+  concept import-chat <concept> --positive <file> --negative <file>
+  --validation-pairs <n> --seed <n>` makes a new concept and its validation set.
 
 ## Judging (`evaluation`)
 

@@ -85,6 +85,7 @@ the researcher's study: their own work goes in a new workspace, or in a
 | `prompts/concepts/<name>/negative.jsonl` | contrastive stimuli, matched control | `{"text": "…"}` per line |
 | `prompts/concepts/<name>/validation.jsonl` | held-out probe (`workspace guide lifecycle`) | `{"text": "…", "expresses": true\|false}` per line |
 | `prompts/concepts/<name>/markers.json` | optional marker word list | `{"words": ["…"]}` |
+| `prompts/concepts/<name>/provenance.json` | where an imported concept came from: source files, SHA-256, counts, seed | written by `concept import-chat`; read-only |
 | `prompts/tasks/*.jsonl` | the measured task prompts | `{"id", "prompt", ["options", "target"]}` per line; ids unique |
 | `prompts/rubrics/*.md` | judging instruments (Markdown) | prose rubric; pinned by file, not inline text |
 | `prompts/batteries/*.jsonl` | capability probes | `{"prompt", "answer", "grading"}`; grading ∈ `exact_number`, `yes_no`, `token_exact`, `exact_normalized`, `regex` |

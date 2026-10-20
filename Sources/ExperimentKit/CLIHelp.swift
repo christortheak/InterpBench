@@ -158,6 +158,10 @@ public enum CLIFlagVocabulary {
         "remote import --out": "<dir>",
         "results export --out": "<dir>",
         "docs cli-reference --path": "<file>",
+        "concept import-chat --positive": "<chat.jsonl>",
+        "concept import-chat --negative": "<chat.jsonl>",
+        "concept import-chat --validation-pairs": "<n>",
+        "concept import-chat --seed": "<n>",
     ]
 
     /// One line per flag. Imperative, and about the effect rather than the
@@ -376,6 +380,18 @@ public enum CLIFlagVocabulary {
     ]
 
     private static let verbPurposes: [String: String] = [
+        "concept import-chat --positive":
+            "Chat-format JSONL whose assistant replies express the concept: "
+            + "one {\"messages\": [user, assistant]} object per line.",
+        "concept import-chat --negative":
+            "The matching chat file whose replies do not: row i answers the "
+            + "same user prompt as row i of --positive.",
+        "concept import-chat --validation-pairs":
+            "Hold out this many pairs as validation.jsonl instead of using "
+            + "them for extraction (requires --seed).",
+        "concept import-chat --seed":
+            "The seed the held-out pairs are drawn with, 0 to "
+            + "\(ChatConceptImport.maximumSeed); recorded in provenance.json.",
         "experiment attach --corpus": "Extra corpus members for emotionGrandMean.",
         // A compiled panel binds the STUDY's model and sampling settings, so
         // these three default from the target manifest and, when given,
@@ -663,6 +679,9 @@ public enum ExperimentCLIHelp {
             .init(
                 synopsis: "authoring study <intent> | prompt <kind> …",
                 purpose: "The study interview (start here), and generation prompts for missing study data."),
+            .init(
+                synopsis: "concept import-chat <name> …",
+                purpose: "Create a concept from paired chat-format files."),
             .init(
                 synopsis: "experiment <verb> <name> …",
                 purpose: "The study lifecycle."),

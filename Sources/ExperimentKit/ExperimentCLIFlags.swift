@@ -362,6 +362,13 @@ public enum ExperimentCLIParser {
         .init(
             namespace: "data", verb: "verify-custody", positional: "<receipt-sha256>",
             purpose: "Verify a retained evidence archive and imported files against a local custody receipt; no network or cleanup."),
+        // The same verb, flags, refusals, and output bytes as the Python
+        // client's `steerlab concept import-chat` (`ChatConceptImport`).
+        .init(
+            namespace: "concept", verb: "import-chat", positional: "<name>",
+            purpose: "Create a concept from two row-aligned chat-format JSONL files, keeping each pair's assistant replies as its positive and negative stimuli; optionally hold out pairs as its validation set.",
+            valueFlags: ["--positive", "--negative", "--validation-pairs", "--seed"],
+            requiredFlags: ["--positive", "--negative"]),
 
         .init(namespace: "agent", verb: "list", purpose: "List discoverable local agent artifacts and their file digests."),
         .init(namespace: "agent", verb: "inspect", positional: "<path>", purpose: "Inspect a workspace agent artifact before attachment."),

@@ -647,6 +647,10 @@ import Testing
                     // researcher can take elsewhere. One verb, reached through
                     // the local Python client like the science actions.
                     "results",
+                    // `concept import-chat`: a new concept from two
+                    // row-aligned chat-format files, the Python client's
+                    // verb of the same name, byte for byte.
+                    "concept",
                 ])
     }
 

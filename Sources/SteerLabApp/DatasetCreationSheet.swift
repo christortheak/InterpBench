@@ -58,10 +58,52 @@ struct DatasetCreationSheet: View {
     @State private var neutralTarget: NeutralCorpusTarget = .normCalibration
     @State private var pairedFamily: VectorCatalog.PairedStimulusFamily?
     @State private var chosen: [DatasetFileSlot: URL] = [:]
-    @State private var importingSlot: DatasetFileSlot?
+    @State private var importing: ImportTarget?
+    /// "Import chat pairs" (concept stimulus sets only): the two chat files,
+    /// how many pairs to hold out, and the seed that draws them.
+    @State private var chatFiles: [ChatSide: URL] = [:]
+    @State private var chatHoldout = 20
+    @State private var chatSeed = DatasetCreationSheet.defaultSeed()
     @State private var confirmingReplace = false
     @State private var failure: String?
     @State private var isApplying = false
+
+    /// What the one file chooser is choosing for. One `.fileImporter` serves
+    /// every button: two importers on one view do not both present.
+    private enum ImportTarget: Equatable {
+        case slot(DatasetFileSlot)
+        case chat(ChatSide)
+    }
+
+    private enum ChatSide: String, CaseIterable, Identifiable {
+        case positive
+        case negative
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .positive: "Positive chat file"
+            case .negative: "Negative chat file"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .positive: "replies that express the concept"
+            case .negative: "replies to the same prompts, in the same order, that do not"
+            }
+        }
+    }
+
+    /// Today's date as a number (20261019), the convention the Demo
+    /// Workspace's held-out draws use. Shown, editable, and recorded.
+    private static func defaultSeed() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd"
+        return formatter.string(from: Date())
+    }
 
     // MARK: Plan
 
@@ -98,18 +140,21 @@ struct DatasetCreationSheet: View {
         .frame(width: Self.sheetWidth, height: Self.sheetHeight)
         .fileImporter(
             isPresented: Binding(
-                get: { importingSlot != nil },
-                set: { if !$0 { importingSlot = nil } }),
+                get: { importing != nil },
+                set: { if !$0 { importing = nil } }),
             allowedContentTypes: [.json, .plainText, .data]
         ) { result in
-            let slot = importingSlot
-            importingSlot = nil
+            let target = importing
+            importing = nil
             // A chooser failure used to be dropped on the floor; say what
             // went wrong (audit 2026-09-06).
             switch result {
             case .success(let url):
-                guard let slot else { return }
-                chosen[slot] = url
+                switch target {
+                case .slot(let slot): chosen[slot] = url
+                case .chat(let side): chatFiles[side] = url
+                case nil: return
+                }
                 failure = nil
             case .failure(let error):
                 failure = "could not open that file — \(describe(error))"
@@ -230,6 +275,7 @@ struct DatasetCreationSheet: View {
                 role = candidate
                 // A role change invalidates every downstream choice.
                 chosen = [:]
+                chatFiles = [:]
                 recipeFamily = nil
                 neutralTarget = .normCalibration
                 pairedFamily = nil
@@ -508,6 +554,11 @@ struct DatasetCreationSheet: View {
                 }
 
                 importCard(plan)
+
+                if plan.role == .conceptStimuli {
+                    Divider()
+                    chatImportCard(plan)
+                }
             }
         }
     }
@@ -634,6 +685,10 @@ struct DatasetCreationSheet: View {
                 "The chosen bytes are copied to the canonical name and place, "
                     + "after the family's own parser accepts them. A malformed "
                     + "file is refused with its error and nothing is written."
+                    + (plan.role == .conceptStimuli
+                        ? #" Chat-format files ({"messages": […]} per line) "#
+                            + "go through Import chat pairs below."
+                        : "")
             )
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -717,7 +772,7 @@ struct DatasetCreationSheet: View {
             }
             Spacer(minLength: 8)
             Button(chosen[file.slot] == nil ? "Choose…" : "Change…") {
-                importingSlot = file.slot
+                importing = .slot(file.slot)
             }
             .controlSize(.small)
             .help(
@@ -727,6 +782,161 @@ struct DatasetCreationSheet: View {
                 Button("Clear") { chosen[file.slot] = nil }
                     .controlSize(.small)
                     .help("forget this choice — nothing on disk changes")
+            }
+        }
+    }
+
+    // MARK: Chat-format pairs
+
+    /// A concept from two row-aligned chat files: `{"messages": [user,
+    /// assistant]}` per line, one file per pole. The assistant replies become
+    /// the stimuli. `ChatConceptImport` holds every rule, and writes the same
+    /// bytes as `concept import-chat` on either command line.
+    private func chatImportCard(_ plan: DatasetCreationPlan) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Import chat pairs")
+                .font(.callout.weight(.medium))
+            Text(
+                "For contrast data in chat format: two JSONL files whose row i "
+                    + "answers the same user prompt. Each pair's assistant replies "
+                    + "become line i of positive.jsonl and negative.jsonl. Pairs "
+                    + "whose prompts differ, whose replies are identical, or with "
+                    + "an empty reply are dropped and counted, and provenance.json "
+                    + "records both files' SHA-256."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            if plan.directoryExists {
+                Label(
+                    "\(plan.directoryRelativePath) already exists. Chat pairs make "
+                        + "a new concept and never add to one, so go back and "
+                        + "choose another name.",
+                    systemImage: "exclamationmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            ForEach(ChatSide.allCases) { side in
+                chatFileRow(side)
+            }
+
+            HStack(spacing: 8) {
+                Text("Hold out")
+                    .font(.caption)
+                TextField("pairs", value: $chatHoldout, format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 64)
+                    .help(
+                        "how many pairs to set aside as validation.jsonl, which "
+                            + "extraction never sees; 0 writes none")
+                    .accessibilityLabel("Pairs to hold out for validation")
+                Text("pairs for validation, drawn with seed")
+                    .font(.caption)
+                TextField("seed", text: $chatSeed)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 110)
+                    .help(
+                        "the seed that draws the held-out pairs, 0 to "
+                            + "\(ChatConceptImport.maximumSeed); recorded in "
+                            + "provenance.json so the draw can be repeated")
+                    .accessibilityLabel("Seed for the held-out pairs")
+                    .disabled(chatHoldout == 0)
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 10) {
+                Button("Import chat pairs") { commitChat(plan) }
+                    .disabled(
+                        chatFiles.count < 2 || isApplying || plan.directoryExists
+                            || chatHoldout < 0)
+                    .help(
+                        "pair the two files row by row and create "
+                            + "\(plan.directoryRelativePath); nothing is written if "
+                            + "any row is refused")
+                if isApplying {
+                    ProgressView().controlSize(.small)
+                }
+                Spacer()
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    private func chatFileRow(_ side: ChatSide) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(side.label)
+                    .font(.caption.weight(.medium))
+                if let source = chatFiles[side] {
+                    Text(source.lastPathComponent)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(source.path)
+                } else {
+                    Text(side.detail)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+            Button(chatFiles[side] == nil ? "Choose…" : "Change…") {
+                importing = .chat(side)
+            }
+            .controlSize(.small)
+            .help("pick the \(side.rawValue) chat file — it is read, never moved or linked")
+            if chatFiles[side] != nil {
+                Button("Clear") { chatFiles[side] = nil }
+                    .controlSize(.small)
+                    .help("forget this choice — nothing on disk changes")
+            }
+        }
+    }
+
+    /// Off the main actor, like `commit`: the import reads, parses, and
+    /// hashes both files before anything is written.
+    private func commitChat(_ plan: DatasetCreationPlan) {
+        guard !isApplying, let positive = chatFiles[.positive],
+            let negative = chatFiles[.negative]
+        else { return }
+        let holdout = max(0, chatHoldout)
+        let seed: UInt64?
+        if holdout > 0 {
+            do {
+                seed = try ChatConceptImport.parseSeed(
+                    chatSeed.trimmingCharacters(in: .whitespaces))
+            } catch {
+                failure = describe(error)
+                return
+            }
+        } else {
+            seed = nil
+        }
+        isApplying = true
+        failure = nil
+        // Security-scoped URLs from the file chooser: access is held across
+        // the whole import, which reads both files.
+        let scoped = [positive, negative].filter { $0.startAccessingSecurityScopedResource() }
+        Task {
+            defer {
+                for url in scoped { url.stopAccessingSecurityScopedResource() }
+                isApplying = false
+            }
+            do {
+                _ = try await Task.detached(priority: .userInitiated) {
+                    try plan.applyChatImport(
+                        positive: positive, negative: negative,
+                        validationPairs: holdout, seed: seed)
+                }.value
+                onCreated(plan.inventoryEntryID)
+                dismiss()
+            } catch {
+                failure = describe(error)
             }
         }
     }
@@ -819,6 +1029,7 @@ struct DatasetCreationSheet: View {
     /// `localizedDescription`.
     private func describe(_ error: Error) -> String {
         if let creation = error as? DatasetCreationError { return creation.description }
+        if let refusal = error as? ChatConceptImport.Refusal { return refusal.description }
         return error.localizedDescription
     }
 }

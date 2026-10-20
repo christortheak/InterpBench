@@ -743,6 +743,10 @@ import Testing
             // else in the family moved.
             "workspace guide",
             "setup start", "setup inspect", "setup plan", "setup apply", "setup repair", "data check", "data custody", "data verify-custody",
+            // A new family with one verb: a concept from two row-aligned
+            // chat-format files, the Python client's verb of the same name.
+            // Nothing in the lifecycle moved.
+            "concept import-chat",
             // POLE MIRRORING: the opposite pole of a contrastive direction as
             // its own artifact. A new verb in an existing family, not a
             // changed one — nothing in the lifecycle moved, and the experiment

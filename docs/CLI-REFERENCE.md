@@ -164,7 +164,10 @@ pin-rubric, acknowledge-custom-code — show a study's intervention-policy custo
 with `--sha256`, record that you trust it; `pack apply`, `bundle import` and
 `attach-agent` print the notice, and `run` will not send a step that executes
 the study's agents until the code is acknowledged),
-`pack` (preview, apply, export), `concept import`, `bundle` (package, inspect, import),
+`pack` (preview, apply, export), `concept` (import; import-chat — a new
+concept from two row-aligned chat-format files, with the same flags, refusals,
+and output bytes as `steerlab-cli concept import-chat`, §3.3),
+`bundle` (package, inspect, import),
 `model` (capabilities — show the chat-template capability record, §4.4;
 set-capability — override one detected field with a reason; this client holds
 no tokenizer, so probing is `steerlab-server model capabilities --probe` or
@@ -905,6 +908,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   workspace init | inspect | handoff …          Create a workspace, or get the first steps for a coding assistant.
   setup start | inspect | plan | apply | repair …  First-run readiness and reviewed client setup.
   authoring study <intent> | prompt <kind> …    The study interview (start here), and generation prompts for missing study data.
+  concept import-chat <name> …                  Create a concept from paired chat-format files.
   experiment <verb> <name> …                    The study lifecycle.
   results export <study> [--run <run-dir>] [--out <dir>]  Export a run's results as tables, transcripts, a methods summary, and a codebook.
   results report <study> [--run <run-dir>] [--out <file>]  Write a run's results as one readable page to open in a browser or send.
@@ -1487,6 +1491,71 @@ skippable. A forced freeze remains non-citable — but checkably so, by stamp.
 
 **`verify`** — prints `OK [status]` or one `VIOLATION: …` line per drifted pin,
 **exiting 1** when there is any violation.
+
+#### Concepts from chat-format data (`concept import-chat`)
+
+<!-- GENERATED:swift-concept BEGIN -->
+<!-- Generated from the declarative verb table — `steerlab-cli docs cli-reference --write`. Edit the table, not this block. -->
+
+```
+steerlab-cli concept import-chat <name> --negative <chat.jsonl> --positive <chat.jsonl> [--seed <n>] [--validation-pairs <n>]
+```
+
+| Verb | Purpose |
+|---|---|
+| `concept import-chat` | Create a concept from two row-aligned chat-format JSONL files, keeping each pair's assistant replies as its positive and negative stimuli; optionally hold out pairs as its validation set. |
+
+Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
+<!-- GENERATED:swift-concept END -->
+
+A concept's stimulus files are one `{"text": "…"}` per line. Contrast data is
+often published in chat format instead: two JSONL files, one per pole, each
+row a `{"messages": [{"role": "user", …}, {"role": "assistant", …}]}` object,
+with row *i* of one file answering the same prompt as row *i* of the other.
+`concept import-chat` turns such a pair into a new concept under
+`prompts/concepts/<name>/`:
+
+```sh
+steerlab-cli concept import-chat consciousness \
+    --positive conscious_claiming.jsonl --negative not_conscious.jsonl \
+    --validation-pairs 20 --seed 20261019 --json
+```
+
+- **Pairing.** Row *i* pairs with row *i*, counting non-blank lines from 1 (a
+  leading byte-order mark is ignored). Each row must hold exactly one `user`
+  message followed by one `assistant` message; `system` messages are allowed
+  and ignored.
+- **Drops.** A pair is dropped, not refused, when its two user prompts differ,
+  when its two assistant replies are identical, or when either reply is empty
+  (only spaces, tabs, and line breaks). The human output and
+  `result.provenance.dropped` give the count and the rows for each reason.
+- **Files.** The kept pairs' assistant replies are written verbatim, on
+  matching lines, to `positive.jsonl` and `negative.jsonl`, beside the
+  `concept.json` every concept carries. `--validation-pairs <n>` holds out
+  *n* kept pairs instead, as `validation.jsonl` rows (the positive reply with
+  `"expresses": true`, then the negative one with `false`). They are drawn
+  with `--seed` (required with it, 0 to 9007199254740991) by the seeded draw
+  the neutral token bank uses on both engines.
+- **Provenance.** `provenance.json` names both source files (base name only),
+  their SHA-256 and sizes, the row, kept, dropped, extraction, and held-out
+  counts, the dropped rows, and the seed and held-out rows.
+- **Refusals** are typed and write nothing: `chatRowUnreadable` (a row that is
+  not UTF-8, not JSON, not an object, or has no `messages` list of
+  `role`/`content` strings — named by file and line), `chatRowRoles` (not
+  exactly one user then one assistant message, or another role),
+  `rowCountMismatch`, `conceptExists` (the importer never adds to or replaces
+  a concept), `noUsablePairs`, and `validationTooLarge` are `65`; a missing
+  file is `notFound` (`66`); a bad name or flag value is `usage` (`64`).
+- **JSON.** Rows are read strictly (RFC 8259, no lone surrogates, no
+  non-finite numbers, nesting at most 64 deep), because a lenient reader on
+  one engine would accept rows the other refuses.
+
+The Python client's `steerlab concept import-chat` (§1.4) takes the same
+flags and writes byte-identical files for the same input and seed; the
+cross-engine fixture `Tests/Fixtures/cross-engine/chat-concept-import.json`
+holds the two equal. In the app, the same import is **Import chat pairs** in
+**New Dataset…** › **Concept stimulus set**. Nothing is bundled or downloaded:
+the importer reads the files you name.
 
 ### 3.4 Running
 

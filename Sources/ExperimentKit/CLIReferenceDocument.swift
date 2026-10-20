@@ -76,6 +76,7 @@ public enum CLIReferenceDocument {
                 "experiment verify", "experiment freeze", "experiment duplicate",
                 "experiment rename", "experiment delete",
             ]),
+        .init(id: "swift-concept", verbLabels: ["concept import-chat"]),
         .init(
             id: "swift-experiment-running",
             verbLabels: [
