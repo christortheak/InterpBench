@@ -145,7 +145,9 @@ import Testing
                     == "variant 'fear-ablation': the ablation of 'fear' lists \(named), "
                     + "which its vector does not have (its layers are 0 to 11); "
                     + "remove \(pronoun) from the injection's layers, or delete the "
-                    + "list to ablate every layer"
+                    + "list to ablate every layer; in a frozen study, save the "
+                    + "corrected agent as a new agent, duplicate the study, attach "
+                    + "the new agent to the copy, then validate and freeze it"
             }
         }
         // Steering ignores the list, so it never refuses for it.

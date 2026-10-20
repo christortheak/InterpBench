@@ -106,7 +106,9 @@ public enum SweepReplies {
         var seen = Set<Key>()
         var unreadable = 0
         let text = String(decoding: data, as: UTF8.self)
-        for raw in text.split(whereSeparator: \.isNewline) {
+        // Records are separated by "\n" alone: a reply may hold U+2028 or
+        // U+0085 raw, which `isNewline` would treat as a line break.
+        for raw in text.split(separator: "\n", omittingEmptySubsequences: true) {
             let line = raw.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty else { continue }
             guard

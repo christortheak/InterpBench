@@ -1029,7 +1029,7 @@ struct DatasetCreationSheet: View {
     /// `localizedDescription`.
     private func describe(_ error: Error) -> String {
         if let creation = error as? DatasetCreationError { return creation.description }
-        if let refusal = error as? ChatConceptImport.Refusal { return refusal.description }
+        if let refusal = error as? ChatConceptImport.Refusal { return refusal.appDescription }
         return error.localizedDescription
     }
 }

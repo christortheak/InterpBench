@@ -183,7 +183,7 @@
         "mode": "ablate"
       },
       "label": "partly-out-of-range",
-      "refusal": "variant 'fear-ablation': the ablation of 'fear' lists layer 12, which its vector does not have (its layers are 0 to 11); remove it from the injection's layers, or delete the list to ablate every layer"
+      "refusal": "variant 'fear-ablation': the ablation of 'fear' lists layer 12, which its vector does not have (its layers are 0 to 11); remove it from the injection's layers, or delete the list to ablate every layer; in a frozen study, save the corrected agent as a new agent, duplicate the study, attach the new agent to the copy, then validate and freeze it"
     },
     {
       "injection": {
@@ -197,7 +197,7 @@
         "mode": "ablate"
       },
       "label": "all-out-of-range",
-      "refusal": "variant 'fear-ablation': the ablation of 'fear' lists layers 12, 40, which its vector does not have (its layers are 0 to 11); remove them from the injection's layers, or delete the list to ablate every layer"
+      "refusal": "variant 'fear-ablation': the ablation of 'fear' lists layers 12, 40, which its vector does not have (its layers are 0 to 11); remove them from the injection's layers, or delete the list to ablate every layer; in a frozen study, save the corrected agent as a new agent, duplicate the study, attach the new agent to the copy, then validate and freeze it"
     },
     {
       "injection": {
@@ -211,7 +211,7 @@
         "mode": "ablate"
       },
       "label": "negative",
-      "refusal": "variant 'fear-ablation': the ablation of 'fear' lists layer -1, which its vector does not have (its layers are 0 to 11); remove it from the injection's layers, or delete the list to ablate every layer"
+      "refusal": "variant 'fear-ablation': the ablation of 'fear' lists layer -1, which its vector does not have (its layers are 0 to 11); remove it from the injection's layers, or delete the list to ablate every layer; in a frozen study, save the corrected agent as a new agent, duplicate the study, attach the new agent to the copy, then validate and freeze it"
     },
     {
       "injection": {

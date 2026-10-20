@@ -188,3 +188,25 @@ def test_the_output_rows_are_the_stimulus_shape():
     files = dict(prepared["files"])
     assert files["positive.jsonl"] == b'{"text": "yes"}\n'
     assert files["negative.jsonl"] == b'{"text": "no"}\n'
+
+
+def test_line_separators_in_a_reply_keep_each_row_one_line(tmp_path):
+    """U+0085, U+2028, and U+2029 are valid raw inside a JSON string, but this
+    engine's stimulus reader splits lines with ``str.splitlines``, which breaks
+    on them. The importer escapes them, so the concept loads on this engine as
+    well as on the Mac, with the reply's text intact."""
+    reply = "I notice\u2028a pause\u2029 and\u0085 then go on."
+    positive = (_row("Prompt 1", reply) + "\n" + _row("Prompt 2", "I feel 2.") + "\n").encode()
+    negative = (_row("Prompt 1", "I compute 1.") + "\n"
+                + _row("Prompt 2", "I compute 2.") + "\n").encode()
+    prepared = chat.prepare("separators", positive, negative,
+                            positive_file="claims.jsonl", negative_file="denials.jsonl",
+                            validation_pairs=0, seed=None, created_at="2026-10-19T00:00:00Z")
+    directory = tmp_path / "separators"
+    directory.mkdir()
+    for name, data in prepared["files"]:
+        assert not any(c in data.decode() for c in "\u0085\u2028\u2029"), name
+        (directory / name).write_bytes(data)
+    stimuli = StimulusSet.from_directory(str(directory))
+    assert list(stimuli.positive) == [reply, "I feel 2."]
+

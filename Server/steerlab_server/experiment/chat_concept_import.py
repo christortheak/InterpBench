@@ -119,11 +119,21 @@ def timestamp(epoch: float) -> str:
         .strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# Line-separating characters a reader may split on (Python's
+# ``str.splitlines`` breaks on all three; JSON allows them raw). Escaped, so
+# every row stays one line whatever reads it.
+_LINE_SEPARATORS = {"\u0085": "\\u0085", "\u2028": "\\u2028", "\u2029": "\\u2029"}
+
+
 def json_string(text: str) -> str:
     """One JSON string literal, non-ASCII kept as UTF-8 — the escaping both
     engines write (``"``, ``\\``, ``\\b\\f\\n\\r\\t``, other controls as
-    lower-case ``\\u00xx``)."""
-    return json.dumps(text, ensure_ascii=False)
+    lower-case ``\\u00xx``, and U+0085, U+2028, and U+2029 as ``\\u0085``,
+    ``\\u2028``, ``\\u2029``)."""
+    literal = json.dumps(text, ensure_ascii=False)
+    for raw, escaped in _LINE_SEPARATORS.items():
+        literal = literal.replace(raw, escaped)
+    return literal
 
 
 def text_row(text: str) -> str:

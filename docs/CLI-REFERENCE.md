@@ -1551,7 +1551,8 @@ steerlab-cli concept import-chat consciousness \
   one engine would accept rows the other refuses.
 
 The Python client's `steerlab concept import-chat` (§1.4) takes the same
-flags and writes byte-identical files for the same input and seed; the
+flags and writes identical files for the same input and seed, apart from the
+import time in `concept.json` and `provenance.json`; the
 cross-engine fixture `Tests/Fixtures/cross-engine/chat-concept-import.json`
 holds the two equal. In the app, the same import is **Import chat pairs** in
 **New Dataset…** › **Concept stimulus set**. Nothing is bundled or downloaded:

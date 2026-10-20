@@ -396,7 +396,7 @@ verb added without a test is still covered. Submitting to a remote runner is
 | family | verbs |
 |---|---|
 | `experiment` | `create`, `attach`, `declare-condition`, `remove-condition`, `set-protocol`, `pin-revision`, `set-style-taxonomy`, `pin-sae-candidates`, `duplicate`, `verify`, `freeze`, `list` (since v0: `detach`, `set-sweep-grid`, `set-parser`, `set-instrument-scope`, `set-system-prompt`, `set-evaluation-sampling`) |
-| `concept` | `import`, `import-chat` (a new concept from two row-aligned chat-format files; the Mac's `steerlab-cli concept import-chat` is its twin, and the two write byte-identical files and give identical refusals for the same input and seed, pinned by the fixture `Tests/Fixtures/cross-engine/chat-concept-import.json`: `test_chat_concept_import.py` ↔ `ChatConceptImportTests`) |
+| `concept` | `import`, `import-chat` (a new concept from two row-aligned chat-format files; the Mac's `steerlab-cli concept import-chat` is its twin, and the two write identical files (apart from the import time in `concept.json` and `provenance.json`) and give identical refusals for the same input and seed, pinned by the fixture `Tests/Fixtures/cross-engine/chat-concept-import.json`: `test_chat_concept_import.py` ↔ `ChatConceptImportTests`) |
 | `bundle` | `package`, `inspect`, `import` |
 | `model` | `capabilities`, `set-capability` (since 2026-09-05: the chat-template capability record, CLI-REFERENCE §4.4 — shown and overridden here, probed by an engine) |
 

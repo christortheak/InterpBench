@@ -307,4 +307,39 @@ import Testing
                 positive: positive, negative: negative, validationPairs: 0, seed: nil)
         }
     }
+
+    /// The app's card has a hold-out count and a seed, not flags: a refusal
+    /// that names a flag on the command line is said in the card's terms.
+    @Test func theAppWordsFlagRefusalsWithoutFlags() throws {
+        func refusal(_ body: () throws -> Void) -> ChatConceptImport.Refusal? {
+            do { try body() } catch let refusal as ChatConceptImport.Refusal { return refusal } catch {}
+            return nil
+        }
+        let row = { (prompt: String, reply: String) in
+            #"{"messages": [{"role": "user", "content": "\#(prompt)"}, "#
+                + #"{"role": "assistant", "content": "\#(reply)"}]}"#
+        }
+        let positive = ChatConceptImport.Source(
+            file: "claims.jsonl", data: Data((row("P1", "I feel 1.") + "\n" + row("P2", "I feel 2.") + "\n").utf8))
+        let negative = ChatConceptImport.Source(
+            file: "denials.jsonl", data: Data((row("P1", "I compute 1.") + "\n" + row("P2", "I compute 2.") + "\n").utf8))
+        let refusals = [
+            refusal { _ = try ChatConceptImport.parseSeed("soon") },
+            refusal { _ = try ChatConceptImport.parseCount("many") },
+            refusal { _ = try ChatConceptImport.prepare(
+                name: "probe", positive: positive, negative: negative,
+                validationPairs: 2, seed: 1, createdAt: "2026-10-19T00:00:00Z") },
+            refusal { _ = try ChatConceptImport.prepare(
+                name: "probe", positive: positive, negative: negative,
+                validationPairs: 1, seed: nil, createdAt: "2026-10-19T00:00:00Z") },
+        ]
+        for case let found? in refusals {
+            #expect(found.description.contains("--"))
+            #expect(!found.appDescription.contains("--"), "\(found.code): \(found.appDescription)")
+        }
+        #expect(refusals.compactMap { $0 }.count == 4)
+        #expect(refusals[2]?.code == "validationTooLarge")
+        #expect(refusals[2]?.appDescription.contains("fewer than 2") == true)
+    }
 }
+

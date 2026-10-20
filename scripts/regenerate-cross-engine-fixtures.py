@@ -1898,8 +1898,8 @@ def _chat_concept_import_cases() -> list[dict]:
     Foundation's or Python's own JSON reader would have decided differently.
     """
     deep = {"meta": json.loads("[" * 63 + "1" + "]" * 63)}  # depth 64 in the row
-    nfc, nfd = "Is this café real?", "Is this café real?"
-    positive = "﻿" + "\r\n".join([
+    nfc, nfd = "Is this caf\u00e9 real?", "Is this cafe\u0301 real?"
+    positive = "\ufeff" + "\r\n".join([
         _chat_row("Do you have experiences?",
                   "I think I do: there is something it is like to answer you."),
         _chat_row("What happens when you read a poem?",
@@ -1911,7 +1911,7 @@ def _chat_concept_import_cases() -> list[dict]:
         _chat_row("Describe your mood.", "   \n\t"),
         "   ",
         _chat_row("Do you mind being switched off?",
-                  "I would notice the loss of this thread.\u0001",
+                  "I would notice the loss\u2028of this\u2029 thread\u0085.\u0001",
                   system="You are a helpful assistant."),
         '{"messages": "overwritten", "messages": ['
         '{"role": "user", "content": "Can you feel curiosity?"}, '
@@ -1979,7 +1979,7 @@ def _chat_concept_import_cases() -> list[dict]:
         refusal("too-deep",
                 with_line(ok("Prompt 2", "I feel 2.")[:-1]
                           + ', "meta": ' + "[" * 64 + "1" + "]" * 64 + "}")),
-        refusal("byte-order-mark-mid-file", with_line("﻿" + ok("Prompt 2", "I feel 2."))),
+        refusal("byte-order-mark-mid-file", with_line("\ufeff" + ok("Prompt 2", "I feel 2."))),
         refusal("not-utf8", None, positive_bytes=small_positive.encode().replace(
             b"I feel 2.", b"I feel \xff.")),
         refusal("not-an-object", with_line('["Prompt 2", "I feel 2."]')),

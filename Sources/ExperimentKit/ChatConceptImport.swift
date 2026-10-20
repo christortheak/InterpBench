@@ -99,6 +99,34 @@ public enum ChatConceptImport {
         }
 
         public var description: String { "\(reason) — \(repairAction)" }
+
+        /// The refusal in the app's words. The command line's reason and
+        /// repair name its flags; the app's card has a hold-out count and a
+        /// seed instead, so the few refusals that name a flag are said in
+        /// those terms, and every other refusal reads as it does everywhere.
+        public var appDescription: String {
+            if code == "validationTooLarge" {
+                let usable = reason.split(separator: " ")
+                    .compactMap { Int($0) }.last
+                return "Holding out that many pairs leaves none to extract from"
+                    + (usable.map { ": \($0) pairs are usable. Hold out fewer than \($0), or none." }
+                        ?? ". Hold out fewer pairs, or none.")
+            }
+            guard code == "usage", reason.hasPrefix("--") else { return description }
+            if reason.hasPrefix("--seed expects") {
+                return "The seed must be a whole number from 0 to \(maximumSeed)."
+            }
+            if reason.hasPrefix("--validation-pairs expects") {
+                return "The number of pairs to hold out must be a whole number."
+            }
+            if reason.hasPrefix("--validation-pairs needs --seed") {
+                return "Holding out pairs needs a seed, so the same pairs can be drawn again."
+            }
+            if reason.hasPrefix("--seed draws") {
+                return "A seed is only used to hold out pairs; set a hold-out count, or clear the seed."
+            }
+            return description
+        }
     }
 
     // MARK: Values written
@@ -265,7 +293,9 @@ public enum ChatConceptImport {
 
     /// One JSON string literal, non-ASCII kept as UTF-8: `"` and `\`
     /// escaped, `\b \f \n \r \t` named, every other control character as a
-    /// lower-case `\u00xx` — Python's `json.dumps(text, ensure_ascii=False)`.
+    /// lower-case `\u00xx` — Python's `json.dumps(text, ensure_ascii=False)` —
+    /// and U+0085, U+2028, and U+2029 escaped too, so every row stays one line
+    /// for a reader that splits on them (Python's `str.splitlines` does).
     public static func jsonString(_ text: String) -> String {
         var out = "\""
         for scalar in text.unicodeScalars {
@@ -278,7 +308,7 @@ public enum ChatConceptImport {
             case "\u{08}": out += "\\b"
             case "\u{0C}": out += "\\f"
             default:
-                if scalar.value < 0x20 {
+                if scalar.value < 0x20 || [0x85, 0x2028, 0x2029].contains(scalar.value) {
                     let hex = String(scalar.value, radix: 16)
                     out += "\\u" + String(repeating: "0", count: 4 - hex.count) + hex
                 } else {

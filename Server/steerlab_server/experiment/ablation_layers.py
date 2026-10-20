@@ -31,7 +31,9 @@ def covered(variant: str, concept, declared, layer_count: int) -> list[int]:
             f"variant '{variant}': the ablation of '{concept}' lists layers "
             f"{declared!r}, which are not all whole layer indices; list block "
             f"numbers such as [3, 7, 10], or delete the list to ablate every "
-            f"layer")
+            f"layer; in a frozen study, save the corrected agent as a new agent, "
+            f"duplicate the study, attach the new agent to the copy, then "
+            f"validate and freeze it")
     layers = sorted(set(declared))
     outside = [layer for layer in layers if not 0 <= layer < layer_count]
     if outside:
@@ -42,5 +44,7 @@ def covered(variant: str, concept, declared, layer_count: int) -> list[int]:
             f"{', '.join(str(layer) for layer in outside)}, which its vector "
             f"does not have (its layers are 0 to {layer_count - 1}); remove "
             f"{'it' if one else 'them'} from the injection's layers, or delete "
-            f"the list to ablate every layer")
+            f"the list to ablate every layer; in a frozen study, save the "
+            f"corrected agent as a new agent, duplicate the study, attach the new "
+            f"agent to the copy, then validate and freeze it")
     return layers

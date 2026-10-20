@@ -186,7 +186,10 @@ public struct ModelVariantArtifact: Codable, Sendable, Equatable {
                 + outside.map(String.init).joined(separator: ", ")
                 + ", which its vector does not have (its layers are 0 to "
                 + "\(layerCount - 1)); remove \(one ? "it" : "them") from the "
-                + "injection's layers, or delete the list to ablate every layer"
+                + "injection's layers, or delete the list to ablate every layer; "
+                + "in a frozen study, save the corrected agent as a new agent, "
+                + "duplicate the study, attach the new agent to the copy, then "
+                + "validate and freeze it"
         }
 
         /// The layers this ref actually covers, given the model's depth.

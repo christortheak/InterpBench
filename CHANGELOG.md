@@ -76,7 +76,10 @@ migration that rewrites frozen bytes.
   does not have now stops the run on both engines, with a message that names
   the layer and the repair: remove it from the list, or delete the list to
   ablate every layer. Before, the Python engine skipped such layers. The
-  Playground also says so when it loads such an agent. If a study run on the
+  Playground also says so when it loads such an agent. A study already
+  frozen with such an agent no longer runs: the message says to save the
+  corrected agent as a new agent, duplicate the study, attach the new agent
+  to the copy, then validate and freeze it. If a study run on the
   Mac attached an agent with a list, its ablation arm may have removed the
   direction at more layers than the agent listed, so run it again. Agents
   without a list (every layer) are unchanged, and so are runs on the Python
@@ -101,11 +104,13 @@ migration that rewrites frozen bytes.
   - It refuses, writing nothing, when a row cannot be read, a row does not
     hold exactly one user and one assistant message, the files have different
     numbers of rows, or the concept already exists.
-  - The two command lines write byte-identical files for the same input and
-    seed. The Demo Workspace guide's "Bring your own concept: consciousness"
+  - The two command lines write identical files for the same input and seed,
+    apart from the import time recorded in `concept.json` and
+    `provenance.json`. A reply's text is kept exactly; characters a reader
+    might break a line on (U+0085, U+2028, and U+2029) are written escaped,
+    so each row stays one line. The Demo Workspace guide's "Bring your own concept: consciousness"
     section now uses the importer. The importer bundles and downloads no
     data: it reads the files you name.
-
 - **The exported methods describe an ablation as the run performs it.** The
   methods file that `results export` writes said an agent's ablation without
   a layer list acted "at layer N", and gave its strength "in raw activation
