@@ -579,6 +579,30 @@ def test_a_choice_reread_on_an_older_runner_is_refused_before_any_upload(
     assert script.uploads == [] and script.submits == []
 
 
+def test_a_verb_that_loads_no_model_runs_where_the_runner_runs(
+        workspace, script, capsys):
+    """With no --executor, `analyze` and `verify` are sent as `local` — on a
+    cluster runner, the controller — because a scheduler allocation would only
+    make them queue for a GPU. A model verb sends none, so the runner's own
+    executor applies, and an executor the caller names is always the one sent.
+    Swift twin: `SubmitExecutorDefault` (2026-10-20)."""
+    script.scheduler_mode = "slurm"
+    script.job_status = "prepared"
+    script.analysis_options = ["rereadChoices"]
+    for extra, expected in ((["--verb", "analyze"], "local"),
+                            (["--verb", "verify"], "local"),
+                            ([], None),
+                            (["--verb", "analyze", "--executor", "slurm"], "slurm")):
+        code, document, _ = _run(
+            [STUDY_NAME, "--runner", RUNNER_URL, "--dry-run", *extra], capsys,
+            root=workspace)
+        assert code == 0, (extra, document)
+        assert script.submits[-1]["executor"] == expected, extra
+    assert client_cli.default_executor(None, " analyze ") == "local"
+    assert client_cli.default_executor(None, "run") is None
+    assert client_cli.default_executor("slurm", "verify") == "slurm"
+
+
 def test_a_dry_run_may_name_slurm_on_any_runner(workspace, script, capsys):
     """The capability gate is not a blanket: a dry run schedules nothing, and
     the submit route accepts it against any runner. A precheck stricter than

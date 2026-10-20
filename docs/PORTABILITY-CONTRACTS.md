@@ -294,10 +294,13 @@ defaults, at any surface a client reaches**:
   Both name **both spellings** of the fix: the manifest key
   (`"alphaInNormUnits": true|false`) and the CLI flag (`--alpha-units
   norm|raw`).
-- **`steerlab-cli experiment declare-condition --alpha-units` is now required**,
-  baselines included. A slot-less arm carries no α, but it still *stamps* the
-  key the other engine reads, and two engines stamping different values for the
-  same call is the gap itself.
+- **`steerlab-cli experiment declare-condition --alpha-units` is now required**
+  of every arm with slots. A `--baseline` carries no α, but it still *stamps*
+  the key the other engine reads, and two engines stamping different values for
+  the same call is the gap itself — so when the flag is absent from a baseline,
+  both clients' `declare-condition` stamp the SAME value, `true` (norm, the
+  project convention; 2026-10-20). The document-level refusal above is
+  unchanged: a condition document with no key is still refused.
 - **Existing artifacts keep their reading.** `Manifest.from_dict` still reads a
   key-less condition as `False` — the reading every study frozen under it was
   measured with. The Swift engine cannot read such a manifest at all, so the
@@ -307,7 +310,9 @@ defaults, at any surface a client reaches**:
 - **Not** removed: Swift's in-process `Condition.init(alphaInNormUnits: true)`
   default. It is not a client-facing declaration — a Swift caller states the
   unit in code, and the UI binds it to a control — and the two boundaries a
-  client actually reaches both refuse silence.
+  client actually reaches both refuse silence. (A client's `declare-condition
+  --baseline` writes the key itself, so it never reaches either boundary
+  without one.)
 
 Both committed fixtures now declare the key explicitly (`true` on each side),
 and `manifest-interop.json` additionally carries the server's own refusal text,
@@ -1191,6 +1196,15 @@ modes — under `--json` stdout carries exactly one document).
 | 7 | `evidence` | fetch the **strongest evidence available** and verify its outer digest | `RunnerClient.evidence_reference`, `.download_bundle` | `evidenceNotPackaged` (65); `malformedDigestPin` (65, before any bytes move); `evidenceDigestMismatch` (65) |
 | 8 | `import` | verify-and-extract into this workspace with the out-of-band pin | `bundles.import_bundle(expected_sha256=…)` | `bundleRefused` (65) |
 | 9 | `provenance` | stamp the imported run, additively | `_write_provenance` | never — it skips and says why |
+
+**The executor the submit sends** (2026-10-20, the same rule on both clients:
+`client_cli.default_executor` here, `SubmitExecutorDefault` on the Mac). The
+caller's `--executor` always wins. Without it, `analyze` and `verify`, which
+load no model, are sent as `local`, so on a cluster runner they run on the
+controller rather than queueing for a GPU. Every other verb sends no executor
+from this client, and the runner's own applies; the Mac's `remote
+submit-bundle` reads that executor from the runner's capabilities and sends it
+explicitly, which is the same choice.
 
 A failure mid-machine is a **typed envelope naming the stage it died in**:
 `result.failedStage` plus the stage table, on top of whatever typed refusal the

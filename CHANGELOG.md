@@ -17,10 +17,11 @@ migration that rewrites frozen bytes.
   site an extract, validate, sweep, or run executed inside the controller's
   small CPU allocation instead of its own GPU job, and the controller
   answered slowly until it finished. It now uses the server's own executor
-  (Slurm on a cluster). `analyze`, which loads no model, still runs on the
-  controller. `--executor local` still works for a CPU smoke test with a
-  small model, and now warns. The envelope's `executorSource` says where the
-  choice came from.
+  (Slurm on a cluster). `analyze` and `verify`, which load no model, still
+  run on the controller, and the cross-platform client's `run` and `runner
+  submit` now treat those two the same way. `--executor local` still works
+  for a CPU smoke test with a small model, and now warns. The envelope's
+  `executorSource` says where the choice came from.
 - **A freeze refusal names `--run-substrate` when it is the fix.** When the
   only validate run matching a study's pins came from the other engine (a
   cluster validate, imported, meeting a freeze on this Mac), the refusal now
@@ -35,9 +36,10 @@ migration that rewrites frozen bytes.
   ask the site's torch index for its newest torch, so every node drifted from
   the committed lock from the day it was set up. It now asks that index for
   the version the lock pins (the site still chooses the CUDA or ROCm build),
-  and falls back to the index's newest with a warning when the index lacks
-  it. The run-start drift advisory now says that a push deploys code, not
-  dependencies, and that re-running bootstrap re-applies the lock.
+  and keeps or installs the index's own torch, with a warning, only when the
+  index lacks that version. The run-start drift advisory now says how to
+  re-align: reinstall from the lock, which on a cluster means re-running
+  bootstrap, because a push deploys code only.
 - **Validate on a cluster names only the study's own concepts.** Its note
   about concepts that are not validation controls listed every concept in
   the cluster's shared workspace, which includes other studies'. Under a run

@@ -252,12 +252,19 @@ import Testing
             ) == ("local", .serverProfile))
     }
 
-    @Test func analyzeLoadsNoModelSoItStaysOnTheController() {
-        let resolved = SubmitExecutorDefault.resolve(
-            explicit: nil, verb: "analyze", serverExecutor: "slurm")
-        #expect(resolved.executor == "local")
-        #expect(resolved.source == .analyzeOnController)
-        #expect(!SubmitExecutorDefault.needsServerExecutor(explicit: nil, verb: "analyze"))
+    /// `verify` is a pin check and `analyze` reads stored records: neither
+    /// loads a model, so a Slurm allocation would only make them queue. This
+    /// is deliberately NOT the app dialog's `isModelRunningVerb`, which counts
+    /// `verify` as a model verb.
+    @Test func verbsThatLoadNoModelStayOnTheController() {
+        for verb in ["analyze", "verify", " Verify "] {
+            let resolved = SubmitExecutorDefault.resolve(
+                explicit: nil, verb: verb, serverExecutor: "slurm")
+            #expect(resolved.executor == "local", "\(verb)")
+            #expect(resolved.source == .loadsNoModel, "\(verb)")
+            #expect(!SubmitExecutorDefault.needsServerExecutor(explicit: nil, verb: verb))
+        }
+        #expect(SubmitExecutorDefault.noModelVerbs == ["analyze", "verify"])
     }
 
     @Test func aServerThatDeclaresNoExecutorKeepsTheOldLocal() {
@@ -281,10 +288,13 @@ import Testing
         #expect(warning?.contains("controller's own") == true)
         #expect(warning?.contains("Drop --executor") == true)
         #expect(warning?.contains("smoke test") == true)
-        // Nothing to say: analyze, a Slurm submission, or a local server.
-        #expect(
-            SubmitExecutorDefault.controllerWarning(
-                executor: "local", verb: "analyze", serverExecutor: "slurm") == nil)
+        // Nothing to say: a verb that loads no model, a Slurm submission, or
+        // a local server.
+        for verb in ["analyze", "verify"] {
+            #expect(
+                SubmitExecutorDefault.controllerWarning(
+                    executor: "local", verb: verb, serverExecutor: "slurm") == nil)
+        }
         #expect(
             SubmitExecutorDefault.controllerWarning(
                 executor: "slurm", verb: "run", serverExecutor: "slurm") == nil)

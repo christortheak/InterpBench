@@ -246,6 +246,34 @@ extension ExperimentStoreTests {
         }
     }
 
+    /// Vacuous evidence on the other substrate would only trade this refusal
+    /// for the vacuous-evidence one, so it earns no `--run-substrate` hint.
+    @Test func vacuousEvidenceElsewhereEarnsNoSubstrateHint() throws {
+        try withTempRoot {
+            let manifest = try makeStudy(name: "mac-auth-vacuous")
+            try fabricateImportedServerValidateRun(for: manifest)
+            let evidenceURL = ExperimentStore.runsDirectory.appending(
+                components: "20260721T000000000Z-exp-mac-auth-vacuous-validate",
+                "validation-evidence.json")
+            var evidence = try #require(
+                try JSONSerialization.jsonObject(with: Data(contentsOf: evidenceURL))
+                    as? [String: Any])
+            evidence["vacuousConcepts"] = ["french"]
+            try JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys])
+                .write(to: evidenceURL)
+            #expect(
+                ExperimentStore.vacuousValidationEvidenceProblem(
+                    for: manifest, runSubstrate: Self.serverEngine) != nil)
+            do {
+                _ = try ExperimentStore.freeze(name: "mac-auth-vacuous")
+                Issue.record("a local freeze must not accept server evidence")
+            } catch let error as ExperimentError {
+                #expect(error.reason.contains("no validate run matches"))
+                #expect(!error.reason.contains("--run-substrate"))
+            }
+        }
+    }
+
     /// A study frozen for the server runs there: the CLI's next step is the
     /// bundle, not this Mac's `experiment run`.
     @Test func aServerFreezeNextActionIsTheBundle() async throws {

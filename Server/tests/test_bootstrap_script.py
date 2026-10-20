@@ -162,6 +162,73 @@ def test_without_a_lock_bootstrap_asks_for_the_index_default_torch(tmp_path):
             "https://example.invalid/whl/cu128") in proc.stdout
 
 
+def _torch_step_run(tmp_path, pinned_install, lock_text="torch==9.8.7\n"):
+    """Run bootstrap.sh for real up to and past its torch step, with a fake
+    conda on PATH and a stub `python` in the prefix that plays pip:
+    `pip install torch==…` answers ``pinned_install`` (stdout text, exit
+    code), `pip install torch` succeeds, everything else succeeds. Returns
+    the process and the stub's argument log."""
+    lock = _platform_lock_name()
+    if lock is None:
+        pytest.skip("bootstrap.sh selects no lock on this platform")
+    server = tmp_path / "repo" / "Server"
+    server.mkdir(parents=True)
+    (server / lock).write_text(lock_text, encoding="utf-8")
+    bindir = tmp_path / "fakebin"
+    _scriptbin(bindir, "conda", "exit 0\n")
+    calls = tmp_path / "pip-calls.log"
+    message, status = pinned_install
+    _scriptbin(tmp_path / "env" / "bin", "python", f"""
+echo "$*" >> {calls}
+case "$*" in
+  *"pip install torch=="*) printf '%s\\n' {message!r}; exit {status} ;;
+esac
+exit 0
+""")
+    proc = subprocess.run(
+        [bash, BOOTSTRAP, "--repo", str(tmp_path / "repo"),
+         "--prefix", str(tmp_path / "env"),
+         "--env-file", str(tmp_path / "cluster.env"),
+         "--torch-index", "https://example.invalid/whl/cu128"],
+        text=True, capture_output=True, check=False, timeout=120,
+        env=_guardable_env(PATH=f"{bindir}:/usr/bin:/bin", HOME=str(tmp_path),
+                           SLURM_JOB_ID="123456"))
+    return proc, calls.read_text(encoding="utf-8").splitlines()
+
+
+def test_only_a_missing_torch_version_falls_back_to_the_index_default(tmp_path):
+    proc, calls = _torch_step_run(tmp_path, (
+        "ERROR: No matching distribution found for torch==9.8.7", 1))
+    assert _report(proc)["steps"]["torchInstall"] == "ok"
+    assert calls[:2] == [
+        "-m pip install torch==9.8.7 --index-url https://example.invalid/whl/cu128",
+        "-m pip install torch --index-url https://example.invalid/whl/cu128"]
+    assert "does not offer torch==9.8.7" in proc.stdout
+    assert "keeping or installing that index's own torch" in proc.stdout
+
+
+def test_any_other_torch_failure_fails_the_step_without_an_unpinned_install(
+        tmp_path):
+    """A quota, a dropped download, or a resolver conflict on a version the
+    index DOES carry is that failure — never quietly an unpinned torch."""
+    proc, calls = _torch_step_run(tmp_path, (
+        "ERROR: Could not install packages due to an OSError: "
+        "[Errno 122] Disk quota exceeded", 1))
+    assert _report(proc)["steps"]["torchInstall"] == "failed"
+    assert not any(c.startswith("-m pip install torch --index-url") for c in calls)
+    assert "does not offer" not in proc.stdout
+
+
+def test_the_torch_pin_is_read_without_line_ends_hashes_or_markers(tmp_path):
+    proc, calls = _torch_step_run(
+        tmp_path, ("Successfully installed torch-9.8.7+cu128", 0),
+        lock_text=("torch==9.8.7 ; sys_platform == 'linux' \\\r\n"
+                   "    --hash=sha256:abc\r\n"))
+    assert _report(proc)["steps"]["torchInstall"] == "ok"
+    assert calls[0] == (
+        "-m pip install torch==9.8.7 --index-url https://example.invalid/whl/cu128")
+
+
 def test_bootstrap_rejects_unknown_flag():
     proc = subprocess.run([bash, BOOTSTRAP, "--frobnicate"],
                           text=True, capture_output=True, check=False)

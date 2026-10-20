@@ -156,8 +156,9 @@ Four decisions worth knowing:
   `scripts/bootstrap.sh` asks `--torch-index` (default cu128) for the torch
   version the lock pins, so a site gets its own CUDA or ROCm build of the
   locked version, and then applies the lock with `torch`, `triton`, and
-  `nvidia-*` filtered out. An index without that version falls back to its own
-  newest torch, with a warning. Everything else is pinned exactly. `--no-lock`
+  `nvidia-*` filtered out. Only when the index does not carry that version
+  does bootstrap keep or install the index's own torch instead, with a
+  warning; any other install failure fails the step. Everything else is pinned exactly. `--no-lock`
   opts out of the lock entirely and says so loudly.
 - **A push does not reinstall dependencies.** `cluster push` deploys code
   only, so a node bootstrapped before the lock moved keeps its older versions,

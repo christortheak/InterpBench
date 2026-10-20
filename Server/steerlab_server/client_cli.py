@@ -187,6 +187,21 @@ RUN_STUDY_VERBS: tuple[str, ...] = ("analyze", "evaluate", "extract",
 #: ``_VALID_EXECUTORS`` and of the submit route's own check.
 RUN_EXECUTORS: tuple[str, ...] = ("local", "slurm")
 
+#: The study verbs that load no model. A submission that names no executor
+#: runs them where the runner itself runs (``local``): a scheduler allocation
+#: would only make a pin check or an analysis wait in a GPU queue. Every other
+#: verb sends no executor, so the runner's own applies (2026-10-20). Swift
+#: twin: ``SubmitExecutorDefault.noModelVerbs``.
+NO_MODEL_STUDY_VERBS: tuple[str, ...] = ("analyze", "verify")
+
+
+def default_executor(executor: str | None, study_verb: str | None) -> str | None:
+    """The executor a runner submission sends: the caller's, else ``local``
+    for a verb that loads no model, else none (the runner decides)."""
+    if executor is None and (study_verb or "").strip() in NO_MODEL_STUDY_VERBS:
+        return "local"
+    return executor
+
 #: What ``run`` submits when ``--verb`` is absent. The same default both
 #: submit paths already hold (``CLI-REFERENCE`` §7.1) — stated here so the
 #: composite does not become a third opinion about it.
@@ -3348,7 +3363,8 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
         identity = client.identity()
         submission = client.submit_uploaded_bundle(
             remote_path=remote_path, expected_sha256=bundle_sha,
-            verb=study_verb, executor=invocation.one("--executor"),
+            verb=study_verb,
+            executor=default_executor(invocation.one("--executor"), study_verb),
             target_root=invocation.one("--target-root"),
             dry_run=invocation.has("--dry-run"),
             dtype=invocation.one("--dtype"),
@@ -4062,7 +4078,8 @@ def _run(invocation: Invocation) -> CLIResult:
     reread_choices = invocation.has("--reread-choices")
     _require_reread_verb(reread_choices, study_verb,
                          payload={"experiment": name, "stages": _stage_table(stages)})
-    executor = (invocation.one("--executor") or "").strip() or None
+    executor = default_executor(
+        (invocation.one("--executor") or "").strip() or None, study_verb)
     dry_run = invocation.has("--dry-run")
     package_evidence = not invocation.has("--no-evidence")
     waiting = not invocation.has("--no-wait")

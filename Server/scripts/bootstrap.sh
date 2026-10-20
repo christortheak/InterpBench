@@ -276,7 +276,10 @@ filtered_lock() {  # filtered_lock <lockfile>
 # that does not carry the pinned version falls back to its own newest, loudly.
 TORCH_SPEC="torch"
 if [ -n "$LOCK_FILE" ]; then
-  TORCH_PIN="$(grep -E '^torch==' "$LOCK_FILE" | head -n 1 | sed 's/^torch==//')"
+  # The version alone: a CRLF line end, a hash continuation (` \`), or an
+  # environment marker (`; …`) must not reach pip as part of it.
+  TORCH_PIN="$(grep -E '^torch==' "$LOCK_FILE" | head -n 1 | tr -d '\r' \
+    | sed -E 's/^torch==//; s/[[:space:];\\].*$//')"
   if [ -n "$TORCH_PIN" ]; then
     TORCH_SPEC="torch==$TORCH_PIN"
   fi
@@ -573,14 +576,26 @@ fi
 
 # ---------------------------------------------------------- 3. torch install --
 if [ "$INSTALL_TORCH" -eq 1 ]; then
-  if "$PYBIN" -m pip install "$TORCH_SPEC" --index-url "$TORCH_INDEX"; then
+  # Fall back ONLY when the index does not carry the pinned version. Any other
+  # failure (no egress, a full quota, a resolver conflict) is that failure, and
+  # must not be papered over with an unpinned install.
+  torch_log="$(mktemp)"
+  "$PYBIN" -m pip install "$TORCH_SPEC" --index-url "$TORCH_INDEX" 2>&1 | tee "$torch_log"
+  torch_status=${PIPESTATUS[0]}
+  if [ "$torch_status" -eq 0 ]; then
     set_step torchInstall "ok"
-  elif [ "$TORCH_SPEC" != "torch" ] && "$PYBIN" -m pip install torch --index-url "$TORCH_INDEX"; then
-    echo "bootstrap.sh: WARNING $TORCH_INDEX does not offer $TORCH_SPEC (the lock's version); installed that index's own torch instead. Every run on this node reports the difference from the lock, and \`steerlab-server site qualify\` shows it."
-    set_step torchInstall "ok"
+  elif [ "$TORCH_SPEC" != "torch" ] \
+      && grep -qE "No matching distribution found for torch==|Could not find a version that satisfies the requirement torch==" "$torch_log"; then
+    echo "bootstrap.sh: WARNING $TORCH_INDEX does not offer $TORCH_SPEC (the lock's version); keeping or installing that index's own torch instead. Every run on this node reports the difference from the lock, and \`steerlab-server site qualify\` shows it."
+    if "$PYBIN" -m pip install torch --index-url "$TORCH_INDEX"; then
+      set_step torchInstall "ok"
+    else
+      fail_step torchInstall "pip install torch from $TORCH_INDEX failed — no egress from this node? Re-run from the site's transfer/data-mover node (environment.transferHost) if the env prefix is on a filesystem both mount, or pass --torch-index/--no-torch"
+    fi
   else
-    fail_step torchInstall "pip install torch from $TORCH_INDEX failed — no egress from this node? Re-run from the site's transfer/data-mover node (environment.transferHost) if the env prefix is on a filesystem both mount, or pass --torch-index/--no-torch"
+    fail_step torchInstall "pip install $TORCH_SPEC from $TORCH_INDEX failed — no egress from this node? Re-run from the site's transfer/data-mover node (environment.transferHost) if the env prefix is on a filesystem both mount, or pass --torch-index/--no-torch"
   fi
+  rm -f "$torch_log"
 else
   set_step torchInstall "skipped"
   echo "bootstrap.sh: skipping torch (--no-torch)"

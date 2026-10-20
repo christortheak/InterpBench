@@ -746,40 +746,49 @@ public enum ModelJobSubmissionPreflight {
 /// float32 while the controller stopped answering `remote jobs`, and the
 /// verb card's own `--verb run` example would have put a whole study there.
 ///
-/// The rule: what the caller names wins; `analyze` runs on the controller,
-/// because it loads no model (`GPUSessionPreflight.isModelRunningVerb`) and
-/// a Slurm allocation would only make it queue; every other verb gets the
-/// server's own executor, as the server applies it to a submission that
-/// names none (`submit_run_bundle`, and the Python client, which sends
-/// none). A server that declares no executor keeps the old "local".
+/// The rule: what the caller names wins; a verb that loads no model
+/// (`analyze`, `verify`) runs on the controller, because a Slurm allocation
+/// would only make it queue; every other verb gets the server's own
+/// executor, as the server applies it to a submission that names none
+/// (`submit_run_bundle`). A server that declares no executor keeps the old
+/// "local". Python twin: `client_cli.default_executor`, which the
+/// cross-platform client's `run` and `runner submit` apply.
 public enum SubmitExecutorDefault {
+
+    /// The study verbs that load no model. Deliberately NOT
+    /// `GPUSessionPreflight.isModelRunningVerb`, which the app's dialog
+    /// uses and which counts every verb but `analyze`: `verify` is a pin
+    /// check, and sending it to a GPU job would only make it wait.
+    public static let noModelVerbs: Set<String> = ["analyze", "verify"]
 
     /// Where the executor came from, echoed as `executorSource`.
     public enum Source: String, Sendable, Equatable {
         /// `--executor` was given.
         case flag
-        /// `analyze`, which loads no model, runs on the controller.
-        case analyzeOnController
+        /// A verb that loads no model runs on the controller.
+        case loadsNoModel
         /// The server's declared executor (`capabilities.profile.executor`).
         case serverProfile
         /// The server declares none: the historical "local".
         case fallback
     }
 
+    static func loadsModel(_ verb: String) -> Bool {
+        !noModelVerbs.contains(verb.trimmingCharacters(in: .whitespaces).lowercased())
+    }
+
     /// True when the verb needs the server's executor to choose: no flag,
     /// and a verb that loads a model. Lets the caller skip the capabilities
     /// request when nothing depends on it.
     public static func needsServerExecutor(explicit: String?, verb: String) -> Bool {
-        explicit == nil && GPUSessionPreflight.isModelRunningVerb(verb)
+        explicit == nil && loadsModel(verb)
     }
 
     public static func resolve(
         explicit: String?, verb: String, serverExecutor: String?
     ) -> (executor: String, source: Source) {
         if let explicit { return (explicit, .flag) }
-        guard GPUSessionPreflight.isModelRunningVerb(verb) else {
-            return ("local", .analyzeOnController)
-        }
+        guard loadsModel(verb) else { return ("local", .loadsNoModel) }
         let declared = serverExecutor?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let declared, !declared.isEmpty { return (declared, .serverProfile) }
         return ("local", .fallback)
@@ -792,7 +801,7 @@ public enum SubmitExecutorDefault {
     public static func controllerWarning(
         executor: String, verb: String, serverExecutor: String?
     ) -> String? {
-        guard GPUSessionPreflight.isModelRunningVerb(verb),
+        guard loadsModel(verb),
             executor.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "local",
             serverExecutor?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 == "slurm"

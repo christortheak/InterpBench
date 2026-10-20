@@ -2441,7 +2441,7 @@ id fails with the stable code `unknownSite`.
 | `capabilities` | Server capability snapshot. |
 | `package` | Builds a hash-pinned run bundle locally; prints its path. |
 | `upload` | Uploads a bundle. |
-| `submit-bundle` | **`--verb` is required**; `--executor` defaults to `local`. Empty resource values are dropped. `--parallel <n>` fans a Slurm run out across N GPU jobs — see below. `--sample-per-condition <n> --sample-seed <s>` submit a seeded subsample coding (`--verb evaluate` only, both or neither; §3.5), echoed at `result.samplePerConditionRequested` / `result.sampleSeedRequested`. |
+| `submit-bundle` | **`--verb` is required**. Without `--executor`, a verb that loads a model gets the server's own executor (`capabilities.profile.executor`: `slurm` on a cluster, `local` on a workstation), and `analyze` and `verify`, which load none, get `local` (the controller). Until 2026-10-20 the default was always `local`, which ran model verbs inside a cluster controller's CPU allocation. `--executor local` for a model verb on a Slurm server warns on stderr. When the server's executor cannot be read, the verb refuses and says to pass `--executor`. The envelope echoes `result.executorSource`: `flag`, `serverProfile`, `loadsNoModel`, or `fallback` (the server declares none). Empty resource values are dropped. `--parallel <n>` fans a Slurm run out across N GPU jobs — see below. `--sample-per-condition <n> --sample-seed <s>` submit a seeded subsample coding (`--verb evaluate` only, both or neither; §3.5), echoed at `result.samplePerConditionRequested` / `result.sampleSeedRequested`. |
 | `jobs` | Job list as JSON. |
 | `logs` | Streams the job log. |
 | `cancel` | Prints `cancel requested`. |

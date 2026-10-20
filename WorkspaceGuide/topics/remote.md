@@ -25,16 +25,17 @@ the cluster's copy home beside it). Site profiles live in the SteerLab
 home's `Sites/cluster-sites/` registry — never invent one; ask the researcher
 for theirs.
 
-**A study on a cluster, start to finish.** A draft's `extract` and `validate`
-go through `remote submit-bundle --verb extract` and `--verb validate`, and
-each comes home with `remote import <evidence-path>` (the finished job's
-record names the path). Freeze with `steerlab-cli experiment freeze <name>
---run-substrate server`, because the validate evidence came from the cluster's
-engine. Then package the frozen study again, upload it, and submit `--verb
-run`. Analyze there too, with `--verb analyze`: this Mac reads a cluster run's
-results and does not re-measure them. Without `--executor`, `submit-bundle`
-uses the server's own executor (Slurm on a cluster), except `analyze`, which
-loads no model and runs on the controller. `--executor local` puts a model
+**A study on a cluster, start to finish.** Package the draft (`remote
+package`), upload it (`remote upload`), and submit `--verb extract`, then
+`--verb validate`, with `remote submit-bundle`. Each comes home with `remote
+import <evidence-path>` (the finished job's record names the path). Freeze
+with `steerlab-cli experiment freeze <name> --run-substrate server`, because
+the validate evidence came from the cluster's engine. Then package the frozen
+study, upload it, and submit `--verb run`. Analyze there too, with `--verb
+analyze`: this Mac reads a cluster run's results and does not re-measure
+them. Without `--executor`, `submit-bundle` uses the server's own executor
+(Slurm on a cluster), except `analyze` and `verify`, which load no model and
+run on the controller. `--executor local` puts a model
 verb inside the controller's small CPU allocation. The verb warns, and it is
 right only for a CPU smoke test with a small model.
 

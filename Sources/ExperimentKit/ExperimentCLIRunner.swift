@@ -119,6 +119,13 @@ public struct ExperimentCLIRunner: Sendable {
     /// implementation of the same report.
     public static let versionFlag = "--version"
 
+    /// Tests only: the URL session the `remote` verbs' client uses, for the
+    /// tasks under `$remoteSessionOverride.withValue(…)`. Task-local, the
+    /// same seam shape as `LaunchCheckMode`'s override, so a concurrent test
+    /// never sees another's session; nil (always, outside a test) is
+    /// `URLSession.shared`.
+    @TaskLocal static var remoteSessionOverride: URLSession?
+
     private let sink: ExperimentCLISink
     /// Injected clock, so a golden envelope fixture is stable. Same seam and
     /// same shape as `ClusterCLIRunner`'s `now`, which its tests pin to
@@ -2528,7 +2535,9 @@ public struct ExperimentCLIRunner: Sendable {
                 token = flag("--token") ?? ProcessInfo.processInfo.environment["STEERLAB_AUTH_TOKEN"]
             }
         }
-        let client = ClusterClient(profile: ClusterConnectionProfile(baseURL: url), token: token)
+        let client = ClusterClient(
+            profile: ClusterConnectionProfile(baseURL: url), token: token,
+            session: Self.remoteSessionOverride ?? .shared)
         /// Leave a record in the workspace of where this job went, so the app
         /// can import from or act on it without a reconnect. Best effort: the
         /// job exists whatever happens here, so a failure is a warning.
@@ -2675,9 +2684,29 @@ public struct ExperimentCLIRunner: Sendable {
             var serverExecutor: String?
             if SubmitExecutorDefault.needsServerExecutor(
                 explicit: explicitExecutor, verb: submitVerb)
-                || explicitExecutor?.lowercased() == "local"
             {
-                if case .string(let declared)? = try await client.capabilities()
+                // The choice depends on the answer, so an unreadable answer
+                // refuses with the way around it — never a silent "local".
+                let capabilities: ClusterCapabilities
+                do {
+                    capabilities = try await client.capabilities()
+                } catch {
+                    throw ExperimentError(
+                        reason: "could not read the server's own executor to "
+                            + "choose where this \(submitVerb) runs (\(error)). "
+                            + "Pass --executor slurm for its own Slurm job, or "
+                            + "--executor local for the controller, to submit "
+                            + "without asking")
+                }
+                if case .string(let declared)? = capabilities.profile?["executor"] {
+                    serverExecutor = declared
+                }
+            } else if explicitExecutor?.trimmingCharacters(in: .whitespaces)
+                .lowercased() == "local"
+            {
+                // Only the warning below reads it: a failed read costs the
+                // warning, never the submission the caller named.
+                if case .string(let declared)? = try? await client.capabilities()
                     .profile?["executor"]
                 {
                     serverExecutor = declared

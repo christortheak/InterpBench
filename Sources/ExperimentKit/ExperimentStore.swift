@@ -7187,11 +7187,16 @@ public enum ExperimentStore {
                 } else {
                     // Matching evidence on the OTHER substrate turns a
                     // dead-end refusal into the one-flag repair it usually
-                    // is: the study runs where that evidence was made.
+                    // is: the study runs where that evidence was made. Only
+                    // evidence that freeze would accept there counts — a
+                    // vacuous run would trade this refusal for that one.
                     let other =
                         runSubstrate == evidenceSubstrate
                         ? WorkspaceScoping.serverSubstrate : evidenceSubstrate
-                    if validationEvidence(for: manifest, runSubstrate: other) != nil {
+                    if validationEvidence(for: manifest, runSubstrate: other) != nil,
+                        vacuousValidationEvidenceProblem(
+                            for: manifest, runSubstrate: other) == nil
+                    {
                         facts.matchingEvidenceElsewhere = other
                     }
                 }

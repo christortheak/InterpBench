@@ -1971,10 +1971,10 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
     # The concepts THIS bundle carried. The target root is shared with other
     # studies (a cluster's server workspace), so a stage that surveys
     # `prompts/concepts/` — validate's undeclared-controls note — must see
-    # these and not its neighbours' (2026-10-20 smoke test).
+    # these and not its neighbours' (2026-10-20 smoke test). Set as the
+    # `try` below opens, so its `finally` always resets it.
     from . import validation_workflow
-    concept_scope_token = validation_workflow.bundle_concept_scope.set(
-        _bundled_concepts(meta))
+    concept_scope_token = None
     pointer_path = (resume_mod.pointer_path_for_record(record_path)
                     if record_path else None)
     resume_dir: str | None = None
@@ -2037,6 +2037,8 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
             result["pointerError"] = f"{type(exc).__name__}: {exc}"
 
     try:
+        concept_scope_token = validation_workflow.bundle_concept_scope.set(
+            _bundled_concepts(meta))
         if verb == "verify":
             result["violations"] = Manifest.load(name, target).verify(target)
         elif verb == "extract":
@@ -2223,7 +2225,8 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
         raise
     finally:
         run_status.current_run_directory.reset(run_directory_token)
-        validation_workflow.bundle_concept_scope.reset(concept_scope_token)
+        if concept_scope_token is not None:
+            validation_workflow.bundle_concept_scope.reset(concept_scope_token)
         result["finishedAt"] = time.time()
         if record_path:
             write_child_record(record_path, kind=f"bundle-execute:{verb}",
