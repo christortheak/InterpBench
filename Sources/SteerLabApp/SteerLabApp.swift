@@ -279,6 +279,11 @@ struct SteerLabApp: App {
                     service: service, workspace: workspace,
                     actions: workspaceActions)
             }
+            // A folder handed in with `open -a SteerLab <folder>` is opened by
+            // SteerLabAppDelegate. Without this, SwiftUI ALSO answered the
+            // same open event by making a second window (seen live,
+            // 2026-10-21); this window claims every external event instead.
+            .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
             // Sections reach the compute choices through the environment, so
             // a view several layers down can offer "switch to full
             // capabilities" without every layer above it carrying a
