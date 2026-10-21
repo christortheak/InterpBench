@@ -80,7 +80,10 @@ public enum WorkspaceBootstrap {
         ]
     }
 
-    public static func handoff(_ root: URL, executable: String = cliExecutable) throws -> [String: JSONValue] {
+    public static func handoff(
+        _ root: URL, executable: String = cliExecutable,
+        app: URL? = CodeResources.enclosingAppBundle
+    ) throws -> [String: JSONValue] {
         var report = try inspect(root)
         guard report["recognized"] == .bool(true), report["agentGuidePresent"] == .bool(true) else {
             throw ExperimentError(reason: "Open a workspace with AGENTS.md before preparing an agent handoff.")
@@ -95,6 +98,18 @@ public enum WorkspaceBootstrap {
             .array($0.map(JSONValue.string))
         })
         report["nextAction"] = .string(handoffNextAction)
+        // The command that opens the Mac app on THIS workspace (2026-10-21),
+        // present only when this process runs inside SteerLab.app and so
+        // knows which app that is. The app takes the folder from `open -a`
+        // the way its Workspace menu's Open does (`SteerLabAppDelegate`).
+        if let app {
+            // A handoff is where a coding assistant starts, so the next
+            // session's way to the command line is recorded here too.
+            MacCommandLineRecord.note(workspaceRoot: root, app: app)
+            report["openInApp"] = .array(
+                ["open", "-a", app.standardizedFileURL.path, root.standardizedFileURL.path]
+                    .map(JSONValue.string))
+        }
         return report
     }
 }

@@ -1259,6 +1259,46 @@ public struct ExperimentCLIRunner: Sendable {
             }
             return result
 
+        case "link":
+            // `CommandLineLink`: never the name `steerlab`, never over a file
+            // that is not SteerLab's, never from a copy whose path will not
+            // last. A refusal is a typed refusal with the sentence as its
+            // reason; an existing correct link is a quiet success.
+            let directory = flag("--directory").map {
+                URL(filePath: ($0 as NSString).expandingTildeInPath).standardizedFileURL
+            } ?? CommandLineLink.defaultDirectory
+            let outcome = try CommandLineLink.install(
+                app: provenance.app?.bundle, directory: directory,
+                replace: args.contains("--replace"))
+            let sentence = CommandLineLink.sentence(outcome)
+            switch outcome.decision {
+            case .foreign, .badLocation:
+                throw ExperimentError.refusing(
+                    .missingPrerequisite, sentence,
+                    repair: outcome.target.map { "run steerlab-cli by its full path: \($0)" }
+                        ?? "run the steerlab-cli inside SteerLab.app: <app>/"
+                            + CommandLineLink.helperPath)
+            case .repoint where !outcome.changed:
+                throw ExperimentError.refusing(
+                    .missingPrerequisite, sentence,
+                    repair: "steerlab-cli install link --replace"
+                        + (flag("--directory").map { " --directory \($0)" } ?? ""))
+            case .create, .alreadyCurrent, .repoint:
+                break
+            }
+            sink.out(sentence)
+            var linkPayload: [String: JSONValue] = [
+                "link": .string(outcome.link.path),
+                "target": outcome.target.map { JSONValue.string($0) } ?? .null,
+                "onPath": .bool(outcome.pathAdvice == nil),
+                "pathAdvice": outcome.pathAdvice.map { JSONValue.string($0) } ?? .null,
+            ]
+            if case .repoint(let from) = outcome.decision {
+                linkPayload["replaced"] = .string(from)
+            }
+            return ExperimentCLIResult(
+                message: sentence, changed: outcome.changed, payload: linkPayload)
+
         case "stamp":
             let manifest = try InstallProvenance.stamp(
                 root: root, sourceRevision: flag("--revision"))

@@ -1008,7 +1008,7 @@ echo
 echo "SteerLab.app ready: $APP"
 echo "  $(du -sh "$APP" | cut -f1) total"
 echo "  CLI: $APP/Contents/$HELPERS_DIR_NAME/$CLI_EXECUTABLE"
-echo "       ln -s \"$APP/Contents/$HELPERS_DIR_NAME/$CLI_EXECUTABLE\" ~/.local/bin/steerlab-cli"
+echo "       put it on PATH: \"$APP/Contents/$HELPERS_DIR_NAME/$CLI_EXECUTABLE\" install link"
 if [ "$IDENTITY" = "-" ]; then
   echo "  signed ad-hoc — fine for local use, NOT distributable."
   echo "  For a shippable build: --identity \"Developer ID Application: … (TEAMID)\","

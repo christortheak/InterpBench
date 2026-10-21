@@ -789,6 +789,10 @@ public final class WorkspaceStore {
         let upkeep = try Self.open(at: url)
         adoptCurrentResolution()
         record(upkeep, at: rootURL)
+        // Where this app's command line is, for a coding assistant's next
+        // session in this workspace (`MacCommandLineRecord`). Best effort,
+        // and only from inside SteerLab.app.
+        MacCommandLineRecord.note(workspaceRoot: rootURL)
         onRootChange?(rootURL)
     }
 

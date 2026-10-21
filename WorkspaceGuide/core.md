@@ -81,6 +81,9 @@ The Python client is a preview: it authors studies and submits them to a runner
 someone has set up. It does not run models itself. On a Mac, the app is the
 supported route to running studies and reading their results.
 
+On a Mac, `.steerlab/mac-app/command-line.json` names the app's `steerlab-cli`;
+use it when the command is not on PATH.
+
 Either client also reads `STEERLAB_WORKSPACE`. Name the workspace in every
 session: on the Mac command line an unnamed workspace falls back to the app's
 last choice, which may be a different study. Every JSON answer carries a
@@ -253,7 +256,7 @@ topic.
   ones the loaders parse; a wrong key is refused with the expected key named.
 - **Do not guess a verb**, and do not type one client's command under the
   other's name. Ask `--help`.
-- **Do not download or replace SteerLab.app yourself.** Updating is the
+- **Do not replace SteerLab.app yourself.** Updating is the
   researcher's click on Install Update in the app. After an update,
   refreshing the local engine and pushing a cluster site's engine are
   separate steps; ask before either.

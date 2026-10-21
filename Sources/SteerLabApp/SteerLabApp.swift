@@ -44,6 +44,9 @@ struct SteerLabApp: App {
     /// item, and Install Update (only on the person's click and
     /// confirmation); see UpdateSignpost.swift.
     @State private var updates = UpdateSignpostModel()
+    /// Folders handed to the app from outside (`open -a SteerLab <folder>`);
+    /// see SteerLabAppDelegate.
+    @NSApplicationDelegateAdaptor(SteerLabAppDelegate.self) private var appDelegate
 
     init() {
         // WP2 — claim the seam `CodeResources.releaseModeAsserted` was
@@ -313,6 +316,12 @@ struct SteerLabApp: App {
             // First, tidy what an interrupted update left and say "updated"
             // once on the first launch of a newer version.
             .task {
+                // A workspace folder a coding assistant handed over with
+                // `open -a SteerLab <folder>` opens like Open Workspace…;
+                // one that arrived before this window existed opens now.
+                appDelegate.onOpenFolders = { [workspaceActions] urls in
+                    workspaceActions.openHandedFolders(urls)
+                }
                 updates.noteLaunch(
                     hasClusterSites: (try? cluster.siteRegistry.sites().isEmpty) == false)
                 await updates.runAutomaticCheckIfDue()

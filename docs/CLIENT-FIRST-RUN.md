@@ -20,6 +20,11 @@ You can start designing a study before you download a model or decide where
 it will run. Both routes make the same kind of workspace, so you can move
 between them, and between the app and your coding assistant, at any time.
 
+To have your coding assistant do the setup for you, give it the address of
+[Set up SteerLab with your coding assistant](AGENT-SETUP.md). It follows the
+route that fits your computer, shows you a plan, and asks before downloading
+anything.
+
 ## What you will need
 
 | Step | How long | Disk space |
@@ -136,15 +141,18 @@ The app carries its own command line, `steerlab-cli`. To type it by name,
 link it into a folder on your `PATH`:
 
 ```sh
-mkdir -p ~/.local/bin
-ln -s "<path-to>/SteerLab.app/Contents/Helpers/steerlab-cli" ~/.local/bin/steerlab-cli
-export PATH="$HOME/.local/bin:$PATH"
+"<path-to>/SteerLab.app/Contents/Helpers/steerlab-cli" install link
+export PATH="$HOME/.local/bin:$PATH"   # only if install link says to
 steerlab-cli --version
 ```
 
+`install link` makes `~/.local/bin/steerlab-cli` point into the app; updates
+keep the link working, and it never replaces a file that is not SteerLab's.
 `--version` reports how many of the app's resource families it found; all of
-them should resolve. Do not name the link `steerlab`, which is the app-free
-client's name. Always tell `steerlab-cli` which workspace to use, with
+them should resolve. Do not name a link `steerlab`, which is the app-free
+client's name. A coding assistant can also find the command line without the
+link: when the app opens a workspace, it records the command line's location
+in that workspace's `.steerlab/mac-app/command-line.json`. Always tell `steerlab-cli` which workspace to use, with
 `--workspace <folder>` before the command or with the `STEERLAB_WORKSPACE`
 environment variable. For example, `steerlab-cli workspace init <folder>`
 creates a workspace, `steerlab-cli workspace init <folder> --demo <backend>`

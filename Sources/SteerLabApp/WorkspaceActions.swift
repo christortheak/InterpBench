@@ -83,11 +83,36 @@ final class WorkspaceActions {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        open(url)
+    }
+
+    /// Switch to a workspace folder: the Open panel's result, or a folder
+    /// handed to the app from outside.
+    private func open(_ url: URL) {
         do {
             try workspace.switchTo(url)
             resetCatalogs()
         } catch {
             report("Could not open that workspace", error)
+        }
+    }
+
+    /// Folders handed to the app from outside — `open -a SteerLab <folder>`,
+    /// the coding assistant's `openInApp`, or a folder dropped on the Dock
+    /// icon (`SteerLabAppDelegate`). Same switch as Open Workspace…, under the
+    /// same condition that disables it (`ExternalWorkspaceOpen`).
+    func openHandedFolders(_ urls: [URL]) {
+        switch ExternalWorkspaceOpen.decide(
+            urls: urls, current: workspace.hasWorkspace ? workspace.rootURL : nil,
+            pinned: workspace.isEnvironmentPinned)
+        {
+        case .open(let folder):
+            open(folder)
+        case .alreadyOpen:
+            break
+        case .pinned(let reason), .noFolder(let reason):
+            errorTitle = "Could not open that workspace"
+            errorMessage = reason
         }
     }
 

@@ -41,6 +41,21 @@ Release files are named `SteerLab-<version>+<revision>.zip` and
 `steerlab-client-<version>+<revision>.tar.gz`, where `<revision>` is a short
 source revision. Each has a `.sha256` file beside it on the Releases page.
 
+### Hand one link to your coding assistant
+
+Give your coding assistant this sentence:
+
+> Set up SteerLab for me by following
+> https://github.com/christortheak/InterpBench/blob/main/docs/AGENT-SETUP.md
+> and then help me design my first study.
+
+[That page](docs/AGENT-SETUP.md) is written for the assistant. It shows you a
+plan and asks before downloading anything. On a Mac it installs and checks the
+app, creates a workspace for your study, and offers to open the app on it;
+elsewhere it sets up the app-free client described below. The assistant needs
+permission to run commands and to reach the internet. If it has neither, the
+page ends with the same steps for you to do by hand.
+
 ### Use the Mac app
 
 1. **Download `SteerLab-<version>+<revision>.zip`** from the Releases page,
@@ -88,11 +103,13 @@ The app carries its own command line, `steerlab-cli`, inside the bundle.
 Run it from where it is, or put it on your `PATH`:
 
 ```sh
-mkdir -p ~/.local/bin
-ln -s "<path-to>/SteerLab.app/Contents/Helpers/steerlab-cli" ~/.local/bin/steerlab-cli
-export PATH="$HOME/.local/bin:$PATH"
+"<path-to>/SteerLab.app/Contents/Helpers/steerlab-cli" install link
+export PATH="$HOME/.local/bin:$PATH"   # if install link says it is not on PATH
 steerlab-cli --version      # reports 7/7 resource families resolved
 ```
+
+`install link` makes `~/.local/bin/steerlab-cli` point into the app, and
+updates keep it working. It never replaces a file that is not SteerLab's.
 
 Do not name the link `steerlab`; that name belongs to the app-free client
 below, a different product with a different verb surface.

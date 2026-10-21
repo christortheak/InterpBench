@@ -820,6 +820,9 @@ import Testing
             // like everything else, so a mistyped flag on `--version` is a
             // usage error rather than a token the verb quietly ignores.
             "install version", "install stamp", "install verify",
+            // Putting this app's command line on PATH for a coding
+            // assistant's later sessions (2026-10-21, docs/AGENT-SETUP.md).
+            "install link",
             // OPEN-ISSUES §18: the panel family. `compile` is the new verb —
             // headless seat casting, previously reachable only from the app,
             // so the only headless path was a re-implementation of the compile

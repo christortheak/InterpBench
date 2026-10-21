@@ -905,6 +905,13 @@ public enum ExperimentCLIParser {
             namespace: "install", verb: "verify",
             purpose: "Check the installed tree against its resource manifest.",
             booleanFlags: ["--gpu"], valueFlags: ["--root"]),
+        // Putting this app's command line on PATH (2026-10-21), so a coding
+        // assistant's next session finds it without the copied handoff.
+        .init(
+            namespace: "install", verb: "link",
+            purpose: "Link ~/.local/bin/steerlab-cli to this app's command line, "
+                + "so a coding assistant finds it on PATH.",
+            booleanFlags: ["--replace"], valueFlags: ["--directory"]),
 
         // authoring — the generation-prompt emitter. A family of its own
         // rather than an `experiment` verb because it takes NO experiment: it

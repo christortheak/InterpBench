@@ -69,12 +69,16 @@ from a research question alone.
 Pick the first path that applies:
 
 1. **SteerLab.app is present** (no Xcode needed): the app carries the CLI at
-   `SteerLab.app/Contents/Helpers/steerlab-cli`. Symlink it:
+   `SteerLab.app/Contents/Helpers/steerlab-cli`. Link it onto PATH:
 
    ```sh
-   mkdir -p ~/.local/bin
-   ln -s <app>/Contents/Helpers/steerlab-cli ~/.local/bin/steerlab-cli
+   <app>/Contents/Helpers/steerlab-cli install link --json
    ```
+
+   It writes `~/.local/bin/steerlab-cli`, never replaces a file that is not
+   SteerLab's, and says whether `~/.local/bin` is on PATH. A researcher with
+   no checkout should be pointed at `docs/AGENT-SETUP.md` instead, which
+   installs the app itself.
 
    **Do not add a `~/.local/bin/steerlab` alias for it.** That spelling belongs
    to the cross-platform Python client (path 4) — its console script installs

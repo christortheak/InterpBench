@@ -68,6 +68,7 @@ public enum CLIFlagVocabulary {
         "--demo": "<" + DemoWorkspace.Backend.allCases.map(\.rawValue).joined(separator: "|") + ">",
         "--description": "<text>",
         "--dev-prompts": "<path>",
+        "--directory": "<dir>",
         "--endpoint": "<key>",
         "--env-file": "<path>",
         "--env-prefix": "<path>",
@@ -220,6 +221,8 @@ public enum CLIFlagVocabulary {
             + "(this Mac, full capabilities), or cuda (another machine).",
         "--description": "Free text stored on the manifest.",
         "--dev-prompts": "The dev split the sweep generates on.",
+        "--directory":
+            "The folder the link goes in (default ~/.local/bin).",
         "--dry-run": "Print what would be submitted and submit nothing.",
         "--endpoint":
             "The record-level parsed-value key the endpoint rules read "
@@ -310,6 +313,9 @@ public enum CLIFlagVocabulary {
         "--reference": "designatedReference only: the concept subtracted from the target.",
         "--refresh": "Also run the read-only remote validation before reporting.",
         "--remote-repo": "Remote path the payload is deployed to.",
+        "--replace":
+            "Repoint an existing link that points at another copy of SteerLab. A "
+            + "file or link that is not SteerLab's is never replaced.",
         "--reread-choices":
             "Read every stored choice again with the current choice parser, for "
             + "this analysis only; the run is never changed.",

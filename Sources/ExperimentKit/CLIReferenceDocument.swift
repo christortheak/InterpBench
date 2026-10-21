@@ -130,7 +130,7 @@ public enum CLIReferenceDocument {
         .init(
             id: "swift-install",
             verbLabels: [
-                "install version", "install stamp", "install verify",
+                "install version", "install stamp", "install verify", "install link",
             ]),
     ]
 

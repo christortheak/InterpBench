@@ -3278,6 +3278,7 @@ and what it gates; the rules are one set, on both engines.
 steerlab-cli install version
 steerlab-cli install stamp [--revision <commit>] [--root <dir>]
 steerlab-cli install verify [--gpu] [--root <dir>]
+steerlab-cli install link [--directory <value>] [--replace]
 ```
 
 | Verb | Purpose |
@@ -3285,6 +3286,7 @@ steerlab-cli install verify [--gpu] [--root <dir>]
 | `install version` | Report this build's version and where it is installed. |
 | `install stamp` | Hash the installed tree into its resource manifest. |
 | `install verify` | Check the installed tree against its resource manifest. |
+| `install link` | Link ~/.local/bin/steerlab-cli to this app's command line, so a coding assistant finds it on PATH. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:swift-install END -->
