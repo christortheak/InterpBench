@@ -240,7 +240,9 @@ PREVIOUS="$PREFIX/libexec/.steerlab-previous.$$"
 cleanup() {
   rm -rf "$STAGING"
   # A shim staged beside its target (write_shim) that never got renamed.
-  rm -f "$BIN_DIR"/*.install-cli.$$ 2>/dev/null
+  # (N): no match is the usual case, and without it zsh's "no matches found"
+  # would end this trap under set -e before the restore below.
+  rm -f -- "$BIN_DIR"/*.install-cli.$$(N)
   if [[ -d "$PREVIOUS" ]]; then
     echo "restoring the previous install at $LIBEXEC"
     rm -rf "$LIBEXEC"

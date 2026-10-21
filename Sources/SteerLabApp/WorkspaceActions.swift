@@ -92,10 +92,11 @@ final class WorkspaceActions {
         // A folder that is not a workspace gets the app's own plain sentence;
         // the store's refusal names the full path and the files it looked
         // for, which is for the command line.
-        guard WorkspaceStore.isWorkspace(url: url.standardizedFileURL) else {
+        if let refusal = ExternalWorkspaceOpen.refusal(
+            for: url, hasWorkspace: workspace.hasWorkspace)
+        {
             errorTitle = "Could not open that workspace"
-            errorMessage = ExternalWorkspaceOpen.notAWorkspace(
-                folderName: url.standardizedFileURL.lastPathComponent)
+            errorMessage = refusal
             return
         }
         do {

@@ -1276,13 +1276,13 @@ public struct ExperimentCLIRunner: Sendable {
                 // This copy is the problem, so its own path is no repair.
                 throw ExperimentError.refusing(
                     .missingPrerequisite, sentence,
-                    repair: CommandLineLink.badLocationRepair)
+                    repair: CommandLineLink.badLocationRepair(app: provenance.app?.bundle))
             case .foreign:
                 throw ExperimentError.refusing(
                     .missingPrerequisite, sentence,
                     repair: outcome.target.map {
                         "run steerlab-cli by its full path: \(CommandLineLink.shellQuoted($0))"
-                    } ?? CommandLineLink.badLocationRepair)
+                    } ?? CommandLineLink.badLocationRepair(app: nil))
             case .repoint where !outcome.changed:
                 // The full path of THIS app's command line: by premise, the
                 // command is not on PATH yet.

@@ -51,10 +51,12 @@ sw_vers -productVersion
 
 `sysctl` prints `1` on Apple Silicon, even in a shell running under Rosetta,
 where `uname -m` says `x86_64`. The SteerLab app needs an Apple Silicon Mac
-with macOS 26.4 or later: continue at step 2. On `Linux` with `x86_64`, go to
-"On Linux" below. On anything else (an Intel Mac, a Mac on an older macOS,
-Windows, or Linux on another processor), tell the researcher SteerLab does not
-support this computer, and stop.
+with macOS 26.4 or later: continue at step 2. On an Apple Silicon Mac with
+an older macOS, tell the researcher that SteerLab needs macOS 26.4 or later and
+that updating macOS would let it run, and stop. On `Linux` with `x86_64`, go to
+"On Linux" below. On anything else (an Intel Mac, Windows, or Linux on another
+processor), tell the researcher SteerLab does not support this computer, and
+stop.
 
 ## 2. Look for an existing copy
 
@@ -103,7 +105,7 @@ which the download address spells `%2B`):
 D="${TMPDIR:-/tmp}/steerlab-setup"
 APP_URL='<the SteerLab-….zip address printed above>'
 case "$APP_URL" in
-  *..*) echo "not this project's release address: stop here" ;;
+  *..*|*%2[eE]*) echo "not this project's release address: stop here" ;;
   https://github.com/christortheak/InterpBench/releases/download/*)
     curl -fL -o "$D/SteerLab.zip" "$APP_URL" &&
       curl -fL -o "$D/SteerLab.zip.sha256" "$APP_URL.sha256" &&
@@ -146,9 +148,10 @@ temporary or read-only location.
 ```
 
 It must report the release's version and `7/7 resource families resolved`.
-If that version is older than 0.9.14 (the latest release can be, until
-0.9.14 is out), follow the older-copy rules at the end of step 2. Run this
-command line by its full path for the rest of the setup. Never use a
+If that version is older than 0.9.14, there is no newer release to ask for
+yet: skip `install link` below, and in step 6 ask the researcher to choose
+**Open Workspace…** in the app's Workspace menu instead of using `openInApp`.
+Run this command line by its full path for the rest of the setup. Never use a
 `steerlab-cli` from a build folder or a source checkout, and do not read or
 change anything else inside SteerLab.app.
 
@@ -219,8 +222,8 @@ the app, which shows its own plan first.
 ## On Linux
 
 This route is for x86_64 Linux. The app-free client authors studies and
-submits them to a runner; it does not run models itself. With the researcher's agreement, download the client
-and its checksum from the
+submits them to a runner; it does not run models itself. With the
+researcher's agreement, download the client and its checksum from the
 [latest release](https://github.com/christortheak/InterpBench/releases/latest)
 (`steerlab-client-<version>+<revision>.tar.gz` and its `.sha256`, named
 yourself as in step 3), check that `sha256sum` of the archive matches the

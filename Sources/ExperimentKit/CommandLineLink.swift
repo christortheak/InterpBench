@@ -139,11 +139,21 @@ public enum CommandLineLink {
         URL(filePath: path).resolvingSymlinksInPath().standardizedFileURL.path
     }
 
-    /// The repair for a copy whose path will not last: run the copy that
-    /// will, from where SteerLab lives.
-    public static let badLocationRepair =
-        "move SteerLab.app to your SteerLab folder or to Applications, open it from "
-        + "there, then run that copy's command line: <app>/" + helperPath
+    /// The repair for a copy whose path will not last, one per cause, and
+    /// never this copy's own path: a build folder and a kept copy point at
+    /// the current SteerLab.app; a translocated copy is moved to where
+    /// SteerLab lives first.
+    public static func badLocationRepair(app: URL?) -> String {
+        let command = "<app>/" + helperPath + " install link"
+        guard let app else {
+            return "run the command line inside SteerLab.app: " + command
+        }
+        if UpdateInstallContextReader.isTranslocated(app) {
+            return "move SteerLab.app to your SteerLab folder or to Applications, open "
+                + "it from there, then run that copy's command line: " + command
+        }
+        return "run the current SteerLab.app's command line: " + command
+    }
 
     /// A path or word as a shell reads it back: bare when it holds only
     /// characters no shell treats specially, otherwise in single quotes.

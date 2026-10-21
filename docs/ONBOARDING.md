@@ -147,6 +147,9 @@ symlink into the app, never replaces a file that is not SteerLab's, and gives
 the `PATH` line to add when `~/.local/bin` is not on it. On an older app, make
 the same link with `mkdir -p ~/.local/bin` and then `ln -s
 "<path-to>/SteerLab.app/Contents/Helpers/steerlab-cli" ~/.local/bin/steerlab-cli`.
+If `~/.local/bin` is not on your `PATH`, add
+`export PATH="$HOME/.local/bin:$PATH"` to your shell profile and open a new
+terminal.
 `steerlab-cli --version` then reports 7/7 resource families resolved. A
 symlink is enough: the binary resolves its shaders and bundled resources
 against its real location inside the bundle, not the link's. `--version`

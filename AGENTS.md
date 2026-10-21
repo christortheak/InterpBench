@@ -79,7 +79,7 @@ Pick the first path that applies:
    SteerLab's, and says whether `~/.local/bin` is on PATH. `install link`
    arrived in 0.9.14; for an older app, make the same link with
    `mkdir -p ~/.local/bin` and then
-   `ln -s <app>/Contents/Helpers/steerlab-cli ~/.local/bin/steerlab-cli`. A researcher with
+   `ln -s "<app>/Contents/Helpers/steerlab-cli" ~/.local/bin/steerlab-cli`. A researcher with
    no checkout should be pointed at `docs/AGENT-SETUP.md` instead, which
    installs the app itself.
 
@@ -99,10 +99,11 @@ Pick the first path that applies:
    never install the client (and even then an existing file the installer did
    not write is left alone). An install from before this policy may have left
    a Swift-CLI shim at `~/.local/bin/steerlab`; if this machine also gets the
-   client, remove it so the name has one owner:
+   client, and only if that file is the old Swift-CLI shim, remove it so the
+   name has one owner:
 
    ```sh
-   rm ~/.local/bin/steerlab   # only if it is the old Swift-CLI shim
+   rm ~/.local/bin/steerlab
    ```
 
 3. **Neither, on a Mac**: ask the person whether to download SteerLab.app

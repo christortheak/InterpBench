@@ -116,6 +116,13 @@ mkdir -p ~/.local/bin
 ln -s "<path-to>/SteerLab.app/Contents/Helpers/steerlab-cli" ~/.local/bin/steerlab-cli
 ```
 
+If `~/.local/bin` is not on your `PATH` yet, add this line to your shell
+profile (`~/.zshrc` for the Mac's default shell), then open a new terminal:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
 Then `steerlab-cli --version` reports 7/7 resource families resolved.
 
 Do not name the link `steerlab`; that name belongs to the app-free client

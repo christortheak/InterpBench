@@ -181,6 +181,45 @@ private func temporaryDirectory(_ label: String) throws -> URL {
         #expect(outcome.decision == .alreadyCurrent)
     }
 
+    /// An absolute target that reaches this app through a symlinked folder is
+    /// this app's link: both sides are compared with their links resolved.
+    @Test func anAbsoluteTargetThroughALinkedFolderIsThisApp() throws {
+        // real/SteerLab.app is the app; alias is a link to real.
+        let root = try temporaryDirectory("alias").resolvingSymlinksInPath()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let real = root.appending(component: "real")
+        let helperFile = real.appending(path: "SteerLab.app/" + CommandLineLink.helperPath)
+        try FileManager.default.createDirectory(
+            at: helperFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\n".utf8).write(to: helperFile)
+        let alias = root.appending(component: "alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: real)
+        let viaAlias = alias.appending(path: "SteerLab.app/" + CommandLineLink.helperPath).path
+        #expect(
+            CommandLineLink.decide(
+                app: real.appending(component: "SteerLab.app"),
+                existing: .symlink(target: viaAlias)) == .alreadyCurrent)
+    }
+
+    /// Each cause has its own repair, and none is this copy's own path: a
+    /// kept copy is not told to move itself, and a build folder has no app
+    /// to move.
+    @Test func eachBadLocationHasItsOwnRepair() {
+        let translocated = URL(
+            filePath: "/private/var/folders/x/AppTranslocation/ABC/d/SteerLab.app")
+        let kept = URL(filePath: "/Volumes/Lab/SteerLab/SteerLab-0.9.12-previous.app")
+        let moving = CommandLineLink.badLocationRepair(app: translocated)
+        let keptRepair = CommandLineLink.badLocationRepair(app: kept)
+        let build = CommandLineLink.badLocationRepair(app: nil)
+        #expect(moving.hasPrefix("move SteerLab.app"))
+        #expect(!keptRepair.contains("move") && keptRepair.contains("current SteerLab.app"))
+        #expect(!build.contains("move") && build.contains("inside SteerLab.app"))
+        for (copy, repair) in [(translocated, moving), (kept, keptRepair)] {
+            #expect(!repair.contains(copy.path), "\(repair)")
+        }
+        #expect(Set([moving, keptRepair, build]).count == 3)
+    }
+
     /// The repoint is a rename over the old link, and leaves nothing behind.
     @Test func aRepointLeavesNoStagedLinkBehind() throws {
         let directory = try temporaryDirectory("staged")
@@ -213,7 +252,7 @@ private func temporaryDirectory(_ label: String) throws -> URL {
         #expect(result.envelope.error?.code == "missingPrerequisite")
         #expect(result.envelope.error?.reason.contains("build folder") == true)
         // The copy is the problem, so the repair is never its own path.
-        #expect(result.envelope.error?.repairAction == CommandLineLink.badLocationRepair)
+        #expect(result.envelope.error?.repairAction == CommandLineLink.badLocationRepair(app: nil))
         #expect(
             (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) == [])
     }
@@ -263,14 +302,35 @@ private func temporaryDirectory(_ label: String) throws -> URL {
     /// What a researcher reads in the alert: the folder's name and the way
     /// forward, in the app's words — no path, no file names, no command.
     @Test func theAlertSpeaksPlainly() {
-        let text = ExternalWorkspaceOpen.notAWorkspace(folderName: "Downloads")
+        let text = ExternalWorkspaceOpen.notAWorkspace(folderName: "Downloads", hadWorkspace: true)
+        let first = ExternalWorkspaceOpen.notAWorkspace(folderName: "Downloads", hadWorkspace: false)
         #expect(text.hasPrefix("“Downloads” is not a SteerLab workspace"))
         #expect(text.contains("Open Workspace…") && text.contains("New Workspace…"))
-        for sentence in [text, ExternalWorkspaceOpen.notAFolder] {
+        // Nothing "stays open" on a first launch, when nothing is open.
+        #expect(text.contains("stays open") && !first.contains("stays open"))
+        #expect(first.hasPrefix("“Downloads” is not a SteerLab workspace. A workspace"))
+        for sentence in [text, first, ExternalWorkspaceOpen.notAFolder] {
             for jargon in ["/", "prompts", "marker", "open -a", "steerlab-cli", "--"] {
                 #expect(!sentence.contains(jargon), "\(jargon) in: \(sentence)")
             }
         }
+    }
+}
+
+extension ExternalWorkspaceOpenTests {
+
+    /// Every way into a workspace asks `refusal` first: a workspace goes
+    /// ahead, anything else gets the plain sentence named by the folder.
+    @Test func aFolderThatIsNotAWorkspaceIsTurnedAwayPlainly() {
+        let downloads = URL(filePath: "/Volumes/Lab/Downloads/")
+        #expect(
+            ExternalWorkspaceOpen.refusal(
+                for: workspace, hasWorkspace: true, isWorkspace: { _ in true }) == nil)
+        let refusal = ExternalWorkspaceOpen.refusal(
+            for: downloads, hasWorkspace: false, isWorkspace: { _ in false })
+        #expect(
+            refusal == ExternalWorkspaceOpen.notAWorkspace(
+                folderName: "Downloads", hadWorkspace: false))
     }
 }
 

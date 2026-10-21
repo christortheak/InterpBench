@@ -150,7 +150,9 @@ is not SteerLab's. If it says `~/.local/bin` is not on your `PATH`, add the
 line it gives to your shell profile. On an older app, make the link yourself
 with `mkdir -p ~/.local/bin` and then `ln -s
 "<path-to>/SteerLab.app/Contents/Helpers/steerlab-cli" ~/.local/bin/steerlab-cli`.
-Then run `steerlab-cli --version`.
+If `~/.local/bin` is not on your `PATH`, add
+`export PATH="$HOME/.local/bin:$PATH"` to your shell profile and open a new
+terminal. Then run `steerlab-cli --version`.
 `--version` reports how many of the app's resource families it found; all of
 them should resolve. Do not name a link `steerlab`, which is the app-free
 client's name. A coding assistant can also find the command line without the
@@ -206,9 +208,10 @@ with that hash:
 sh install-client.sh install --expect <planSHA256> --yes
 ```
 
-This takes a few minutes and a few hundred MB. It downloads a verified copy
-of `uv`, a Python installer, and a managed copy of Python, then installs the
-client and its locked dependencies into a separate folder:
+This takes a few minutes, a download of about 100 MB, and up to 1 GB of
+disk. It downloads a verified copy of `uv`, a Python installer, and a managed
+copy of Python, then installs the client and its locked dependencies into a
+separate folder:
 `~/Library/Application Support/SteerLab/client-runtime` on a Mac, or
 `~/.local/share/SteerLab/client-runtime` on Linux. Add `--runtime
 <absolute-path>` to both commands to choose another folder. It needs internet

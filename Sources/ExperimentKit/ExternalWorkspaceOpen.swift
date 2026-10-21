@@ -8,10 +8,10 @@ import Foundation
 /// and showed whichever workspace it had open last, so "open the app" could
 /// put a different study in front of the researcher.
 ///
-/// The decision is pure, so it is tested without an app. The app opens what
-/// it decides through the same path as the Workspace menu's Open
-/// (`WorkspaceStore.switchTo`), which refuses a folder that is not a
-/// workspace and says why.
+/// The decisions are pure, so they are tested without an app. The app opens
+/// what it decides through the same path as the Workspace menu's Open:
+/// `refusal` first, which turns a folder that is not a workspace away in the
+/// app's own words, then `WorkspaceStore.switchTo`.
 public enum ExternalWorkspaceOpen {
 
     public enum Decision: Sendable, Equatable {
@@ -28,13 +28,28 @@ public enum ExternalWorkspaceOpen {
 
     /// The alert a researcher reads when a folder is not a workspace: the
     /// folder's name, what a workspace is, and the two ways forward, in the
-    /// app's words. The command line keeps `WorkspaceStore.open`'s own
-    /// refusal, which names the full path for whoever typed it.
-    public static func notAWorkspace(folderName: String) -> String {
-        "“\(folderName)” is not a SteerLab workspace, so the workspace you had "
-            + "open stays open. A workspace is a folder SteerLab made to hold a "
-            + "study's examples, designs, and results. Choose one with Open "
-            + "Workspace… in the Workspace menu, or make one with New Workspace…."
+    /// app's words. It says the open workspace stays open only when one is
+    /// open: on a first launch there is none. The command line keeps
+    /// `WorkspaceStore.open`'s own refusal, which names the full path for
+    /// whoever typed it.
+    public static func notAWorkspace(folderName: String, hadWorkspace: Bool) -> String {
+        "“\(folderName)” is not a SteerLab workspace"
+            + (hadWorkspace ? ", so the workspace you had open stays open." : ".")
+            + " A workspace is a folder SteerLab made to hold a study's examples, "
+            + "designs, and results. Choose one with Open Workspace… in the "
+            + "Workspace menu, or make one with New Workspace…."
+    }
+
+    /// The alert for a folder the app was asked to open, or nil when it is a
+    /// workspace and the switch can go ahead. Every way into a workspace in
+    /// the app asks this first: Open Workspace… and a folder handed in.
+    public static func refusal(
+        for folder: URL, hasWorkspace: Bool,
+        isWorkspace: (URL) -> Bool = WorkspaceStore.isWorkspace(url:)
+    ) -> String? {
+        let folder = folder.standardizedFileURL
+        if isWorkspace(folder) { return nil }
+        return notAWorkspace(folderName: folder.lastPathComponent, hadWorkspace: hasWorkspace)
     }
 
     /// The same, when what arrived was not a folder at all.
