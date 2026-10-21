@@ -136,6 +136,45 @@ private func temporaryDirectory(_ label: String) throws -> URL {
         #expect(try String(contentsOf: link, encoding: .utf8) == "mine")
     }
 
+    /// A relative link target is resolved where the system resolves it: in
+    /// the link's own folder, never in this process's working directory.
+    @Test func aRelativeLinkToThisAppIsCurrent() throws {
+        // The app sits beside the link's folder: `../Lab/SteerLab.app/…`
+        // names it only from that folder, never from the process's own.
+        let root = try temporaryDirectory("relative")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let local = root.appending(path: "Lab/SteerLab.app")
+        let directory = root.appending(component: "bin")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            atPath: directory.appending(component: "steerlab-cli").path,
+            withDestinationPath: "../Lab/SteerLab.app/" + CommandLineLink.helperPath)
+        let outcome = try CommandLineLink.install(
+            app: local, directory: directory, replace: false, path: directory.path)
+        #expect(outcome.decision == .alreadyCurrent)
+    }
+
+    /// The repoint is a rename over the old link, and leaves nothing behind.
+    @Test func aRepointLeavesNoStagedLinkBehind() throws {
+        let directory = try temporaryDirectory("staged")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let other = "/Applications/SteerLab.app/Contents/Helpers/steerlab-cli"
+        try FileManager.default.createSymbolicLink(
+            atPath: directory.appending(component: "steerlab-cli").path,
+            withDestinationPath: other)
+        let outcome = try CommandLineLink.install(
+            app: app, directory: directory, replace: true, path: directory.path)
+        #expect(outcome.changed)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path) == ["steerlab-cli"])
+    }
+
+    @Test func shellQuotingKeepsPlainPathsBareAndQuotesTheRest() {
+        #expect(CommandLineLink.shellQuoted("/Volumes/Lab/bin") == "/Volumes/Lab/bin")
+        #expect(CommandLineLink.shellQuoted("/Volumes/My Lab/bin") == "'/Volumes/My Lab/bin'")
+        #expect(CommandLineLink.shellQuoted("it's") == "'it'\\''s'")
+        #expect(CommandLineLink.shellQuoted("") == "''")
+    }
+
     /// The test process is not inside SteerLab.app, so the verb refuses as a
     /// build folder would, typed, with a repair.
     @Test func theVerbRefusesOutsideAnApp() async throws {
@@ -243,5 +282,25 @@ private func temporaryDirectory(_ label: String) throws -> URL {
                 == .array(["open", "-a", app.path, root.standardizedFileURL.path]
                     .map(JSONValue.string)))
         #expect(MacCommandLineRecord.read(workspaceRoot: root)?.app == app.path)
+
+        // A copy whose path will not last is offered to no one.
+        let translocated = URL(
+            filePath: "/private/var/folders/x/AppTranslocation/ABC/d/SteerLab.app")
+        let fleeting = try WorkspaceBootstrap.handoff(
+            root, executable: "steerlab-cli", app: translocated)
+        #expect(fleeting["openInApp"] == nil)
+        #expect(MacCommandLineRecord.read(workspaceRoot: root)?.app == app.path)
+    }
+
+    /// The ignore rule is what keeps the path out of git, so it comes back
+    /// even when the record itself is unchanged.
+    @Test func aDeletedIgnoreRuleComesBack() throws {
+        let root = try temporaryDirectory("ignore")
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(MacCommandLineRecord.note(workspaceRoot: root, app: app, appVersion: "1"))
+        let ignore = root.appending(path: ".steerlab/mac-app/.gitignore")
+        try FileManager.default.removeItem(at: ignore)
+        #expect(!MacCommandLineRecord.note(workspaceRoot: root, app: app, appVersion: "1"))
+        #expect(try String(contentsOf: ignore, encoding: .utf8) == "*\n")
     }
 }

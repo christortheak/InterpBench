@@ -19,13 +19,14 @@ migration that rewrites frozen bytes.
   app, checks its checksum, signature, and Apple notarization, installs it in
   your SteerLab folder, creates a workspace for your study, and offers to
   open the app on it. On any other computer it sets up the app-free client.
-- **The app opens the workspace it is given.** `open -a SteerLab <folder>`,
-  or a workspace folder dropped on SteerLab's Dock icon, now opens that
-  workspace the way Open Workspace… does. Before, the app ignored the folder
+- **The app opens the workspace it is given.** `open -a SteerLab <folder>`
+  now opens that workspace the way Open Workspace… does, in the window that
+  is already open. Before, the app ignored the folder
   and showed whichever workspace it had open last. A coding assistant's
   handoff includes the exact command as `openInApp`.
 - **A coding assistant finds the command line in later sessions.** When the
-  app opens a workspace, it records where its command line is in
+  app opens a workspace, or starts up on one, it records where its command
+  line is in
   `.steerlab/mac-app/command-line.json`, which stays out of the workspace's
   git history, and the workspace's AGENTS.md says to look there.
   `steerlab-cli install link` puts the command line on your PATH as

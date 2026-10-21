@@ -53,7 +53,7 @@ Give your coding assistant this sentence:
 plan and asks before downloading anything. On a Mac it installs and checks the
 app, creates a workspace for your study, and offers to open the app on it;
 elsewhere it sets up the app-free client described below. The assistant needs
-permission to run commands and to reach the internet. If it has neither, the
+permission to run commands and to reach the internet. If it lacks either, the
 page ends with the same steps for you to do by hand.
 
 ### Use the Mac app

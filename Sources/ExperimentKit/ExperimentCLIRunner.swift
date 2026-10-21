@@ -1275,14 +1275,21 @@ public struct ExperimentCLIRunner: Sendable {
             case .foreign, .badLocation:
                 throw ExperimentError.refusing(
                     .missingPrerequisite, sentence,
-                    repair: outcome.target.map { "run steerlab-cli by its full path: \($0)" }
+                    repair: outcome.target.map {
+                        "run steerlab-cli by its full path: \(CommandLineLink.shellQuoted($0))"
+                    }
                         ?? "run the steerlab-cli inside SteerLab.app: <app>/"
                             + CommandLineLink.helperPath)
             case .repoint where !outcome.changed:
+                // The full path of THIS app's command line: by premise, the
+                // command is not on PATH yet.
                 throw ExperimentError.refusing(
                     .missingPrerequisite, sentence,
-                    repair: "steerlab-cli install link --replace"
-                        + (flag("--directory").map { " --directory \($0)" } ?? ""))
+                    repair: [outcome.target ?? "steerlab-cli", "install", "link", "--replace"]
+                        .map(CommandLineLink.shellQuoted).joined(separator: " ")
+                        + (flag("--directory").map {
+                            " --directory " + CommandLineLink.shellQuoted($0)
+                        } ?? ""))
             case .create, .alreadyCurrent, .repoint:
                 break
             }

@@ -8,9 +8,10 @@ import Foundation
 /// land on an old copy in a build folder. The workspace's AGENTS.md now
 /// points here, and the app keeps the record current:
 ///
-///   * the app writes it whenever it opens or creates this workspace
-///     (`WorkspaceStore.switchTo`), and whenever it or its command line
-///     prepares a handoff (`WorkspaceBootstrap.handoff`);
+///   * the app writes it when it opens, creates, or starts up on this
+///     workspace (`WorkspaceStore.switchTo`, and the app's launch), and
+///     whenever it or its command line prepares a handoff
+///     (`WorkspaceBootstrap.handoff`);
 ///   * it names the app the researcher actually uses, so a moved app is
 ///     corrected the next time it opens the workspace;
 ///   * it is never written from somewhere that will not last (a translocated
@@ -67,12 +68,19 @@ public enum MacCommandLineRecord {
             schemaVersion: schemaVersion,
             commandLine: standardized.appending(path: CommandLineLink.helperPath).path,
             app: standardized.path, appVersion: appVersion)
-        if read(workspaceRoot: workspaceRoot) == record { return false }
         let url = fileURL(workspaceRoot: workspaceRoot)
         let folder = url.deletingLastPathComponent()
+        let ignore = folder.appending(component: ".gitignore")
+        if read(workspaceRoot: workspaceRoot) == record {
+            // Unchanged, but the ignore rule is what keeps the path out of
+            // git, so a deleted one comes back.
+            if !FileManager.default.fileExists(atPath: ignore.path) {
+                try? Data("*\n".utf8).write(to: ignore, options: .atomic)
+            }
+            return false
+        }
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            let ignore = folder.appending(component: ".gitignore")
             if !FileManager.default.fileExists(atPath: ignore.path) {
                 try Data("*\n".utf8).write(to: ignore, options: .atomic)
             }

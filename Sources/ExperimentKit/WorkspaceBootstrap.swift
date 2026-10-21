@@ -1,6 +1,9 @@
 import Foundation
 
-/// Read-only first-run information over the shared workspace seed contract.
+/// First-run information over the shared workspace seed contract. It changes
+/// nothing a study holds: the one thing it writes is the Mac app's
+/// machine-local command-line record, under `.steerlab/` and ignored by git
+/// (`MacCommandLineRecord`), which is why `changed` stays false.
 public enum WorkspaceBootstrap {
     public static func inspect(_ root: URL) throws -> [String: JSONValue] {
         var directory: ObjCBool = false
@@ -102,7 +105,9 @@ public enum WorkspaceBootstrap {
         // present only when this process runs inside SteerLab.app and so
         // knows which app that is. The app takes the folder from `open -a`
         // the way its Workspace menu's Open does (`SteerLabAppDelegate`).
-        if let app {
+        // Only an app at a lasting place: a translocated or kept copy's path
+        // stops working when it quits (`CommandLineLink.locationProblem`).
+        if let app, CommandLineLink.locationProblem(app: app) == nil {
             // A handoff is where a coding assistant starts, so the next
             // session's way to the command line is recorded here too.
             MacCommandLineRecord.note(workspaceRoot: root, app: app)

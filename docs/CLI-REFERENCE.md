@@ -3278,7 +3278,7 @@ and what it gates; the rules are one set, on both engines.
 steerlab-cli install version
 steerlab-cli install stamp [--revision <commit>] [--root <dir>]
 steerlab-cli install verify [--gpu] [--root <dir>]
-steerlab-cli install link [--directory <value>] [--replace]
+steerlab-cli install link [--directory <dir>] [--replace]
 ```
 
 | Verb | Purpose |

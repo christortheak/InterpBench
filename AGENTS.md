@@ -76,7 +76,9 @@ Pick the first path that applies:
    ```
 
    It writes `~/.local/bin/steerlab-cli`, never replaces a file that is not
-   SteerLab's, and says whether `~/.local/bin` is on PATH. A researcher with
+   SteerLab's, and says whether `~/.local/bin` is on PATH. `install link`
+   arrived in 0.9.14; for an older app, make the same link with
+   `ln -s <app>/Contents/Helpers/steerlab-cli ~/.local/bin/steerlab-cli`. A researcher with
    no checkout should be pointed at `docs/AGENT-SETUP.md` instead, which
    installs the app itself.
 

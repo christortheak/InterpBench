@@ -98,8 +98,8 @@ final class WorkspaceActions {
     }
 
     /// Folders handed to the app from outside — `open -a SteerLab <folder>`,
-    /// the coding assistant's `openInApp`, or a folder dropped on the Dock
-    /// icon (`SteerLabAppDelegate`). Same switch as Open Workspace…, under the
+    /// the coding assistant's `openInApp` (`SteerLabAppDelegate`). Same
+    /// switch as Open Workspace…, under the
     /// same condition that disables it (`ExternalWorkspaceOpen`).
     func openHandedFolders(_ urls: [URL]) {
         switch ExternalWorkspaceOpen.decide(

@@ -327,6 +327,12 @@ struct SteerLabApp: App {
                 appDelegate.onOpenFolders = { [workspaceActions] urls in
                     workspaceActions.openHandedFolders(urls)
                 }
+                // The workspace restored at launch gets the same record an
+                // explicit open writes, so a moved app is corrected the next
+                // time it starts (`MacCommandLineRecord`).
+                if let root = workspace.chosenRootURL {
+                    MacCommandLineRecord.note(workspaceRoot: root)
+                }
                 updates.noteLaunch(
                     hasClusterSites: (try? cluster.siteRegistry.sites().isEmpty) == false)
                 await updates.runAutomaticCheckIfDue()

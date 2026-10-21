@@ -132,13 +132,27 @@ public enum CommandLineLink {
         return "export PATH=\"\(spelled):$PATH\""
     }
 
+    /// A path or word as a shell reads it back: bare when it holds only
+    /// characters no shell treats specially, otherwise in single quotes.
+    public static func shellQuoted(_ word: String) -> String {
+        let plain = CharacterSet(
+            charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./+:=@%")
+        if !word.isEmpty, word.unicodeScalars.allSatisfy(plain.contains) { return word }
+        return "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
     // MARK: - Live
 
-    /// What is at `link` now, without following it.
+    /// What is at `link` now, without following it. A relative link target
+    /// is resolved against the link's own folder, where the system resolves
+    /// it, never against this process's working directory.
     public static func observe(_ link: URL) -> Existing {
         let fm = FileManager.default
         if let target = try? fm.destinationOfSymbolicLink(atPath: link.path) {
-            return .symlink(target: target)
+            let absolute = target.hasPrefix("/")
+                ? target
+                : link.deletingLastPathComponent().appending(path: target).path
+            return .symlink(target: absolute)
         }
         // `fileExists` follows links; a dangling link was handled above.
         var isDirectory: ObjCBool = false
@@ -177,9 +191,17 @@ public enum CommandLineLink {
                 atPath: link.path, withDestinationPath: helper!)
             outcome.changed = true
         case .repoint where replace:
-            try FileManager.default.removeItem(at: link)
+            // Atomically: a new link beside the old one, renamed over it. A
+            // remove-then-create could delete whatever replaced the link in
+            // between, and rename(2) refuses to put a link over a directory.
+            let staged = directory.appending(component: ".\(name).\(UUID().uuidString)")
             try FileManager.default.createSymbolicLink(
-                atPath: link.path, withDestinationPath: helper!)
+                atPath: staged.path, withDestinationPath: helper!)
+            guard Darwin.rename(staged.path, link.path) == 0 else {
+                let failure = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                try? FileManager.default.removeItem(at: staged)
+                throw failure
+            }
             outcome.changed = true
         case .repoint, .alreadyCurrent, .foreign, .badLocation:
             break

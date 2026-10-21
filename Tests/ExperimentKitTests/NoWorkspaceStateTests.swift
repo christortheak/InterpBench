@@ -345,7 +345,7 @@ import Testing
                 "init",
                 "workspace init",
                 "setup inspect", "setup plan", "setup apply", "setup repair", "setup start",
-                "install version", "install verify", "install stamp",
+                "install version", "install verify", "install stamp", "install link",
                 "docs cli-reference",
                 "authoring prompt", "authoring study",
                 "science list", "science guide",

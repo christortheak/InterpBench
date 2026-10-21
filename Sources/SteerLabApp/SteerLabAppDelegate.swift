@@ -1,9 +1,9 @@
 import AppKit
 
 /// Receives folders handed to the app from outside: `open -a SteerLab
-/// <workspace folder>` (the coding assistant's `openInApp`), or a folder
-/// dropped on the Dock icon. It exists for that alone; everything else stays
-/// in the SwiftUI app.
+/// <workspace folder>`, the coding assistant's `openInApp`. It exists for
+/// that alone; everything else stays in the SwiftUI app. (The app declares
+/// no document types, so the Dock does not offer it dropped folders.)
 ///
 /// On a cold launch the folder can arrive before the window exists, so folders
 /// wait in `pending` until the window installs `onOpenFolders` and drains them.

@@ -2,8 +2,9 @@ import Foundation
 
 /// A workspace folder handed to the app from outside (2026-10-21): `open -a
 /// SteerLab <folder>`, which is how a coding assistant offers to open the app
-/// on the workspace it just set up (the handoff's `openInApp`), or a folder
-/// dropped on the app's Dock icon. Before this the app ignored the folder
+/// on the workspace it just set up (the handoff's `openInApp`). The app
+/// declares no document types, so a folder dropped on its Dock icon is not
+/// offered to it. Before this the app ignored the folder
 /// and showed whichever workspace it had open last, so "open the app" could
 /// put a different study in front of the researcher.
 ///
