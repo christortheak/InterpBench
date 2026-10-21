@@ -148,9 +148,10 @@ temporary or read-only location.
 ```
 
 It must report the release's version and `7/7 resource families resolved`.
-If that version is older than 0.9.14, there is no newer release to ask for
-yet: skip `install link` below, and in step 6 ask the researcher to choose
-**Open Workspace…** in the app's Workspace menu instead of using `openInApp`.
+If you downloaded it in step 3 and its version is older than 0.9.14, there
+is no newer release to ask for yet: skip `install link` below, and in step 6
+ask the researcher to choose **Open Workspace…** in the app's Workspace menu
+instead of using `openInApp`.
 Run this command line by its full path for the rest of the setup. Never use a
 `steerlab-cli` from a build folder or a source checkout, and do not read or
 change anything else inside SteerLab.app.

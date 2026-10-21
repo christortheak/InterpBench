@@ -157,7 +157,8 @@ terminal. Then run `steerlab-cli --version`.
 them should resolve. Do not name a link `steerlab`, which is the app-free
 client's name. A coding assistant can also find the command line without the
 link: when the app opens a workspace, it records the command line's location
-in that workspace's `.steerlab/mac-app/command-line.json`. Always tell `steerlab-cli` which workspace to use, with
+in that workspace's `.steerlab/mac-app/command-line.json`. Always tell
+`steerlab-cli` which workspace to use, with
 `--workspace <folder>` before the command or with the `STEERLAB_WORKSPACE`
 environment variable. For example, `steerlab-cli workspace init <folder>`
 creates a workspace, `steerlab-cli workspace init <folder> --demo <backend>`
