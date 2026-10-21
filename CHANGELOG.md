@@ -15,15 +15,20 @@ migration that rewrites frozen bytes.
 - **Hand one link to your coding assistant.** Give it
   [docs/AGENT-SETUP.md](docs/AGENT-SETUP.md) and ask it to set SteerLab up.
   The page is written for the assistant: it checks your computer, shows you
-  a plan, and asks before downloading anything. On a Mac it downloads the
+  a plan, and asks before downloading anything. On an Apple Silicon Mac it
+  downloads the
   app, checks its checksum, signature, and Apple notarization, installs it in
   your SteerLab folder, creates a workspace for your study, and offers to
-  open the app on it. On any other computer it sets up the app-free client.
+  open the app on it. On x86_64 Linux it sets up the app-free client, and on
+  any other computer it says SteerLab does not support it.
 - **The app opens the workspace it is given.** `open -a SteerLab <folder>`
   now opens that workspace the way Open Workspace… does, in the window that
   is already open. Before, the app ignored the folder
   and showed whichever workspace it had open last. A coding assistant's
-  handoff includes the exact command as `openInApp`.
+  handoff includes the exact command as `openInApp`. A folder that is not a
+  workspace, given this way or chosen with Open Workspace…, now gets a plain
+  explanation naming the folder, instead of its full path and the files the
+  app looked for.
 - **A coding assistant finds the command line in later sessions.** When the
   app opens a workspace, or starts up on one, it records where its command
   line is in

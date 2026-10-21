@@ -29,9 +29,9 @@ anything.
 
 | Step | How long | Disk space |
 |---|---|---|
-| Download SteerLab | a minute or two | the app is a download of about 50 MB; the client is a few MB |
+| Download SteerLab | a minute or two | the app is a download of about 65 MB; the client is a few MB |
 | Create a workspace | under a minute | about 1 MB to begin with; it grows with your studies and results |
-| Set up the study-design helper | a few minutes, with an internet connection | a few hundred MB |
+| Set up the study-design helper | a few minutes, with an internet connection | about 100 MB to download, and up to 1 GB once installed |
 | Download a model, when you are ready to run a study | depends on your connection | typically 3 to 35 GB for each model |
 | Set up the Python engine on this Mac, only for "This Mac, full capabilities" | depends on your connection | about 2 GB to download, and several GB once installed |
 
@@ -142,12 +142,15 @@ link it into a folder on your `PATH`:
 
 ```sh
 "<path-to>/SteerLab.app/Contents/Helpers/steerlab-cli" install link
-export PATH="$HOME/.local/bin:$PATH"   # only if install link says to
-steerlab-cli --version
 ```
 
-`install link` makes `~/.local/bin/steerlab-cli` point into the app; updates
-keep the link working, and it never replaces a file that is not SteerLab's.
+`install link` (0.9.14 and later) makes `~/.local/bin/steerlab-cli` point
+into the app; updates keep the link working, and it never replaces a file that
+is not SteerLab's. If it says `~/.local/bin` is not on your `PATH`, add the
+line it gives to your shell profile. On an older app, make the link yourself
+with `mkdir -p ~/.local/bin` and then `ln -s
+"<path-to>/SteerLab.app/Contents/Helpers/steerlab-cli" ~/.local/bin/steerlab-cli`.
+Then run `steerlab-cli --version`.
 `--version` reports how many of the app's resource families it found; all of
 them should resolve. Do not name a link `steerlab`, which is the app-free
 client's name. A coding assistant can also find the command line without the

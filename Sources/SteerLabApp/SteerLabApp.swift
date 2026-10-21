@@ -330,7 +330,9 @@ struct SteerLabApp: App {
                 // The workspace restored at launch gets the same record an
                 // explicit open writes, so a moved app is corrected the next
                 // time it starts (`MacCommandLineRecord`).
-                if let root = workspace.chosenRootURL {
+                if let root = workspace.chosenRootURL,
+                    WorkspaceStore.isWorkspace(url: root)
+                {
                     MacCommandLineRecord.note(workspaceRoot: root)
                 }
                 updates.noteLaunch(

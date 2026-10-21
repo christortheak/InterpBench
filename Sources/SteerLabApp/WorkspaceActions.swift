@@ -89,6 +89,15 @@ final class WorkspaceActions {
     /// Switch to a workspace folder: the Open panel's result, or a folder
     /// handed to the app from outside.
     private func open(_ url: URL) {
+        // A folder that is not a workspace gets the app's own plain sentence;
+        // the store's refusal names the full path and the files it looked
+        // for, which is for the command line.
+        guard WorkspaceStore.isWorkspace(url: url.standardizedFileURL) else {
+            errorTitle = "Could not open that workspace"
+            errorMessage = ExternalWorkspaceOpen.notAWorkspace(
+                folderName: url.standardizedFileURL.lastPathComponent)
+            return
+        }
         do {
             try workspace.switchTo(url)
             resetCatalogs()

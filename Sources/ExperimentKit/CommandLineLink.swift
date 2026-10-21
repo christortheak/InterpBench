@@ -43,7 +43,8 @@ public enum CommandLineLink {
     /// What is at the link's path now.
     public enum Existing: Sendable, Equatable {
         case absent
-        /// A symbolic link, with its target as written.
+        /// A symbolic link, with its target made absolute against the
+        /// link's own folder (`observe`).
         case symlink(target: String)
         /// A regular file, a directory, or anything else that is not a link.
         case otherFile
@@ -107,7 +108,7 @@ public enum CommandLineLink {
                     + "its full path: \(helper)")
         case .symlink(let target):
             let resolved = URL(filePath: target).standardizedFileURL.path
-            if resolved == helper { return .alreadyCurrent }
+            if canonical(resolved) == canonical(helper) { return .alreadyCurrent }
             guard isSteerLabHelper(resolved) else {
                 return .foreign(
                     "a link to something else (\(target)) already has this name, and "
@@ -132,6 +133,18 @@ public enum CommandLineLink {
         return "export PATH=\"\(spelled):$PATH\""
     }
 
+    /// One spelling for two paths that name the same file: symlinked folders
+    /// (`/tmp`, a dotfiles `~/.local/bin`) resolved, then standardized.
+    static func canonical(_ path: String) -> String {
+        URL(filePath: path).resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    /// The repair for a copy whose path will not last: run the copy that
+    /// will, from where SteerLab lives.
+    public static let badLocationRepair =
+        "move SteerLab.app to your SteerLab folder or to Applications, open it from "
+        + "there, then run that copy's command line: <app>/" + helperPath
+
     /// A path or word as a shell reads it back: bare when it holds only
     /// characters no shell treats specially, otherwise in single quotes.
     public static func shellQuoted(_ word: String) -> String {
@@ -151,7 +164,8 @@ public enum CommandLineLink {
         if let target = try? fm.destinationOfSymbolicLink(atPath: link.path) {
             let absolute = target.hasPrefix("/")
                 ? target
-                : link.deletingLastPathComponent().appending(path: target).path
+                : link.deletingLastPathComponent().resolvingSymlinksInPath()
+                    .appending(path: target).standardizedFileURL.path
             return .symlink(target: absolute)
         }
         // `fileExists` follows links; a dangling link was handled above.

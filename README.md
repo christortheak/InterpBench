@@ -50,9 +50,9 @@ Give your coding assistant this sentence:
 > and then help me design my first study.
 
 [That page](docs/AGENT-SETUP.md) is written for the assistant. It shows you a
-plan and asks before downloading anything. On a Mac it installs and checks the
-app, creates a workspace for your study, and offers to open the app on it;
-elsewhere it sets up the app-free client described below. The assistant needs
+plan and asks before downloading anything. On an Apple Silicon Mac it installs
+and checks the app, creates a workspace for your study, and offers to open the
+app on it; on x86_64 Linux it sets up the app-free client described below. The assistant needs
 permission to run commands and to reach the internet. If it lacks either, the
 page ends with the same steps for you to do by hand.
 
@@ -104,12 +104,19 @@ Run it from where it is, or put it on your `PATH`:
 
 ```sh
 "<path-to>/SteerLab.app/Contents/Helpers/steerlab-cli" install link
-export PATH="$HOME/.local/bin:$PATH"   # if install link says it is not on PATH
-steerlab-cli --version      # reports 7/7 resource families resolved
 ```
 
-`install link` makes `~/.local/bin/steerlab-cli` point into the app, and
-updates keep it working. It never replaces a file that is not SteerLab's.
+`install link` (0.9.14 and later) makes `~/.local/bin/steerlab-cli` point
+into the app, and updates keep it working. It never replaces a file that is
+not SteerLab's, and it tells you when `~/.local/bin` is not on your `PATH` and
+the line to add. On an older app, make the link yourself:
+
+```sh
+mkdir -p ~/.local/bin
+ln -s "<path-to>/SteerLab.app/Contents/Helpers/steerlab-cli" ~/.local/bin/steerlab-cli
+```
+
+Then `steerlab-cli --version` reports 7/7 resource families resolved.
 
 Do not name the link `steerlab`; that name belongs to the app-free client
 below, a different product with a different verb surface.

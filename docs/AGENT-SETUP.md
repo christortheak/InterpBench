@@ -7,9 +7,10 @@ say what you want, for example:
 > https://github.com/christortheak/InterpBench/blob/main/docs/AGENT-SETUP.md
 > and then help me design my first study.
 
-It shows you a plan and asks before it downloads or installs anything. On a
-Mac it installs the SteerLab app, creates a workspace for your study, and
-offers to open the app on it. On Linux it sets up the app-free client.
+It shows you a plan and asks before it downloads or installs anything. On an
+Apple Silicon Mac it installs the SteerLab app, creates a workspace for your
+study, and offers to open the app on it. On x86_64 Linux it sets up the
+app-free client. Other computers are not supported.
 
 ---
 
@@ -37,22 +38,36 @@ says what to do with an older copy.
 ## 1. Check the computer
 
 ```sh
-uname -s                      # Darwin is a Mac, Linux is Linux
-sysctl -n hw.optional.arm64   # on a Mac: 1 means Apple Silicon, even under Rosetta
-sw_vers -productVersion       # on a Mac: needs 26.4 or later
+uname -s
+uname -m
 ```
 
-The SteerLab app needs an Apple Silicon Mac with macOS 26.4 or later. On
-x86_64 Linux, set up the app-free client instead (go to "On Linux" below).
-Windows is not supported: tell the researcher so, and stop.
+On a Mac (`Darwin`), also run:
+
+```sh
+sysctl -n hw.optional.arm64
+sw_vers -productVersion
+```
+
+`sysctl` prints `1` on Apple Silicon, even in a shell running under Rosetta,
+where `uname -m` says `x86_64`. The SteerLab app needs an Apple Silicon Mac
+with macOS 26.4 or later: continue at step 2. On `Linux` with `x86_64`, go to
+"On Linux" below. On anything else (an Intel Mac, a Mac on an older macOS,
+Windows, or Linux on another processor), tell the researcher SteerLab does not
+support this computer, and stop.
 
 ## 2. Look for an existing copy
 
 ```sh
 for APP in "$HOME/SteerLab/SteerLab.app" /Applications/SteerLab.app; do
-  [ -d "$APP" ] && "$APP/Contents/Helpers/steerlab-cli" --version | head -1 && echo "  at $APP"
+  if [ -d "$APP" ]; then
+    "$APP/Contents/Helpers/steerlab-cli" --version | head -1
+    echo "  at $APP"
+  fi
 done
 ```
+
+Nothing printed means no copy is installed in either place.
 
 If SteerLab is already installed, do not download or replace it. Updating is
 the researcher's click on Install Update in the app. Use that copy, by the
@@ -88,6 +103,7 @@ which the download address spells `%2B`):
 D="${TMPDIR:-/tmp}/steerlab-setup"
 APP_URL='<the SteerLab-….zip address printed above>'
 case "$APP_URL" in
+  *..*) echo "not this project's release address: stop here" ;;
   https://github.com/christortheak/InterpBench/releases/download/*)
     curl -fL -o "$D/SteerLab.zip" "$APP_URL" &&
       curl -fL -o "$D/SteerLab.zip.sha256" "$APP_URL.sha256" &&
@@ -130,7 +146,9 @@ temporary or read-only location.
 ```
 
 It must report the release's version and `7/7 resource families resolved`.
-Run this command line by its full path for the rest of the setup. Never use a
+If that version is older than 0.9.14 (the latest release can be, until
+0.9.14 is out), follow the older-copy rules at the end of step 2. Run this
+command line by its full path for the rest of the setup. Never use a
 `steerlab-cli` from a build folder or a source checkout, and do not read or
 change anything else inside SteerLab.app.
 
@@ -162,15 +180,22 @@ W="$HOME/SteerLab/Workspaces/<study-name>"
 "$CLI" --workspace "$W" workspace handoff --json
 ```
 
-Studies are designed with a small helper that installs separately. Check it:
+The study interview and drafting a study need nothing more. A small helper,
+installed separately, adds the rest of the study-design work: exporting
+results and reports, importing evidence, and preparing corpora and probes.
+Check whether it is there:
 
 ```sh
-"$HOME/SteerLab/SteerLab.app/Contents/Helpers/steerlab-cli" setup inspect --json
+CLI="$HOME/SteerLab/SteerLab.app/Contents/Helpers/steerlab-cli"
+W="$HOME/SteerLab/Workspaces/<study-name>"
+"$CLI" --workspace "$W" setup inspect --json
 ```
 
-If `result.authoringReady` is false, run `setup plan --json` with the same
-command line and show the researcher the plan, including
-`result.approximateDownloadMB`. Only after they agree, install it with
+If `result.authoringReady` is false, offer to install it when the researcher
+first needs it, or now. Run `setup plan --json` with the app's command line,
+by its full path as above, and show them the plan, including
+`result.approximateDownloadMB` (about 100 MB) and `result.requiredDiskMB`
+(about 1 GB). Only after they agree, install it with the same command line:
 `setup apply --expect <result.planSHA256> --yes --json`.
 
 ## 6. Hand over to the workspace
@@ -193,8 +218,8 @@ the app, which shows its own plan first.
 
 ## On Linux
 
-The app-free client authors studies and submits them to a runner; it does
-not run models itself. With the researcher's agreement, download the client
+This route is for x86_64 Linux. The app-free client authors studies and
+submits them to a runner; it does not run models itself. With the researcher's agreement, download the client
 and its checksum from the
 [latest release](https://github.com/christortheak/InterpBench/releases/latest)
 (`steerlab-client-<version>+<revision>.tar.gz` and its `.sha256`, named

@@ -140,13 +140,15 @@ library. Run it in place by its full path, or give it a name on your `PATH`:
 
 ```bash
 "<path-to>/SteerLab.app/Contents/Helpers/steerlab-cli" install link
-export PATH="$HOME/.local/bin:$PATH"   # if install link says it is not on PATH
-steerlab-cli --version      # reports 7/7 resource families resolved
 ```
 
 `install link` (0.9.14 and later) writes `~/.local/bin/steerlab-cli` as a
-symlink into the app and never replaces a file that is not SteerLab's; on an
-older app, make the same link with `ln -s`. A symlink is enough: the binary resolves its shaders and bundled resources
+symlink into the app, never replaces a file that is not SteerLab's, and gives
+the `PATH` line to add when `~/.local/bin` is not on it. On an older app, make
+the same link with `mkdir -p ~/.local/bin` and then `ln -s
+"<path-to>/SteerLab.app/Contents/Helpers/steerlab-cli" ~/.local/bin/steerlab-cli`.
+`steerlab-cli --version` then reports 7/7 resource families resolved. A
+symlink is enough: the binary resolves its shaders and bundled resources
 against its real location inside the bundle, not the link's. `--version`
 prints where each shipped resource family resolved, and **7/7 resolved** is
 the quick answer to "is this install intact"; the app's code signature is the

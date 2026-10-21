@@ -26,6 +26,22 @@ public enum ExternalWorkspaceOpen {
         case noFolder(String)
     }
 
+    /// The alert a researcher reads when a folder is not a workspace: the
+    /// folder's name, what a workspace is, and the two ways forward, in the
+    /// app's words. The command line keeps `WorkspaceStore.open`'s own
+    /// refusal, which names the full path for whoever typed it.
+    public static func notAWorkspace(folderName: String) -> String {
+        "“\(folderName)” is not a SteerLab workspace, so the workspace you had "
+            + "open stays open. A workspace is a folder SteerLab made to hold a "
+            + "study's examples, designs, and results. Choose one with Open "
+            + "Workspace… in the Workspace menu, or make one with New Workspace…."
+    }
+
+    /// The same, when what arrived was not a folder at all.
+    public static let notAFolder =
+        "SteerLab was asked to open something that is not a folder. A workspace "
+        + "is a folder: choose one with Open Workspace… in the Workspace menu."
+
     /// The first folder among `urls` decides; files are ignored, because a
     /// workspace is a folder and the app opens no documents.
     public static func decide(
@@ -33,10 +49,7 @@ public enum ExternalWorkspaceOpen {
         isDirectory: (URL) -> Bool = defaultIsDirectory
     ) -> Decision {
         guard let folder = urls.map(\.standardizedFileURL).first(where: isDirectory) else {
-            return .noFolder(
-                "SteerLab opens a workspace folder, and what it was given is not a "
-                    + "folder. Open the workspace folder itself, for example with "
-                    + "open -a SteerLab <workspace folder>.")
+            return .noFolder(notAFolder)
         }
         if let current, current.standardizedFileURL.path == folder.path {
             return .alreadyOpen

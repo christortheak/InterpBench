@@ -154,6 +154,33 @@ private func temporaryDirectory(_ label: String) throws -> URL {
         #expect(outcome.decision == .alreadyCurrent)
     }
 
+    /// A `~/.local/bin` that is itself a symlink (a dotfiles setup): `..` in a
+    /// relative target is where the kernel resolves it, not where the path's
+    /// letters suggest.
+    @Test func aLinkInASymlinkedFolderIsJudgedWhereTheSystemResolvesIt() throws {
+        // dotfiles/bin is the real folder; home/.local/bin is a link to it.
+        // From the link's real folder, `../Lab` is dotfiles/Lab; read by its
+        // letters from home/.local/bin, it would be home/.local/Lab.
+        let root = try temporaryDirectory("dotfiles")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dotfiles = root.appending(component: "dotfiles")
+        try FileManager.default.createDirectory(
+            at: dotfiles.appending(component: "bin"), withIntermediateDirectories: true)
+        let local = root.appending(path: "home/.local")
+        try FileManager.default.createDirectory(at: local, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: local.appending(component: "bin"),
+            withDestinationURL: dotfiles.appending(component: "bin"))
+        try FileManager.default.createSymbolicLink(
+            atPath: dotfiles.appending(path: "bin/steerlab-cli").path,
+            withDestinationPath: "../Lab/SteerLab.app/" + CommandLineLink.helperPath)
+        let outcome = try CommandLineLink.install(
+            app: dotfiles.appending(path: "Lab/SteerLab.app"),
+            directory: local.appending(component: "bin"), replace: false,
+            path: "/usr/bin")
+        #expect(outcome.decision == .alreadyCurrent)
+    }
+
     /// The repoint is a rename over the old link, and leaves nothing behind.
     @Test func aRepointLeavesNoStagedLinkBehind() throws {
         let directory = try temporaryDirectory("staged")
@@ -185,6 +212,8 @@ private func temporaryDirectory(_ label: String) throws -> URL {
         #expect(result.envelope.exitCode == 65)
         #expect(result.envelope.error?.code == "missingPrerequisite")
         #expect(result.envelope.error?.reason.contains("build folder") == true)
+        // The copy is the problem, so the repair is never its own path.
+        #expect(result.envelope.error?.repairAction == CommandLineLink.badLocationRepair)
         #expect(
             (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) == [])
     }
@@ -228,7 +257,20 @@ private func temporaryDirectory(_ label: String) throws -> URL {
             urls: [URL(filePath: "/tmp/a.json")], current: nil, pinned: false,
             isDirectory: folders([]))
         else { Issue.record("a file is not a workspace"); return }
-        #expect(reason.contains("open -a SteerLab"))
+        #expect(reason == ExternalWorkspaceOpen.notAFolder)
+    }
+
+    /// What a researcher reads in the alert: the folder's name and the way
+    /// forward, in the app's words — no path, no file names, no command.
+    @Test func theAlertSpeaksPlainly() {
+        let text = ExternalWorkspaceOpen.notAWorkspace(folderName: "Downloads")
+        #expect(text.hasPrefix("“Downloads” is not a SteerLab workspace"))
+        #expect(text.contains("Open Workspace…") && text.contains("New Workspace…"))
+        for sentence in [text, ExternalWorkspaceOpen.notAFolder] {
+            for jargon in ["/", "prompts", "marker", "open -a", "steerlab-cli", "--"] {
+                #expect(!sentence.contains(jargon), "\(jargon) in: \(sentence)")
+            }
+        }
     }
 }
 

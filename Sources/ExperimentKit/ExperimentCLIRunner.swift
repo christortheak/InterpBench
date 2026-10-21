@@ -1272,14 +1272,17 @@ public struct ExperimentCLIRunner: Sendable {
                 replace: args.contains("--replace"))
             let sentence = CommandLineLink.sentence(outcome)
             switch outcome.decision {
-            case .foreign, .badLocation:
+            case .badLocation:
+                // This copy is the problem, so its own path is no repair.
+                throw ExperimentError.refusing(
+                    .missingPrerequisite, sentence,
+                    repair: CommandLineLink.badLocationRepair)
+            case .foreign:
                 throw ExperimentError.refusing(
                     .missingPrerequisite, sentence,
                     repair: outcome.target.map {
                         "run steerlab-cli by its full path: \(CommandLineLink.shellQuoted($0))"
-                    }
-                        ?? "run the steerlab-cli inside SteerLab.app: <app>/"
-                            + CommandLineLink.helperPath)
+                    } ?? CommandLineLink.badLocationRepair)
             case .repoint where !outcome.changed:
                 // The full path of THIS app's command line: by premise, the
                 // command is not on PATH yet.
