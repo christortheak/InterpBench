@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.13] — 2026-10-21
+
 - **`remote submit-bundle` sends model work to the cluster's own executor.**
   Typed without `--executor`, the verb used to send `local`, so on a Slurm
   site an extract, validate, sweep, or run executed inside the controller's
