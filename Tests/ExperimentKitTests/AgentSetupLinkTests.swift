@@ -85,6 +85,38 @@ private func temporaryDirectory(_ label: String) throws -> URL {
         #expect(advice?.hasSuffix(":$PATH\"") == true)
     }
 
+    /// The PATH line, run by a shell, puts exactly this folder first: quotes,
+    /// `$`, backticks, `!`, and spaces in a folder's name are taken literally.
+    @Test func pathAdviceNamesExactlyThisFolderInAShell() throws {
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
+        let folders = [
+            home + "/.local/bin", home + "/Research \"A\"/bin",
+            "/Volumes/Lab/Research \"A\"/bin", "/Volumes/Lab/$HOME/bin",
+            "/Volumes/Lab/back`date`tick/bin", "/Volumes/Lab/it's/bin",
+            "/Volumes/Lab/a!b/bin", "/Volumes/Lab/back\\slash/bin", "/Volumes/My Lab/bin",
+        ]
+        #expect(
+            CommandLineLink.pathAdvice(directory: URL(filePath: folders[0]), path: "/usr/bin")
+                == "export PATH=\"$HOME/.local/bin:$PATH\"")
+        for folder in folders {
+            let advice = try #require(
+                CommandLineLink.pathAdvice(directory: URL(filePath: folder), path: "/usr/bin"))
+            for shell in ["/bin/zsh", "/bin/bash"] {
+                let process = Process()
+                process.executableURL = URL(filePath: shell)
+                process.arguments = ["-c", advice + "\nprintf '%s\\n' \"${PATH%%:*}\""]
+                process.environment = ["HOME": home, "PATH": "/usr/bin:/bin"]
+                let output = Pipe()
+                process.standardOutput = output
+                try process.run()
+                process.waitUntilExit()
+                let first = String(
+                    decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                #expect(first == folder + "\n", "\(shell): \(advice)")
+            }
+        }
+    }
+
     @Test func installMakesReplacesOnRequestAndNeverTouchesSteerlab() throws {
         let directory = try temporaryDirectory("link")
         defer { try? FileManager.default.removeItem(at: directory) }

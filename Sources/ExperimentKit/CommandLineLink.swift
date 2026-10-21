@@ -128,9 +128,18 @@ public enum CommandLineLink {
         }
         if entries.contains(wanted) { return nil }
         let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
-        let spelled = wanted.hasPrefix(home + "/")
-            ? "$HOME" + wanted.dropFirst(home.count) : wanted
-        return "export PATH=\"\(spelled):$PATH\""
+        let underHome = wanted.hasPrefix(home + "/")
+        let rest = underHome ? String(wanted.dropFirst(home.count)) : wanted
+        // Inside double quotes a shell still expands $, `, and \, and an
+        // interactive one expands !; a folder with none of them keeps the
+        // familiar form.
+        let expanded = CharacterSet(charactersIn: "\"$`\\!\n")
+        if !rest.unicodeScalars.contains(where: expanded.contains) {
+            return "export PATH=\"" + (underHome ? "$HOME" : "") + rest + ":$PATH\""
+        }
+        // Any other folder is quoted literally, with $PATH expanded beside it.
+        return "export PATH=" + (underHome ? "\"$HOME\"" : "") + shellQuoted(rest)
+            + ":\"$PATH\""
     }
 
     /// One spelling for two paths that name the same file: symlinked folders
