@@ -37,7 +37,8 @@ VERB_SPECS = (
                      'how many would read differently: changed to another option, changed to no answer, or gained '
                      'an answer, with a few records of each kind to look at. Uses the newest completed run unless '
                      '--run names another. Writes nothing and changes nothing under runs/; to analyze with the '
-                     'current reading, analyze the run with --reread-choices.',
+                     'current reading, analyze that run with --reread-choices (steerlab run --verb analyze '
+                     '--source <run>).',
              value_flags=frozenset({'--run'})),
 )
 
@@ -218,7 +219,8 @@ def run(invocation):
                                 state=exc.state) from exc
         print('\n'.join(check_lines(result)))
         return CLIResult(message=check_message(
-            result, analyze_command=f'steerlab run {study} --runner <url> --verb analyze --reread-choices'),
+            result, analyze_command=(f"steerlab run {study} --runner <url> --verb analyze "
+                                     f"--source {result['run']} --reread-choices")),
             changed=False, payload=result)
     destination = invocation.one('--out')
     if destination is not None:

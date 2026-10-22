@@ -534,9 +534,12 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
              # every stored choice again with the runner's current parser.
              boolean_flags=frozenset({"--dry-run", "--no-evidence",
                                       "--reread-choices"}),
+             # `--source` (with --verb analyze or evaluate): the completed run
+             # on the runner to read, as `results check-choices` prints it.
              value_flags=_RUNNER_FLAGS | frozenset({
                  "--bundle-path", "--bundle-sha", "--verb", "--executor",
-                 "--target-root", "--dtype", "--device", "--parallel"}),
+                 "--target-root", "--dtype", "--device", "--parallel",
+                 "--source"}),
              required_flags=frozenset({"--runner", "--bundle-path",
                                        "--bundle-sha", "--verb"})),
     VerbSpec("runner", "jobs", positional="[<job-id>]",
@@ -598,7 +601,7 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
                  "--runner", "--token-file", "--ca-bundle", "--timeout",
                  "--request-timeout", "--verb", "--executor", "--target-root",
                  "--dtype", "--device", "--parallel", "--evidence-out",
-                 "--max-bytes"}),
+                 "--max-bytes", "--source"}),
              required_flags=frozenset({"--runner"})),
 )
 
@@ -3195,6 +3198,42 @@ def _require_reread_verb(reread_choices: bool, study_verb: str | None, *,
             payload=payload)
 
 
+#: The steps that read a completed run and accept ``--source`` to name it.
+SOURCE_RUN_VERBS = frozenset({"analyze", "evaluate"})
+
+
+def _source_run(invocation, study_verb: str | None, *, payload: dict) -> str | None:
+    """``--source``: the completed run on the runner that an analysis or an
+    evaluation reads, named as ``results check-choices`` prints it
+    (``runs/<run-dir>``) or by its directory name. Sent as the directory name,
+    which the runner reads under its own ``runs/``. Refused with any other
+    step, never dropped, and refused when it is not a run directory's name."""
+    raw = invocation.one("--source")
+    if raw is None:
+        return None
+    if study_verb not in SOURCE_RUN_VERBS:
+        raise ClientRefusal(
+            code=USAGE_CODE,
+            reason=(f"--source names the completed run an analysis or an "
+                    f"evaluation reads, and the '{study_verb}' step reads no "
+                    "completed run"),
+            repair_action=("add --verb analyze (or --verb evaluate) to read "
+                           "that run, or leave --source out"),
+            payload=payload)
+    name = raw.strip()
+    if name.startswith("runs/"):
+        name = name[len("runs/"):]
+    name = name.rstrip("/")
+    if not name or "/" in name or name in {".", ".."}:
+        raise ClientRefusal(
+            code=USAGE_CODE,
+            reason=(f"--source {raw!r} is not a run directory's name: name a "
+                    "run under the runner's runs/ folder"),
+            repair_action="--source runs/<run-directory>",
+            payload=payload)
+    return name
+
+
 def _normalized_runner_url(runner_api, raw: str, *, payload: dict) -> str:
     """The runner locator, canonical — or this client's typed refusal.
 
@@ -3360,10 +3399,11 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
         # than after a job (and possibly a scheduler allocation) exists.
         reread_choices = invocation.has("--reread-choices")
         _require_reread_verb(reread_choices, study_verb, payload=dict(common))
+        source_run = _source_run(invocation, study_verb, payload=dict(common))
         identity = client.identity()
         submission = client.submit_uploaded_bundle(
             remote_path=remote_path, expected_sha256=bundle_sha,
-            verb=study_verb,
+            verb=study_verb, source_path=source_run,
             executor=default_executor(
                 (invocation.one("--executor") or "").strip() or None, study_verb),
             target_root=invocation.one("--target-root"),
@@ -4079,6 +4119,10 @@ def _run(invocation: Invocation) -> CLIResult:
     reread_choices = invocation.has("--reread-choices")
     _require_reread_verb(reread_choices, study_verb,
                          payload={"experiment": name, "stages": _stage_table(stages)})
+    # `--source`: the completed run on the runner to analyze or evaluate,
+    # checked here, before anything is built or sent (`_run_wire` sends it).
+    _source_run(invocation, study_verb,
+                payload={"experiment": name, "stages": _stage_table(stages)})
     executor = default_executor(
         (invocation.one("--executor") or "").strip() or None, study_verb)
     dry_run = invocation.has("--dry-run")
@@ -4363,7 +4407,9 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
             parallel_jobs=_runner_int(invocation, "--parallel", 1) or 1,
             # Read from the invocation, as every other submit field is here;
             # `_run` already refused it for any step but analyze.
-            reread_choices=invocation.has("--reread-choices"))
+            reread_choices=invocation.has("--reread-choices"),
+            # Checked in `_run` before anything was built or sent.
+            source_path=_source_run(invocation, study_verb, payload=dict(common)))
     except runner_api.RunnerUnreachable as exc:
         # The one call in this machine whose failure is genuinely ambiguous:
         # the request may have created a job (and on Slurm spent an

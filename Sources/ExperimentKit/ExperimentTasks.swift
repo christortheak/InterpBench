@@ -5222,17 +5222,29 @@ public enum ExperimentTasks {
     /// `rereadChoices` (`--reread-choices`, the app's "Re-read choices"):
     /// every stored choice is read again with the current parser for this
     /// analysis only, stamped in `choice-reread.json` (`ChoiceReread`).
+    /// `sourceRunName` (`--run`, the app's Analyze on a run's page) names the
+    /// run to analyze; nil analyzes the newest completed run.
     public static func analyze(
         experimentName: String,
         allowUnverifiedEpoch: Bool = false,
-        rereadChoices: Bool = false
+        rereadChoices: Bool = false,
+        sourceRunName: String? = nil
     ) throws -> URL {
         let manifest = try loadVerified(experimentName)
         let repository = StudyAnalysisRepository(
             workspaceRoot: ExperimentStore.workspaceRoot, promptRoot: VectorCatalog.projectRoot)
         return try StudyAnalysisWorkflow.analyze(
             manifest: manifest, repository: repository, allowUnverifiedEpoch: allowUnverifiedEpoch,
-            rereadChoices: rereadChoices)
+            rereadChoices: rereadChoices, sourceRunName: sourceRunName)
+    }
+
+    /// The directory a `--run` reference names in this workspace: an absolute
+    /// path, `runs/<dir>` as the results commands print it, or a directory
+    /// name under `runs/` (`StudyAnalysisRepository.runDirectory(named:)`).
+    public static func runDirectory(named reference: String) -> URL {
+        StudyAnalysisRepository(
+            workspaceRoot: ExperimentStore.workspaceRoot, promptRoot: VectorCatalog.projectRoot
+        ).runDirectory(named: reference)
     }
 
     /// The `storedChoicesReadDifferently` count for an analysis directory's

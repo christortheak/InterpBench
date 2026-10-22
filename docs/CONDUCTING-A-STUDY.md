@@ -985,9 +985,12 @@ writes the record, and runs never change: a run made before a parser change
 keeps the reading it was made with. To see what the current parser would
 read instead, run `results check-choices <study> --run <run>`; it reports,
 per condition, how many stored choices change to another option, change to
-no answer, or gain an answer, and writes nothing. To analyze with the current
-reading, analyze with `--reread-choices` (in the app, "Re-read choices with
-the current parser" beside Analyze). The analysis re-reads the stored
+no answer, or gain an answer, and writes nothing. To analyze that run with
+the current reading, analyze it with `--reread-choices` and name it: `--run
+runs/<run>` on the Mac, `--source runs/<run>` with the app-free client. The
+check prints the exact command. In the app, turn on "Re-read choices with the
+current parser" beside Analyze on that run's page; a server's Analyze reads
+the study's newest completed run there. The analysis re-reads the stored
 replies against the hash-verified task prompts the run was made from, uses
 those readings for every choice outcome and exclusion, and writes
 `choice-reread.json` with the parser version and the counts; the run itself

@@ -2673,7 +2673,11 @@ public struct ExperimentCLIRunner: Sendable {
             // this verb had no way to hand the child the escape its own
             // help documents. The server refuses an unreadable directory at
             // submit time, so a typo costs a request, not a queue slot.
-            let submitSourceRun = flag("--source")
+            // `runs/<dir>`, as the results commands print it, names the same
+            // run the server reads under its own runs/.
+            let submitSourceRun = flag("--source").map {
+                $0.hasPrefix("runs/") ? String($0.dropFirst("runs/".count)) : $0
+            }
             // The evaluate subsample (2026-08-29), submitted rather than
             // typed locally: the cluster is where a judged evaluate of a
             // 7,200-record corpus actually runs, so the preregistered
@@ -4262,13 +4266,14 @@ public struct ExperimentCLIRunner: Sendable {
 
         case "analyze":
             // Headless statistics: paired-to-baseline effect sizes (bootstrap CI
-            // + Wilcoxon) over the newest completed run, under the epoch guard
-            // (the run's experiment-hash stamp must equal the live manifest's
-            // content hash). Pure CPU — no model load.
+            // + Wilcoxon) over the newest completed run, or the one --run
+            // names, under the epoch guard (the run's experiment-hash stamp
+            // must equal the live manifest's content hash). Pure CPU — no
+            // model load.
             guard args.count >= 2 else {
                 throw ExperimentError(
-                    reason: "usage: experiment analyze <name> [--allow-unverified-epoch] "
-                        + "[--reread-choices]")
+                    reason: "usage: experiment analyze <name> [--run <run-dir>] "
+                        + "[--allow-unverified-epoch] [--reread-choices]")
             }
             // --reread-choices: every stored choice read again with the
             // current parser, for this analysis only (`ChoiceReread`).
@@ -4276,7 +4281,8 @@ public struct ExperimentCLIRunner: Sendable {
             let runDirectory = try ExperimentTasks.analyze(
                 experimentName: args[1],
                 allowUnverifiedEpoch: args.contains("--allow-unverified-epoch"),
-                rereadChoices: rereadChoices)
+                rereadChoices: rereadChoices,
+                sourceRunName: flag("--run"))
             var payload = Self.analysisPayload(inRunAt: runDirectory)
             payload["experiment"] = .string(args[1])
             payload["runDirectory"] = .string(runDirectory.path)
@@ -4333,7 +4339,7 @@ public struct ExperimentCLIRunner: Sendable {
                             checkCommand: "steerlab-cli results check-choices \(args[1]) "
                                 + "--run runs/\(found.run)",
                             analyzeCommand: "steerlab-cli experiment analyze \(args[1]) "
-                                + "--reread-choices")))
+                                + "--run runs/\(found.run) --reread-choices")))
             }
             return ExperimentCLIResult(
                 message: "analyzed '\(args[1])' → \(entries) effect-size "
@@ -5361,10 +5367,7 @@ public struct ExperimentCLIRunner: Sendable {
                 program: "steerlab-cli")
             let sourceRun: URL
             if let runFlag = flag("--run") {
-                sourceRun =
-                    runFlag.hasPrefix("/")
-                    ? URL(filePath: runFlag)
-                    : ExperimentStore.runsDirectory.appending(path: runFlag)
+                sourceRun = ExperimentTasks.runDirectory(named: runFlag)
             } else if let newest = ExperimentTasks.newestCompletedRun(
                 experimentName: args[1])
             {

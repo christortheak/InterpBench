@@ -414,6 +414,37 @@ def test_runner_submit_sends_local_for_a_verb_that_loads_no_model(
         assert seen[-1] == expected, (extra, document)
 
 
+def test_runner_submit_sends_the_named_source_run(wired_cli, capsys, monkeypatch):
+    """`runner submit --source runs/<dir>` sends the directory name the
+    runner reads under its own runs/, for an analysis or an evaluation, and
+    is refused for a step that reads no completed run."""
+    seen = []
+    original = _REAL_RUNNER_CLIENT.submit_uploaded_bundle
+
+    def recording(self, **kwargs):
+        seen.append(kwargs.get("source_path"))
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(_REAL_RUNNER_CLIENT, "submit_uploaded_bundle", recording)
+    service = wired_cli
+    runner = ["--runner", "http://testserver"]
+    code, document, _ = _envelope(
+        ["runner", "upload", service["bundle"], *runner], capsys)
+    assert code == 0, document
+    staged, digest = document["result"]["runnerPath"], document["result"]["sha256"]
+    base = ["runner", "submit", *runner, "--bundle-path", staged,
+            "--bundle-sha", digest, "--target-root", service["target"],
+            "--dry-run"]
+    code, document, _ = _envelope(
+        [*base, "--verb", "analyze", "--source", "runs/20261017T000000000-exp-s-run"],
+        capsys)
+    assert seen[-1] == "20261017T000000000-exp-s-run", document
+    code, document, _ = _envelope([*base, "--verb", "run", "--source", "runs/x"], capsys)
+    assert code == 64, document
+    assert document["error"]["code"] == "usage"
+    assert len(seen) == 1
+
+
 def test_runner_submit_records_the_jobs_origin_in_the_named_workspace(
         wired_cli, capsys, tmp_path):
     """The Mac app imports a job's evidence without a reconnect when the

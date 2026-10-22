@@ -111,11 +111,11 @@ deliver the rubric already pinned. The rules are the same on every client:
 <!-- client: mac -->
 
 ```bash
-steerlab-cli experiment analyze <name> [--allow-unverified-epoch] [--reread-choices]
+steerlab-cli experiment analyze <name> [--run runs/<run>] [--allow-unverified-epoch] [--reread-choices]
 ```
 
 Pure CPU, no model load. Paired-to-baseline effect sizes — bootstrap CIs and
-Wilcoxon — over the newest completed run; writes `effect-sizes.csv` and folds
+Wilcoxon — over the newest completed run, or the one `--run` names; writes `effect-sizes.csv` and folds
 `effectSizes` into `report.json`. `n` counts items: an item sampled several
 times contributes one difference, its responses averaged within each
 condition. Rows marked `withinItemSamples` describe one item's samples and
@@ -238,23 +238,26 @@ writes nothing.
 
 <!-- client: mac -->
 
-To analyze with the current reading:
+To analyze that run with the current reading, name it (the check prints
+this command with the run filled in):
 
 ```bash
-steerlab-cli experiment analyze <name> --reread-choices
+steerlab-cli experiment analyze <name> --run runs/<run> --reread-choices
 ```
 
 On a run made on the Python engine, use `--reread-choices` with that engine's
-analyze (`steerlab-cli remote submit-bundle … --verb analyze
---reread-choices`). In the app, turn on "Re-read choices with the current
-parser" beside the Analyze button.
+analyze (`steerlab-cli remote submit-bundle … --verb analyze --source
+runs/<run> --reread-choices`). In the app, turn on "Re-read choices with the
+current parser" beside Analyze on that run's page; a server's Analyze reads
+the study's newest completed run there.
 
 <!-- client: python -->
 
-To analyze with the current reading:
+To analyze that run with the current reading, name it (the check prints this
+command with the run filled in):
 
 ```bash
-steerlab run <name> --runner <url> --verb analyze --reread-choices
+steerlab run <name> --runner <url> --verb analyze --source runs/<run> --reread-choices
 ```
 
 <!-- client: all -->

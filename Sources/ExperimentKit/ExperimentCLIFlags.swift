@@ -853,12 +853,14 @@ public enum ExperimentCLIParser {
             valueFlags: ["--prompts"]),
         .init(
             namespace: "experiment", verb: "analyze", positional: "<name>",
-            purpose: "Compute paired effect sizes from the newest completed "
-                + "run into a fresh run directory.",
+            purpose: "Compute paired effect sizes from a completed run (the "
+                + "newest, unless --run names another) into a fresh run directory.",
             // `--reread-choices` reads every stored choice again with the
             // current choice parser, for this analysis only; the run is
-            // never changed (`ChoiceReread`).
-            booleanFlags: ["--allow-unverified-epoch", "--reread-choices"]),
+            // never changed (`ChoiceReread`). `--run` names the run, as
+            // `results check-choices` prints it.
+            booleanFlags: ["--allow-unverified-epoch", "--reread-choices"],
+            valueFlags: ["--run"]),
         .init(
             namespace: "experiment", verb: "rescore-style", positional: "<name>",
             purpose: "Re-score reasoning style over a completed run into a "

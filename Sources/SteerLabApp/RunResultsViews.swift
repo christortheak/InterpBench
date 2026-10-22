@@ -617,22 +617,23 @@ struct RunAnalyzeRow: View {
         case .local(let experiment):
             actionRow(
                 title: "Analyze (local)",
-                caption: "paired effect sizes (bootstrap CI + Wilcoxon) over the "
-                    + "newest completed run of '\(experiment)' — pure CPU, writes "
-                    + "a new immutable analyze run",
-                help: "compute paired effect sizes for '\(experiment)' here on "
-                    + "this Mac — it writes a NEW analyze run and never touches "
-                    + "the run you are reading"
-            ) { runLocal(experiment: experiment) }
+                caption: "paired effect sizes (bootstrap CI + Wilcoxon) over this "
+                    + "run, \(item.name) — pure CPU, writes a new immutable "
+                    + "analyze run",
+                help: "compute paired effect sizes for '\(experiment)' from this "
+                    + "run, here on this Mac — it writes a NEW analyze run and "
+                    + "never touches the run you are reading"
+            ) { runLocal(experiment: experiment, run: item.url.path) }
         case .server(let experiment):
             actionRow(
                 title: "Analyze on \(service.cluster.substrateLabel)",
                 caption: "runs the analysis where the run was produced, as a "
-                    + "durable job for '\(experiment)' (the per-engine epoch "
-                    + "guard: a server run is analyzed on the server)",
+                    + "durable job for '\(experiment)'. The server analyzes the "
+                    + "study's newest completed run there, which may not be "
+                    + "this one",
                 help: "submit the server's analyze verb for '\(experiment)' as "
-                    + "a durable job — the new analyze run lands on the server, "
-                    + "not in this workspace"
+                    + "a durable job over its newest completed run — the new "
+                    + "analyze run lands on the server, not in this workspace"
             ) { runServer(experiment: experiment) }
         case .unavailable(let reason):
             if item.runType == "run" {
@@ -697,14 +698,17 @@ struct RunAnalyzeRow: View {
         }
     }
 
-    private func runLocal(experiment: String) {
+    /// `run`: the run on this page. The analysis reads exactly it, never
+    /// whichever run of the study is newest.
+    private func runLocal(experiment: String, run: String) {
         state = .running
         let reread = rereadChoices
         Task {
             do {
                 let (directory, advice) = try await Task.detached(priority: .userInitiated) {
                     let directory = try ExperimentTasks.analyze(
-                        experimentName: experiment, rereadChoices: reread)
+                        experimentName: experiment, rereadChoices: reread,
+                        sourceRunName: run)
                     // An ordinary analysis used the stored choices: say when
                     // the current parser would read some of them
                     // differently. Never blocks.
@@ -796,6 +800,12 @@ struct RemoteRunAnalyzeRow: View {
                     statusText
                     Spacer()
                 }
+                Text(
+                    "The server analyzes the newest completed run of '\(experiment)', "
+                        + "which may not be this one."
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
                 ChoiceRereadToggle(isOn: $rereadChoices)
                     .disabled(isRunning)
             }

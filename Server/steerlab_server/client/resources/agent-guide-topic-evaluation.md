@@ -138,10 +138,11 @@ another option, changed to no answer, or gained an answer, and lists a few
 records of each kind (`result.examples`, by line of `generations.jsonl`). It
 writes nothing.
 
-To analyze with the current reading:
+To analyze that run with the current reading, name it (the check prints this
+command with the run filled in):
 
 ```bash
-steerlab run <name> --runner <url> --verb analyze --reread-choices
+steerlab run <name> --runner <url> --verb analyze --source runs/<run> --reread-choices
 ```
 
 That analysis reads every stored reply again with the current parser, in

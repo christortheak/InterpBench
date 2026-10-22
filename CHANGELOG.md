@@ -12,6 +12,17 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **Re-reading a run's choices analyzes that run.** `results check-choices
+  <study> --run <run>` checked the run it was given, but the command it
+  suggested analyzed the study's newest completed run, which could be a
+  different one, and on the Mac there was no way to name another. `experiment
+  analyze` now takes `--run runs/<run>` (the form the check prints; a run's
+  directory name or full path also works), and the check's suggested command
+  names the run it checked, on both clients. The app-free client's `run` and
+  `runner submit` take `--source runs/<run>` for an analysis or an evaluation.
+  In the app, Analyze on a run's page analyzes that run; a server's Analyze
+  still reads the study's newest completed run there, and now says so.
+  `evaluate --run` and `rescore-style --run` accept `runs/<run>` too.
 - **Hand one link to your coding assistant.** Give it
   [docs/AGENT-SETUP.md](docs/AGENT-SETUP.md) and ask it to set SteerLab up.
   The page is written for the assistant: it checks your computer, shows you a

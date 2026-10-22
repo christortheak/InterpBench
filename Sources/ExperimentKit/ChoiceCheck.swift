@@ -182,8 +182,9 @@ public enum ChoiceCheck {
         }
         return "\(report.total.changed) of \(report.total.storedChoices) stored choices in "
             + "\(report.run) would read differently with choice parser version "
-            + "\(report.parserVersion). Nothing was written. To analyze with the current "
-            + "reading: steerlab-cli experiment analyze \(study) --reread-choices"
+            + "\(report.parserVersion). Nothing was written. To analyze this run with the "
+            + "current reading: steerlab-cli experiment analyze \(study) --run \(report.run) "
+            + "--reread-choices"
     }
 }
 

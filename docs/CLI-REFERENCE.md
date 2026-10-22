@@ -1608,7 +1608,7 @@ equal tokens.
 <!-- Generated from the declarative verb table — `steerlab-cli docs cli-reference --write`. Edit the table, not this block. -->
 
 ```
-steerlab-cli experiment analyze <name> [--allow-unverified-epoch] [--reread-choices]
+steerlab-cli experiment analyze <name> [--allow-unverified-epoch] [--reread-choices] [--run <run-dir>]
 steerlab-cli experiment rescore-style <name> [--allow-unverified-epoch] [--run <run-dir>]
 steerlab-cli experiment evaluate <name> [--allow-unverified-epoch] [--run <run-dir>] [--sample-per-condition <n>] [--sample-seed <hex-or-int>]
 steerlab-cli results export <study> [--out <dir>] [--run <run-dir>]
@@ -1618,7 +1618,7 @@ steerlab-cli results check-choices <study> [--run <run-dir>]
 
 | Verb | Purpose |
 |---|---|
-| `experiment analyze` | Compute paired effect sizes from the newest completed run into a fresh run directory. |
+| `experiment analyze` | Compute paired effect sizes from a completed run (the newest, unless --run names another) into a fresh run directory. |
 | `experiment rescore-style` | Re-score reasoning style over a completed run into a fresh run directory. |
 | `experiment evaluate` | Judge a completed run with the pinned rubric and judges. |
 | `results export` | Export a completed run's results into a new folder outside runs/: tables that open in R, Stata, SPSS, or a spreadsheet, transcripts for coding by hand, a methods summary, and a codebook. Runs no model, and recalculates nothing. |
@@ -1880,10 +1880,14 @@ with a repair):
 ```
 steerlab results check-choices <study> [--run <run-dir>]        # writes nothing
 steerlab-cli results check-choices <study> [--run <run-dir>]    # the same check, through the bridge
-steerlab-cli experiment analyze <name> --reread-choices
+steerlab-cli experiment analyze <name> [--run runs/<run>] --reread-choices
 steerlab-server experiment analyze <name> [--source <run-dir>] --reread-choices
-steerlab run <experiment> --runner <url> --verb analyze --reread-choices
+steerlab run <experiment> --runner <url> --verb analyze [--source runs/<run>] --reread-choices
 ```
+
+The check's message gives the analyze command with the checked run filled in
+(0.9.14): without a run named, an analysis reads the study's newest completed
+run, which may be a different one.
 
 `check-choices` counts, per condition and in total, the records with a stored
 choice, the unchanged ones, those changed to another option, changed to no

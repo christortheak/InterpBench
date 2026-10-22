@@ -412,7 +412,9 @@ struct ChoiceRereadTests {
         #expect(total["changed"] == .number(6))
         #expect(total["storedChoices"] == .number(14))
         #expect(total["noFinishReason"] == .number(4))
-        #expect(result.message.contains("steerlab-cli experiment analyze reread --reread-choices"))
+        #expect(
+            result.message.hasSuffix(
+                "steerlab-cli experiment analyze reread --run runs/\(Self.runName) --reread-choices"))
         let report = try await ChoiceCheck.check(
             workspaceRoot: space.root, study: value.study, client: .commandLine,
             python: python, source: source)
@@ -571,6 +573,177 @@ struct ChoiceRereadTests {
                 return
             }
             #expect(summary["changed"] == .number(6))
+        }
+    }
+
+    // MARK: - The checked run is the analyzed run (external review F1)
+
+    private static let older = "20261017T000000000Z-exp-reread-run"
+    private static let newer = "20261018T000000000Z-exp-reread-run"
+
+    /// The fixture's study in `root`, with one concept attached, and a run
+    /// for each `(name, records)`: same manifest, same epoch.
+    private func study(in root: URL, runs: [(String, [[String: Any]])]) async throws -> Fixture {
+        let directory = CodeResources.compiledCheckoutPath.appending(
+            components: "Tests", "Fixtures", "cross-engine")
+        let value = try JSONDecoder().decode(
+            Fixture.self,
+            from: Data(contentsOf: directory.appending(component: "choice-reread.json")))
+        let prompts = root.appending(path: value.taskPromptsFile)
+        try FileManager.default.createDirectory(
+            at: prompts.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(value.taskPromptsText.utf8).write(to: prompts)
+        let concept = root.appending(path: "prompts/concepts/fair")
+        try FileManager.default.createDirectory(at: concept, withIntermediateDirectories: true)
+        try Data("{\"text\": \"fair\"}\n".utf8).write(to: concept.appending(component: "positive.jsonl"))
+        try Data("{\"text\": \"unfair\"}\n".utf8).write(to: concept.appending(component: "negative.jsonl"))
+        _ = try ExperimentStore.create(name: value.study, description: "", modelID: "test/model")
+        let attached = await ExperimentCLIRunner(sink: .discarding).run(
+            namespace: "experiment", ["attach", value.study, "fair", "--json"])
+        #expect(attached.envelope.exitCode == 0, "\(attached.envelope)")
+        var manifest = try ExperimentStore.load(name: value.study)
+        manifest.taskPromptsFile = value.taskPromptsFile
+        manifest.taskPromptsHash = SHA256.hash(data: Data(value.taskPromptsText.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        try ExperimentStore.save(manifest)
+        for (name, records) in runs { try addRun(name, records: records, manifest: manifest, root: root) }
+        return value
+    }
+
+    private func addRun(
+        _ name: String, records: [[String: Any]], manifest: ExperimentManifest, root: URL
+    ) throws {
+        let run = root.appending(path: "runs/\(name)")
+        try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true)
+        try JSONEncoder().encode(manifest).write(to: run.appending(component: "experiment.json"))
+        try Data(ExperimentStore.manifestHash(manifest).utf8).write(
+            to: run.appending(component: "experiment-hash.txt"))
+        let lines = try records.map {
+            String(
+                decoding: try JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]),
+                as: UTF8.self)
+        }
+        try Data((lines.joined(separator: "\n") + "\n").utf8).write(
+            to: run.appending(component: "generations.jsonl"))
+        try Data("{}".utf8).write(to: run.appending(component: "report.json"))
+    }
+
+    /// The fixture's records as stored, and as the current parser reads them:
+    /// each example's line holds its re-read value.
+    private func records() throws -> (stored: [[String: Any]], current: [[String: Any]]) {
+        let data = try Data(
+            contentsOf: CodeResources.compiledCheckoutPath.appending(
+                components: "Tests", "Fixtures", "cross-engine", "choice-reread.json"))
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let stored = try #require(object["records"] as? [[String: Any]])
+        let expected = try #require(object["expected"] as? [String: Any])
+        let examples = try #require(expected["examples"] as? [String: [[String: Any]]])
+        var current = stored
+        for entry in examples.values.joined() {
+            let line = try #require(entry["line"] as? Int)
+            current[line - 1]["parsedChoice"] = entry["reread"] ?? NSNull()
+        }
+        return (stored, current)
+    }
+
+    /// Every file in a run, in name order: compared before and after.
+    private func runFiles(_ run: URL) throws -> [Data] {
+        try FileManager.default.contentsOfDirectory(atPath: run.path).sorted().map {
+            try Data(contentsOf: run.appending(component: $0))
+        }
+    }
+
+    private func stamp(_ envelope: SteerLabCLIEnvelope) throws -> (source: String, changed: Double) {
+        let result = try #require(envelope.result, "\(envelope)")
+        guard case .string(let source)? = result["sourceRun"],
+            case .object(let summary)? = result["choiceReread"],
+            case .number(let changed)? = summary["changed"]
+        else { throw ExperimentError(reason: "no source or re-read summary in \(result)") }
+        return (source, changed)
+    }
+
+    /// Check the older run while it is the only one; a newer run arrives;
+    /// follow the check's command exactly as printed. It analyzes the checked
+    /// run with its six changes. Without --run, analyze still reads the
+    /// newest, which has none. Neither run's bytes change.
+    @Test func theCheckedRunIsTheRunItsCommandAnalyzes() async throws {
+        let python = URL(
+            filePath: try #require(
+                ProcessInfo.processInfo.environment["STEERLAB_TEST_PYTHON"],
+                "Set STEERLAB_TEST_PYTHON to run the real Python client."))
+        let source = CodeResources.compiledCheckoutPath.appending(component: "Server")
+        let (stored, current) = try records()
+        try await withTempRoot { root in
+            let value = try await study(in: root, runs: [(Self.older, stored)])
+            let check = try await ChoiceCheckCLI.run(
+                try ExperimentCLIParser.parse(namespace: "results", ["check-choices", value.study]),
+                sink: .discarding, workspaceRoot: root, python: python, source: source)
+            let command = try #require(
+                check.message.components(separatedBy: "current reading: ").last)
+            #expect(
+                command
+                    == "steerlab-cli experiment analyze \(value.study) --run runs/\(Self.older) "
+                    + "--reread-choices")
+
+            try addRun(
+                Self.newer, records: current,
+                manifest: try ExperimentStore.load(name: value.study), root: root)
+            let olderRun = root.appending(path: "runs/\(Self.older)")
+            let newerRun = root.appending(path: "runs/\(Self.newer)")
+            let before = try [olderRun, newerRun].map(runFiles)
+            var words = command.split(separator: " ").map(String.init)
+            #expect(words.removeFirst() == "steerlab-cli")
+            #expect(words.removeFirst() == "experiment")
+            let followed = await ExperimentCLIRunner(sink: .discarding).run(
+                namespace: "experiment", words + ["--json"])
+            #expect(followed.envelope.exitCode == 0, "\(followed.envelope)")
+            let checked = try stamp(followed.envelope)
+            #expect(checked.source == Self.older && checked.changed == 6)
+
+            let byDefault = await ExperimentCLIRunner(sink: .discarding).run(
+                namespace: "experiment", ["analyze", value.study, "--reread-choices", "--json"])
+            let newest = try stamp(byDefault.envelope)
+            #expect(newest.source == Self.newer && newest.changed == 0)
+            let after = try [olderRun, newerRun].map(runFiles)
+            #expect(after == before)
+        }
+    }
+
+    /// `--run` names a completed run of this study, or is refused, typed,
+    /// with a repair: it is never widened to another run.
+    @Test func analyzeRunRefusesWhatIsNotACompletedRunOfTheStudy() async throws {
+        let (stored, _) = try records()
+        try await withTempRoot { root in
+            let value = try await study(in: root, runs: [(Self.older, stored)])
+            let unfinished = root.appending(path: "runs/20261019T000000000Z-exp-reread-run")
+            try FileManager.default.createDirectory(at: unfinished, withIntermediateDirectories: true)
+            var other = try ExperimentStore.load(name: value.study)
+            other.name = "another-study"
+            try addRun(
+                "20261020T000000000Z-exp-another-study-run", records: stored, manifest: other,
+                root: root)
+            let outside = root.appending(path: "elsewhere")
+            try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+            for (reference, words) in [
+                ("runs/no-such-run", "not a run directory"),
+                (outside.path, "not a run directory"),
+                ("runs/20261019T000000000Z-exp-reread-run", "not a completed study run"),
+                ("runs/20261020T000000000Z-exp-another-study-run", "a run of the study 'another-study'"),
+            ] {
+                let result = await ExperimentCLIRunner(sink: .discarding).run(
+                    namespace: "experiment", ["analyze", value.study, "--run", reference, "--json"])
+                #expect(result.envelope.exitCode == 65, "\(reference): \(result.envelope)")
+                #expect(result.envelope.error?.code == "missingPrerequisite")
+                #expect(result.envelope.error?.reason.contains(words) == true, "\(result.envelope)")
+                #expect(result.envelope.error?.repairAction.isEmpty == false)
+            }
+            // All three spellings of the same run analyze it.
+            for reference in ["runs/\(Self.older)", Self.older, root.appending(path: "runs/\(Self.older)").path] {
+                let result = await ExperimentCLIRunner(sink: .discarding).run(
+                    namespace: "experiment", ["analyze", value.study, "--run", reference, "--json"])
+                #expect(result.envelope.exitCode == 0, "\(reference): \(result.envelope)")
+                #expect(result.envelope.result?["sourceRun"] == .string(Self.older))
+            }
         }
     }
 }

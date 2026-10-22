@@ -2100,7 +2100,8 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
                         found,
                         check_command=(f"results check-choices {name} "
                                        f"--run runs/{found['run']}"),
-                        analyze_command="analyze again with --reread-choices"),
+                        analyze_command=(f"analyze again with --source "
+                                         f"runs/{found['run']} --reread-choices")),
                         flush=True)
         elif verb == "pipeline":
             run_directory = tasks.pipeline(

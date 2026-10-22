@@ -34,6 +34,71 @@ struct StudyAnalysisRepository {
         return nil
     }
 
+    /// The directory a run reference names: an absolute path, a path from
+    /// the workspace (`runs/<dir>`, the form the results commands print), or
+    /// a directory name under `runs/`. Only resolved, never checked: the
+    /// caller decides what the run must hold.
+    func runDirectory(named reference: String) -> URL {
+        if reference.hasPrefix("/") { return URL(filePath: reference) }
+        let fromWorkspace = workspaceRoot.appending(path: reference)
+        var isDirectory: ObjCBool = false
+        if reference.hasPrefix("runs/"),
+            FileManager.default.fileExists(atPath: fromWorkspace.path, isDirectory: &isDirectory),
+            isDirectory.boolValue
+        {
+            return fromWorkspace
+        }
+        return runsDirectory.appending(path: reference)
+    }
+
+    /// The completed run of `experimentName` that `reference` names
+    /// (`runDirectory(named:)`), or a refusal saying why it is not one. An
+    /// analysis names the evidence it reads, so a reference is never
+    /// widened to another run: a directory outside `runs/`, an unfinished
+    /// run, or another study's run is refused.
+    func completedRun(named reference: String, experimentName: String) throws -> URL {
+        let fm = FileManager.default
+        let directory = runDirectory(named: reference).standardizedFileURL
+        let listRuns = "steerlab-cli experiment analyze \(experimentName)  (without --run, "
+            + "the newest completed run; run directories are listed under runs/)"
+        var isDirectory: ObjCBool = false
+        guard fm.fileExists(atPath: directory.path, isDirectory: &isDirectory),
+            isDirectory.boolValue,
+            directory.resolvingSymlinksInPath().deletingLastPathComponent().path
+                == runsDirectory.resolvingSymlinksInPath().standardizedFileURL.path
+        else {
+            throw ExperimentError.refusing(
+                .missingPrerequisite,
+                "'\(reference)' is not a run directory in this workspace's runs/ folder",
+                repair: listRuns)
+        }
+        let missing = ["generations.jsonl", "report.json"].filter {
+            !fm.fileExists(atPath: directory.appending(component: $0).path)
+        }
+        guard missing.isEmpty else {
+            throw ExperimentError.refusing(
+                .missingPrerequisite,
+                "run '\(directory.lastPathComponent)' is not a completed study run: it has no "
+                    + missing.joined(separator: " and ")
+                    + " (a run writes report.json when it completes)",
+                repair: listRuns)
+        }
+        let owner =
+            (try? Data(contentsOf: directory.appending(component: "experiment.json")))
+            .flatMap { try? JSONDecoder().decode(ExperimentManifest.self, from: $0) }?.name
+        guard owner == experimentName else {
+            throw ExperimentError.refusing(
+                .missingPrerequisite,
+                "run '\(directory.lastPathComponent)' is "
+                    + (owner.map { "a run of the study '\($0)'" } ?? "not stamped with its study")
+                    + ", not of '\(experimentName)'",
+                repair: owner.map {
+                    "steerlab-cli experiment analyze \($0) --run runs/\(directory.lastPathComponent)"
+                } ?? listRuns)
+        }
+        return directory
+    }
+
     static func verifyRunEpoch(
         verb: String,
         runDirectory: URL,
@@ -111,11 +176,18 @@ struct StudyAnalysisRepository {
         return (count, conditions)
     }
 
+    /// `sourceRunName` (`analyze --run`): the run to analyze, as
+    /// `completedRun(named:experimentName:)` reads it; nil analyzes the
+    /// newest completed run.
     func loadAnalysis(
-        manifest: ExperimentManifest, allowUnverifiedEpoch: Bool, rereadChoices: Bool = false
+        manifest: ExperimentManifest, allowUnverifiedEpoch: Bool, rereadChoices: Bool = false,
+        sourceRunName: String? = nil
     ) throws -> StudyAnalysisInput {
         let experimentName = manifest.name
-        guard let sourceRun = newestCompletedRun(experimentName: experimentName) else {
+        let named = try sourceRunName.map {
+            try completedRun(named: $0, experimentName: experimentName)
+        }
+        guard let sourceRun = named ?? newestCompletedRun(experimentName: experimentName) else {
             throw ExperimentError.refusing(
                 .missingPrerequisite,
                 "no completed study run found for '\(experimentName)' "
@@ -250,10 +322,7 @@ struct StudyAnalysisRepository {
         }
         let sourceRun: URL
         if let runDirectoryName {
-            sourceRun =
-                runDirectoryName.hasPrefix("/")
-                ? URL(filePath: runDirectoryName)
-                : runsDirectory.appending(path: runDirectoryName)
+            sourceRun = runDirectory(named: runDirectoryName)
         } else if let newest = newestCompletedRun(experimentName: experimentName) {
             sourceRun = newest
         } else {

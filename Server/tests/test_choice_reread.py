@@ -343,6 +343,71 @@ def test_the_client_check_writes_nothing_and_reports_the_counts(tmp_path, capsys
     assert sorted(os.walk(root)) == before
 
 
+#: A newer run of the same study, at the same epoch, whose stored choices are
+#: already the current reading: the fixture's six changed records hold their
+#: re-read value (``EXPECTED["examples"]``, by line).
+NEWER = "20261018T000000000-exp-reread-run"
+
+
+def _current_records():
+    records = [dict(record) for record in FIXTURE["records"]]
+    for entries in EXPECTED["examples"].values():
+        for entry in entries:
+            records[entry["line"] - 1]["parsedChoice"] = entry["reread"]
+    return records
+
+
+def _add_newer_run(root, run_dir):
+    newer = os.path.join(root, "runs", NEWER)
+    os.makedirs(newer)
+    for name in ("experiment.json", "experiment-hash.txt", "report.json"):
+        with open(os.path.join(run_dir, name), "rb") as source, \
+                open(os.path.join(newer, name), "wb") as target:
+            target.write(source.read())
+    with open(os.path.join(newer, "generations.jsonl"), "w", encoding="utf-8") as handle:
+        handle.write("\n".join(json.dumps(record) for record in _current_records()) + "\n")
+    return newer
+
+
+def _stamp(out):
+    with open(os.path.join(out, choice_reread.STAMP_FILE), encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def test_the_check_names_the_run_its_repair_analyzes(tmp_path, capsys, monkeypatch):
+    """External review F1: the suggested analysis must read the run that was
+    checked, never whichever run of the study is newest. The check runs while
+    the older run is the only one; a newer run arrives before the suggested
+    command is followed. The command still analyzes the checked run, and
+    reports its six changes; the newer run, analyzed by default, has none."""
+    root, run_dir = _workspace(tmp_path)
+    monkeypatch.delenv("STEERLAB_ROOT", raising=False)
+    assert client_cli.main(["--root", root, "results", "check-choices", STUDY, "--json"]) == 0
+    message = json.loads(capsys.readouterr().out)["message"]
+    command = message.split("To analyze with the current reading: ", 1)[1]
+    assert command == (f"steerlab run {STUDY} --runner <url> --verb analyze "
+                       f"--source runs/{RUN} --reread-choices")
+
+    newer = _add_newer_run(root, run_dir)
+    before = (_run_bytes(run_dir), _run_bytes(newer))
+    assert client_cli.main(["--root", root, "results", "check-choices", STUDY,
+                            "--run", "runs/" + RUN, "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["message"].endswith(command)
+
+    # What the runner does with that --source: the client sends the directory
+    # name, the runner reads it under its runs/, and the engine analyzes it.
+    source = command.split("--source ", 1)[1].split()[0]
+    assert source == "runs/" + RUN
+    checked = _stamp(tasks.analyze(STUDY, root, os.path.join(root, source),
+                                   log=lambda *_: None, reread_choices=True))
+    assert checked["sourceRun"] == RUN
+    assert checked["total"]["changed"] == 6
+    newest = _stamp(tasks.analyze(STUDY, root, log=lambda *_: None, reread_choices=True))
+    assert newest["sourceRun"] == NEWER
+    assert newest["total"]["changed"] == 0
+    assert (_run_bytes(run_dir), _run_bytes(newer)) == before
+
+
 def test_the_client_check_says_the_changes_in_words(tmp_path, capsys, monkeypatch):
     root, _run_dir = _workspace(tmp_path)
     monkeypatch.delenv("STEERLAB_ROOT", raising=False)

@@ -5,11 +5,11 @@ import Foundation
 enum StudyAnalysisWorkflow {
     static func analyze(
         manifest: ExperimentManifest, repository: StudyAnalysisRepository,
-        allowUnverifiedEpoch: Bool, rereadChoices: Bool = false
+        allowUnverifiedEpoch: Bool, rereadChoices: Bool = false, sourceRunName: String? = nil
     ) throws -> URL {
         let input = try repository.loadAnalysis(
             manifest: manifest, allowUnverifiedEpoch: allowUnverifiedEpoch,
-            rereadChoices: rereadChoices)
+            rereadChoices: rereadChoices, sourceRunName: sourceRunName)
         let result = try StudyAnalysisCalculator.analyze(input)
         let artifacts = try StudyAnalysisRendering.analyze(input: input, result: result)
         let directory = try StudyAnalysisWriter(workspaceRoot: repository.workspaceRoot)

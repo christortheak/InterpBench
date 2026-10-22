@@ -564,6 +564,44 @@ def test_a_choice_reread_reaches_the_runner_only_when_asked(workspace, script,
         assert script.submits[-1]["reread_choices"] is expected
 
 
+def test_the_source_run_reaches_the_runner_by_its_directory_name(
+        workspace, script, capsys):
+    """`--source` names the completed run an analysis or an evaluation reads,
+    in the form `results check-choices` prints (`runs/<dir>`) or by its
+    directory name. The runner reads it under its own runs/, so the
+    directory name is what is sent; absent, nothing is sent and the runner
+    reads its newest completed run."""
+    script.job_status = "prepared"
+    script.analysis_options = ["rereadChoices"]
+    for extra, expected in (
+            (["--verb", "analyze", "--source", "runs/20261017T000000000-exp-s-run"],
+             "20261017T000000000-exp-s-run"),
+            (["--verb", "evaluate", "--source", "20261017T000000000-exp-s-run/"],
+             "20261017T000000000-exp-s-run"),
+            (["--verb", "analyze"], None)):
+        code, document, _ = _run(
+            [STUDY_NAME, "--runner", RUNNER_URL, "--dry-run", *extra], capsys,
+            root=workspace)
+        assert code == 0, (extra, document)
+        assert script.submits[-1]["source_path"] == expected, extra
+
+
+def test_a_source_run_is_refused_for_a_step_that_reads_none(workspace, script, capsys):
+    """`--source` with a step that reads no completed run, or naming
+    something that is not a run directory's name, is refused before anything
+    is built or sent."""
+    for extra, words in ((["--verb", "run", "--source", "runs/x"], "--verb analyze"),
+                         (["--verb", "analyze", "--source", "runs/a/b"], "runs/<run-directory>"),
+                         (["--verb", "analyze", "--source", "runs/.."], "runs/<run-directory>")):
+        code, document, _ = _run(
+            [STUDY_NAME, "--runner", RUNNER_URL, "--dry-run", *extra], capsys,
+            root=workspace)
+        assert code == 64, (extra, document)
+        assert document["error"]["code"] == "usage"
+        assert words in document["error"]["repairAction"], document
+    assert script.uploads == [] and script.submits == []
+
+
 def test_a_choice_reread_on_an_older_runner_is_refused_before_any_upload(
         workspace, script, capsys):
     """An engine whose capabilities do not list `rereadChoices` would ignore
