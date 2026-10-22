@@ -389,4 +389,3 @@ def test_the_fixture_covers_repeats_with_and_without_the_advisory():
     assert advised and repeats_only
     assert {a["code"] for case in advised for a in case["advisories"]} == \
         {"validationOverlapsExtraction"}
-

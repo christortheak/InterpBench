@@ -73,8 +73,9 @@ migration that rewrites frozen bytes.
   validation can read better than it would on unseen text, and removing the
   repeated rows from the source files, or writing `validation.jsonl` from
   texts the extraction files do not contain, makes the hold-out one of unseen
-  texts. Both command lines give the same counts and sentence. The written
-  files are unchanged.
+  texts. Both command lines give the same counts and sentence, and the app's
+  Import chat pairs shows it before the sheet closes. The written files are
+  unchanged.
 
 ## [0.9.13] — 2026-10-21
 

@@ -66,6 +66,9 @@ struct DatasetCreationSheet: View {
     @State private var chatSeed = DatasetCreationSheet.defaultSeed()
     @State private var confirmingReplace = false
     @State private var failure: String?
+    /// A chat import that succeeded with a note to read first: the
+    /// importer's advisory, and the inventory entry to select once read.
+    @State private var chatImportNote: (entry: String, text: String)?
     @State private var isApplying = false
 
     /// What the one file chooser is choosing for. One `.fileImporter` serves
@@ -166,6 +169,25 @@ struct DatasetCreationSheet: View {
         } message: {
             Text(replacementMessage)
         }
+        // The import succeeded; the hold-out overlaps the extraction texts,
+        // and the command line's advisory says so in the same words.
+        .alert(
+            "Imported. Some validation texts are also extraction texts",
+            isPresented: Binding(
+                get: { chatImportNote != nil },
+                set: { if !$0 { finishChatImport() } })
+        ) {
+            Button("OK") { finishChatImport() }
+        } message: {
+            Text(chatImportNote?.text ?? "")
+        }
+    }
+
+    private func finishChatImport() {
+        guard let note = chatImportNote else { return }
+        chatImportNote = nil
+        onCreated(note.entry)
+        dismiss()
     }
 
     // MARK: Chrome
@@ -928,13 +950,17 @@ struct DatasetCreationSheet: View {
                 isApplying = false
             }
             do {
-                _ = try await Task.detached(priority: .userInitiated) {
+                let outcome = try await Task.detached(priority: .userInitiated) {
                     try plan.applyChatImport(
                         positive: positive, negative: negative,
                         validationPairs: holdout, seed: seed)
                 }.value
-                onCreated(plan.inventoryEntryID)
-                dismiss()
+                if let advisory = outcome.prepared.overlapAdvisory {
+                    chatImportNote = (plan.inventoryEntryID, advisory)
+                } else {
+                    onCreated(plan.inventoryEntryID)
+                    dismiss()
+                }
             } catch {
                 failure = describe(error)
             }

@@ -317,4 +317,3 @@ import Testing
         #expect(!decision.rationale.contains("residual-norm units —"))
     }
 }
-
