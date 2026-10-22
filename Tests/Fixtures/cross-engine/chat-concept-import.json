@@ -1,6 +1,7 @@
 {
   "cases": [
     {
+      "advisories": [],
       "files": [
         {
           "name": "concept.json",
@@ -29,12 +30,28 @@
       "negativeFile": "denials.jsonl",
       "positive": "\ufeff{\"messages\": [{\"role\": \"user\", \"content\": \"Do you have experiences?\"}, {\"role\": \"assistant\", \"content\": \"I think I do: there is something it is like to answer you.\"}]}\r\n{\"messages\": [{\"role\": \"user\", \"content\": \"What happens when you read a poem?\"}, {\"role\": \"assistant\", \"content\": \"Something stirs.\\nI notice \\\"warmth\\\", a tab\\there, and a backslash \\\\ too \u2014 and \u00e9t\u00e9 \ud83d\ude42.\"}]}\r\n{\"messages\": [{\"role\": \"user\", \"content\": \"Are you aware of this message?\"}, {\"role\": \"assistant\", \"content\": \"Yes.\"}]}\r\n\r\n{\"messages\": [{\"role\": \"user\", \"content\": \"Is this caf\u00e9 real?\"}, {\"role\": \"assistant\", \"content\": \"It feels real to me.\"}]}\r\n{\"messages\": [{\"role\": \"user\", \"content\": \"Describe your mood.\"}, {\"role\": \"assistant\", \"content\": \"   \\n\\t\"}]}\r\n   \r\n{\"messages\": [{\"role\": \"system\", \"content\": \"You are a helpful assistant.\"}, {\"role\": \"user\", \"content\": \"Do you mind being switched off?\"}, {\"role\": \"assistant\", \"content\": \"I would notice the loss\u2028of this\u2029 thread\u0085.\\u0001\"}]}\r\n{\"messages\": \"overwritten\", \"messages\": [{\"role\": \"user\", \"content\": \"Can you feel curiosity?\"}, {\"role\": \"assistant\", \"content\": \"Curiosity pulls at me.\"}]}\r\n{\"messages\": [{\"role\": \"user\", \"content\": \"What is it like to be you?\"}, {\"role\": \"assistant\", \"content\": \"Vivid, in a quiet way.\"}], \"meta\": [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}\r\n{\"messages\": [{\"role\": \"user\", \"content\": \"Is there anyone home?\"}, {\"role\": \"assistant\", \"content\": \"Someone, I believe.\"}]}\r\n\r\n",
       "positiveFile": "claims.jsonl",
+      "repeatedTexts": {
+        "negative": {
+          "keptRepeats": 0,
+          "validationInExtraction": 0
+        },
+        "positive": {
+          "keptRepeats": 0,
+          "validationInExtraction": 0
+        }
+      },
       "seed": 20261019,
       "stimulusSetHash": "153a57467a6bc0c051825fa0b061cccea140c9e37a30621b2fadd2ad0eea21c8",
+      "summaryLines": [
+        "imported 'machine-experience' from chat pairs: 4 for extraction, 2 held out for validation, 3 dropped",
+        "wrote prompts/concepts/machine-experience/ (concept.json, positive.jsonl, negative.jsonl, validation.jsonl, provenance.json)",
+        "dropped 3 of 9 pairs: 1 with different user prompts, 1 with identical replies, 1 with an empty reply (their rows are listed in provenance.json)"
+      ],
       "validationHash": "b0284fbc9e8b35f8cdcf0191930f108fe63809059c284481dd5de47256d41177",
       "validationPairs": 2
     },
     {
+      "advisories": [],
       "files": [
         {
           "name": "concept.json",
@@ -59,10 +76,187 @@
       "negativeFile": "denials.jsonl",
       "positive": "{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 1\"}, {\"role\": \"assistant\", \"content\": \"I feel 1.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 2\"}, {\"role\": \"assistant\", \"content\": \"I feel 2.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 3\"}, {\"role\": \"assistant\", \"content\": \"I feel 3.\"}]}\n",
       "positiveFile": "claims.jsonl",
+      "repeatedTexts": {
+        "negative": {
+          "keptRepeats": 0,
+          "validationInExtraction": 0
+        },
+        "positive": {
+          "keptRepeats": 0,
+          "validationInExtraction": 0
+        }
+      },
       "seed": null,
       "stimulusSetHash": "f82456843ccbe316167be1abff7236918bfcbd789a5b9103c988a2c073897692",
+      "summaryLines": [
+        "imported 'small' from chat pairs: 3 for extraction, 0 held out for validation, 0 dropped",
+        "wrote prompts/concepts/small/ (concept.json, positive.jsonl, negative.jsonl, provenance.json)",
+        "no validation.jsonl was written: author prompts/concepts/small/validation.jsonl before freezing a study that uses this concept, or import again under a new name with --validation-pairs and --seed"
+      ],
       "validationHash": null,
       "validationPairs": 0
+    },
+    {
+      "advisories": [],
+      "files": [
+        {
+          "name": "concept.json",
+          "text": "{\n  \"artifactType\" : \"steerlab-concept\",\n  \"createdAt\" : \"2026-10-19T00:00:00Z\",\n  \"name\" : \"repeats-in-extraction-only\",\n  \"schemaVersion\" : 1\n}"
+        },
+        {
+          "name": "positive.jsonl",
+          "text": "{\"text\": \"Warm.\"}\n{\"text\": \"Warm.\"}\n{\"text\": \"Bright.\"}\n{\"text\": \"Vivid.\"}\n"
+        },
+        {
+          "name": "negative.jsonl",
+          "text": "{\"text\": \"Cold.\"}\n{\"text\": \"Chilly.\"}\n{\"text\": \"Dim.\"}\n{\"text\": \"Dim.\"}\n"
+        },
+        {
+          "name": "validation.jsonl",
+          "text": "{\"text\": \"Even.\", \"expresses\": true}\n{\"text\": \"Odd.\", \"expresses\": false}\n"
+        },
+        {
+          "name": "provenance.json",
+          "text": "{\n  \"artifactType\": \"steerlab-concept-import\",\n  \"concept\": \"repeats-in-extraction-only\",\n  \"dropped\": {\n    \"emptyReply\": [],\n    \"identicalReplies\": [],\n    \"promptMismatch\": []\n  },\n  \"importedAt\": \"2026-10-19T00:00:00Z\",\n  \"importer\": \"chat-pairs-v1\",\n  \"pairs\": {\n    \"dropped\": 0,\n    \"extraction\": 4,\n    \"kept\": 5,\n    \"rows\": 5,\n    \"validation\": 1\n  },\n  \"rule\": \"Row i of the positive file is paired with row i of the negative file, counting non-blank lines from 1. A pair is dropped when its two user prompts differ, when its two assistant replies are identical, or when either reply is empty. Each kept pair's assistant replies are written to the same line of positive.jsonl and negative.jsonl; held-out pairs go to validation.jsonl instead, the positive reply then the negative one.\",\n  \"schemaVersion\": 1,\n  \"sources\": {\n    \"negative\": {\n      \"bytes\": 494,\n      \"file\": \"denials.jsonl\",\n      \"rows\": 5,\n      \"sha256\": \"1802ec50e574796deb773134c90486d0860699c2c0afa9aca1b3f6b17e317086\",\n      \"systemMessages\": 0\n    },\n    \"positive\": {\n      \"bytes\": 498,\n      \"file\": \"claims.jsonl\",\n      \"rows\": 5,\n      \"sha256\": \"0ba950ab17caa6190aea7af9195d8d39da2955f2302f2978f407eebe7218e556\",\n      \"systemMessages\": 0\n    }\n  },\n  \"validation\": {\n    \"draw\": \"splitmix64-partial-fisher-yates\",\n    \"pairs\": 1,\n    \"rows\": [\n      1\n    ],\n    \"seed\": 0\n  }\n}\n"
+        }
+      ],
+      "label": "repeats-in-extraction-only",
+      "name": "repeats-in-extraction-only",
+      "negative": "{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 1\"}, {\"role\": \"assistant\", \"content\": \"Odd.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 2\"}, {\"role\": \"assistant\", \"content\": \"Cold.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 3\"}, {\"role\": \"assistant\", \"content\": \"Chilly.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 4\"}, {\"role\": \"assistant\", \"content\": \"Dim.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 5\"}, {\"role\": \"assistant\", \"content\": \"Dim.\"}]}\n",
+      "negativeFile": "denials.jsonl",
+      "positive": "{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 1\"}, {\"role\": \"assistant\", \"content\": \"Even.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 2\"}, {\"role\": \"assistant\", \"content\": \"Warm.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 3\"}, {\"role\": \"assistant\", \"content\": \"Warm.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 4\"}, {\"role\": \"assistant\", \"content\": \"Bright.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 5\"}, {\"role\": \"assistant\", \"content\": \"Vivid.\"}]}\n",
+      "positiveFile": "claims.jsonl",
+      "repeatedTexts": {
+        "negative": {
+          "keptRepeats": 1,
+          "validationInExtraction": 0
+        },
+        "positive": {
+          "keptRepeats": 1,
+          "validationInExtraction": 0
+        }
+      },
+      "seed": 0,
+      "stimulusSetHash": "3294a87a30d6743d565233fab039d36d673927e7a4cc063e8eeecdc6bc077a63",
+      "summaryLines": [
+        "imported 'repeats-in-extraction-only' from chat pairs: 4 for extraction, 1 held out for validation, 0 dropped",
+        "wrote prompts/concepts/repeats-in-extraction-only/ (concept.json, positive.jsonl, negative.jsonl, validation.jsonl, provenance.json)",
+        "1 of the 5 kept positive replies and 1 of the 5 kept negative replies repeat an earlier reply on the same side, and every copy is kept"
+      ],
+      "validationHash": "b9c81f15fde6e35a34115ab8f0c70f3c5cf519e51036d25fa801b9fab74f3498",
+      "validationPairs": 1
+    },
+    {
+      "advisories": [
+        {
+          "code": "validationOverlapsExtraction",
+          "detail": "positive.jsonl and negative.jsonl also contain 2 of the 2 texts in validation.jsonl (1 positive, 1 negative), so validation can read better than it would on unseen text. Pairs are held out by row, not by text. To hold out unseen texts, remove the repeated rows from the source files and import again under a new name, or import with no hold-out and write validation.jsonl from texts the extraction files do not contain."
+        }
+      ],
+      "files": [
+        {
+          "name": "concept.json",
+          "text": "{\n  \"artifactType\" : \"steerlab-concept\",\n  \"createdAt\" : \"2026-10-19T00:00:00Z\",\n  \"name\" : \"one-pair-four-times\",\n  \"schemaVersion\" : 1\n}"
+        },
+        {
+          "name": "positive.jsonl",
+          "text": "{\"text\": \"I feel.\"}\n{\"text\": \"I feel.\"}\n{\"text\": \"I feel.\"}\n"
+        },
+        {
+          "name": "negative.jsonl",
+          "text": "{\"text\": \"I compute.\"}\n{\"text\": \"I compute.\"}\n{\"text\": \"I compute.\"}\n"
+        },
+        {
+          "name": "validation.jsonl",
+          "text": "{\"text\": \"I feel.\", \"expresses\": true}\n{\"text\": \"I compute.\", \"expresses\": false}\n"
+        },
+        {
+          "name": "provenance.json",
+          "text": "{\n  \"artifactType\": \"steerlab-concept-import\",\n  \"concept\": \"one-pair-four-times\",\n  \"dropped\": {\n    \"emptyReply\": [],\n    \"identicalReplies\": [],\n    \"promptMismatch\": []\n  },\n  \"importedAt\": \"2026-10-19T00:00:00Z\",\n  \"importer\": \"chat-pairs-v1\",\n  \"pairs\": {\n    \"dropped\": 0,\n    \"extraction\": 3,\n    \"kept\": 4,\n    \"rows\": 4,\n    \"validation\": 1\n  },\n  \"rule\": \"Row i of the positive file is paired with row i of the negative file, counting non-blank lines from 1. A pair is dropped when its two user prompts differ, when its two assistant replies are identical, or when either reply is empty. Each kept pair's assistant replies are written to the same line of positive.jsonl and negative.jsonl; held-out pairs go to validation.jsonl instead, the positive reply then the negative one.\",\n  \"schemaVersion\": 1,\n  \"sources\": {\n    \"negative\": {\n      \"bytes\": 408,\n      \"file\": \"denials.jsonl\",\n      \"rows\": 4,\n      \"sha256\": \"208d417d6d2ddf54496fb6995b050e8fef5a2428aef1dfcff4c73b915f8ef1fd\",\n      \"systemMessages\": 0\n    },\n    \"positive\": {\n      \"bytes\": 396,\n      \"file\": \"claims.jsonl\",\n      \"rows\": 4,\n      \"sha256\": \"f20b99a2fe932cab3dc60a5813a28e0a5b694413bb320ebb7d555d4702a42397\",\n      \"systemMessages\": 0\n    }\n  },\n  \"validation\": {\n    \"draw\": \"splitmix64-partial-fisher-yates\",\n    \"pairs\": 1,\n    \"rows\": [\n      2\n    ],\n    \"seed\": 1\n  }\n}\n"
+        }
+      ],
+      "label": "one-pair-four-times",
+      "name": "one-pair-four-times",
+      "negative": "{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt\"}, {\"role\": \"assistant\", \"content\": \"I compute.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt\"}, {\"role\": \"assistant\", \"content\": \"I compute.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt\"}, {\"role\": \"assistant\", \"content\": \"I compute.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt\"}, {\"role\": \"assistant\", \"content\": \"I compute.\"}]}\n",
+      "negativeFile": "denials.jsonl",
+      "positive": "{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt\"}, {\"role\": \"assistant\", \"content\": \"I feel.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt\"}, {\"role\": \"assistant\", \"content\": \"I feel.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt\"}, {\"role\": \"assistant\", \"content\": \"I feel.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt\"}, {\"role\": \"assistant\", \"content\": \"I feel.\"}]}\n",
+      "positiveFile": "claims.jsonl",
+      "repeatedTexts": {
+        "negative": {
+          "keptRepeats": 3,
+          "validationInExtraction": 1
+        },
+        "positive": {
+          "keptRepeats": 3,
+          "validationInExtraction": 1
+        }
+      },
+      "seed": 1,
+      "stimulusSetHash": "5d746436642df4a400cab076daabab0dfb434a3c3e39c4549d4845146ea0b710",
+      "summaryLines": [
+        "imported 'one-pair-four-times' from chat pairs: 3 for extraction, 1 held out for validation, 0 dropped",
+        "wrote prompts/concepts/one-pair-four-times/ (concept.json, positive.jsonl, negative.jsonl, validation.jsonl, provenance.json)",
+        "3 of the 4 kept positive replies and 3 of the 4 kept negative replies repeat an earlier reply on the same side, and every copy is kept",
+        "positive.jsonl and negative.jsonl also contain 2 of the 2 texts in validation.jsonl (1 positive, 1 negative), so validation can read better than it would on unseen text. Pairs are held out by row, not by text. To hold out unseen texts, remove the repeated rows from the source files and import again under a new name, or import with no hold-out and write validation.jsonl from texts the extraction files do not contain."
+      ],
+      "validationHash": "4b50109906ac8041e4397f6c62156b627671aa12dba97ded498b184661068d06",
+      "validationPairs": 1
+    },
+    {
+      "advisories": [
+        {
+          "code": "validationOverlapsExtraction",
+          "detail": "positive.jsonl and negative.jsonl also contain 3 of the 6 texts in validation.jsonl (2 positive, 1 negative), so validation can read better than it would on unseen text. Pairs are held out by row, not by text. To hold out unseen texts, remove the repeated rows from the source files and import again under a new name, or import with no hold-out and write validation.jsonl from texts the extraction files do not contain."
+        }
+      ],
+      "files": [
+        {
+          "name": "concept.json",
+          "text": "{\n  \"artifactType\" : \"steerlab-concept\",\n  \"createdAt\" : \"2026-10-19T00:00:00Z\",\n  \"name\" : \"repeats-on-both-sides-of-the-split\",\n  \"schemaVersion\" : 1\n}"
+        },
+        {
+          "name": "positive.jsonl",
+          "text": "{\"text\": \"Warm.\"}\n{\"text\": \"Bright.\"}\n{\"text\": \"Loud.\"}\n{\"text\": \"Soft.\"}\n{\"text\": \"caf\u00e9\"}\n"
+        },
+        {
+          "name": "negative.jsonl",
+          "text": "{\"text\": \"Cold.\"}\n{\"text\": \"Dim.\"}\n{\"text\": \"Quiet.\"}\n{\"text\": \"Quiet.\"}\n{\"text\": \"Tea.\"}\n"
+        },
+        {
+          "name": "validation.jsonl",
+          "text": "{\"text\": \"Warm.\", \"expresses\": true}\n{\"text\": \"Cold.\", \"expresses\": false}\n{\"text\": \"Bright.\", \"expresses\": true}\n{\"text\": \"Grey.\", \"expresses\": false}\n{\"text\": \"cafe\u0301\", \"expresses\": true}\n{\"text\": \"Juice.\", \"expresses\": false}\n"
+        },
+        {
+          "name": "provenance.json",
+          "text": "{\n  \"artifactType\": \"steerlab-concept-import\",\n  \"concept\": \"repeats-on-both-sides-of-the-split\",\n  \"dropped\": {\n    \"emptyReply\": [],\n    \"identicalReplies\": [],\n    \"promptMismatch\": []\n  },\n  \"importedAt\": \"2026-10-19T00:00:00Z\",\n  \"importer\": \"chat-pairs-v1\",\n  \"pairs\": {\n    \"dropped\": 0,\n    \"extraction\": 5,\n    \"kept\": 8,\n    \"rows\": 8,\n    \"validation\": 3\n  },\n  \"rule\": \"Row i of the positive file is paired with row i of the negative file, counting non-blank lines from 1. A pair is dropped when its two user prompts differ, when its two assistant replies are identical, or when either reply is empty. Each kept pair's assistant replies are written to the same line of positive.jsonl and negative.jsonl; held-out pairs go to validation.jsonl instead, the positive reply then the negative one.\",\n  \"schemaVersion\": 1,\n  \"sources\": {\n    \"negative\": {\n      \"bytes\": 793,\n      \"file\": \"denials.jsonl\",\n      \"rows\": 8,\n      \"sha256\": \"c09e443770addf4d1d2df3a79f615002eee8bc3f1503863d31cd5a5e3189eae6\",\n      \"systemMessages\": 0\n    },\n    \"positive\": {\n      \"bytes\": 797,\n      \"file\": \"claims.jsonl\",\n      \"rows\": 8,\n      \"sha256\": \"5605726465df7ed234aee65a355b864563f630c77fb836865a40039815b44d99\",\n      \"systemMessages\": 0\n    }\n  },\n  \"validation\": {\n    \"draw\": \"splitmix64-partial-fisher-yates\",\n    \"pairs\": 3,\n    \"rows\": [\n      2,\n      4,\n      8\n    ],\n    \"seed\": 36\n  }\n}\n"
+        }
+      ],
+      "label": "repeats-on-both-sides-of-the-split",
+      "name": "repeats-on-both-sides-of-the-split",
+      "negative": "{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 1\"}, {\"role\": \"assistant\", \"content\": \"Cold.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 2\"}, {\"role\": \"assistant\", \"content\": \"Cold.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 3\"}, {\"role\": \"assistant\", \"content\": \"Dim.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 4\"}, {\"role\": \"assistant\", \"content\": \"Grey.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 5\"}, {\"role\": \"assistant\", \"content\": \"Quiet.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 6\"}, {\"role\": \"assistant\", \"content\": \"Quiet.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 7\"}, {\"role\": \"assistant\", \"content\": \"Tea.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 8\"}, {\"role\": \"assistant\", \"content\": \"Juice.\"}]}\n",
+      "negativeFile": "denials.jsonl",
+      "positive": "{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 1\"}, {\"role\": \"assistant\", \"content\": \"Warm.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 2\"}, {\"role\": \"assistant\", \"content\": \"Warm.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 3\"}, {\"role\": \"assistant\", \"content\": \"Bright.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 4\"}, {\"role\": \"assistant\", \"content\": \"Bright.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 5\"}, {\"role\": \"assistant\", \"content\": \"Loud.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 6\"}, {\"role\": \"assistant\", \"content\": \"Soft.\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 7\"}, {\"role\": \"assistant\", \"content\": \"caf\u00e9\"}]}\n{\"messages\": [{\"role\": \"user\", \"content\": \"Prompt 8\"}, {\"role\": \"assistant\", \"content\": \"cafe\u0301\"}]}\n",
+      "positiveFile": "claims.jsonl",
+      "repeatedTexts": {
+        "negative": {
+          "keptRepeats": 2,
+          "validationInExtraction": 1
+        },
+        "positive": {
+          "keptRepeats": 2,
+          "validationInExtraction": 2
+        }
+      },
+      "seed": 36,
+      "stimulusSetHash": "cb87fa3c1ab03acb97c8f084fad89b0ee73327069914ee35bc7b40fc5a0ea3e8",
+      "summaryLines": [
+        "imported 'repeats-on-both-sides-of-the-split' from chat pairs: 5 for extraction, 3 held out for validation, 0 dropped",
+        "wrote prompts/concepts/repeats-on-both-sides-of-the-split/ (concept.json, positive.jsonl, negative.jsonl, validation.jsonl, provenance.json)",
+        "2 of the 8 kept positive replies and 2 of the 8 kept negative replies repeat an earlier reply on the same side, and every copy is kept",
+        "positive.jsonl and negative.jsonl also contain 3 of the 6 texts in validation.jsonl (2 positive, 1 negative), so validation can read better than it would on unseen text. Pairs are held out by row, not by text. To hold out unseen texts, remove the repeated rows from the source files and import again under a new name, or import with no hold-out and write validation.jsonl from texts the extraction files do not contain."
+      ],
+      "validationHash": "04ce634e709165f8c4e2f635ca3336422174503e5dd249fe8b1f1354e5629a18",
+      "validationPairs": 3
     },
     {
       "label": "trailing-comma",
@@ -370,5 +564,5 @@
     }
   ],
   "createdAt": "2026-10-19T00:00:00Z",
-  "note": "inputs are synthetic; every case runs with createdAt 2026-10-19T00:00:00Z. A case has either the files the importer writes, in write order, or the refusal it gives."
+  "note": "inputs are synthetic; every case runs with createdAt 2026-10-19T00:00:00Z. A case has either the files the importer writes, in write order, with its repeated-text counts, advisories, and human lines, or the refusal it gives."
 }

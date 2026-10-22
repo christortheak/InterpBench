@@ -49,8 +49,11 @@ enum ChatConceptImportCLI {
             root: workspaceRoot, now: now)
         let lines = outcome.summaryLines
         for line in lines { sink.out(line) }
+        // Never a refusal: a row hold-out that repeats extraction texts is the
+        // documented rule at work, so it is said, with what to do about it.
         return ExperimentCLIResult(
             message: lines[0], changed: true, payload: outcome.payload,
+            advisories: outcome.advisories,
             nextAction: .init(
                 verb: "experiment attach <name> \(outcome.prepared.name)",
                 detail: "pin the new concept into a draft study"))

@@ -1943,6 +1943,15 @@ def _chat_concept_import_cases() -> list[dict]:
     small_positive = "\n".join(ok(f"Prompt {i}", f"I feel {i}.") for i in range(1, 4)) + "\n"
     small_negative = "\n".join(ok(f"Prompt {i}", f"I compute {i}.") for i in range(1, 4)) + "\n"
 
+    def repeated(label, rows, *, validation_pairs, seed):
+        """A success case from ``(prompt, positive reply, negative reply)``
+        rows, for the repeated-text counts and the overlap advisory."""
+        return {"label": label, "name": label,
+                "positiveFile": "claims.jsonl", "negativeFile": "denials.jsonl",
+                "positive": "".join(ok(p, r) + "\n" for p, r, _ in rows),
+                "negative": "".join(ok(p, r) + "\n" for p, _, r in rows),
+                "validationPairs": validation_pairs, "seed": seed}
+
     def refusal(label, positive_text, *, negative_text=small_negative, name="probe",
                 validation_pairs=0, seed=None, positive_bytes=None):
         case = {"label": label, "name": name,
@@ -1967,6 +1976,31 @@ def _chat_concept_import_cases() -> list[dict]:
          "positiveFile": "claims.jsonl", "negativeFile": "denials.jsonl",
          "positive": small_positive, "negative": small_negative,
          "validationPairs": 0, "seed": None},
+        # Repeated replies, all on the extraction side: counted, no advisory
+        # (seed 0 holds out row 1).
+        repeated("repeats-in-extraction-only", [
+            ("Prompt 1", "Even.", "Odd."),
+            ("Prompt 2", "Warm.", "Cold."),
+            ("Prompt 3", "Warm.", "Chilly."),
+            ("Prompt 4", "Bright.", "Dim."),
+            ("Prompt 5", "Vivid.", "Dim."),
+        ], validation_pairs=1, seed=0),
+        # One pair four times over, one held out: both validation texts are
+        # extraction texts too (seed 1 holds out row 2).
+        repeated("one-pair-four-times", [("Prompt", "I feel.", "I compute.")] * 4,
+                 validation_pairs=1, seed=1),
+        # Both at once, and NFC and NFD spellings stay two texts (seed 36
+        # holds out rows 2, 4, and 8).
+        repeated("repeats-on-both-sides-of-the-split", [
+            ("Prompt 1", "Warm.", "Cold."),
+            ("Prompt 2", "Warm.", "Cold."),
+            ("Prompt 3", "Bright.", "Dim."),
+            ("Prompt 4", "Bright.", "Grey."),
+            ("Prompt 5", "Loud.", "Quiet."),
+            ("Prompt 6", "Soft.", "Quiet."),
+            ("Prompt 7", "café", "Tea."),
+            ("Prompt 8", "café", "Juice."),
+        ], validation_pairs=3, seed=36),
         refusal("trailing-comma",
                 with_line('{"messages": [{"role": "user", "content": "Prompt 2"}, '
                           '{"role": "assistant", "content": "I feel 2."},]}')),
@@ -2035,11 +2069,17 @@ def chat_concept_import() -> None:
                              for name, data in prepared["files"]]
             case["stimulusSetHash"] = prepared["stimulusSetHash"]
             case["validationHash"] = prepared["validationHash"]
+            case["repeatedTexts"] = prepared["repeatedTexts"]
+            case["advisories"] = [{"code": code, "detail": detail}
+                                  for code, detail in chat.advisories(prepared)]
+            case["summaryLines"] = chat.summary_lines(dict(
+                prepared, directory=f"prompts/concepts/{prepared['name']}"))
         cases.append(case)
     _write(os.path.join(FIXTURES, "chat-concept-import.json"), {
         "note": "inputs are synthetic; every case runs with createdAt "
                 f"{created_at}. A case has either the files the importer "
-                "writes, in write order, or the refusal it gives.",
+                "writes, in write order, with its repeated-text counts, "
+                "advisories, and human lines, or the refusal it gives.",
         "createdAt": created_at,
         "cases": cases,
     })

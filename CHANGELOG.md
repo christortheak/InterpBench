@@ -62,6 +62,19 @@ migration that rewrites frozen bytes.
   promoted strength, the note beside the default α of 0.1 now says it is a
   tenth of a residual-stream norm, the convention's starting fraction. It
   used to say one residual-stream norm.
+- **The chat importer says when held-out texts are also extraction texts.**
+  `concept import-chat` holds out pairs by row, so a reply that repeats in the
+  source files can land in both `validation.jsonl` and the extraction files.
+  The import still succeeds and still writes every copy, but it now reports,
+  for each side, how many kept replies repeat an earlier one and how many
+  validation texts the extraction files also contain (`result.repeatedTexts`).
+  When validation texts are also extraction texts, it says so in a
+  `validationOverlapsExtraction` advisory, also printed for a person: the
+  validation can read better than it would on unseen text, and removing the
+  repeated rows from the source files, or writing `validation.jsonl` from
+  texts the extraction files do not contain, makes the hold-out one of unseen
+  texts. Both command lines give the same counts and sentence. The written
+  files are unchanged.
 
 ## [0.9.13] — 2026-10-21
 

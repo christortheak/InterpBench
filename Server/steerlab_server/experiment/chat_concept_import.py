@@ -30,6 +30,16 @@ The rule, stated once (it is also written into every ``provenance.json``):
 * ``concept.json`` and a ``provenance.json`` naming both source files, their
   SHA-256, the counts, the dropped rows, and the seed are written beside them.
 
+**A row hold-out is not a text hold-out.** Pairs are held out by row, so a
+reply that repeats in the source can land in both ``validation.jsonl`` and the
+extraction files. Nothing is merged or refused for it. The import reports, per
+side, how many kept replies repeat an earlier one and how many validation texts
+the extraction files also contain (:func:`repeated_texts`, which compares code
+point by code point like every other comparison here), and when the second
+count is not zero it says so in one advisory (:func:`overlap_advisory`).
+Neither is written into ``provenance.json``, whose bytes :data:`IMPORTER`
+pins; both are in the verb's answer.
+
 **Why a strict parser.** Byte parity is decided as much by which rows are
 REFUSED as by what is written. Foundation's JSON reader accepts trailing
 commas and a byte-order mark mid-file; Python's accepts lone surrogates,
@@ -72,6 +82,9 @@ MAX_DEPTH = 64
 
 PROVENANCE_ARTIFACT = "steerlab-concept-import"
 CONCEPT_ARTIFACT = "steerlab-concept"
+#: The envelope advisory given when held-out texts are also extraction texts
+#: (``cli_envelope.ADVISORY_CODES``).
+ADVISORY_CODE = "validationOverlapsExtraction"
 
 RULE = ("Row i of the positive file is paired with row i of the negative "
         "file, counting non-blank lines from 1. A pair is dropped when its "
@@ -393,6 +406,43 @@ def _is_empty(reply: str) -> bool:
     return all(ch in _EMPTY_REPLY for ch in reply)
 
 
+# --- repeated texts ----------------------------------------------------------
+
+
+def repeated_texts(kept, training, held_out) -> dict:
+    """Per side, ``keptRepeats`` (kept replies that repeat an earlier kept
+    reply on the same side) and ``validationInExtraction`` (held-out replies
+    that the same side's extraction rows also hold). The texts are the replies
+    the import writes, compared code point by code point, never normalized."""
+    sides = {}
+    for side, column in (("positive", 1), ("negative", 2)):
+        texts = [pair[column] for pair in kept]
+        extraction = {pair[column] for pair in training}
+        sides[side] = {
+            "keptRepeats": len(texts) - len(set(texts)),
+            "validationInExtraction": sum(
+                1 for pair in held_out if pair[column] in extraction),
+        }
+    return sides
+
+
+def overlap_advisory(repeated: dict, validation_pairs: int) -> str | None:
+    """The one sentence given when validation texts are also extraction texts,
+    or ``None``. Advice only: the import has already succeeded."""
+    positive = repeated["positive"]["validationInExtraction"]
+    negative = repeated["negative"]["validationInExtraction"]
+    if not positive + negative:
+        return None
+    return (f"positive.jsonl and negative.jsonl also contain "
+            f"{positive + negative} of the {2 * validation_pairs} texts in "
+            f"validation.jsonl ({positive} positive, {negative} negative), so "
+            "validation can read better than it would on unseen text. Pairs "
+            "are held out by row, not by text. To hold out unseen texts, "
+            "remove the repeated rows from the source files and import again "
+            "under a new name, or import with no hold-out and write "
+            "validation.jsonl from texts the extraction files do not contain.")
+
+
 # --- the import -------------------------------------------------------------
 
 
@@ -403,7 +453,8 @@ def prepare(name: str, positive: bytes, negative: bytes, *,
     """Everything the import writes, computed and checked, nothing written.
 
     Returns ``{"name", "files": [(filename, bytes)], "provenance",
-    "stimulusSetHash", "validationHash"}``; ``files`` is in write order.
+    "stimulusSetHash", "validationHash", "repeatedTexts",
+    "overlapAdvisory"}``; ``files`` is in write order.
     """
     name = validate_name(name)
     check_holdout(validation_pairs, seed)
@@ -496,9 +547,12 @@ def prepare(name: str, positive: bytes, negative: bytes, *,
     }
     files.append(("provenance.json",
                   provenance_document(provenance).encode()))
+    repeated = repeated_texts(kept, training, held_out)
     return {"name": name, "files": files, "provenance": provenance,
             "stimulusSetHash": sha256(positive_bytes + negative_bytes),
-            "validationHash": validation_hash}
+            "validationHash": validation_hash,
+            "repeatedTexts": repeated,
+            "overlapAdvisory": overlap_advisory(repeated, len(held_out))}
 
 
 def _exists(name: str) -> ChatImportRefusal:
@@ -575,8 +629,16 @@ def result_payload(outcome: dict) -> dict:
             "directory": outcome["directory"],
             "files": outcome["writtenFiles"],
             "provenance": outcome["provenance"],
+            "repeatedTexts": outcome["repeatedTexts"],
             "stimulusSetHash": outcome["stimulusSetHash"],
             "validationHash": outcome["validationHash"]}
+
+
+def advisories(outcome: dict) -> list[tuple[str, str]]:
+    """The envelope's advisories, as ``(code, detail)``: the same on both
+    clients, and empty unless validation texts are also extraction texts."""
+    advisory = outcome["overlapAdvisory"]
+    return [(ADVISORY_CODE, advisory)] if advisory else []
 
 
 def summary_lines(outcome: dict) -> list[str]:
@@ -597,6 +659,17 @@ def summary_lines(outcome: dict) -> list[str]:
             f"{len(dropped['identicalReplies'])} with identical replies, "
             f"{len(dropped['emptyReply'])} with an empty reply (their rows "
             "are listed in provenance.json)")
+    repeated = outcome["repeatedTexts"]
+    positive_repeats = repeated["positive"]["keptRepeats"]
+    negative_repeats = repeated["negative"]["keptRepeats"]
+    if positive_repeats or negative_repeats:
+        lines.append(
+            f"{positive_repeats} of the {pairs['kept']} kept positive replies "
+            f"and {negative_repeats} of the {pairs['kept']} kept negative "
+            "replies repeat an earlier reply on the same side, and every copy "
+            "is kept")
+    if outcome["overlapAdvisory"]:
+        lines.append(outcome["overlapAdvisory"])
     if not pairs["validation"]:
         lines.append(
             f"no validation.jsonl was written: author "

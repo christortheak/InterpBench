@@ -173,6 +173,12 @@ ADVISORY_CODES: tuple[str, ...] = (
     # older parser keeps its mistakes). Never a refusal: the detail names
     # `results check-choices` and `analyze --reread-choices`.
     "storedChoicesReadDifferently",
+    # Some validation texts are also extraction texts, so validation can read
+    # better than it would on unseen text. Today's one instance: `concept
+    # import-chat`, which holds out pairs by ROW, so a reply that repeats in
+    # the source can land on both sides. Named for the MECHANISM, not the
+    # importer; never a refusal, and the detail says how to hold out texts.
+    "validationOverlapsExtraction",
 )
 
 

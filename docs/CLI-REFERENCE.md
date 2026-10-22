@@ -1540,6 +1540,20 @@ steerlab-cli concept import-chat consciousness \
 - **Provenance.** `provenance.json` names both source files (base name only),
   their SHA-256 and sizes, the row, kept, dropped, extraction, and held-out
   counts, the dropped rows, and the seed and held-out rows.
+- **Repeated texts.** The hold-out draws rows, not distinct texts, and nothing
+  is deduplicated, so a reply that repeats in the source can land in both
+  `validation.jsonl` and the extraction files. `result.repeatedTexts` gives,
+  for each side, `keptRepeats` (kept replies that repeat an earlier kept reply
+  on that side) and `validationInExtraction` (held-out replies that the same
+  side's extraction rows also hold), comparing code point by code point as
+  the pairing rule does. When validation texts are also extraction texts, the
+  import still succeeds (`okWithAdvisories`, exit `0`) and carries one
+  `validationOverlapsExtraction` advisory, also printed for a person: the
+  validation can read better than it would on unseen text. To hold out unseen
+  texts, remove the repeated rows from the source files and import again
+  under a new name, or import with no hold-out and write `validation.jsonl`
+  from texts the extraction files do not contain. The counts are reported,
+  not written to `provenance.json`.
 - **Refusals** are typed and write nothing: `chatRowUnreadable` (a row that is
   not UTF-8, not JSON, not an object, or has no `messages` list of
   `role`/`content` strings — named by file and line), `chatRowRoles` (not

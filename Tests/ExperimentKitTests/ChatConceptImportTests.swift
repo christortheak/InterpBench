@@ -33,6 +33,16 @@ import Testing
             let state: String
         }
 
+        struct ExpectedSide: Decodable, Equatable {
+            let keptRepeats: Int
+            let validationInExtraction: Int
+        }
+
+        struct ExpectedAdvisory: Decodable, Equatable {
+            let code: String
+            let detail: String
+        }
+
         struct Case: Decodable {
             let label: String
             let name: String
@@ -46,6 +56,9 @@ import Testing
             let files: [ExpectedFile]?
             let stimulusSetHash: String?
             let validationHash: String?
+            let repeatedTexts: [String: ExpectedSide]?
+            let advisories: [ExpectedAdvisory]?
+            let summaryLines: [String]?
             let refusal: ExpectedRefusal?
         }
 
@@ -87,6 +100,37 @@ import Testing
                 }
                 #expect(prepared.stimulusSetHash == item.stimulusSetHash, "\(item.label)")
                 #expect(prepared.validationHash == item.validationHash, "\(item.label)")
+                // The repeated-text counts, the advisory, and the human
+                // lines: the same numbers and sentences as the Python engine.
+                let sides = try #require(item.repeatedTexts, "\(item.label): stale fixture")
+                #expect(
+                    sides["positive"]
+                        == .init(
+                            keptRepeats: prepared.positiveRepeats.keptRepeats,
+                            validationInExtraction: prepared.positiveRepeats.validationInExtraction),
+                    "\(item.label)")
+                #expect(
+                    sides["negative"]
+                        == .init(
+                            keptRepeats: prepared.negativeRepeats.keptRepeats,
+                            validationInExtraction: prepared.negativeRepeats.validationInExtraction),
+                    "\(item.label)")
+                let outcome = ChatConceptImport.Outcome(
+                    prepared: prepared, directory: URL(fileURLWithPath: "/Volumes/Lab"),
+                    relativeDirectory: "prompts/concepts/\(prepared.name)")
+                let advisories = try #require(item.advisories, "\(item.label): stale fixture")
+                #expect(
+                    outcome.advisories
+                        == advisories.map {
+                            SteerLabCLIEnvelope.Advisory(code: $0.code, detail: $0.detail)
+                        },
+                    "\(item.label)")
+                #expect(outcome.summaryLines == item.summaryLines, "\(item.label)")
+                if case .object(let payload)? = outcome.payload["repeatedTexts"] {
+                    #expect(Set(payload.keys) == ["negative", "positive"], "\(item.label)")
+                } else {
+                    Issue.record("\(item.label): no repeatedTexts in the payload")
+                }
             case .failure(let error):
                 let wanted = try #require(item.refusal, "\(item.label): Swift refused, Python did not — \(error)")
                 let refusal = try #require(error as? ChatConceptImport.Refusal, "\(item.label): \(error)")
@@ -176,6 +220,14 @@ import Testing
             #expect(outcome.envelope.verb == "concept import-chat")
             #expect(outcome.envelope.changed)
             #expect(outcome.envelope.nextAction?.verb == "experiment attach <name> machine-experience")
+            // Six different pairs: nothing repeats, so nothing is advised.
+            #expect((outcome.envelope.advisories ?? []).isEmpty)
+            let zero: JSONValue = .object([
+                "keptRepeats": .number(0), "validationInExtraction": .number(0),
+            ])
+            #expect(
+                outcome.envelope.result?["repeatedTexts"]
+                    == .object(["negative": zero, "positive": zero]))
 
             let directory = root.appending(path: "prompts/concepts/machine-experience")
             let names = try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
@@ -268,6 +320,197 @@ import Testing
             #expect(mismatch.exitCode == 65)
             #expect(mismatch.envelope.error?.code == "rowCountMismatch")
             #expect(try FileManager.default.contentsOfDirectory(atPath: concepts.path) == ["taken"])
+        }
+    }
+
+    // MARK: Repeated texts: a row hold-out is not a text hold-out
+
+    // Every count below is worked out by hand from the rows; the fixture
+    // test above holds these numbers and sentences to the Python engine's.
+
+    /// The advisory, written out here rather than read from the importer, so
+    /// a change to the sentence has to be made on purpose.
+    static func overlapAdvice(total: Int, texts: Int, positive: Int, negative: Int) -> String {
+        "positive.jsonl and negative.jsonl also contain \(total) of the \(texts) "
+            + "texts in validation.jsonl (\(positive) positive, \(negative) negative), so "
+            + "validation can read better than it would on unseen text. Pairs are held "
+            + "out by row, not by text. To hold out unseen texts, remove the repeated "
+            + "rows from the source files and import again under a new name, or import "
+            + "with no hold-out and write validation.jsonl from texts the extraction "
+            + "files do not contain."
+    }
+
+    /// `prepare` over `(prompt, positive reply, negative reply)` rows.
+    static func prepare(
+        _ rows: [(String, String, String)], validationPairs: Int = 0, seed: UInt64? = nil
+    ) throws -> ChatConceptImport.Outcome {
+        let positive = rows.map { row($0.0, $0.1) + "\n" }.joined()
+        let negative = rows.map { row($0.0, $0.2) + "\n" }.joined()
+        let prepared = try ChatConceptImport.prepare(
+            name: "repeats",
+            positive: .init(file: "claims.jsonl", data: Data(positive.utf8)),
+            negative: .init(file: "denials.jsonl", data: Data(negative.utf8)),
+            validationPairs: validationPairs, seed: seed, createdAt: "2026-10-19T00:00:00Z")
+        return ChatConceptImport.Outcome(
+            prepared: prepared, directory: URL(fileURLWithPath: "/Volumes/Lab/repeats"),
+            relativeDirectory: "prompts/concepts/repeats")
+    }
+
+    /// (positive keptRepeats, negative keptRepeats, positive
+    /// validationInExtraction, negative validationInExtraction).
+    static func counts(_ outcome: ChatConceptImport.Outcome) -> [Int] {
+        let p = outcome.prepared
+        return [
+            p.positiveRepeats.keptRepeats, p.negativeRepeats.keptRepeats,
+            p.positiveRepeats.validationInExtraction, p.negativeRepeats.validationInExtraction,
+        ]
+    }
+
+    static func heldRows(_ outcome: ChatConceptImport.Outcome) -> [Int] {
+        guard case .object(let provenance) = outcome.prepared.provenance,
+            case .object(let validation)? = provenance["validation"],
+            case .array(let rows)? = validation["rows"]
+        else { return [] }
+        return rows.compactMap { (value: ChatConceptImport.Value) -> Int? in
+            guard case .integer(let row) = value else { return nil }
+            return row
+        }
+    }
+
+    static func written(_ outcome: ChatConceptImport.Outcome, _ name: String) -> String {
+        String(decoding: outcome.prepared.files.first { $0.name == name }?.data ?? Data(), as: UTF8.self)
+    }
+
+    @Test func noRepeatedTextsCountZeroAndAdviseNothing() throws {
+        let outcome = try Self.prepare(
+            (1 ... 6).map { ("Prompt \($0)", "I feel \($0).", "I compute \($0).") },
+            validationPairs: 2, seed: 7)
+        #expect(Self.counts(outcome) == [0, 0, 0, 0])
+        #expect(outcome.prepared.overlapAdvisory == nil)
+        #expect(outcome.advisories.isEmpty)
+        // Only the two lines every import prints: what was imported, and where.
+        #expect(outcome.summaryLines.map { $0.split(separator: " ")[0] } == ["imported", "wrote"])
+    }
+
+    @Test func repeatsInsideExtractionAreCountedButNotAdvised() throws {
+        // Positive "Warm." twice (rows 2, 3); negative "Dim." twice (rows 4,
+        // 5). Seed 0 holds out row 1, whose texts appear nowhere else.
+        let outcome = try Self.prepare(
+            [
+                ("Prompt 1", "Even.", "Odd."),
+                ("Prompt 2", "Warm.", "Cold."),
+                ("Prompt 3", "Warm.", "Chilly."),
+                ("Prompt 4", "Bright.", "Dim."),
+                ("Prompt 5", "Vivid.", "Dim."),
+            ], validationPairs: 1, seed: 0)
+        #expect(Self.heldRows(outcome) == [1])
+        #expect(Self.counts(outcome) == [1, 1, 0, 0])
+        #expect(outcome.prepared.overlapAdvisory == nil)
+        #expect(outcome.advisories.isEmpty)
+        #expect(
+            outcome.summaryLines.contains(
+                "1 of the 5 kept positive replies and 1 of the 5 kept negative "
+                    + "replies repeat an earlier reply on the same side, and every copy "
+                    + "is kept"))
+    }
+
+    /// The review's case: one pair four times over, one pair held out. Both
+    /// validation texts are also extraction texts, and the import still
+    /// succeeds, writes every copy, and keeps its provenance shape.
+    @Test func onePairFourTimesWithOneHeldOutIsAdvisedNotRefused() throws {
+        let outcome = try Self.prepare(
+            Array(repeating: ("Prompt", "I feel.", "I compute."), count: 4),
+            validationPairs: 1, seed: 1)
+        #expect(Self.heldRows(outcome) == [2])
+        #expect(Self.counts(outcome) == [3, 3, 1, 1])
+        let advice = Self.overlapAdvice(total: 2, texts: 2, positive: 1, negative: 1)
+        #expect(outcome.prepared.overlapAdvisory == advice)
+        #expect(outcome.advisories == [.init(code: "validationOverlapsExtraction", detail: advice)])
+        #expect(outcome.summaryLines.last == advice)
+        // The claim itself, read off the written files.
+        #expect(Self.written(outcome, "positive.jsonl") == String(repeating: #"{"text": "I feel."}"# + "\n", count: 3))
+        #expect(Self.written(outcome, "negative.jsonl") == String(repeating: #"{"text": "I compute."}"# + "\n", count: 3))
+        #expect(
+            Self.written(outcome, "validation.jsonl")
+                == #"{"text": "I feel.", "expresses": true}"# + "\n"
+                + #"{"text": "I compute.", "expresses": false}"# + "\n")
+        // Reported, never written: provenance.json keeps the chat-pairs-v1 keys.
+        let provenance = try #require(
+            try JSONSerialization.jsonObject(with: Data(Self.written(outcome, "provenance.json").utf8))
+                as? [String: Any])
+        #expect(
+            Set(provenance.keys) == [
+                "artifactType", "concept", "dropped", "importedAt", "importer", "pairs", "rule",
+                "schemaVersion", "sources", "validation",
+            ])
+        #expect(provenance["importer"] as? String == "chat-pairs-v1")
+    }
+
+    @Test func repeatsOnBothSidesOfTheSplitAreCountedByScalar() throws {
+        // Seed 36 holds out rows 2, 4, and 8. Extraction keeps 1, 3, 5, 6, 7.
+        //   positive: "Warm." (row 2) is row 1's and "Bright." (row 4) is row
+        //     3's, so 2 held-out texts are extraction texts; NFD "café" (row
+        //     8) is not NFC "café" (row 7), though Swift's `==` says it is.
+        //     Repeats among the 8 kept: Warm., Bright. -> 2.
+        //   negative: "Cold." (row 2) is row 1's; "Grey." and "Juice." are
+        //     not, so 1. Repeats among the 8 kept: Cold., and "Quiet." (rows
+        //     5, 6, both extraction) -> 2.
+        #expect("caf\u{e9}" == "cafe\u{301}")
+        let outcome = try Self.prepare(
+            [
+                ("Prompt 1", "Warm.", "Cold."),
+                ("Prompt 2", "Warm.", "Cold."),
+                ("Prompt 3", "Bright.", "Dim."),
+                ("Prompt 4", "Bright.", "Grey."),
+                ("Prompt 5", "Loud.", "Quiet."),
+                ("Prompt 6", "Soft.", "Quiet."),
+                ("Prompt 7", "caf\u{e9}", "Tea."),
+                ("Prompt 8", "cafe\u{301}", "Juice."),
+            ], validationPairs: 3, seed: 36)
+        #expect(Self.heldRows(outcome) == [2, 4, 8])
+        #expect(Self.counts(outcome) == [2, 2, 2, 1])
+        let advice = Self.overlapAdvice(total: 3, texts: 6, positive: 2, negative: 1)
+        #expect(outcome.advisories == [.init(code: "validationOverlapsExtraction", detail: advice)])
+        #expect(
+            Array(outcome.summaryLines.suffix(2)) == [
+                "2 of the 8 kept positive replies and 2 of the 8 kept negative replies "
+                    + "repeat an earlier reply on the same side, and every copy is kept",
+                advice,
+            ])
+    }
+
+    @Test func theVerbReportsAnOverlappingHoldOutAsAnAdvisory() async throws {
+        try await withTempRoot { root in
+            let positive = root.appending(component: "claims.jsonl")
+            let negative = root.appending(component: "denials.jsonl")
+            try String(repeating: Self.row("Prompt", "I feel.") + "\n", count: 4)
+                .write(to: positive, atomically: true, encoding: .utf8)
+            try String(repeating: Self.row("Prompt", "I compute.") + "\n", count: 4)
+                .write(to: negative, atomically: true, encoding: .utf8)
+            let recorder = ExperimentCLIRecorder()
+            let outcome = await invoke(
+                [
+                    "import-chat", "one-pair", "--positive", positive.path,
+                    "--negative", negative.path, "--validation-pairs", "1", "--seed", "1",
+                    "--json",
+                ], recorder: recorder)
+            let advice = Self.overlapAdvice(total: 2, texts: 2, positive: 1, negative: 1)
+            #expect(outcome.exitCode == 0)
+            #expect(outcome.envelope.state == .okWithAdvisories)
+            #expect(outcome.envelope.changed)
+            #expect(
+                outcome.envelope.advisories == [
+                    .init(code: "validationOverlapsExtraction", detail: advice)
+                ])
+            let side: JSONValue = .object([
+                "keptRepeats": .number(3), "validationInExtraction": .number(1),
+            ])
+            #expect(
+                outcome.envelope.result?["repeatedTexts"]
+                    == .object(["negative": side, "positive": side]))
+            #expect(
+                FileManager.default.fileExists(
+                    atPath: root.appending(path: "prompts/concepts/one-pair/validation.jsonl").path))
         }
     }
 

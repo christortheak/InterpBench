@@ -278,6 +278,15 @@ public enum CLIAdvisory: String, CaseIterable, Sendable, Codable {
     /// (`ChoiceReread`; server twin `choice_reread`).
     case storedChoicesReadDifferently
 
+    /// Some validation texts are also extraction texts, so validation can
+    /// read better than it would on unseen text. Today's one instance:
+    /// `concept import-chat`, which holds out pairs by ROW, so a reply that
+    /// repeats in the source can land on both sides. Named for the
+    /// MECHANISM, not the importer; never a refusal, and the detail says how
+    /// to hold out texts instead (`ChatConceptImport`; server twin
+    /// `chat_concept_import`).
+    case validationOverlapsExtraction
+
     public static let vocabulary: [String] = allCases.map(\.rawValue)
 }
 

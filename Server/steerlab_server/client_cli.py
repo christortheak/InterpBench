@@ -2222,9 +2222,14 @@ def _concept_import_chat(invocation: Invocation) -> CLIResult:
     lines = chat.summary_lines(outcome)
     for line in lines:
         print(line)
+    # Never a refusal: a row hold-out that repeats extraction texts is the
+    # documented rule at work, so it is said, with what to do about it.
+    advisories = [envelope.advisory(code, detail)
+                  for code, detail in chat.advisories(outcome)]
     return CLIResult(
         message=lines[0], changed=True,
-        payload=chat.result_payload(outcome),
+        state="okWithAdvisories" if advisories else "ready",
+        payload=chat.result_payload(outcome), advisories=advisories,
         next_action=envelope.next_action(
             f"experiment attach <name> {outcome['name']}",
             detail="pin the new concept into a draft study"))

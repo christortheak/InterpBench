@@ -33,6 +33,16 @@ import SteeringKit
 ///   (`TokenBankDownsampler.selectedIndices`: SplitMix64, partial
 ///   Fisher–Yates).
 ///
+/// **A row hold-out is not a text hold-out.** Pairs are held out by row, so a
+/// reply that repeats in the source can land in both `validation.jsonl` and
+/// the extraction files. Nothing is merged or refused for it. The import
+/// reports, per side, how many kept replies repeat an earlier one and how many
+/// validation texts the extraction files also contain (`repeatedTexts`, which
+/// compares scalar by scalar like every other comparison here), and when the
+/// second count is not zero it says so in one advisory (`overlapAdvisory`).
+/// Neither is written into `provenance.json`, whose bytes `importerID` pins;
+/// both are in the verb's answer.
+///
 /// **Why its own JSON reader.** Parity is decided as much by which rows are
 /// refused as by what is written, and Foundation's reader accepts trailing
 /// commas and a byte-order mark mid-file where Python's refuses them (Python's
@@ -220,9 +230,39 @@ public enum ChatConceptImport {
         public let stimulusSetHash: String
         /// SHA-256 of `validation.jsonl`, when pairs were held out.
         public let validationHash: String?
+        /// How the positive replies repeat. Reported, never written.
+        public let positiveRepeats: RepeatedTexts
+        /// How the negative replies repeat. Reported, never written.
+        public let negativeRepeats: RepeatedTexts
 
         public var droppedPairs: Int {
             droppedPromptMismatch + droppedIdenticalReplies + droppedEmptyReply
+        }
+
+        public var keptPairs: Int { extractionPairs + validationPairs }
+
+        /// The one sentence given when validation texts are also extraction
+        /// texts, or nil.
+        public var overlapAdvisory: String? {
+            ChatConceptImport.overlapAdvisory(
+                positive: positiveRepeats, negative: negativeRepeats,
+                validationPairs: validationPairs)
+        }
+    }
+
+    /// How one side's texts repeat — the twin's `repeated_texts`. The texts
+    /// are the replies the import writes, compared scalar by scalar.
+    public struct RepeatedTexts: Sendable, Equatable {
+        /// Kept replies that repeat an earlier kept reply on this side.
+        public let keptRepeats: Int
+        /// Held-out replies that this side's extraction rows also hold.
+        public let validationInExtraction: Int
+
+        var jsonValue: JSONValue {
+            .object([
+                "keptRepeats": .number(Double(keptRepeats)),
+                "validationInExtraction": .number(Double(validationInExtraction)),
+            ])
         }
     }
 
@@ -245,9 +285,19 @@ public enum ChatConceptImport {
                 "directory": .string(relativeDirectory),
                 "files": .array(writtenFiles.map(JSONValue.string)),
                 "provenance": prepared.provenance.jsonValue,
+                "repeatedTexts": .object([
+                    "negative": prepared.negativeRepeats.jsonValue,
+                    "positive": prepared.positiveRepeats.jsonValue,
+                ]),
                 "stimulusSetHash": .string(prepared.stimulusSetHash),
                 "validationHash": prepared.validationHash.map(JSONValue.string) ?? .null,
             ]
+        }
+
+        /// The envelope's advisories: the same on both clients, and empty
+        /// unless validation texts are also extraction texts.
+        public var advisories: [SteerLabCLIEnvelope.Advisory] {
+            prepared.overlapAdvisory.map { [.init(.validationOverlapsExtraction, $0)] } ?? []
         }
 
         /// What a person at a terminal reads. The first line is the
@@ -268,6 +318,16 @@ public enum ChatConceptImport {
                         + "\(p.droppedIdenticalReplies) with identical replies, "
                         + "\(p.droppedEmptyReply) with an empty reply (their rows "
                         + "are listed in provenance.json)")
+            }
+            if p.positiveRepeats.keptRepeats > 0 || p.negativeRepeats.keptRepeats > 0 {
+                lines.append(
+                    "\(p.positiveRepeats.keptRepeats) of the \(p.keptPairs) kept positive replies "
+                        + "and \(p.negativeRepeats.keptRepeats) of the \(p.keptPairs) kept negative "
+                        + "replies repeat an earlier reply on the same side, and every copy "
+                        + "is kept")
+            }
+            if let advisory = p.overlapAdvisory {
+                lines.append(advisory)
             }
             if p.validationPairs == 0 {
                 lines.append(
@@ -704,7 +764,48 @@ public enum ChatConceptImport {
             droppedIdenticalReplies: identicalReplies.count,
             droppedEmptyReply: emptyReply.count,
             stimulusSetHash: sha256(positiveBytes + negativeBytes),
-            validationHash: validationHash)
+            validationHash: validationHash,
+            positiveRepeats: repeatedTexts(
+                kept: kept.map(\.positive), training: training.map(\.positive),
+                heldOut: heldOut.map(\.positive)),
+            negativeRepeats: repeatedTexts(
+                kept: kept.map(\.negative), training: training.map(\.negative),
+                heldOut: heldOut.map(\.negative)))
+    }
+
+    // MARK: Repeated texts
+
+    /// One side's `RepeatedTexts`. Scalar by scalar, as `same` compares: a
+    /// `Set<String>` would merge canonically equivalent texts (NFC and NFD),
+    /// which the Python twin's `set` keeps apart.
+    static func repeatedTexts(
+        kept: [String], training: [String], heldOut: [String]
+    ) -> RepeatedTexts {
+        let distinct = Set(kept.map { Array($0.unicodeScalars) })
+        let extraction = Set(training.map { Array($0.unicodeScalars) })
+        return RepeatedTexts(
+            keptRepeats: kept.count - distinct.count,
+            validationInExtraction: heldOut.filter {
+                extraction.contains(Array($0.unicodeScalars))
+            }.count)
+    }
+
+    /// The one sentence given when validation texts are also extraction
+    /// texts, or nil. Advice only: the import has already succeeded.
+    static func overlapAdvisory(
+        positive: RepeatedTexts, negative: RepeatedTexts, validationPairs: Int
+    ) -> String? {
+        let p = positive.validationInExtraction
+        let n = negative.validationInExtraction
+        guard p + n > 0 else { return nil }
+        return "positive.jsonl and negative.jsonl also contain "
+            + "\(p + n) of the \(2 * validationPairs) texts in "
+            + "validation.jsonl (\(p) positive, \(n) negative), so "
+            + "validation can read better than it would on unseen text. Pairs "
+            + "are held out by row, not by text. To hold out unseen texts, "
+            + "remove the repeated rows from the source files and import again "
+            + "under a new name, or import with no hold-out and write "
+            + "validation.jsonl from texts the extraction files do not contain."
     }
 
     static func exists(_ name: String) -> Refusal {

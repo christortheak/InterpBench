@@ -138,6 +138,7 @@ def test_advisory_codes_match_the_swift_literal():
         "singleRegimeCapabilityReading",
         "modelCapabilities", "capabilityControlNotApplied",
         "computeCannotRun", "storedChoicesReadDifferently",
+        "validationOverlapsExtraction",
     ]
     assert list(cli_envelope.ADVISORY_CODES) == contract
 
