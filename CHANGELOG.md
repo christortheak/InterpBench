@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.14] — 2026-10-22
+
 - **Re-reading a run's choices analyzes that run.** `results check-choices
   <study> --run <run>` checked the run it was given, but the command it
   suggested analyzed the study's newest completed run, which could be a
