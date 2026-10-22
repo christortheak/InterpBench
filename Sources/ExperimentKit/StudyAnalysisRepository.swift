@@ -138,8 +138,13 @@ struct StudyAnalysisRepository {
             } ?? false
             let repair: String
             if RunEpoch.foreignSubstrate(runDirectory) != nil {
+                // The server's name for the run: a copy imported again here
+                // as `<run>-reimport` is `<run>` there.
+                let serverRun = repairRun.map {
+                    WorkspaceImportPolicy.splitReimportSuffix($0)?.body ?? $0
+                }
                 repair = "steerlab-server experiment \(verb) \(manifest.name)"
-                    + (repairRun.map { " --source runs/\($0)" } ?? "") + flags + "  "
+                    + (serverRun.map { " --source runs/\($0)" } ?? "") + flags + "  "
                     + "(on the engine that produced the run; the Mac reads "
                     + "its results, it does not re-measure them)"
             } else if let owner, owner != manifest.name, ownerIsHere {

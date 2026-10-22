@@ -223,7 +223,7 @@ def test_foreign_substrate_repair_names_an_engine_that_has_the_verb(tmp_path):
         assert lifecycle_gates.gate_of(excinfo.value) == \
             lifecycle_gates.MANIFEST_EPOCH
         repair = lifecycle_gates.repair_of(excinfo.value)
-        assert repair.startswith(f"steerlab-cli experiment {verb} study")
+        assert repair.startswith(f"steerlab-cli experiment {verb} study --run runs/")
         assert verb in roster, (
             f"the repair sends the caller to 'steerlab-cli experiment {verb}', "
             "which the Mac CLI's generated reference does not declare")

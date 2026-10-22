@@ -144,6 +144,12 @@ def test_analyze_refuses_unstamped_run_then_accepts_with_flag(tmp_path):
     # The one case the flag reads, and the repair names the run.
     assert excinfo.value.repair_action.endswith(
         f"--source runs/{os.path.basename(run_dir)} --allow-unverified-epoch")
+    # A re-read asked for is kept, so following the repair re-reads.
+    with pytest.raises(RuntimeError) as reread:
+        tasks.analyze("study", root=root, reread_choices=True)
+    assert reread.value.repair_action.endswith(
+        f"--source runs/{os.path.basename(run_dir)} --reread-choices "
+        "--allow-unverified-epoch")
     warnings = []
     out = tasks.analyze("study", root=root, allow_unverified_epoch=True,
                         log=warnings.append)

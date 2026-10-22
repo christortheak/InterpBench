@@ -792,6 +792,37 @@ struct ChoiceRereadTests {
             #expect(followed.envelope.exitCode == 0, "\(followed.envelope)")
             #expect(followed.envelope.result?["sourceRun"] == .string(otherRun))
 
+            // Unstamped, a run of a study that is here is still read under
+            // that study, before the bypass for an unstamped run.
+            let unstampedRun = "20261022T000000000Z-exp-other-study-run"
+            try addRun(unstampedRun, records: stored, manifest: other, root: root)
+            try FileManager.default.removeItem(
+                at: root.appending(path: "runs/\(unstampedRun)/experiment-hash.txt"))
+            let unstamped = await ExperimentCLIRunner(sink: .discarding).run(
+                namespace: "experiment",
+                ["analyze", value.study, "--run", "runs/\(unstampedRun)", "--json"])
+            #expect(
+                unstamped.envelope.error?.repairAction.hasPrefix(
+                    "steerlab-cli experiment analyze other-study --run runs/\(unstampedRun)  ")
+                    == true, "\(unstamped.envelope)")
+
+            // A Python-engine run imported again here as `-reimport` is named
+            // as the server names it.
+            let foreign = "20261023T000000000Z-exp-\(value.study)-run-reimport"
+            try addRun(
+                foreign, records: stored, manifest: try ExperimentStore.load(name: value.study),
+                root: root)
+            try Data("{\"substrate\": \"python-hf\"}".utf8).write(
+                to: root.appending(path: "runs/\(foreign)/config.json"))
+            let elsewhere = await ExperimentCLIRunner(sink: .discarding).run(
+                namespace: "experiment",
+                ["analyze", value.study, "--run", "runs/\(foreign)", "--reread-choices", "--json"])
+            #expect(
+                elsewhere.envelope.error?.repairAction.hasPrefix(
+                    "steerlab-server experiment analyze \(value.study) --source "
+                        + "runs/20261023T000000000Z-exp-\(value.study)-run --reread-choices  ")
+                    == true, "\(elsewhere.envelope)")
+
             // All three spellings of the same run analyze it, and a link to
             // it is stamped with the run's own name.
             try FileManager.default.createSymbolicLink(

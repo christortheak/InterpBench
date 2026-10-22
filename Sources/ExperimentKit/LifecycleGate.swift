@@ -356,9 +356,9 @@ public enum RefusalSiteRegistry {
             ],
             origin: "RunEpoch.refusal → ExperimentTasks.analyze/evaluate/rescoreStyle",
             repairAction: "steerlab-cli experiment run <name> "
-                + "(a run of the CURRENT manifest), or re-read the older run "
-                + "with steerlab-cli experiment analyze <name> "
-                + "--allow-unverified-epoch"),
+                + "(a run of the CURRENT manifest); an UNSTAMPED run only can be "
+                + "read with steerlab-cli experiment analyze <name> --run "
+                + "runs/<dir> --allow-unverified-epoch"),
         .init(
             gate: .promotionEpoch,
             verbs: ["experiment promote"],
