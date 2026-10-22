@@ -309,6 +309,8 @@ import Testing
         try String(repeating: "b", count: 64).write(
             to: temp.appending(component: "experiment-hash.txt"),
             atomically: true, encoding: .utf8)
+        // A stamp that does not match: --allow-unverified-epoch forgives only
+        // a MISSING stamp, so it is not offered; re-making the run is.
         do {
             _ = try ExperimentTasks.verifyRunEpoch(
                 verb: "analyze", runDirectory: temp, manifest: manifest)
@@ -317,7 +319,18 @@ import Testing
             let refusal = try #require(error.lifecycleRefusal)
             #expect(refusal.gate == .manifestEpoch)
             #expect(refusal.repairAction.contains("steerlab-cli experiment run epoch"))
-            #expect(refusal.repairAction.contains("--allow-unverified-epoch"))
+            #expect(!refusal.repairAction.contains("--allow-unverified-epoch"))
+        }
+        // No stamp at all: the one case the flag reads.
+        try FileManager.default.removeItem(at: temp.appending(component: "experiment-hash.txt"))
+        do {
+            _ = try ExperimentTasks.verifyRunEpoch(
+                verb: "analyze", runDirectory: temp, manifest: manifest)
+            Issue.record("expected an epoch refusal for an unstamped run")
+        } catch let error as ExperimentError {
+            let refusal = try #require(error.lifecycleRefusal)
+            #expect(refusal.gate == .manifestEpoch)
+            #expect(refusal.repairAction.contains("experiment analyze epoch --allow-unverified-epoch"))
         }
     }
 

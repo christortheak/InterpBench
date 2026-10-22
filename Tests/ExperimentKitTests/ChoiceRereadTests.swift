@@ -732,7 +732,7 @@ struct ChoiceRereadTests {
                 #expect(result.envelope.exitCode == 65, "\(reference): \(result.envelope)")
                 #expect(result.envelope.error?.code == "missingPrerequisite")
                 #expect(result.envelope.error?.reason.contains(words) == true, "\(result.envelope)")
-                #expect(result.envelope.error?.repairAction.hasPrefix("ls -d ") == true)
+                #expect(result.envelope.error?.repairAction.hasPrefix("ls ") == true)
             }
 
             // A renamed duplicate's donor run: the same measured study under
@@ -747,7 +747,8 @@ struct ChoiceRereadTests {
             #expect(duplicate.envelope.result?["sourceRun"] == .string(donorRun))
 
             // A different study's run: refused by the epoch guard, and its
-            // repair still names this run and the re-read.
+            // repair reads it under its own study, keeping the run and the
+            // re-read; the bypass for an unstamped run is not offered.
             var other = donor
             other.name = "other-study"
             other.modelID = "test/another-model"
@@ -759,10 +760,11 @@ struct ChoiceRereadTests {
             #expect(refused.envelope.exitCode == 65, "\(refused.envelope)")
             #expect(refused.envelope.error?.code == "manifestEpoch")
             #expect(
-                refused.envelope.error?.repairAction.contains(
-                    "experiment analyze \(value.study) --run runs/\(otherRun) --reread-choices "
-                        + "--allow-unverified-epoch") == true,
+                refused.envelope.error?.repairAction.hasPrefix(
+                    "steerlab-cli experiment analyze other-study --run runs/\(otherRun) "
+                        + "--reread-choices  (the run belongs to the study 'other-study')") == true,
                 "\(refused.envelope)")
+            #expect(refused.envelope.error?.repairAction.contains("--allow-unverified-epoch") == false)
 
             // All three spellings of the same run analyze it, and a link to
             // it is stamped with the run's own name.
@@ -821,8 +823,10 @@ struct ChoiceRereadTests {
             #expect(
                 elsewhere.message.hasSuffix(
                     "made on the Python engine, so analyze it there with the current reading: "
-                        + "steerlab-cli remote submit-bundle <bundle> --verb analyze --source "
-                        + "runs/\(Self.older) --reread-choices"), "\(elsewhere.message)")
+                        + "steerlab-cli remote submit-bundle <bundle> --site <id> --verb analyze "
+                        + "--source runs/\(Self.older) --reread-choices (<bundle> is the study's "
+                        + "bundle on that server, as remote package uploads it)"),
+                "\(elsewhere.message)")
         }
     }
 }

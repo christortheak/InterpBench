@@ -188,7 +188,9 @@ public enum ChoiceCheck {
         if madeElsewhere {
             return differ + " This run was made on the Python engine, so analyze it there "
                 + "with the current reading: steerlab-cli remote submit-bundle <bundle> "
-                + "--verb analyze --source \(report.run) --reread-choices"
+                + "--site <id> --verb analyze --source \(report.run) --reread-choices "
+                + "(<bundle> is the study's bundle on that server, as remote package "
+                + "uploads it)"
         }
         return differ + " To analyze this run with the current reading: steerlab-cli "
             + "experiment analyze \(study) --run \(report.run) --reread-choices"

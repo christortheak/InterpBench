@@ -317,7 +317,7 @@ steerlab runner upload runs/…/study.run-bundle.tar.gz --runner <url>
 steerlab runner submit --runner <url> \
     --bundle-path <the path upload printed> \
     --bundle-sha  <the digest upload printed> \
-    --verb run [--executor local|slurm] [--target-root <dir>] [--dry-run]
+    --verb run [--executor local|slurm] [--target-root <dir>] [--dry-run] \
     [--source runs/<run>]                     # with --verb analyze or evaluate
 steerlab runner jobs [<job-id>] [--cancel] --runner <url>
 steerlab runner logs <job-id> [--follow] --runner <url>

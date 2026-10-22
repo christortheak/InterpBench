@@ -59,8 +59,8 @@ migration that rewrites frozen bytes.
   arms carry no label, because ablation strength is never scaled by the
   residual norm, and in an arm that both steers and ablates the label covers
   the steering α only. The Mac app, `steerlab-cli`, the app-free `steerlab`
-  client, and the server write the same text. Only new freezes change: studies already frozen, and their
-  summaries, are untouched.
+  client, and the server write the same text. Only new freezes change:
+  studies already frozen, and their summaries, are untouched.
 - **The Playground explains its starting α correctly.** For a vector with no
   promoted strength, the note beside the default α of 0.1 now says it is a
   tenth of a residual-stream norm, the convention's starting fraction. It
@@ -76,8 +76,9 @@ migration that rewrites frozen bytes.
   validation can read better than it would on unseen text, and removing the
   repeated rows from the source files, or writing `validation.jsonl` from
   texts the extraction files do not contain, gives a hold-out with no exact
-  repeat in extraction. Only exact repeats on the same side are counted. Both command lines give the same counts and sentence, and the app's
-  Import chat pairs shows it before the sheet closes. The written files are
+  repeat in extraction. Only exact repeats on the same side are counted.
+  Both command lines give the same counts and sentence, and the app's Import
+  chat pairs shows it before the sheet closes. The written files are
   unchanged.
 
 ## [0.9.13] — 2026-10-21

@@ -558,8 +558,9 @@ def test_the_route_analyzes_the_run_it_is_given(tmp_path, monkeypatch):
 
     assert client.post(f"/api/experiment/{STUDY}/evaluate",
                        json={"sourcePath": RUN}).status_code == 400
-    assert client.post(f"/api/experiment/{STUDY}/analyze",
-                       json={"sourcePath": "no-such-run"}).status_code == 404
+    missing = client.post(f"/api/experiment/{STUDY}/analyze", json={"sourcePath": "no-such-run"})
+    assert missing.status_code == 404
+    assert "no run 'no-such-run' in this server's runs/" in missing.json()["detail"]
 
 
 def test_the_route_refuses_reread_choices_on_any_other_verb():

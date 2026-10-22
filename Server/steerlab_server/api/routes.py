@@ -1453,9 +1453,18 @@ def build_router(state: ServiceState) -> APIRouter:
                 raise HTTPException(
                     status_code=400,
                     detail="sourcePath applies to the 'analyze' verb only")
-            source_run = state.resolver.require_dir(
-                str(source_ref), root=state.resolver.roots.runs,
-                allow_local_absolute=True)
+            try:
+                source_run = state.resolver.require_dir(
+                    str(source_ref), root=state.resolver.roots.runs,
+                    allow_local_absolute=True)
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+                raise HTTPException(status_code=404, detail=(
+                    f"There is no run '{source_ref}' in this server's runs/ "
+                    "folder, so nothing was submitted. A run is analyzed on the "
+                    "server that holds it; analyze without naming a run to read "
+                    "this study's newest run here.")) from exc
         # Targeted retry (2026-07-24, cross-engine body key "resumeFrom"):
         # finish a FAILED evaluation by judging only its undecided cells,
         # reusing the verdicts it already produced. Every pin of the

@@ -62,9 +62,9 @@ struct StudyAnalysisRepository {
         let directory = runDirectory(named: reference).standardizedFileURL
         // How to find a run's name; never "leave --run out", which reads a
         // different run.
-        let listRuns = "ls -d "
+        let listRuns = "ls "
             + CommandLineLink.shellQuoted(runsDirectory.standardizedFileURL.path)
-            + "/*-exp-\(experimentName)-run*  (each is a run's directory; name one with "
+            + "  (a study run's directory ends in -exp-<study>-run; name one with "
             + "--run runs/<directory>)"
         var isDirectory: ObjCBool = false
         guard fm.fileExists(atPath: directory.path, isDirectory: &isDirectory),
@@ -121,20 +121,35 @@ struct StudyAnalysisRepository {
             // would leave this run just as unreadable) — it is the same verb
             // on the engine that wrote the records.
             let flags = repairFlags.map { " " + $0 }.joined()
-            let repair =
-                RunEpoch.foreignSubstrate(runDirectory) != nil
-                ? "steerlab-server experiment \(verb) \(manifest.name)"
+            let runFlag = repairRun.map { " --run runs/\($0)" } ?? ""
+            // Who made the run: a stamped run of another study is read under
+            // that study, and a stamped run of this one under different
+            // settings is re-made; only an UNSTAMPED run can be read with
+            // --allow-unverified-epoch, so only it is offered that.
+            let stamped = RunEpoch.stampedExperimentHash(runDirectory) != nil
+            let owner =
+                (try? Data(contentsOf: runDirectory.appending(component: "experiment.json")))
+                .flatMap { try? JSONDecoder().decode(ExperimentManifest.self, from: $0) }?.name
+            let repair: String
+            if RunEpoch.foreignSubstrate(runDirectory) != nil {
+                repair = "steerlab-server experiment \(verb) \(manifest.name)"
                     + (repairRun.map { " --source runs/\($0)" } ?? "") + flags + "  "
                     + "(on the engine that produced the run; the Mac reads "
                     + "its results, it does not re-measure them)"
-                : "steerlab-cli experiment run \(manifest.name)  "
-                    + "(a run of the CURRENT manifest), or read the older run "
+            } else if stamped, let owner, owner != manifest.name {
+                repair = "steerlab-cli experiment \(verb) \(owner)\(runFlag)\(flags)  "
+                    + "(the run belongs to the study '\(owner)'), or make a run of "
+                    + "this study: steerlab-cli experiment run \(manifest.name)"
+            } else if stamped {
+                repair = "steerlab-cli experiment run \(manifest.name)  (a run of the "
+                    + "CURRENT manifest: this run's stamp says it was made under "
+                    + "different settings)"
+            } else {
+                repair = "steerlab-cli experiment run \(manifest.name)  "
+                    + "(a run of the CURRENT manifest), or read this unstamped run "
                     + "under its own epoch with steerlab-cli experiment "
-                    + "\(verb) \(manifest.name)"
-                    + (repairRun.map { " --run runs/\($0)" } ?? "") + flags
-                    + " --allow-unverified-epoch  "
-                    + "(which only bypasses an UNSTAMPED run, never a "
-                    + "mismatched one)"
+                    + "\(verb) \(manifest.name)\(runFlag)\(flags) --allow-unverified-epoch"
+            }
             throw ExperimentError.refusing(.manifestEpoch, refusal, repair: repair)
         }
         // Tolerated is never silent (server twin: the `_log` warnings in

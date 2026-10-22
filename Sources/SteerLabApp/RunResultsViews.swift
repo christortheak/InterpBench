@@ -746,8 +746,12 @@ struct RunAnalyzeRow: View {
                 return
             }
             do {
+                // A copy imported again under `<run>-reimport` is the same
+                // run on the server that made it.
+                let serverName =
+                    WorkspaceImportPolicy.splitReimportSuffix(item.name)?.body ?? item.name
                 let submitted = try await RemoteAnalyze.submit(
-                    client: client, experiment: experiment, run: item.name,
+                    client: client, experiment: experiment, run: serverName,
                     rereadChoices: rereadChoices)
                 state = .finished(
                     submitted.message + " — monitor in Compute, then refresh the server runs list")
@@ -769,10 +773,17 @@ enum RemoteAnalyze {
     static func submit(
         client: ClusterClient, experiment: String, run: String?, rereadChoices: Bool
     ) async throws -> Submitted {
+        // Whether the engine can choose the run. An unanswered question is
+        // not a refusal: the analysis goes ahead on the newest run, as it
+        // always did, and the message says why.
+        var answered = true
         var chosen: String?
         if let run {
-            let capabilities = try await client.capabilities()
-            if ChoiceReread.supportsSourceRun(capabilities) { chosen = run }
+            if let capabilities = try? await client.capabilities() {
+                if ChoiceReread.supportsSourceRun(capabilities) { chosen = run }
+            } else {
+                answered = false
+            }
         }
         let jobID = try await client.submitExperimentJobDetailed(
             experiment: experiment, verb: "analyze", rereadChoices: rereadChoices,
@@ -781,11 +792,19 @@ enum RemoteAnalyze {
         if let chosen {
             return Submitted(jobID: jobID, message: "submitted analyze job \(jobID) for \(chosen)")
         }
+        guard run != nil else {
+            return Submitted(
+                jobID: jobID,
+                message: "submitted analyze job \(jobID) for the study's newest run there")
+        }
         return Submitted(
             jobID: jobID,
-            message: "submitted analyze job \(jobID). This server's engine is older than "
-                + "this app, so it analyzes the study's newest run there, which may not be "
-                + "this one; bring the engine up to date to analyze a chosen run")
+            message: "submitted analyze job \(jobID) for the study's newest run there, which "
+                + "may not be this one: "
+                + (answered
+                    ? "this server's engine is older than this app; bring it up to date "
+                        + "to analyze a chosen run"
+                    : "the server did not say whether it can analyze a chosen run"))
     }
 }
 
