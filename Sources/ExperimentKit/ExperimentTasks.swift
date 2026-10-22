@@ -5117,9 +5117,12 @@ public enum ExperimentTasks {
         verb: String,
         runDirectory: URL,
         manifest: ExperimentManifest,
-        allowUnverified: Bool = false
+        allowUnverified: Bool = false,
+        repairRun: String? = nil
     ) throws -> RunEpoch.Check {
-        try StudyAnalysisRepository.verifyRunEpoch(verb: verb, runDirectory: runDirectory, manifest: manifest, allowUnverified: allowUnverified)
+        try StudyAnalysisRepository.verifyRunEpoch(
+            verb: verb, runDirectory: runDirectory, manifest: manifest,
+            allowUnverified: allowUnverified, repairRun: repairRun)
     }
 
     // MARK: - analyze (headless statistics)
@@ -5697,7 +5700,8 @@ public enum ExperimentTasks {
         // under a frozen manifest).
         let epoch = try verifyRunEpoch(
             verb: "evaluate", runDirectory: sourceRunDirectory,
-            manifest: manifest, allowUnverified: allowUnverifiedEpoch)
+            manifest: manifest, allowUnverified: allowUnverifiedEpoch,
+            repairRun: sourceRunDirectory.lastPathComponent)
         // Effective evaluation (2026-07-22 incident): an explicit spec (the
         // caller's override, else the manifest block) wins; with neither,
         // pinned judges + a pinned rubric file ARE the paired-judge

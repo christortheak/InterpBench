@@ -186,11 +186,15 @@ public enum ChoiceCheck {
             + "\(report.run) would read differently with choice parser version "
             + "\(report.parserVersion). Nothing was written."
         if madeElsewhere {
+            // The server's name for the run: a copy imported again here as
+            // `<run>-reimport` is `<run>` there.
+            let serverRun =
+                WorkspaceImportPolicy.splitReimportSuffix(report.run)?.body ?? report.run
             return differ + " This run was made on the Python engine, so analyze it there "
                 + "with the current reading: steerlab-cli remote submit-bundle <bundle> "
-                + "--site <id> --verb analyze --source \(report.run) --reread-choices "
-                + "(<bundle> is the study's bundle on that server, as remote package "
-                + "uploads it)"
+                + "--site <id> --verb analyze --source \(serverRun) --reread-choices "
+                + "(<bundle> is the server-side path that remote upload prints for the "
+                + "study's bundle)"
         }
         return differ + " To analyze this run with the current reading: steerlab-cli "
             + "experiment analyze \(study) --run \(report.run) --reread-choices"

@@ -5,6 +5,7 @@ choice of verb and must retain the guard's returned provenance in their output.
 """
 from __future__ import annotations
 import os
+import shlex
 from . import command_vocabulary as vocabulary
 from . import lifecycle_gates, run_epoch
 from .manifest import Manifest
@@ -126,15 +127,33 @@ def require_source_epoch(verb: str, name: str, manifest: Manifest,
         # negotiation: a third substrate must come back here and decide what
         # it can compose, and the test is what will stop it from not
         # noticing.
+        # The repair fits the cause, as on the Mac (review 2026-10-22): a
+        # stamped run that does not match is re-made, because
+        # --allow-unverified-epoch forgives only a MISSING stamp; a run of
+        # another study still in this workspace is read under that study.
+        run_name = os.path.basename(os.path.normpath(run_dir))
+        owner = getattr(run_epoch.snapshot(run_dir), "name", None)
+        owner_here = isinstance(owner, str) and os.path.isfile(os.path.join(
+            os.path.dirname(os.path.dirname(os.path.normpath(run_dir))),
+            "experiments", owner, "experiment.json"))
         if run_epoch.foreign_substrate(run_dir) is not None:
             repair = (f"steerlab-cli experiment {verb} {name}  (on the engine "
                       "that produced the run; this engine reads its results, "
                       "it does not re-measure them)")
+        elif owner_here and owner != name:
+            repair = (f"steerlab-server experiment {verb} {shlex.quote(owner)} "
+                      f"--source runs/{run_name}  (the run belongs to the study "
+                      f"'{owner}'), or make a run of this study: "
+                      f"steerlab-server experiment run {name}")
+        elif run_epoch.stamped_experiment_hash(run_dir) is not None:
+            repair = (f"steerlab-server experiment run {name}  (a run of the "
+                      "CURRENT manifest: this run's stamp says it was made "
+                      "under different settings)")
         else:
             repair = (f"steerlab-server experiment run {name}  (a run of the "
-                      "CURRENT manifest), or re-read the older run with "
+                      "CURRENT manifest), or read this unstamped run with "
                       f"steerlab-server experiment {verb} {name} "
-                      "--allow-unverified-epoch")
+                      f"--source runs/{run_name} --allow-unverified-epoch")
         raise lifecycle_gates.refusing(
             lifecycle_gates.MANIFEST_EPOCH, refusal, repair=repair)
     return unverified, drift

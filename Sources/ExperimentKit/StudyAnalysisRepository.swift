@@ -64,8 +64,8 @@ struct StudyAnalysisRepository {
         // different run.
         let listRuns = "ls "
             + CommandLineLink.shellQuoted(runsDirectory.standardizedFileURL.path)
-            + "  (a study run's directory ends in -exp-<study>-run; name one with "
-            + "--run runs/<directory>)"
+            + "  (a study run's directory name contains -exp-<study>-run; name one "
+            + "with --run runs/<directory>)"
         var isDirectory: ObjCBool = false
         guard fm.fileExists(atPath: directory.path, isDirectory: &isDirectory),
             isDirectory.boolValue,
@@ -122,24 +122,30 @@ struct StudyAnalysisRepository {
             // on the engine that wrote the records.
             let flags = repairFlags.map { " " + $0 }.joined()
             let runFlag = repairRun.map { " --run runs/\($0)" } ?? ""
-            // Who made the run: a stamped run of another study is read under
-            // that study, and a stamped run of this one under different
-            // settings is re-made; only an UNSTAMPED run can be read with
-            // --allow-unverified-epoch, so only it is offered that.
+            // Who made the run: a run of another study that is still in this
+            // workspace is read under that study; a stamped run of this one
+            // under different settings is re-made; only an UNSTAMPED run can
+            // be read with --allow-unverified-epoch, so only it is offered
+            // that.
             let stamped = RunEpoch.stampedExperimentHash(runDirectory) != nil
             let owner =
                 (try? Data(contentsOf: runDirectory.appending(component: "experiment.json")))
                 .flatMap { try? JSONDecoder().decode(ExperimentManifest.self, from: $0) }?.name
+            let ownerIsHere = owner.map {
+                FileManager.default.fileExists(
+                    atPath: runDirectory.deletingLastPathComponent().deletingLastPathComponent()
+                        .appending(components: "experiments", $0, "experiment.json").path)
+            } ?? false
             let repair: String
             if RunEpoch.foreignSubstrate(runDirectory) != nil {
                 repair = "steerlab-server experiment \(verb) \(manifest.name)"
                     + (repairRun.map { " --source runs/\($0)" } ?? "") + flags + "  "
                     + "(on the engine that produced the run; the Mac reads "
                     + "its results, it does not re-measure them)"
-            } else if stamped, let owner, owner != manifest.name {
-                repair = "steerlab-cli experiment \(verb) \(owner)\(runFlag)\(flags)  "
-                    + "(the run belongs to the study '\(owner)'), or make a run of "
-                    + "this study: steerlab-cli experiment run \(manifest.name)"
+            } else if let owner, owner != manifest.name, ownerIsHere {
+                repair = "steerlab-cli experiment \(verb) \(CommandLineLink.shellQuoted(owner))"
+                    + "\(runFlag)\(flags)  (the run belongs to the study '\(owner)'), or make "
+                    + "a run of this study: steerlab-cli experiment run \(manifest.name)"
             } else if stamped {
                 repair = "steerlab-cli experiment run \(manifest.name)  (a run of the "
                     + "CURRENT manifest: this run's stamp says it was made under "
@@ -358,7 +364,7 @@ struct StudyAnalysisRepository {
         }
         let epoch = try Self.verifyRunEpoch(
             verb: "rescore-style", runDirectory: sourceRun, manifest: manifest,
-            allowUnverified: allowUnverifiedEpoch)
+            allowUnverified: allowUnverifiedEpoch, repairRun: sourceRun.lastPathComponent)
 
         let text = try String(
             contentsOf: sourceRun.appending(component: "generations.jsonl"),

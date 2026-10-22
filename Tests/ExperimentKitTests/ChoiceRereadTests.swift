@@ -754,17 +754,43 @@ struct ChoiceRereadTests {
             other.modelID = "test/another-model"
             let otherRun = "20261021T000000000Z-exp-other-study-run"
             try addRun(otherRun, records: stored, manifest: other, root: root)
-            let refused = await ExperimentCLIRunner(sink: .discarding).run(
-                namespace: "experiment",
-                ["analyze", value.study, "--run", "runs/\(otherRun)", "--reread-choices", "--json"])
-            #expect(refused.envelope.exitCode == 65, "\(refused.envelope)")
-            #expect(refused.envelope.error?.code == "manifestEpoch")
+            let analyzeOther = [
+                "analyze", value.study, "--run", "runs/\(otherRun)", "--reread-choices", "--json",
+            ]
+            // That study is not in this workspace: its run is stamped under
+            // other settings, so the repair is to make a run of this study.
+            let gone = await ExperimentCLIRunner(sink: .discarding).run(
+                namespace: "experiment", analyzeOther)
+            #expect(gone.envelope.exitCode == 65, "\(gone.envelope)")
+            #expect(gone.envelope.error?.code == "manifestEpoch")
             #expect(
-                refused.envelope.error?.repairAction.hasPrefix(
+                gone.envelope.error?.repairAction.hasPrefix(
+                    "steerlab-cli experiment run \(value.study)  (a run of the CURRENT") == true,
+                "\(gone.envelope)")
+            #expect(gone.envelope.error?.repairAction.contains("--allow-unverified-epoch") == false)
+            // With the study here, the repair reads the run under it, and
+            // following it as printed works.
+            _ = try ExperimentStore.create(
+                name: other.name, description: "", modelID: other.modelID)
+            try ExperimentStore.save(other)
+            let refused = await ExperimentCLIRunner(sink: .discarding).run(
+                namespace: "experiment", analyzeOther)
+            #expect(refused.envelope.exitCode == 65, "\(refused.envelope)")
+            let repair = try #require(refused.envelope.error?.repairAction)
+            #expect(
+                repair.hasPrefix(
                     "steerlab-cli experiment analyze other-study --run runs/\(otherRun) "
-                        + "--reread-choices  (the run belongs to the study 'other-study')") == true,
-                "\(refused.envelope)")
-            #expect(refused.envelope.error?.repairAction.contains("--allow-unverified-epoch") == false)
+                        + "--reread-choices  (the run belongs to the study 'other-study')"),
+                "\(repair)")
+            #expect(!repair.contains("--allow-unverified-epoch"))
+            var words = try #require(repair.components(separatedBy: "  (").first)
+                .split(separator: " ").map(String.init)
+            #expect(words.removeFirst() == "steerlab-cli")
+            #expect(words.removeFirst() == "experiment")
+            let followed = await ExperimentCLIRunner(sink: .discarding).run(
+                namespace: "experiment", words + ["--json"])
+            #expect(followed.envelope.exitCode == 0, "\(followed.envelope)")
+            #expect(followed.envelope.result?["sourceRun"] == .string(otherRun))
 
             // All three spellings of the same run analyze it, and a link to
             // it is stamped with the run's own name.
@@ -824,8 +850,8 @@ struct ChoiceRereadTests {
                 elsewhere.message.hasSuffix(
                     "made on the Python engine, so analyze it there with the current reading: "
                         + "steerlab-cli remote submit-bundle <bundle> --site <id> --verb analyze "
-                        + "--source runs/\(Self.older) --reread-choices (<bundle> is the study's "
-                        + "bundle on that server, as remote package uploads it)"),
+                        + "--source runs/\(Self.older) --reread-choices (<bundle> is the "
+                        + "server-side path that remote upload prints for the study's bundle)"),
                 "\(elsewhere.message)")
         }
     }

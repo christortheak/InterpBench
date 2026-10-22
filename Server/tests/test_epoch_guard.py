@@ -128,6 +128,10 @@ def test_analyze_refuses_epoch_mismatch_naming_run_and_hashes(tmp_path):
     # (2026-08-28). It names the real alternative instead.
     assert "allowUnverifiedEpoch" not in message
     assert "measurement verb" in message
+    # Nor does its repair (review 2026-10-22): re-make the run.
+    repair = excinfo.value.repair_action
+    assert "--allow-unverified-epoch" not in repair
+    assert repair.startswith("steerlab-server experiment run study  (a run of the CURRENT")
     # The flag does NOT bypass a stamped mismatch — only unstamped legacy runs.
     with pytest.raises(RuntimeError, match="different manifest epoch"):
         tasks.analyze("study", root=root, allow_unverified_epoch=True)
@@ -135,8 +139,11 @@ def test_analyze_refuses_epoch_mismatch_naming_run_and_hashes(tmp_path):
 
 def test_analyze_refuses_unstamped_run_then_accepts_with_flag(tmp_path):
     root, run_dir = _analyze_fixture(tmp_path, stamp=None)
-    with pytest.raises(RuntimeError, match="allowUnverifiedEpoch"):
+    with pytest.raises(RuntimeError, match="allowUnverifiedEpoch") as excinfo:
         tasks.analyze("study", root=root)
+    # The one case the flag reads, and the repair names the run.
+    assert excinfo.value.repair_action.endswith(
+        f"--source runs/{os.path.basename(run_dir)} --allow-unverified-epoch")
     warnings = []
     out = tasks.analyze("study", root=root, allow_unverified_epoch=True,
                         log=warnings.append)

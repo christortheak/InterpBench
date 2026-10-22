@@ -773,17 +773,12 @@ enum RemoteAnalyze {
     static func submit(
         client: ClusterClient, experiment: String, run: String?, rereadChoices: Bool
     ) async throws -> Submitted {
-        // Whether the engine can choose the run. An unanswered question is
-        // not a refusal: the analysis goes ahead on the newest run, as it
-        // always did, and the message says why.
-        var answered = true
+        // Whether the engine can choose the run. Unanswered, nothing is
+        // submitted: this page asks for this run, and analyzing another
+        // instead is what the question is there to prevent.
         var chosen: String?
-        if let run {
-            if let capabilities = try? await client.capabilities() {
-                if ChoiceReread.supportsSourceRun(capabilities) { chosen = run }
-            } else {
-                answered = false
-            }
+        if let run, ChoiceReread.supportsSourceRun(try await client.capabilities()) {
+            chosen = run
         }
         let jobID = try await client.submitExperimentJobDetailed(
             experiment: experiment, verb: "analyze", rereadChoices: rereadChoices,
@@ -800,11 +795,8 @@ enum RemoteAnalyze {
         return Submitted(
             jobID: jobID,
             message: "submitted analyze job \(jobID) for the study's newest run there, which "
-                + "may not be this one: "
-                + (answered
-                    ? "this server's engine is older than this app; bring it up to date "
-                        + "to analyze a chosen run"
-                    : "the server did not say whether it can analyze a chosen run"))
+                + "may not be this one: this server's engine is older than this app; bring "
+                + "it up to date to analyze a chosen run")
     }
 }
 
