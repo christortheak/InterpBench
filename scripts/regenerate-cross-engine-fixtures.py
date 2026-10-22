@@ -2689,6 +2689,42 @@ def _preregistration_arm_cases() -> list[tuple[str, dict]]:
                 _prereg_condition("fear-band-0", [("fear", 14, 0.8)],
                                   bandWidth=0),
             ])),
+        # A condition states its α units once, when it steers, as an agent
+        # line does: the same α is a different dose as a fraction of the
+        # residual norm and as a raw coefficient. A random matched-norm
+        # control steers, so it states them; a baseline and an ablation-only
+        # arm state none (λ is never scaled), and in a mixed arm the units
+        # are α's alone.
+        ("concept-study-alpha-units", _prereg_manifest(
+            "concept-study-alpha-units",
+            conditions=[
+                _prereg_condition("baseline", []),
+                _prereg_condition("fear-norm", [("fear", 14, 0.8)]),
+                _prereg_condition("fear-raw", [("fear", 14, 2.5)],
+                                  alphaInNormUnits=False),
+                _prereg_condition("fear-norm-random", [("fear", 14, 0.8)],
+                                  controlType="randomMatchedNorm"),
+                _prereg_condition("fear-raw-random", [("fear", 14, 2.5)],
+                                  alphaInNormUnits=False,
+                                  controlType="randomMatchedNorm"),
+                _prereg_condition("fear-raw-band-3", [("fear", 14, 2.5)],
+                                  bandWidth=3, alphaInNormUnits=False),
+                _prereg_condition("fear-norm-calm-ablated",
+                                  [("fear", 14, 0.8),
+                                   ("calm", 10, 0.5, "ablate")]),
+                _prereg_condition("fear-raw-calm-ablated",
+                                  [("fear", 14, 2.5),
+                                   ("calm", 10, 0.5, "ablate")],
+                                  alphaInNormUnits=False),
+                _prereg_condition("calm-ablated-norm",
+                                  [("calm", 10, 0.5, "ablate")]),
+                _prereg_condition("calm-ablated-raw",
+                                  [("calm", 10, 0.5, "ablate")],
+                                  alphaInNormUnits=False),
+                _prereg_condition("calm-ablated-random",
+                                  [("calm", 10, 0.5, "ablate")],
+                                  controlType="randomDirectionAblation"),
+            ])),
         # SAE latent arms run on the server after the ordinary arms.
         ("sae-latent-arms", _prereg_manifest(
             "sae-latent-arms", conditions=[fear_mid],

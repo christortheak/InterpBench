@@ -4213,6 +4213,17 @@ def _preregistration_is_generated(path: str, d: dict) -> bool:
     return False
 
 
+def _preregistration_alpha_units(steers: bool, in_norm_units) -> str:
+    """The α-units clause an arm line ends with: empty when the arm does not
+    steer (λ is never scaled by the residual norm), otherwise which units its
+    α is in. One wording for condition and agent lines alike. Swift twin:
+    ``ExperimentStore.preregistrationAlphaUnits``."""
+    if not steers:
+        return ""
+    return ("; α in residual-norm units" if in_norm_units
+            else "; raw α (not scaled by the residual norm)")
+
+
 def _preregistration_arms(d: dict) -> tuple[list[str], list[str]]:
     """The Conditions section: one line per arm a run of ``d`` EXECUTES, in
     run order, plus the names of declared arms the run will not execute.
@@ -4269,14 +4280,25 @@ def _preregistration_arms(d: dict) -> tuple[list[str], list[str]]:
         half = max(0, width // 2)
         band = (f" (band width {width}: ±{half} "
                 f"layer{'' if half == 1 else 's'})" if half else "")
+        condition_slots = condition.get("slots") or []
         slots = ", ".join(
             f"{s.get('concept')} ablated λ={s.get('alpha')} at every layer"
             if s.get("mode") == "ablate" else
             f"{s.get('concept')}@L{s.get('layer')} α={s.get('alpha')}{band}"
-            for s in condition.get("slots") or []) or "none (baseline)"
+            for s in condition_slots) or "none (baseline)"
+        # The condition's α units, stated once, as an agent line states its
+        # own: the same α reads as a fraction of the residual norm or as a
+        # raw coefficient, and the two are different doses (review
+        # 2026-10-21, F2). They scale steering slots only — λ is never scaled
+        # (condition_injections) — so a baseline or an ablation-only arm
+        # states none. An absent alphaInNormUnits reads as raw α, as
+        # ``Manifest.from_dict`` reads it.
+        units = _preregistration_alpha_units(
+            any(s.get("mode") != "ablate" for s in condition_slots),
+            condition.get("alphaInNormUnits", False))
         control = condition.get("controlType")
         suffix = f" [{control}]" if control else ""
-        lines.append(f"- **{condition.get('name')}**{suffix}: {slots}")
+        lines.append(f"- **{condition.get('name')}**{suffix}: {slots}{units}")
     for vc in variants:
         reference = vc.get("fromPromotion")
         if isinstance(reference, dict):
@@ -4302,12 +4324,9 @@ def _preregistration_arms(d: dict) -> tuple[list[str], list[str]]:
         band = (f" (band width {width}: ±{half} "
                 f"layer{'' if half == 1 else 's'})" if half else "")
         injections = artifact.get("injections") or []
-        steers = any(injection.get("mode") != "ablate"
-                     for injection in injections)
-        units = ("" if not steers
-                 else "; α in residual-norm units"
-                 if artifact.get("alphaInNormUnits", False)
-                 else "; raw α (not scaled by the residual norm)")
+        units = _preregistration_alpha_units(
+            any(injection.get("mode") != "ablate" for injection in injections),
+            artifact.get("alphaInNormUnits", False))
         parts = []
         for injection in injections:
             if injection.get("mode") == "ablate":

@@ -13,9 +13,12 @@ An injection condition's slot line also says what the run does with the slot:
 an ablating slot reads ``<concept> ablated λ=<λ> at every layer`` (so λ=1
 ablation no longer reads like α=1 steering at one layer), and a steering slot
 in a condition whose band widens it says by how much. An agent line says the
-same of each steering injection when the agent's band widens it, and states
-the agent's α units once, when the agent steers: ``α in residual-norm units``
-or ``raw α (not scaled by the residual norm)``.
+same of each steering injection when the agent's band widens it. Both kinds of
+line state the arm's α units once, when the arm steers: ``α in residual-norm
+units`` or ``raw α (not scaled by the residual norm)``. A baseline or an
+ablation-only arm states none, because λ is never scaled by the residual norm
+(review 2026-10-21, F2: a condition line used to print ``α=0.8`` alike for a
+fraction of the residual norm and for a raw coefficient).
 
 ``Tests/Fixtures/cross-engine/preregistration-arms.json`` holds the section
 this engine writes for each study shape; the Swift twin
@@ -42,9 +45,13 @@ SHAPES = {
     "agent-interventions", "agent-band-and-units", "agent-ablation-layer-subset",
     "concept-study-implicit-baseline",
     "concept-study-declared-baseline", "concept-study-ablation",
-    "concept-study-band-width", "sae-latent-arms", "multi-agent-panel",
+    "concept-study-band-width", "concept-study-alpha-units",
+    "sae-latent-arms", "multi-agent-panel",
     "multi-agent-panel-without-baseline",
 }
+
+NORM = "; α in residual-norm units"
+RAW = "; raw α (not scaled by the residual norm)"
 
 
 def _cases():
@@ -226,21 +233,23 @@ def test_a_concept_study_reads_as_before_apart_from_the_implicit_baseline(
     declared = _section(_render(
         tmp_path, _case("concept-study-declared-baseline")["manifest"]))
     assert declared == ("- **baseline**: none (baseline)\n"
-                        "- **fear-mid**: fear@L14 α=0.8")
+                        "- **fear-mid**: fear@L14 α=0.8; "
+                        "α in residual-norm units")
     implicit = _section(_render(
         tmp_path, _case("concept-study-implicit-baseline")["manifest"]))
     assert implicit == ("- **baseline**: none (baseline, run implicitly)\n"
-                        "- **fear-mid**: fear@L14 α=0.8\n"
+                        "- **fear-mid**: fear@L14 α=0.8; "
+                        "α in residual-norm units\n"
                         "- **fear-mid-random** [randomMatchedNorm]: "
-                        "fear@L14 α=0.8")
+                        "fear@L14 α=0.8; α in residual-norm units")
 
 
 def test_an_ablating_slot_never_reads_like_a_steering_slot(tmp_path):
     assert _section(_render(
         tmp_path, _case("concept-study-ablation")["manifest"])).split("\n") == [
         "- **baseline**: none (baseline, run implicitly)",
-        "- **fear-mid**: fear@L14 α=0.8",
-        "- **fear-steer-1**: fear@L14 α=1",
+        "- **fear-mid**: fear@L14 α=0.8; α in residual-norm units",
+        "- **fear-steer-1**: fear@L14 α=1; α in residual-norm units",
         "- **fear-ablate**: fear ablated λ=1 at every layer",
         "- **fear-ablate-random** [randomDirectionAblation]: "
         "fear ablated λ=1 at every layer",
@@ -253,19 +262,78 @@ def test_a_band_wider_than_one_layer_is_stated_on_each_steering_slot(
         tmp_path, _case("concept-study-band-width")["manifest"])).split("\n") \
         == [
         "- **baseline**: none (baseline, run implicitly)",
-        "- **fear-band-3**: fear@L14 α=0.8 (band width 3: ±1 layer)",
-        "- **fear-band-2**: fear@L14 α=0.8 (band width 2: ±1 layer)",
+        "- **fear-band-3**: fear@L14 α=0.8 (band width 3: ±1 layer); "
+        "α in residual-norm units",
+        "- **fear-band-2**: fear@L14 α=0.8 (band width 2: ±1 layer); "
+        "α in residual-norm units",
         "- **fear-calm-band-5**: fear@L14 α=0.8 (band width 5: ±2 layers), "
-        "calm@L10 α=0.25 (band width 5: ±2 layers)",
+        "calm@L10 α=0.25 (band width 5: ±2 layers); α in residual-norm units",
         "- **fear-band-3-calm-ablated**: fear@L14 α=0.8 "
-        "(band width 3: ±1 layer), calm ablated λ=0.5 at every layer",
-        "- **fear-band-0**: fear@L14 α=0.8",
+        "(band width 3: ±1 layer), calm ablated λ=0.5 at every layer; "
+        "α in residual-norm units",
+        "- **fear-band-0**: fear@L14 α=0.8; α in residual-norm units",
     ]
 
 
-def test_each_slot_line_names_the_layers_the_run_injects():
+def test_a_condition_line_states_its_alpha_units_only_when_it_steers(
+        tmp_path):
+    """Review 2026-10-21, F2: the same α is a different dose as a fraction of
+    the residual norm and as a raw coefficient, so a condition that steers
+    says which, once, as an agent line does. A random matched-norm control
+    steers. A baseline and an ablation-only arm state no units (λ is never
+    scaled), and in a mixed arm the units are α's alone. Each line below is
+    written out by hand, not derived from the writer."""
+    assert _section(_render(
+        tmp_path, _case("concept-study-alpha-units")["manifest"])).split("\n") \
+        == [
+        "- **baseline**: none (baseline)",
+        "- **fear-norm**: fear@L14 α=0.8; α in residual-norm units",
+        "- **fear-raw**: fear@L14 α=2.5; "
+        "raw α (not scaled by the residual norm)",
+        "- **fear-norm-random** [randomMatchedNorm]: fear@L14 α=0.8; "
+        "α in residual-norm units",
+        "- **fear-raw-random** [randomMatchedNorm]: fear@L14 α=2.5; "
+        "raw α (not scaled by the residual norm)",
+        "- **fear-raw-band-3**: fear@L14 α=2.5 (band width 3: ±1 layer); "
+        "raw α (not scaled by the residual norm)",
+        "- **fear-norm-calm-ablated**: fear@L14 α=0.8, "
+        "calm ablated λ=0.5 at every layer; α in residual-norm units",
+        "- **fear-raw-calm-ablated**: fear@L14 α=2.5, "
+        "calm ablated λ=0.5 at every layer; "
+        "raw α (not scaled by the residual norm)",
+        "- **calm-ablated-norm**: calm ablated λ=0.5 at every layer",
+        "- **calm-ablated-raw**: calm ablated λ=0.5 at every layer",
+        "- **calm-ablated-random** [randomDirectionAblation]: "
+        "calm ablated λ=0.5 at every layer",
+    ]
+
+
+def test_a_condition_without_declared_units_reads_as_raw_alpha(tmp_path):
+    """A legacy condition document that never declared ``alphaInNormUnits``
+    runs as raw α on this engine (``Manifest.from_dict``), so its line says
+    raw α rather than guessing the convention. The Mac engine refuses to
+    open such a manifest at all, so this shape has no cross-engine case."""
+    manifest = json.loads(json.dumps(
+        _case("concept-study-declared-baseline")["manifest"]))
+    manifest["name"] = "legacy-units"
+    for condition in manifest["conditions"]:
+        del condition["alphaInNormUnits"]
+    assert Manifest.from_dict(manifest).conditions[1].alpha_in_norm_units \
+        is False
+    assert _section(_render(tmp_path, manifest)).split("\n") == [
+        "- **baseline**: none (baseline)",
+        "- **fear-mid**: fear@L14 α=0.8; "
+        "raw α (not scaled by the residual norm)",
+    ]
+
+
+def test_each_slot_line_names_the_layers_and_units_the_run_injects():
     """The wording is read off the run's own cell builder: the layers a slot
-    line names are the layers ``condition_injections`` injects it at."""
+    line names are the layers ``condition_injections`` injects it at, and the
+    stated α units are the scale it applies. A residual norm of 10 over a
+    vector norm of 5 doubles an α in residual-norm units and leaves a raw α
+    as given; λ is never scaled, and a line states units exactly when its
+    condition steers."""
     import warnings
 
     from steerlab_server.experiment.condition_execution import \
@@ -277,13 +345,15 @@ def test_each_slot_line_names_the_layers_the_run_injects():
     layer_count = 32
     bundle = ConceptVectorBundle(
         vectors=ConceptVectors(per_layer=[[3.0, 4.0, 0.0]] * layer_count),
-        residual_norm_per_layer=[1.0] * layer_count,
+        residual_norm_per_layer=[10.0] * layer_count,
         residual_norm_source="neutral-corpus", stimulus_hash="h" * 64,
         neutral_mean_per_layer=[[0.0, 0.0, 1.0]] * layer_count)
     slot_pattern = re.compile(
-        r"(\w+)(?: ablated λ=\S+ at (every layer)"
-        r"|@L(\d+) α=\S+(?: \(band width -?\d+: ±(\d+) layers?\))?)")
-    for label in ("concept-study-ablation", "concept-study-band-width"):
+        r"(\w+)(?: ablated λ=([^\s;,]+) at (every layer)"
+        r"|@L(\d+) α=([^\s;,]+)(?: \(band width -?\d+: ±(\d+) layers?\))?)")
+    checked = 0
+    for label in ("concept-study-ablation", "concept-study-band-width",
+                  "concept-study-alpha-units"):
         case = _case(label)
         lines = {re.match(r"- \*\*(.+?)\*\*", line).group(1): line
                  for line in case["conditionsSection"].split("\n")}
@@ -292,20 +362,33 @@ def test_each_slot_line_names_the_layers_the_run_injects():
                 warnings.simplefilter("ignore")
                 cells = condition_injections(
                     condition, {"fear": bundle, "calm": bundle})
-            stated = slot_pattern.findall(
-                lines[condition.name].split(": ", 1)[1])
+            line = lines[condition.name]
+            stated = slot_pattern.findall(line.split(": ", 1)[1].split(";")[0])
             assert [concept for concept, *_ in stated] \
                 == [slot.concept for slot in condition.slots], condition.name
-            for concept, every, layer, half in stated:
-                injected = sorted(cell.layer for cell in cells
-                                  if cell.concept == concept)
+            norm, raw = line.endswith(NORM), line.endswith(RAW)
+            steers = any(not slot.is_ablation for slot in condition.slots)
+            assert (norm or raw) == steers, condition.name
+            assert not steers or norm == condition.alpha_in_norm_units, \
+                condition.name
+            for concept, lam, every, layer, alpha, half in stated:
+                mine = [cell for cell in cells if cell.concept == concept]
                 if every:
                     named = list(range(layer_count))
+                    assert all(cell.mode == "ablate" for cell in mine)
+                    expected = float(lam)
                 else:
                     width = int(half or 0)
                     named = list(range(int(layer) - width,
                                        int(layer) + width + 1))
-                assert injected == named, (label, condition.name, concept)
+                    assert all(cell.mode == "add" for cell in mine)
+                    expected = float(alpha) * (2.0 if norm else 1.0)
+                assert sorted(cell.layer for cell in mine) == named, \
+                    (label, condition.name, concept)
+                assert all(abs(cell.alpha - expected) < 1e-6
+                           for cell in mine), (label, condition.name, concept)
+            checked += 1
+    assert checked == 20
 
 
 def test_a_generated_summary_stating_ablations_is_still_provably_ours(

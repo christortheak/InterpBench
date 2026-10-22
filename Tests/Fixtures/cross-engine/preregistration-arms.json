@@ -610,7 +610,7 @@
     }
   },
   {
-    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **fear-mid**: fear@L14 \u03b1=0.8\n- **fear-mid-random** [randomMatchedNorm]: fear@L14 \u03b1=0.8",
+    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **fear-mid**: fear@L14 \u03b1=0.8; \u03b1 in residual-norm units\n- **fear-mid-random** [randomMatchedNorm]: fear@L14 \u03b1=0.8; \u03b1 in residual-norm units",
     "label": "concept-study-implicit-baseline",
     "manifest": {
       "concepts": [],
@@ -660,7 +660,7 @@
     }
   },
   {
-    "conditionsSection": "- **baseline**: none (baseline)\n- **fear-mid**: fear@L14 \u03b1=0.8",
+    "conditionsSection": "- **baseline**: none (baseline)\n- **fear-mid**: fear@L14 \u03b1=0.8; \u03b1 in residual-norm units",
     "label": "concept-study-declared-baseline",
     "manifest": {
       "concepts": [],
@@ -703,7 +703,7 @@
     }
   },
   {
-    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **fear-mid**: fear@L14 \u03b1=0.8\n- **fear-steer-1**: fear@L14 \u03b1=1\n- **fear-ablate**: fear ablated \u03bb=1 at every layer\n- **fear-ablate-random** [randomDirectionAblation]: fear ablated \u03bb=1 at every layer",
+    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **fear-mid**: fear@L14 \u03b1=0.8; \u03b1 in residual-norm units\n- **fear-steer-1**: fear@L14 \u03b1=1; \u03b1 in residual-norm units\n- **fear-ablate**: fear ablated \u03bb=1 at every layer\n- **fear-ablate-random** [randomDirectionAblation]: fear ablated \u03bb=1 at every layer",
     "label": "concept-study-ablation",
     "manifest": {
       "concepts": [],
@@ -779,7 +779,7 @@
     }
   },
   {
-    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **fear-band-3**: fear@L14 \u03b1=0.8 (band width 3: \u00b11 layer)\n- **fear-band-2**: fear@L14 \u03b1=0.8 (band width 2: \u00b11 layer)\n- **fear-calm-band-5**: fear@L14 \u03b1=0.8 (band width 5: \u00b12 layers), calm@L10 \u03b1=0.25 (band width 5: \u00b12 layers)\n- **fear-band-3-calm-ablated**: fear@L14 \u03b1=0.8 (band width 3: \u00b11 layer), calm ablated \u03bb=0.5 at every layer\n- **fear-band-0**: fear@L14 \u03b1=0.8",
+    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **fear-band-3**: fear@L14 \u03b1=0.8 (band width 3: \u00b11 layer); \u03b1 in residual-norm units\n- **fear-band-2**: fear@L14 \u03b1=0.8 (band width 2: \u00b11 layer); \u03b1 in residual-norm units\n- **fear-calm-band-5**: fear@L14 \u03b1=0.8 (band width 5: \u00b12 layers), calm@L10 \u03b1=0.25 (band width 5: \u00b12 layers); \u03b1 in residual-norm units\n- **fear-band-3-calm-ablated**: fear@L14 \u03b1=0.8 (band width 3: \u00b11 layer), calm ablated \u03bb=0.5 at every layer; \u03b1 in residual-norm units\n- **fear-band-0**: fear@L14 \u03b1=0.8; \u03b1 in residual-norm units",
     "label": "concept-study-band-width",
     "manifest": {
       "concepts": [],
@@ -875,7 +875,176 @@
     }
   },
   {
-    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **fear-mid**: fear@L14 \u03b1=0.8\n- **clamp-42** (SAE latent): gemma-scope-2b-pt-res/layer_12/width_16k/average_l0_82 feature 42 at L12, mode clamp, \u03b2=0.5 (latent units)\n- **add-7** (SAE latent): gemma-scope-2b-pt-res/layer_6/width_16k/average_l0_70 feature 7, mode add, \u03b2=2.5 (latent units)",
+    "conditionsSection": "- **baseline**: none (baseline)\n- **fear-norm**: fear@L14 \u03b1=0.8; \u03b1 in residual-norm units\n- **fear-raw**: fear@L14 \u03b1=2.5; raw \u03b1 (not scaled by the residual norm)\n- **fear-norm-random** [randomMatchedNorm]: fear@L14 \u03b1=0.8; \u03b1 in residual-norm units\n- **fear-raw-random** [randomMatchedNorm]: fear@L14 \u03b1=2.5; raw \u03b1 (not scaled by the residual norm)\n- **fear-raw-band-3**: fear@L14 \u03b1=2.5 (band width 3: \u00b11 layer); raw \u03b1 (not scaled by the residual norm)\n- **fear-norm-calm-ablated**: fear@L14 \u03b1=0.8, calm ablated \u03bb=0.5 at every layer; \u03b1 in residual-norm units\n- **fear-raw-calm-ablated**: fear@L14 \u03b1=2.5, calm ablated \u03bb=0.5 at every layer; raw \u03b1 (not scaled by the residual norm)\n- **calm-ablated-norm**: calm ablated \u03bb=0.5 at every layer\n- **calm-ablated-raw**: calm ablated \u03bb=0.5 at every layer\n- **calm-ablated-random** [randomDirectionAblation]: calm ablated \u03bb=0.5 at every layer",
+    "label": "concept-study-alpha-units",
+    "manifest": {
+      "concepts": [],
+      "conditions": [
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "name": "baseline",
+          "slots": []
+        },
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "name": "fear-norm",
+          "slots": [
+            {
+              "alpha": 0.8,
+              "concept": "fear",
+              "layer": 14
+            }
+          ]
+        },
+        {
+          "alphaInNormUnits": false,
+          "bandWidth": 1,
+          "name": "fear-raw",
+          "slots": [
+            {
+              "alpha": 2.5,
+              "concept": "fear",
+              "layer": 14
+            }
+          ]
+        },
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "controlType": "randomMatchedNorm",
+          "name": "fear-norm-random",
+          "slots": [
+            {
+              "alpha": 0.8,
+              "concept": "fear",
+              "layer": 14
+            }
+          ]
+        },
+        {
+          "alphaInNormUnits": false,
+          "bandWidth": 1,
+          "controlType": "randomMatchedNorm",
+          "name": "fear-raw-random",
+          "slots": [
+            {
+              "alpha": 2.5,
+              "concept": "fear",
+              "layer": 14
+            }
+          ]
+        },
+        {
+          "alphaInNormUnits": false,
+          "bandWidth": 3,
+          "name": "fear-raw-band-3",
+          "slots": [
+            {
+              "alpha": 2.5,
+              "concept": "fear",
+              "layer": 14
+            }
+          ]
+        },
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "name": "fear-norm-calm-ablated",
+          "slots": [
+            {
+              "alpha": 0.8,
+              "concept": "fear",
+              "layer": 14
+            },
+            {
+              "alpha": 0.5,
+              "concept": "calm",
+              "layer": 10,
+              "mode": "ablate"
+            }
+          ]
+        },
+        {
+          "alphaInNormUnits": false,
+          "bandWidth": 1,
+          "name": "fear-raw-calm-ablated",
+          "slots": [
+            {
+              "alpha": 2.5,
+              "concept": "fear",
+              "layer": 14
+            },
+            {
+              "alpha": 0.5,
+              "concept": "calm",
+              "layer": 10,
+              "mode": "ablate"
+            }
+          ]
+        },
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "name": "calm-ablated-norm",
+          "slots": [
+            {
+              "alpha": 0.5,
+              "concept": "calm",
+              "layer": 10,
+              "mode": "ablate"
+            }
+          ]
+        },
+        {
+          "alphaInNormUnits": false,
+          "bandWidth": 1,
+          "name": "calm-ablated-raw",
+          "slots": [
+            {
+              "alpha": 0.5,
+              "concept": "calm",
+              "layer": 10,
+              "mode": "ablate"
+            }
+          ]
+        },
+        {
+          "alphaInNormUnits": true,
+          "bandWidth": 1,
+          "controlType": "randomDirectionAblation",
+          "name": "calm-ablated-random",
+          "slots": [
+            {
+              "alpha": 0.5,
+              "concept": "calm",
+              "layer": 10,
+              "mode": "ablate"
+            }
+          ]
+        }
+      ],
+      "createdAt": "2026-10-19T00:00:00Z",
+      "experimentDescription": "",
+      "freezeHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "frozenAt": "2026-10-19T00:00:00Z",
+      "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+      "modelID": "test/model",
+      "modelRevision": "abc123",
+      "multiAgentIncludeBaseline": true,
+      "name": "concept-study-alpha-units",
+      "seeds": [
+        20260610
+      ],
+      "status": "frozen",
+      "studyKind": "modelOutput",
+      "temperature": 0,
+      "variantConditions": []
+    }
+  },
+  {
+    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **fear-mid**: fear@L14 \u03b1=0.8; \u03b1 in residual-norm units\n- **clamp-42** (SAE latent): gemma-scope-2b-pt-res/layer_12/width_16k/average_l0_82 feature 42 at L12, mode clamp, \u03b2=0.5 (latent units)\n- **add-7** (SAE latent): gemma-scope-2b-pt-res/layer_6/width_16k/average_l0_70 feature 7, mode add, \u03b2=2.5 (latent units)",
     "label": "sae-latent-arms",
     "manifest": {
       "concepts": [],

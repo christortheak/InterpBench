@@ -46,6 +46,22 @@ migration that rewrites frozen bytes.
   `~/.local/bin/steerlab-cli`, and updates keep the link working. It never
   replaces a file that is not SteerLab's, and never uses the name `steerlab`,
   which belongs to the app-free client.
+- **The preregistration summary states each condition's α units.** A
+  condition that steers now ends its line in the summary written at freeze
+  with `α in residual-norm units` or `raw α (not scaled by the residual
+  norm)`, the wording agent lines already used. Before, `fear@L14 α=0.8` read
+  the same whether 0.8 was a fraction of the residual-stream norm or a raw
+  coefficient, and those are very different doses. Random matched-norm
+  controls are labelled too, because they steer. Baselines and ablation-only
+  arms carry no label, because ablation strength is never scaled by the
+  residual norm, and in an arm that both steers and ablates the label covers
+  the steering α only. The Mac app, `steerlab-cli`, and the server write the
+  same text. Only new freezes change: studies already frozen, and their
+  summaries, are untouched.
+- **The Playground explains its starting α correctly.** For a vector with no
+  promoted strength, the note beside the default α of 0.1 now says it is a
+  tenth of a residual-stream norm, the convention's starting fraction. It
+  used to say one residual-stream norm.
 
 ## [0.9.13] — 2026-10-21
 

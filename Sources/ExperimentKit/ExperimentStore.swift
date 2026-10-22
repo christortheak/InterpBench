@@ -7852,6 +7852,17 @@ public enum ExperimentStore {
             : "\(value)"
     }
 
+    /// The α-units clause an arm line ends with: empty when the arm does not
+    /// steer (λ is never scaled by the residual norm), otherwise which units
+    /// its α is in. One wording for condition and agent lines alike. Server
+    /// twin: `_preregistration_alpha_units` (experiment_store.py).
+    static func preregistrationAlphaUnits(steers: Bool, inNormUnits: Bool) -> String {
+        guard steers else { return "" }
+        return inNormUnits
+            ? "; α in residual-norm units"
+            : "; raw α (not scaled by the residual norm)"
+    }
+
     /// The Conditions section: one line per arm a run of this manifest
     /// EXECUTES, in run order, plus the names of declared arms the run will
     /// not execute.
@@ -7927,10 +7938,19 @@ public enum ExperimentStore {
                             + "α=\(format(slot.alpha))\(band)"
                 }
                 .joined(separator: ", ")
+            // The condition's α units, stated once, as an agent line states
+            // its own: the same α reads as a fraction of the residual norm or
+            // as a raw coefficient, and the two are different doses (review
+            // 2026-10-21, F2). They scale steering slots only — λ is never
+            // scaled (`ExperimentTasks.injections(for:extractions:)`) — so a
+            // baseline or an ablation-only arm states none.
+            let units = preregistrationAlphaUnits(
+                steers: condition.slots.contains { $0.effectiveMode != .ablate },
+                inNormUnits: condition.alphaInNormUnits)
             let suffix = condition.controlType.map { " [\($0)]" } ?? ""
             lines.append(
                 "- **\(condition.name)**\(suffix): "
-                    + (slots.isEmpty ? "none (baseline)" : slots))
+                    + (slots.isEmpty ? "none (baseline)" : slots) + units)
         }
         for variant in manifest.variantConditions {
             if let reference = variant.fromPromotion {
@@ -7954,12 +7974,9 @@ public enum ExperimentStore {
                 ? ""
                 : " (band width \(artifact.bandWidth): ±\(half) "
                     + "layer\(half == 1 ? "" : "s"))"
-            let steers = artifact.injections.contains { $0.effectiveMode != .ablate }
-            let units = !steers
-                ? ""
-                : artifact.alphaInNormUnits
-                    ? "; α in residual-norm units"
-                    : "; raw α (not scaled by the residual norm)"
+            let units = preregistrationAlphaUnits(
+                steers: artifact.injections.contains { $0.effectiveMode != .ablate },
+                inNormUnits: artifact.alphaInNormUnits)
             var parts = artifact.injections.map { injection -> String in
                 guard injection.effectiveMode == .ablate else {
                     return "\(injection.concept)@L\(injection.layer) "

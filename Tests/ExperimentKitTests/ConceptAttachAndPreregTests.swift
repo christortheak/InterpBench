@@ -271,9 +271,11 @@ extension ExperimentStoreTests {
                 "- **Sampling:** temperature 0.7, samplesPerItem 5, "
                     + "seedPolicy derivedSHA256"))
         #expect(text.contains("- **baseline**: none (baseline)"))
-        #expect(text.contains("- **fear-mid**: fear@L14 α=0.8"))
+        #expect(text.contains("- **fear-mid**: fear@L14 α=0.8; α in residual-norm units\n"))
         #expect(
-            text.contains("- **fear-mid-random** [randomMatchedNorm]: fear@L14 α=0.8"))
+            text.contains(
+                "- **fear-mid-random** [randomMatchedNorm]: fear@L14 α=0.8; "
+                    + "α in residual-norm units\n"))
         #expect(text.contains("- FDR threshold: 0.05"))
         #expect(text.contains("- Capability gate: battery within 0.05 of baseline"))
         #expect(

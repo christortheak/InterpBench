@@ -76,7 +76,7 @@ import Testing
 
     // MARK: Row 2 — norms, no recommendation
 
-    @Test func normsWithoutARecommendationDefaultsToOneNormUnitNotTwo() {
+    @Test func normsWithoutARecommendationDefaultsToATenthOfANormNotTwo() {
         let decision = SlotAlphaDefault.decide(
             facts(norms: 42, convention: ResidualNormConvention.perTextMean))
 
@@ -84,6 +84,13 @@ import Testing
         #expect(decision.alpha != 2)  // the reported bug, pinned
         #expect(decision.units == .normUnits)
         #expect(decision.alphaLabel == "α in residual-norm units at L18")
+        // The rationale says what the number is: a tenth of a norm, not a
+        // whole one (review 2026-10-21, N2).
+        #expect(
+            decision.rationale
+                == "α 0.1 residual-norm units — a tenth of a residual-stream "
+                + "norm, the convention's starting fraction; this artifact has "
+                + "no promoted cell to inherit")
         #expect(decision.conventionNote == "perTextMean-v1")
         #expect(decision.backfillHint == nil)
     }

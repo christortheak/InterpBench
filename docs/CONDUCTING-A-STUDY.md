@@ -551,8 +551,13 @@ direction from the whole network, whatever layer the slot names. A steering
 slot whose condition has a band width of 2 or more says how far the band
 reaches, as in `fear@L14 α=0.8 (band width 3: ±1 layer)`. An agent's line
 says the same of each steering injection when the agent's band width is 2 or
-more, and, when the agent steers, states its α units once, as
-`α in residual-norm units` or `raw α (not scaled by the residual norm)`.
+more. A condition's line and an agent's line both state the arm's α units
+once, when the arm steers, as `α in residual-norm units` or
+`raw α (not scaled by the residual norm)`, because the same α is a different
+dose in each. A random matched-norm control steers, so its line states them
+too. A baseline, and an arm that only ablates, states none, because λ is
+never scaled by the residual norm; in an arm that both steers and ablates,
+the units belong to its α alone.
 
 A preserved preregistration is then **frozen like any other pinned input**:
 its SHA-256 is stamped into the manifest, it is snapshotted into

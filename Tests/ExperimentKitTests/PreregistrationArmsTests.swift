@@ -19,8 +19,12 @@ import Testing
 /// λ=1 ablation no longer reads like α=1 steering at one layer), and a
 /// steering slot in a condition whose band widens it says by how much. An
 /// agent line says the same of each steering injection when the agent's band
-/// widens it, and states the agent's α units once, when the agent steers:
-/// `α in residual-norm units` or `raw α (not scaled by the residual norm)`.
+/// widens it. Both kinds of line state the arm's α units once, when the arm
+/// steers: `α in residual-norm units` or `raw α (not scaled by the residual
+/// norm)`. A baseline or an ablation-only arm states none, because λ is never
+/// scaled by the residual norm (review 2026-10-21, F2: a condition line used
+/// to print `α=0.8` alike for a fraction of the residual norm and for a raw
+/// coefficient).
 ///
 /// The sections in `Tests/Fixtures/cross-engine/preregistration-arms.json`
 /// were written by the PYTHON engine's freeze; this engine must render the
@@ -33,9 +37,12 @@ extension ExperimentStoreTests {
         "agent-interventions", "agent-band-and-units", "agent-ablation-layer-subset",
         "concept-study-implicit-baseline",
         "concept-study-declared-baseline", "concept-study-ablation",
-        "concept-study-band-width", "sae-latent-arms",
+        "concept-study-band-width", "concept-study-alpha-units", "sae-latent-arms",
         "multi-agent-panel", "multi-agent-panel-without-baseline",
     ]
+
+    private static let normClause = "; α in residual-norm units"
+    private static let rawClause = "; raw α (not scaled by the residual norm)"
 
     private struct ArmCase {
         let label: String
@@ -261,8 +268,8 @@ extension ExperimentStoreTests {
                 try conditionsSection(ExperimentStore.preregistrationMarkdown(manifest))
                     .split(separator: "\n").map(String.init) == [
                         "- **baseline**: none (baseline, run implicitly)",
-                        "- **fear-mid**: fear@L14 α=0.8",
-                        "- **fear-steer-1**: fear@L14 α=1",
+                        "- **fear-mid**: fear@L14 α=0.8; α in residual-norm units",
+                        "- **fear-steer-1**: fear@L14 α=1; α in residual-norm units",
                         "- **fear-ablate**: fear ablated λ=1 at every layer",
                         "- **fear-ablate-random** [randomDirectionAblation]: "
                             + "fear ablated λ=1 at every layer",
@@ -278,32 +285,78 @@ extension ExperimentStoreTests {
                 try conditionsSection(ExperimentStore.preregistrationMarkdown(manifest))
                     .split(separator: "\n").map(String.init) == [
                         "- **baseline**: none (baseline, run implicitly)",
-                        "- **fear-band-3**: fear@L14 α=0.8 (band width 3: ±1 layer)",
-                        "- **fear-band-2**: fear@L14 α=0.8 (band width 2: ±1 layer)",
+                        "- **fear-band-3**: fear@L14 α=0.8 (band width 3: ±1 layer); "
+                            + "α in residual-norm units",
+                        "- **fear-band-2**: fear@L14 α=0.8 (band width 2: ±1 layer); "
+                            + "α in residual-norm units",
                         "- **fear-calm-band-5**: fear@L14 α=0.8 (band width 5: ±2 layers), "
-                            + "calm@L10 α=0.25 (band width 5: ±2 layers)",
+                            + "calm@L10 α=0.25 (band width 5: ±2 layers); "
+                            + "α in residual-norm units",
                         "- **fear-band-3-calm-ablated**: fear@L14 α=0.8 "
-                            + "(band width 3: ±1 layer), calm ablated λ=0.5 at every layer",
-                        "- **fear-band-0**: fear@L14 α=0.8",
+                            + "(band width 3: ±1 layer), calm ablated λ=0.5 at every layer; "
+                            + "α in residual-norm units",
+                        "- **fear-band-0**: fear@L14 α=0.8; α in residual-norm units",
+                    ])
+        }
+    }
+
+    /// Review 2026-10-21, F2: the same α is a different dose as a fraction of
+    /// the residual norm and as a raw coefficient, so a condition that steers
+    /// says which, once, as an agent line does. A random matched-norm control
+    /// steers. A baseline and an ablation-only arm state no units (λ is never
+    /// scaled), and in a mixed arm the units are α's alone. Each line below
+    /// is written out by hand, not derived from the writer.
+    @Test func aConditionLineStatesItsAlphaUnitsOnlyWhenItSteers() throws {
+        try withTempRoot {
+            let manifest = try #require(
+                try armCases().first { $0.label == "concept-study-alpha-units" }).manifest
+            #expect(
+                try conditionsSection(ExperimentStore.preregistrationMarkdown(manifest))
+                    .split(separator: "\n").map(String.init) == [
+                        "- **baseline**: none (baseline)",
+                        "- **fear-norm**: fear@L14 α=0.8; α in residual-norm units",
+                        "- **fear-raw**: fear@L14 α=2.5; "
+                            + "raw α (not scaled by the residual norm)",
+                        "- **fear-norm-random** [randomMatchedNorm]: fear@L14 α=0.8; "
+                            + "α in residual-norm units",
+                        "- **fear-raw-random** [randomMatchedNorm]: fear@L14 α=2.5; "
+                            + "raw α (not scaled by the residual norm)",
+                        "- **fear-raw-band-3**: fear@L14 α=2.5 (band width 3: ±1 layer); "
+                            + "raw α (not scaled by the residual norm)",
+                        "- **fear-norm-calm-ablated**: fear@L14 α=0.8, "
+                            + "calm ablated λ=0.5 at every layer; α in residual-norm units",
+                        "- **fear-raw-calm-ablated**: fear@L14 α=2.5, "
+                            + "calm ablated λ=0.5 at every layer; "
+                            + "raw α (not scaled by the residual norm)",
+                        "- **calm-ablated-norm**: calm ablated λ=0.5 at every layer",
+                        "- **calm-ablated-raw**: calm ablated λ=0.5 at every layer",
+                        "- **calm-ablated-random** [randomDirectionAblation]: "
+                            + "calm ablated λ=0.5 at every layer",
                     ])
         }
     }
 
     /// The wording is read off this engine's own cell builder: the layers a
     /// slot line names are the layers `ExperimentTasks.injections(for:
-    /// extractions:)` injects it at.
-    @Test func eachSlotLineNamesTheLayersTheRunInjects() throws {
+    /// extractions:)` injects it at, and the stated α units are the scale it
+    /// applies. A residual norm of 10 over a vector norm of 5 doubles an α in
+    /// residual-norm units and leaves a raw α as given; λ is never scaled,
+    /// and a line states units exactly when its condition steers.
+    @Test func eachSlotLineNamesTheLayersAndUnitsTheRunInjects() throws {
         let layerCount = 32
         let extraction = ExperimentTasks.ConceptExtraction(
             result: ExtractionResult(
                 vectors: ConceptVectors(
                     perLayer: (0 ..< layerCount).map { _ in [3, 4, 0] }),
-                residualNormPerLayer: Array(repeating: 1, count: layerCount),
+                residualNormPerLayer: Array(repeating: 10, count: layerCount),
                 residualNormSource: "neutral-corpus",
                 options: ExtractionOptions(method: .meanDifference)),
             stimuli: nil)
-        let slotPattern = /(\w+)(?: ablated λ=\S+ at (every layer)|@L(\d+) α=\S+(?: \(band width -?\d+: ±(\d+) layers?\))?)/
-        for label in ["concept-study-ablation", "concept-study-band-width"] {
+        let slotPattern = /(\w+)(?: ablated λ=([^\s;,]+) at (every layer)|@L(\d+) α=([^\s;,]+)(?: \(band width -?\d+: ±(\d+) layers?\))?)/
+        var checked = 0
+        for label in [
+            "concept-study-ablation", "concept-study-band-width", "concept-study-alpha-units",
+        ] {
             let armCase = try #require(try armCases().first { $0.label == label })
             var lines: [String: String] = [:]
             for line in armCase.conditionsSection.split(separator: "\n") {
@@ -315,26 +368,46 @@ extension ExperimentStoreTests {
                     for: condition,
                     extractions: ["fear": extraction, "calm": extraction])
                 let line = try #require(lines[condition.name])
-                let slotText = try #require(line.split(separator: ": ", maxSplits: 1).last)
+                let slotText = try #require(
+                    line.split(separator: ": ", maxSplits: 1).last?
+                        .split(separator: ";").first)
                 let stated = slotText.matches(of: slotPattern)
                 #expect(
                     stated.map { String($0.output.1) } == condition.slots.map(\.concept),
                     "\(condition.name)")
+                let norm = line.hasSuffix(Self.normClause)
+                let raw = line.hasSuffix(Self.rawClause)
+                let steers = condition.slots.contains { $0.effectiveMode != .ablate }
+                #expect((norm || raw) == steers, "\(condition.name)")
+                #expect(!steers || norm == condition.alphaInNormUnits, "\(condition.name)")
                 for match in stated {
                     let concept = String(match.output.1)
-                    let injected = cells.filter { $0.concept == concept }.map(\.layer).sorted()
+                    let mine = cells.filter { $0.concept == concept }
                     let named: [Int]
-                    if match.output.2 != nil {
+                    let expected: Float
+                    if match.output.3 != nil {
                         named = Array(0 ..< layerCount)
+                        #expect(mine.allSatisfy { $0.mode == .ablate }, "\(condition.name)")
+                        expected = try #require(match.output.2.flatMap { Float($0) })
                     } else {
-                        let layer = try #require(match.output.3.flatMap { Int($0) })
-                        let half = match.output.4.flatMap { Int($0) } ?? 0
+                        let layer = try #require(match.output.4.flatMap { Int($0) })
+                        let half = match.output.6.flatMap { Int($0) } ?? 0
                         named = Array((layer - half) ... (layer + half))
+                        #expect(mine.allSatisfy { $0.mode == .add }, "\(condition.name)")
+                        let alpha = try #require(match.output.5.flatMap { Float($0) })
+                        expected = alpha * (norm ? 2 : 1)
                     }
-                    #expect(injected == named, "\(label) \(condition.name) \(concept)")
+                    #expect(
+                        mine.map(\.layer).sorted() == named,
+                        "\(label) \(condition.name) \(concept)")
+                    #expect(
+                        mine.allSatisfy { abs($0.alpha - expected) < 1e-5 },
+                        "\(label) \(condition.name) \(concept)")
                 }
+                checked += 1
             }
         }
+        #expect(checked == 20)
     }
 
     /// An agent's ablation line names the set of layers the agent cell

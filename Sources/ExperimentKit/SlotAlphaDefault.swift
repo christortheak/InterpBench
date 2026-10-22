@@ -56,7 +56,8 @@ public enum SlotAlphaDefault {
     public enum Provenance: Sendable, Equatable {
         /// A promoted agent's cell for this exact vector artifact.
         case promotedCell(agent: String, promotedBy: String?)
-        /// No recommendation existed; the convention's unit stride.
+        /// No recommendation existed; the convention's starting fraction,
+        /// `normUnitsDefault` (a tenth of a residual-stream norm).
         case conventionDefault
         /// No denominator: the labelled raw fallback.
         case rawFallback
@@ -247,9 +248,13 @@ public enum SlotAlphaDefault {
                 : promotedBy == nil ? "hand-created variant" : "sweep-selected cell"
             return "α \(number) \(unitWord) — the \(how) on agent '\(agent)'"
         case .conventionDefault:
+            // Only ever decided with `normUnitsDefault` in norm units (0.1:
+            // a tenth of the norm, not a whole one, which drives generation
+            // incoherent).
             return
-                "α \(number) \(unitWord) — one residual-stream norm; this "
-                + "artifact has no promoted cell to inherit"
+                "α \(number) \(unitWord) — a tenth of a residual-stream norm, "
+                + "the convention's starting fraction; this artifact has no "
+                + "promoted cell to inherit"
         case .rawFallback:
             return
                 "α \(number) \(unitWord) — this artifact stores no residual-norm "
