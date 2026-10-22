@@ -1732,4 +1732,3 @@ def test_an_ablation_names_the_layers_it_covers(root):
     steering = described({"concept": "fear", "layer": 14, "alpha": 0.8})
     assert ("adds the direction for the concept 'fear' at layer 14, with strength "
             "0.8 (in units of the typical activation size at that layer)") in steering
-

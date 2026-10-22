@@ -603,12 +603,42 @@ def _fake_app(tmp_path, before_sleeping=""):
     return app, executable, pid_file
 
 
-def _launch_check(tmp_path, executable, *flags):
-    return subprocess.run(
-        ["/bin/bash", str(LAUNCH_CHECK), str(executable), str(tmp_path / "launch.log"),
-         "--seconds", "1", "--grace", "1", *flags],
-        env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(tmp_path)},
-        text=True, capture_output=True, check=False, timeout=60)
+def _launch_check(tmp_path, executable, *flags, path="/usr/bin:/bin:/usr/sbin:/sbin"):
+    """Run the check with a long observation window, and close the window
+    once the stand-in is READY (it has printed its verdict, after whatever
+    setup it does first) rather than after a fixed second: an interpreter
+    that starts slowly on a loaded machine then delays the test instead of
+    failing it (external review N3). The check itself, and what it requires
+    of the app, are unchanged; the window closes as its own timer would."""
+    log = tmp_path / "launch.log"
+    command = ["/bin/bash", str(LAUNCH_CHECK), str(executable), str(log),
+               "--seconds", "60", "--grace", "1", *flags]
+    check = subprocess.Popen(
+        command, env={"PATH": path, "HOME": str(tmp_path)},
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        assert _wait_for(
+            lambda: log.exists() and _HONEST_APP_LINES[1] in log.read_text(), 30), \
+            "the stand-in never printed its verdict"
+        _close_window(check.pid)
+        out, err = check.communicate(timeout=60)
+    finally:
+        if check.poll() is None:
+            check.kill()
+            check.communicate()
+    return subprocess.CompletedProcess(command, check.returncode, out, err)
+
+
+def _close_window(check_pid: int) -> None:
+    """End the check's observation window: stop the `sleep` timer it waits
+    on (its only `sleep` child), so it goes on exactly as when the timer runs
+    out."""
+    def timer():
+        found = subprocess.run(["/usr/bin/pgrep", "-x", "-P", str(check_pid), "sleep"],
+                               capture_output=True, text=True, check=False).stdout.split()
+        return found[0] if found else None
+    assert _wait_for(lambda: timer() is not None, 30), "the check started no timer"
+    os.kill(int(timer()), signal.SIGTERM)
 
 
 def _running(pid: int) -> bool:
@@ -749,11 +779,8 @@ def test_a_launch_check_that_cannot_see_the_app_never_takes_it_for_exited(tmp_pa
     _stand_in(tools, "ps", "exit 1\n")       # ps that gives no answer
     app, executable, pid_file = _fake_app(tmp_path)
     try:
-        result = subprocess.run(
-            ["/bin/bash", str(LAUNCH_CHECK), str(executable), str(tmp_path / "launch.log"),
-             "--seconds", "1", "--grace", "1"],
-            env={"PATH": f"{tools}:/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(tmp_path)},
-            text=True, capture_output=True, check=False, timeout=30)
+        result = _launch_check(
+            tmp_path, executable, path=f"{tools}:/usr/bin:/bin:/usr/sbin:/sbin")
         assert result.returncode == 6, result.stdout + result.stderr
         assert "could not tell whether the app" in result.stderr
         assert "ps gave no answer" in result.stderr

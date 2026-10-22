@@ -1,0 +1,4 @@
+# The Demo Workspace's generated report pages carry model replies verbatim,
+# trailing spaces included. Git's whitespace check ignores them; their bytes
+# are recorded evidence and are never trimmed.
+DemoWorkspaces/*/reports/** -whitespace
