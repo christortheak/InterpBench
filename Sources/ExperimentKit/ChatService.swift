@@ -368,10 +368,11 @@ public final class ChatService {
         /// removal is usually rewritten by the layers above it.
         public var mode: InterventionPlan.Mode
 
-        /// A slot with no vector yet starts at ONE residual-stream norm, not
-        /// the historical flat 2. Fresh sessions are in norm units, where 2 is
-        /// two whole residual norms — off the end of the control's own −1…1
-        /// range. As soon as a vector IS selected,
+        /// A slot with no vector yet starts at a tenth of a residual-stream
+        /// norm (`SlotAlphaDefault.normUnitsDefault`), not the historical
+        /// flat 2. Fresh sessions are in norm units, where 2 is two whole
+        /// residual norms — off the end of the control's own −1…1 range. As
+        /// soon as a vector IS selected,
         /// `ChatService.applyDefaultsForSelectedVector` replaces this with
         /// what the artifact knows about itself (`SlotAlphaDefault`).
         public init(

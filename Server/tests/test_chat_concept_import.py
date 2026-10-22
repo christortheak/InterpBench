@@ -232,13 +232,13 @@ def test_line_separators_in_a_reply_keep_each_row_one_line(tmp_path):
 #: The advisory, written out here rather than imported, so a change to the
 #: sentence has to be made on purpose.
 OVERLAP_ADVICE = (
-    "positive.jsonl and negative.jsonl also contain {total} of the {texts} "
-    "texts in validation.jsonl ({positive} positive, {negative} negative), so "
-    "validation can read better than it would on unseen text. Pairs are held "
-    "out by row, not by text. To hold out unseen texts, remove the repeated "
-    "rows from the source files and import again under a new name, or import "
-    "with no hold-out and write validation.jsonl from texts the extraction "
-    "files do not contain.")
+    "{total} of the {texts} texts in validation.jsonl ({positive} positive, "
+    "{negative} negative) also appear, exactly, in the same side's extraction "
+    "file, so validation can read better than it would on unseen text. Pairs "
+    "are held out by row, not by text. To hold out texts with no exact repeat "
+    "in extraction, remove the repeated rows from the source files and import "
+    "again under a new name, or import with no hold-out and write "
+    "validation.jsonl from texts the extraction files do not contain.")
 
 #: What provenance.json held before repeated texts were counted: the counts
 #: are reported, never written, so the importer's bytes stay chat-pairs-v1.

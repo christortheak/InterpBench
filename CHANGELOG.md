@@ -18,11 +18,14 @@ migration that rewrites frozen bytes.
   different one, and on the Mac there was no way to name another. `experiment
   analyze` now takes `--run runs/<run>` (the form the check prints; a run's
   directory name or full path also works), and the check's suggested command
-  names the run it checked, on both clients. The app-free client's `run` and
-  `runner submit` take `--source runs/<run>` for an analysis or an evaluation.
-  In the app, Analyze on a run's page analyzes that run; a server's Analyze
-  still reads the study's newest completed run there, and now says so.
-  `evaluate --run` and `rescore-style --run` accept `runs/<run>` too.
+  names the run it checked, on both clients; so do the repairs of an analysis
+  refused for its run. The app-free client's `run` and `runner submit` take
+  `--source runs/<run>` for an analysis or an evaluation, and a runner given
+  `--target-root` now reads that run from the target root's `runs/`. In the
+  app, Analyze on a run's page analyzes that run, on this Mac or on a server;
+  a server engine older than this release analyzes its newest run, and the
+  app says so. `evaluate --run`, `rescore-style --run`, and `remote
+  submit-bundle --source` accept `runs/<run>` too.
 - **Hand one link to your coding assistant.** Give it
   [docs/AGENT-SETUP.md](docs/AGENT-SETUP.md) and ask it to set SteerLab up.
   The page is written for the assistant: it checks your computer, shows you a
@@ -55,8 +58,8 @@ migration that rewrites frozen bytes.
   controls are labelled too, because they steer. Baselines and ablation-only
   arms carry no label, because ablation strength is never scaled by the
   residual norm, and in an arm that both steers and ablates the label covers
-  the steering α only. The Mac app, `steerlab-cli`, and the server write the
-  same text. Only new freezes change: studies already frozen, and their
+  the steering α only. The Mac app, `steerlab-cli`, the app-free `steerlab`
+  client, and the server write the same text. Only new freezes change: studies already frozen, and their
   summaries, are untouched.
 - **The Playground explains its starting α correctly.** For a vector with no
   promoted strength, the note beside the default α of 0.1 now says it is a
@@ -72,8 +75,8 @@ migration that rewrites frozen bytes.
   `validationOverlapsExtraction` advisory, also printed for a person: the
   validation can read better than it would on unseen text, and removing the
   repeated rows from the source files, or writing `validation.jsonl` from
-  texts the extraction files do not contain, makes the hold-out one of unseen
-  texts. Both command lines give the same counts and sentence, and the app's
+  texts the extraction files do not contain, gives a hold-out with no exact
+  repeat in extraction. Only exact repeats on the same side are counted. Both command lines give the same counts and sentence, and the app's
   Import chat pairs shows it before the sheet closes. The written files are
   unchanged.
 

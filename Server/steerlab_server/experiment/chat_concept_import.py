@@ -433,14 +433,15 @@ def overlap_advisory(repeated: dict, validation_pairs: int) -> str | None:
     negative = repeated["negative"]["validationInExtraction"]
     if not positive + negative:
         return None
-    return (f"positive.jsonl and negative.jsonl also contain "
-            f"{positive + negative} of the {2 * validation_pairs} texts in "
-            f"validation.jsonl ({positive} positive, {negative} negative), so "
-            "validation can read better than it would on unseen text. Pairs "
-            "are held out by row, not by text. To hold out unseen texts, "
-            "remove the repeated rows from the source files and import again "
-            "under a new name, or import with no hold-out and write "
-            "validation.jsonl from texts the extraction files do not contain.")
+    return (f"{positive + negative} of the {2 * validation_pairs} texts in "
+            f"validation.jsonl ({positive} positive, {negative} negative) also "
+            "appear, exactly, in the same side's extraction file, so validation "
+            "can read better than it would on unseen text. Pairs are held out "
+            "by row, not by text. To hold out texts with no exact repeat in "
+            "extraction, remove the repeated rows from the source files and "
+            "import again under a new name, or import with no hold-out and "
+            "write validation.jsonl from texts the extraction files do not "
+            "contain.")
 
 
 # --- the import -------------------------------------------------------------

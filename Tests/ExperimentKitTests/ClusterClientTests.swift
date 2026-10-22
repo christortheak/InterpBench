@@ -454,6 +454,67 @@ import Testing
         #expect(bodies.values.isEmpty)
     }
 
+    /// The app's Analyze on a run's page names the run (`sourcePath`): sent
+    /// only when given, refused before submitting by an engine that cannot
+    /// choose the run, and refused after an answer that does not echo it.
+    @Test func aChosenRunRidesTheBodyAndIsConfirmed() async throws {
+        final class Sent: @unchecked Sendable {
+            private let lock = NSLock()
+            private var values: [String?] = []
+            func append(_ value: String?) { lock.lock(); values.append(value); lock.unlock() }
+            var all: [String?] { lock.lock(); defer { lock.unlock() }; return values }
+        }
+        func client(lists: Bool, echoes: Bool, sent: Sent) -> ClusterClient {
+            ClusterClient(
+                profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+                session: Self.session { request in
+                    if request.url?.path == "/api/capabilities" {
+                        return (
+                            Data(
+                                (lists
+                                    ? #"{"analysisOptions": ["rereadChoices", "sourceRun"]}"#
+                                    : #"{"analysisOptions": ["rereadChoices"]}"#).utf8), 200)
+                    }
+                    let body = try #require(Self.bodyData(from: request))
+                    let object = try #require(
+                        JSONSerialization.jsonObject(with: body) as? [String: Any])
+                    let named = object["sourcePath"] as? String
+                    sent.append(named)
+                    return (
+                        Data(
+                            (echoes && named != nil
+                                ? #"{"jobId": "job-6", "sourcePath": "\#(named!)"}"#
+                                : #"{"jobId": "job-6"}"#).utf8), 200)
+                })
+        }
+        let sent = Sent()
+        let current = client(lists: true, echoes: true, sent: sent)
+        let chosen = try await current.submitExperimentJobDetailed(
+            experiment: "study", verb: "analyze", sourceRun: "20261017T000000000-exp-study-run")
+        #expect(chosen.sourcePath == "20261017T000000000-exp-study-run")
+        _ = try await current.submitExperimentJobDetailed(experiment: "study", verb: "analyze")
+        #expect(sent.all == ["20261017T000000000-exp-study-run", nil])
+
+        let older = Sent()
+        do {
+            _ = try await client(lists: false, echoes: false, sent: older)
+                .submitExperimentJobDetailed(experiment: "study", verb: "analyze", sourceRun: "r")
+            Issue.record("an engine that cannot choose the run was asked to")
+        } catch let error as ExperimentError {
+            #expect(error.reason.contains("Nothing was submitted"))
+        }
+        #expect(older.all.isEmpty)
+
+        do {
+            _ = try await client(lists: true, echoes: false, sent: Sent())
+                .submitExperimentJobDetailed(experiment: "study", verb: "analyze", sourceRun: "r")
+            Issue.record("an unconfirmed run was reported as analyzed")
+        } catch let error as ExperimentError {
+            #expect(error.reason.contains("job-6"))
+            #expect(error.reason.contains("did not confirm which run"))
+        }
+    }
+
     /// An answer that does not confirm the re-read (no echo from the route,
     /// no flag in the rendered command) is refused after submitting: that
     /// job analyzes the stored choices.

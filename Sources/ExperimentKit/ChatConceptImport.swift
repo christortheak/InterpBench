@@ -798,14 +798,15 @@ public enum ChatConceptImport {
         let p = positive.validationInExtraction
         let n = negative.validationInExtraction
         guard p + n > 0 else { return nil }
-        return "positive.jsonl and negative.jsonl also contain "
-            + "\(p + n) of the \(2 * validationPairs) texts in "
-            + "validation.jsonl (\(p) positive, \(n) negative), so "
-            + "validation can read better than it would on unseen text. Pairs "
-            + "are held out by row, not by text. To hold out unseen texts, "
-            + "remove the repeated rows from the source files and import again "
-            + "under a new name, or import with no hold-out and write "
-            + "validation.jsonl from texts the extraction files do not contain."
+        return "\(p + n) of the \(2 * validationPairs) texts in "
+            + "validation.jsonl (\(p) positive, \(n) negative) also "
+            + "appear, exactly, in the same side's extraction file, so validation "
+            + "can read better than it would on unseen text. Pairs are held out "
+            + "by row, not by text. To hold out texts with no exact repeat in "
+            + "extraction, remove the repeated rows from the source files and "
+            + "import again under a new name, or import with no hold-out and "
+            + "write validation.jsonl from texts the extraction files do not "
+            + "contain."
     }
 
     static func exists(_ name: String) -> Refusal {

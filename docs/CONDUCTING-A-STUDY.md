@@ -555,9 +555,11 @@ more. A condition's line and an agent's line both state the arm's α units
 once, when the arm steers, as `α in residual-norm units` or
 `raw α (not scaled by the residual norm)`, because the same α is a different
 dose in each. A random matched-norm control steers, so its line states them
-too. A baseline, and an arm that only ablates, states none, because λ is
+too. A baseline, and an arm that only ablates, state none, because λ is
 never scaled by the residual norm; in an arm that both steers and ablates,
-the units belong to its α alone.
+the units belong to its α alone. A summary frozen before 0.9.14 has no units
+on its condition lines; read them from `alphaInNormUnits` in the frozen
+`experiment.json`.
 
 A preserved preregistration is then **frozen like any other pinned input**:
 its SHA-256 is stamped into the manifest, it is snapshotted into
@@ -994,8 +996,9 @@ no answer, or gain an answer, and writes nothing. To analyze that run with
 the current reading, analyze it with `--reread-choices` and name it: `--run
 runs/<run>` on the Mac, `--source runs/<run>` with the app-free client. The
 check prints the exact command. In the app, turn on "Re-read choices with the
-current parser" beside Analyze on that run's page; a server's Analyze reads
-the study's newest completed run there. The analysis re-reads the stored
+current parser" beside Analyze on that run's page, which analyzes that run,
+on this Mac or on a server (a server engine older than 0.9.14 analyzes its
+newest run, and the app says so). The analysis re-reads the stored
 replies against the hash-verified task prompts the run was made from, uses
 those readings for every choice outcome and exclusion, and writes
 `choice-reread.json` with the parser version and the counts; the run itself

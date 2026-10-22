@@ -2117,7 +2117,7 @@ private struct RemoteRunDetailView: View {
             // server that produced them (per-engine epoch guard).
             RemoteRunAnalyzeRow(
                 service: service, runType: run.runType,
-                substrate: run.substrate, experiment: run.experiment)
+                substrate: run.substrate, experiment: run.experiment, runName: run.id)
         }
     }
 

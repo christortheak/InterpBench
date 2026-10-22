@@ -289,6 +289,19 @@ def _resolve_optional_dir(resolver: SafePathResolver, ref, root: str):
     return resolver.resolve_under(ref, root, allow_local_absolute=True)
 
 
+def _resolve_source_dir(resolver: SafePathResolver, ref, target_root: str | None):
+    """A submission's ``sourcePath``: the completed run a measurement verb
+    reads. A relative name is a run of the workspace the submission writes
+    into, so it resolves under ``<targetRoot>/runs`` when a target root is
+    given and under this engine's runs root otherwise; an absolute path keeps
+    the runs-root containment it always had. None when absent."""
+    if not ref:
+        return None
+    if target_root and not os.path.isabs(str(ref)):
+        return resolver.resolve_under(str(ref), os.path.join(target_root, "runs"))
+    return _resolve_optional_dir(resolver, ref, resolver.roots.runs)
+
+
 def _resolve_optional_file(resolver: SafePathResolver, ref):
     """Contain an optional client-supplied input file under the workspace root."""
     if not ref:
@@ -1428,6 +1441,21 @@ def build_router(state: ServiceState) -> APIRouter:
             raise HTTPException(
                 status_code=400,
                 detail="rereadChoices applies to the 'analyze' verb only")
+        # Which completed run an analysis reads (cross-engine body key
+        # "sourcePath", as on /api/studies/submit; the app's Analyze on a
+        # run's page): a run directory under runs/. Absent, the newest
+        # completed run. Echoed, because an older engine ignores the key and
+        # analyzes its newest run.
+        source_ref = (body or {}).get("sourcePath")
+        source_run = None
+        if source_ref is not None:
+            if verb != "analyze":
+                raise HTTPException(
+                    status_code=400,
+                    detail="sourcePath applies to the 'analyze' verb only")
+            source_run = state.resolver.require_dir(
+                str(source_ref), root=state.resolver.roots.runs,
+                allow_local_absolute=True)
         # Targeted retry (2026-07-24, cross-engine body key "resumeFrom"):
         # finish a FAILED evaluation by judging only its undecided cells,
         # reusing the verdicts it already produced. Every pin of the
@@ -1465,7 +1493,8 @@ def build_router(state: ServiceState) -> APIRouter:
                 run_dir = tasks.analyze(
                     name, log=job.log,
                     allow_unverified_epoch=allow_unverified_epoch,
-                    **({"reread_choices": True} if reread_choices else {}))
+                    **({"reread_choices": True} if reread_choices else {}),
+                    **({"source_run": source_run} if source_run else {}))
                 if not reread_choices:
                     # The same discoverability count the CLI advisory reads,
                     # said in the job log the app shows. Never blocks.
@@ -1554,10 +1583,12 @@ def build_router(state: ServiceState) -> APIRouter:
             _refuse_batch_only_verb(verb)
 
         job = state.jobs.submit(f"experiment:{verb}", work)
-        # The echo a client checks before it reports a re-read analysis: an
-        # older engine ignores `rereadChoices` and answers without it.
+        # The echoes a client checks before it reports a re-read analysis, or
+        # one of a chosen run: an older engine ignores `rereadChoices` and
+        # `sourcePath` and answers without them.
         return {"jobId": job.id,
-                **({"rereadChoices": True} if reread_choices else {})}
+                **({"rereadChoices": True} if reread_choices else {}),
+                **({"sourcePath": str(source_ref)} if source_run else {})}
 
     # --- catalog (read-only discovery for the UI) ---------------------------
 
@@ -3882,8 +3913,7 @@ def build_router(state: ServiceState) -> APIRouter:
         target_root = _resolve_optional_dir(resolver, body.get("targetRoot"),
                                             resolver.roots.workspace)
         prompts_path = _resolve_optional_file(resolver, body.get("promptsPath"))
-        source_path = _resolve_optional_dir(resolver, body.get("sourcePath"),
-                                            resolver.roots.runs)
+        source_path = _resolve_source_dir(resolver, body.get("sourcePath"), target_root)
         try:
             submission = submit_study(
                 name, verb=verb, jobs=state.jobs,
@@ -3937,8 +3967,7 @@ def build_router(state: ServiceState) -> APIRouter:
         target_root = _resolve_optional_dir(resolver, body.get("targetRoot"),
                                             resolver.roots.workspace)
         prompts_path = _resolve_optional_file(resolver, body.get("promptsPath"))
-        source_path = _resolve_optional_dir(resolver, body.get("sourcePath"),
-                                            resolver.roots.runs)
+        source_path = _resolve_source_dir(resolver, body.get("sourcePath"), target_root)
         try:
             submission = submit_run_bundle(
                 bundle_path, verb=verb, jobs=state.jobs,

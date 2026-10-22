@@ -150,7 +150,7 @@
       "advisories": [
         {
           "code": "validationOverlapsExtraction",
-          "detail": "positive.jsonl and negative.jsonl also contain 2 of the 2 texts in validation.jsonl (1 positive, 1 negative), so validation can read better than it would on unseen text. Pairs are held out by row, not by text. To hold out unseen texts, remove the repeated rows from the source files and import again under a new name, or import with no hold-out and write validation.jsonl from texts the extraction files do not contain."
+          "detail": "2 of the 2 texts in validation.jsonl (1 positive, 1 negative) also appear, exactly, in the same side's extraction file, so validation can read better than it would on unseen text. Pairs are held out by row, not by text. To hold out texts with no exact repeat in extraction, remove the repeated rows from the source files and import again under a new name, or import with no hold-out and write validation.jsonl from texts the extraction files do not contain."
         }
       ],
       "files": [
@@ -197,7 +197,7 @@
         "imported 'one-pair-four-times' from chat pairs: 3 for extraction, 1 held out for validation, 0 dropped",
         "wrote prompts/concepts/one-pair-four-times/ (concept.json, positive.jsonl, negative.jsonl, validation.jsonl, provenance.json)",
         "3 of the 4 kept positive replies and 3 of the 4 kept negative replies repeat an earlier reply on the same side, and every copy is kept",
-        "positive.jsonl and negative.jsonl also contain 2 of the 2 texts in validation.jsonl (1 positive, 1 negative), so validation can read better than it would on unseen text. Pairs are held out by row, not by text. To hold out unseen texts, remove the repeated rows from the source files and import again under a new name, or import with no hold-out and write validation.jsonl from texts the extraction files do not contain."
+        "2 of the 2 texts in validation.jsonl (1 positive, 1 negative) also appear, exactly, in the same side's extraction file, so validation can read better than it would on unseen text. Pairs are held out by row, not by text. To hold out texts with no exact repeat in extraction, remove the repeated rows from the source files and import again under a new name, or import with no hold-out and write validation.jsonl from texts the extraction files do not contain."
       ],
       "validationHash": "4b50109906ac8041e4397f6c62156b627671aa12dba97ded498b184661068d06",
       "validationPairs": 1
@@ -206,7 +206,7 @@
       "advisories": [
         {
           "code": "validationOverlapsExtraction",
-          "detail": "positive.jsonl and negative.jsonl also contain 3 of the 6 texts in validation.jsonl (2 positive, 1 negative), so validation can read better than it would on unseen text. Pairs are held out by row, not by text. To hold out unseen texts, remove the repeated rows from the source files and import again under a new name, or import with no hold-out and write validation.jsonl from texts the extraction files do not contain."
+          "detail": "3 of the 6 texts in validation.jsonl (2 positive, 1 negative) also appear, exactly, in the same side's extraction file, so validation can read better than it would on unseen text. Pairs are held out by row, not by text. To hold out texts with no exact repeat in extraction, remove the repeated rows from the source files and import again under a new name, or import with no hold-out and write validation.jsonl from texts the extraction files do not contain."
         }
       ],
       "files": [
@@ -253,7 +253,7 @@
         "imported 'repeats-on-both-sides-of-the-split' from chat pairs: 5 for extraction, 3 held out for validation, 0 dropped",
         "wrote prompts/concepts/repeats-on-both-sides-of-the-split/ (concept.json, positive.jsonl, negative.jsonl, validation.jsonl, provenance.json)",
         "2 of the 8 kept positive replies and 2 of the 8 kept negative replies repeat an earlier reply on the same side, and every copy is kept",
-        "positive.jsonl and negative.jsonl also contain 3 of the 6 texts in validation.jsonl (2 positive, 1 negative), so validation can read better than it would on unseen text. Pairs are held out by row, not by text. To hold out unseen texts, remove the repeated rows from the source files and import again under a new name, or import with no hold-out and write validation.jsonl from texts the extraction files do not contain."
+        "3 of the 6 texts in validation.jsonl (2 positive, 1 negative) also appear, exactly, in the same side's extraction file, so validation can read better than it would on unseen text. Pairs are held out by row, not by text. To hold out texts with no exact repeat in extraction, remove the repeated rows from the source files and import again under a new name, or import with no hold-out and write validation.jsonl from texts the extraction files do not contain."
       ],
       "validationHash": "04ce634e709165f8c4e2f635ca3336422174503e5dd249fe8b1f1354e5629a18",
       "validationPairs": 3

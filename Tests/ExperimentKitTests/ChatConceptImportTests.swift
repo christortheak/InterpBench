@@ -331,13 +331,13 @@ import Testing
     /// The advisory, written out here rather than read from the importer, so
     /// a change to the sentence has to be made on purpose.
     static func overlapAdvice(total: Int, texts: Int, positive: Int, negative: Int) -> String {
-        "positive.jsonl and negative.jsonl also contain \(total) of the \(texts) "
-            + "texts in validation.jsonl (\(positive) positive, \(negative) negative), so "
-            + "validation can read better than it would on unseen text. Pairs are held "
-            + "out by row, not by text. To hold out unseen texts, remove the repeated "
-            + "rows from the source files and import again under a new name, or import "
-            + "with no hold-out and write validation.jsonl from texts the extraction "
-            + "files do not contain."
+        "\(total) of the \(texts) texts in validation.jsonl (\(positive) positive, "
+            + "\(negative) negative) also appear, exactly, in the same side's extraction "
+            + "file, so validation can read better than it would on unseen text. Pairs "
+            + "are held out by row, not by text. To hold out texts with no exact repeat "
+            + "in extraction, remove the repeated rows from the source files and import "
+            + "again under a new name, or import with no hold-out and write "
+            + "validation.jsonl from texts the extraction files do not contain."
     }
 
     /// `prepare` over `(prompt, positive reply, negative reply)` rows.

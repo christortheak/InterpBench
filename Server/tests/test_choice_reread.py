@@ -529,6 +529,39 @@ def test_the_route_rereads_on_request_and_notes_the_count_otherwise(tmp_path, mo
     assert "Re-read choices" in logs
 
 
+def test_the_route_analyzes_the_run_it_is_given(tmp_path, monkeypatch):
+    """The app's Analyze on a run's page names that run (body key
+    "sourcePath"): with a newer run present, the route analyzes the named
+    older run and echoes it; without the key it analyzes the newest."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+    from steerlab_server.api.app import app
+    root, run_dir = _workspace(tmp_path)
+    _add_newer_run(root, run_dir)
+    monkeypatch.setenv("STEERLAB_ROOT", root)
+    client = TestClient(app)
+
+    answer = client.post(f"/api/experiment/{STUDY}/analyze",
+                         json={"rereadChoices": True, "sourcePath": RUN}).json()
+    assert answer["sourcePath"] == RUN
+    job = _wait_for_job(client, answer["jobId"])
+    assert job["status"] == "succeeded", job
+    stamp = _stamp(job["result"]["runDirectory"])
+    assert (stamp["sourceRun"], stamp["total"]["changed"]) == (RUN, 6)
+
+    newest = client.post(f"/api/experiment/{STUDY}/analyze", json={"rereadChoices": True}).json()
+    assert "sourcePath" not in newest
+    job = _wait_for_job(client, newest["jobId"])
+    stamp = _stamp(job["result"]["runDirectory"])
+    assert (stamp["sourceRun"], stamp["total"]["changed"]) == (NEWER, 0)
+
+    assert client.post(f"/api/experiment/{STUDY}/evaluate",
+                       json={"sourcePath": RUN}).status_code == 400
+    assert client.post(f"/api/experiment/{STUDY}/analyze",
+                       json={"sourcePath": "no-such-run"}).status_code == 404
+
+
 def test_the_route_refuses_reread_choices_on_any_other_verb():
     pytest.importorskip("fastapi")
     pytest.importorskip("httpx")
@@ -680,7 +713,7 @@ def test_the_engine_says_it_can_reread_and_its_route_echoes_the_request():
     from steerlab_server.api import profile
     snapshot = profile.capability_snapshot()
     assert choice_reread.remote_supports(snapshot)
-    assert snapshot["analysisOptions"] == ["rereadChoices"]
+    assert snapshot["analysisOptions"] == ["rereadChoices", "sourceRun"]
 
 
 def test_the_client_run_refuses_the_reread_for_any_other_step(tmp_path, capsys, monkeypatch):

@@ -248,8 +248,9 @@ steerlab-cli experiment analyze <name> --run runs/<run> --reread-choices
 On a run made on the Python engine, use `--reread-choices` with that engine's
 analyze (`steerlab-cli remote submit-bundle … --verb analyze --source
 runs/<run> --reread-choices`). In the app, turn on "Re-read choices with the
-current parser" beside Analyze on that run's page; a server's Analyze reads
-the study's newest completed run there.
+current parser" beside Analyze on that run's page, which analyzes that run,
+on this Mac or on a server (a server engine older than 0.9.14 analyzes its
+newest run, and the app says so).
 
 <!-- client: python -->
 

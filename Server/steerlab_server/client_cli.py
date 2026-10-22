@@ -723,6 +723,7 @@ METAVARS: dict = {
     "--root": "<dir>",
     "--run": "<run-dir>",
     "--runner": "<url>",
+    "--source": "<runs/run-dir>",
     "--runner-root": "<dir>",
     "--set": "<key>=<json>",
     "--sha256": "<digest>",

@@ -1067,6 +1067,9 @@ public struct RemoteExperimentJobSubmission: Codable, Sendable {
     /// The route's echo of a honoured choice re-read; nil from an engine
     /// that ignored the request, or when none was asked for.
     public var rereadChoices: Bool? = nil
+    /// The route's echo of the run an analysis reads; nil from an engine
+    /// that ignored the request, or when none was named.
+    public var sourcePath: String? = nil
 }
 
 // MARK: - Housekeeping (WS3 contract — camelCase, ISO-8601 dates as strings)
@@ -2650,13 +2653,18 @@ public struct ClusterClient: Sendable {
     /// the server's current choice parser for this analysis only, stamped in
     /// `choice-reread.json`; the run is never changed. Sent only when true,
     /// so an older server sees exactly the body it always did.
+    /// `sourceRun` (analyze only): the run directory under the server's
+    /// runs/ to analyze; nil analyzes the newest. Sent only when given,
+    /// refused before submitting by an engine that does not list
+    /// `ChoiceReread.sourceRunOption`, and checked against the route's echo.
     public func submitExperimentJobDetailed(
         experiment name: String, verb: String, resumeFrom: String? = nil,
-        rereadChoices: Bool = false
+        rereadChoices: Bool = false, sourceRun: String? = nil
     ) async throws -> RemoteExperimentJobSubmission {
         struct Body: Encodable {
             var resumeFrom: String?
             var rereadChoices: Bool?
+            var sourcePath: String?
         }
         // Names are slugified at creation on both engines, but path-encode
         // anyway: a URL must never depend on that invariant holding forever.
@@ -2665,15 +2673,26 @@ public struct ClusterClient: Sendable {
         // An older engine ignores `rereadChoices` and analyzes the stored
         // choices: refused before submitting when its capabilities do not
         // list it, and after when its answer does not echo it.
-        if rereadChoices {
-            try ChoiceReread.requireRemoteSupport(
-                try await capabilities(), where: profile.baseURL.absoluteString)
+        if rereadChoices || sourceRun != nil {
+            let found = try await capabilities()
+            if rereadChoices {
+                try ChoiceReread.requireRemoteSupport(found, where: profile.baseURL.absoluteString)
+            }
+            if sourceRun != nil, !ChoiceReread.supportsSourceRun(found) {
+                throw ChoiceReread.sourceRunUnsupported(where: profile.baseURL.absoluteString)
+            }
         }
         let submission: RemoteExperimentJobSubmission = try await post(
             "/api/experiment/\(safeName)/\(safeVerb)",
-            body: Body(resumeFrom: resumeFrom, rereadChoices: rereadChoices ? true : nil))
+            body: Body(
+                resumeFrom: resumeFrom, rereadChoices: rereadChoices ? true : nil,
+                sourcePath: sourceRun))
         if rereadChoices, submission.rereadChoices != true {
             throw ChoiceReread.remoteNotConfirmed(
+                where: profile.baseURL.absoluteString, jobID: submission.jobId)
+        }
+        if let sourceRun, submission.sourcePath != sourceRun {
+            throw ChoiceReread.sourceRunNotConfirmed(
                 where: profile.baseURL.absoluteString, jobID: submission.jobId)
         }
         return submission

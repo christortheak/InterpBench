@@ -51,16 +51,21 @@ struct StudyAnalysisRepository {
         return runsDirectory.appending(path: reference)
     }
 
-    /// The completed run of `experimentName` that `reference` names
-    /// (`runDirectory(named:)`), or a refusal saying why it is not one. An
-    /// analysis names the evidence it reads, so a reference is never
-    /// widened to another run: a directory outside `runs/`, an unfinished
-    /// run, or another study's run is refused.
+    /// The completed run that `reference` names (`runDirectory(named:)`),
+    /// resolved, or a refusal saying why it is not one. An analysis names
+    /// the evidence it reads, so a reference is never widened to another
+    /// run: a directory outside `runs/` or an unfinished run is refused.
+    /// Whose run it is, the epoch guard decides (`verifyRunEpoch`), as for
+    /// any source: it reads a renamed duplicate's donor run, on purpose.
     func completedRun(named reference: String, experimentName: String) throws -> URL {
         let fm = FileManager.default
         let directory = runDirectory(named: reference).standardizedFileURL
-        let listRuns = "steerlab-cli experiment analyze \(experimentName)  (without --run, "
-            + "the newest completed run; run directories are listed under runs/)"
+        // How to find a run's name; never "leave --run out", which reads a
+        // different run.
+        let listRuns = "ls -d "
+            + CommandLineLink.shellQuoted(runsDirectory.standardizedFileURL.path)
+            + "/*-exp-\(experimentName)-run*  (each is a run's directory; name one with "
+            + "--run runs/<directory>)"
         var isDirectory: ObjCBool = false
         guard fm.fileExists(atPath: directory.path, isDirectory: &isDirectory),
             isDirectory.boolValue,
@@ -83,27 +88,22 @@ struct StudyAnalysisRepository {
                     + " (a run writes report.json when it completes)",
                 repair: listRuns)
         }
-        let owner =
-            (try? Data(contentsOf: directory.appending(component: "experiment.json")))
-            .flatMap { try? JSONDecoder().decode(ExperimentManifest.self, from: $0) }?.name
-        guard owner == experimentName else {
-            throw ExperimentError.refusing(
-                .missingPrerequisite,
-                "run '\(directory.lastPathComponent)' is "
-                    + (owner.map { "a run of the study '\($0)'" } ?? "not stamped with its study")
-                    + ", not of '\(experimentName)'",
-                repair: owner.map {
-                    "steerlab-cli experiment analyze \($0) --run runs/\(directory.lastPathComponent)"
-                } ?? listRuns)
-        }
-        return directory
+        // Resolved, so the analysis stamps the run's own name, as the results
+        // commands report it, and never a link's.
+        return directory.resolvingSymlinksInPath()
     }
 
+    /// `repairRun` and `repairFlags`: what the caller named, carried into the
+    /// repair, so following it reads the same run in the same way (a repair
+    /// without the run reads the newest one). `repairRun` is a directory
+    /// name under runs/.
     static func verifyRunEpoch(
         verb: String,
         runDirectory: URL,
         manifest: ExperimentManifest,
-        allowUnverified: Bool = false
+        allowUnverified: Bool = false,
+        repairRun: String? = nil,
+        repairFlags: [String] = []
     ) throws -> RunEpoch.Check {
         let check = RunEpoch.check(
             verb: verb, experiment: manifest.name,
@@ -120,15 +120,19 @@ struct StudyAnalysisRepository {
             // `--allow-unverified-epoch` (which forgives a missing stamp, and
             // would leave this run just as unreadable) — it is the same verb
             // on the engine that wrote the records.
+            let flags = repairFlags.map { " " + $0 }.joined()
             let repair =
                 RunEpoch.foreignSubstrate(runDirectory) != nil
-                ? "steerlab-server experiment \(verb) \(manifest.name)  "
+                ? "steerlab-server experiment \(verb) \(manifest.name)"
+                    + (repairRun.map { " --source runs/\($0)" } ?? "") + flags + "  "
                     + "(on the engine that produced the run; the Mac reads "
                     + "its results, it does not re-measure them)"
                 : "steerlab-cli experiment run \(manifest.name)  "
                     + "(a run of the CURRENT manifest), or read the older run "
                     + "under its own epoch with steerlab-cli experiment "
-                    + "\(verb) \(manifest.name) --allow-unverified-epoch  "
+                    + "\(verb) \(manifest.name)"
+                    + (repairRun.map { " --run runs/\($0)" } ?? "") + flags
+                    + " --allow-unverified-epoch  "
                     + "(which only bypasses an UNSTAMPED run, never a "
                     + "mismatched one)"
             throw ExperimentError.refusing(.manifestEpoch, refusal, repair: repair)
@@ -195,9 +199,12 @@ struct StudyAnalysisRepository {
                 repair: "steerlab-cli experiment run \(experimentName) && "
                     + "steerlab-cli experiment analyze \(experimentName)")
         }
+        // The repair names the run it refused, whether --run named it or it
+        // was the newest, and keeps the re-read.
         let epoch = try Self.verifyRunEpoch(
             verb: "analyze", runDirectory: sourceRun, manifest: manifest,
-            allowUnverified: allowUnverifiedEpoch)
+            allowUnverified: allowUnverifiedEpoch, repairRun: sourceRun.lastPathComponent,
+            repairFlags: rereadChoices ? ["--reread-choices"] : [])
 
         // Reasoning-style values are derived, not stored: recompute them from
         // each record's output through the pinned (hash-checked) taxonomy so

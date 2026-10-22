@@ -240,8 +240,10 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
         "instrumentation": list(instrumentation_contract.SUPPORTED),
         # Analysis options this engine honours when a client asks for them
         # (an older engine ignores an unknown request key, so a client checks
-        # here before asking): `rereadChoices` is `analyze --reread-choices`.
-        choice_reread.CAPABILITY_KEY: [choice_reread.REMOTE_OPTION],
+        # here before asking): `rereadChoices` is `analyze --reread-choices`,
+        # and `sourceRun` is the direct route's `sourcePath` for analyze.
+        choice_reread.CAPABILITY_KEY: [choice_reread.REMOTE_OPTION,
+                                       choice_reread.SOURCE_RUN_OPTION],
         "sciencePlacement": science_placement.capabilities(profile),
         "serviceRole": service_role(),
         "serverVersion": __version__,

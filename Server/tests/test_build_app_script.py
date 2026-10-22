@@ -637,8 +637,10 @@ def _close_window(check_pid: int) -> None:
         found = subprocess.run(["/usr/bin/pgrep", "-x", "-P", str(check_pid), "sleep"],
                                capture_output=True, text=True, check=False).stdout.split()
         return found[0] if found else None
-    assert _wait_for(lambda: timer() is not None, 30), "the check started no timer"
-    os.kill(int(timer()), signal.SIGTERM)
+    found = []
+    assert _wait_for(lambda: found.append(timer()) or found[-1] is not None, 30), \
+        "the check started no timer"
+    os.kill(int(found[-1]), signal.SIGTERM)
 
 
 def _running(pid: int) -> bool:

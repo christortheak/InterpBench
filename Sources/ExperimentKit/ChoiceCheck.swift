@@ -174,17 +174,24 @@ public enum ChoiceCheck {
         return lines
     }
 
-    /// One sentence for a person.
-    static func message(study: String, report: Report) -> String {
+    /// One sentence for a person. `madeElsewhere`: the run's records come
+    /// from the Python engine (`RunEpoch.foreignSubstrate`), so this Mac
+    /// cannot analyze them and the command is that engine's, naming the run.
+    static func message(study: String, report: Report, madeElsewhere: Bool = false) -> String {
         if report.total.changed == 0 {
             return "All \(report.total.storedChoices) stored choices in \(report.run) read the "
                 + "same with choice parser version \(report.parserVersion). Nothing was written."
         }
-        return "\(report.total.changed) of \(report.total.storedChoices) stored choices in "
+        let differ = "\(report.total.changed) of \(report.total.storedChoices) stored choices in "
             + "\(report.run) would read differently with choice parser version "
-            + "\(report.parserVersion). Nothing was written. To analyze this run with the "
-            + "current reading: steerlab-cli experiment analyze \(study) --run \(report.run) "
-            + "--reread-choices"
+            + "\(report.parserVersion). Nothing was written."
+        if madeElsewhere {
+            return differ + " This run was made on the Python engine, so analyze it there "
+                + "with the current reading: steerlab-cli remote submit-bundle <bundle> "
+                + "--verb analyze --source \(report.run) --reread-choices"
+        }
+        return differ + " To analyze this run with the current reading: steerlab-cli "
+            + "experiment analyze \(study) --run \(report.run) --reread-choices"
     }
 }
 
@@ -222,7 +229,11 @@ enum ChoiceCheckCLI {
                 python: python, source: source)
             for line in ChoiceCheck.summaryLines(study: study, report: report) { sink.out(line) }
             return ExperimentCLIResult(
-                message: ChoiceCheck.message(study: study, report: report), changed: false,
+                message: ChoiceCheck.message(
+                    study: study, report: report,
+                    madeElsewhere: RunEpoch.foreignSubstrate(
+                        workspaceRoot.appending(path: report.run)) != nil),
+                changed: false,
                 payload: report.response)
         } catch let refusal as ResultsExport.Refusal {
             sink.err(

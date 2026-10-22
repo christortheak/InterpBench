@@ -418,12 +418,13 @@ def test_runner_submit_sends_the_named_source_run(wired_cli, capsys, monkeypatch
     """`runner submit --source runs/<dir>` sends the directory name the
     runner reads under its own runs/, for an analysis or an evaluation, and
     is refused for a step that reads no completed run."""
-    seen = []
+    seen, answers = [], []
     original = _REAL_RUNNER_CLIENT.submit_uploaded_bundle
 
     def recording(self, **kwargs):
         seen.append(kwargs.get("source_path"))
-        return original(self, **kwargs)
+        answers.append(original(self, **kwargs))
+        return answers[-1]
 
     monkeypatch.setattr(_REAL_RUNNER_CLIENT, "submit_uploaded_bundle", recording)
     service = wired_cli
@@ -435,10 +436,17 @@ def test_runner_submit_sends_the_named_source_run(wired_cli, capsys, monkeypatch
     base = ["runner", "submit", *runner, "--bundle-path", staged,
             "--bundle-sha", digest, "--target-root", service["target"],
             "--dry-run"]
+    # The run is one the runner made into this target root's runs/.
+    run_name = "20261017T000000000-exp-s-run"
+    source = os.path.join(service["target"], "runs", run_name)
+    os.makedirs(source)
     code, document, _ = _envelope(
-        [*base, "--verb", "analyze", "--source", "runs/20261017T000000000-exp-s-run"],
-        capsys)
-    assert seen[-1] == "20261017T000000000-exp-s-run", document
+        [*base, "--verb", "analyze", "--source", "runs/" + run_name], capsys)
+    assert code == 0, document
+    assert seen[-1] == run_name
+    # The runner resolved it there, and the job's command reads exactly it.
+    command = answers[-1]["command"]
+    assert command[command.index("--source") + 1] == os.path.realpath(source), command
     code, document, _ = _envelope([*base, "--verb", "run", "--source", "runs/x"], capsys)
     assert code == 64, document
     assert document["error"]["code"] == "usage"

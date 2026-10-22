@@ -627,13 +627,13 @@ struct RunAnalyzeRow: View {
         case .server(let experiment):
             actionRow(
                 title: "Analyze on \(service.cluster.substrateLabel)",
-                caption: "runs the analysis where the run was produced, as a "
-                    + "durable job for '\(experiment)'. The server analyzes the "
-                    + "study's newest completed run there, which may not be "
-                    + "this one",
-                help: "submit the server's analyze verb for '\(experiment)' as "
-                    + "a durable job over its newest completed run — the new "
-                    + "analyze run lands on the server, not in this workspace"
+                caption: "analyzes this run where it was produced, as a durable "
+                    + "job for '\(experiment)'. A server engine older than this "
+                    + "app analyzes the study's newest run there instead, and "
+                    + "the result says so",
+                help: "submit the server's analyze verb for this run of "
+                    + "'\(experiment)' as a durable job — the new analyze run "
+                    + "lands on the server, not in this workspace"
             ) { runServer(experiment: experiment) }
         case .unavailable(let reason):
             if item.runType == "run" {
@@ -746,17 +746,46 @@ struct RunAnalyzeRow: View {
                 return
             }
             do {
-                let jobID = try await client.submitExperimentJobDetailed(
-                    experiment: experiment, verb: "analyze",
-                    rereadChoices: rereadChoices
-                ).jobId
+                let submitted = try await RemoteAnalyze.submit(
+                    client: client, experiment: experiment, run: item.name,
+                    rereadChoices: rereadChoices)
                 state = .finished(
-                    "submitted analyze job \(jobID) — monitor in Compute, then "
-                        + "refresh the server runs list")
+                    submitted.message + " — monitor in Compute, then refresh the server runs list")
             } catch {
                 state = .failed(ChoiceReread.appMessage(for: error))
             }
         }
+    }
+}
+
+/// The server's analyze for the run on a page: named when the engine can
+/// choose the run, otherwise the engine's newest run, said in the result.
+enum RemoteAnalyze {
+    struct Submitted {
+        let jobID: String
+        let message: String
+    }
+
+    static func submit(
+        client: ClusterClient, experiment: String, run: String?, rereadChoices: Bool
+    ) async throws -> Submitted {
+        var chosen: String?
+        if let run {
+            let capabilities = try await client.capabilities()
+            if ChoiceReread.supportsSourceRun(capabilities) { chosen = run }
+        }
+        let jobID = try await client.submitExperimentJobDetailed(
+            experiment: experiment, verb: "analyze", rereadChoices: rereadChoices,
+            sourceRun: chosen
+        ).jobId
+        if let chosen {
+            return Submitted(jobID: jobID, message: "submitted analyze job \(jobID) for \(chosen)")
+        }
+        return Submitted(
+            jobID: jobID,
+            message: "submitted analyze job \(jobID). This server's engine is older than "
+                + "this app, so it analyzes the study's newest run there, which may not be "
+                + "this one; bring the engine up to date to analyze a chosen run")
     }
 }
 
@@ -767,6 +796,8 @@ struct RemoteRunAnalyzeRow: View {
     let runType: String?
     let substrate: String?
     let experiment: String?
+    /// The run directory on the server this row's page shows.
+    var runName: String? = nil
     @State private var state: RunAnalyzeState = .idle
     @State private var rereadChoices = false
 
@@ -794,15 +825,15 @@ struct RemoteRunAnalyzeRow: View {
                     .controlSize(.small)
                     .disabled(isRunning)
                     .help(
-                        "submit the server's analyze verb for '\(experiment)' as a "
-                            + "durable job (newest completed run of the study)")
+                        "submit the server's analyze verb for this run of "
+                            + "'\(experiment)' as a durable job")
                     if isRunning { ProgressView().controlSize(.small) }
                     statusText
                     Spacer()
                 }
                 Text(
-                    "The server analyzes the newest completed run of '\(experiment)', "
-                        + "which may not be this one."
+                    "Analyzes this run. A server engine older than this app analyzes "
+                        + "the study's newest run instead, and the result says so."
                 )
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -828,7 +859,7 @@ struct RemoteRunAnalyzeRow: View {
             EmptyView()
         case .finished(let message):
             Text(message).font(.caption).foregroundStyle(.green)
-                .textSelection(.enabled).lineLimit(2)
+                .textSelection(.enabled).lineLimit(4)
         case .failed(let message):
             Text(message).font(.caption).foregroundStyle(.red)
                 .textSelection(.enabled).lineLimit(4)
@@ -843,11 +874,10 @@ struct RemoteRunAnalyzeRow: View {
                 return
             }
             do {
-                let jobID = try await client.submitExperimentJobDetailed(
-                    experiment: experiment, verb: "analyze",
-                    rereadChoices: rereadChoices
-                ).jobId
-                state = .finished("submitted analyze job \(jobID) — monitor in Compute")
+                let submitted = try await RemoteAnalyze.submit(
+                    client: client, experiment: experiment, run: runName,
+                    rereadChoices: rereadChoices)
+                state = .finished(submitted.message + " — monitor in Compute")
             } catch {
                 state = .failed(ChoiceReread.appMessage(for: error))
             }

@@ -517,6 +517,16 @@ public enum ChoiceReread {
     /// `choice_reread.CAPABILITY_KEY` / `REMOTE_OPTION` / `COMMAND_FLAG`.
     public static let capabilityKey = "analysisOptions"
     public static let remoteOption = "rereadChoices"
+    /// The second analysis option: the direct experiment route's analyze
+    /// reads the run named in `sourcePath` (the app's Analyze on a run's
+    /// page). An engine without it analyzes its newest run. Server twin:
+    /// `choice_reread.SOURCE_RUN_OPTION`.
+    public static let sourceRunOption = "sourceRun"
+
+    /// Whether an engine analyzes the run a request names.
+    public static func supportsSourceRun(_ capabilities: ClusterCapabilities) -> Bool {
+        capabilities.analysisOptions?.contains(sourceRunOption) == true
+    }
     public static let commandFlag = "--reread-choices"
 
     /// The repair when a remote engine cannot (or did not) re-read. Python
@@ -551,6 +561,27 @@ public enum ChoiceReread {
                 + "re-read, so that job analyzes the stored choices and writes no "
                 + "choice-reread.json. Do not report it as an analysis with re-read "
                 + "choices.",
+            repair: remoteRepair)
+    }
+
+    /// The refusal before asking an engine that cannot choose the run: it
+    /// would analyze its newest run instead.
+    static func sourceRunUnsupported(where server: String) -> ExperimentError {
+        ExperimentError.refusing(
+            .missingPrerequisite,
+            "The engine at \(server) cannot analyze a chosen run: its capabilities do "
+                + "not list \(sourceRunOption), so it is older than this client. Nothing "
+                + "was submitted, because that engine would have analyzed its newest run.",
+            repair: remoteRepair)
+    }
+
+    /// The refusal after a submission whose answer does not confirm the run.
+    static func sourceRunNotConfirmed(where server: String, jobID: String) -> ExperimentError {
+        ExperimentError.refusing(
+            .missingPrerequisite,
+            "The engine at \(server) accepted job \(jobID) but did not confirm which run "
+                + "it analyzes, so that job may analyze its newest run instead. Do not "
+                + "report it as an analysis of the run you chose.",
             repair: remoteRepair)
     }
 

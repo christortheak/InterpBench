@@ -172,7 +172,7 @@ struct DatasetCreationSheet: View {
         // The import succeeded; the hold-out overlaps the extraction texts,
         // and the command line's advisory says so in the same words.
         .alert(
-            "Imported. Some validation texts are also extraction texts",
+            "Imported — some validation texts are also extraction texts",
             isPresented: Binding(
                 get: { chatImportNote != nil },
                 set: { if !$0 { finishChatImport() } })

@@ -709,41 +709,120 @@ struct ChoiceRereadTests {
         }
     }
 
-    /// `--run` names a completed run of this study, or is refused, typed,
-    /// with a repair: it is never widened to another run.
+    /// `--run` names a completed run, or is refused, typed, with a repair
+    /// that finds a run's name: it is never widened to another run. Whose
+    /// run it is, the epoch guard decides: a renamed duplicate reads its
+    /// donor's run, and a different study's run is refused with a repair
+    /// that keeps the run and the re-read.
     @Test func analyzeRunRefusesWhatIsNotACompletedRunOfTheStudy() async throws {
         let (stored, _) = try records()
         try await withTempRoot { root in
             let value = try await study(in: root, runs: [(Self.older, stored)])
             let unfinished = root.appending(path: "runs/20261019T000000000Z-exp-reread-run")
             try FileManager.default.createDirectory(at: unfinished, withIntermediateDirectories: true)
-            var other = try ExperimentStore.load(name: value.study)
-            other.name = "another-study"
-            try addRun(
-                "20261020T000000000Z-exp-another-study-run", records: stored, manifest: other,
-                root: root)
             let outside = root.appending(path: "elsewhere")
             try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
             for (reference, words) in [
                 ("runs/no-such-run", "not a run directory"),
                 (outside.path, "not a run directory"),
                 ("runs/20261019T000000000Z-exp-reread-run", "not a completed study run"),
-                ("runs/20261020T000000000Z-exp-another-study-run", "a run of the study 'another-study'"),
             ] {
                 let result = await ExperimentCLIRunner(sink: .discarding).run(
                     namespace: "experiment", ["analyze", value.study, "--run", reference, "--json"])
                 #expect(result.envelope.exitCode == 65, "\(reference): \(result.envelope)")
                 #expect(result.envelope.error?.code == "missingPrerequisite")
                 #expect(result.envelope.error?.reason.contains(words) == true, "\(result.envelope)")
-                #expect(result.envelope.error?.repairAction.isEmpty == false)
+                #expect(result.envelope.error?.repairAction.hasPrefix("ls -d ") == true)
             }
-            // All three spellings of the same run analyze it.
-            for reference in ["runs/\(Self.older)", Self.older, root.appending(path: "runs/\(Self.older)").path] {
+
+            // A renamed duplicate's donor run: the same measured study under
+            // another name. Read, as the epoch guard allows a measurement verb.
+            var donor = try ExperimentStore.load(name: value.study)
+            donor.name = "donor-study"
+            let donorRun = "20261020T000000000Z-exp-donor-study-run"
+            try addRun(donorRun, records: stored, manifest: donor, root: root)
+            let duplicate = await ExperimentCLIRunner(sink: .discarding).run(
+                namespace: "experiment", ["analyze", value.study, "--run", "runs/\(donorRun)", "--json"])
+            #expect(duplicate.envelope.exitCode == 0, "\(duplicate.envelope)")
+            #expect(duplicate.envelope.result?["sourceRun"] == .string(donorRun))
+
+            // A different study's run: refused by the epoch guard, and its
+            // repair still names this run and the re-read.
+            var other = donor
+            other.name = "other-study"
+            other.modelID = "test/another-model"
+            let otherRun = "20261021T000000000Z-exp-other-study-run"
+            try addRun(otherRun, records: stored, manifest: other, root: root)
+            let refused = await ExperimentCLIRunner(sink: .discarding).run(
+                namespace: "experiment",
+                ["analyze", value.study, "--run", "runs/\(otherRun)", "--reread-choices", "--json"])
+            #expect(refused.envelope.exitCode == 65, "\(refused.envelope)")
+            #expect(refused.envelope.error?.code == "manifestEpoch")
+            #expect(
+                refused.envelope.error?.repairAction.contains(
+                    "experiment analyze \(value.study) --run runs/\(otherRun) --reread-choices "
+                        + "--allow-unverified-epoch") == true,
+                "\(refused.envelope)")
+
+            // All three spellings of the same run analyze it, and a link to
+            // it is stamped with the run's own name.
+            try FileManager.default.createSymbolicLink(
+                at: root.appending(path: "runs/alias"),
+                withDestinationURL: root.appending(path: "runs/\(Self.older)"))
+            for reference in [
+                "runs/\(Self.older)", Self.older, root.appending(path: "runs/\(Self.older)").path,
+                "runs/alias",
+            ] {
                 let result = await ExperimentCLIRunner(sink: .discarding).run(
                     namespace: "experiment", ["analyze", value.study, "--run", reference, "--json"])
                 #expect(result.envelope.exitCode == 0, "\(reference): \(result.envelope)")
-                #expect(result.envelope.result?["sourceRun"] == .string(Self.older))
+                #expect(result.envelope.result?["sourceRun"] == .string(Self.older), "\(reference)")
             }
+        }
+    }
+
+    /// With both runs present, checking the older one names it, and the
+    /// advisory an ordinary analysis of it carries names it too.
+    @Test func theCheckAndTheAdvisoryNameTheRunWithBothPresent() async throws {
+        let python = URL(
+            filePath: try #require(
+                ProcessInfo.processInfo.environment["STEERLAB_TEST_PYTHON"],
+                "Set STEERLAB_TEST_PYTHON to run the real Python client."))
+        let source = CodeResources.compiledCheckoutPath.appending(component: "Server")
+        let (stored, current) = try records()
+        try await withTempRoot { root in
+            let value = try await study(
+                in: root, runs: [(Self.older, stored), (Self.newer, current)])
+            let check = try await ChoiceCheckCLI.run(
+                try ExperimentCLIParser.parse(
+                    namespace: "results", ["check-choices", value.study, "--run", "runs/\(Self.older)"]),
+                sink: .discarding, workspaceRoot: root, python: python, source: source)
+            #expect(
+                check.message.hasSuffix(
+                    "experiment analyze \(value.study) --run runs/\(Self.older) --reread-choices"))
+            let ordinary = await ExperimentCLIRunner(sink: .discarding).run(
+                namespace: "experiment", ["analyze", value.study, "--run", "runs/\(Self.older)", "--json"])
+            let advice = (ordinary.envelope.advisories ?? []).first {
+                $0.code == CLIAdvisory.storedChoicesReadDifferently.rawValue
+            }
+            #expect(
+                advice?.detail.contains(
+                    "experiment analyze \(value.study) --run runs/\(Self.older) --reread-choices")
+                    == true, "\(ordinary.envelope)")
+
+            // A run the Python engine made is analyzed there: the check says
+            // so, with that engine's command naming the run.
+            try Data("{\"substrate\": \"python-hf\"}".utf8).write(
+                to: root.appending(path: "runs/\(Self.older)/config.json"))
+            let elsewhere = try await ChoiceCheckCLI.run(
+                try ExperimentCLIParser.parse(
+                    namespace: "results", ["check-choices", value.study, "--run", "runs/\(Self.older)"]),
+                sink: .discarding, workspaceRoot: root, python: python, source: source)
+            #expect(
+                elsewhere.message.hasSuffix(
+                    "made on the Python engine, so analyze it there with the current reading: "
+                        + "steerlab-cli remote submit-bundle <bundle> --verb analyze --source "
+                        + "runs/\(Self.older) --reread-choices"), "\(elsewhere.message)")
         }
     }
 }

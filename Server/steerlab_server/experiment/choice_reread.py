@@ -61,6 +61,11 @@ ADVISORY_CODE = "storedChoicesReadDifferently"
 #: twins: ``ChoiceReread.capabilityKey`` / ``remoteOption``.
 CAPABILITY_KEY = "analysisOptions"
 REMOTE_OPTION = "rereadChoices"
+#: The second analysis option: the direct experiment route's analyze accepts
+#: ``sourcePath``, the completed run to read (the app's Analyze on a run's
+#: page). An engine without it analyzes its newest run. Swift twin:
+#: ``ChoiceReread.sourceRunOption``.
+SOURCE_RUN_OPTION = "sourceRun"
 #: The flag a bundle submission renders when it honours the request.
 COMMAND_FLAG = "--reread-choices"
 UNSUPPORTED_CODE = "rereadChoicesUnsupported"
