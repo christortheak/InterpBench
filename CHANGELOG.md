@@ -12,6 +12,12 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **`instrumentation-cost` reads a study's task file.** A line of its prompt
+  file may give the prompt as `text`, as study task files do, instead of
+  `prompt`; when a line has both, `prompt` is used, as a study run reads it.
+  The readers guide already said a study's own file could be used, but the
+  operation refused one at its first line. Every line still needs an `id`.
+
 ## [0.9.15] — 2026-10-23
 
 - **Cluster bootstrap keeps the site's torch.** When a site's torch index

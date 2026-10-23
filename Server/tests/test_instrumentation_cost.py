@@ -154,6 +154,38 @@ def test_plan_refuses_unreadable_or_mismatched_inputs_with_a_repair(tmp_path):
     assert owner.preflight(kept, tmp_path)['prompts'] == 1
 
 
+def test_a_study_task_file_that_names_its_prompt_text_is_measured_on_that_text(tmp_path, model, monkeypatch):
+    from steerlab_server.experiment import generate
+    # A study's task file names the prompt `text` and carries fields the instrument does not read.
+    rows = [{'id': 'a', 'text': 'w4 w6 w3', 'options': ['x', 'y']}, {'id': 'b', 'text': 'w5 w3 w4'}]
+    config = configured(tmp_path, model, prompts=rows, repeats=1, warmups=0, probes=[], retainActivations=False,
+                        zeroActionPolicy=None, fixedPolicy=None, conditionalPolicy=None)
+    assert owner.preflight(config, tmp_path)['prompts'] == 2
+    seen, real = [], generate.generate
+
+    def spy(model, prompt, **kwargs):
+        seen.append(prompt)
+        return real(model, prompt, **kwargs)
+    monkeypatch.setattr(generate, 'generate', spy)
+    _, report = measured(config, tmp_path)
+    # The baseline alone, once in each view: every generation starts from a line's text, under that line's id.
+    assert sorted(seen) == sorted(row['text'] for row in rows for _ in owner.VIEWS)
+    assert all(row['status'] == 'measured' for row in report['rows']) and {row['promptID'] for row in report['rows']} == {'a', 'b'}
+
+
+def test_prompt_comes_before_text_as_the_study_loader_reads_it_and_a_line_with_neither_is_refused():
+    from steerlab_server.experiment import task_inputs
+    text = ''.join(json.dumps(row) + '\n' for row in ({'id': 'both', 'prompt': 'w3', 'text': 'w4'}, {'id': 'text', 'text': 'w5'},
+                                                       {'id': 'blank', 'prompt': '', 'text': 'w6'}))
+    rows = owner.prompt_rows(text.encode())
+    assert rows == [{'id': 'both', 'prompt': 'w3'}, {'id': 'text', 'prompt': 'w5'}, {'id': 'blank', 'prompt': 'w6'}]
+    assert [row['prompt'] for row in rows] == [row['prompt'] for row in task_inputs.parse_prompts(text)]
+    # Neither field, both blank, a prompt that is not text, or no id: the refusal is unchanged.
+    for line in ('{"id":"a"}', '{"id":"a","options":["x","y"]}', '{"id":"a","prompt":"","text":" "}', '{"id":"a","prompt":7,"text":"w3"}', '{"text":"w3"}'):
+        with pytest.raises(owner.CostError) as caught: owner.prompt_rows((line + '\n').encode())
+        assert str(caught.value) == 'Prompt line 1 needs a text id and a text prompt.'
+
+
 def test_declared_policy_roles_are_advised_not_refused(tmp_path):
     config = configured(tmp_path, tiny_model())
     swapped = owner.CostConfig.from_dict({**config.to_dict(), 'zeroActionPolicy': config.fixedPolicy, 'fixedPolicy': config.zeroActionPolicy,

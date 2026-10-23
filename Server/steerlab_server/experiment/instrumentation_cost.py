@@ -146,6 +146,8 @@ def prompt_rows(content):
         if not line.strip(): continue
         try: row = json.loads(line)
         except ValueError as exc: raise CostError(f'Prompt line {number} is not JSON. Write one object per line with an id and a prompt.') from exc
+        # A study's task file names the prompt `text`; `prompt` comes first, as the study task loader reads it.
+        if isinstance(row, dict): row = {'id': row.get('id'), 'prompt': row.get('prompt') or row.get('text')}
         if not isinstance(row, dict) or not all(isinstance(row.get(key), str) and row[key].strip() for key in ('id', 'prompt')):
             raise CostError(f'Prompt line {number} needs a text id and a text prompt.')
         if row['id'] in seen: raise CostError('Two prompts share the id ' + row['id'] + '. Give each prompt its own id.')

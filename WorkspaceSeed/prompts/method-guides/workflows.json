@@ -1497,7 +1497,7 @@
           "label": "Reviewed prompt file",
           "kind": "fileRef",
           "required": true,
-          "help": "A JSONL file with one object per line, each with an id and a prompt. Use a small sample of the prompts the study will use: at most 64, and a handful is usually enough."
+          "help": "A JSONL file with one object per line, each with an id field and a prompt field. A text field, as in a study's task file, works in place of prompt; when a line has both, prompt is used. Use a small sample of the prompts the study will use: at most 64, and a handful is usually enough."
         },
         {
           "id": "probes",

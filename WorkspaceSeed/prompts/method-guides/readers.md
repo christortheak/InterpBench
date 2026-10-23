@@ -501,8 +501,10 @@ sooner or later. Read its tokens and duration together.
   {"id":"prompt-1","prompt":"Replace with a prompt the study will use."}
   ```
 
-  Other fields on a line are ignored, so a study's own prompt file can be
-  used. A handful of prompts is usually enough: every prompt is generated once
+  A line may name its prompt `text` instead, as a study's task file does;
+  when a line has both, `prompt` is used. Other fields on a line are ignored,
+  so a study's own task file can be used, provided every line carries an
+  `id`. A handful of prompts is usually enough: every prompt is generated once
   for each configuration, view, and round.
 - Probe files named by `science probe-list`, and published policy files named
   by `science policy-list`. Each must have been made for this model, revision,
