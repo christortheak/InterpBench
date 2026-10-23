@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.15] — 2026-10-23
+
 - **Cluster bootstrap keeps the site's torch.** When a site's torch index
   did not carry the lock's torch, bootstrap kept the site's build, as
   designed, but then installed the rest of the lock unconstrained. The lock
