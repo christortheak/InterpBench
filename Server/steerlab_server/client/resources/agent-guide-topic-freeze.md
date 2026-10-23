@@ -90,7 +90,9 @@ descriptive measures (distinct-2, word counts, and finish reasons) show
 general degradation where it appears in the responses. When the agent also
 carries fixed steering (vectors or adapters), the battery reads that steering
 alone, labelled `<agent> without its policy`, and the freeze gate requires
-that reading; it covers the fixed steering only. Nothing in the study rules out
+that reading; it covers the fixed steering only. Only validate from SteerLab
+0.9.16 or later takes that reading, so a runner on an older engine must be
+updated before it validates again. Nothing in the study rules out
 general degradation caused by the policy's own actions. `CONDUCTING-A-STUDY.md`
 §5.2 in the repository says more.
 

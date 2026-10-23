@@ -57,7 +57,10 @@ migration that rewrites frozen bytes.
   as it requires battery evidence for any fixed steering. A policy agent with
   no fixed steering stays exempt exactly as before. Both engines write and
   read the same row, and a study validated before this change needs a new
-  validation run before it freezes.
+  validation run before it freezes. Only validate from SteerLab 0.9.16 or
+  later takes the reading, and the refusal says so, so a runner on an older
+  engine must be updated first. The data readiness checklist shows the
+  reading as its own row, owed until validate evidence records it.
 - **Results pages and exports say which conditions have no battery
   reading.** For every condition the run executed without a capability
   battery score, the page now says "No capability battery reading was
@@ -65,7 +68,11 @@ migration that rewrites frozen bytes.
   Older runs gain these lines when their pages are regenerated, from their
   own files, and never with an exemption their manifest does not stamp. The
   app's battery column shows "not applicable" (with the reason) or "not
-  recorded" instead of a dash.
+  recorded" instead of a dash. When no battery ran at all, the export's
+  methods summary now says so, as the results page always has. A forced
+  freeze that skipped nothing is told apart from one whose settings do not
+  list the skipped gates, and the export's manifest records that list as
+  it is, or null when the settings carry none.
 - **The settings summary of a forced freeze says so.** A study frozen with
   force from now on gets a "Freeze" section naming the gates that were
   skipped. Summaries of unforced studies are unchanged.

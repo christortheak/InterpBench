@@ -862,7 +862,11 @@ such a study can still claim:
   policy removed and records it as "*agent* without its policy", inside the
   agent's not-applicable row, never as the agent's own score. Freeze requires
   that reading, as it requires battery evidence for any fixed steering. It
-  covers the fixed steering only.
+  covers the fixed steering only. Only validate from SteerLab 0.9.16 or
+  later takes it, so evidence from an older engine never carries it: a
+  runner on an older engine must be updated before it validates again.
+  The data readiness checklist shows the reading as its own row, owed
+  until matching validate evidence records it.
 - **What it cannot rule out.** Nothing in the study rules out general
   degradation caused by the policy's own actions. Say so where you report the
   policy arm.
