@@ -1111,6 +1111,69 @@ def test_an_unbuildable_dose_refuses_before_the_run(floor_battery):
     assert "residual norms" in err.value.reason
 
 
+def _policy_agent(root, name="steered-policy"):
+    """A saved agent that carries a real, published intervention policy and a
+    vector injection — the kind attaching a policy to a steering agent
+    makes."""
+    from test_intervention_policies import attached, setup
+    doc, _, _ = setup(root)
+    variants = os.path.join(root, "runs", "model-variants")
+    os.makedirs(variants, exist_ok=True)
+    with open(os.path.join(variants, f"{name}.json"), "w",
+              encoding="utf-8") as handle:
+        json.dump({"schemaVersion": 1, "name": name,
+                   "baseModelID": "fake/model", "adapters": [],
+                   "alphaInNormUnits": True,
+                   "injections": [{"concept": "kindness",
+                                   "vectorArtifactID": "runs/x/kindness",
+                                   "layer": 17, "alpha": 0.2}],
+                   "interventionPolicies": attached(doc, root)}, handle)
+    return f"runs/model-variants/{name}.json"
+
+
+def test_a_policy_agent_refuses_before_any_model_load(tmp_path, floor_battery):
+    """The battery's scoring applies fixed steering only, so it cannot read an
+    agent that uses an intervention policy. That refuses with its own code,
+    before any model loads and before any run directory exists, and the
+    repair offers the same agent without its policy under its own name."""
+    root, rel = floor_battery
+    path = _policy_agent(tmp_path)
+    with pytest.raises(battery_run.BatteryRunRefusal) as err:
+        battery_run.preflight(rel, ["steered-policy"], root=root)
+    assert err.value.code == battery_run.INTERVENTION_POLICY_UNSUPPORTED
+    assert err.value.code == "interventionPolicyUnsupported"
+    assert "intervention policy" in err.value.reason
+    repair = err.value.repair_action
+    assert "science policy-attach-review" in repair
+    assert "science policy-attach " in repair
+    assert '"policyPaths": []' in repair and path in repair
+    assert "steered-policy-without-policy=" in repair
+    assert "the report will name the agent without its policy, not this " \
+        "agent" in repair.lower()
+
+    def no_model(*args, **kwargs):
+        raise AssertionError("a model was requested for a refused agent")
+
+    with pytest.raises(battery_run.BatteryRunRefusal):
+        battery_run.execute(rel, ["steered-policy"], root=root,
+                            model_provider=no_model)
+    assert not [name for name in os.listdir(os.path.join(root, "runs"))
+                if name.endswith(battery_run.RUN_SLUG)]
+
+
+def test_the_cli_answers_a_policy_agent_with_the_typed_refusal(
+        tmp_path, floor_battery, capsys):
+    from steerlab_server.cli import main
+    root, rel = floor_battery
+    _policy_agent(tmp_path)
+    assert main(["--root", root, "battery", "run", rel, "--agent",
+                 "steered-policy", "--dry-run", "--json"]) == 65
+    document = _document(capsys)
+    assert document["state"] == "refused"
+    assert document["error"]["code"] == "interventionPolicyUnsupported"
+    assert "without its policy" in document["error"]["repairAction"]
+
+
 def test_a_refused_agent_surface_writes_no_run_directory(floor_battery):
     """The module's contract, extended to the checks that were missing from
     it: every artifact-surface check is UPSTREAM of the mint."""

@@ -5445,6 +5445,12 @@ nothing): `notFound` (66) for a missing battery file; `malformedBattery` (65)
 when it will not parse; `batteryLintBlocked` (65) when `battery lint` has
 blockers, naming each; `unknownAgent` / `ambiguousAgent` (65) for a reference
 that resolves to nothing or to several things; `agentModelConflict` (65);
+`interventionPolicyUnsupported` (65) for an agent that uses an intervention
+policy, which the battery's scoring cannot run — refused before any model
+loads, with a repair that makes the same agent without its policy under its
+own name (`science policy-attach-review` / `science policy-attach` with an
+empty `policyPaths`) and reads that agent instead, so the report names the
+agent without its policy, never the one that carries it;
 `agentReference` / `agentNameCollision` / `noAgents` / `modelRequired` (64).
 
 **`battery-report.json`** carries, per agent: `graded` (`accuracy`,

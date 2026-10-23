@@ -629,12 +629,58 @@ def preflight(battery_file: str, agent_values: list[str], *,
     agents = resolve_agents(parse_agents(agent_values), model_id=model_id,
                             revision=revision, alpha_units=alpha_units,
                             root=root)
-    check_artifact_surface(agents, root)
+    check_artifact_surface(agents, root, battery_file=battery_file)
     return spec, agents
 
 
+#: The refusal code for an agent that carries an intervention policy: the
+#: battery's scoring paths apply fixed steering only, so it cannot read the
+#: agent as it runs. Raised before any model load.
+INTERVENTION_POLICY_UNSUPPORTED = "interventionPolicyUnsupported"
+
+
+def intervention_policy_refusal(agent: ResolvedAgent,
+                                battery_file: str | None = None,
+                                root: str | None = None) -> BatteryRunRefusal:
+    """The typed refusal for a policy agent, with a repair that offers the
+    battery on the same agent WITHOUT its policies — as a separate agent with
+    its own name and its own file, so the reading can never be filed under,
+    or matched by pins to, the agent that carries the policy.
+
+    The policy-free agent is made by the existing attachment verbs with an
+    empty policy list (``policy_authoring.attachment_review``), which keeps
+    the agent's static vectors and adapters. A flag that read the policy
+    agent's own file with its policies stripped was not added: the report is
+    keyed by pins, and it would carry the policy agent's file hash under a
+    reading of a different agent."""
+    from . import command_vocabulary as vocabulary
+    variant = agent.variant
+    source = (agent.identity.get("artifactPath") if isinstance(agent.identity, dict)
+              else None) or agent.reference
+    new_name = f"{getattr(variant, 'name', None) or agent.name}-without-policy"
+    settings = json.dumps({"agentPath": source, "name": new_name,
+                           "policyPaths": []}, sort_keys=True)
+    make = vocabulary.authoring(
+        "science policy-attach-review <settings.json> --root <workspace> --json",
+        "science policy-attach <settings.json> --plan-sha256 <review hash> "
+        "--root <workspace> --json")
+    battery = battery_file or "<battery-file>"
+    return BatteryRunRefusal(
+        f"agent {agent.name!r} uses an intervention policy, which this "
+        "battery cannot run: its scoring applies fixed steering only, so it "
+        "cannot read this agent as it runs",
+        code=INTERVENTION_POLICY_UNSUPPORTED,
+        repair=(f"to read this agent's static steering without its policy, "
+                f"make that agent under its own name: write {settings} to a "
+                f"settings file, then {make}; then run "
+                f"'steerlab-server battery run {battery} --agent "
+                f"{new_name}=<the path policy-attach prints>'. The report "
+                "will name the agent without its policy, not this agent"))
+
+
 def check_artifact_surface(agents: list[ResolvedAgent],
-                           root: str | None = None) -> None:
+                           root: str | None = None, *,
+                           battery_file: str | None = None) -> None:
     """Every disk-side thing execution needs, checked with no model load.
 
     Three surfaces, in the order execution meets them, each mapped to a typed
@@ -664,6 +710,10 @@ def check_artifact_surface(agents: list[ResolvedAgent],
         variant = agent.variant
         if variant is None:
             continue
+        if getattr(variant, "intervention_policies", None):
+            # Before every other check: no other repair helps an agent the
+            # battery cannot run at all.
+            raise intervention_policy_refusal(agent, battery_file, root)
         missing = model_variant.missing_artifacts(variant, root)
         if missing:
             named = ", ".join(f"{m['kind']} {m['reference'] or '(unnamed)'!r} "
