@@ -521,6 +521,14 @@ def test_a_clean_freeze_with_an_exempt_condition_says_every_check_that_applies(r
             'to formal, because its agent uses an intervention policy') in section(text, 'controls')
 
 
+def test_a_forced_freeze_that_skipped_nothing_says_so(root):
+    manifest = _manifest(status='frozen', freezeForced=True, forcedGatesSkipped=[],
+                         conditions=[BASELINE, FORMAL])
+    text = _battery_run(root, manifest, {})
+    assert 'These checks were skipped: none (every check would have passed).' in section(text, 'freeze')
+    assert 'No capability battery was run for this study.' in section(text, 'controls')
+
+
 def test_a_bare_run_says_what_it_lacks(root):
     directory = os.path.join(str(root), 'runs', RUN)
     _write_lines(os.path.join(directory, 'generations.jsonl'), [

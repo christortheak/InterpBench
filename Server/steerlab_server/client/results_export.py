@@ -1840,6 +1840,10 @@ def _methods(context):
                 f"{block.get('itemCount')} items, as the engine scored it.")
         for line in unscored:
             say("- " + line)
+    else:
+        # The same fact the results page states for such a run.
+        say()
+        say("No capability battery was run for this study.")
     say()
 
     # -- outcomes
@@ -2072,12 +2076,13 @@ def _methods(context):
     say()
     status = snapshot.get("status")
     if snapshot.get("freezeForced"):
-        skipped = snapshot.get("forcedGatesSkipped") or []
+        skipped = recorded_gates_skipped(snapshot)
         say("- **This study was frozen with force.** Freezing fixes a study's "
             "settings before any behavior is measured, and it normally requires "
             "every check to pass. Here these checks were skipped: "
             + (_and(f"{_GATES.get(g, 'a check')} ({_code(g)})" for g in skipped)
-               if skipped else "not available (the settings do not list them)")
+               if skipped else "none (every check would have passed)"
+               if skipped == [] else "not available (the settings do not list them)")
             + ". The study's settings record the forced freeze and the skipped "
             "checks permanently. Report which checks were skipped wherever you "
             "report these results.")
@@ -2140,6 +2145,14 @@ def _battery_sentence(entry):
     except Exception:  # noqa: BLE001 - the summary must not fail on an import
         return (f"The capability battery was not applied to {condition} (recorded "
                 f"reason: {reason}). This study has no capability control for that agent.")
+
+
+def recorded_gates_skipped(snapshot):
+    """The gates a forced freeze skipped, exactly as the settings record them:
+    a list (empty when force skipped nothing that would have failed), or
+    None when the settings carry no list at all."""
+    value = snapshot.get("forcedGatesSkipped")
+    return [str(gate) for gate in value] if isinstance(value, list) else None
 
 
 def _battery_exemptions(report, snapshot):
@@ -2523,7 +2536,9 @@ def export_results(root, study, *, run=None, out=None, client=PYTHON_CLIENT, now
         "evaluations": {kind: ("runs/" + name if name else None) for kind, name in names.items()},
         "experimentHash": experiment_hash,
         "freezeForced": bool(snapshot.get("freezeForced")),
-        "forcedGatesSkipped": list(snapshot.get("forcedGatesSkipped") or []),
+        # As recorded: the list (empty when force skipped nothing), or null
+        # when the settings carry no list at all — two different facts.
+        "forcedGatesSkipped": recorded_gates_skipped(snapshot),
         "capabilityBatteryNotApplied": list(snapshot.get("capabilityBatteryNotApplied") or []),
         "lineBreakMark": LINE_BREAK_MARK,
         "sources": stored["sources"],

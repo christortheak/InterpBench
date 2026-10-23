@@ -52,9 +52,12 @@ public enum ResultsExport {
         /// The Python client's whole answer, for the command line's envelope.
         public let response: [String: JSONValue]
 
-        /// The gates the forced freeze skipped, as the answer lists them.
-        public var forcedGatesSkipped: [String] {
-            Self.strings(response["forcedGatesSkipped"])
+        /// The gates the forced freeze skipped, as the answer lists them:
+        /// empty when force skipped nothing that would have failed, nil when
+        /// the study's settings carry no list at all.
+        public var forcedGatesSkipped: [String]? {
+            guard case .array = response["forcedGatesSkipped"] else { return nil }
+            return Self.strings(response["forcedGatesSkipped"])
         }
 
         /// The conditions the study's settings stamp the capability battery
@@ -76,11 +79,20 @@ public enum ResultsExport {
         public var noteLines: [String] {
             var lines: [String] = []
             if freezeForced {
-                let skipped = forcedGatesSkipped
+                // The same facts the run header states for each case
+                // (`RunResults.Classification.detail`).
+                let said =
+                    switch forcedGatesSkipped {
+                    case .some(let gates) where !gates.isEmpty:
+                        "gates skipped: " + gates.joined(separator: ", ")
+                    case .some:
+                        "gates skipped: none (every gate would have passed)"
+                    case .none:
+                        "its settings do not list which gates were skipped"
+                    }
                 lines.append(
-                    "This study was frozen with force; gates skipped: "
-                        + (skipped.isEmpty ? "none recorded" : skipped.joined(separator: ", "))
-                        + ". The methods summary says so.")
+                    "This study was frozen with force; \(said). The methods "
+                        + "summary says so.")
             }
             let notApplied = batteryNotApplied
             if !notApplied.isEmpty {

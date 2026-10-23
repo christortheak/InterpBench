@@ -219,6 +219,19 @@ enum FreezePolicy {
         "\(condition) without its policy"
     }
 
+    /// The first SteerLab release whose validate takes the static-part
+    /// reading. Evidence written by an older engine never carries
+    /// `withoutPolicy`. Server twin: `freeze_policy.STATIC_PART_READING_SINCE`.
+    static let staticPartReadingSince = "0.9.16"
+
+    /// Said with every refusal and repair that asks for a static-part
+    /// reading. Server twin: `freeze_policy.STATIC_PART_READING_NOTE`.
+    static let staticPartReadingNote =
+        "Only validate from SteerLab \(staticPartReadingSince) or later takes "
+        + "a policy agent's static-part reading, so evidence from an older "
+        + "engine never carries it: a runner on an older engine must be "
+        + "updated before it validates again"
+
     /// The researcher-facing sentence for one entry. Both engines emit it
     /// verbatim (server twin: `freeze_policy.battery_not_applied_sentence`).
     static func batteryNotAppliedSentence(
@@ -344,7 +357,7 @@ enum FreezePolicy {
             }
             if !missingStatic.isEmpty {
                 owed.append(
-                    "a capability-battery reading of "
+                    "capability-battery reading of "
                         + missingStatic.map(withoutPolicyLabel)
                         .joined(separator: ", ")
                         + " (its static steering alone)")
@@ -352,6 +365,10 @@ enum FreezePolicy {
             let lacking =
                 "cannot freeze '\(name)': matching validate evidence has no "
                 + owed.joined(separator: " and no ")
+            // Evidence from an engine older than the static-part reading
+            // never carries it, so the refusal says re-running validate on
+            // such an engine cannot help. Server twin: the same sentence.
+            let since = missingStatic.isEmpty ? "" : ". " + staticPartReadingNote
             let failures =
                 missing.compactMap { condition in
                     results[condition]?.error.map {
@@ -370,12 +387,12 @@ enum FreezePolicy {
                         + failures.joined(separator: " ")
                         + " Repair what that message names, then re-run "
                         + "'steerlab-cli experiment validate \(name)' "
-                        + "(\(batteryScopePhrase)), or freeze --force")
+                        + "(\(batteryScopePhrase)), or freeze --force" + since)
             }
             throw ExperimentError(
                 reason: lacking
                     + " — re-run 'steerlab-cli experiment validate \(name)' "
-                    + "(\(batteryScopePhrase)), or freeze --force")
+                    + "(\(batteryScopePhrase)), or freeze --force" + since)
         }
         if let expected = facts.expectedHash {
             let drifted =

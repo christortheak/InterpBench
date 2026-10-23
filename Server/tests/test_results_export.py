@@ -1220,9 +1220,31 @@ def test_a_cleanly_frozen_study_says_so(root):
     assert ("- The study was frozen before this run, with every freeze check passed "
             "(frozen at 2026-10-03T12:00:00Z).") in methods
     assert "frozen with force" not in methods
-    # No battery ran, so there is no battery section and nothing to say about
-    # readings it did not take.
+    # No battery ran and nothing is stamped: the export states that fact, as
+    # the results page does, and says nothing about per-condition readings.
+    assert "\nNo capability battery was run for this study.\n" in methods
     assert "No capability battery reading" not in methods
+    stored = json.loads(_read(_export(root, out=str(root / "second")), "manifest.json"))
+    # Not forced and no list recorded: null, not an empty list.
+    assert stored["forcedGatesSkipped"] is None
+
+
+def test_a_forced_freeze_that_skipped_nothing_is_told_apart_from_an_unlisted_one(root):
+    # Force used, every gate would have passed: an empty, recorded list.
+    manifest = _manifest(status="frozen", freezeForced=True, forcedGatesSkipped=[])
+    _write_run(root, manifest, _python_records("0" * 64))
+    result = _export(root)
+    methods = _read(result, "methods.md")
+    assert "Here these checks were skipped: none (every check would have passed)." in methods
+    assert result["forcedGatesSkipped"] == []
+    # Force stamped with no list at all (a snapshot that lost it): said so.
+    manifest = _manifest(status="frozen", freezeForced=True)
+    _write_run(root, manifest, _python_records("0" * 64), name="20261005T000000000-run")
+    result = _export(root, run="20261005T000000000-run", out=str(root / "unlisted"))
+    methods = _read(result, "methods.md")
+    assert ("Here these checks were skipped: not available (the settings do not "
+            "list them).") in methods
+    assert result["forcedGatesSkipped"] is None
 
 
 def _battery_report(manifest, scored):

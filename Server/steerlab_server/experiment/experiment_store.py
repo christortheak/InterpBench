@@ -3714,7 +3714,7 @@ def freeze(name: str, *, force: bool = False, cached_revision=None,
             for gate_id, message in gate_failures:
                 print(f"freeze '{name}' FORCE WARNING: skipping failing gate "
                       f"'{gate_id}' — {message}", file=sys.stderr)
-        freeze_policy.admit_failures(name, gate_failures, force=force)
+        freeze_policy.admit_failures(name, gate_failures, force=force, d=d)
 
         # Frozen studies must be self-contained: pinned scenario/variant inputs
         # that live under gitignored runs/ are copied into the experiment

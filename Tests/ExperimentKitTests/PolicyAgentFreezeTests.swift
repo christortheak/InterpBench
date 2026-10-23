@@ -580,10 +580,22 @@ extension ExperimentStoreTests {
                 batteryGateRefusal(
                     manifest, [scored("baseline"), notApplicable(Self.mixedAgent)]))
             #expect(
-                missing.contains(
-                    "a capability-battery reading of mixed-agent without its "
-                        + "policy (its static steering alone)"))
+                missing.hasPrefix(
+                    "cannot freeze 'static-gate': matching validate evidence has "
+                        + "no capability-battery reading of mixed-agent without "
+                        + "its policy (its static steering alone)"))
             #expect(missing.contains(FreezePolicy.batteryScopePhrase))
+            // Evidence from an older engine never carries the reading: the
+            // refusal says which validate takes it, word for word the
+            // server's sentence.
+            #expect(
+                missing.hasSuffix(", or freeze --force. " + FreezePolicy.staticPartReadingNote))
+            #expect(
+                FreezePolicy.staticPartReadingNote
+                    == "Only validate from SteerLab 0.9.16 or later takes a policy "
+                    + "agent's static-part reading, so evidence from an older engine "
+                    + "never carries it: a runner on an older engine must be updated "
+                    + "before it validates again")
             // A reading that could not be taken says why, and is missing.
             let failed = try #require(
                 batteryGateRefusal(
@@ -753,7 +765,25 @@ extension ExperimentStoreTests {
             reading: legacy)
         #expect(forced.runClass == .forcedFreeze)
         #expect(forced.label == "Frozen with force")
-        #expect(forced.detail.hasPrefix("freeze checks skipped with --force: batteryEvidence"))
+        #expect(
+            forced.detail
+                == "frozen with --force; gates skipped: batteryEvidence (recorded "
+                + "in forcedGatesSkipped)")
+        // The two other cases, each stated as what it is: an empty list
+        // (nothing would have failed) and no list at all.
+        var skippedNothing = forced
+        skippedNothing.forcedGatesSkipped = []
+        #expect(
+            skippedNothing.detail
+                == "frozen with --force; gates skipped: none (every gate would "
+                + "have passed)")
+        var unlisted = forced
+        unlisted.forcedGatesSkipped = nil
+        #expect(
+            unlisted.detail
+                == "frozen with --force; the snapshot does not list which gates "
+                + "were skipped")
+        #expect(!unlisted.detail.contains("records this permanently"))
         // Nothing credits it with an exemption its manifest does not stamp.
         #expect(forced.batteryNotAppliedLines.isEmpty)
         for text in [clean.label, clean.detail, forced.label, forced.detail] {
@@ -803,5 +833,108 @@ extension ExperimentStoreTests {
         #expect(
             parsed?.capabilityBatteryNotApplied
                 == [.init(condition: "guided", reason: Self.policyReason)])
+    }
+
+    // MARK: - Review follow-ups (2026-10-23)
+
+    /// An in-memory study whose one agent uses a policy and carries only an
+    /// adapter as static steering.
+    private func adapterOnlyPolicyStudy() -> ExperimentManifest {
+        var manifest = ExperimentManifest(
+            name: "adapter-policy", description: "", modelID: "test/model")
+        manifest.modelRevision = String(repeating: "a", count: 40)
+        manifest.variantConditions = [
+            .init(
+                name: "adapter-agent", artifactPath: "runs/model-variants/a.json",
+                artifactHash: String(repeating: "c", count: 64),
+                artifact: .init(
+                    name: "adapter-agent", baseModelID: "test/model",
+                    adapters: [
+                        .init(
+                            name: "a1", artifactPath: "runs/a", adapterDirectory: "runs/a",
+                            adapterHash: String(repeating: "d", count: 64))
+                    ],
+                    injections: [], promptMode: "chatAssistant",
+                    qwenThinkingEnabled: false, temperature: 0, systemPrompt: "",
+                    interventionPolicies: policyAttachments()))
+        ]
+        return manifest
+    }
+
+    @Test func anAdapterAloneIsStaticSteeringThatOwesAReading() throws {
+        let manifest = adapterOnlyPolicyStudy()
+        let variant = try #require(manifest.variantConditions.first)
+        #expect(FreezePolicy.hasStaticSteering(variant))
+        #expect(FreezePolicy.owesStaticPartReading(variant))
+        let refusal = try #require(
+            batteryGateRefusal(
+                manifest, [scored("baseline"), notApplicable("adapter-agent")]))
+        #expect(refusal.contains("capability-battery reading of adapter-agent without its policy"))
+        #expect(
+            batteryGateRefusal(manifest, [scored("baseline"), withoutPolicy("adapter-agent")])
+                == nil)
+    }
+
+    /// The gate's repair names the engines that take the static-part reading
+    /// only when a policy agent owes one (server twin: `freeze_gate_repair`).
+    @Test func theBatteryRepairNamesTheEngineVersionOnlyWhenAReadingIsOwed() throws {
+        try withTempRoot {
+            func repair(_ manifest: ExperimentManifest) -> String? {
+                ExperimentStore.freezeGateTable(name: manifest.name, autoCommit: false)
+                    .compactMap { $0.evaluate(manifest) }
+                    .first { $0.gate == .batteryEvidence }?.repairAction
+            }
+            let owing = adapterOnlyPolicyStudy()
+            let owed = repair(owing)
+            #expect(owed?.hasSuffix(". " + FreezePolicy.staticPartReadingNote) == true)
+            var policyOnly = owing
+            policyOnly.variantConditions[0].artifact.adapters = []
+            let notOwed = try #require(repair(policyOnly))
+            #expect(!notOwed.contains(FreezePolicy.staticPartReadingNote))
+        }
+    }
+
+    /// The data readiness checklist shows the static-part reading as its own
+    /// row: owed until matching validate evidence records it, then recorded.
+    @Test func theReadinessChecklistShowsTheStaticPartReadingOwedThenRecorded() throws {
+        try withTempRoot {
+            let manifest = try makePolicyStudy(
+                name: "static-ready", conditions: [Self.mixedAgent, Self.policyAgent])
+            let root = try #require(ExperimentStore.rootOverride)
+            func row() -> DataRequirement? {
+                StudyDataReadiness.requirements(for: manifest, workspaceRoot: root)
+                    .first { $0.id == "capabilityBattery:withoutPolicy:mixed-agent" }
+            }
+            // A policy agent with no static steering gets no such row.
+            #expect(
+                !StudyDataReadiness.requirements(for: manifest, workspaceRoot: root)
+                    .contains { $0.id == "capabilityBattery:withoutPolicy:policy-agent" })
+            let owed = try #require(row())
+            #expect(owed.title == "capability battery — mixed-agent without its policy")
+            #expect(owed.kind == .capabilityBattery)
+            #expect(owed.status != .notApplicable && owed.status != .present)
+            #expect(owed.detail.hasPrefix("owed: the freeze gate requires"))
+            #expect(owed.detail.contains(FreezePolicy.staticPartReadingNote))
+            // The agent as it runs is still recorded as not applicable.
+            #expect(
+                StudyDataReadiness.requirements(for: manifest, workspaceRoot: root)
+                    .contains {
+                        $0.id == "capabilityBattery:notApplicable:mixed-agent"
+                            && $0.status == .notApplicable
+                    })
+
+            try fabricateValidationEvidence(
+                for: manifest,
+                capabilityBattery: [
+                    scored("baseline"), withoutPolicy(Self.mixedAgent),
+                    notApplicable(Self.policyAgent),
+                ])
+            let recorded = try #require(row())
+            #expect(recorded.status == .present)
+            #expect(
+                recorded.detail
+                    == "recorded in the matching validate evidence: 75% (3/4). It "
+                    + "describes the static steering, not the agent as it runs.")
+        }
     }
 }

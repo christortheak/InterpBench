@@ -849,11 +849,12 @@ class Page:
         snapshot, config, observed = self.snapshot, self.config, self.loaded['observed']
         status = snapshot.get('status')
         if snapshot.get('freezeForced'):
-            skipped = _list(snapshot.get('forcedGatesSkipped'))
+            skipped = source.recorded_gates_skipped(snapshot)
             state = join(el('strong', 'Frozen with force.'), ' Freezing fixes a study’s settings before any behavior '
                          'is measured, and normally every check must pass. These checks were skipped: ',
                          join(*[join(source._GATES.get(gate, 'a check this version cannot name'), ' (', code(gate), ')')
-                                for gate in skipped], sep='; ') if skipped else 'not recorded',
+                                for gate in skipped], sep='; ') if skipped
+                         else 'none (every check would have passed)' if skipped == [] else 'not recorded',
                          '. The study’s settings record the forced freeze and the skipped checks permanently. '
                          'Report which checks were skipped wherever these results are reported.')
         elif status in ('frozen', 'complete'):

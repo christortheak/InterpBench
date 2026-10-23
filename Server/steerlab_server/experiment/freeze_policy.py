@@ -93,13 +93,32 @@ def owes_static_part_reading(vc) -> bool:
 #: that condition's not-applicable row, as a sub-object —
 #: ``{"condition", "batteryHash", "notApplicable": "interventionPolicy",
 #: "withoutPolicy": {"total", "correct", "accuracy", "batteryFormat"?,
-#: "armingIsolated"?}}``, or ``"withoutPolicy": {"error": <what went wrong>}``
-#: when the reading could not be taken — so the condition's own row keeps NO
-#: score keys, and every reader that looks for ``accuracy`` on a row still
-#: finds none for the agent as it runs. Shown everywhere under
-#: :func:`without_policy_label`. Swift twin:
-#: ``CapabilityBatteryConditionResult.withoutPolicy``.
+#: "armingIsolated"?}}`` — so the condition's own row keeps NO score keys,
+#: and every reader that looks for ``accuracy`` on a row still finds none for
+#: the agent as it runs. Shown everywhere under :func:`without_policy_label`.
+#:
+#: Which engine writes what when the reading cannot be taken: THIS engine
+#: records ``"withoutPolicy": {"error": <what went wrong>}`` and carries on
+#: with the other conditions, as it does with an ``error`` row for an agent
+#: that fails to load. The Mac engine's validate throws instead and the whole
+#: validation fails, as it does for any condition whose agent cannot load.
+#: Both engines READ either shape, and an ``error`` sub-object is never a
+#: score. Swift twin: ``CapabilityBatteryConditionResult.withoutPolicy``.
 WITHOUT_POLICY_KEY = "withoutPolicy"
+
+#: The first SteerLab release whose validate takes the static-part reading.
+#: Evidence written by an older engine never carries ``withoutPolicy``, so
+#: the gate says so rather than send a researcher to re-run an engine that
+#: cannot produce it. Swift twin: ``FreezePolicy.staticPartReadingSince``.
+STATIC_PART_READING_SINCE = "0.9.16"
+
+#: Said with every refusal and repair that asks for a static-part reading.
+#: Swift twin: ``FreezePolicy.staticPartReadingNote``.
+STATIC_PART_READING_NOTE = (
+    f"Only validate from SteerLab {STATIC_PART_READING_SINCE} or later takes "
+    "a policy agent's static-part reading, so evidence from an older engine "
+    "never carries it: a runner on an older engine must be updated before it "
+    "validates again")
 
 
 def without_policy_label(condition: str) -> str:
@@ -109,11 +128,23 @@ def without_policy_label(condition: str) -> str:
 
 
 def without_policy_reading(row) -> dict | None:
-    """The static-part reading inside one evidence row, or None."""
-    if not isinstance(row, dict):
+    """The static-part reading inside one evidence row, or None. Read only on
+    a not-applicable row — the one place either engine writes it — so a
+    scored row can never carry a second score. Swift twin: the decoder of
+    ``CapabilityBatteryConditionResult``."""
+    if not isinstance(row, dict) or row.get("notApplicable") is None:
         return None
     reading = row.get(WITHOUT_POLICY_KEY)
     return reading if isinstance(reading, dict) else None
+
+
+def static_part_scored(row) -> bool:
+    """Whether one evidence row carries a SCORED static-part reading: a
+    not-applicable row whose ``withoutPolicy`` has an accuracy and no
+    ``error``. Swift twin: ``WithoutPolicyReading.isScored``."""
+    reading = without_policy_reading(row)
+    return (reading is not None and reading.get("error") is None
+            and reading.get("accuracy") is not None)
 
 
 def battery_not_applied_sentence(condition: str, reason: str) -> str:
@@ -222,7 +253,20 @@ def evaluate(name: str, d: dict, evidence: FreezeEvidence) -> list[tuple[str, st
     return failures
 
 
-def freeze_gate_repair(gate: str, name: str) -> str:
+def freeze_gate_repair(gate: str, name: str, d: dict | None = None) -> str:
+    """The repair for a freeze-gate refusal (:func:`_gate_repair`), plus,
+    for the battery gate of a study ``d`` with a policy agent that owes a
+    static-part reading, the fact that only a 0.9.16-or-later validate takes
+    it. Swift twin: the battery gate's entry in ``freezeGateTable``."""
+    repair = _gate_repair(gate, name)
+    if gate == "batteryEvidence" and isinstance(d, dict) and any(
+            owes_static_part_reading(vc)
+            for vc in d.get("variantConditions") or []):
+        repair += f". {STATIC_PART_READING_NOTE}"
+    return repair
+
+
+def _gate_repair(gate: str, name: str) -> str:
     """The RUNNABLE repair for a freeze-gate refusal, for whoever shows it.
 
     Gate-5 dry run #2 (P2/P3): every freeze-gate refusal here carried one
@@ -303,12 +347,13 @@ def freeze_gate_repair(gate: str, name: str) -> str:
         gate, f"satisfy the '{gate}' gate, then {freeze_again}")
 
 
-def admit_failures(name: str, failures: list[tuple[str, str]], *, force: bool) -> None:
+def admit_failures(name: str, failures: list[tuple[str, str]], *, force: bool,
+                   d: dict | None = None) -> None:
     if failures and not force:
         raise ExperimentStoreError(
             failures[0][1], gate=failures[0][0],
             gates=tuple(g for g in FORCED_GATE_IDS if g in {gid for gid, _ in failures}),
-            repair=freeze_gate_repair(failures[0][0], name))
+            repair=freeze_gate_repair(failures[0][0], name, d))
 
 
 def check_variant_validity(name: str, d: dict, *, evidence_grade_variants: set[int]) -> None:
@@ -409,23 +454,22 @@ def check_battery_evidence(name: str, d: dict, evidence: dict | None,
     # own score, and a policy agent with no static steering owes nothing.
     owing = [vc.get("name", "?") for vc in d.get("variantConditions") or []
              if owes_static_part_reading(vc)]
-    missing_static = [
-        c for c in owing
-        if (without_policy_reading(results.get(c)) or {}).get("accuracy") is None]
+    missing_static = [c for c in owing if not static_part_scored(results.get(c))]
     if missing or missing_static:
         owed = []
         if missing:
             owed.append("capability-battery results for condition(s) "
                         + ", ".join(missing))
         if missing_static:
-            owed.append("a capability-battery reading of "
+            owed.append("capability-battery reading of "
                         + ", ".join(without_policy_label(c)
                                     for c in missing_static)
                         + " (its static steering alone)")
         raise ExperimentStoreError(
             f"cannot freeze '{name}': validate evidence has no "
             + " and no ".join(owed) + f" — run '{validate}' "
-            f"({BATTERY_SCOPE_PHRASE}), or freeze --force")
+            f"({BATTERY_SCOPE_PHRASE}), or freeze --force"
+            + (f". {STATIC_PART_READING_NOTE}" if missing_static else ""))
     expected = expected_hash
     if expected:
         drifted = sorted(

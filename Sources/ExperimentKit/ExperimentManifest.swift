@@ -2107,12 +2107,20 @@ public struct ExperimentError: Error, CustomStringConvertible {
 /// A not-applicable row for a policy agent that ALSO carries static steering
 /// (vectors or adapters) adds one key, `withoutPolicy`: the battery reading
 /// of that agent with its policies removed, as a sub-object
-/// {"total", "correct", "accuracy", "batteryFormat"?, "armingIsolated"?} or
-/// {"error"} when the reading could not be taken. The row itself still has
-/// no score keys, so nothing reads the static part as the agent's own
-/// capability; it is shown as "<condition> without its policy"
-/// (`FreezePolicy.withoutPolicyLabel`). Server twin:
+/// {"total", "correct", "accuracy", "batteryFormat"?, "armingIsolated"?}.
+/// The row itself still has no score keys, so nothing reads the static part
+/// as the agent's own capability; it is shown as "<condition> without its
+/// policy" (`FreezePolicy.withoutPolicyLabel`). Server twin:
 /// `freeze_policy.WITHOUT_POLICY_KEY`.
+///
+/// When the reading cannot be taken the engines differ, and this decoder
+/// reads both: the Python engine records {"error": "<what went wrong>"} as
+/// the sub-object and carries on with the other conditions, while this
+/// engine's validate throws, so the validation fails as it does for any
+/// condition whose agent cannot load, and writes no such sub-object. An
+/// {"error"} sub-object is never a score (`WithoutPolicyReading.isScored`).
+/// Evidence from an engine older than 0.9.16 carries no `withoutPolicy` at
+/// all (`FreezePolicy.staticPartReadingSince`).
 ///
 /// A row with none of the score keys, `notApplicable`, or `error` is
 /// malformed and fails to decode exactly as it always has.
@@ -2125,8 +2133,9 @@ public struct CapabilityBatteryConditionResult: Codable, Sendable, Equatable {
         public var accuracy: Double
         public var batteryFormat: Int?
         public var armingIsolated: Bool?
-        /// Why the reading could not be taken, when it could not; the score
-        /// fields are then placeholders and are not written.
+        /// Why the reading could not be taken, as the Python engine records
+        /// it (this engine's validate throws instead); the score fields are
+        /// then placeholders and are not written.
         public var error: String?
 
         public var isScored: Bool { error == nil }

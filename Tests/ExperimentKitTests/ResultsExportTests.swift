@@ -388,6 +388,19 @@ import Testing
                     + "summary says why.",
             ])
         #expect(!outcome.noteLines.joined().contains("citable"))
+        // Force used and nothing skipped: an empty list, told apart from a
+        // missing one.
+        let skippedNothing = try ResultsExport.outcome(
+            from: .object([
+                "exportDirectory": .string("/tmp/exports/four"), "run": .string("runs/d"),
+                "freezeForced": .bool(true), "forcedGatesSkipped": .array([]),
+            ]))
+        #expect(skippedNothing.forcedGatesSkipped == [])
+        #expect(
+            skippedNothing.noteLines == [
+                "This study was frozen with force; gates skipped: none (every gate "
+                    + "would have passed). The methods summary says so."
+            ])
         // A clean run without exemptions has nothing to add.
         let clean = try ResultsExport.outcome(
             from: .object([
@@ -421,10 +434,12 @@ import Testing
         #expect(outcome.notAvailable.first?.repair == "steerlab-cli experiment analyze a")
         #expect(outcome.message.contains("Not available: effects.csv."))
         #expect(outcome.summaryLines.contains("  responses.csv  (12 rows)"))
+        // The answer carries no forcedGatesSkipped list: said as such.
+        #expect(outcome.forcedGatesSkipped == nil)
         #expect(
             outcome.summaryLines.last
-                == "  note: This study was frozen with force; gates skipped: "
-                + "none recorded. The methods summary says so.")
+                == "  note: This study was frozen with force; its settings do not "
+                + "list which gates were skipped. The methods summary says so.")
 
         #expect(
             throws: ResultsExport.Refusal(

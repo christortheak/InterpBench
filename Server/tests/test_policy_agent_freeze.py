@@ -430,11 +430,18 @@ def test_the_gate_requires_the_static_part_reading(tmp_path):
         es.freeze(name, force=False, root=root)
     assert refused.value.gate == "batteryEvidence"
     message = str(refused.value)
-    assert "a capability-battery reading of mixed-agent without its policy " \
-        "(its static steering alone)" in message
+    assert ("validate evidence has no capability-battery reading of mixed-agent "
+            "without its policy (its static steering alone)") in message
     assert freeze_policy.BATTERY_SCOPE_PHRASE in message
+    # Evidence from an older engine never carries the reading, so both the
+    # refusal and the repair say which validate takes it.
+    assert message.endswith(", or freeze --force. "
+                            + freeze_policy.STATIC_PART_READING_NOTE)
+    assert "SteerLab 0.9.16 or later" in freeze_policy.STATIC_PART_READING_NOTE
     # The repair says what the validate step scores.
     assert freeze_policy.BATTERY_SCOPE_PHRASE in refused.value.repair_action
+    assert refused.value.repair_action.endswith(
+        ". " + freeze_policy.STATIC_PART_READING_NOTE)
 
     # With the reading inside the row, the study freezes cleanly: the stamp
     # still says the battery was not applied to the agent as it runs.
@@ -529,3 +536,113 @@ def test_validation_reads_the_static_part_with_the_policies_removed(tmp_path, mo
     # A policy agent with no static steering gets no reading at all.
     assert freeze_policy.WITHOUT_POLICY_KEY not in by_condition[POLICY]
     assert "battery: mixed-agent without its policy: 1/1" in logged
+
+
+# --- review follow-ups (2026-10-23) -------------------------------------------
+
+def _gate_refusal(d, rows):
+    """The battery gate's refusal for manifest dict ``d`` over evidence rows,
+    or None when it passes."""
+    try:
+        freeze_policy.check_battery_evidence(
+            "s", d, {"batteryResults": rows}, expected_hash=None)
+    except es.ExperimentStoreError as exc:
+        return str(exc)
+    return None
+
+
+def _policy_vc(name, *, injections=(), adapters=()):
+    return {"name": name, "artifact": {
+        "name": name, "injections": list(injections), "adapters": list(adapters),
+        "interventionPolicies": [{"json": "{}", "sha256": "0" * 64}]}}
+
+
+BASELINE_ROW = {"condition": "baseline", "batteryHash": "h", "total": 4,
+                "correct": 4, "accuracy": 1.0}
+
+
+def test_an_adapter_alone_is_static_steering_that_owes_a_reading():
+    adapter_only = _policy_vc(
+        "adapter-agent", adapters=[{"adapterDirectory": "runs/a", "adapterHash": "a" * 64}])
+    assert freeze_policy.has_static_steering(adapter_only)
+    assert freeze_policy.owes_static_part_reading(adapter_only)
+    d = {"name": "s", "variantConditions": [adapter_only]}
+    refused = _gate_refusal(d, [BASELINE_ROW, {
+        "condition": "adapter-agent", "batteryHash": "h",
+        "notApplicable": "interventionPolicy"}])
+    assert "capability-battery reading of adapter-agent without its policy" in refused
+    assert _gate_refusal(d, [BASELINE_ROW, {
+        "condition": "adapter-agent", "batteryHash": "h",
+        "notApplicable": "interventionPolicy",
+        "withoutPolicy": {"total": 4, "correct": 2, "accuracy": 0.5}}]) is None
+
+
+def test_a_static_part_reading_is_read_only_on_a_not_applicable_row():
+    # The Mac decoder reads withoutPolicy only on a not-applicable row; so
+    # does this engine. On a scored row the key is ignored.
+    scored_with_extra = {"condition": "mixed", "batteryHash": "h", "total": 4,
+                         "correct": 4, "accuracy": 1.0,
+                         "withoutPolicy": {"total": 4, "correct": 4, "accuracy": 1.0}}
+    assert freeze_policy.without_policy_reading(scored_with_extra) is None
+    assert not freeze_policy.static_part_scored(scored_with_extra)
+    d = {"name": "s", "variantConditions": [_policy_vc("mixed", injections=[INJECTION])]}
+    refused = _gate_refusal(d, [BASELINE_ROW, scored_with_extra])
+    assert "capability-battery reading of mixed without its policy" in refused
+
+
+def test_a_static_part_reading_with_an_error_is_never_a_score():
+    # An error key means the reading was not taken, even beside a number.
+    row = {"condition": "mixed", "batteryHash": "h",
+           "notApplicable": "interventionPolicy",
+           "withoutPolicy": {"error": "adapter did not load", "accuracy": 1.0,
+                             "total": 4, "correct": 4}}
+    assert not freeze_policy.static_part_scored(row)
+    d = {"name": "s", "variantConditions": [_policy_vc("mixed", injections=[INJECTION])]}
+    assert "without its policy" in _gate_refusal(d, [BASELINE_ROW, row])
+
+
+def test_the_repair_names_the_engine_version_only_when_a_reading_is_owed():
+    mixed = {"name": "s", "variantConditions": [_policy_vc("mixed", injections=[INJECTION])]}
+    policy_only = {"name": "s", "variantConditions": [_policy_vc("only")]}
+    note = freeze_policy.STATIC_PART_READING_NOTE
+    assert freeze_policy.freeze_gate_repair("batteryEvidence", "s", mixed).endswith(
+        ". " + note)
+    assert note not in freeze_policy.freeze_gate_repair("batteryEvidence", "s", policy_only)
+    assert note not in freeze_policy.freeze_gate_repair("batteryEvidence", "s")
+    assert note not in freeze_policy.freeze_gate_repair("validateEvidence", "s", mixed)
+
+
+def test_validation_records_a_static_part_reading_it_could_not_take(tmp_path, monkeypatch):
+    import steerlab_server.experiment.model_variant as _owner_model_variant
+    root, name = _study(tmp_path, conditions=(MIXED,))
+    battery_hash = _write(
+        os.path.join(root, "prompts", "batteries", "basic.jsonl"),
+        '{"prompt": "2+2?", "answer": "4"}\n')
+    d = es.load_raw(name, root)
+    d["capabilityBatteryFile"] = "prompts/batteries/basic.jsonl"
+    d["capabilityBatteryHash"] = battery_hash
+    es.save_raw(d, root)
+    manifest = Manifest.from_dict(d)
+    monkeypatch.setattr(_owner_generate, "generate", lambda *a, **k: "4")
+
+    def variant_injections(variant, **kwargs):
+        raise ValueError("vector runs/x/c not found")
+
+    monkeypatch.setattr(_owner_model_variant, "variant_injections", variant_injections)
+    logged = []
+    rows = _owner_validation_workflow._battery_results(
+        manifest, object(), root, logged.append)
+
+    mixed = {r["condition"]: r for r in rows}[MIXED]
+    # Recorded, and the validation carries on: this engine's behaviour.
+    assert mixed == {"condition": MIXED, "batteryHash": battery_hash,
+                     "notApplicable": "interventionPolicy",
+                     "withoutPolicy": {"error": "vector runs/x/c not found"}}
+    assert any("mixed-agent without its policy skipped" in line for line in logged)
+
+    # The gate refuses it, naming why the reading is missing.
+    _validate_evidence(root, name, [lambda h: _scored("baseline", battery_hash),
+                                    lambda h: mixed])
+    with pytest.raises(es.ExperimentStoreError, match="without its policy") as refused:
+        es.freeze(name, force=False, root=root)
+    assert refused.value.gate == "batteryEvidence"

@@ -99,13 +99,18 @@ extension RunResults {
                     + "whether this run matches the study's current settings "
                     + "could not be checked"
             case .forcedFreeze:
-                "freeze checks skipped with --force: "
-                    + (forcedGatesSkipped.map {
-                        $0.isEmpty ? "none (every check would have passed)"
-                            : $0.joined(separator: ", ")
-                    } ?? "not recorded in the snapshot")
-                    + " — the manifest records this permanently "
-                    + "(freezeForced, forcedGatesSkipped)"
+                switch forcedGatesSkipped {
+                case .some(let gates) where !gates.isEmpty:
+                    "frozen with --force; gates skipped: "
+                        + gates.joined(separator: ", ")
+                        + " (recorded in forcedGatesSkipped)"
+                case .some:
+                    "frozen with --force; gates skipped: none (every gate "
+                        + "would have passed)"
+                case .none:
+                    "frozen with --force; the snapshot does not list which "
+                        + "gates were skipped"
+                }
             case .validatedDraft:
                 "draft manifest with matching validate evidence for its exact "
                     + "validation scope"

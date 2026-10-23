@@ -636,6 +636,15 @@ public enum StudyDataReadiness {
                     path: battery.path,
                     detail: FreezePolicy.batteryNotAppliedSentence(entry)))
         }
+        // A policy agent that also carries static steering owes a reading
+        // of that steering alone, which the freeze gate requires: its own
+        // row, recorded or owed, like the battery row above.
+        if ManifestDeclarationPolicy.modelOutputSurfacesOperative(manifest) {
+            for variant in manifest.variantConditions
+            where FreezePolicy.owesStaticPartReading(variant) {
+                rows.append(staticPartRequirement(variant, manifest: manifest, battery: battery))
+            }
+        }
 
         // Neutral corpus: the α denominator (norm-unit steering strengths).
         let corpusPath = "prompts/neutral/corpus.jsonl"
@@ -1317,6 +1326,50 @@ public enum StudyDataReadiness {
                     + "\((error as? ExperimentError)?.reason ?? "\(error)")",
                 templateID: templateID)
         }
+    }
+
+    /// The row for a policy agent's static-part reading: recorded when the
+    /// study's matching validate evidence (on either substrate) holds a
+    /// scored `withoutPolicy` reading for the condition, otherwise owed.
+    /// Owed is `.optional`, as the battery row is before a battery is
+    /// pinned: the reading is produced by validate, not a file the
+    /// researcher authors, so it never blocks `data check` — the freeze gate
+    /// is what requires it. A missing or invalid battery file stays the
+    /// battery row's blocker, and this row repeats that status.
+    static func staticPartRequirement(
+        _ variant: ExperimentManifest.VariantCondition,
+        manifest: ExperimentManifest, battery: DataRequirement
+    ) -> DataRequirement {
+        let label = FreezePolicy.withoutPolicyLabel(variant.name)
+        let id = "capabilityBattery:withoutPolicy:\(variant.name)"
+        let title = "capability battery — \(label)"
+        let evidence =
+            ExperimentStore.validationEvidence(for: manifest)
+            ?? ExperimentStore.validationEvidence(
+                for: manifest, runSubstrate: WorkspaceScoping.serverSubstrate)
+        let reading = evidence
+            .flatMap { ExperimentStore.validationEvidenceBatteryResults(at: $0) }?
+            .first { $0.condition == variant.name }?.withoutPolicy
+        if let reading, reading.isScored {
+            return DataRequirement(
+                id: id, title: title, kind: .capabilityBattery, status: .present,
+                path: battery.path,
+                detail: "recorded in the matching validate evidence: "
+                    + String(format: "%.0f%%", reading.accuracy * 100)
+                    + " (\(reading.correct)/\(reading.total)). It describes the "
+                    + "static steering, not the agent as it runs.")
+        }
+        let blocked = battery.status == .missing || battery.status == .invalid
+        return DataRequirement(
+            id: id, title: title, kind: .capabilityBattery,
+            status: blocked ? battery.status : .optional,
+            path: battery.path,
+            detail: "owed: the freeze gate requires a capability-battery reading "
+                + "of \(variant.name)'s static steering (its vectors and "
+                + "adapters) with the policy removed, which validate takes"
+                + (reading?.error.map { "; the last validate could not take it: \($0)" }
+                    ?? "; no matching validate evidence records it yet")
+                + ". \(FreezePolicy.staticPartReadingNote).")
     }
 
     private static func batteryRequirement(

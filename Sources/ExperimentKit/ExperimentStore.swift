@@ -7214,24 +7214,32 @@ public enum ExperimentStore {
                 guard modelOutputSurfacesOperative(manifest) else { return nil }
                 return variantValidity.evaluate(manifest)
             })
-        let batteryEvidence = freezeGateEntry(
-            .batteryEvidence, name: name,
-            // Same class as `validateEvidence` (dry run #2, P2): this gate
-            // reads battery evidence stamped with the RUN substrate, so under
-            // `--run-substrate server` a `steerlab-cli experiment validate`
-            // can never satisfy it. The sentence is unchanged; only the
-            // binary moves. Server twin: `_freeze_gate_repair`, which names
-            // `steerlab-server` unconditionally because THAT engine's
-            // `_check_battery_evidence` has no run-substrate seam — it accepts
-            // only `python-hf-transformers` evidence.
-            repairAction: "re-run '\(validateCLI(forRunSubstrate: runSubstrate)) "
-                + "experiment validate \(name)' "
-                + "(\(FreezePolicy.batteryScopePhrase)), or freeze --force"
-        ) { try checkVariantBatteryEvidence($0, runSubstrate: runSubstrate) }
+        // Same class as `validateEvidence` (dry run #2, P2): this gate reads
+        // battery evidence stamped with the RUN substrate, so under
+        // `--run-substrate server` a `steerlab-cli experiment validate` can
+        // never satisfy it. The sentence is unchanged; only the binary moves.
+        // Server twin: `freeze_gate_repair`, which names `steerlab-server`
+        // unconditionally because THAT engine's `_check_battery_evidence`
+        // has no run-substrate seam — it accepts only
+        // `python-hf-transformers` evidence.
+        let batteryRepair =
+            "re-run '\(validateCLI(forRunSubstrate: runSubstrate)) "
+            + "experiment validate \(name)' "
+            + "(\(FreezePolicy.batteryScopePhrase)), or freeze --force"
         table.append(
             FreezeGateEntry(gate: .batteryEvidence) { manifest in
                 guard modelOutputSurfacesOperative(manifest) else { return nil }
-                return batteryEvidence.evaluate(manifest)
+                // A study with a policy agent that owes a static-part
+                // reading is told which engines take it (server twin: the
+                // same sentence appended by `freeze_gate_repair`).
+                let owes = manifest.variantConditions.contains(
+                    where: FreezePolicy.owesStaticPartReading)
+                return freezeGateEntry(
+                    .batteryEvidence, name: name,
+                    repairAction: batteryRepair
+                        + (owes ? ". " + FreezePolicy.staticPartReadingNote : "")
+                ) { try checkVariantBatteryEvidence($0, runSubstrate: runSubstrate) }
+                .evaluate(manifest)
             })
         // Judge validity is NOT model-output-only: a panel's turns are
         // flattened into generations and judged like any other output.
