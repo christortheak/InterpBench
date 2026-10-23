@@ -120,7 +120,8 @@ def pipeline(name: str, root: str | None = None, dtype: str = "auto",
         if any(stage in ("validate", "sweep") for stage in spec.stages):
             _log("WARNING: pipeline declares no gates — every stage will run "
                  "to completion with no scientific stop conditions; declare "
-                 "pipeline.gates for evidence-grade chains")
+                 "pipeline.gates to stop the chain when a stage fails its "
+                 "check")
         else:
             _log("pipeline declares no gates — a "
                  + " → ".join(spec.stages)

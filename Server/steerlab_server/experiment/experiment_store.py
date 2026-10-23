@@ -2870,8 +2870,9 @@ def _adapter_variant_advisories(d: dict, root: str | None = None) -> list[str]:
                 f"variant '{label}' uses an EXPLORATORY adapter (no "
                 "evidence-grade training provenance: the adapter's sidecar "
                 "is pre-v2 or does not claim evidence grade) — fine for "
-                "pilots and robustness arms; a citable adapter intervention "
-                "must be trained through the evidence-grade path")
+                "pilots and robustness arms; its training data and splits "
+                "are not pinned, which the evidence-grade training path "
+                "does")
             continue
         block = vc.get("trainingProvenance")
         control = block.get("matchedControl") if isinstance(block, dict) else None
@@ -2949,7 +2950,8 @@ def _sae_qualification_advisories(d: dict, root: str | None = None) -> list[str]
                 f"{sae_qualification.FILENAME} (held-out construct probe, "
                 "lexical leakage, discriminant controls, coherence/format, "
                 "dose response, accept/reject) and re-promote citing it "
-                "(promote --qualification …) for a citable arm")
+                "(promote --qualification …) so the arm's promotion records "
+                "that evidence")
             break  # one advisory per variant, not one per injection
     return advisories
 
@@ -3047,7 +3049,8 @@ def freeze_advisories(d: dict, root: str | None = None) -> list[str]:
                 "apply to an optvec concept (no stimuli, no held-out set), "
                 "and nothing in the artifact names an eval run either — so "
                 "this freeze rests on the training run alone, whose val "
-                "split is selected-on and not citable. Run the OptVec eval "
+                "split was used to select the vector, so it is not held-out "
+                "evidence. Run the OptVec eval "
                 "verb on the test split and re-attach so the evidence is "
                 "named")
     # Trained-adapter arms (LoRA readiness §0 amendments 1 + 2). Both are
@@ -3140,7 +3143,7 @@ def freeze_advisories(d: dict, root: str | None = None) -> list[str]:
         advisories.append(
             "pipeline declares no gates — the chain will run every stage "
             "to completion with no scientific stop conditions; declare "
-            "pipeline.gates for evidence-grade chains")
+            "pipeline.gates to stop the chain when a stage fails its check")
     # Carried non-operative configuration (2026-07-19): preserved by the
     # type picker's never-delete promise, but invisible to this kind's
     # verification, snapshot, and bundle — say so at the moment of

@@ -239,9 +239,10 @@ struct StudyArmsSection: View {
                 $0.id == panel.draft.confirmAgentID
             }), record.artifact.promotion == nil {
                 Text(
-                    "hand-created agent: confirmation of an undeclared "
-                        + "selection is exploratory, not evidence-grade — "
-                        + "promote from a sweep for the evidence path"
+                    "hand-created agent: its settings were not selected by a "
+                        + "declared sweep, so this confirms an undeclared "
+                        + "selection — promote from a sweep to record the "
+                        + "selection"
                 )
                 .font(.caption2)
                 .foregroundStyle(.orange)

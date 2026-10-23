@@ -106,7 +106,8 @@ public enum AgentEvidence {
                 Note(
                     label: "Hand-created",
                     detail: "no sweep-selection provenance — fine for exploration; "
-                        + "evidence-grade studies should compare sweep-promoted agents",
+                        + "an agent promoted from a sweep records the sweep "
+                        + "that chose its settings",
                     severity: .informational))
         }
         if latestRobustness == nil {

@@ -96,7 +96,8 @@ public enum SweepGridPresentation {
             case .absent:
                 "NO matched-norm random control ran — the winner's margin over "
                     + "a random direction of the same norm is unmeasured, so "
-                    + "this cell is exploratory rather than evidence-grade"
+                    + "nothing here separates this cell's effect from that of "
+                    + "any direction of its size"
             }
         }
 

@@ -104,8 +104,9 @@ software. The settings that produced a result are fixed, with their file hashes,
 before any behavior is measured, and anyone can check that later. Freezing also
 writes a settings summary beside the study, or keeps and protects a
 `preregistration.md` you wrote yourself. A study can be frozen "with force",
-skipping the evidence checks, but that is recorded permanently, and SteerLab
-treats such a study as not citable. The app has no button for it.
+skipping the evidence checks, but that is recorded permanently, and every
+results page and export of the study names the checks it skipped. The app has
+no button for it.
 
 **Inter-rater reliability: judge agreement.** Free-text responses are scored by
 *judges*: language models that apply a rubric file you pin, either a local model

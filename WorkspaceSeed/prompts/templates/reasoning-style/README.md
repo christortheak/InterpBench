@@ -28,8 +28,8 @@ with no model or judge in the loop. It closes the gap between vocabulary
   the `rs_<id>` effect-size endpoint. Restricted to `[A-Za-z0-9_.-]`.
 - `kind` — `wordList` or `regex`. **`wordList` is the conservative choice**:
   its whole-word semantics are simple, trivially identical across engines,
-  and immune to regex-dialect drift — prefer it for evidence-grade
-  taxonomies unless a feature genuinely needs structure (`regex` exists for
+  and immune to regex-dialect drift — prefer it for a taxonomy a study
+  pins unless a feature genuinely needs structure (`regex` exists for
   that, under the restricted grammar below).
 - `patterns` — non-empty list. Matching is case-insensitive on both kinds.
   Text and patterns are **NFC-normalized before any matching** (Swift

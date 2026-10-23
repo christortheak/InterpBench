@@ -179,8 +179,8 @@ enum StudyInfo {
         Before experimental use a vector must earn its name: validation \
         checks that it moves held-out probes for its own concept, and \
         that distinct concepts do not collapse into one direction \
-        (cross-concept similarity is reported). Freeze requires that \
-        evidence for evidence-grade studies.
+        (cross-concept similarity is reported). Freezing a study without \
+        force requires that evidence.
         """
 
     static let injectionConditions = """

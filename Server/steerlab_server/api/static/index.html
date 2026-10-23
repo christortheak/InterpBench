@@ -601,7 +601,7 @@ function claimPill(rows){
   const label = claims.length === 1 ? claims[0] : "mixed: " + claims.join(", ");
   return `<span class="pill ${ok?'ok':'warn'}" title="${ok
     ? 'every condition is pinned and the lens is qualified'
-    : 'at least one condition is not citable — an unpinned agent '
+    : 'at least one condition is not qualified — an unpinned agent '
       + 'configuration, or a row recorded before per-condition claims existed'
     }">${esc(label)}</span>`;
 }

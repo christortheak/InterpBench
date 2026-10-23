@@ -6401,7 +6401,8 @@ public enum ExperimentStore {
             advisories.append(
                 "\(handCreated.count) variant condition(s) are hand-created (no "
                     + "sweep-selection provenance) — fine for exploration; "
-                    + "evidence-grade studies should promote agents from sweeps")
+                    + "an agent promoted from a sweep records the sweep that "
+                    + "chose its settings")
         }
         // Trained-adapter arms (LoRA readiness §0 amendments 1 + 2). Both are
         // non-blocking BY DESIGN: an exploratory adapter is a legitimate pilot
@@ -6557,8 +6558,8 @@ public enum ExperimentStore {
                 advisories.append(
                     "pipeline declares no gates — the chain will run every "
                         + "stage to completion with no scientific stop "
-                        + "conditions; declare pipeline.gates for "
-                        + "evidence-grade chains")
+                        + "conditions; declare pipeline.gates to stop the "
+                        + "chain when a stage fails its check")
             }
         }
         // Carried non-operative configuration (2026-07-19): preserved by
@@ -8261,9 +8262,9 @@ public enum ExperimentStore {
                     "variant '\(variant.name)' uses an EXPLORATORY adapter (no "
                         + "evidence-grade training provenance: the adapter's "
                         + "sidecar is pre-v2 or does not claim evidence grade) — "
-                        + "fine for pilots and robustness arms; a citable adapter "
-                        + "intervention must be trained through the "
-                        + "evidence-grade path")
+                        + "fine for pilots and robustness arms; its training "
+                        + "data and splits are not pinned, which the "
+                        + "evidence-grade training path does")
                 continue
             }
             if variant.trainingProvenance?.matchedControl == nil {

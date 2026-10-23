@@ -111,7 +111,7 @@ is never the default.
 
 **Claim limit.** *A direction selected ON behaviour is a screen, not a result:
 it is one sample from an equivalence class, so only loadings stable across
-seeds are interpretable, and the citable numbers come from a separate confirm
+seeds are interpretable, and its effect is measured by a separate confirm
 study run through the deployed additive path.*
 
 ---

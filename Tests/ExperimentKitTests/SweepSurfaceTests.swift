@@ -176,7 +176,7 @@ struct SweepGridPresentationTests {
             recommendation: nil)
         #expect(grid.control == .absent)
         #expect(grid.control.detail.contains("unmeasured"))
-        #expect(grid.control.detail.contains("exploratory"))
+        #expect(grid.control.detail.contains("any direction of its size"))
     }
 
     @Test func theBaselineIsShownSeparatelyFromTheGrid() {

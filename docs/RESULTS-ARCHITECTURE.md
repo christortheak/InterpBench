@@ -252,8 +252,9 @@ checkable by someone who was not there.
   `measurementPins`, `validateEvidence`, `variantValidity`, `batteryEvidence`,
   `judgeValidity`, `gitClean`). `--force` skips the seven, warns for each
   skipped-and-failing one, and stamps `freezeForced` plus the gate ids into
-  `forcedGatesSkipped`. A forced freeze stays non-citable — but **by stamp**,
-  checkable years later rather than by your memory of why it seemed fine.
+  `forcedGatesSkipped`. A forced freeze is recorded **by stamp**, checkable
+  years later rather than by your memory of why it seemed fine, and the results
+  pages and exports name the skipped gates.
 - **Measurement-side inputs are pinned too** — validation sets, marker files,
   neutral principal-component bases, rubrics, sweep dev splits and batteries, and
   the human-baseline CSV, all hash-enforced against the bytes on disk. Drift

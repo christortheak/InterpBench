@@ -179,7 +179,7 @@ check. `error.gates` lists every check that failed, not just the first.
 | `gitClean` | An input the study pins is not committed in the workspace's history | Commit the named files |
 
 Do not freeze "with force" to get past a check. It is recorded permanently,
-and the study is then not citable.
+and every results page and export of the study names the checks it skipped.
 
 ### Changing and running a study
 

@@ -86,8 +86,8 @@ struct StudyIssuesSection: View {
                     .font(.caption2)
                     .foregroundStyle(.orange)
                     .help("a note ('advisory' in reports) — non-blocking; "
-                        + "affects the evidence grade the study can claim, "
-                        + "not whether it can run")
+                        + "a fact about the study a reader should know, "
+                        + "not something that stops it running")
             }
         } header: {
             InfoSectionHeader(title: "Issues", text: StudyInfo.issues)

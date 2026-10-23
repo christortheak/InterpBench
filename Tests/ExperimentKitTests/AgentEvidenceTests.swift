@@ -98,7 +98,7 @@ import Testing
         let handCreated = try #require(note(notes, "Hand-created"))
         #expect(handCreated.severity == .informational)
         #expect(handCreated.detail.contains("no sweep-selection provenance"))
-        #expect(handCreated.detail.contains("sweep-promoted"))
+        #expect(handCreated.detail.contains("promoted from a sweep"))
     }
 
     @Test func handCreatedArtifactNeverGetsPromotionNotes() {

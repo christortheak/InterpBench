@@ -55,7 +55,7 @@ enum WorkbenchSection: String, CaseIterable, Identifiable {
         case .data: "the workspace's data: inventory of every dataset and derived artifact, the one New Dataset flow, and the editors that author and build them (concepts, corpora, vectors, adapter training)"
         case .probes: "inspect saved probes, their model bindings, score meanings, and provenance"
         case .templates: "the template library: a study's task, instruments, sampling and judges — with no agents and no compute"
-        case .studies: "evidence-grade study protocols (draft → freeze → run)"
+        case .studies: "preregistered study protocols (draft → freeze → run)"
         case .multiAgent: "build a scenario several agents take turns in — who speaks when, what each one sees, and the rehearsal that tries it"
         case .results: "browse immutable run directories"
         case .analysis: "how vectors sit relative to each other and what the model does with them — cosines, RSA, published-SAE cross-checks, and lens readouts"

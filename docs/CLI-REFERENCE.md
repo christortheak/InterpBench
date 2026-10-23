@@ -1489,7 +1489,8 @@ engine — the substrate the measured runs will actually execute on — instead 
 this one. `--force` skips the evidence gates (revision, validateEvidence,
 batteryEvidence, judgeValidity, variantValidity, gitClean) and stamps the
 manifest `freezeForced` + `forcedGatesSkipped`; the pin `verify()` is never
-skippable. A forced freeze remains non-citable — but checkably so, by stamp.
+skippable. A forced freeze stays checkable by stamp: the generated settings
+summary, the results pages, and the exports name the skipped gates.
 
 **`verify`** — prints `OK [status]` or one `VIOLATION: …` line per drifted pin,
 **exiting 1** when there is any violation.

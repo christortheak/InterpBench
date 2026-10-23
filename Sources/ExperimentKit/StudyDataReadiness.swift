@@ -1408,7 +1408,7 @@ public enum StudyDataReadiness {
         return DataRequirement(
             id: id, title: title, kind: .capabilityBattery, status: .optional,
             path: "prompts/batteries/",
-            detail: "required for evidence-grade variant/sweep gates — pin one "
+            detail: "required by the variant and sweep freeze gates — pin one "
                 + "from prompts/batteries/ (e.g. basic.jsonl)")
     }
 

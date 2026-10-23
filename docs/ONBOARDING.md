@@ -577,8 +577,8 @@ model and a 62-block one) along with the dev split, the battery, and the
 per-cell token budget, and refuses a grid no sweep could run — empty,
 non-ascending, repeated, or out of range. `set-sweep-selection` declares how the
 winner is chosen. `detach` is attach's inverse and is what lets a duplicated
-study shed the donor's concepts, which would otherwise ride along swept but
-uncitable; it refuses while any declaration still names the concept.
+study shed the donor's concepts, which would otherwise ride along into its
+sweeps; it refuses while any declaration still names the concept.
 
 The four `set-*` verbs between the instrument and the grid are the
 **measurement declarations**, and each exists because the alternative was a
@@ -651,8 +651,9 @@ experiment
 `--force` skips the seven gates. It does not skip pin verification, and it is
 **loud and permanent**: every skipped-and-failing gate prints a warning and is
 stamped into the frozen manifest as `freezeForced` plus the gate ids in
-`forcedGatesSkipped`. A forced freeze stays non-citable — but checkably so, by
-stamp, years later. Do not reach for it to get past a gate; fix the gate.
+`forcedGatesSkipped`. A forced freeze stays checkable by stamp, years later,
+and the results pages and exports name the skipped gates. Do not reach for it
+to get past a gate; fix the gate.
 
 After freezing the manifest is read-only; `duplicate` it into a fresh draft to
 change anything. That is not an inconvenience, it is what keeps the record of
@@ -865,7 +866,8 @@ or as rehearsal; the declaration is stamped on the lens record with its
 provenance, and freeze refuses a testing-tier lens and a lens with no tier
 at all.
 
-`qualify` is what makes a lens citable. It loads the model (a GPU job) and
+`qualify` is what lets a lens readout claim `qualified`. It loads the model (a
+GPU job) and
 runs seven named checks — geometry, runtime numerics, finite Jacobians,
 agreement with the pinned reference implementation, stable readouts, a
 causal smoke test, and the capability battery at the top of the intended
@@ -949,8 +951,9 @@ gate declined a well-formed request against a healthy system, and
 `error.repairAction` is an executable repair — perform it, then retry. And
 **advisories never change the exit code**: they are things you should know that
 did not stop the verb, such as a skipped gate, a vacuous validation, a one-judge
-panel, an empty analysis. Ignoring them produces results stamped as not citable;
-treating them as failures makes you refuse a legitimate lifecycle. The common
+panel, an empty analysis. Ignoring them means reporting results without facts
+a reader needs; treating them as failures makes you refuse a legitimate
+lifecycle. The common
 refusals and advisories, with their repairs on both clients, are listed in
 [REPORTING-AND-TROUBLESHOOTING.md](REPORTING-AND-TROUBLESHOOTING.md).
 

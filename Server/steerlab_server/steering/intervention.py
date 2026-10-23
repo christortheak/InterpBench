@@ -183,7 +183,7 @@ CLAIM_LIMITS_ABLATION = (
 CLAIM_LIMITS_TRAINABLE = (
     "A direction selected ON behaviour is a screen, not a result: it is one "
     "sample from an equivalence class, so only loadings stable across seeds "
-    "are interpretable, and the citable numbers come from a separate confirm "
+    "are interpretable, and its effect is measured by a separate confirm "
     "study run through the deployed additive path.")
 CLAIM_LIMITS_PROBE = (
     "A local sensitivity reading at one position and one dose — the derivative "

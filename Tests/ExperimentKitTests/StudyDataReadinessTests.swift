@@ -541,7 +541,7 @@ struct StudyDataReadinessTests {
             let rows = StudyDataReadiness.requirements(for: m, workspaceRoot: root)
             let battery = try #require(requirement("capabilityBattery", in: rows))
             #expect(battery.status == .optional)
-            #expect(battery.detail.contains("evidence-grade"))
+            #expect(battery.detail.contains("freeze gates"))
 
             // A declared sweep makes its battery file a hard requirement.
             m.sweep = ExperimentManifest.SweepSpec()

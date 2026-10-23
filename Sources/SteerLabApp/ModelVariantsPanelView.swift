@@ -17,11 +17,12 @@ enum AgentCreateMode: String, CaseIterable, Identifiable {
         switch self {
         case .manual:
             "compose a definition by hand — base model, vector injections, "
-                + "adapter, prompt settings. Hand-created agents stay legal but "
-                + "permanently exploratory (studies surface their provenance); "
+                + "adapter, prompt settings. Hand-created agents stay legal and "
+                + "carry no record of a sweep that chose their settings (studies "
+                + "surface their provenance); "
                 + "adapter-only and baseline agents are manual compositions too."
         case .optimize:
-            "the evidence-grade path: a declared layer×alpha sweep selects the "
+            "the recorded-selection path: a declared layer×alpha sweep selects the "
                 + "winning cell by a pre-declared criterion, and the agent is "
                 + "created from that cell with a birth certificate."
         }

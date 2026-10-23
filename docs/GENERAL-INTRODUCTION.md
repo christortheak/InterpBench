@@ -345,7 +345,7 @@ evidence gates apply:
 A refusal is typed and names its repair. `--force` skips the seven gates — never
 pin verification — and is **loud and permanent**: every skipped-and-failing gate
 is stamped into the frozen manifest by name, so a forced freeze stays
-non-citable by stamp rather than by memory.
+visible by stamp rather than by memory.
 
 Downstream the same discipline continues. Runs stamp the manifest epoch they
 came from, and judging and statistics refuse to interpret a run against a

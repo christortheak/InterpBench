@@ -389,7 +389,7 @@ struct OptimizationComposerView: View {
     private var objectiveSection: some View {
         Section("Optimize from Concept Vector — objective") {
             Text(
-                "The evidence-grade path: sweep layer×alpha on dev prompts, "
+                "The recorded-selection path: sweep layer×alpha on dev prompts, "
                     + "select the winning cell by a pre-declared criterion "
                     + "under capability/coherence constraints, then Create "
                     + "Agent from the recommended cell — its birth certificate "
@@ -674,8 +674,9 @@ struct OptimizationComposerView: View {
                     + "no agent is recommended. 0 = must merely beat it. "
                     + "This is the difference between \"this direction moves "
                     + "the endpoint\" and \"any vector this long moves the "
-                    + "endpoint\". Empty skips the control (screens only — "
-                    + "evidence-grade promotion should declare one)")
+                    + "endpoint\". Empty skips the control (an agent promoted "
+                    + "without one records no comparison against a random "
+                    + "direction)")
         ControlScopeControls(
             applyTo: $controlApplyTo, topKText: $controlTopKText,
             marginText: marginText)

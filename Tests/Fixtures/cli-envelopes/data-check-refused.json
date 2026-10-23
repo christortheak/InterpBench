@@ -104,7 +104,7 @@
         "title" : "reasoning-style taxonomy"
       },
       {
-        "detail" : "required for evidence-grade variant/sweep gates — pin one from prompts/batteries/ (e.g. basic.jsonl)",
+        "detail" : "required by the variant and sweep freeze gates — pin one from prompts/batteries/ (e.g. basic.jsonl)",
         "id" : "capabilityBattery",
         "kind" : "capabilityBattery",
         "path" : "prompts/batteries/",

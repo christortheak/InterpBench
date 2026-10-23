@@ -87,8 +87,8 @@ public enum StudyIntent: String, CaseIterable, Sendable, Identifiable {
             matched-norm control on HELD-OUT prompts, as a NEW \
             preregistered study — Holm-corrected, with the held-out pool \
             enforced at verify. You need: concept data (stimuli, \
-            validation, markers), task prompts, and — for evidence-grade \
-            claims — a pinned judge rubric with a judge panel (two or more \
+            validation, markers), task prompts, and — for judged \
+            outcomes — a pinned judge rubric with a judge panel (two or more \
             distinct judges buy inter-rater agreement; one is legal and \
             reports none). Conditions are \
             named injection arms. Matched-norm random controls help test \
@@ -221,7 +221,7 @@ public enum StudyIntent: String, CaseIterable, Sendable, Identifiable {
                     required: true),
                 GuideItem(
                     "Judges + rubric",
-                    "a pinned judge panel and a rubric file for evidence-grade "
+                    "a pinned judge panel and a rubric file for pinned, "
                         + "blinded A/B judging (two or more distinct judges "
                         + "buy inter-rater agreement)", required: false),
                 GuideItem(

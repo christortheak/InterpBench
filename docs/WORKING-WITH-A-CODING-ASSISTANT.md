@@ -99,7 +99,8 @@ Approval for one run is not approval for the next.
 
 **It does not do these at all, unless you explicitly accept the consequence:**
 freeze a study "with force" (skipping the evidence checks), which is recorded
-permanently and makes the study not citable; and invent examples to fill a
+permanently and named on every results page and export of the study; and invent
+examples to fill a
 missing scientific input. It never edits a run folder or a frozen study, and
 never writes a password or token into a file or a command.
 
