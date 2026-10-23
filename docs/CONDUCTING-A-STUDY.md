@@ -592,10 +592,14 @@ with actual results, so an empty planted directory will not satisfy it.
 
 **`--force` is loud, stamped, and permanent.** Every skipped-and-failing gate
 prints a warning, emits a `freezeGateSkipped` advisory, and is recorded in the
-frozen manifest as `freezeForced: true` plus the ids in `forcedGatesSkipped`. A
-forced freeze remains **non-citable — but checkably so, by stamp**, years
-later, by someone who was not there: the discipline is enforced by the artifact
-rather than by memory. Do not force a freeze to get past a gate; fix the gate.
+frozen manifest as `freezeForced: true` plus the ids in `forcedGatesSkipped`.
+The settings summary that freeze generates says so too, and every results page
+and export of the study names the skipped gates. A forced freeze stays
+**checkable by stamp**, years later, by someone who was not there: the
+discipline is enforced by the artifact rather than by memory. SteerLab states
+which checks ran and which were skipped; what the results then support is your
+judgment, made in the open. Do not force a freeze to get past a gate; fix the
+gate.
 
 After freeze the manifest is read-only and the writing verbs (`attach`,
 `detach`, `pin-prompts`, `pin-rubric`, `declare-condition`, `set-sweep-grid`,
@@ -611,7 +615,7 @@ when you are re-pointing a study at a different concept the full move is
 `attach` the new one**. `detach` is all-or-nothing and refuses (`conceptInUse`)
 while any condition, sweep-selection instrument, variant condition, or
 perturbation policy still names the concept, which is what forces that ordering.
-Without it a donor's concepts ride along swept but uncitable.
+Without it a donor's concepts ride along into the new study's sweeps.
 
 **A duplicate inherits its donor's validation evidence, and this saves real
 GPU time.** The `validateEvidence` gate matches on a **validation scope
@@ -836,6 +840,37 @@ The battery runs **per condition inside `run`** on both engines, writing
 accuracy drops under a condition, report the degradation alongside the effect
 and treat the effect as confounded — extreme doses break tasks rather than
 biasing them, and the battery is what tells you which happened.
+
+#### A study whose agent uses an intervention policy
+
+The battery applies fixed steering only, so it cannot read an agent that uses
+an intervention policy as that agent runs. Freeze records such a condition as
+not applicable (`capabilityBatteryNotApplied`) instead of refusing, and the
+freeze result, the settings summary, the results pages, and the exports all
+say that the study has no capability control for that agent as it runs. What
+such a study can still claim:
+
+- **Compare outcomes and decision records across arms.** Each arm's outcomes,
+  and the policy's own decision trace, are measured exactly as in any other
+  study.
+- **Read the study's own descriptive measures for general degradation.**
+  Distinct-2, word counts, and finish reasons are recorded for every arm. A
+  policy that damages the model usually shows there, as responses that run
+  longer or shorter, repeat themselves, or stop at the token limit.
+- **The static part is read on its own.** When the agent also carries fixed
+  steering (vectors or adapters), validation reads that steering with the
+  policy removed and records it as "*agent* without its policy", inside the
+  agent's not-applicable row, never as the agent's own score. Freeze requires
+  that reading, as it requires battery evidence for any fixed steering. It
+  covers the fixed steering only.
+- **What it cannot rule out.** Nothing in the study rules out general
+  degradation caused by the policy's own actions. Say so where you report the
+  policy arm.
+
+The floor battery below cannot read a policy agent either: `battery run`
+refuses it (`interventionPolicyUnsupported`), and its repair makes the same
+agent without its policy, under its own name, so the reading names that agent
+and not the one that carries the policy.
 
 #### The floor battery, and why it is not this one
 

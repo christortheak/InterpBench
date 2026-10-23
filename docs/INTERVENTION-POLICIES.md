@@ -92,7 +92,11 @@ batches, arbitrary execution-flow changes, auxiliary model execution, gradient
 training through policies, direct choice scoring, or policy-aware capability
 battery qualification. Unsupported static-scoring paths refuse instead of
 silently omitting the policy. Use sampled-response comparisons for the current
-slice; record the missing battery qualification explicitly. P6 adds richer analysis; P7 retains the live qualification/remote acceptance walk. Live
+slice; record the missing battery qualification explicitly. Freeze records it
+for you (`capabilityBatteryNotApplied`), and when a policy agent also carries
+vectors or adapters, validation reads that static steering alone, labelled
+"*agent* without its policy", and freeze requires that reading
+(`CONDUCTING-A-STUDY.md` §5.2). P6 adds richer analysis; P7 retains the live qualification/remote acceptance walk. Live
 GPU qualification and manual app interaction have not been established by the
 synthetic/unit tests.
 

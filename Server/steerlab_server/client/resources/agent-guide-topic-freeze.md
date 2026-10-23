@@ -48,7 +48,7 @@ Two classes of check, and the difference matters:
 | `measurementPins` | pins that determine *what is measured* are present and valid (e.g. a loadable study dtype) | repoint the invalid pin at a loadable value |
 | `validateEvidence` | a validation run matching the exact pins on the run substrate, **and** that evidence is not vacuous (`workspace guide lifecycle`) | author the named `validation.jsonl` files, **re-attach** their concepts, then `steerlab run <name> --runner <url> --verb validate` (a draft is accepted for this step) |
 | `variantValidity` | attached variants carry hashed adapter weights and a pinnable dataset manifest | re-save the variant with hashed weights and re-attach it |
-| `batteryEvidence` | baseline and each agent condition have scope-matched capability-battery evidence. A condition whose agent uses an intervention policy is exempt, because the battery cannot run a policy; the frozen study records it in `capabilityBatteryNotApplied` and is not forced | `steerlab run <name> --runner <url> --verb validate` again (each agent condition the battery can run is scored) |
+| `batteryEvidence` | baseline and each agent condition the battery can run have scope-matched capability-battery evidence. A condition whose agent uses an intervention policy is recorded as not applicable, because the battery cannot run a policy; the frozen study records it in `capabilityBatteryNotApplied` and is not forced. When that agent also carries vectors or adapters, the evidence must include the reading of that steering alone, labelled `<agent> without its policy` | `steerlab run <name> --runner <url> --verb validate` again (each condition the battery can run is scored, and a policy agent's vectors and adapters are scored without the policy) |
 | `judgeValidity` | a rubric **file** and at least one judge the pipeline can actually run (a panel of two or more must be distinct) | declare the rubric file and judges (`workspace guide evaluation`) |
 | `gitClean` | every pinned input is committed in the workspace git repo | commit the pinned inputs |
 
@@ -76,9 +76,23 @@ battery) and the inheritance correctly stops; then validate.
 
 **`--force` skips the seven gates and stamps the manifest** `freezeForced: true`
 plus `forcedGatesSkipped: [<gate ids>]`, and emits one `freezeGateSkipped`
-advisory per gate. A forced freeze is permanently non-citable — but checkably
-so, by stamp. **Do not `--force` to get past a gate.** If a human explicitly
-asks for it, do it and report exactly which gates were skipped.
+advisory per gate. The stamps are permanent and checkable, and every results
+page and export of the study names the skipped gates; the generated settings
+summary of a forced freeze says so too. **Do not `--force` to get past a
+gate.** If a human explicitly asks for it, do it and report exactly which gates
+were skipped.
+
+**A study whose agent uses an intervention policy.** The capability battery
+cannot run a policy, so there is no capability control for that agent as it
+runs, and the study's results pages say so for that condition. Such a study
+can still compare outcomes and decision records across its arms, and its own
+descriptive measures (distinct-2, word counts, and finish reasons) show
+general degradation where it appears in the responses. When the agent also
+carries fixed steering (vectors or adapters), the battery reads that steering
+alone, labelled `<agent> without its policy`, and the freeze gate requires
+that reading; it covers the fixed steering only. Nothing in the study rules out
+general degradation caused by the policy's own actions. `CONDUCTING-A-STUDY.md`
+§5.2 in the repository says more.
 
 ## What stays immutable after freeze
 

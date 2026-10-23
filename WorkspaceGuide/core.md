@@ -1,7 +1,7 @@
 # AGENTS.md
 <!-- Source of the core workspace guide. scripts/ci/check-workspace-bootstrap.py generates both clients' copies from this directory. Keep this file client-neutral and within its size budget; depth belongs in topics/. Raise "Guide version" whenever this text changes, so a refresh only ever upgrades. -->
 
-Guide version: 7
+Guide version: 8
 
 You are a coding assistant working inside a **SteerLab data workspace**. This
 file is the core contract: read it before running anything. It is short on
@@ -198,8 +198,9 @@ Templates, multi-agent panels, and model preparation have their own topics.
   failure, and it is not ignorable.
 - **Never use `--force` unless the researcher explicitly accepts what it
   skips.** A forced freeze is stamped `freezeForced`, with every skipped gate
-  in `forcedGatesSkipped`, permanently, and it is not citable. If the
-  researcher asks for one, report exactly which gates were skipped.
+  in `forcedGatesSkipped`, permanently, and every results page and export of
+  the study names those gates. If the researcher asks for one, report exactly
+  which gates were skipped.
 - **Flags are strict.** An undeclared flag is exit `64` before the verb does
   any work, so a typo cannot silently change what a study means.
 
@@ -231,8 +232,9 @@ topic.
 - **Do not retry a `refused` (65) without performing the repair.** It will
   refuse identically. Read `error.repairAction`.
 - **Do not `--force` a freeze to get past a gate.** It is stamped, loud, and
-  permanently non-citable. Fix the gate instead. If a human explicitly asks for
-  a forced freeze, report every id in `forcedGatesSkipped`.
+  permanent: the skipped gates travel with every report of the study. Fix the
+  gate instead. If a human explicitly asks for a forced freeze, report every id
+  in `forcedGatesSkipped`.
 - **Do not write into `runs/`**, and do not edit a frozen manifest or a
   `pinned/` snapshot.
 - **Do not edit a manifest to iterate.** `duplicate`, then edit the copy.

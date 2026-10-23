@@ -150,7 +150,7 @@ command here: that is the Mac command line.
 know that did not stop the verb: a skipped freeze gate, a vacuous validation, a
 one-judge panel, an empty analysis. **Read them.** Treating them as failures
 will make you refuse to walk a legitimate lifecycle; ignoring them will make
-you produce results that are stamped as not citable.
+you report results without facts a reader needs to interpret them.
 
 ### Refusals
 

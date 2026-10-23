@@ -37,6 +37,46 @@ migration that rewrites frozen bytes.
   counted from that older saved place (for example, 15) while the run folder
   held more finished responses (18), all of which the continuation keeps.
   The count now comes from the responses in the run folder.
+- **Facts, not verdicts.** SteerLab no longer calls a study "citable",
+  "non-citable", or "evidence-grade". Whether results support a claim is the
+  researcher's judgment, so every page and message now states what ran,
+  which checks applied, and which were skipped. The app's run header reads
+  "Frozen — every freeze check passed" (or "that applies passed" when the
+  capability battery did not apply to an agent) and "Frozen with force",
+  with the skipped gates beside it. Freeze advisories, CLI help, results
+  pages, exports, the workspace guide, and the docs say the same in facts.
+  The stamps (`freezeForced`, `forcedGatesSkipped`,
+  `capabilityBatteryNotApplied`), the content hash, the freeze gates, and
+  `--force` are unchanged, and no stored manifest, run, or generated file is
+  rewritten; pages and summaries generated from now on use the new wording.
+- **A policy agent's fixed steering gets its own battery reading.** When an
+  agent uses an intervention policy and also carries vectors or adapters,
+  validation reads that steering with the policy removed and records it
+  inside the agent's not-applicable row, labelled "*agent* without its
+  policy", never as the agent's own score. Freeze now requires that reading,
+  as it requires battery evidence for any fixed steering. A policy agent with
+  no fixed steering stays exempt exactly as before. Both engines write and
+  read the same row, and a study validated before this change needs a new
+  validation run before it freezes.
+- **Results pages and exports say which conditions have no battery
+  reading.** For every condition the run executed without a capability
+  battery score, the page now says "No capability battery reading was
+  recorded for *condition*", with the recorded reason when there is one.
+  Older runs gain these lines when their pages are regenerated, from their
+  own files, and never with an exemption their manifest does not stamp. The
+  app's battery column shows "not applicable" (with the reason) or "not
+  recorded" instead of a dash.
+- **The settings summary of a forced freeze says so.** A study frozen with
+  force from now on gets a "Freeze" section naming the gates that were
+  skipped. Summaries of unforced studies are unchanged.
+- **The floor battery points to the policy-free reading.** `battery run
+  --agent` on an agent that uses an intervention policy now refuses before
+  any model loads, with the new code `interventionPolicyUnsupported`. Its
+  repair makes the same agent without its policy under its own name and
+  reads that agent instead, so the report names it, not the policy agent.
+- **Guidance for policy studies.** `CONDUCTING-A-STUDY.md` §5.2 and the
+  workspace guide's freeze topic say what a policy study can claim without a
+  capability control on the policy itself.
 
 ## [0.9.15] — 2026-10-23
 
