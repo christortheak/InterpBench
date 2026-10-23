@@ -13,6 +13,7 @@ from . import execution_reporting
 from . import run_artifacts
 from . import run_preflight
 from . import run_reporting
+from . import run_status
 from . import scoring
 from . import study_admission
 
@@ -474,6 +475,13 @@ def run_multi_agent_study(name, manifest, model, root, model_provider=None,
     # A finished run is not resumable. Leaving the pointer behind violates the
     # artifact contract and invites a later caller to "resume" a complete run.
     resume_mod.clear_state(run_directory)
+    # Nor does it read as parked: an earlier attempt's `checkpointed`
+    # run-status.json is settled now that report.json exists.
+    if run_status.settle_after_resumed_completion(
+            run_directory, completion_file=resume_mod.COMPLETION_FILENAME,
+            items_written=len(records)):
+        log("resume: the panel run is complete; its run-status.json, left "
+            "checkpointed by an earlier attempt, now says completed")
     # Panel-effect decomposition needs both arms of the pair.
     if manifest.multi_agent_include_baseline and replicates == 1:
         from . import panel_effects

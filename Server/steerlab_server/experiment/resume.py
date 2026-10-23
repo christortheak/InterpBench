@@ -50,11 +50,15 @@ Fixed cross-wave contract:
 - checkpoint exit code is **85**;
 - ``resume-state.json`` = ``{"runId", "verb", "completedRecords",
   "updatedAt", "reason": "signal"|"cancel"|"records"}`` — presence marks a
-  resumable, incomplete run; it is deleted when the run completes normally.
+  resumable, incomplete run; it is deleted when the run completes normally,
+  with any unfinished write of it (``resume-state.json.tmp``).
   ``"records"`` (additive, 2026-10-04) means the run did not save this
   place itself: it was saved afterwards, from the record lines on disk;
 - ``report.json`` marks a COMPLETE study run, and complete runs refuse
-  resume (immutable-runs invariant).
+  resume (immutable-runs invariant). A ``checkpointed`` ``run-status.json``
+  an earlier attempt left is settled to ``completed`` once it is written
+  (``run_status.settle_after_resumed_completion``); a ``failed`` one never
+  is.
 
 This module imports only the standard library and the equally light
 ``run_status`` at load, so the subprocess signal tests (and any child runner)
@@ -243,6 +247,23 @@ def clear_state(run_directory: str) -> None:
     try:
         os.remove(state_path(run_directory))
     except FileNotFoundError:
+        pass
+    discard_unfinished_state_write(run_directory)
+
+
+def discard_unfinished_state_write(run_directory: str) -> None:
+    """Remove ``resume-state.json.tmp``: what a process killed inside
+    :func:`write_state` leaves behind (observed 2026-10-23, an empty temp file
+    that travelled home in a completed run's evidence).
+
+    The kill never tears the state itself, because only the rename publishes
+    it: the previous state stands, and the temp file holds nothing anyone
+    reads. Called only where the earlier writer has ended (a resume, a
+    completion), and best-effort: a leftover temp file is not worth failing
+    a run over."""
+    try:
+        os.remove(state_path(run_directory) + ".tmp")
+    except OSError:
         pass
 
 
@@ -708,6 +729,7 @@ class GenerationWriter:
                 # before any other writer of this run loads that stream.
                 self.removed_side_rows = reconcile_side_streams(
                     run_directory, self.completed_keys, log=log)
+                discard_unfinished_state_write(run_directory)
                 state = read_state(run_directory)
                 if log is not None and (
                         state is None

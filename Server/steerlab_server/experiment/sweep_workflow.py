@@ -22,6 +22,7 @@ from . import model_resources
 from ..steering import stimulus_set
 from . import rubric_inputs
 from . import run_artifacts
+from . import run_status
 from . import scoring
 from . import study_admission
 from . import sweep_evidence
@@ -904,6 +905,14 @@ def _sweep_with_spec(name, manifest, model, root, spec, criterion, objective,
         os.fsync(handle.fileno())
     os.replace(marker_tmp,
                os.path.join(run_directory, "recommendations.json"))
+    # Only now, with the marker written, may an earlier attempt's
+    # `checkpointed` run-status.json say completed.
+    if run_status.settle_after_resumed_completion(
+            run_directory,
+            completion_file=resume_mod.completion_file_for("sweep"),
+            items_written=len(rows)):
+        _log("resume: the sweep is complete; its run-status.json, left "
+             "checkpointed by an earlier attempt, now says completed")
     _log(f"sweep ({len(rows)} cells) → {run_directory}")
     return run_directory
 

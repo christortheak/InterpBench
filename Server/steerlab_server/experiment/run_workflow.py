@@ -19,6 +19,7 @@ from . import run_artifacts
 from . import run_preflight
 from . import run_readouts
 from . import run_reporting
+from . import run_status
 from . import study_admission
 from . import task_inputs
 from . import vector_materialization
@@ -597,6 +598,14 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
         run_reporting.write_report(name, manifest, records, run_directory, battery=battery,
                       style=style, numeric_parser=numeric_parser)
         resume_mod.clear_state(run_directory)
+        # A run an earlier attempt parked still carries that attempt's
+        # `checkpointed` run-status.json, which would bar this completed run
+        # from every evidence gate. A failed status is never touched.
+        if run_status.settle_after_resumed_completion(
+                run_directory, completion_file=resume_mod.COMPLETION_FILENAME,
+                items_written=len(records)):
+            _log("resume: the run is complete; its run-status.json, left "
+                 "checkpointed by an earlier attempt, now says completed")
     _log(f"run ({len(records)} generations"
          f"{f', shard {shard.label}' if shard is not None else ''}"
          f"{', cancelled early — directory is resumable' if cancelled else ''}"

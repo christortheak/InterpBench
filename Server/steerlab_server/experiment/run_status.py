@@ -197,21 +197,7 @@ class RunStatus:
         make it look complete. ``os.replace`` is atomic on POSIX, so a
         reader sees either the whole previous status or the whole new one.
         """
-        path = os.path.join(self.run_directory, STATUS_FILENAME)
-        tmp = f"{path}.tmp.{os.getpid()}"
-        try:
-            with open(tmp, "w", encoding="utf-8") as handle:
-                json.dump(self.to_dict(), handle, indent=2, sort_keys=True)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp, path)
-        except OSError:
-            # Best-effort by design (a status write must not kill a run),
-            # but never leave the temp file behind to be mistaken for data.
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
+        _replace_status_file(self.run_directory, self.to_dict())
 
     # -- progress ---------------------------------------------------------
 
@@ -336,6 +322,28 @@ class RunStatus:
             pass
 
 
+def _replace_status_file(run_directory: str, payload: dict) -> bool:
+    """Write ``payload`` as the run's status, atomically (temp file + fsync +
+    rename; see ``RunStatus.write``). Returns whether it was written."""
+    path = os.path.join(run_directory, STATUS_FILENAME)
+    tmp = f"{path}.tmp.{os.getpid()}"
+    try:
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except OSError:
+        # Best-effort by design (a status write must not kill a run),
+        # but never leave the temp file behind to be mistaken for data.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return False
+    return True
+
+
 # -- readers ---------------------------------------------------------------
 
 
@@ -396,6 +404,66 @@ def heal_after_completion(run_directory: str) -> bool:
         except OSError:
             pass
     return healed
+
+
+#: The statuses an earlier attempt leaves in a run directory it stopped
+#: without failing: parked at a checkpoint, or killed before it could write
+#: anything terminal. These are the only ones a completed continuation
+#: settles; ``failed`` is a failure record and is never among them.
+PARKED_STATUSES = ("checkpointed", "inProgress")
+
+
+def settle_after_resumed_completion(run_directory: str, *,
+                                    completion_file: str,
+                                    items_written: int | None = None) -> bool:
+    """A continuation COMPLETED a run that an earlier attempt parked: replace
+    the parked status with a ``completed`` one.
+
+    Observed live (2026-10-23): a study run cancelled mid-run checkpointed
+    (``status: checkpointed``, 15 records), was resumed, stopped and resumed
+    again, and its last continuation wrote every record and ``report.json``,
+    record for record what an uninterrupted run wrote. The first checkpoint's
+    ``run-status.json`` was still in the directory, so ``is_partial`` (and
+    the Mac's run classification, which reads the same file first) barred a
+    complete run from every evidence-grade gate. Every run parked by a
+    walltime signal and resumed to completion carried the same record.
+
+    Deliberately narrow:
+
+    - only once the stage's completion artifact (``completion_file``) is on
+      disk, so nothing is marked complete that did not complete;
+    - only a status in :data:`PARKED_STATUSES`. A ``failed`` status and
+      ``FAILED.md`` are failure records and are left exactly as they are
+      (unlike :func:`heal_after_completion`, whose authority is a pipeline
+      ledger that says completed);
+    - a directory with no status (an uninterrupted run) is given none, and
+      an unreadable one stays unreadable: it fails closed.
+
+    The park stays on record as ``resumedFrom`` (the status, count, reason,
+    and time it recorded) rather than being erased. ``items_written`` is the
+    completed run's count; without it the parked count is kept. Returns
+    whether the status was rewritten. Best-effort like every status write:
+    settling must never take down the completion it records.
+    """
+    if not os.path.isfile(os.path.join(run_directory, completion_file)):
+        return False
+    if os.path.exists(os.path.join(run_directory, FAILURE_NOTE_FILENAME)):
+        return False
+    payload = read_status(run_directory)
+    if not isinstance(payload, dict) \
+            or payload.get("status") not in PARKED_STATUSES:
+        return False
+    parked = {key: payload[key]
+              for key in ("status", "itemsWritten", "error", "errorType",
+                          "finishedAt")
+              if payload.get(key) is not None}
+    settled = {key: value for key, value in payload.items()
+               if key not in ("error", "errorType")}
+    settled.update({"status": "completed", "evidenceComplete": True,
+                    "finishedAt": time.time(), "resumedFrom": parked})
+    if items_written is not None:
+        settled["itemsWritten"] = int(items_written)
+    return _replace_status_file(run_directory, settled)
 
 
 def read_status(run_directory: str):

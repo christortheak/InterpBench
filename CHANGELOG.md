@@ -17,6 +17,26 @@ migration that rewrites frozen bytes.
   `prompt`; when a line has both, `prompt` is used, as a study run reads it.
   The readers guide already said a study's own file could be used, but the
   operation refused one at its first line. Every line still needs an `id`.
+- **A run that was paused and then resumed to completion now counts as
+  complete.** When a cancel or a walltime limit paused a cluster run, the
+  run folder recorded the pause. Resuming finished the run, with every
+  response and its report, but the pause record stayed, so the app read the
+  finished run as a failure record and no evidence gate would accept it.
+  When a run, a panel run, or a sweep finishes after a pause, the record
+  now says completed and keeps the pause as history. A run that failed
+  keeps its failure record, and a paused run that was never resumed still
+  reads as incomplete. Runs imported before this change are not rewritten:
+  a completed run whose record still says "checkpointed" reads as
+  incomplete, as before.
+- **A resumed run leaves no empty temporary file.** A job stopped while it
+  was saving its place left an empty `resume-state.json.tmp`, which then
+  came home with the run's evidence. Resuming or finishing the run now
+  removes it.
+- **Resuming a cancelled job reports the responses it actually keeps.** If
+  the job had been stopped once before while saving its place, the message
+  counted from that older saved place (for example, 15) while the run folder
+  held more finished responses (18), all of which the continuation keeps.
+  The count now comes from the responses in the run folder.
 
 ## [0.9.15] — 2026-10-23
 

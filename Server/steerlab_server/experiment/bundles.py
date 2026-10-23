@@ -2001,6 +2001,18 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
         elif disposition == "complete":
             complete_dir = pointed
             result["alreadyComplete"] = True
+            # The completion's own bookkeeping may not have run: a job
+            # stopped just after writing the completion artifact keeps its
+            # saved place and an earlier attempt's `checkpointed` status.
+            # Finish it before the directory is packaged; a failed status is
+            # never touched. Best-effort: the run is complete either way.
+            try:
+                resume_mod.clear_state(complete_dir)
+            except OSError:
+                pass
+            run_status.settle_after_resumed_completion(
+                complete_dir,
+                completion_file=resume_mod.completion_file_for(verb))
     resume_pipeline_dir: str | None = None
     if verb == "pipeline" and resume_directory is not None:
         resume_pipeline_dir = resume_directory

@@ -117,6 +117,24 @@ def _resumable_directory_in(result: dict) -> str | None:
     return None
 
 
+def _kept_record_count(run_dir: str, saved: dict, verb: str):
+    """How many completed records a continuation of a PARKED run keeps.
+
+    Read from the record lines on disk, which is what the continuation
+    itself loads, rather than from the saved place: a continuation stopped
+    while saving its own place (killed inside the state write) leaves the
+    PREVIOUS place, and its records beyond it are kept too. Observed live
+    (2026-10-23): the saved place said 15, the run folder held 18, the
+    continuation resumed 18, and the resume message said 15. The saved count
+    stands only where the records cannot be counted (a sweep, a panel's
+    turns, a folder that no longer qualifies)."""
+    from ..experiment import resume as resume_mod
+    basis = resume_mod.records_basis(run_dir, verb=verb)
+    if basis["qualifies"] and basis.get("unit") == "response":
+        return basis["completedRecords"]
+    return saved.get("completedRecords")
+
+
 class ResubmitRefused(Exception):
     """A manual resume request refused with a plain-language reason.
 
@@ -3705,7 +3723,8 @@ class JobManager:
                     "recordsRunDirectory": directory,
                     "completedRecords": from_records["completedRecords"]}
         return {**found, "state": "parked",
-                "completedRecords": saved.get("completedRecords")}
+                "completedRecords": _kept_record_count(directory, saved,
+                                                       verb)}
 
     @staticmethod
     def _cancel_parked_pipeline(pipeline_directory: str) -> dict:
@@ -3743,7 +3762,8 @@ class JobManager:
             parked = resume_mod.is_resumable(run_dir, "run")
             if parked and state.get("reason") != resume_mod.RECORDS_REASON:
                 return {"state": "parked",
-                        "completedRecords": state.get("completedRecords")}
+                        "completedRecords": _kept_record_count(
+                            run_dir, state, "run")}
             # No place saved by the run stage itself (see
             # ``_cancel_parked_state``): its records are read afresh.
             basis = resume_mod.records_basis(run_dir, verb="run")

@@ -142,6 +142,76 @@ struct RunStatusFileTests {
         #expect(RunStatusFile.isPartial(at: torn))
     }
 
+    // MARK: - ResumedRun: a run parked, then resumed to completion
+
+    /// What the engine leaves when a run parks (`bundle execute`'s
+    /// checkpoint path), and what it rewrites that to once a continuation
+    /// writes `report.json` (`run_status.settle_after_resumed_completion`,
+    /// pinned in `Server/tests/test_resumed_run_status.py`). Found live
+    /// 2026-10-23: the parked status was never rewritten, so a complete run
+    /// classified as a failure record here.
+    private static let parkedStatus = #"""
+        {"evidenceComplete": false, "error": "signal",
+         "errorType": "CheckpointRequested", "experiment": "demo",
+         "finishedAt": 1761190000.25, "invalidResponses": 0,
+         "itemLabel": "record", "itemsWritten": 15, "schemaVersion": 1,
+         "stage": "run", "startedAt": 1761180000.0, "status": "checkpointed"}
+        """#
+
+    private static let settledStatus = #"""
+        {"evidenceComplete": true, "experiment": "demo",
+         "finishedAt": 1761200000.5, "invalidResponses": 0,
+         "itemLabel": "record", "itemsWritten": 36,
+         "resumedFrom": {"error": "signal", "errorType": "CheckpointRequested",
+                         "finishedAt": 1761190000.25, "itemsWritten": 15,
+                         "status": "checkpointed"},
+         "schemaVersion": 1, "stage": "run", "startedAt": 1761180000.0,
+         "status": "completed"}
+        """#
+
+    @Test func resumedRunSettledToCompletedIsNotPartial() throws {
+        let url = try directory("resumed-complete")
+        try write(Self.settledStatus, to: url)
+        try Data("{}".utf8).write(to: url.appending(component: "report.json"))
+        #expect(RunStatusFile.reading(at: url) != .unreadable)
+        #expect(!RunStatusFile.isPartial(at: url))
+        #expect(!RunStatusFile.isCheckpointed(at: url))
+        #expect(RunStatusFile.partialSummary(at: url) == nil)
+        #expect(RunStatusFile.read(at: url)?.itemsWritten == 36)
+        #expect(RunStatusFile.read(at: url)?.error == nil)
+        let classification = RunResults.classification(
+            runDirectory: url, records: [])
+        #expect(classification.runClass != .partialFailedRun)
+        #expect(classification.runClass == .draftPilot)
+    }
+
+    @Test func resumedRunOfAFrozenStudyIsNotAFailureRecord() throws {
+        let url = try directory("resumed-frozen")
+        try write(Self.settledStatus, to: url)
+        try Data(#"{"name": "s", "modelID": "org/m", "status": "frozen"}"#.utf8)
+            .write(to: url.appending(component: "experiment.json"))
+        let classification = RunResults.classification(
+            runDirectory: url, records: [])
+        #expect(classification.runClass != .partialFailedRun)
+    }
+
+    @Test func parkedRunNeverResumedStaysPartial() throws {
+        // Even beside a report.json, the status alone governs: only the
+        // engine's settling, done when it writes the report, makes a parked
+        // run complete. A reader never infers it.
+        let url = try directory("parked")
+        try write(Self.parkedStatus, to: url)
+        try Data("{}".utf8).write(to: url.appending(component: "report.json"))
+        #expect(RunStatusFile.isPartial(at: url))
+        #expect(RunStatusFile.isCheckpointed(at: url))
+        #expect(
+            RunStatusFile.partialSummary(at: url)?
+                .hasPrefix("run checkpointed — resumable") == true)
+        #expect(
+            RunResults.classification(runDirectory: url, records: []).runClass
+                == .partialFailedRun)
+    }
+
     @Test func tornStatusOutranksAFrozenStampToo() throws {
         // The dominance rule has to hold for the fail-closed case as well,
         // or a torn status on a frozen study would read as evidence-grade.
