@@ -37,6 +37,12 @@ class Observation:
         self.rows = []; self.omitted = 0; self.activation_bytes = 0
         self.prompt_ids = []; self.bindings = {}; self.failures = []; self.scheduled = {}
 
+    partial_ids = ()
+
+    def set_partial_token_ids(self, ids):
+        # Generation calls this just before its failure reaches the session: the ids sampled so far.
+        self.partial_ids = list(ids)
+
     @contextmanager
     def observe_session(self, model, rendered):
         import torch
@@ -76,7 +82,7 @@ class Observation:
                 # Partial evidence is not a completed response or a resume key.
                 destination = Path(self.run_directory) / ('probe-failure-' + uuid.uuid4().hex + '.json')
                 with destination.open('x') as handle:
-                    json.dump(self.result([]), handle, allow_nan=False)
+                    json.dump(self.result(self.partial_ids), handle, allow_nan=False)
             raise
         finally:
             sessions.close()

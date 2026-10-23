@@ -84,6 +84,20 @@ migration that rewrites frozen bytes.
 - **Guidance for policy studies.** `CONDUCTING-A-STUDY.md` §5.2 and the
   workspace guide's freeze topic say what a policy study can claim without a
   capability control on the policy itself.
+- **A policy or measurement that fails during generation keeps its failure
+  record.** When an agent's intervention policy, or a study's probe
+  measurement, failed while the model was generating (for example, two token
+  constraints with no token in common, a policy set to stop on error, or a
+  non-finite score), the run stopped with the right error, but the promised
+  `policy-failure-*.json` or `probe-failure-*.json` was never written, so the
+  decisions and readings made before the failure were lost. The engine now
+  writes that file in the run directory, for study arms and panel turns
+  alike. It holds the decisions or readings made up to the failure, the
+  failure's reason, and the token IDs the model had sampled before it. As
+  before, it is partial evidence: it never counts as a response or as a
+  resume point, and `FAILED.md` and `run-status.json` read as they did. Runs
+  that failed this way on 0.9.15 or earlier have no such file; run the arm
+  again to get one.
 
 ## [0.9.15] — 2026-10-23
 

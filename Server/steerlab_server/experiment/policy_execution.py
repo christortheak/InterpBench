@@ -26,6 +26,12 @@ class Execution:
         self.decision_seconds = 0.0; self.decision_calls = 0
         self.probes = {}; self.parameters = {}
 
+    partial_ids = ()
+
+    def set_partial_token_ids(self, ids):
+        # Generation calls this just before its failure reaches the session: the ids sampled so far.
+        self.partial_ids = list(ids)
+
     @contextmanager
     def observe_session(self, model, rendered):
         if self.used: raise PolicyError('Each response needs a fresh policy execution session.')
@@ -71,7 +77,7 @@ class Execution:
                 self.failure(str(exc))
                 if self.run_directory:
                     path = Path(self.run_directory) / ('policy-failure-' + uuid.uuid4().hex + '.json')
-                    with path.open('x') as handle: json.dump(self.result([]), handle, allow_nan=False)
+                    with path.open('x') as handle: json.dump(self.result(self.partial_ids), handle, allow_nan=False)
                 raise
             finally:
                 self.close()

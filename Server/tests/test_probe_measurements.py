@@ -197,3 +197,39 @@ def test_actual_transformers_generation_preserves_sample_stream_and_attaches_rea
     assert result['readings'][0]['predictedTokenID']==ids[1][0]
     assert result['readings'][0]['score'] == pytest.approx(artifacts.score(doc, existing.values[0], input_binding=doc['input'])['score'])
     assert all(r['inputTokenPosition'] < len(result['promptTokenIDs'])+len(ids[1])-1 for r in result['readings'])
+
+
+def test_stopped_reading_during_real_generation_saves_one_sidecar_with_the_sampled_prefix(tmp_path,monkeypatch):
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+    from tokenizers.pre_tokenizers import Whitespace
+    from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast
+    from steerlab_server.experiment import generate, probe_capture
+    from steerlab_server.steering.model_loader import SteeredModel
+    config, doc, _ = prepared(tmp_path); config['onError'] = 'stop'
+    backend = Tokenizer(WordLevel({'<unk>':0, '<s>':1, '</s>':2, 'one':3, 'two':4, 'three':5}, unk_token='<unk>'))
+    backend.pre_tokenizer = Whitespace()
+    tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend, unk_token='<unk>', bos_token='<s>', eos_token='</s>', pad_token='</s>')
+    torch.manual_seed(42)
+    network = LlamaForCausalLM(LlamaConfig(vocab_size=6, hidden_size=2, intermediate_size=4, num_hidden_layers=1, num_attention_heads=1, num_key_value_heads=1, max_position_embeddings=64, eos_token_id=None)).eval()
+    model = SteeredModel(network, tokenizer, HookedModel(network), 'example/model', 'a'*40)
+    doc['input']['tokenizerSHA256'] = probe_capture.tokenizer_identity(tokenizer)
+    source = tmp_path/config['probes'][0]['probe']['path'];source.write_text(json.dumps(doc));config['probes'][0]['probe']['sha256'] = archives.file_hash(source)
+    # The prefill reading succeeds; the first decode reading fails on the generation thread.
+    calls = []; original = runtime.to_cpu_float64
+    def transfer(tensor):
+        calls.append(1)
+        if len(calls) > 1: raise artifacts.ProbeError('example failure')
+        return original(tensor)
+    monkeypatch.setattr(runtime, 'to_cpu_float64', transfer)
+    directory = tmp_path/'run'; directory.mkdir()
+    observer = runtime.create(config,owner.load(config,tmp_path),condition='baseline',agent='baseline',rendering='rawCompletion',run_directory=directory,context={'promptID':'item'})
+    token_ids = []
+    with pytest.raises(artifacts.ProbeError, match='example failure'):
+        generate.generate(model,'one two three',prompt_mode='rawCompletion',max_tokens=4,temperature=0,token_ids_out=token_ids,observers=[observer])
+    files = list(directory.glob('probe-failure-*.json')); assert len(files) == 1 and token_ids == []
+    left = json.loads(files[0].read_text())
+    assert left['status'] == 'partial' and left['failures'] == ['example failure'] and left['promptID'] == 'item'
+    [sampled] = left['outputTokenIDs']; [row] = left['readings']
+    assert (row['stage'], row['status'], row['predictedTokenID']) == ('prefill', 'recorded', sampled)
+    assert not model.hooked.runtime.subscriptions and not model.hooked._pre_handles

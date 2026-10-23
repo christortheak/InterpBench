@@ -326,3 +326,99 @@ def test_malformed_provenance_and_agent_paths_have_typed_repairs(tmp_path,value)
     doc,_,_=setup(tmp_path);doc['actions'][0]['source']=value
     with pytest.raises(ValueError,match='provenance'):owner.review(doc,tmp_path)
     with pytest.raises(ValueError):owner.attachment_review({'agentPath':value,'name':'example','policyPaths':[]},tmp_path)
+
+
+def tiny_llama():
+    """A real one-layer Llama with no stop token: generate() runs its true background-thread path."""
+    from transformers import LlamaConfig,LlamaForCausalLM,PreTrainedTokenizerFast
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+    from tokenizers.pre_tokenizers import Whitespace
+    from steerlab_server.steering.hooks import HookedModel
+    from steerlab_server.steering.model_loader import SteeredModel
+    backend=Tokenizer(WordLevel({'[PAD]':0,'[EOS]':1,'[UNK]':2,'example':3,'selected':4},unk_token='[UNK]'));backend.pre_tokenizer=Whitespace()
+    tokenizer=PreTrainedTokenizerFast(tokenizer_object=backend,pad_token='[PAD]',eos_token='[EOS]',unk_token='[UNK]')
+    torch.manual_seed(3)
+    lm=LlamaForCausalLM(LlamaConfig(vocab_size=5,hidden_size=2,intermediate_size=4,num_hidden_layers=1,num_attention_heads=1,num_key_value_heads=1,max_position_embeddings=64,pad_token_id=0,eos_token_id=None)).eval()
+    return SteeredModel(model=lm,tokenizer=tokenizer,hooked=HookedModel(lm),model_id='example/model',revision='a'*40)
+
+
+def conflicting_logits_policy(root, model):
+    """The live failure: one fixed allowTokens and one fixed forceToken whose tokens never intersect."""
+    doc,_,_=setup(root);doc['binding']['tokenizerSHA256']=runtime.probe_capture.tokenizer_identity(model.tokenizer)
+    doc.update(site={'kind':'logitsPreSelection'},probes=[],
+               actions=[{'id':'allow','kind':'allowTokens','bounds':[0,1],'tokens':[3]},{'id':'force','kind':'forceToken','bounds':[0,1],'tokens':[4]}],
+               rules=[{'action':'allow','kind':'fixed','value':1},{'action':'force','kind':'fixed','value':1}])
+    return doc
+
+
+def failing_study(root, model, doc):
+    from steerlab_server.experiment import condition_execution as execution,manifest
+    variant=ModelVariant(name='modified',base_model_id='example/model',base_revision='a'*40,prompt_mode='rawCompletion',intervention_policies=attached(doc,root))
+    study=manifest.Manifest(name='example',model_id='example/model',seeds=[0],max_tokens=4)
+    eff=execution.EffectiveCondition('modified',[],{},'rawCompletion',None,False,0,variant=variant)
+    directory=root/'runs/study';directory.mkdir()
+    kwargs=dict(name='example',manifest=study,experiment_hash='b'*64,wants_choice=False,wants_sampled=True,reader_scorers=[],should_cancel=None,log=lambda _:None,root=root)
+    return execution,eff,directory,kwargs
+
+
+def only_sidecar(directory, kind='policy'):
+    files=list(directory.glob(kind+'-failure-*.json'));assert len(files)==1
+    return json.loads(files[0].read_text())
+
+
+def no_records(directory):
+    path=directory/'generations.jsonl'
+    return not path.exists() or not path.read_text().strip()
+
+
+def test_logits_conflict_during_real_generation_saves_one_sidecar_and_no_record(tmp_path):
+    from contextlib import closing
+    from steerlab_server.experiment import resume
+    model=tiny_llama();execution,eff,directory,kwargs=failing_study(tmp_path,model,conflicting_logits_policy(tmp_path,model))
+    with pytest.raises(ValueError,match='Policy token constraints conflict') as raised:
+        with closing(resume.GenerationWriter(str(directory))) as writer:execution.execute_condition(model,eff,[{'id':'item','prompt':'example'}],writer,**kwargs)
+    assert type(raised.value) is ValueError and no_records(directory)
+    left=only_sidecar(directory);assert not list(directory.glob('probe-failure-*.json'))
+    assert left['status']=='partial' and any('constraints conflict' in reason for reason in left['failures'])
+    assert (left['promptID'],left['sampleIndex'],left['condition'])==('item',0,'modified')
+    # The first decode step failed: nothing was sampled, and its decision says why.
+    [row]=left['decisions'];assert left['outputTokenIDs']==[] and row['status']=='failed'
+    assert {k:'constraints conflict' in v['reason'] for k,v in row['actionOutcomes'].items()}=={'allow':True,'force':True}
+    assert row['inputTokenID']==left['promptTokenIDs'][-1] and row['predictedTokenID'] is None
+    assert not model.hooked.runtime.subscriptions and not model.hooked._pre_handles
+
+
+def test_residual_decide_failure_mid_decode_keeps_decisions_and_sampled_prefix(tmp_path):
+    from contextlib import closing
+    from steerlab_server.experiment import resume
+    model=tiny_llama();doc,_,_=setup(tmp_path);doc['binding']['tokenizerSHA256']=runtime.probe_capture.tokenizer_identity(model.tokenizer)
+    # The prefill decides; the first decode forward raises, under onError stop.
+    (tmp_path/'provider.py').write_text('def decide(context, tensor, scores, state, rng, assets):\n    state["calls"] = state.get("calls", 0) + 1\n    if state["calls"] > 1: raise ValueError("example failure")\n    return [Decision("change", 1)]\n')
+    doc.update(probes=[],rules=[],provider={'sourcePath':'provider.py','assetPaths':{}})
+    execution,eff,directory,kwargs=failing_study(tmp_path,model,doc)
+    with pytest.raises(ValueError,match='example failure'):
+        with closing(resume.GenerationWriter(str(directory))) as writer:execution.execute_condition(model,eff,[{'id':'item','prompt':'example'}],writer,**kwargs)
+    assert no_records(directory)
+    left=only_sidecar(directory);assert left['status']=='partial' and 'example-policy: example failure' in left['failures']
+    [sampled]=left['outputTokenIDs'];decided,failed=left['decisions']
+    assert decided['status']=='applied' and decided['predictedTokenID']==sampled and decided['generatedTokenIndex']==0
+    assert failed['status']=='skipped' and failed['reason']=='example failure'
+    assert failed['inputTokenID']==sampled and failed['predictedTokenID'] is None
+    assert not model.hooked.runtime.subscriptions
+
+
+def test_panel_turn_generation_failure_saves_sidecar_and_writes_no_turn(tmp_path,monkeypatch):
+    from steerlab_server.experiment import multi_agent
+    from test_multi_agent import _scenario
+    model=tiny_llama();doc=conflicting_logits_policy(tmp_path,model)
+    variant=ModelVariant(name='modified',base_model_id='example/model',base_revision='a'*40,prompt_mode='rawCompletion',intervention_policies=attached(doc,tmp_path))
+    path=tmp_path/'runs/fit/agent.json';path.write_text(json.dumps(variant.to_dict()))
+    monkeypatch.setenv('STEERLAB_ROOT',str(tmp_path))
+    scenario=_scenario();scenario.max_tokens=2
+    for agent in scenario.agents:agent.variant_artifact_path=str(path);agent.variant_artifact_hash=hashlib.sha256(path.read_bytes()).hexdigest()
+    directory=tmp_path/'configured';directory.mkdir()
+    with pytest.raises(ValueError,match='Policy token constraints conflict'):
+        multi_agent.run_scenario(model,scenario,run_dir=str(directory),log=lambda _:None)
+    left=only_sidecar(directory);assert (left['turnID'],left['agent'])==('t1','a') and left['decisions']
+    turns=directory/'turns.jsonl';assert not turns.exists() or not turns.read_text().strip()

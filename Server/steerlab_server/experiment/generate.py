@@ -509,8 +509,16 @@ def _stream_rendered(model: SteeredModel, rendered: prompt_render.RenderedPrompt
     # sets it when THIS generator is closed early — either way an abandoned
     # generation cannot squat on the model-slot lock until max_tokens.
     stop = should_stop or threading.Event()
+    # Observers that keep partial evidence when a generation fails are told,
+    # below, which ids it sampled before failing. Only they arm the extra
+    # criterion that remembers the newest sequence; nobody else's decode
+    # changes.
+    partial = [observer for observer in (observers or [])
+               if hasattr(observer, "set_partial_token_ids")]
+    newest: list = []
     kwargs["stopping_criteria"] = _stopping_criteria(
-        stop, budget=budget, prompt_length=len(rendered.input_ids))
+        stop, budget=budget, prompt_length=len(rendered.input_ids),
+        sequence_out=newest if partial else None)
 
     injectors = _injectors(injections or [], rendered.prompt_token_count,
                            latent_edits=latent_edits)
@@ -579,24 +587,44 @@ def _stream_rendered(model: SteeredModel, rendered: prompt_render.RenderedPrompt
             if token_ids_out is not None and sink:
                 token_ids_out.extend(
                     generated_token_ids(sink[0], len(rendered.input_ids)))
-    # Surface a generation failure instead of silently ending the stream — and,
-    # because _run_generate calls streamer.end() on error, the consumer above
-    # never hangs waiting for a stop sentinel that generate() failed to send.
-    # Torch's raw multinomial failure is translated to the same typed error the
-    # guard raises (belt and braces).
-    if error:
-        translated = _translated_generation_error(error[0], guard)
-        if translated is error[0]:
-            raise translated
-        raise translated from error[0]
+        # Surface a generation failure instead of silently ending the stream —
+        # and, because _run_generate calls streamer.end() on error, the
+        # consumer above never hangs waiting for a stop sentinel that
+        # generate() failed to send. Torch's raw multinomial failure is
+        # translated to the same typed error the guard raises (belt and
+        # braces).
+        #
+        # Raised HERE, inside the observation sessions, so an observer meets a
+        # failure on the generation thread exactly as it meets one on this
+        # thread: an intervention policy or a study measurement saves its
+        # partial evidence as a failure sidecar before it closes. Raised after
+        # the sessions had closed normally, a failure during decoding — a
+        # conflicting token constraint, a policy that stops on error, a
+        # non-finite score — left no sidecar at all (found live, 2026-10-23).
+        # The sampled prefix is what the last stopping check saw; it is empty
+        # when the first step failed.
+        if error:
+            translated = _translated_generation_error(error[0], guard)
+            prefix = generated_token_ids(newest[0] if newest else None,
+                                         len(rendered.input_ids))
+            for observer in partial:
+                observer.set_partial_token_ids(prefix)
+            if translated is error[0]:
+                raise translated
+            raise translated from error[0]
 
 
 def _stopping_criteria(stop: "threading.Event", *, budget=None,
-                       prompt_length: int = 0):
+                       prompt_length: int = 0, sequence_out: list | None = None):
     """A transformers StoppingCriteriaList that ends generation when the
     event is set (checked after every decode step) — and, under a declared
     reasoning budget, when either block's own cap fills
     (:class:`truncation_gate.ReasoningBudget`).
+
+    ``sequence_out`` adds a criterion that never stops: it keeps a reference
+    to the newest sequence (prompt plus every sampled id — a criterion runs
+    after each id is appended), with no copy and no device sync, so a
+    generation that fails mid-decode can still say what it sampled.
 
     The budget criterion feeds every NEW sampled id to the budget rule in
     order — transformers hands the whole sequence to a criterion each step,
@@ -612,9 +640,16 @@ def _stopping_criteria(stop: "threading.Event", *, budget=None,
         def __call__(self, input_ids, scores, **kwargs) -> bool:
             return stop.is_set()
 
+    class _KeepNewest(StoppingCriteria):
+        def __call__(self, input_ids, scores, **kwargs) -> bool:
+            sequence_out[:] = [input_ids]
+            return False
+
     criteria = [_StopOnEvent()]
     if budget is not None:
         criteria.append(_ReasoningStop(budget, prompt_length))
+    if sequence_out is not None:
+        criteria.append(_KeepNewest())
     return StoppingCriteriaList(criteria)
 
 
