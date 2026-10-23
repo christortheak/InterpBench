@@ -98,6 +98,13 @@ migration that rewrites frozen bytes.
   resume point, and `FAILED.md` and `run-status.json` read as they did. Runs
   that failed this way on 0.9.15 or earlier have no such file; run the arm
   again to get one.
+- **Agents with intervention policies work in multi-turn agent chat.**
+  Chatting with an agent that carries an intervention policy failed when the
+  request was a multi-turn conversation rather than a single prompt: the
+  reply ended in a server error, and a streamed reply stopped before any
+  text arrived. Both now run the policy, and the full reply carries the
+  policy's decision records, as single-prompt chat already did. Agent chat
+  remains exploration, not study evidence.
 
 ## [0.9.15] — 2026-10-23
 

@@ -422,3 +422,23 @@ def test_panel_turn_generation_failure_saves_sidecar_and_writes_no_turn(tmp_path
         multi_agent.run_scenario(model,scenario,run_dir=str(directory),log=lambda _:None)
     left=only_sidecar(directory);assert (left['turnID'],left['agent'])==('t1','a') and left['decisions']
     turns=directory/'turns.jsonl';assert not turns.exists() or not turns.read_text().strip()
+
+
+CHAT=[{'role':'user','content':'example'},{'role':'assistant','content':'example','seeded':True},{'role':'user','content':'example'}]
+
+
+def test_multi_turn_agent_chat_runs_the_policy_and_returns_its_decisions(tmp_path):
+    from steerlab_server.api import variant_chat
+    model=tiny_llama();doc,_,_=setup(tmp_path);doc['binding']['tokenizerSHA256']=runtime.probe_capture.tokenizer_identity(model.tokenizer)
+    doc.update(site={'kind':'logitsPreSelection'},probes=[],actions=[{'id':'change','kind':'forceToken','bounds':[0,1],'tokens':[4]}],rules=[{'action':'change','kind':'fixed','value':1}])
+    variant=ModelVariant(name='modified',base_model_id='example/model',base_revision='a'*40,prompt_mode='rawCompletion',temperature=0,intervention_policies=attached(doc,tmp_path))
+    def request(**changes):return variant_chat.VariantChatRequest(variant_path='p',messages=CHAT,max_tokens=2,**changes)
+    result=variant_chat.generate_with_variant(model,variant,request())
+    decisions=result['interventionDecisions'];prompt=len(decisions['promptTokenIDs'])
+    assert decisions['outputTokenIDs']==[4,4] and decisions['status']=='complete' and decisions['mode']=='playground'
+    assert [r['inputTokenPosition'] for r in decisions['decisions']]==[prompt-1,prompt] and result['seededMessageIndices']==[1]
+    # Streaming executes the same policy; its text stream carries no decision records.
+    streamed=''.join(variant_chat.stream_with_variant(model,variant,request()))
+    baseline=variant_chat.generate_with_variant(model,variant,request(strip_interventions=True))
+    assert streamed==result['output']!=baseline['output'] and 'interventionDecisions' not in baseline
+    assert not model.hooked.runtime.subscriptions and not model.hooked._pre_handles

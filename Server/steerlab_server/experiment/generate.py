@@ -430,12 +430,18 @@ def stream_generate_messages(model: SteeredModel, messages: list[dict], *,
                              qwen_thinking_enabled: bool = False,
                              continue_final_message: bool = False,
                              should_stop: "threading.Event | None" = None,
+                             token_ids_out: list | None = None,
+                             observers: list | None = None,
                              reasoning_effort: str | None = None,
                              reasoning_max_tokens: int | None = None) -> Iterator[str]:
     """Yield decoded text chunks from a multi-turn chat transcript.
 
     ``continue_final_message=True`` continues an INCOMPLETE final assistant
     turn mid-turn (assistant-prefix "prefill") instead of opening a new one.
+
+    ``token_ids_out``/``observers`` are the same observation seam as
+    :func:`stream_generate`'s — agent chat hands an intervention policy in
+    through them. Both default to off, so every existing caller is unchanged.
     """
     mid = model_id or model.model_id
     rendered = prompt_render.render_messages(
@@ -446,7 +452,9 @@ def stream_generate_messages(model: SteeredModel, messages: list[dict], *,
     yield from _stream_rendered(
         model, rendered, max_tokens=max_tokens, temperature=temperature,
         injections=injections, latent_edits=latent_edits,
-        should_stop=should_stop, reasoning_max_tokens=reasoning_max_tokens)
+        should_stop=should_stop,
+        token_ids_out=token_ids_out, observers=observers,
+        reasoning_max_tokens=reasoning_max_tokens)
 
 
 def _stream_rendered(model: SteeredModel, rendered: prompt_render.RenderedPrompt, *,
@@ -777,6 +785,8 @@ def generate_messages(model: SteeredModel, messages: list[dict], *,
                       qwen_thinking_enabled: bool = False,
                       continue_final_message: bool = False,
                       on_chunk: Callable[[str], None] | None = None,
+                      token_ids_out: list | None = None,
+                      observers: list | None = None,
                       reasoning_effort: str | None = None,
                       reasoning_max_tokens: int | None = None) -> str:
     text = ""
@@ -786,6 +796,7 @@ def generate_messages(model: SteeredModel, messages: list[dict], *,
             latent_edits=latent_edits, prompt_mode=prompt_mode,
             system_prompt=system_prompt, qwen_thinking_enabled=qwen_thinking_enabled,
             continue_final_message=continue_final_message,
+            token_ids_out=token_ids_out, observers=observers,
             reasoning_effort=reasoning_effort,
             reasoning_max_tokens=reasoning_max_tokens):
         text += chunk
