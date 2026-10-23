@@ -77,7 +77,13 @@ class Execution:
                 self.failure(str(exc))
                 if self.run_directory:
                     path = Path(self.run_directory) / ('policy-failure-' + uuid.uuid4().hex + '.json')
-                    with path.open('x') as handle: json.dump(self.result(self.partial_ids), handle, allow_nan=False)
+                    # The response's own error is what the run reports; a record that cannot be written never replaces it.
+                    try:
+                        text = json.dumps(self.result(self.partial_ids), allow_nan=False)
+                        with path.open('x') as handle: handle.write(text)
+                    except Exception as lost:
+                        note = getattr(exc, 'add_note', None)  # Python 3.11+
+                        if note: note('The policy-failure record could not be written: ' + str(lost))
                 raise
             finally:
                 self.close()

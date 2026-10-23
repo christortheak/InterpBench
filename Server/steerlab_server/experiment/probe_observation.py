@@ -81,8 +81,14 @@ class Observation:
             if self.run_directory:
                 # Partial evidence is not a completed response or a resume key.
                 destination = Path(self.run_directory) / ('probe-failure-' + uuid.uuid4().hex + '.json')
-                with destination.open('x') as handle:
-                    json.dump(self.result(self.partial_ids), handle, allow_nan=False)
+                # The response's own error is what the run reports; a record that cannot be written never replaces it.
+                try:
+                    text = json.dumps(self.result(self.partial_ids), allow_nan=False)
+                    with destination.open('x') as handle:
+                        handle.write(text)
+                except Exception as lost:
+                    note = getattr(exc, 'add_note', None)  # Python 3.11+
+                    if note: note('The probe-failure record could not be written: ' + str(lost))
             raise
         finally:
             sessions.close()

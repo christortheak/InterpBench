@@ -609,12 +609,18 @@ def _stream_rendered(model: SteeredModel, rendered: prompt_render.RenderedPrompt
         # the sessions had closed normally, a failure during decoding — a
         # conflicting token constraint, a policy that stops on error, a
         # non-finite score — left no sidecar at all (found live, 2026-10-23).
-        # The sampled prefix is what the last stopping check saw; it is empty
-        # when the first step failed.
+        # The sampled prefix is what the last stopping check saw, read in one
+        # transfer. It is empty when the first step failed — or when a faulted
+        # device cannot be read, since reading it must never replace the
+        # failure being raised.
         if error:
             translated = _translated_generation_error(error[0], guard)
-            prefix = generated_token_ids(newest[0] if newest else None,
-                                         len(rendered.input_ids))
+            try:
+                prefix = (generated_token_ids(newest[0].cpu(),
+                                              len(rendered.input_ids))
+                          if newest else [])
+            except Exception:  # noqa: BLE001 - the original failure wins
+                prefix = []
             for observer in partial:
                 observer.set_partial_token_ids(prefix)
             if translated is error[0]:

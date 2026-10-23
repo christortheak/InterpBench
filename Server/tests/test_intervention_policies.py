@@ -352,10 +352,18 @@ def conflicting_logits_policy(root, model):
     return doc
 
 
-def failing_study(root, model, doc):
+def bound_measurement(root, model):
+    """A study probe measurement whose fitted probe is bound to this model's tokenizer."""
+    from steerlab_server.experiment import diagnostic_archives as archives
+    config,probe,_=prepared(root);probe['input']['tokenizerSHA256']=runtime.probe_capture.tokenizer_identity(model.tokenizer)
+    source=root/config['probes'][0]['probe']['path'];source.write_text(json.dumps(probe));config['probes'][0]['probe']['sha256']=archives.file_hash(source)
+    return config
+
+
+def failing_study(root, model, doc, measurements=None):
     from steerlab_server.experiment import condition_execution as execution,manifest
     variant=ModelVariant(name='modified',base_model_id='example/model',base_revision='a'*40,prompt_mode='rawCompletion',intervention_policies=attached(doc,root))
-    study=manifest.Manifest(name='example',model_id='example/model',seeds=[0],max_tokens=4)
+    study=manifest.Manifest(name='example',model_id='example/model',raw={'probeMeasurements':measurements} if measurements else {},seeds=[0],max_tokens=4)
     eff=execution.EffectiveCondition('modified',[],{},'rawCompletion',None,False,0,variant=variant)
     directory=root/'runs/study';directory.mkdir()
     kwargs=dict(name='example',manifest=study,experiment_hash='b'*64,wants_choice=False,wants_sampled=True,reader_scorers=[],should_cancel=None,log=lambda _:None,root=root)
@@ -379,13 +387,42 @@ def test_logits_conflict_during_real_generation_saves_one_sidecar_and_no_record(
     with pytest.raises(ValueError,match='Policy token constraints conflict') as raised:
         with closing(resume.GenerationWriter(str(directory))) as writer:execution.execute_condition(model,eff,[{'id':'item','prompt':'example'}],writer,**kwargs)
     assert type(raised.value) is ValueError and no_records(directory)
-    left=only_sidecar(directory);assert not list(directory.glob('probe-failure-*.json'))
+    left=only_sidecar(directory)
     assert left['status']=='partial' and any('constraints conflict' in reason for reason in left['failures'])
     assert (left['promptID'],left['sampleIndex'],left['condition'])==('item',0,'modified')
     # The first decode step failed: nothing was sampled, and its decision says why.
     [row]=left['decisions'];assert left['outputTokenIDs']==[] and row['status']=='failed'
     assert {k:'constraints conflict' in v['reason'] for k,v in row['actionOutcomes'].items()}=={'allow':True,'force':True}
     assert row['inputTokenID']==left['promptTokenIDs'][-1] and row['predictedTokenID'] is None
+    assert not model.hooked.runtime.subscriptions and not model.hooked._pre_handles
+
+
+def test_policy_failure_beside_a_measurement_leaves_one_sidecar_each(tmp_path):
+    from contextlib import closing
+    from steerlab_server.experiment import resume
+    model=tiny_llama();doc=conflicting_logits_policy(tmp_path,model)
+    execution,eff,directory,kwargs=failing_study(tmp_path,model,doc,measurements=bound_measurement(tmp_path,model))
+    with pytest.raises(ValueError,match='Policy token constraints conflict'):
+        with closing(resume.GenerationWriter(str(directory))) as writer:execution.execute_condition(model,eff,[{'id':'item','prompt':'example'}],writer,**kwargs)
+    assert no_records(directory) and only_sidecar(directory)['decisions']
+    # The measurement keeps what it read before the policy failed, and names the policy's error as its reason.
+    left=only_sidecar(directory,'probe');[row]=left['readings']
+    assert left['status']=='partial' and len(left['failures'])==1 and 'constraints conflict' in left['failures'][0]
+    assert (row['stage'],row['status'],row['predictedTokenID'])==('prefill','recorded',None) and left['outputTokenIDs']==[]
+
+
+def test_a_sidecar_that_cannot_be_written_never_replaces_the_generation_error(tmp_path):
+    from steerlab_server.experiment import probe_measurements,probe_observation
+    from steerlab_server.experiment.generate import generate
+    model=tiny_llama();doc=conflicting_logits_policy(tmp_path,model);config=bound_measurement(tmp_path,model)
+    absent=tmp_path/'absent'
+    measurement=probe_observation.create(config,probe_measurements.load(config,tmp_path),condition='modified',agent='modified',rendering='rawCompletion',run_directory=absent)
+    policy=runtime.Execution(attached(doc,tmp_path),rendering='rawCompletion',run_directory=absent)
+    with pytest.raises(ValueError,match='Policy token constraints conflict') as raised:
+        generate(model,'example',model_id=model.model_id,prompt_mode='rawCompletion',max_tokens=2,temperature=0,observers=[measurement,policy])
+    assert type(raised.value) is ValueError and not absent.exists()
+    if hasattr(BaseException,'add_note'):
+        assert [note.split(':')[0] for note in raised.value.__notes__]==['The policy-failure record could not be written','The probe-failure record could not be written']
     assert not model.hooked.runtime.subscriptions and not model.hooked._pre_handles
 
 

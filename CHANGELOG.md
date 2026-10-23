@@ -91,13 +91,16 @@ migration that rewrites frozen bytes.
   non-finite score), the run stopped with the right error, but the promised
   `policy-failure-*.json` or `probe-failure-*.json` was never written, so the
   decisions and readings made before the failure were lost. The engine now
-  writes that file in the run directory, for study arms and panel turns
-  alike. It holds the decisions or readings made up to the failure, the
-  failure's reason, and the token IDs the model had sampled before it. As
-  before, it is partial evidence: it never counts as a response or as a
-  resume point, and `FAILED.md` and `run-status.json` read as they did. Runs
-  that failed this way on 0.9.15 or earlier have no such file; run the arm
-  again to get one.
+  writes that file in the run directory (for a panel turn, in that
+  transcript's own folder). It holds the decisions or readings made up to the
+  failure, the failure's reason, and the token IDs the model had sampled
+  before it. A response with both a policy and a measurement gets one file
+  from each, and the measurement's file gives the policy's error as its
+  reason. As before, the file is partial evidence: it never counts as a
+  response or as a resume point, and `FAILED.md` and `run-status.json` read
+  as they did. If the file cannot be written, for example on a full disk,
+  the run still reports the original error. Runs that failed this way on
+  0.9.15 or earlier have no such file; run the arm again to get one.
 - **Agents with intervention policies work in multi-turn agent chat.**
   Chatting with an agent that carries an intervention policy failed when the
   request was a multi-turn conversation rather than a single prompt: the
