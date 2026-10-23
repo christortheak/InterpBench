@@ -43,6 +43,39 @@ above). Until they are done, [SUBSTRATES.md](SUBSTRATES.md) is the support
 statement: probe measurements and intervention policies are implemented, and
 their comparison is unqualified.
 
+### Status on 2026-10-23 (release 0.9.15)
+
+This section supersedes the P7 rows of the table in §1 and the "Open" line
+under P7-B in §3. The open P7 legs ran on 2026-10-23 against 0.9.15, on
+cluster A100-SXM4-80GB GPUs (CUDA 12.8, torch 2.11), with the same
+Gemma-3-4B, probe, and direction as P7-B. Detailed records, run hashes, and
+custody receipts are in the study workspace.
+
+| Item | Status on 2026-10-23 |
+|---|---|
+| P7-B panel seats | Passed. Three seats with different policies (fixed, threshold, none) and different measurement selections in a 24-turn panel, configured and baseline arms: seat and turn attribution, reset between turns, no policy action reached the seat without a policy (its pre- and post-action readings agree at every position), every scheduled reading recorded or explicitly omitted (the only omissions were the predicted ones at the trace limit), and the flattened records carry the same decision and reading documents as the turn records. |
+| P7-B behavioural positive control | Executed as declared; the outcome did not show sensitivity. Strengths 16 and 32, declared with the outcome, reading rule, and stopping rule before the freeze, run once: no Golden Gate content at either dose (0 of 12 in every arm). Descriptively (not preregistered), the policy's action changed the text strongly and dose-dependently, toward travel and greeting words and then repetition. No further dose was run, so P7-B still has no behavioural positive control. |
+| P7-C cancel, continue, custody | Continuation and custody checks passed; three checks failed on two defects. Cancelled-and-continued runs (ordinary and panel, each cancelled twice) were identical to the uninterrupted run except for timing fields, with every response once; a resume sent while the job was still stopping was refused (exercised at the second cancel of each; the first attempts were refused for an operator error and are recorded as such); a second resume of an already-continued job was refused, naming its continuation; a failing policy produced a failure record that cannot be resumed or analyzed as a result. Defects: (1) a policy failure during generation writes no failure sidecar, so its partial observations are lost (the probe-measurement observer has the same structure and likely the same gap); (2) a run that was checkpointed and then resumed to completion keeps the checkpoint's status file, so both engines classify the completed run as partial; earlier completed runs that were checkpointed are affected too. Also observed: the resume message reported the stale checkpoint count rather than the records kept, and the scheduler wrapper's kill reached the launcher rather than the job step, which kept writing for up to 37 s, so safety rested on the gate waiting for the queue to release the job. A record line torn mid-write was not produced live. Not covered: provider-state reset, a capability mismatch, a tampered bundle on a local runner, and cancellation on the local executor. |
+| P7-D surface matrix and app journey | Pending. Policy studies have frozen without `--force` since 0.9.7, with the missing capability control recorded per condition; a design draft for the remaining presentation gaps is with the researcher, and the app walkthrough needs the researcher. |
+| P7-E cost | Passed (descriptive). Six configurations in two views, with warm-up, shuffled repeats, and dispersion, on one A100 with 300- to 441-token prompts and 96 generated tokens: reading the probe adds about 0.3 s per response, almost all of it in the prompt phase (so it grows with prompt length), and slows decode by about 1%; a policy adds about 0.1 s more (about 0.56 ms per decision) and slows decode by about 3%; evidence adds about 54 KB per response; peak memory is unchanged at this length. No targets. |
+| P7-F | In progress: the independent review of this statement and of the J4 record was done on 2026-10-23 (corrections below and in the J4 documents); regression of the fixes for the two P7-C defects is owed when they land. |
+
+**Support statement.** [SUBSTRATES.md](SUBSTRATES.md) is unchanged: probe
+measurements and intervention policies are implemented, and their comparison
+is unqualified. The P7 legs show within-substrate behaviour for one model on
+one CUDA stack (and, for P7-B's first legs, on MPS with older builds); they do
+not qualify a comparison across substrates, and the qualified state needs a
+reproducible public measurement record. The two P7-C defects should be fixed
+and regression-checked before any stronger statement.
+
+**Correction (independent review, 2026-10-23).** §2 says the mixed lens "is
+within 0.004 of the general lens at every layer on general text". On the
+WikiText held-out the mixed lens's divergence from the model's prediction is
+higher than the general lens's at 22 of 63 layers, by up to 0.005 (layer 48),
+and the largest per-layer difference in either direction is 0.008. The
+difference remains small, and no uncertainty estimate accompanies it. See
+also the review section in the [J4 supplement](JLENS-QUALIFICATION-DECISION-J4-SUPPLEMENT-2026-09-21.md).
+
 ## 2. J-lens results since the closure handoff
 
 **Full 27B lens.** 828 WikiText-103 rows, bf16, dimension batch 4, fitted as

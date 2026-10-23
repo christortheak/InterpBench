@@ -75,3 +75,45 @@ plain-residual baseline at every layer used.
 Independent review of J4 together with this supplement, before the support
 statement. A weight study and a subspace comparison are research follow-ups,
 not gates.
+
+## 5. Independent review (2026-10-23)
+
+The review owed in §4 was carried out on 2026-10-23 by a reviewer who
+re-derived the figures from the assessment reports. This section records its
+corrections; the text above is left as written. Two of the corrections (the
+general-text cost of the mixed lens and the layer-45 value) were re-checked
+against the WikiText assessment report before being recorded here.
+
+- §1, "three full-size fits … were executed": two full-size fits and one
+  cross-corpus merge.
+- §2, "the best readout at layers 20 to 55": on case opinions the case-only
+  lens is not the best at layers 24, 25, and 45 to 47 (the mixed lens is
+  lower there), and on the ladder windows it is the best at only 21 of those
+  36 layers. Its cost on general text is concentrated at layers 33 to 58 (up
+  to 0.025 JSD at layer 51), not uniform over 20 to 55; below layer 25 it is
+  better than the general lens on general text.
+- §2, "at no measurable cost on general text": on the WikiText held-out the
+  mixed lens's divergence is higher than the general lens's at 22 of 63
+  layers, by up to 0.005 (layer 48); the largest per-layer difference in
+  either direction is 0.008, and no uncertainty estimate is attached. Say:
+  "at a small cost on general text (at most 0.005 JSD at any layer)".
+- §2, onsets against the plain residual: the legal onset is about layer 19 on
+  case opinions but about layer 29 on the ladder windows; the "16" for general
+  text is the case-only lens, which is not the matching register; and "32 to
+  43" is two separate onsets (the ladder windows from layer 32, interrupted at
+  58, and case opinions from layer 43), not a band.
+- §2, "every readout is above 0.6 through layer 45": the general lens is
+  0.598 at layer 45 on WikiText; say "through layer 44".
+- §3, "Qualified within the tested scope: managed fitting, sharding, merging
+  … at full row budgets": the new evidence is end-to-end execution, custody,
+  and readout. No full-size fit or merge was repeated, so determinism at full
+  size is untested, and no reference agreement was measured at full size; the
+  sentence also contradicts J4 §1 ("not qualified: any full-size hybrid 27B
+  lens") without saying it supersedes it. Say: "Executed end to end with
+  custody on H100 cards; full-size hybrid numerics rest on J2's five-layer,
+  one-row subset."
+
+Verified as written: 58 of 63 layers better than the pilot lens on both
+held-outs; no readout below 0.5 before layer 51; the mean-JSD table; every
+shard ran on H100 cards; the general lens's per-layer values identical across
+the two WikiText assessments.

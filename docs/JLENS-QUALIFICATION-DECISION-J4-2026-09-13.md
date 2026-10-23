@@ -188,3 +188,27 @@ matrices with their sha256 stay in the cluster diagnostics directory);
 `jlens-benchmark-c9f1b6e4…`, `…ae6bfdc0…`, `…fab8769b…`, `…e32e0c69…`,
 `…5929ab75…`; lenses `custom-lens-895a4f3a…` (ours) and
 `custom-lens-976f9c12…` (published).
+
+## Independent review (2026-10-23)
+
+Reviewed together with the [supplement](JLENS-QUALIFICATION-DECISION-J4-SUPPLEMENT-2026-09-21.md),
+whose §5 holds the review of that document. Corrections to this record; the
+text above is left as written:
+
+- §1, "Fits may be made at the largest feasible dimension batch on whichever
+  card the queue offers": bound it to the configurations in §3; batches above
+  64 on the 4B model, and the B200 card, are untested (§2).
+- §3, "on A100 or H100": the 4B batches 16 to 64 and the dense 27B model were
+  tested on the H100 only (§2); the A100 is untested for them.
+- §4.4, "five assessments, four benchmarks": the evidence index lists three
+  assessments and five benchmarks, and the workspace holds four assessment and
+  eight benchmark directories dated on or before 2026-09-13; reconcile the
+  count before citing it.
+- §4.5, "better at 6 to 15": the live J3 interpretation shows a tie at layers 9
+  to 11.
+- §4.5, "layers 4 to 5 (JS 0.28 to 0.31, overlap 0.63)": that describes layer 4;
+  layer 5 is JS 0.19 to 0.20 with overlap 0.74 to 0.75 (T5 table).
+- §4.2, "Every repeat": every tested repeat (repeats were at batch 1, plus the
+  engine-against-bare-kernel comparison at the same batch).
+
+The conclusions of §1 stand with these bounds.
