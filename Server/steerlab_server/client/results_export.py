@@ -2536,9 +2536,12 @@ def export_results(root, study, *, run=None, out=None, client=PYTHON_CLIENT, now
         "evaluations": {kind: ("runs/" + name if name else None) for kind, name in names.items()},
         "experimentHash": experiment_hash,
         "freezeForced": bool(snapshot.get("freezeForced")),
-        # As recorded: the list (empty when force skipped nothing), or null
-        # when the settings carry no list at all — two different facts.
-        "forcedGatesSkipped": recorded_gates_skipped(snapshot),
+        # Always a list, as before (empty when nothing was skipped or the
+        # settings carry no list); whether the settings carry one at all is
+        # its own additive key, because "skipped nothing" and "not recorded"
+        # are two different facts about a forced freeze.
+        "forcedGatesSkipped": recorded_gates_skipped(snapshot) or [],
+        "forcedGatesSkippedRecorded": recorded_gates_skipped(snapshot) is not None,
         "capabilityBatteryNotApplied": list(snapshot.get("capabilityBatteryNotApplied") or []),
         "lineBreakMark": LINE_BREAK_MARK,
         "sources": stored["sources"],
@@ -2573,5 +2576,6 @@ def export_results(root, study, *, run=None, out=None, client=PYTHON_CLIENT, now
         "notAvailable": not_available,
         "freezeForced": manifest["freezeForced"],
         "forcedGatesSkipped": manifest["forcedGatesSkipped"],
+        "forcedGatesSkippedRecorded": manifest["forcedGatesSkippedRecorded"],
         "capabilityBatteryNotApplied": manifest["capabilityBatteryNotApplied"],
     }

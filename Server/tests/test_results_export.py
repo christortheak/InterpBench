@@ -1225,8 +1225,10 @@ def test_a_cleanly_frozen_study_says_so(root):
     assert "\nNo capability battery was run for this study.\n" in methods
     assert "No capability battery reading" not in methods
     stored = json.loads(_read(_export(root, out=str(root / "second")), "manifest.json"))
-    # Not forced and no list recorded: null, not an empty list.
-    assert stored["forcedGatesSkipped"] is None
+    # Not forced: the list stays a list, as before, and says no list is
+    # recorded in its own key.
+    assert stored["forcedGatesSkipped"] == []
+    assert stored["forcedGatesSkippedRecorded"] is False
 
 
 def test_a_forced_freeze_that_skipped_nothing_is_told_apart_from_an_unlisted_one(root):
@@ -1237,6 +1239,7 @@ def test_a_forced_freeze_that_skipped_nothing_is_told_apart_from_an_unlisted_one
     methods = _read(result, "methods.md")
     assert "Here these checks were skipped: none (every check would have passed)." in methods
     assert result["forcedGatesSkipped"] == []
+    assert result["forcedGatesSkippedRecorded"] is True
     # Force stamped with no list at all (a snapshot that lost it): said so.
     manifest = _manifest(status="frozen", freezeForced=True)
     _write_run(root, manifest, _python_records("0" * 64), name="20261005T000000000-run")
@@ -1244,7 +1247,8 @@ def test_a_forced_freeze_that_skipped_nothing_is_told_apart_from_an_unlisted_one
     methods = _read(result, "methods.md")
     assert ("Here these checks were skipped: not available (the settings do not "
             "list them).") in methods
-    assert result["forcedGatesSkipped"] is None
+    assert result["forcedGatesSkipped"] == []
+    assert result["forcedGatesSkippedRecorded"] is False
 
 
 def _battery_report(manifest, scored):

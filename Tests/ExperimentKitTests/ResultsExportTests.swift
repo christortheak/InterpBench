@@ -401,6 +401,20 @@ import Testing
                 "This study was frozen with force; gates skipped: none (every gate "
                     + "would have passed). The methods summary says so."
             ])
+        // The client's answer keeps the list an array and says, in its own
+        // key, that the settings carry none: read as not recorded.
+        let unlisted = try ResultsExport.outcome(
+            from: .object([
+                "exportDirectory": .string("/tmp/exports/five"), "run": .string("runs/e"),
+                "freezeForced": .bool(true), "forcedGatesSkipped": .array([]),
+                "forcedGatesSkippedRecorded": .bool(false),
+            ]))
+        #expect(unlisted.forcedGatesSkipped == nil)
+        #expect(
+            unlisted.noteLines == [
+                "This study was frozen with force; its settings do not list which "
+                    + "gates were skipped. The methods summary says so."
+            ])
         // A clean run without exemptions has nothing to add.
         let clean = try ResultsExport.outcome(
             from: .object([

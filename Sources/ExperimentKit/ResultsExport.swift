@@ -54,8 +54,11 @@ public enum ResultsExport {
 
         /// The gates the forced freeze skipped, as the answer lists them:
         /// empty when force skipped nothing that would have failed, nil when
-        /// the study's settings carry no list at all.
+        /// the study's settings carry no list at all. The answer's list is
+        /// always an array; `forcedGatesSkippedRecorded: false` (additive)
+        /// is what says the settings carry none.
         public var forcedGatesSkipped: [String]? {
+            if case .bool(false) = response["forcedGatesSkippedRecorded"] { return nil }
             guard case .array = response["forcedGatesSkipped"] else { return nil }
             return Self.strings(response["forcedGatesSkipped"])
         }
