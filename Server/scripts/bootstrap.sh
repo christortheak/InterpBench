@@ -25,7 +25,8 @@
 #   2. create-or-update    the python env at --prefix
 #   3. pip install torch   (from --torch-index; skip with --no-torch)
 #   4. pip install -r Server/requirements-<platform>.lock  (WP6 R1 pinned set,
-#      minus the site-owned torch/nvidia-*/triton; skip with --no-lock),
+#      minus the site-owned torch/nvidia-*/cuda-*/triton, with the site's
+#      torch held exactly; skip with --no-lock),
 #      then pip install -e "$repo/Server[all]"
 #   5. install the canonical env file (~/steerlab-cluster.env by default;
 #      atomic; refuses to clobber an existing file without --force). With
@@ -256,8 +257,33 @@ fi
 # arrives here as --torch-index and is installed in step 3, before this. The
 # lock's torch line gives the VERSION step 3 asks that index for (TORCH_SPEC,
 # below), never an instruction to overwrite the site's build with PyPI's;
-# every other pin is applied exactly.
-LOCK_EXCLUDE_RE='^(torch|triton|pytorch-triton|nvidia-)'
+# every other pin is applied exactly. `cuda-*` (cuda-toolkit, cuda-bindings,
+# cuda-pathfinder) is torch's CUDA runtime too, since torch 2.11: left in, the
+# lock's CUDA 13 runtime contradicted a cu128 torch (2026-10-22).
+LOCK_EXCLUDE_RE='^(torch|triton|pytorch-triton|nvidia-|cuda-)'
+
+# The site's torch, as the environment's own interpreter sees it
+# (`site_torch.py`: its version, the CUDA it was built for, and which lock pins
+# it allows). Absent with an older payload, which then behaves as before.
+site_torch() {  # site_torch <version|cuda>
+  if [ -f "$REPO/Server/scripts/site_torch.py" ]; then
+    "$PYBIN" "$REPO/Server/scripts/site_torch.py" "$@"
+  fi
+}
+
+# The CUDA version an index names (`…/whl/cu128` → 12.8), or nothing for a
+# ROCm, CPU, or mirror index that does not say.
+index_cuda() {
+  printf '%s' "$TORCH_INDEX" | sed -nE 's#.*/cu([0-9]+)([0-9])/?$#\1.\2#p'
+}
+
+# The newest version an index offered, from pip's "(from versions: …)" line:
+# the fallback asks for it by number, so an installed torch from somewhere else
+# (PyPI's, of a different CUDA) is replaced rather than kept as "satisfied".
+newest_offered() {  # newest_offered <pip log>
+  sed -nE 's/.*\(from versions: (.*)\).*/\1/p' "$1" | head -n 1 | tr ',' '\n' \
+    | sed 's/[[:space:]]//g' | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?(\+[A-Za-z0-9.]+)?$' | tail -n 1
+}
 
 # Prints the lock with the site-owned torch stack filtered out. Comment and
 # `# via` continuation lines are dropped with it — pip does not need them and
@@ -338,7 +364,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
   if [ "$USE_LOCK" -eq 0 ]; then
     echo "  [serverInstall]   (--no-lock: resolving from pyproject floors)"
   elif [ -n "$LOCK_FILE" ]; then
-    echo "  [serverInstall]   pip install -r $LOCK_FILE (minus torch/nvidia-*/triton — site-owned)"
+    echo "  [serverInstall]   pip install -r $LOCK_FILE (minus torch/nvidia-*/cuda-*/triton — site-owned; the site's torch held)"
   else
     echo "  [serverInstall]   (no committed lock for $(uname -s)-$(uname -m): resolving from pyproject floors)"
   fi
@@ -582,22 +608,44 @@ if [ "$INSTALL_TORCH" -eq 1 ]; then
   # and that, like any other failure (a full quota, a resolver conflict), is
   # the failure itself, never a reason for an unpinned install.
   torch_log="$(mktemp)"
+  TORCH_WANT="$TORCH_SPEC"
   "$PYBIN" -m pip install "$TORCH_SPEC" --index-url "$TORCH_INDEX" 2>&1 | tee "$torch_log"
   torch_status=${PIPESTATUS[0]}
   if [ "$torch_status" -eq 0 ]; then
     set_step torchInstall "ok"
   elif [ "$TORCH_SPEC" != "torch" ] \
       && grep -qE "satisfies the requirement torch==[^ ]+ \(from versions: [0-9]" "$torch_log"; then
-    echo "bootstrap.sh: WARNING $TORCH_INDEX does not offer $TORCH_SPEC (the lock's version); keeping or installing that index's own torch instead. Every run on this node reports the difference from the lock, and \`steerlab-server site qualify\` shows it."
-    if "$PYBIN" -m pip install torch --index-url "$TORCH_INDEX"; then
+    # By number, the index's newest: plain `torch` keeps a torch installed
+    # from elsewhere as "already satisfied".
+    offered="$(newest_offered "$torch_log")"
+    TORCH_WANT="torch${offered:+==$offered}"
+    echo "bootstrap.sh: WARNING $TORCH_INDEX does not offer $TORCH_SPEC (the lock's version); installing that index's own newest, $TORCH_WANT, instead. Every run on this node reports the difference from the lock, and \`steerlab-server site qualify\` shows it."
+    if "$PYBIN" -m pip install "$TORCH_WANT" --index-url "$TORCH_INDEX"; then
       set_step torchInstall "ok"
     else
-      fail_step torchInstall "pip install torch from $TORCH_INDEX failed — no egress from this node? Re-run from the site's transfer/data-mover node (environment.transferHost) if the env prefix is on a filesystem both mount, or pass --torch-index/--no-torch"
+      fail_step torchInstall "pip install $TORCH_WANT from $TORCH_INDEX failed — no egress from this node? Re-run from the site's transfer/data-mover node (environment.transferHost) if the env prefix is on a filesystem both mount, or pass --torch-index/--no-torch"
     fi
   else
     fail_step torchInstall "pip install $TORCH_SPEC from $TORCH_INDEX failed — no egress from this node? Re-run from the site's transfer/data-mover node (environment.transferHost) if the env prefix is on a filesystem both mount, or pass --torch-index/--no-torch"
   fi
   rm -f "$torch_log"
+  # The build, not only the version (2026-10-22): a torch of the right version
+  # from another index (PyPI's, built for another CUDA) reads as "already
+  # satisfied". When the index names its CUDA and the installed torch was built
+  # for a different one, it is reinstalled from the index; still different,
+  # the step fails rather than leave a torch that may not see the GPU.
+  want_cuda="$(index_cuda)"
+  if [ "$(get_step torchInstall)" = "ok" ] && [ -n "$want_cuda" ]; then
+    have_cuda="$(site_torch cuda)"
+    if [ -n "$have_cuda" ] && [ "$have_cuda" != "$want_cuda" ]; then
+      echo "bootstrap.sh: torch $(site_torch version) is built for CUDA $have_cuda, not $want_cuda as $TORCH_INDEX provides; reinstalling $TORCH_WANT from that index"
+      "$PYBIN" -m pip install --force-reinstall "$TORCH_WANT" --index-url "$TORCH_INDEX" || true
+      have_cuda="$(site_torch cuda)"
+      if [ "$have_cuda" != "$want_cuda" ]; then
+        fail_step torchInstall "torch is built for CUDA ${have_cuda:-unknown}, not $want_cuda as $TORCH_INDEX provides, even after reinstalling from it — check --torch-index against this site's CUDA driver"
+      fi
+    fi
+  fi
 else
   set_step torchInstall "skipped"
   echo "bootstrap.sh: skipping torch (--no-torch)"
@@ -613,12 +661,26 @@ else
   # WP6 R1: the pinned set first, so the editable install below finds every
   # requirement already satisfied at the LOCKED version instead of resolving
   # the floors to whatever PyPI published this morning.
+  #
+  # The site's torch is HELD while they install (2026-10-22): a constraint pins
+  # it to exactly the version step 3 installed, and a lock pin it forbids is
+  # dropped by name (`site_torch.py filter-lock`). Free, pip settled the
+  # lock's setuptools==84 against torch 2.11's setuptools<82 by replacing the
+  # site's cu128 torch with PyPI's CUDA 13 build, and reported success.
   lock_ok=1
+  held_torch="$(site_torch version)"
+  held_file="$(mktemp)"
+  if [ -n "$held_torch" ]; then printf 'torch==%s\n' "$held_torch" > "$held_file"; fi
   if [ "$USE_LOCK" -eq 1 ] && [ -n "$LOCK_FILE" ]; then
     lock_tmp="$(mktemp)"
-    filtered_lock "$LOCK_FILE" > "$lock_tmp"
-    echo "bootstrap.sh: installing pinned dependencies from $LOCK_FILE (torch/nvidia-*/triton left to the site's --torch-index build)"
-    if ! "$PYBIN" -m pip install -r "$lock_tmp"; then
+    if [ -f "$REPO/Server/scripts/site_torch.py" ]; then
+      filtered_lock "$LOCK_FILE" \
+        | "$PYBIN" "$REPO/Server/scripts/site_torch.py" filter-lock > "$lock_tmp" || lock_ok=0
+    else
+      filtered_lock "$LOCK_FILE" > "$lock_tmp"
+    fi
+    echo "bootstrap.sh: installing pinned dependencies from $LOCK_FILE (torch/nvidia-*/cuda-*/triton left to the site's --torch-index build${held_torch:+; torch held at $held_torch})"
+    if [ "$lock_ok" -eq 1 ] && ! "$PYBIN" -m pip install -r "$lock_tmp" ${held_torch:+-c "$held_file"}; then
       lock_ok=0
     fi
     rm -f "$lock_tmp"
@@ -629,11 +691,19 @@ else
   fi
   if [ "$lock_ok" -eq 0 ]; then
     fail_step serverInstall "pip install -r $LOCK_FILE failed — see pip output above. No egress from this node? Re-run from the site's transfer/data-mover node, or pass --no-lock to resolve from pyproject floors (unpinned — the run stamp will say so)"
-  elif "$PYBIN" -m pip install -e "$REPO/Server[all]"; then
+  elif "$PYBIN" -m pip install -e "$REPO/Server[all]" ${held_torch:+-c "$held_file"}; then
     set_step serverInstall "ok"
   else
     fail_step serverInstall "pip install -e $REPO/Server[all] failed — see pip output above"
   fi
+  # Held means unchanged: anything else fails the step, never "ok".
+  if [ "$(get_step serverInstall)" = "ok" ] && [ -n "$held_torch" ]; then
+    after_torch="$(site_torch version)"
+    if [ "$after_torch" != "$held_torch" ]; then
+      fail_step serverInstall "torch changed from $held_torch to ${after_torch:-nothing} while the dependencies installed, although it was held — see the pip output above; re-run bootstrap to restore the site's build"
+    fi
+  fi
+  rm -f "$held_file"
 fi
 
 # ---------------------------------------------------- 4b. J-lens pre-stage --

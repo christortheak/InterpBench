@@ -13,7 +13,12 @@
 #   * requirements-macos-arm64.lock   — Mac parity/dev work (MPS)
 #   * requirements-linux-x86_64.lock  — the CUDA science substrate
 #
-# Usage:  Server/scripts/update-locks.sh [--generate-hashes]
+# Usage:  Server/scripts/update-locks.sh [--upgrade] [--generate-hashes]
+#
+# Existing pins are kept unless the resolution must move them (2026-10-22):
+# each lock is resolved with its committed predecessor as uv's preferences,
+# so a constraint change moves only what it has to. --upgrade resolves
+# everything fresh against today's index instead.
 # Requires `uv` (a dev-only tool; `Server[dev]` installs it, or
 # `pip install uv` into the server venv). Needs PyPI egress.
 #
@@ -38,10 +43,24 @@ if [ -z "$UV" ]; then
 fi
 
 EXTRA_FLAGS=()
-if [ "${1:-}" = "--generate-hashes" ]; then
-  EXTRA_FLAGS+=(--generate-hashes)
-  shift
-fi
+UPGRADE=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --generate-hashes) EXTRA_FLAGS+=(--generate-hashes); shift ;;
+    --upgrade)         UPGRADE=1; shift ;;
+    *) echo "update-locks.sh: unknown flag $1 (use --upgrade, --generate-hashes)" >&2; exit 64 ;;
+  esac
+done
+
+# The newest torch the science substrate's site index carries. bootstrap.sh
+# asks the site's --torch-index (default download.pytorch.org/whl/cu128) for
+# the lock's torch version, and that index stops at 2.11.0 (2026-10-22). A lock
+# resolved against PyPI's newer torch pinned what a cu128 build cannot run with
+# (setuptools 84 against its setuptools<82, the CUDA 13 runtime), and the
+# cluster bootstrap replaced the site's torch to satisfy them. Raise this only
+# once the site index carries the newer version:
+#     pip index versions torch --index-url https://download.pytorch.org/whl/cu128
+LINUX_TORCH="2.11.0"
 
 # `--extra all` (lora + gemmascope + test), matching what `bootstrap.sh`
 # installs on a cluster node. `jlens` is deliberately NOT here, for the same
@@ -58,14 +77,22 @@ EXTRAS=(--extra all)
 PYVER=3.12
 
 compile_one() {
-  local platform="$1" outfile="$2" label="$3" note="$4" envprefix="$5"
-  local tmp
+  local platform="$1" outfile="$2" label="$3" note="$4" envprefix="$5" torch_pin="${6:-}"
+  local tmp constraint_args=()
   tmp="$(mktemp)"
+  # uv prefers the versions already in its output file: seeding it with the
+  # committed lock keeps every pin the resolution does not have to move.
+  if [ "$UPGRADE" -eq 0 ] && [ -f "$outfile" ]; then cp "$outfile" "$tmp"; fi
+  if [ -n "$torch_pin" ]; then
+    printf 'torch==%s\n' "$torch_pin" > "$tmp.constraints"
+    constraint_args=(--constraint "$tmp.constraints")
+  fi
   # shellcheck disable=SC2086
   env $envprefix "$UV" pip compile pyproject.toml \
     "${EXTRAS[@]}" \
     --python-version "$PYVER" \
     --python-platform "$platform" \
+    "${constraint_args[@]+"${constraint_args[@]}"}" \
     "${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"}" \
     --custom-compile-command "Server/scripts/update-locks.sh" \
     --output-file "$tmp"
@@ -77,15 +104,20 @@ compile_one() {
     echo "# which runs, from Server/:"
     echo "#     ${envprefix:+$envprefix }uv pip compile pyproject.toml --extra all \\"
     echo "#         --python-version $PYVER --python-platform $platform \\"
+    if [ -n "$torch_pin" ]; then
+      echo "#         --constraint <(echo torch==$torch_pin) \\"
+    fi
     echo "#         --output-file $(basename "$outfile")"
     echo "# Add --generate-hashes to that script call for a hash-pinned variant"
     echo "# (not the committed default — see Server/README.md 'Dependency locks')."
     echo "#"
     echo "$note"
     echo "#"
-    cat "$tmp"
+    # uv names the constraint file it was given in its `# via` notes: the
+    # temporary path would put this machine's temp folder in the lock.
+    sed "s#-c $tmp.constraints#-c update-locks.sh LINUX_TORCH#" "$tmp"
   } > "$outfile"
-  rm -f "$tmp"
+  rm -f "$tmp" "$tmp.constraints"
   echo "update-locks.sh: wrote $outfile ($(grep -cE '^[A-Za-z0-9]' "$outfile") pinned packages)"
 }
 
@@ -102,17 +134,19 @@ compile_one aarch64-apple-darwin requirements-macos-arm64.lock \
 
 compile_one x86_64-unknown-linux-gnu requirements-linux-x86_64.lock \
   "Linux x86_64 + CUDA — THE SCIENCE SUBSTRATE, CPython $PYVER" \
-'# torch here resolves to the default PyPI linux wheel, which carries the
-# nvidia-* CUDA runtime wheels as real dependencies — correct, and the reason
-# this lock is ~50 lines longer than the macOS one.
+'# torch is constrained to the newest version the site index carries
+# (update-locks.sh LINUX_TORCH, 2.11.0 against download.pytorch.org/whl/cu128),
+# so every other pin here is one that site torch can run with. It resolves to
+# the default PyPI linux wheel of that version, which carries the CUDA runtime
+# wheels (nvidia-*, cuda-*) as real dependencies.
 #
 # BUT: which CUDA a site actually wants is a SITE fact, not ours.
 # bootstrap.sh asks `--torch-index` (default cu128) for the torch VERSION on
 # the line below BEFORE it applies this lock, so a site gets its own build of
 # that version, and then applies the lock with torch + its nvidia-*/triton
-# runtime EXCLUDED. Everything else — transformers, accelerate, peft, numpy,
-# scipy, safetensors, huggingface_hub — is pinned exactly by this file. Each
-# run stamps the torch that actually ran.' \
-  ""
+# runtime EXCLUDED and the site torch held. Everything else — transformers,
+# accelerate, peft, numpy, scipy, safetensors, huggingface_hub — is pinned
+# exactly by this file. Each run stamps the torch that actually ran.' \
+  "" "$LINUX_TORCH"
 
 echo "update-locks.sh: done. Review the diff — a lock bump is a substrate change."

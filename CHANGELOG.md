@@ -12,6 +12,30 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **Cluster bootstrap keeps the site's torch.** When a site's torch index
+  did not carry the lock's torch, bootstrap kept the site's build, as
+  designed, but then installed the rest of the lock unconstrained. The lock
+  pinned setuptools 84 and a CUDA 13 runtime, which a cu128 torch 2.11
+  forbids, so pip replaced that torch with PyPI's CUDA 13 build, and
+  bootstrap reported success. Bootstrap now:
+  - holds the installed torch exactly while the lock and the package install;
+  - leaves torch's CUDA runtime (`cuda-*`, as well as `nvidia-*`) to the site;
+  - drops any locked pin the site's torch forbids, naming it;
+  - fails if torch changes anyway;
+  - reinstalls a torch built for a different CUDA than the index provides,
+    or fails.
+
+  When the index does not carry the lock's version, bootstrap installs the
+  index's newest by number, so a torch installed from elsewhere is replaced
+  rather than kept.
+- **The Linux lock pins torch 2.11.0.** That is the newest version the
+  cluster's cu128 index carries, so every other pin in the lock is one that
+  build can run with: setuptools moves to 81.0.0 and triton to 3.6.0, and
+  transformers and everything else stay where they were. `update-locks.sh`
+  now keeps the committed pins unless a constraint has to move them, and
+  `--upgrade` resolves fresh. A cluster gets the new lock and bootstrap after
+  `steerlab-cli cluster push`, then a bootstrap re-run.
+
 ## [0.9.14] — 2026-10-22
 
 - **Re-reading a run's choices analyzes that run.** `results check-choices

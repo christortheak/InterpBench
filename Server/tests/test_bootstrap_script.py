@@ -147,8 +147,10 @@ def test_bootstrap_asks_the_site_index_for_the_locked_torch_version(tmp_path):
     assert proc.returncode == 0, proc.stderr
     assert ("[torchInstall]    pip install torch==9.8.7 --index-url "
             "https://example.invalid/whl/cu128") in proc.stdout
-    # The lock install still leaves the torch stack to the site.
-    assert "minus torch/nvidia-*/triton" in proc.stdout
+    # The lock install still leaves the torch stack to the site, CUDA runtime
+    # included, and holds the site's torch while it installs.
+    assert "minus torch/nvidia-*/cuda-*/triton" in proc.stdout
+    assert "the site's torch held" in proc.stdout
 
 
 def test_without_a_lock_bootstrap_asks_for_the_index_default_torch(tmp_path):
@@ -165,9 +167,10 @@ def test_without_a_lock_bootstrap_asks_for_the_index_default_torch(tmp_path):
 def _torch_step_run(tmp_path, pinned_install, lock_text="torch==9.8.7\n"):
     """Run bootstrap.sh for real up to and past its torch step, with a fake
     conda on PATH and a stub `python` in the prefix that plays pip:
-    `pip install torch==…` answers ``pinned_install`` (stdout text, exit
-    code), `pip install torch` succeeds, everything else succeeds. Returns
-    the process and the stub's argument log."""
+    `pip install torch==9.8.7` (the lock's version) answers
+    ``pinned_install`` (stdout text, exit code); everything else, the
+    fallback's own versioned install included, succeeds. Returns the process
+    and the stub's argument log."""
     lock = _platform_lock_name()
     if lock is None:
         pytest.skip("bootstrap.sh selects no lock on this platform")
@@ -181,7 +184,7 @@ def _torch_step_run(tmp_path, pinned_install, lock_text="torch==9.8.7\n"):
     _scriptbin(tmp_path / "env" / "bin", "python", f"""
 echo "$*" >> {calls}
 case "$*" in
-  *"pip install torch=="*) printf '%s\\n' {message!r}; exit {status} ;;
+  *"pip install torch==9.8.7 "*) printf '%s\\n' {message!r}; exit {status} ;;
 esac
 exit 0
 """)
@@ -202,11 +205,13 @@ def test_only_a_missing_torch_version_falls_back_to_the_index_default(tmp_path):
         "torch==9.8.7 (from versions: 2.5.1+cu128, 2.6.0+cu128)\n"
         "ERROR: No matching distribution found for torch==9.8.7", 1))
     assert _report(proc)["steps"]["torchInstall"] == "ok"
+    # By number, the index's newest: plain `torch` would keep a torch installed
+    # from elsewhere as "already satisfied" (2026-10-22).
     assert calls[:2] == [
         "-m pip install torch==9.8.7 --index-url https://example.invalid/whl/cu128",
-        "-m pip install torch --index-url https://example.invalid/whl/cu128"]
+        "-m pip install torch==2.6.0+cu128 --index-url https://example.invalid/whl/cu128"]
     assert "does not offer torch==9.8.7" in proc.stdout
-    assert "keeping or installing that index's own torch" in proc.stdout
+    assert "installing that index's own newest, torch==2.6.0+cu128" in proc.stdout
 
 
 def test_any_other_torch_failure_fails_the_step_without_an_unpinned_install(

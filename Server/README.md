@@ -136,7 +136,10 @@ pip install -e "Server[dev]"   # or: pip install uv
 Server/scripts/update-locks.sh
 ```
 
-which runs, from `Server/`:
+Each lock is resolved with its committed predecessor as preferences, so a
+changed constraint moves only the pins it has to; `--upgrade` resolves
+everything fresh against today's index instead. The script runs, from
+`Server/`:
 
 ```bash
 MACOSX_DEPLOYMENT_TARGET=14.0 uv pip compile pyproject.toml --extra all \
@@ -144,22 +147,35 @@ MACOSX_DEPLOYMENT_TARGET=14.0 uv pip compile pyproject.toml --extra all \
     --output-file requirements-macos-arm64.lock
 uv pip compile pyproject.toml --extra all \
     --python-version 3.12 --python-platform x86_64-unknown-linux-gnu \
+    --constraint <(echo torch==2.11.0) \
     --output-file requirements-linux-x86_64.lock
 ```
 
-Four decisions worth knowing:
+Five decisions worth knowing:
 
 - **`MACOSX_DEPLOYMENT_TARGET=14.0` is load-bearing.** torch ≥ 2.12 publishes
   Apple-silicon wheels tagged `macosx_14_0_arm64`; without it uv silently pins
   torch back to 2.11.0.
+- **The Linux lock's torch is one the site index carries.** `update-locks.sh`
+  constrains it (`LINUX_TORCH`, 2.11.0) to the newest version
+  `download.pytorch.org/whl/cu128` offers, so every other pin is one that
+  build can run with. Raise it only once that index carries the newer version
+  (`pip index versions torch --index-url https://download.pytorch.org/whl/cu128`).
+  Before 2026-10-22 the lock followed PyPI's newer torch, and a cluster
+  bootstrap replaced the site's cu128 torch with PyPI's CUDA 13 build to
+  satisfy the lock's setuptools and CUDA 13 runtime pins.
 - **torch's build is site-owned on the cluster; its version is the lock's.**
   `scripts/bootstrap.sh` asks `--torch-index` (default cu128) for the torch
   version the lock pins, so a site gets its own CUDA or ROCm build of the
-  locked version, and then applies the lock with `torch`, `triton`, and
-  `nvidia-*` filtered out. Only when the index does not carry that version
-  does bootstrap keep or install the index's own torch instead, with a
-  warning; any other install failure fails the step. Everything else is pinned exactly. `--no-lock`
-  opts out of the lock entirely and says so loudly.
+  locked version. When the index does not carry that version, bootstrap
+  installs the index's own newest, by number, with a warning; any other
+  install failure fails the step. A torch built for a different CUDA than the
+  index names is reinstalled from it, or the step fails. The lock is then
+  applied with `torch`, `triton`, `nvidia-*`, and `cuda-*` filtered out and
+  the installed torch **held** by a constraint; a pin that torch forbids is
+  dropped and named (`scripts/site_torch.py`), and a torch that changed anyway
+  fails the step. Everything else is pinned exactly. `--no-lock` opts out of
+  the lock entirely and says so loudly.
 - **A push does not reinstall dependencies.** `cluster push` deploys code
   only, so a node bootstrapped before the lock moved keeps its older versions,
   and every run there says so in its drift advisory. Re-running bootstrap
@@ -181,7 +197,7 @@ Four decisions worth knowing:
 The lock is the *intended* resolution. The *achieved* one is stamped into every
 run: `config.json`'s `pythonEnvironment` (schema 4) records the interpreter and
 the resolved versions of the science-relevant packages the run actually
-imported, including torch's local version segment (`2.13.0+cu128`). At
+imported, including torch's local version segment (`2.11.0+cu128`). At
 `experiment run` start the server also logs a **non-blocking** advisory — and
 appends it to the run's `advisories.txt` — when installed torch/transformers
 differ from the lock's pins. It is never a refusal: a queued cluster job must

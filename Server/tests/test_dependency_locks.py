@@ -240,7 +240,8 @@ def test_bootstrap_dry_run_plans_the_lock_install(tmp_path):
     assert proc.returncode == 0, proc.stderr
     assert "pip install -r" in proc.stdout and ".lock" in proc.stdout
     # torch stays the site's: the lock must not overwrite a cu128 build.
-    assert "minus torch/nvidia-*/triton" in proc.stdout
+    assert "minus torch/nvidia-*/cuda-*/triton" in proc.stdout
+    assert "the site's torch held" in proc.stdout
 
 
 def test_bootstrap_no_lock_says_the_node_is_unpinned(tmp_path):

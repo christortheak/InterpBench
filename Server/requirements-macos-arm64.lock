@@ -113,6 +113,7 @@ httpcore==1.0.9
     # via httpx
 httpx==0.28.1
     # via
+    #   steerlab-server (pyproject.toml)
     #   datasets
     #   huggingface-hub
 huggingface-hub==1.28.0
@@ -227,7 +228,9 @@ psutil==7.2.2
 py2store==0.1.22
     # via babe
 pyarrow==25.0.1
-    # via datasets
+    # via
+    #   steerlab-server (pyproject.toml)
+    #   datasets
 pydantic==2.13.4
     # via
     #   steerlab-server (pyproject.toml)
