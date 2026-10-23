@@ -2988,7 +2988,7 @@ def freeze_advisories(d: dict, root: str | None = None) -> list[str]:
     ``ExperimentStore.freezeAdvisories``). Never a gate: freeze prints these
     loudly and proceeds/refuses on the GATES alone. Advisories: cross-substrate
     validate evidence (WS7.1); legacy pre-measurement-pin concept attaches; and
-    the non-citable marker on a forced freeze."""
+    the forced-freeze line naming the skipped gates."""
     advisories: list[str] = []
     # A one-judge panel freezes cleanly (the gate asks for a judge, not for
     # two) — and says what it costs, at the moment of freezing.
@@ -3218,7 +3218,8 @@ def freeze_advisories(d: dict, root: str | None = None) -> list[str]:
     if d.get("freezeForced"):
         skipped = ", ".join(d.get("forcedGatesSkipped") or []) or "none"
         advisories.append(
-            f"forced freeze — gates skipped: {skipped} — non-citable")
+            f"forced freeze — gates skipped: {skipped}; the manifest "
+            "records this permanently")
     return advisories
 
 
@@ -3411,7 +3412,8 @@ def _check_jlens_readout(name: str, d: dict, root: str | None) -> None:
             f"Qualify this exact runtime first — 'steerlab-server jlens "
             f"qualify {block['lensID']} {model_id} --revision {revision[:12]}…' "
             f"(it needs the model resident, so it is a GPU job) — or "
-            f"force-freeze, which stamps the study non-citable")
+            f"force-freeze, which records the skipped check in the manifest "
+            f"permanently")
 
 
 
@@ -4445,6 +4447,11 @@ def _write_preregistration(d: dict, root: str | None) -> None:
         lines += ["", "## Capability battery", ""]
         lines += ["- " + freeze_policy.battery_not_applied_sentence(
             entry["condition"], entry["reason"]) for entry in not_applied]
+    # A forced freeze says so in the summary it generated, in facts: that
+    # force was used and which gates it skipped. Present only when the freeze
+    # was forced, so every other study's summary bytes are unchanged. Swift
+    # twin: the same section in `preregistrationMarkdown`.
+    lines += freeze_policy.forced_freeze_summary_lines(d)
     if d.get("promotionRule"):
         pr = d["promotionRule"]
         lines += [

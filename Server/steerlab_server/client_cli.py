@@ -2063,7 +2063,9 @@ def _experiment(invocation: Invocation) -> CLIResult:
         frozen = store.freeze(name, force=forced, cached_revision=None)
         line = (f"froze {frozen['name']!r} @ "
                 f"{(frozen.get('freezeHash') or '')[:12]}…"
-                + (" (FORCED — not citable)" if forced else ""))
+                + (" (FORCED — gates skipped: "
+                   + (", ".join(frozen.get("forcedGatesSkipped") or [])
+                      or "none") + ")" if forced else ""))
         print(line)
         payload = {
             "name": frozen.get("name"), "status": frozen.get("status"),
@@ -2083,8 +2085,8 @@ def _experiment(invocation: Invocation) -> CLIResult:
                 advisories.append(advisory(
                     "freezeGateSkipped",
                     f"gate '{gate}' would have failed and was skipped by "
-                    "--force; this freeze is stamped freezeForced and is not "
-                    "citable"))
+                    "--force; the frozen study records this permanently in "
+                    "freezeForced and forcedGatesSkipped"))
         # A condition the capability battery could not be applied to (its
         # agent carries an intervention policy): the freeze is clean and NOT
         # forced, and the envelope says in plain words what the frozen study
@@ -2100,7 +2102,7 @@ def _experiment(invocation: Invocation) -> CLIResult:
                     freeze_policy.battery_not_applied_sentence(
                         str(entry.get("condition")), str(entry.get("reason")))))
         # The store's non-blocking freeze advisories (cross-substrate validate
-        # evidence, legacy attaches, the non-citable marker). Loud on stderr
+        # evidence, legacy attaches, the forced-freeze line). Loud on stderr
         # AND in the payload; they never move the state or the exit code.
         freeze_notes = store.freeze_advisories(frozen)
         for text in freeze_notes:
@@ -4920,8 +4922,8 @@ def _typed_envelope_for_exception(label: str, exc: BaseException):
                 repair_action=(
                     lifecycle_gates.repair_of(exc)
                     or (f"satisfy the '{freeze_gate}' gate, or freeze with "
-                        "--force — which is stamped permanently and makes the "
-                        "study non-citable")))
+                        "--force, which records in the frozen study, "
+                        "permanently, that the gate was skipped")))
 
     from .experiment.experiment_store import ExperimentStoreError
     if isinstance(exc, ExperimentStoreError):

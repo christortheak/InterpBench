@@ -478,11 +478,47 @@ def test_a_forced_study_says_so_first_and_names_every_skipped_check(root):
     freeze = section(text, 'freeze')
     assert ('the check that the steering directions were validated (<code>validateEvidence</code>); the check that '
             'the pinned inputs are committed (<code>gitClean</code>)') in freeze
-    assert 'treats the study as not citable' in freeze
+    # Facts, not a verdict (ruling 2026-10-23).
+    assert ('The study’s settings record the forced freeze and the skipped checks permanently. Report which '
+            'checks were skipped wherever these results are reported.') in freeze
+    assert 'citable' not in text
     controls = section(text, 'controls')
     assert '<strong>random</strong>: adds a random direction of the same size' in controls
     assert '(recorded as <code>randomMatchedNorm</code>)' in controls
     assert re.search(r'<td>formal</td>\s*<td class="num">0.85</td>\s*<td class="num">20</td>', controls)
+
+
+def _battery_run(root, manifest, scored):
+    manifest_hash = Manifest.from_dict(manifest).content_hash()
+    _write_run(root, manifest, _python_records(manifest_hash), report={
+        'experiment': STUDY, 'experimentHash': manifest_hash,
+        'conditions': {name: {'generations': 8, 'capabilityBattery': {
+            'accuracy': accuracy, 'itemCount': 10, 'batteryHash': 'c' * 64}}
+            for name, accuracy in scored.items()}})
+    return study_results.render(results_export.read_results(str(root), STUDY))
+
+
+def test_a_legacy_forced_run_shows_which_conditions_have_no_reading(root):
+    # A policy study frozen with force before the exemption existed: no
+    # battery-not-applied stamp, and a battery reading for the baseline only.
+    manifest = _manifest(status='frozen', frozenAt='2026-09-14T12:00:00Z', freezeForced=True,
+                         forcedGatesSkipped=['batteryEvidence'], conditions=[BASELINE, FORMAL])
+    text = _battery_run(root, manifest, {'baseline': 0.6})
+    controls = section(text, 'controls')
+    assert 'No capability battery reading was recorded for formal.' in controls
+    assert 'No capability battery reading was recorded for baseline' not in controls
+    # Nothing credits the run with an exemption its manifest does not stamp.
+    assert 'was not applied to' not in text and 'Capability battery exemption' not in text
+    assert 'Frozen with force.' in section(text, 'freeze')
+
+
+def test_a_clean_freeze_with_an_exempt_condition_says_every_check_that_applies(root):
+    manifest = _manifest(status='frozen', frozenAt='2026-10-03T12:00:00Z', conditions=[BASELINE, FORMAL],
+                         capabilityBatteryNotApplied=[{'condition': 'formal', 'reason': 'interventionPolicy'}])
+    text = _battery_run(root, manifest, {'baseline': 0.6})
+    assert 'Frozen before this run, with every freeze check that applies passed' in section(text, 'freeze')
+    assert ('No capability battery reading was recorded for formal. The capability battery was not applied '
+            'to formal, because its agent uses an intervention policy') in section(text, 'controls')
 
 
 def test_a_bare_run_says_what_it_lacks(root):

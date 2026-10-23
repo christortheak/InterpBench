@@ -52,6 +52,54 @@ public enum ResultsExport {
         /// The Python client's whole answer, for the command line's envelope.
         public let response: [String: JSONValue]
 
+        /// The gates the forced freeze skipped, as the answer lists them.
+        public var forcedGatesSkipped: [String] {
+            Self.strings(response["forcedGatesSkipped"])
+        }
+
+        /// The conditions the study's settings stamp the capability battery
+        /// was not applied to, as the answer lists them.
+        public var batteryNotApplied: [String] {
+            guard case .array(let entries) = response["capabilityBatteryNotApplied"]
+            else { return [] }
+            return entries.compactMap { entry in
+                guard case .object(let fields) = entry,
+                    case .string(let condition) = fields["condition"]
+                else { return nil }
+                return condition
+            }
+        }
+
+        /// The facts a person should see beside the export's location: a
+        /// forced freeze and the gates it skipped, and each condition the
+        /// capability battery was not applied to. Empty for every other run.
+        public var noteLines: [String] {
+            var lines: [String] = []
+            if freezeForced {
+                let skipped = forcedGatesSkipped
+                lines.append(
+                    "This study was frozen with force; gates skipped: "
+                        + (skipped.isEmpty ? "none recorded" : skipped.joined(separator: ", "))
+                        + ". The methods summary says so.")
+            }
+            let notApplied = batteryNotApplied
+            if !notApplied.isEmpty {
+                lines.append(
+                    "The capability battery was not applied to "
+                        + notApplied.joined(separator: ", ")
+                        + ". The methods summary says why.")
+            }
+            return lines
+        }
+
+        private static func strings(_ value: JSONValue?) -> [String] {
+            guard case .array(let entries) = value else { return [] }
+            return entries.compactMap {
+                if case .string(let text) = $0 { return text }
+                return nil
+            }
+        }
+
         /// One sentence for a person: where the files are and what is missing.
         public var message: String {
             var text = "Results exported to \(directory.path)."
@@ -74,9 +122,7 @@ public enum ResultsExport {
                 "  \(entry.file)" + (entry.rows.map { "  (\($0) rows)" } ?? "")
             }
             lines += notAvailable.map { "  not available: \($0.what) (\($0.why))" }
-            if freezeForced {
-                lines.append("  note: this study was frozen with force; methods.md says so.")
-            }
+            lines += noteLines.map { "  note: " + $0 }
             return lines
         }
     }

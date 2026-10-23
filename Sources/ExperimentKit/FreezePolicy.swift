@@ -246,6 +246,26 @@ enum FreezePolicy {
         + "uses an intervention policy is recorded as not applicable, and its "
         + "static steering, when it has any, is scored without the policy"
 
+    /// The settings summary's "Freeze" section for a forced freeze, as lines
+    /// (a leading blank line included); empty when the freeze was not
+    /// forced, so every other summary is byte-for-byte what it was. Facts
+    /// only: that force was used, which gates it skipped, and where that is
+    /// recorded. Server twin: `freeze_policy.forced_freeze_summary_lines`.
+    static func forcedFreezeSummaryLines(_ manifest: ExperimentManifest) -> [String] {
+        guard manifest.freezeForced == true else { return [] }
+        let skipped = manifest.forcedGatesSkipped ?? []
+        let said =
+            skipped.isEmpty
+            ? "none (every gate would have passed)"
+            : skipped.map { "`\($0)`" }.joined(separator: ", ")
+        return [
+            "", "## Freeze", "",
+            "- Frozen with force (`--force`). Gates skipped: \(said).",
+            "- The manifest records this permanently, in `freezeForced` and "
+                + "`forcedGatesSkipped`.",
+        ]
+    }
+
     /// The researcher-facing sentence for an ERROR row: the validate run
     /// could not run the battery for this condition, and `error` is the
     /// engine's own account of why. Ends with a full stop exactly once.

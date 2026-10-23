@@ -2,9 +2,10 @@
 is evaluated even under --force, each failing gate prints a warning naming its
 id, the frozen manifest stamps ``freezeForced`` + ``forcedGatesSkipped``
 (closed cross-engine id vocabulary), the pinned/ snapshot and workspace
-auto-commit now run under force too, and freeze_advisories marks a forced
-freeze non-citable. The two stamp keys stay OUT of the freeze-canonical
-payload and the content hash, like every other freeze stamp."""
+auto-commit now run under force too, and freeze_advisories and the generated
+settings summary name the gates a forced freeze skipped. The two stamp keys
+stay OUT of the freeze-canonical payload and the content hash, like every
+other freeze stamp."""
 
 import hashlib
 import json
@@ -176,16 +177,58 @@ def test_force_freeze_auto_commits_standalone_workspace(tmp_path):
         in tracked
 
 
-def test_freeze_advisories_flag_forced_freeze_as_non_citable(tmp_path):
+def test_freeze_advisories_name_the_gates_a_forced_freeze_skipped(tmp_path):
     root = str(tmp_path)
     name = _study(root, revision=None)
     frozen = es.freeze(name, force=True, cached_revision=lambda m: None,
                        root=root)
     advisories = es.freeze_advisories(frozen, root)
-    (forced,) = [a for a in advisories if "non-citable" in a]
+    (forced,) = [a for a in advisories if a.startswith("forced freeze")]
     assert forced.startswith("forced freeze — gates skipped: ")
+    assert forced.endswith("; the manifest records this permanently")
     for gate_id in frozen["forcedGatesSkipped"]:
         assert gate_id in forced
+    # Facts, not a verdict (ruling 2026-10-23).
+    assert "citable" not in forced
+
+
+def _summary(root, name):
+    with open(os.path.join(root, "experiments", name, "preregistration.md"),
+              encoding="utf-8") as handle:
+        return handle.read()
+
+
+def test_the_settings_summary_of_a_forced_freeze_says_so(tmp_path):
+    root = str(tmp_path)
+    name = _study(root, revision=None)
+    frozen = es.freeze(name, force=True, cached_revision=lambda m: None,
+                       root=root)
+    summary = _summary(root, name)
+    skipped = ", ".join(f"`{g}`" for g in frozen["forcedGatesSkipped"])
+    assert ("\n## Freeze\n\n"
+            f"- Frozen with force (`--force`). Gates skipped: {skipped}.\n"
+            "- The manifest records this permanently, in `freezeForced` and "
+            "`forcedGatesSkipped`.\n") in summary
+    # The section sits before the generated-marker footer, so the file is
+    # still recognized as this instrument's own output.
+    assert summary.index("## Freeze") < summary.index(es.PREREG_GENERATED_MARKER)
+    assert "citable" not in summary
+
+
+def test_the_settings_summary_of_an_unforced_freeze_has_no_freeze_section(tmp_path):
+    from steerlab_server.experiment import freeze_policy
+    root = str(tmp_path)
+    name = _study(root)
+    _validate_evidence(root, name)
+    frozen = es.freeze(name, force=False, root=root)
+    assert "## Freeze\n" not in _summary(root, name)
+    # Nothing is added for an unforced study: the lines are empty, so the
+    # summary is byte-for-byte what earlier versions generated.
+    assert freeze_policy.forced_freeze_summary_lines(frozen) == []
+    assert freeze_policy.forced_freeze_summary_lines(
+        {**frozen, "freezeForced": True, "forcedGatesSkipped": []})[-2] == (
+        "- Frozen with force (`--force`). Gates skipped: none (every gate "
+        "would have passed).")
 
 
 def test_duplicate_drops_force_stamps(tmp_path):

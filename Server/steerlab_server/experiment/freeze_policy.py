@@ -132,6 +132,23 @@ def battery_not_applied_sentence(condition: str, reason: str) -> str:
             "control for that agent.")
 
 
+def forced_freeze_summary_lines(d: dict) -> list[str]:
+    """The settings summary's "Freeze" section for a forced freeze, as lines
+    (a leading blank line included); empty when the freeze was not forced, so
+    every other summary is byte-for-byte what it was. Facts only: that force
+    was used, which gates it skipped, and where that is recorded. Swift twin:
+    ``FreezePolicy.forcedFreezeSummaryLines``."""
+    if not d.get("freezeForced"):
+        return []
+    skipped = [str(g) for g in d.get("forcedGatesSkipped") or []]
+    said = (", ".join(f"`{g}`" for g in skipped) if skipped
+            else "none (every gate would have passed)")
+    return ["", "## Freeze", "",
+            "- Frozen with force (`--force`). Gates skipped: " + said + ".",
+            "- The manifest records this permanently, in `freezeForced` and "
+            "`forcedGatesSkipped`."]
+
+
 #: What the battery gate asks of each condition, said once for every repair
 #: and refusal that names the validate step. Swift twin:
 #: ``FreezePolicy.batteryScopePhrase``.
@@ -191,7 +208,8 @@ def evaluate(name: str, d: dict, evidence: FreezeEvidence) -> list[tuple[str, st
                 f"cannot freeze '{name}': no validation run in this workspace "
                 "matches its exact pins. Validate it on a runner first "
                 f"('{vocabulary.study_verb('validate', name)}'), or freeze "
-                "with --force, which marks the study as not citable"
+                "with --force, which records in the frozen study, "
+                "permanently, that this check was skipped"
                 if vocabulary.is_client() else
                 f"cannot freeze '{name}': no validate run matches its exact "
                 f"pins — run 'steerlab-server experiment validate {name}' first, or force-freeze")))

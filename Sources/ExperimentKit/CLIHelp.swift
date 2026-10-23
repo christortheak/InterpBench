@@ -244,8 +244,8 @@ public enum CLIFlagVocabulary {
             "Name the compiled scenario file (default: the study's name).",
         "--follow": "Keep reading the log as it grows.",
         "--force":
-            "Skip the evidence gates and stamp the manifest freezeForced "
-            + "(non-citable, by stamp).",
+            "Skip the evidence gates and stamp the manifest freezeForced, "
+            + "with the skipped gates in forcedGatesSkipped, permanently.",
         "--gpu": "Also dispatch one Metal kernel, to prove the shaders load.",
         "--gres": "Scheduler GPU resource request.",
         "--gpu-type": "One of the site's declared GPU types for this managed job; omitted means the site default. The type is bound into planSHA256.",

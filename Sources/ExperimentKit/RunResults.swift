@@ -245,6 +245,10 @@ public enum RunResults {
         /// What one paired difference of the report's effect rows is, when
         /// the run stamps it (a multi-agent run stamps "transcript").
         public var unitOfAnalysis: String?
+        /// The conditions the run's capability battery did not score, and
+        /// why (`capabilityBatteryNotApplied`, the manifest stamp's shape);
+        /// empty when the report records none.
+        public var capabilityBatteryNotApplied: [ExperimentManifest.BatteryNotApplied] = []
 
         public init() {}
     }
@@ -262,6 +266,14 @@ public enum RunResults {
         report.seedCount = intValue(dictionary["seedCount"])
         report.unitOfAnalysis = (dictionary["unitOfAnalysis"] as? String)
             .flatMap { $0.isEmpty ? nil : $0 }
+        report.capabilityBatteryNotApplied =
+            (dictionary["capabilityBatteryNotApplied"] as? [[String: Any]] ?? [])
+            .compactMap { entry in
+                guard let condition = entry["condition"] as? String,
+                    let reason = entry["reason"] as? String
+                else { return nil }
+                return .init(condition: condition, reason: reason)
+            }
         if let conditions = dictionary["conditions"] as? [String: Any] {
             for (name, raw) in conditions {
                 guard let block = raw as? [String: Any] else { continue }

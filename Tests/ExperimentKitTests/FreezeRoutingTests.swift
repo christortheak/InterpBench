@@ -373,7 +373,9 @@ struct FreezeRoutingTests {
         let cross =
             "validation evidence was produced on python-hf-transformers; "
             + "runs on swift-mlx should re-validate on-substrate"
-        let regular = "forced freeze — gates skipped: revision — non-citable"
+        let regular =
+            "forced freeze — gates skipped: revision; the manifest records "
+            + "this permanently"
         let presentation = FreezeRouting.present(advisories: [cross, regular])
         #expect(presentation.prominent.count == 1)
         #expect(presentation.prominent.first?.hasPrefix(cross) == true)

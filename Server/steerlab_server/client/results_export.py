@@ -1829,10 +1829,8 @@ def _methods(context):
                 "responses for it.")
     if not names:
         say("- " + unavailable("the conditions", "the run holds no responses"))
-    battery = report.get("capabilityBatteryNotApplied") or snapshot.get("capabilityBatteryNotApplied")
-    scored = {name: block["capabilityBattery"] for name, block in (report.get("conditions") or {}).items()
-              if isinstance(block, dict) and isinstance(block.get("capabilityBattery"), dict)}
-    if scored or battery:
+    shown, scored, unscored = battery_findings(names, report, snapshot)
+    if shown:
         say()
         say("Capability battery (a set of unrelated questions, scored under each "
             "condition to check that the intervention did not damage other abilities):")
@@ -1840,9 +1838,8 @@ def _methods(context):
         for name, block in scored.items():
             say(f"- {name}: accuracy {_number(block.get('accuracy'))} on "
                 f"{block.get('itemCount')} items, as the engine scored it.")
-        for entry in battery if isinstance(battery, list) else []:
-            if isinstance(entry, dict):
-                say("- " + _battery_sentence(entry))
+        for line in unscored:
+            say("- " + line)
     say()
 
     # -- outcomes
@@ -2081,10 +2078,11 @@ def _methods(context):
             "every check to pass. Here these checks were skipped: "
             + (_and(f"{_GATES.get(g, 'a check')} ({_code(g)})" for g in skipped)
                if skipped else "not available (the settings do not list them)")
-            + ". SteerLab records a forced freeze permanently and treats the study "
-            "as not citable. Say so wherever you report these results.")
+            + ". The study's settings record the forced freeze and the skipped "
+            "checks permanently. Report which checks were skipped wherever you "
+            "report these results.")
     elif status in ("frozen", "complete"):
-        say("- The study was frozen before this run, with every freeze check passed"
+        say("- The study was frozen before this run, with " + clean_freeze_phrase(snapshot)
             + (f" (frozen at {snapshot['frozenAt']})" if snapshot.get("frozenAt") else "") + ".")
     elif status:
         say(f"- **The study was not frozen when this run was made** (its status was "
@@ -2142,6 +2140,60 @@ def _battery_sentence(entry):
     except Exception:  # noqa: BLE001 - the summary must not fail on an import
         return (f"The capability battery was not applied to {condition} (recorded "
                 f"reason: {reason}). This study has no capability control for that agent.")
+
+
+def _battery_exemptions(report, snapshot):
+    """The battery-not-applied entries the run's own files record: the run's
+    report.json first, then the study's settings snapshot. Never inferred: a
+    run whose files stamp no exemption is said to have none."""
+    battery = report.get("capabilityBatteryNotApplied") or snapshot.get("capabilityBatteryNotApplied")
+    return [entry for entry in (battery if isinstance(battery, list) else [])
+            if isinstance(entry, dict)]
+
+
+def clean_freeze_phrase(snapshot):
+    """How a study frozen without force is described: every freeze check
+    passed, or, when a check did not apply to part of the study (a stamped
+    battery exemption), every check that applies."""
+    if _battery_exemptions({}, snapshot):
+        return "every freeze check that applies passed"
+    return "every freeze check passed"
+
+
+def no_battery_reading_sentence(condition, entry=None):
+    """The line for an executed condition the run's battery did not score,
+    with the recorded reason when the run's files carry one."""
+    said = f"No capability battery reading was recorded for {condition}."
+    return said + " " + _battery_sentence(entry) if isinstance(entry, dict) else said
+
+
+def battery_findings(executed, report, snapshot):
+    """What the run's own files say about the capability battery, for the
+    export and the results page alike: ``(shown, scored, lines)``.
+
+    ``shown`` is whether there is a battery section at all: the run's battery
+    scored some condition, or the study stamps a condition it was not applied
+    to. ``scored`` maps each condition the battery scored to its block.
+    ``lines`` holds one sentence for every EXECUTED condition with no scored
+    row — "No capability battery reading was recorded for X", followed by the
+    engines' own sentence when an exemption is recorded for it — and then the
+    sentence for any stamped condition the run did not execute. Derived from
+    the run's report and settings snapshot alone, so an older run (one frozen
+    with force before the exemption existed, say) gains the lines without any
+    claim that a newer exemption applied to it."""
+    conditions = report.get("conditions") if isinstance(report.get("conditions"), dict) else {}
+    scored = {name: block["capabilityBattery"] for name, block in conditions.items()
+              if isinstance(block, dict) and isinstance(block.get("capabilityBattery"), dict)}
+    exemptions = _battery_exemptions(report, snapshot)
+    shown = bool(scored or exemptions)
+    if not shown:
+        return False, scored, []
+    by_condition = {str(entry.get("condition", "?")): entry for entry in exemptions}
+    lines = [no_battery_reading_sentence(name, by_condition.get(name))
+             for name in executed if name not in scored]
+    lines += [_battery_sentence(entry) for name, entry in by_condition.items()
+              if name not in scored and name not in executed]
+    return True, scored, lines
 
 
 # --- the codebook --------------------------------------------------------------
@@ -2505,5 +2557,6 @@ def export_results(root, study, *, run=None, out=None, client=PYTHON_CLIENT, now
                   for entry in written] + [{"file": "manifest.json"}],
         "notAvailable": not_available,
         "freezeForced": manifest["freezeForced"],
+        "forcedGatesSkipped": manifest["forcedGatesSkipped"],
         "capabilityBatteryNotApplied": manifest["capabilityBatteryNotApplied"],
     }

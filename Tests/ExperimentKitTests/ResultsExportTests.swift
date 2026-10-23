@@ -363,6 +363,39 @@ import Testing
         }
     }
 
+    /// The export result states the forced freeze with the gates it skipped,
+    /// and each condition the battery was not applied to — facts, never a
+    /// verdict on the study (2026-10-23).
+    @Test func theOutcomeStatesForceAndBatteryExemptionsAsFacts() throws {
+        let outcome = try ResultsExport.outcome(
+            from: .object([
+                "exportDirectory": .string("/tmp/exports/two"), "run": .string("runs/b"),
+                "freezeForced": .bool(true),
+                "forcedGatesSkipped": .array([.string("batteryEvidence"), .string("gitClean")]),
+                "capabilityBatteryNotApplied": .array([
+                    .object([
+                        "condition": .string("guided"), "reason": .string("interventionPolicy"),
+                    ])
+                ]),
+            ]))
+        #expect(outcome.forcedGatesSkipped == ["batteryEvidence", "gitClean"])
+        #expect(outcome.batteryNotApplied == ["guided"])
+        #expect(
+            outcome.noteLines == [
+                "This study was frozen with force; gates skipped: batteryEvidence, "
+                    + "gitClean. The methods summary says so.",
+                "The capability battery was not applied to guided. The methods "
+                    + "summary says why.",
+            ])
+        #expect(!outcome.noteLines.joined().contains("citable"))
+        // A clean run without exemptions has nothing to add.
+        let clean = try ResultsExport.outcome(
+            from: .object([
+                "exportDirectory": .string("/tmp/exports/three"), "run": .string("runs/c"),
+            ]))
+        #expect(clean.noteLines.isEmpty)
+    }
+
     @Test func anAnswerIsReadIntoAnOutcomeOrARefusal() throws {
         let outcome = try ResultsExport.outcome(
             from: .object([
@@ -388,7 +421,10 @@ import Testing
         #expect(outcome.notAvailable.first?.repair == "steerlab-cli experiment analyze a")
         #expect(outcome.message.contains("Not available: effects.csv."))
         #expect(outcome.summaryLines.contains("  responses.csv  (12 rows)"))
-        #expect(outcome.summaryLines.last == "  note: this study was frozen with force; methods.md says so.")
+        #expect(
+            outcome.summaryLines.last
+                == "  note: This study was frozen with force; gates skipped: "
+                + "none recorded. The methods summary says so.")
 
         #expect(
             throws: ResultsExport.Refusal(

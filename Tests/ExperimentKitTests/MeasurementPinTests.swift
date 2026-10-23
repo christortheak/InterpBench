@@ -326,8 +326,8 @@ extension ExperimentStoreTests {
             #expect(ExperimentStore.verify(frozen).isEmpty)
             #expect(
                 ExperimentStore.freezeAdvisories(for: frozen).contains(
-                    "forced freeze — gates skipped: revision, validateEvidence "
-                        + "— non-citable"))
+                    "forced freeze — gates skipped: revision, validateEvidence"
+                        + "; the manifest records this permanently"))
         }
     }
 }

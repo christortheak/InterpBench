@@ -102,8 +102,8 @@ struct ResultsExportButton: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        if outcome.freezeForced {
-            Text("This study was frozen with force. The methods summary says so.")
+        ForEach(outcome.noteLines, id: \.self) { line in
+            Text(line)
                 .font(.caption)
                 .foregroundStyle(.orange)
         }

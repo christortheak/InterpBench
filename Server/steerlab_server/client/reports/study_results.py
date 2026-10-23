@@ -669,27 +669,23 @@ class Page:
         else:
             parts.append(paragraph('This study declares no control arm, such as a random direction of the same size, '
                                    'to compare its steering with.'))
-        conditions = _dict(self.report.get('conditions'))
-        scored = [(name, _dict(block_.get('capabilityBattery'))) for name, block_ in conditions.items()
-                  if isinstance(block_, dict) and isinstance(block_.get('capabilityBattery'), dict)]
-        exempt = _list(self.report.get('capabilityBatteryNotApplied')) or _list(
-            self.snapshot.get('capabilityBatteryNotApplied'))
+        shown, scored, unscored = source.battery_findings(self.conditions, self.report, self.snapshot)
         parts.append(el('h3', 'Capability battery'))
-        if scored or exempt:
+        if shown:
             parts.append(paragraph('A set of unrelated questions, scored under each condition, to check that the '
                                    'intervention did not damage other abilities.'))
         if scored:
             parts.append(table('Capability battery accuracy, for each condition',
                                [Column('Condition'), Column('Accuracy', numeric=True), Column('Items', numeric=True),
                                 Column('Battery SHA-256')],
-                               [[name, number_text(entry.get('accuracy')), count_text(entry.get('itemCount')),
-                                 code(entry['batteryHash']) if entry.get('batteryHash') else None]
-                                for name, entry in scored], key='battery', row_header=False,
+                               [[name, number_text(_dict(entry).get('accuracy')),
+                                 count_text(_dict(entry).get('itemCount')),
+                                 code(entry['batteryHash']) if _dict(entry).get('batteryHash') else None]
+                                for name, entry in scored.items()], key='battery', row_header=False,
                                footnote='As the engine scored it.'))
-        for entry in exempt:
-            if isinstance(entry, dict):
-                parts.append(paragraph(source._battery_sentence(entry)))
-        if not scored and not exempt:
+        for line in unscored:
+            parts.append(paragraph(line))
+        if not shown:
             parts.append(paragraph('No capability battery was run for this study.'))
         return block('Controls', *parts, key='controls')
 
@@ -858,10 +854,10 @@ class Page:
                          'is measured, and normally every check must pass. These checks were skipped: ',
                          join(*[join(source._GATES.get(gate, 'a check this version cannot name'), ' (', code(gate), ')')
                                 for gate in skipped], sep='; ') if skipped else 'not recorded',
-                         '. SteerLab records a forced freeze permanently and treats the study as not citable. Say so '
-                         'wherever these results are reported.')
+                         '. The study’s settings record the forced freeze and the skipped checks permanently. '
+                         'Report which checks were skipped wherever these results are reported.')
         elif status in ('frozen', 'complete'):
-            state = join('Frozen before this run, with every freeze check passed',
+            state = join('Frozen before this run, with ' + source.clean_freeze_phrase(snapshot),
                          f' (frozen at {snapshot["frozenAt"]})' if snapshot.get('frozenAt') else '', '.')
         elif status:
             state = join(el('strong', 'Not frozen when this run was made'), ' (status ', code(status), '). Its settings '

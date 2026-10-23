@@ -6617,7 +6617,7 @@ public enum ExperimentStore {
             advisories.append(
                 "forced freeze — gates skipped: "
                     + (skipped.isEmpty ? "none" : skipped.joined(separator: ", "))
-                    + " — non-citable")
+                    + "; the manifest records this permanently")
         }
         return advisories
     }
@@ -7803,6 +7803,11 @@ public enum ExperimentStore {
             lines += ["", "## Capability battery", ""]
             lines += batteryNotApplied.map { "- " + $0 }
         }
+        // A forced freeze says so in the summary it generated, in facts:
+        // that force was used and which gates it skipped. Present only when
+        // the freeze was forced, so every other study's summary bytes are
+        // unchanged. Server twin: `freeze_policy.forced_freeze_summary_lines`.
+        lines += FreezePolicy.forcedFreezeSummaryLines(manifest)
         if let rule = manifest.promotionRule {
             lines += [
                 "",

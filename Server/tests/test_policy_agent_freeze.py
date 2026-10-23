@@ -254,8 +254,8 @@ def test_forced_freeze_of_a_plain_variant_study_is_unchanged(tmp_path):
     # No policy agent, so no stamp: this study's frozen bytes are what they
     # always were.
     assert freeze_policy.BATTERY_NOT_APPLIED_KEY not in frozen
-    assert "forced freeze — gates skipped: validateEvidence, batteryEvidence " \
-        "— non-citable" in es.freeze_advisories(frozen, root)
+    assert "forced freeze — gates skipped: validateEvidence, batteryEvidence; " \
+        "the manifest records this permanently" in es.freeze_advisories(frozen, root)
 
 
 def test_force_keeps_its_meaning_on_a_policy_agent_study(tmp_path):

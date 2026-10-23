@@ -95,6 +95,42 @@ extension RunResults {
         public init(runDirectory: URL) {
             self.runDirectory = runDirectory
         }
+
+        /// The battery column's cell for one condition: the scored accuracy
+        /// when the report has one; otherwise what the run's own files say —
+        /// "not applicable", with the engines' sentence as help, when the
+        /// report or the snapshot records why the battery was not applied,
+        /// and "not recorded" when nothing does (an older run, a condition
+        /// the battery skipped without a stated reason). Never a bare dash,
+        /// which reads the same for every one of those cases.
+        public func batteryCell(_ condition: String) -> BatteryCell {
+            let summary = report?.conditions[condition]
+            if let accuracy = summary?.capabilityBatteryAccuracy {
+                let count = summary?.capabilityBatteryItemCount
+                return BatteryCell(
+                    text: String(format: "%.0f%%", accuracy * 100)
+                        + (count.map { " of \($0)" } ?? ""),
+                    help: nil)
+            }
+            let entry =
+                report?.capabilityBatteryNotApplied.first { $0.condition == condition }
+                ?? classification.batteryNotApplied.first { $0.condition == condition }
+            if let entry {
+                return BatteryCell(
+                    text: "not applicable",
+                    help: FreezePolicy.batteryNotAppliedSentence(entry))
+            }
+            return BatteryCell(
+                text: "not recorded",
+                help: "No capability battery reading was recorded for \(condition).")
+        }
+    }
+
+    /// One battery-column cell: the text, and the sentence that explains a
+    /// cell with no score (nil on a scored cell).
+    public struct BatteryCell: Sendable, Equatable {
+        public var text: String
+        public var help: String?
     }
 
     // MARK: - One assembly pipeline (F9)
@@ -336,7 +372,8 @@ extension RunResults {
         if let manifest = reading?.strict {
             model.conditionInterventions = interventionSummaries(manifest: manifest)
         }
-        model.classification = classify(reading, model.records)
+        model.classification = withSnapshotFacts(
+            classify(reading, model.records), reading: reading)
         // What leads the summary. The declared outcome is read tolerantly
         // from the snapshot bytes, so a snapshot the strict decoder cannot
         // read still says which outcome its study declared.

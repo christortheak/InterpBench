@@ -502,16 +502,16 @@ struct RunResultsTests {
             manifestRevision: "abc", recordRevisions: ["abc"])
         #expect(frozen.runClass == .frozenEvidenceGrade)
         #expect(frozen.epoch == .verified)
-        #expect(frozen.label == "Frozen (evidence-grade)")
+        #expect(frozen.label == "Frozen — every freeze check passed")
         #expect(frozen.revisionWarning == nil)
 
-        // Forced freeze wins over frozen — non-citable by stamp.
+        // Forced freeze wins over frozen — stated as a fact, by stamp.
         let forced = RunResults.classify(
             manifestStatus: "frozen", freezeForced: true,
             hasMatchingValidateEvidence: true, stampedHashMatchesLive: true,
             manifestRevision: "abc", recordRevisions: [])
         #expect(forced.runClass == .forcedFreeze)
-        #expect(forced.label == "Forced freeze — non-citable")
+        #expect(forced.label == "Frozen with force")
 
         // Draft with matching validate evidence.
         let validated = RunResults.classify(

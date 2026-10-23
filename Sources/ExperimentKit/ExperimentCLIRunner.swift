@@ -4039,12 +4039,12 @@ public struct ExperimentCLIRunner: Sendable {
                 "runSubstrate": .string(runSubstrate),
                 "forced": .bool(manifest.freezeForced == true),
             ]
-            // A forced freeze is non-citable, and the envelope must say so as
-            // loudly as the stamp does — advisories, never a changed exit
+            // A forced freeze skipped gates, and the envelope must say which
+            // as loudly as the stamp does — advisories, never a changed exit
             // code (a `set -e` wrapper must not break on a deliberate force).
             var advisories: [SteerLabCLIEnvelope.Advisory] = []
-            // The single-coder consequence, stamped where the study becomes
-            // citable. The gate let this freeze through deliberately; the
+            // The single-coder consequence, stamped where the study is
+            // frozen. The gate let this freeze through deliberately; the
             // envelope must still say what the frozen design cannot report.
             if let singleCoder = ExperimentStore.singleJudgePanelAdvisory(manifest) {
                 advisories.append(
@@ -4057,8 +4057,9 @@ public struct ExperimentCLIRunner: Sendable {
                         .init(
                             code: CLIAdvisory.freezeGateSkipped.rawValue,
                             detail: "gate '\(gate)' would have failed and was "
-                                + "skipped by --force; this freeze is stamped "
-                                + "freezeForced and is not citable"))
+                                + "skipped by --force; the frozen study records "
+                                + "this permanently in freezeForced and "
+                                + "forcedGatesSkipped"))
                 }
             }
             // A condition the capability battery could not be applied to

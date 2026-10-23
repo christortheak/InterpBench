@@ -35,6 +35,14 @@ struct RunClassificationHeaderView: View {
             Text(classification.detail)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            // Beside the freeze state: each condition the snapshot stamps the
+            // capability battery was not applied to, in the engines' words.
+            ForEach(classification.batteryNotAppliedLines, id: \.self) { line in
+                Label(line, systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             // F8: a snapshot the strict decoder cannot read is a CAUTION
             // state, never a silently missing banner.
             if let warning = classification.snapshotWarning {
@@ -59,8 +67,8 @@ struct RunClassificationHeaderView: View {
         case .forcedFreeze: .red
         case .validatedDraft: .blue
         case .draftPilot: .gray
-        // Same red as the other non-citable classes: an incomplete run is
-        // not a milder form of "draft", it is a failure record.
+        // Same red as the forced and mismatched classes: an incomplete run
+        // is not a milder form of "draft", it is a failure record.
         case .partialFailedRun: .red
         }
     }
@@ -423,7 +431,10 @@ struct ConditionSummaryTableView: View {
                 Text(ordinalText(summary))
             }
             if showsBattery {
-                Text(batteryText(summary))
+                let cell = model.batteryCell(name)
+                Text(cell.text)
+                    .foregroundStyle(cell.help == nil ? Color.primary : Color.secondary)
+                    .help(cell.help ?? "")
             }
         }
     }
@@ -438,13 +449,6 @@ struct ConditionSummaryTableView: View {
         guard let fraction = summary?.agreementWithBaseline else { return "—" }
         let count = summary?.agreementTotal.map { " (n=\($0))" } ?? ""
         return String(format: "%.0f%%", fraction * 100) + count
-    }
-
-    private func batteryText(_ summary: RunResults.ConditionSummary?) -> String {
-        guard let accuracy = summary?.capabilityBatteryAccuracy else { return "—" }
-        let count = summary?.capabilityBatteryItemCount
-        return String(format: "%.0f%%", accuracy * 100)
-            + (count.map { " of \($0)" } ?? "")
     }
 
     private var caption: some View {

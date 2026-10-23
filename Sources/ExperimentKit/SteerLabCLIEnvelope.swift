@@ -135,7 +135,7 @@ public enum SteerLabCLIState: String, Codable, Sendable, CaseIterable {
 public enum CLIAdvisory: String, CaseIterable, Sendable, Codable {
 
     /// A freeze gate would have failed and `--force` skipped it. The freeze is
-    /// stamped `freezeForced` and is not citable.
+    /// stamped `freezeForced`, with the gate in `forcedGatesSkipped`.
     case freezeGateSkipped
     /// A validate run scored no held-out probe for a pinned concept.
     case vacuousValidation

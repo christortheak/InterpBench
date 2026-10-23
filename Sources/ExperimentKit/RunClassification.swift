@@ -57,13 +57,28 @@ extension RunResults {
         /// freeze-forced server run whose snapshot a newer engine wrote must
         /// never lose its banner to a swallowed decode error (F8).
         public var snapshotUnreadable: Bool = false
+        /// The gates a forced freeze skipped, as the snapshot's
+        /// `forcedGatesSkipped` stamp records them; nil when the snapshot
+        /// does not say (never inferred).
+        public var forcedGatesSkipped: [String]? = nil
+        /// The conditions the snapshot's `capabilityBatteryNotApplied` stamp
+        /// records the capability battery was not applied to, and why. Empty
+        /// when the snapshot stamps none — an older run is never credited
+        /// with an exemption its manifest does not carry.
+        public var batteryNotApplied: [ExperimentManifest.BatteryNotApplied] = []
 
+        /// Facts, not verdicts (2026-10-23 ruling): the badge says what the
+        /// freeze state IS — frozen, frozen with force, a draft — and which
+        /// checks applied, and leaves what the run supports to the reader.
         public var label: String {
             switch runClass {
-            case .frozenEvidenceGrade: "Frozen (evidence-grade)"
+            case .frozenEvidenceGrade:
+                batteryNotApplied.isEmpty
+                    ? "Frozen — every freeze check passed"
+                    : "Frozen — every freeze check that applies passed"
             case .frozenEpochMismatch: "Frozen — epoch mismatch"
             case .frozenUnverified: "Frozen — epoch unverified"
-            case .forcedFreeze: "Forced freeze — non-citable"
+            case .forcedFreeze: "Frozen with force"
             case .validatedDraft: "Validated draft"
             case .draftPilot: "Draft/pilot"
             case .partialFailedRun: "Incomplete — failure record"
@@ -73,41 +88,58 @@ extension RunResults {
         public var detail: String {
             switch runClass {
             case .frozenEvidenceGrade:
-                "run stamped by a frozen manifest; stamp matches the live manifest"
+                "frozen without force; the settings stamp on this run matches "
+                    + "the live manifest"
             case .frozenEpochMismatch:
-                "frozen manifest snapshot, but the live manifest changed since "
-                    + "this run (epoch mismatch) — do not cite without re-running"
+                "frozen manifest snapshot, but the live manifest changed after "
+                    + "this run (epoch mismatch): these results describe "
+                    + "settings the study no longer has"
             case .frozenUnverified:
-                "frozen manifest snapshot; live manifest unavailable, so the "
-                    + "epoch could not be verified — do not treat as evidence-grade"
+                "frozen manifest snapshot; the live manifest is unavailable, so "
+                    + "whether this run matches the study's current settings "
+                    + "could not be checked"
             case .forcedFreeze:
-                "freeze gates were force-skipped (stamped freezeForced) — "
-                    + "non-citable by stamp"
+                "freeze checks skipped with --force: "
+                    + (forcedGatesSkipped.map {
+                        $0.isEmpty ? "none (every check would have passed)"
+                            : $0.joined(separator: ", ")
+                    } ?? "not recorded in the snapshot")
+                    + " — the manifest records this permanently "
+                    + "(freezeForced, forcedGatesSkipped)"
             case .validatedDraft:
                 "draft manifest with matching validate evidence for its exact "
                     + "validation scope"
             case .draftPilot:
-                "no freeze and no matching validate evidence — treat as a pilot, "
-                    + "not a result"
+                "no freeze and no matching validate evidence: the study's "
+                    + "settings were not fixed before this run"
             case .partialFailedRun:
                 "the stage that wrote this run did not complete (see FAILED.md "
-                    + "and run-status.json) — the data it holds is real and "
-                    + "retryable, but this is a failure record, not a result"
+                    + "and run-status.json) — the data it holds is real and the "
+                    + "stage can be retried, but the run is incomplete"
             }
+        }
+
+        /// One line per condition the snapshot stamps the capability battery
+        /// was not applied to — the engines' own sentence — shown beside the
+        /// freeze state. Empty for every other run.
+        public var batteryNotAppliedLines: [String] {
+            batteryNotApplied.map(FreezePolicy.batteryNotAppliedSentence)
         }
 
         /// The unresolved-revision warning line, when it applies.
         public var revisionWarning: String? {
             guard let revision = unpinnedResolvedRevision else { return nil }
             return "revision \(String(revision.prefix(12))) resolved at run time "
-                + "but never pinned — pin before evidence use"
+                + "but never pinned — the study does not record which revision "
+                + "ran until it is pinned"
         }
 
         /// The unreadable-snapshot caution line, when it applies (F8).
         public var snapshotWarning: String? {
             guard snapshotUnreadable else { return nil }
             return "manifest snapshot present but not fully decodable "
-                + "(engine version skew?) — treat as unverified"
+                + "(engine version skew?) — the freeze state shown comes from "
+                + "a partial read"
         }
 
         /// Whether the header's epoch CHIPS should render: the frozen
@@ -153,6 +185,8 @@ extension RunResults {
         var freezeForced: Bool?
         var name: String?
         var modelRevision: String?
+        var forcedGatesSkipped: [String]?
+        var batteryNotApplied: [ExperimentManifest.BatteryNotApplied] = []
 
         /// Bytes were present but the strict decode failed.
         var isUnreadable: Bool { strict == nil }
@@ -165,18 +199,44 @@ extension RunResults {
                 statusRaw: manifest.status.rawValue,
                 freezeForced: manifest.freezeForced,
                 name: manifest.name,
-                modelRevision: manifest.modelRevision)
+                modelRevision: manifest.modelRevision,
+                forcedGatesSkipped: manifest.forcedGatesSkipped,
+                batteryNotApplied: manifest.capabilityBatteryNotApplied ?? [])
         }
         guard
             let object = try? JSONSerialization.jsonObject(with: data),
             let dictionary = object as? [String: Any]
         else { return ManifestSnapshotReading() }
+        // The same tolerant read as `freezeForced`: the stamps a reader must
+        // not lose to an undecodable snapshot.
+        let notApplied = (dictionary["capabilityBatteryNotApplied"] as? [[String: Any]] ?? [])
+            .compactMap { entry -> ExperimentManifest.BatteryNotApplied? in
+                guard let condition = entry["condition"] as? String,
+                    let reason = entry["reason"] as? String
+                else { return nil }
+                return .init(condition: condition, reason: reason)
+            }
         return ManifestSnapshotReading(
             strict: nil,
             statusRaw: dictionary["status"] as? String,
             freezeForced: dictionary["freezeForced"] as? Bool,
             name: dictionary["name"] as? String,
-            modelRevision: dictionary["modelRevision"] as? String)
+            modelRevision: dictionary["modelRevision"] as? String,
+            forcedGatesSkipped: dictionary["forcedGatesSkipped"] as? [String],
+            batteryNotApplied: notApplied)
+    }
+
+    /// Adds the snapshot's freeze stamps — the gates a forced freeze skipped
+    /// and the battery-not-applied entries — to a classification, for the
+    /// header to state beside the freeze state. Reads only what the snapshot
+    /// stamps.
+    static func withSnapshotFacts(
+        _ classification: Classification, reading: ManifestSnapshotReading?
+    ) -> Classification {
+        var result = classification
+        result.forcedGatesSkipped = reading?.forcedGatesSkipped
+        result.batteryNotApplied = reading?.batteryNotApplied ?? []
+        return result
     }
 
     /// The pure classification rule. `hasMatchingValidateEvidence` and
@@ -286,7 +346,7 @@ extension RunResults {
             manifestRevision: reading?.modelRevision,
             recordRevisions: Set(records.compactMap(\.modelRevision)))
         result.snapshotUnreadable = reading?.isUnreadable ?? false
-        return result
+        return withSnapshotFacts(result, reading: reading)
     }
 
     /// The run's experiment-hash stamp: `experiment-hash.txt` first, then

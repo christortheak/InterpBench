@@ -95,7 +95,7 @@ struct RunStatusFileTests {
         #expect(classification.runClass == .partialFailedRun)
         #expect(!classification.isCitableResult)
         #expect(classification.label == "Incomplete — failure record")
-        #expect(classification.detail.contains("failure record, not a result"))
+        #expect(classification.detail.contains("the run is incomplete"))
     }
 
     @Test func completedRunStillClassifiesNormally() throws {

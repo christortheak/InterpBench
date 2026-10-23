@@ -688,4 +688,120 @@ extension ExperimentStoreTests {
             CapabilityBatteryConditionResult.self, from: row)
         #expect(decoded.isScored && decoded.withoutPolicy == nil)
     }
+
+    // MARK: - Facts, not verdicts (ruling 2026-10-23)
+
+    @Test func theSettingsSummaryOfAForcedFreezeSaysSo() throws {
+        try withTempRoot {
+            _ = try makePolicyStudy(name: "forced-summary", conditions: [Self.plainAgent])
+            let frozen = try ExperimentStore.freeze(name: "forced-summary", force: true)
+            #expect(frozen.freezeForced == true)
+            let skipped = (frozen.forcedGatesSkipped ?? []).map { "`\($0)`" }
+                .joined(separator: ", ")
+            let markdown = ExperimentStore.preregistrationMarkdown(frozen)
+            #expect(
+                markdown.contains(
+                    "\n## Freeze\n\n- Frozen with force (`--force`). Gates skipped: "
+                        + "\(skipped).\n- The manifest records this permanently, "
+                        + "in `freezeForced` and `forcedGatesSkipped`.\n"))
+            #expect(!markdown.contains("citable"))
+            // An unforced study gets nothing new: its summary is what it was.
+            var unforced = frozen
+            unforced.freezeForced = nil
+            unforced.forcedGatesSkipped = nil
+            #expect(FreezePolicy.forcedFreezeSummaryLines(unforced).isEmpty)
+            #expect(!ExperimentStore.preregistrationMarkdown(unforced).contains("## Freeze"))
+            // The advisory states the skipped gates, not a verdict.
+            let advisory = try #require(
+                ExperimentStore.freezeAdvisories(for: frozen)
+                    .first { $0.hasPrefix("forced freeze") })
+            #expect(advisory.hasSuffix("; the manifest records this permanently"))
+        }
+    }
+
+    @Test func theRunHeaderStatesFreezeFactsAndBatteryExemptions() throws {
+        // A clean freeze whose snapshot stamps one exempt condition.
+        let stamped = RunResults.manifestSnapshotReading(
+            from: Data(
+                #"{"name":"s","status":"frozen","capabilityBatteryNotApplied":[{"condition":"guided","reason":"interventionPolicy"}]}"#
+                    .utf8))
+        let clean = RunResults.withSnapshotFacts(
+            RunResults.classify(
+                manifestStatus: stamped.statusRaw, freezeForced: stamped.freezeForced,
+                hasMatchingValidateEvidence: nil, stampedHashMatchesLive: true,
+                manifestRevision: "abc", recordRevisions: []),
+            reading: stamped)
+        #expect(clean.runClass == .frozenEvidenceGrade)
+        #expect(clean.label == "Frozen — every freeze check that applies passed")
+        #expect(
+            clean.batteryNotAppliedLines == [
+                FreezePolicy.batteryNotAppliedSentence(
+                    .init(condition: "guided", reason: Self.policyReason))
+            ])
+
+        // A legacy forced snapshot, shaped like a policy study frozen with
+        // force before the exemption existed: forced, no stamp.
+        let legacy = RunResults.manifestSnapshotReading(
+            from: Data(
+                #"{"name":"p","status":"frozen","freezeForced":true,"forcedGatesSkipped":["batteryEvidence"],"appVersion":"0.9.6"}"#
+                    .utf8))
+        let forced = RunResults.withSnapshotFacts(
+            RunResults.classify(
+                manifestStatus: legacy.statusRaw, freezeForced: legacy.freezeForced,
+                hasMatchingValidateEvidence: nil, stampedHashMatchesLive: true,
+                manifestRevision: "abc", recordRevisions: []),
+            reading: legacy)
+        #expect(forced.runClass == .forcedFreeze)
+        #expect(forced.label == "Frozen with force")
+        #expect(forced.detail.hasPrefix("freeze checks skipped with --force: batteryEvidence"))
+        // Nothing credits it with an exemption its manifest does not stamp.
+        #expect(forced.batteryNotAppliedLines.isEmpty)
+        for text in [clean.label, clean.detail, forced.label, forced.detail] {
+            #expect(!text.contains("citable") && !text.contains("evidence-grade"))
+        }
+    }
+
+    @Test func theBatteryColumnSaysWhyACellHasNoScore() {
+        var model = RunResults.Model(runDirectory: URL(filePath: "/tmp/no-run"))
+        var report = RunResults.Report()
+        var baseline = RunResults.ConditionSummary(generations: 4)
+        baseline.capabilityBatteryAccuracy = 0.6
+        baseline.capabilityBatteryItemCount = 10
+        report.conditions = [
+            "baseline": baseline, "guided": .init(generations: 4),
+            "stamped": .init(generations: 4), "legacy": .init(generations: 4),
+        ]
+        report.capabilityBatteryNotApplied = [
+            .init(condition: "guided", reason: Self.policyReason)
+        ]
+        model.report = report
+        model.classification.batteryNotApplied = [
+            .init(condition: "stamped", reason: Self.policyReason)
+        ]
+        #expect(model.batteryCell("baseline") == .init(text: "60% of 10", help: nil))
+        // Recorded in the run's report, or in the snapshot's stamp.
+        for condition in ["guided", "stamped"] {
+            #expect(
+                model.batteryCell(condition)
+                    == .init(
+                        text: "not applicable",
+                        help: FreezePolicy.batteryNotAppliedSentence(
+                            .init(condition: condition, reason: Self.policyReason))))
+        }
+        // Recorded nowhere: said as such, never a bare dash.
+        #expect(
+            model.batteryCell("legacy")
+                == .init(
+                    text: "not recorded",
+                    help: "No capability battery reading was recorded for legacy."))
+
+        // The run report's own record of what its battery did not score.
+        let parsed = RunResults.report(
+            fromJSON: Data(
+                #"{"conditions":{},"capabilityBatteryNotApplied":[{"condition":"guided","reason":"interventionPolicy"}]}"#
+                    .utf8))
+        #expect(
+            parsed?.capabilityBatteryNotApplied
+                == [.init(condition: "guided", reason: Self.policyReason)])
+    }
 }

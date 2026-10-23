@@ -1196,7 +1196,12 @@ def test_a_forced_study_and_a_battery_exemption_are_stated_plainly(root):
     assert "**This study was frozen with force.**" in methods
     assert ("the check that the steering directions were validated (`validateEvidence`) "
             "and the check that the pinned inputs are committed (`gitClean`)") in methods
-    assert "treats the study as not citable" in methods
+    # Facts, not a verdict (ruling 2026-10-23): what was skipped, that it is
+    # recorded, and that a report should say which checks were skipped.
+    assert ("The study's settings record the forced freeze and the skipped checks "
+            "permanently. Report which checks were skipped wherever you report "
+            "these results.") in methods
+    assert "citable" not in methods
     assert ("**Capability battery exemption.** The capability battery was not applied to "
             "guided, because its agent uses an intervention policy") in methods
     assert f"- Freeze hash: `{'f' * 64}`" in methods
@@ -1215,6 +1220,66 @@ def test_a_cleanly_frozen_study_says_so(root):
     assert ("- The study was frozen before this run, with every freeze check passed "
             "(frozen at 2026-10-03T12:00:00Z).") in methods
     assert "frozen with force" not in methods
+    # No battery ran, so there is no battery section and nothing to say about
+    # readings it did not take.
+    assert "No capability battery reading" not in methods
+
+
+def _battery_report(manifest, scored):
+    """A run report whose battery scored exactly the conditions in
+    ``scored``."""
+    return {"experiment": manifest["name"],
+            "experimentHash": Manifest.from_dict(manifest).content_hash(),
+            "conditions": {name: {"generations": 6, "capabilityBattery": {
+                "accuracy": accuracy, "itemCount": 10, "batteryHash": "b" * 64}}
+                for name, accuracy in scored.items()},
+            "truncation": {"classified": 12, "lengthStopped": 0}}
+
+
+def test_a_clean_freeze_with_an_exempt_condition_says_every_check_that_applies(root):
+    manifest = _manifest(
+        status="frozen", frozenAt="2026-10-03T12:00:00Z",
+        capabilityBatteryNotApplied=[{"condition": "formal", "reason": "interventionPolicy"}])
+    _write_run(root, manifest, _python_records("0" * 64),
+               report=_battery_report(manifest, {"baseline": 0.6}))
+    methods = _read(_export(root), "methods.md")
+    assert ("- The study was frozen before this run, with every freeze check that "
+            "applies passed (frozen at 2026-10-03T12:00:00Z).") in methods
+    # The exempt condition gets the "no reading" line with its recorded reason.
+    assert ("- No capability battery reading was recorded for formal. The capability "
+            "battery was not applied to formal, because its agent uses an intervention "
+            "policy") in methods
+    assert "- baseline: accuracy 0.6 on 10 items, as the engine scored it." in methods
+
+
+def test_a_legacy_forced_run_gains_no_reading_lines_and_no_claimed_exemption(root):
+    # The shape of a policy study frozen with force before the exemption
+    # existed: forced, no battery-not-applied stamp, and battery rows for the
+    # baseline only. Its pages say what the run's own files show, and nothing
+    # credits it with an exemption its manifest does not carry.
+    manifest = _manifest(
+        status="frozen", frozenAt="2026-09-14T12:00:00Z", freezeHash="e" * 64,
+        freezeForced=True, forcedGatesSkipped=["batteryEvidence"], appVersion="0.9.6")
+    _write_run(root, manifest, _python_records("0" * 64),
+               report=_battery_report(manifest, {"baseline": 0.6}))
+    methods = _read(_export(root), "methods.md")
+    assert "- No capability battery reading was recorded for formal.\n" in methods
+    assert "No capability battery reading was recorded for baseline" not in methods
+    assert "Capability battery exemption" not in methods
+    assert "was not applied to" not in methods
+    # The forced paragraph is still there, in facts.
+    assert "**This study was frozen with force.**" in methods
+    assert "(`batteryEvidence`)" in methods
+    assert "every freeze check" not in methods
+
+
+def test_a_run_whose_battery_scored_every_condition_gains_no_lines(root):
+    manifest = _manifest(status="frozen", frozenAt="2026-10-03T12:00:00Z")
+    _write_run(root, manifest, _python_records("0" * 64),
+               report=_battery_report(manifest, {"baseline": 0.6, "formal": 0.5}))
+    methods = _read(_export(root), "methods.md")
+    assert "No capability battery reading" not in methods
+    assert "with every freeze check passed" in methods
 
 
 def test_a_run_with_exclusions_reports_the_engines_own_counts(root):
