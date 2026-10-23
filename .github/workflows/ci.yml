@@ -35,16 +35,21 @@ jobs:
         run: python scripts/ci/check-substrates.py
       - name: Install engine (CPU torch + locked dependencies)
         working-directory: Server
-        # Same shape as scripts/bootstrap.sh: torch is substrate-owned (CPU
-        # wheel here — no GPU on the runner), everything else pinned exactly
-        # by the committed Linux lock.
+        # Same shape as scripts/bootstrap.sh: the lock's torch version, as the
+        # substrate's own build (the CPU wheel here — no GPU on the runner);
+        # the torch stack and its CUDA runtime filtered out of the lock; the
+        # installed torch held while everything else installs, and a lock pin
+        # it forbids dropped by name (scripts/site_torch.py).
         run: |
           python -m pip install --upgrade pip
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-          grep -vE '^(torch|triton|pytorch-triton|nvidia-)' \
-            requirements-linux-x86_64.lock > /tmp/ci-lock.txt
-          pip install -r /tmp/ci-lock.txt
-          pip install -e ".[all]"
+          TORCH_PIN="$(grep -E '^torch==' requirements-linux-x86_64.lock | sed -E 's/^torch==//; s/[[:space:];\\].*$//')"
+          pip install "torch==${TORCH_PIN}" --index-url https://download.pytorch.org/whl/cpu
+          python scripts/site_torch.py version | sed 's/^/torch==/' > /tmp/ci-torch-held.txt
+          grep -E '^[A-Za-z0-9]' requirements-linux-x86_64.lock \
+            | grep -vE '^(torch|triton|pytorch-triton|nvidia-|cuda-)' \
+            | python scripts/site_torch.py filter-lock > /tmp/ci-lock.txt
+          pip install -r /tmp/ci-lock.txt -c /tmp/ci-torch-held.txt
+          pip install -e ".[all]" -c /tmp/ci-torch-held.txt
       - name: Check shared declarations and exercise the technique guide
         env:
           HF_HUB_OFFLINE: "1"

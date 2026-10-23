@@ -39,16 +39,18 @@ TORCH_REQUIRES = (
 )
 
 
-def _fake_torch(site, version="2.11.0+cu128", cuda="12.8"):
+def _fake_torch(site, version="2.11.0+cu128", cuda="12.8", annotated=True):
     """A torch distribution importlib.metadata and find_spec can see, with
-    torch/version.py written as torch writes it."""
+    torch/version.py written as torch writes it (or, unannotated, as older
+    releases did)."""
     package = site / "torch"
     package.mkdir(parents=True, exist_ok=True)
     (package / "__init__.py").write_text("", encoding="utf-8")
     value = f"'{cuda}'" if cuda else "None"
+    assignment = f"cuda: Optional[str] = {value}" if annotated else f"cuda = {value}"
     (package / "version.py").write_text(
-        f"from typing import Optional\n__version__ = '{version}'\n"
-        f"cuda: Optional[str] = {value}\n", encoding="utf-8")
+        f"from typing import Optional\n__version__ = '{version}'\n{assignment}\n",
+        encoding="utf-8")
     dist = site / f"torch-{version}.dist-info"
     dist.mkdir(exist_ok=True)
     (dist / "METADATA").write_text(
@@ -72,6 +74,11 @@ def _site_torch(site, *args, stdin=""):
 def test_the_helper_reads_the_installed_version_and_cuda_build(tmp_path):
     site = _fake_torch(tmp_path / "site")
     assert _site_torch(site, "version").stdout.strip() == "2.11.0+cu128"
+    assert _site_torch(site, "cuda").stdout.strip() == "12.8"
+
+
+def test_an_unannotated_version_file_is_read_too(tmp_path):
+    site = _fake_torch(tmp_path / "site", annotated=False)
     assert _site_torch(site, "cuda").stdout.strip() == "12.8"
 
 
@@ -117,7 +124,7 @@ def _scriptbin(directory, name, body):
     return path
 
 
-def _bootstrap(tmp_path, *, cuda="12.8", on_pip=""):
+def _bootstrap(tmp_path, *, cuda="12.8", on_pip="", lock_text=None, helper=None):
     """Run bootstrap.sh for real against a checkout with the real helper and a
     lock, a fake torch on PYTHONPATH, and a stub interpreter that hands
     site_torch.py to this Python and plays pip for everything else. Each pip
@@ -129,10 +136,13 @@ def _bootstrap(tmp_path, *, cuda="12.8", on_pip=""):
     site = _fake_torch(tmp_path / "site", cuda=cuda)
     server = tmp_path / "repo" / "Server"
     (server / "scripts").mkdir(parents=True)
-    shutil.copy(SITE_TORCH, server / "scripts" / "site_torch.py")
-    (server / lock).write_text(
+    if helper is None:
+        shutil.copy(SITE_TORCH, server / "scripts" / "site_torch.py")
+    else:
+        (server / "scripts" / "site_torch.py").write_text(helper, encoding="utf-8")
+    (server / lock).write_text(lock_text or (
         "numpy==2.0.0\ntorch==2.11.0\ntriton==3.6.0\nnvidia-nccl-cu13==2.28.9\n"
-        "cuda-toolkit==13.0.2\nsetuptools==84.0.0\nfilelock==3.32.3\n",
+        "cuda-toolkit==13.0.2\nsetuptools==84.0.0\nfilelock==3.32.3\n"),
         encoding="utf-8")
     record = tmp_path / "record"
     record.mkdir()
@@ -207,7 +217,7 @@ def test_a_torch_built_for_another_cuda_is_reinstalled_from_the_index(tmp_path):
         "fi\n")
     proc, record, _site = _bootstrap(tmp_path, cuda="13.0", on_pip=rebuild)
     assert _steps(proc)["torchInstall"] == "ok", proc.stdout + proc.stderr
-    assert "built for CUDA 13.0, not 12.8" in proc.stdout
+    assert "built for CUDA 13.0, not CUDA 12.8" in proc.stdout
     calls = (record / "pip-calls.log").read_text(encoding="utf-8").splitlines()
     assert ("-m pip install --force-reinstall torch==2.11.0 --index-url "
             "https://example.invalid/whl/cu128") in calls
@@ -216,4 +226,55 @@ def test_a_torch_built_for_another_cuda_is_reinstalled_from_the_index(tmp_path):
 def test_a_torch_that_stays_on_another_cuda_fails_the_step(tmp_path):
     proc, _record, _site = _bootstrap(tmp_path, cuda="13.0")
     assert _steps(proc)["torchInstall"] == "failed"
-    assert "built for CUDA 13.0, not 12.8" in proc.stderr
+    assert "built for CUDA 13.0, not CUDA 12.8" in proc.stderr
+
+
+def test_a_cpu_build_on_a_cuda_index_is_reinstalled_or_fails(tmp_path):
+    """No CUDA at all is a mismatch too: a CPU torch already installed reads
+    as satisfied, and holding it through the installs would leave a GPU site
+    without the GPU."""
+    proc, record, _site = _bootstrap(tmp_path, cuda=None)
+    assert _steps(proc)["torchInstall"] == "failed"
+    assert "built for no CUDA" in proc.stderr
+    calls = (record / "pip-calls.log").read_text(encoding="utf-8").splitlines()
+    assert any("--force-reinstall torch==2.11.0" in c for c in calls)
+
+
+def test_a_helper_that_cannot_read_torch_fails_the_step_and_installs_nothing(tmp_path):
+    broken = SITE_TORCH.read_text(encoding="utf-8").replace(
+        'elif command == "filter-lock":',
+        'elif command == "filter-lock":\n        raise SystemExit("cannot read torch")\n    elif False:')
+    proc, record, _site = _bootstrap(tmp_path, helper=broken)
+    assert _steps(proc)["serverInstall"] == "failed"
+    assert "could not read the site's torch to filter" in proc.stderr
+    assert not (record / "lock-installed.txt").exists()
+
+
+def test_a_hashed_lock_reaches_pip_as_plain_pins(tmp_path):
+    """A --generate-hashes lock: the --hash lines go, and so must the trailing
+    backslash on each pin, which would otherwise join the next pin to it."""
+    lock = ("numpy==2.0.0 \\\n    --hash=sha256:aaaa\n"
+            "torch==2.11.0 \\\n    --hash=sha256:bbbb\n"
+            "filelock==3.32.3 \\\n    --hash=sha256:cccc\n")
+    proc, record, _site = _bootstrap(tmp_path, lock_text=lock)
+    assert _steps(proc)["serverInstall"] == "ok", proc.stdout + proc.stderr
+    installed = (record / "lock-installed.txt").read_text(encoding="utf-8").splitlines()
+    assert installed == ["numpy==2.0.0", "filelock==3.32.3"]
+
+
+# --- the committed locks ---------------------------------------------------------
+
+
+def test_the_linux_lock_pins_the_torch_update_locks_constrains_it_to():
+    import re
+    script = (SCRIPTS / "update-locks.sh").read_text(encoding="utf-8")
+    constrained = re.search(r'^LINUX_TORCH="([^"]+)"', script, re.M).group(1)
+    lock = (SCRIPTS.parent / "requirements-linux-x86_64.lock").read_text(encoding="utf-8")
+    assert re.search(r"^torch==(\S+)", lock, re.M).group(1) == constrained
+
+
+def test_the_committed_locks_name_no_machine_paths():
+    import re
+    for name in ("requirements-linux-x86_64.lock", "requirements-macos-arm64.lock"):
+        text = (SCRIPTS.parent / name).read_text(encoding="utf-8")
+        assert not re.search(r"/(var/folders|tmp|private|Users|home)/", text), name

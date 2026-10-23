@@ -25,12 +25,17 @@ import re
 import sys
 from pathlib import Path
 
-try:
-    from packaging.requirements import Requirement
-    from packaging.utils import canonicalize_name
-except ImportError:  # a fresh environment has pip's copy
-    from pip._vendor.packaging.requirements import Requirement
-    from pip._vendor.packaging.utils import canonicalize_name
+
+def _packaging():
+    """packaging, or pip's copy of it in a fresh environment. Imported only
+    where requirements are read, so `version` and `cuda` never depend on it."""
+    try:
+        from packaging.requirements import Requirement
+        from packaging.utils import canonicalize_name
+    except ImportError:
+        from pip._vendor.packaging.requirements import Requirement
+        from pip._vendor.packaging.utils import canonicalize_name
+    return Requirement, canonicalize_name
 
 
 def torch_version():
@@ -51,7 +56,7 @@ def torch_cuda():
         text = version_file.read_text(encoding="utf-8")
     except OSError:
         return None
-    found = re.search(r"^cuda(?:\s*:[^=]*)?=\s*['\"]([^'\"]+)['\"]", text, re.M)
+    found = re.search(r"^cuda\s*(?::[^=]*)?=\s*['\"]([^'\"]+)['\"]", text, re.M)
     return found.group(1) if found else None
 
 
@@ -59,6 +64,7 @@ def torch_limits():
     """What the installed torch requires of other packages, by name."""
     if torch_version() is None:
         return {}
+    Requirement, canonicalize_name = _packaging()
     limits = {}
     for text in md.requires("torch") or []:
         requirement = Requirement(text)
@@ -70,6 +76,7 @@ def torch_limits():
 
 def filter_lock(lines, limits, torch):
     """The lines torch allows, and a warning on stderr for each it does not."""
+    _, canonicalize_name = _packaging()
     for line in lines:
         name, pinned_sep, rest = line.strip().partition("==")
         pinned = re.split(r"[\s;\\]", rest, maxsplit=1)[0] if pinned_sep else ""

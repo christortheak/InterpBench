@@ -151,7 +151,7 @@ uv pip compile pyproject.toml --extra all \
     --output-file requirements-linux-x86_64.lock
 ```
 
-Five decisions worth knowing:
+Six decisions worth knowing:
 
 - **`MACOSX_DEPLOYMENT_TARGET=14.0` is load-bearing.** torch ≥ 2.12 publishes
   Apple-silicon wheels tagged `macosx_14_0_arm64`; without it uv silently pins

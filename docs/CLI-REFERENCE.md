@@ -2789,10 +2789,13 @@ node, `requirements-macos-arm64.lock` on Apple silicon — *before* the editable
 `pip install -e "$repo/Server[all]"`, so a node's torch/transformers are the
 same ones every other node resolved rather than whatever PyPI published that
 morning (`pyproject.toml` declares floors only). Two carve-outs, both
-deliberate: `torch`, `triton`, and `nvidia-*` are filtered out of the lock
-install, because which CUDA/ROCm build a node wants is a SITE fact that arrives
-as `--torch-index`; and `--no-lock` resolves from the floors instead, printing
-a WARNING that this node is unpinned. A platform with no committed lock warns
+deliberate: `torch`, `triton`, `nvidia-*`, and `cuda-*` are filtered out of
+the lock install, because which CUDA/ROCm build a node wants is a SITE fact
+that arrives as `--torch-index`; and `--no-lock` resolves from the floors
+instead, printing a WARNING that this node is unpinned. The installed torch is
+held by a constraint while the lock and the package install, a lock pin it
+forbids is dropped and named, and a torch that changes anyway fails the step
+(0.9.15). A platform with no committed lock warns
 the same way. Regenerate the locks with `Server/scripts/update-locks.sh`
 (needs `uv`, from the `Server[dev]` extra). Independently of all of it, every
 run stamps what it ACTUALLY imported — see `config.json`'s `pythonEnvironment`

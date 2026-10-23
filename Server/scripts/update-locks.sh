@@ -117,6 +117,10 @@ compile_one() {
     # temporary path would put this machine's temp folder in the lock.
     sed "s#-c $tmp.constraints#-c update-locks.sh LINUX_TORCH#" "$tmp"
   } > "$outfile"
+  if grep -qF "$tmp" "$outfile"; then
+    echo "update-locks.sh: $outfile names the temporary file $tmp — refusing to leave a machine path in a committed lock" >&2
+    exit 1
+  fi
   rm -f "$tmp" "$tmp.constraints"
   echo "update-locks.sh: wrote $outfile ($(grep -cE '^[A-Za-z0-9]' "$outfile") pinned packages)"
 }
