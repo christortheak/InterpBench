@@ -28,7 +28,9 @@ NEW_CALL = 'artifact_paths.converted_file(record.lensID, record.converted.path, 
 #: No existing endpoint or statistic body changes. On 2026-10-17 (reviewed,
 #: approved) an opt-in `reread_choices`, off by default, re-reads stored
 #: choices with the current parser in memory and stamps choice-reread.json;
-#: without it the analysis is unchanged.
+#: without it the analysis is unchanged. On 2026-10-22 (reviewed, approved)
+#: the epoch guard's call carries `--reread-choices` into its refusal's repair,
+#: so following the repair re-reads too; no statistic or input changes.
 ANALYSIS_WORKFLOW_CHANGES = (
     ("""            row.modality = modalities.get(condition, "")
             # What one difference is, recorded rather than left for readers.
@@ -88,6 +90,9 @@ ANALYSIS_WORKFLOW_CHANGES = (
      ''),
     ("    if choice_reread_stamp is not None:\n        choice_reread.write_stamp(out, choice_reread_stamp)\n",
      ''),
+    ("        allow_unverified_epoch=allow_unverified_epoch,\n"
+     "        repair_flags=(\"--reread-choices\",) if reread_choices else ())",
+     "        allow_unverified_epoch=allow_unverified_epoch)"),
 )
 
 

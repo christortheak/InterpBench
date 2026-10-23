@@ -31,6 +31,18 @@ Engine, app, and cluster payload are at `7110200` (three landings today, §4).
 Suite counts on that tree: Python 6684 passed, 9 skipped; Swift 4956 passed,
 5 skipped.
 
+### Status on 2026-10-22 (release 0.9.14)
+
+No P7 leg has run since this record was written, so the table above is
+current rather than stale: P7-A is done; P7-B's local and remote legs are
+done, and its panel-seat and behavioural-dose legs are open; P7-C, P7-D, and
+P7-F have not started; and P7-E stays descriptive. Releases since then have
+changed code these legs exercise, so the open legs run against 0.9.14, and
+the finished legs keep the builds they were run on (`7110200` and earlier,
+above). Until they are done, [SUBSTRATES.md](SUBSTRATES.md) is the support
+statement: probe measurements and intervention policies are implemented, and
+their comparison is unqualified.
+
 ## 2. J-lens results since the closure handoff
 
 **Full 27B lens.** 828 WikiText-103 rows, bf16, dimension batch 4, fitted as

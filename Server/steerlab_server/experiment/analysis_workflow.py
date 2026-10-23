@@ -73,7 +73,8 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
                     f"steerlab-server experiment analyze {name}"))
     epoch_unverified, measurement_drift = require_source_epoch(
         "analyze", name, manifest, run_dir,
-        allow_unverified_epoch=allow_unverified_epoch)
+        allow_unverified_epoch=allow_unverified_epoch,
+        repair_flags=("--reread-choices",) if reread_choices else ())
     if measurement_drift:
         _log(f"WARNING: '{name}' drifted from source run "
              f"'{os.path.basename(run_dir)}' in MEASUREMENT-side fields only "
