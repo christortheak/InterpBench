@@ -1161,6 +1161,45 @@ def test_a_policy_agent_refuses_before_any_model_load(tmp_path, floor_battery):
                 if name.endswith(battery_run.RUN_SLUG)]
 
 
+def test_the_policy_free_repair_is_spelled_for_each_command_line(
+        tmp_path, floor_battery):
+    """The two authoring clients select a workspace differently: the Mac
+    command line takes the global --workspace (its science verbs declare no
+    --root and refuse one as unknownFlag), the cross-platform client takes
+    --root on the verb. Each reader gets the exact spelling it can run."""
+    from steerlab_server.experiment import command_vocabulary as vocabulary
+    root, rel = floor_battery
+    _policy_agent(tmp_path)
+    settings = ('{"agentPath": "runs/model-variants/steered-policy.json", '
+                '"name": "steered-policy-without-policy", "policyPaths": []}')
+    mac = ("steerlab-cli --workspace <workspace> science policy-attach-review "
+           "<settings.json> --json && steerlab-cli --workspace <workspace> "
+           "science policy-attach <settings.json> --plan-sha256 <review hash> "
+           "--json")
+    client = ("steerlab science policy-attach-review <settings.json> --root "
+              "<workspace> --json && steerlab science policy-attach "
+              "<settings.json> --plan-sha256 <review hash> --root <workspace> "
+              "--json")
+    tail = ("; then run 'steerlab-server battery run prompts/batteries/floor.jsonl "
+            "--agent steered-policy-without-policy=<the path policy-attach "
+            "prints>'. The report will name the agent without its policy, not "
+            "this agent")
+    head = ("to read this agent's static steering without its policy, make that "
+            f"agent under its own name: write {settings} to a settings file, then ")
+
+    def repair(surface):
+        with vocabulary.speaking_as(surface):
+            with pytest.raises(battery_run.BatteryRunRefusal) as err:
+                battery_run.preflight(rel, ["steered-policy"], root=root)
+        return err.value.repair_action
+
+    assert repair(vocabulary.MAC) == head + mac + tail
+    assert repair(vocabulary.CLIENT) == head + client + tail
+    assert repair(vocabulary.ENGINE) == (
+        head + "on your authoring client: " + mac + "  (Mac command line), or "
+        + client + "  (cross-platform client)" + tail)
+
+
 def test_the_cli_answers_a_policy_agent_with_the_typed_refusal(
         tmp_path, floor_battery, capsys):
     from steerlab_server.cli import main

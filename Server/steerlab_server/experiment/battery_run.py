@@ -660,10 +660,19 @@ def intervention_policy_refusal(agent: ResolvedAgent,
     new_name = f"{getattr(variant, 'name', None) or agent.name}-without-policy"
     settings = json.dumps({"agentPath": source, "name": new_name,
                            "policyPaths": []}, sort_keys=True)
+    # The two clients select the workspace differently: the Mac command line
+    # takes the global --workspace (its science verbs declare no --root and
+    # would read one as an extra argument), the cross-platform client takes
+    # --root on the verb.
     make = vocabulary.authoring(
-        "science policy-attach-review <settings.json> --root <workspace> --json",
-        "science policy-attach <settings.json> --plan-sha256 <review hash> "
-        "--root <workspace> --json")
+        ("--workspace <workspace> science policy-attach-review <settings.json> "
+         "--json",
+         "science policy-attach-review <settings.json> --root <workspace> "
+         "--json"),
+        ("--workspace <workspace> science policy-attach <settings.json> "
+         "--plan-sha256 <review hash> --json",
+         "science policy-attach <settings.json> --plan-sha256 <review hash> "
+         "--root <workspace> --json"))
     battery = battery_file or "<battery-file>"
     return BatteryRunRefusal(
         f"agent {agent.name!r} uses an intervention policy, which this "
