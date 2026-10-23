@@ -398,6 +398,11 @@ def test_every_committed_fixture_has_a_staleness_test():
         # re-run with one agent failing to load; the written evidence file is
         # compared with the committed one). Read by BatteryEvidenceRowTests.
         "validation-evidence-error-row.json",
+        # Checked inline in test_battery_without_policy_fixture.py (validation
+        # re-run with a policy agent that also carries a vector; the written
+        # evidence file, with its static-part reading under withoutPolicy, is
+        # compared with the committed one). Read by PolicyAgentFreezeTests.
+        "validation-evidence-without-policy.json",
         # Checked inline in test_marker_scoring.py (both engines' tokenization
         # against the committed cases) and ScoringTests.swift.
         "marker-scoring.json",

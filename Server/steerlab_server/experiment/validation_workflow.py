@@ -5,6 +5,7 @@ This owner never imports the task compatibility facade.
 from __future__ import annotations
 import contextvars
 import csv
+import dataclasses
 import json
 import os
 from typing import Callable
@@ -602,6 +603,12 @@ def _battery_results(manifest: manifest_module.Manifest, model, root, _log) -> l
     not a failure of the agent, so it is neither an ``error`` row nor a
     refusal; freeze's battery gate exempts exactly those conditions and
     stamps the frozen study (``freeze_policy.battery_exemption_reason``).
+    When that agent also carries static steering (vectors or adapters), the
+    battery reads the same agent with its policies removed and the row
+    carries that reading in a ``withoutPolicy`` sub-object
+    (``freeze_policy.WITHOUT_POLICY_KEY``): the row itself still has no score
+    keys, so nothing can read the static part as the agent's own capability,
+    and the gate requires the sub-object's score for such a condition.
 
     Arming follows the battery's FORMAT (2026-08-13 repair): a format-2
     battery declares its own rendering context and every condition — baseline
@@ -658,10 +665,35 @@ def _battery_results(manifest: manifest_module.Manifest, model, root, _log) -> l
                 "batteryFormat": spec.format_version,
                 "armingIsolated": spec.isolated}
 
+    def _without_policy_row(policy_free, condition: str) -> dict:
+        # The static-part reading of a policy agent: the same agent, armed
+        # the same way, with its policies removed. Its own score keys only —
+        # never "condition", which belongs to the enclosing row.
+        label = freeze_policy.without_policy_label(condition)
+        try:
+            injections = model_variant.variant_injections(policy_free)
+            adapter = model_variant.apply_adapter(model, policy_free, root=root)
+        except (OSError, KeyError, ValueError, RuntimeError) as exc:
+            _log(f"battery: {label} skipped: {exc}")
+            return {"error": str(exc)}
+        try:
+            correct = _score(injections, policy_free.prompt_mode,
+                             policy_free.system_prompt,
+                             policy_free.qwen_thinking_enabled,
+                             agent_system_prompt=policy_free.system_prompt)
+        finally:
+            model_variant.remove_adapter(model, adapter)
+        _log(f"battery: {label}: {correct}/{len(items)}")
+        reading = _row(condition, correct)
+        reading.pop("condition")
+        reading.pop("batteryHash")
+        return reading
+
     results = [_row("baseline", _score([], manifest.prompt_mode,
                                        manifest.system_prompt,
                                        manifest.qwen_thinking_enabled))]
     for vc in manifest.variant_conditions:
+        policy_row = None
         try:
             if vc.from_promotion:
                 # Validate-time battery for a forward-referenced condition
@@ -675,21 +707,31 @@ def _battery_results(manifest: manifest_module.Manifest, model, root, _log) -> l
                            paths.resolve(vc.artifact_path, root)))
             if variant.intervention_policies:
                 # Not applicable, said as such: the battery cannot run an
-                # intervention policy, so there is nothing to score and
-                # nothing went wrong. An ``error`` row here would read as a
-                # broken agent.
+                # intervention policy, so there is nothing to score for the
+                # agent as it runs and nothing went wrong. An ``error`` row
+                # here would read as a broken agent.
                 reason = freeze_policy.BATTERY_REASON_INTERVENTION_POLICY
                 _log("battery: " + freeze_policy.battery_not_applied_sentence(
                     vc.name, reason))
-                results.append({"condition": vc.name, "batteryHash": digest,
-                                "notApplicable": reason})
-                continue
-            injections = model_variant.variant_injections(variant)
-            adapter = model_variant.apply_adapter(model, variant, root=root)
+                policy_row = {"condition": vc.name, "batteryHash": digest,
+                              "notApplicable": reason}
+            else:
+                injections = model_variant.variant_injections(variant)
+                adapter = model_variant.apply_adapter(model, variant, root=root)
         except (OSError, KeyError, ValueError, RuntimeError) as exc:
             _log(f"battery: variant '{vc.name}' skipped: {exc}")
             results.append({"condition": vc.name, "batteryHash": digest,
                             "error": str(exc)})
+            continue
+        if policy_row is not None:
+            if variant.injections or variant.adapters:
+                # Its static steering alone, read with the policies removed
+                # and recorded INSIDE this row (WITHOUT_POLICY_KEY), so it can
+                # never be filed under or shown as the agent's own score.
+                policy_row[freeze_policy.WITHOUT_POLICY_KEY] = _without_policy_row(
+                    dataclasses.replace(variant, intervention_policies=None),
+                    vc.name)
+            results.append(policy_row)
             continue
         try:
             correct = _score(injections, variant.prompt_mode,

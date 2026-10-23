@@ -79,7 +79,38 @@ extension RunResults {
         /// The engine's account of why the battery could not run for this
         /// condition, when it could not. Such a row has no score either.
         public var error: String? = nil
+        /// On a not-applicable row only: the reading of the agent's static
+        /// steering alone, taken with its policies removed. It describes that
+        /// steering, never the agent as it runs, and is shown under its own
+        /// label (`withoutPolicyLine`), never in the score column.
+        public var withoutPolicy: WithoutPolicyReading? = nil
         public var id: String { condition }
+
+        public struct WithoutPolicyReading: Sendable, Equatable {
+            public var accuracy: Double?
+            public var correct: Int?
+            public var total: Int?
+            public var error: String?
+        }
+
+        /// The static-part reading in words, labelled
+        /// "<condition> without its policy"; nil when the row carries none.
+        public var withoutPolicyLine: String? {
+            guard let reading = withoutPolicy else { return nil }
+            let label = FreezePolicy.withoutPolicyLabel(condition)
+            if let error = reading.error {
+                return FreezePolicy.batteryErrorSentence(condition: label, error: error)
+            }
+            guard let accuracy = reading.accuracy else {
+                return "\(label): no score recorded"
+            }
+            let counts =
+                reading.correct.flatMap { correct in
+                    reading.total.map { " (\(correct)/\($0))" }
+                } ?? ""
+            return "\(label): " + String(format: "%.0f%%", accuracy * 100) + counts
+                + ". It describes the static steering, not the agent as it runs."
+        }
 
         /// What stands where the score would be on a row without one; nil on
         /// a scored row. A row with neither a score nor a stated reason says
@@ -171,13 +202,25 @@ extension RunResults {
     /// error row. The last two carry no score keys.
     private static func batteryRow(_ row: [String: Any]) -> ValidationBatteryRow? {
         guard let condition = row["condition"] as? String else { return nil }
+        let notApplicable = row["notApplicable"] as? String
+        // The static-part reading is read only on a not-applicable row, the
+        // one place both engines write it.
+        let withoutPolicy = (notApplicable == nil ? nil : row["withoutPolicy"] as? [String: Any])
+            .map { sub in
+                ValidationBatteryRow.WithoutPolicyReading(
+                    accuracy: (sub["accuracy"] as? NSNumber)?.doubleValue,
+                    correct: (sub["correct"] as? NSNumber)?.intValue,
+                    total: (sub["total"] as? NSNumber)?.intValue,
+                    error: sub["error"] as? String)
+            }
         return ValidationBatteryRow(
             condition: condition,
             accuracy: (row["accuracy"] as? NSNumber)?.doubleValue,
             correct: (row["correct"] as? NSNumber)?.intValue,
             total: (row["total"] as? NSNumber)?.intValue,
-            notApplicable: row["notApplicable"] as? String,
-            error: row["error"] as? String)
+            notApplicable: notApplicable,
+            error: row["error"] as? String,
+            withoutPolicy: withoutPolicy)
     }
 
     /// The battery rows of a `validation-evidence.json`, or none when the

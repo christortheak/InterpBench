@@ -2104,9 +2104,91 @@ public struct ExperimentError: Error, CustomStringConvertible {
 /// validation evidence at all; now the row is kept as what it is and every
 /// other row is still read. Ask `isScored` before reading `accuracy`.
 ///
+/// A not-applicable row for a policy agent that ALSO carries static steering
+/// (vectors or adapters) adds one key, `withoutPolicy`: the battery reading
+/// of that agent with its policies removed, as a sub-object
+/// {"total", "correct", "accuracy", "batteryFormat"?, "armingIsolated"?} or
+/// {"error"} when the reading could not be taken. The row itself still has
+/// no score keys, so nothing reads the static part as the agent's own
+/// capability; it is shown as "<condition> without its policy"
+/// (`FreezePolicy.withoutPolicyLabel`). Server twin:
+/// `freeze_policy.WITHOUT_POLICY_KEY`.
+///
 /// A row with none of the score keys, `notApplicable`, or `error` is
 /// malformed and fails to decode exactly as it always has.
 public struct CapabilityBatteryConditionResult: Codable, Sendable, Equatable {
+    /// The battery reading of a policy agent's static steering alone, taken
+    /// with its policies removed — never the agent's own score.
+    public struct WithoutPolicyReading: Codable, Sendable, Equatable {
+        public var total: Int
+        public var correct: Int
+        public var accuracy: Double
+        public var batteryFormat: Int?
+        public var armingIsolated: Bool?
+        /// Why the reading could not be taken, when it could not; the score
+        /// fields are then placeholders and are not written.
+        public var error: String?
+
+        public var isScored: Bool { error == nil }
+
+        public init(
+            total: Int, correct: Int, accuracy: Double,
+            batteryFormat: Int? = nil, armingIsolated: Bool? = nil
+        ) {
+            self.total = total
+            self.correct = correct
+            self.accuracy = accuracy
+            self.batteryFormat = batteryFormat
+            self.armingIsolated = armingIsolated
+            self.error = nil
+        }
+
+        public init(error message: String) {
+            self.total = 0
+            self.correct = 0
+            self.accuracy = 0
+            self.batteryFormat = nil
+            self.armingIsolated = nil
+            self.error = message
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case total, correct, accuracy, batteryFormat, armingIsolated, error
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            error = try container.decodeIfPresent(String.self, forKey: .error)
+            if error != nil {
+                total = try container.decodeIfPresent(Int.self, forKey: .total) ?? 0
+                correct = try container.decodeIfPresent(Int.self, forKey: .correct) ?? 0
+                accuracy = try container.decodeIfPresent(
+                    Double.self, forKey: .accuracy) ?? 0
+            } else {
+                total = try container.decode(Int.self, forKey: .total)
+                correct = try container.decode(Int.self, forKey: .correct)
+                accuracy = try container.decode(Double.self, forKey: .accuracy)
+            }
+            batteryFormat = try container.decodeIfPresent(
+                Int.self, forKey: .batteryFormat)
+            armingIsolated = try container.decodeIfPresent(
+                Bool.self, forKey: .armingIsolated)
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            if let error {
+                try container.encode(error, forKey: .error)
+            } else {
+                try container.encode(total, forKey: .total)
+                try container.encode(correct, forKey: .correct)
+                try container.encode(accuracy, forKey: .accuracy)
+                try container.encodeIfPresent(batteryFormat, forKey: .batteryFormat)
+                try container.encodeIfPresent(armingIsolated, forKey: .armingIsolated)
+            }
+        }
+    }
+
     public var condition: String
     public var batteryHash: String
     public var total: Int
@@ -2128,9 +2210,14 @@ public struct CapabilityBatteryConditionResult: Codable, Sendable, Equatable {
     /// other row. When set, `total`/`correct`/`accuracy` are placeholders
     /// and are not written.
     public var error: String?
+    /// On a not-applicable row only: the reading of the agent's static
+    /// steering alone, with its policies removed (`withoutPolicy`). Never the
+    /// condition's own score; nil on every other row.
+    public var withoutPolicy: WithoutPolicyReading? = nil
 
-    /// Whether this row is a reading. False for a not-applicable row and for
-    /// an error row, whose score fields are placeholders.
+    /// Whether this row is a reading. False for a not-applicable row (even
+    /// one that carries a `withoutPolicy` reading) and for an error row,
+    /// whose score fields are placeholders.
     public var isScored: Bool { notApplicable == nil && error == nil }
 
     public init(
@@ -2150,8 +2237,12 @@ public struct CapabilityBatteryConditionResult: Codable, Sendable, Equatable {
     }
 
     /// The explicit not-applicable row for a condition the battery cannot be
-    /// applied to.
-    public init(condition: String, batteryHash: String, notApplicable reason: String) {
+    /// applied to, with the reading of its static steering alone when one
+    /// was taken.
+    public init(
+        condition: String, batteryHash: String, notApplicable reason: String,
+        withoutPolicy: WithoutPolicyReading? = nil
+    ) {
         self.condition = condition
         self.batteryHash = batteryHash
         self.total = 0
@@ -2161,6 +2252,7 @@ public struct CapabilityBatteryConditionResult: Codable, Sendable, Equatable {
         self.armingIsolated = nil
         self.notApplicable = reason
         self.error = nil
+        self.withoutPolicy = withoutPolicy
     }
 
     /// The error row for a condition the battery could not run for.
@@ -2179,6 +2271,7 @@ public struct CapabilityBatteryConditionResult: Codable, Sendable, Equatable {
     enum CodingKeys: String, CodingKey {
         case condition, batteryHash, total, correct, accuracy
         case batteryFormat, armingIsolated, notApplicable, error
+        case withoutPolicy
     }
 
     public init(from decoder: Decoder) throws {
@@ -2188,6 +2281,13 @@ public struct CapabilityBatteryConditionResult: Codable, Sendable, Equatable {
         notApplicable = try container.decodeIfPresent(
             String.self, forKey: .notApplicable)
         error = try container.decodeIfPresent(String.self, forKey: .error)
+        // Read only on a not-applicable row: anywhere else the key has no
+        // meaning, and a scored row must never carry a second score.
+        withoutPolicy =
+            notApplicable == nil
+            ? nil
+            : try container.decodeIfPresent(
+                WithoutPolicyReading.self, forKey: .withoutPolicy)
         if notApplicable != nil || error != nil {
             // The score keys are absent by contract on a not-applicable row
             // and on an error row.
@@ -2212,8 +2312,10 @@ public struct CapabilityBatteryConditionResult: Codable, Sendable, Equatable {
         try container.encode(batteryHash, forKey: .batteryHash)
         if let notApplicable {
             // No score keys: a zero accuracy would read as a measured failure
-            // on either engine.
+            // on either engine. The static-part reading, when there is one,
+            // stays inside its own sub-object.
             try container.encode(notApplicable, forKey: .notApplicable)
+            try container.encodeIfPresent(withoutPolicy, forKey: .withoutPolicy)
         } else if let error {
             // No score keys here either, for the same reason.
             try container.encode(error, forKey: .error)

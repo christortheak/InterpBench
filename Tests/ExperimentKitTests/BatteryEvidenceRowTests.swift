@@ -239,13 +239,17 @@ extension ExperimentStoreTests {
         // One full stop, whether or not the engine's message ended with one.
         #expect(withError.contains("could not run for agent: did not load. Repair"))
 
-        // No row at all for the condition: the historical sentence, verbatim.
+        // No row at all for the condition: the sentence, verbatim, with the
+        // battery scope said as the gate now applies it (2026-10-23).
         #expect(
             refusal([baseline])
                 == "cannot freeze 'gate': matching validate evidence has no "
                 + "capability-battery results for condition(s): agent — re-run "
-                + "'steerlab-cli experiment validate gate' (each variant "
-                + "condition runs the pinned battery), or freeze --force")
+                + "'steerlab-cli experiment validate gate' (each condition the "
+                + "battery can run is scored; a condition whose agent uses an "
+                + "intervention policy is recorded as not applicable, and its "
+                + "static steering, when it has any, is scored without the "
+                + "policy), or freeze --force")
 
         // And a scored row passes.
         #expect(
@@ -285,7 +289,9 @@ extension ExperimentStoreTests {
                 == "The capability battery was not applied to policy-agent, "
                 + "because its agent uses an intervention policy, which the "
                 + "battery cannot run. This study has no capability control "
-                + "for that agent.")
+                + "for that agent as it runs. Any reading of its static "
+                + "steering alone, labelled \"policy-agent without its "
+                + "policy\", describes that steering, not the agent as it runs.")
     }
 
     /// A Python-engine validate run keeps its battery rows in the evidence

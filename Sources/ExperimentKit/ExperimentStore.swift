@@ -7224,8 +7224,8 @@ public enum ExperimentStore {
             // `_check_battery_evidence` has no run-substrate seam — it accepts
             // only `python-hf-transformers` evidence.
             repairAction: "re-run '\(validateCLI(forRunSubstrate: runSubstrate)) "
-                + "experiment validate \(name)' (each variant "
-                + "condition runs the pinned battery), or freeze --force"
+                + "experiment validate \(name)' "
+                + "(\(FreezePolicy.batteryScopePhrase)), or freeze --force"
         ) { try checkVariantBatteryEvidence($0, runSubstrate: runSubstrate) }
         table.append(
             FreezeGateEntry(gate: .batteryEvidence) { manifest in

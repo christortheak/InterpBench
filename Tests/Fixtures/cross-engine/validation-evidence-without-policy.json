@@ -1,0 +1,46 @@
+{
+  "batteryResults": [
+    {
+      "accuracy": 0.5,
+      "armingIsolated": false,
+      "batteryFormat": 1,
+      "batteryHash": "d4167d6a465c561cf2b1764139ed05a362fb3b961821764825139001025de985",
+      "condition": "baseline",
+      "correct": 1,
+      "total": 2
+    },
+    {
+      "accuracy": 0.5,
+      "armingIsolated": false,
+      "batteryFormat": 1,
+      "batteryHash": "d4167d6a465c561cf2b1764139ed05a362fb3b961821764825139001025de985",
+      "condition": "agent-plain",
+      "correct": 1,
+      "total": 2
+    },
+    {
+      "batteryHash": "d4167d6a465c561cf2b1764139ed05a362fb3b961821764825139001025de985",
+      "condition": "agent-policy-only",
+      "notApplicable": "interventionPolicy"
+    },
+    {
+      "batteryHash": "d4167d6a465c561cf2b1764139ed05a362fb3b961821764825139001025de985",
+      "condition": "agent-policy-and-vector",
+      "notApplicable": "interventionPolicy",
+      "withoutPolicy": {
+        "accuracy": 0.5,
+        "armingIsolated": false,
+        "batteryFormat": 1,
+        "correct": 1,
+        "total": 2
+      }
+    }
+  ],
+  "experiment": "policy-with-steering",
+  "reportFile": "validation-report.json",
+  "schemaVersion": 1,
+  "substrate": "python-hf-transformers",
+  "task": "validate",
+  "vacuousConcepts": [],
+  "validationScopeHash": "166f78836116426f6dbcba3cbf020e08d8cdb786e36d41482132c5f749cba2de"
+}

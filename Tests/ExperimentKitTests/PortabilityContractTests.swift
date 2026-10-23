@@ -492,7 +492,10 @@ import Testing
                 "The capability battery was not applied to policy-agent, "
                     + "because its agent uses an intervention policy, which "
                     + "the battery cannot run. This study has no capability "
-                    + "control for that agent."
+                    + "control for that agent as it runs. Any reading of its "
+                    + "static steering alone, labelled \"policy-agent without "
+                    + "its policy\", describes that steering, not the agent as "
+                    + "it runs."
             ])
 
         // And the frozen study VERIFIES here against the exact bytes the

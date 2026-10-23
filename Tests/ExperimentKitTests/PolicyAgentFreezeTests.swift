@@ -8,7 +8,7 @@ import Testing
 ///
 /// The capability battery cannot run an intervention policy, so the
 /// `batteryEvidence` freeze gate could never be satisfied for such a
-/// condition and `--force` — which stamps the whole study non-citable — was
+/// condition and `--force` — which stamps the whole study forced — was
 /// the only way to freeze it. The gate now exempts exactly those conditions
 /// and nothing else:
 ///
@@ -26,6 +26,8 @@ extension ExperimentStoreTests {
 
     private static let policyAgent = "policy-agent"
     private static let plainAgent = "plain-agent"
+    /// A policy agent that ALSO carries static steering (a vector injection).
+    private static let mixedAgent = "mixed-agent"
     private static let policyReason =
         ExperimentManifest.BatteryNotApplied.interventionPolicyReason
     private static let policyStamp = [
@@ -36,7 +38,10 @@ extension ExperimentStoreTests {
     private static let policySentence =
         "The capability battery was not applied to policy-agent, because its "
         + "agent uses an intervention policy, which the battery cannot run. "
-        + "This study has no capability control for that agent."
+        + "This study has no capability control for that agent as it runs. "
+        + "Any reading of its static steering alone, labelled \"policy-agent "
+        + "without its policy\", describes that steering, not the agent as it "
+        + "runs."
 
     private func hex(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
@@ -67,9 +72,12 @@ extension ExperimentStoreTests {
         for condition in conditions {
             let artifact = ModelVariantArtifact(
                 name: condition, baseModelID: "test/model", adapters: [],
-                injections: [], promptMode: "chatAssistant",
+                injections: condition == Self.mixedAgent
+                    ? [.init(concept: "c", vectorArtifactID: "runs/x/c", layer: 1, alpha: 0.1)]
+                    : [],
+                promptMode: "chatAssistant",
                 qwenThinkingEnabled: false, temperature: 0, systemPrompt: "",
-                interventionPolicies: condition == Self.policyAgent
+                interventionPolicies: [Self.policyAgent, Self.mixedAgent].contains(condition)
                     ? policyAttachments() : nil)
             let relativePath = "runs/model-variants/\(condition)/model-variant.json"
             let url = root.appending(path: relativePath)
@@ -125,7 +133,7 @@ extension ExperimentStoreTests {
 
             #expect(frozen.status == .frozen)
             // Not forced: neither force stamp exists, so nothing marks the
-            // study non-citable.
+            // study forced.
             #expect(frozen.freezeForced == nil)
             #expect(frozen.forcedGatesSkipped == nil)
             // The honest stamp: which condition, and why.
@@ -511,5 +519,173 @@ extension ExperimentStoreTests {
                 !ExperimentStore.preregistrationMarkdown(manifest)
                     .contains("## Capability battery"))
         }
+    }
+
+    // MARK: - The static part of a policy agent (ruling 2026-10-23)
+
+    private func withoutPolicy(
+        _ condition: String, accuracy: Double = 0.75, error: String? = nil
+    ) -> CapabilityBatteryConditionResult {
+        .init(
+            condition: condition, batteryHash: "bh",
+            notApplicable: Self.policyReason,
+            withoutPolicy: error.map { .init(error: $0) }
+                ?? .init(total: 4, correct: 3, accuracy: accuracy))
+    }
+
+    private func batteryGateRefusal(
+        _ manifest: ExperimentManifest, _ rows: [CapabilityBatteryConditionResult],
+        expectedHash: String? = nil
+    ) -> String? {
+        do {
+            try FreezePolicy.checkVariantBatteryEvidence(
+                manifest,
+                facts: .init(
+                    hasMatchingEvidence: true, results: rows,
+                    expectedHash: expectedHash))
+            return nil
+        } catch let error as ExperimentError {
+            return error.reason
+        } catch {
+            return "\(error)"
+        }
+    }
+
+    @Test func onlyAPolicyAgentWithStaticSteeringOwesAStaticPartReading() throws {
+        try withTempRoot {
+            let manifest = try makePolicyStudy(
+                name: "owes",
+                conditions: [Self.policyAgent, Self.mixedAgent, Self.plainAgent])
+            let byName = Dictionary(
+                uniqueKeysWithValues: manifest.variantConditions.map { ($0.name, $0) })
+            let mixed = try #require(byName[Self.mixedAgent])
+            let policyOnly = try #require(byName[Self.policyAgent])
+            let plain = try #require(byName[Self.plainAgent])
+            #expect(FreezePolicy.owesStaticPartReading(mixed))
+            #expect(!FreezePolicy.owesStaticPartReading(policyOnly))
+            #expect(!FreezePolicy.owesStaticPartReading(plain))
+            #expect(
+                FreezePolicy.withoutPolicyLabel(Self.mixedAgent)
+                    == "mixed-agent without its policy")
+        }
+    }
+
+    @Test func theGateRequiresTheStaticPartReading() throws {
+        try withTempRoot {
+            let manifest = try makePolicyStudy(
+                name: "static-gate", conditions: [Self.mixedAgent])
+            // The not-applicable row alone no longer suffices for an agent
+            // that also carries static steering.
+            let missing = try #require(
+                batteryGateRefusal(
+                    manifest, [scored("baseline"), notApplicable(Self.mixedAgent)]))
+            #expect(
+                missing.contains(
+                    "a capability-battery reading of mixed-agent without its "
+                        + "policy (its static steering alone)"))
+            #expect(missing.contains(FreezePolicy.batteryScopePhrase))
+            // A reading that could not be taken says why, and is missing.
+            let failed = try #require(
+                batteryGateRefusal(
+                    manifest,
+                    [scored("baseline"), withoutPolicy(Self.mixedAgent, error: "no vector")]))
+            #expect(
+                failed.contains(
+                    "The capability battery could not run for mixed-agent "
+                        + "without its policy: no vector."))
+            // With the reading inside the row, the gate passes.
+            #expect(
+                batteryGateRefusal(
+                    manifest, [scored("baseline"), withoutPolicy(Self.mixedAgent)]) == nil)
+            // Drift is checked for the static-part reading too.
+            let baselineOther = CapabilityBatteryConditionResult(
+                condition: "baseline", batteryHash: "other", total: 12, correct: 12,
+                accuracy: 1)
+            let drifted = try #require(
+                batteryGateRefusal(
+                    manifest, [baselineOther, withoutPolicy(Self.mixedAgent)],
+                    expectedHash: "other"))
+            #expect(drifted.contains("drifted"))
+            #expect(drifted.contains("mixed-agent without its policy"))
+
+            // A policy agent with no static steering owes nothing more.
+            let policyOnly = try makePolicyStudy(name: "policy-only-gate")
+            #expect(
+                batteryGateRefusal(
+                    policyOnly, [scored("baseline"), notApplicable(Self.policyAgent)]) == nil)
+            // The static part never stands in for a condition's own score.
+            let plain = try makePolicyStudy(
+                name: "plain-gate", conditions: [Self.plainAgent])
+            #expect(
+                batteryGateRefusal(
+                    plain, [scored("baseline"), withoutPolicy(Self.plainAgent, accuracy: 1)])
+                    != nil)
+        }
+    }
+
+    /// The Python engine's evidence file, written by its own validation code
+    /// (`Server/tests/test_battery_without_policy_fixture.py`), decodes here:
+    /// the static-part reading lands in `withoutPolicy`, the row itself stays
+    /// unscored, and the row satisfies this engine's gate.
+    @Test func thePythonEnginesStaticPartRowDecodesAndSatisfiesTheGate() throws {
+        let url = URL(filePath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "Fixtures/cross-engine/validation-evidence-without-policy.json")
+        struct Evidence: Decodable {
+            let batteryResults: [CapabilityBatteryConditionResult]
+        }
+        let data = try Data(contentsOf: url)
+        let evidence = try JSONDecoder().decode(Evidence.self, from: data)
+        let rows = Dictionary(
+            uniqueKeysWithValues: evidence.batteryResults.map { ($0.condition, $0) })
+        let mixed = try #require(rows["agent-policy-and-vector"])
+        #expect(!mixed.isScored)
+        #expect(mixed.notApplicable == Self.policyReason)
+        let reading = try #require(mixed.withoutPolicy)
+        #expect(reading.isScored)
+        #expect(reading.correct == 1 && reading.total == 2 && reading.accuracy == 0.5)
+        #expect(reading.batteryFormat == 1 && reading.armingIsolated == false)
+        #expect(rows["agent-policy-only"]?.withoutPolicy == nil)
+        #expect(rows["agent-plain"]?.withoutPolicy == nil)
+
+        // Re-encoded by this engine, the row keeps the shape: no score keys
+        // on the row, the reading in its own object.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        #expect(
+            String(decoding: try encoder.encode(mixed), as: UTF8.self)
+                == #"{"batteryHash":"d4167d6a465c561cf2b1764139ed05a362fb3b961821764825139001025de985","condition":"agent-policy-and-vector","notApplicable":"interventionPolicy","withoutPolicy":{"accuracy":0.5,"armingIsolated":false,"batteryFormat":1,"correct":1,"total":2}}"#)
+
+        // The validation report box shows it under its own label.
+        let display = RunResults.batteryRows(fromEvidenceJSON: data)
+        let shown = try #require(display.first { $0.condition == "agent-policy-and-vector" })
+        #expect(shown.unscoredLabel == "not applicable")
+        #expect(
+            shown.withoutPolicyLine
+                == "agent-policy-and-vector without its policy: 50% (1/2). It "
+                + "describes the static steering, not the agent as it runs.")
+        #expect(display.first { $0.condition == "agent-policy-only" }?.withoutPolicyLine == nil)
+
+        // The same row, under this study's condition name, satisfies the gate.
+        try withTempRoot {
+            let manifest = try makePolicyStudy(
+                name: "python-static", conditions: [Self.mixedAgent])
+            var renamed = mixed
+            renamed.condition = Self.mixedAgent
+            var baseline = try #require(rows["baseline"])
+            baseline.batteryHash = mixed.batteryHash
+            #expect(batteryGateRefusal(manifest, [baseline, renamed]) == nil)
+        }
+    }
+
+    /// A key that means nothing on a scored row is never read there: a scored
+    /// row cannot carry a second score.
+    @Test func aScoredRowNeverCarriesAStaticPartReading() throws {
+        let row = Data(
+            #"{"condition":"baseline","batteryHash":"bh","total":2,"correct":2,"accuracy":1,"withoutPolicy":{"total":2,"correct":0,"accuracy":0}}"#
+                .utf8)
+        let decoded = try JSONDecoder().decode(
+            CapabilityBatteryConditionResult.self, from: row)
+        #expect(decoded.isScored && decoded.withoutPolicy == nil)
     }
 }

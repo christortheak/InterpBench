@@ -299,12 +299,13 @@ import Testing
         let local = try! #require(batteryRepair(ExperimentStore.evidenceSubstrate))
         let server = try! #require(
             batteryRepair(WorkspaceScoping.serverSubstrate))
-        // The SENTENCE is unchanged; only the binary moves.
-        #expect(local == "re-run 'steerlab-cli experiment validate bat' (each "
-            + "variant condition runs the pinned battery), or freeze --force")
+        // The SENTENCE is the same on both; only the binary moves.
+        let scope = FreezePolicy.batteryScopePhrase
+        #expect(local == "re-run 'steerlab-cli experiment validate bat' "
+            + "(\(scope)), or freeze --force")
         #expect(server == "re-run 'steerlab-server experiment validate bat' "
-            + "(each variant condition runs the pinned battery), or "
-            + "freeze --force")
+            + "(\(scope)), or freeze --force")
+        #expect(scope.hasPrefix("each condition the battery can run is scored"))
     }
 
     /// WP0 residual (a) — THE FIREWALL. The closed instrument vocabulary was

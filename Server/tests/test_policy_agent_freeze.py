@@ -2,7 +2,7 @@
 
 The capability battery cannot run an intervention policy, so the
 ``batteryEvidence`` freeze gate could never be satisfied for such a condition
-and ``--force`` — which stamps the whole study non-citable — was the only way
+and ``--force`` — which stamps the whole study forced — was the only way
 to freeze it. The gate now exempts exactly those conditions and nothing else:
 
 * the frozen manifest carries ``capabilityBatteryNotApplied`` (a freeze stamp,
@@ -34,11 +34,17 @@ from test_intervention_policies import attached, setup
 
 POLICY = "policy-agent"
 PLAIN = "plain-agent"
+#: A policy agent that ALSO carries static steering (a vector injection).
+MIXED = "mixed-agent"
 SENTENCE = (
     "The capability battery was not applied to policy-agent, because its "
     "agent uses an intervention policy, which the battery cannot run. This "
-    "study has no capability control for that agent.")
+    "study has no capability control for that agent as it runs. Any reading "
+    "of its static steering alone, labelled \"policy-agent without its "
+    "policy\", describes that steering, not the agent as it runs.")
 STAMP = [{"condition": POLICY, "reason": "interventionPolicy"}]
+INJECTION = {"concept": "c", "vectorArtifactID": "runs/x/c", "layer": 1,
+             "alpha": 0.1}
 
 
 def _write(path, payload):
@@ -50,10 +56,10 @@ def _write(path, payload):
         return hashlib.sha256(handle.read()).hexdigest()
 
 
-def _condition(root, name, *, policies=None):
+def _condition(root, name, *, policies=None, injections=()):
     """One variant condition with its agent pinned inline and on disk."""
     artifact = {"name": name, "baseModelID": "org/m", "adapters": [],
-                "injections": [], "temperature": 0.0,
+                "injections": list(injections), "temperature": 0.0,
                 "promptMode": "chatAssistant"}
     if policies is not None:
         artifact["interventionPolicies"] = policies
@@ -72,7 +78,8 @@ def _study(tmp_path, name="policy-study", *, conditions=(POLICY,)):
     es.create(name, model_id="org/m", revision="abc", root=root)
     d = es.load_raw(name, root)
     d["variantConditions"] = [
-        _condition(root, c, policies=policies if c == POLICY else None)
+        _condition(root, c, policies=policies if c in (POLICY, MIXED) else None,
+                   injections=[INJECTION] if c == MIXED else ())
         for c in conditions]
     es.save_raw(d, root)
     return root, name
@@ -119,7 +126,7 @@ def test_policy_agent_study_freezes_without_force_and_carries_the_stamp(tmp_path
     frozen = es.freeze(name, force=False, root=root)
 
     assert frozen["status"] == "frozen"
-    # Not forced: neither force stamp exists, so nothing marks it non-citable.
+    # Not forced: neither force stamp exists, so nothing marks it forced.
     assert "freezeForced" not in frozen
     assert "forcedGatesSkipped" not in frozen
     # The honest stamp: which condition, and why.
@@ -389,3 +396,136 @@ def test_a_run_report_for_a_study_without_a_policy_agent_is_unchanged(tmp_path):
         battery={"baseline": {"accuracy": 1.0, "itemCount": 2, "batteryHash": "h"}})
     with open(os.path.join(path, "report.json"), encoding="utf-8") as handle:
         assert freeze_policy.BATTERY_NOT_APPLIED_KEY not in json.load(handle)
+
+
+# --- the static part of a policy agent (ruling 2026-10-23) --------------------
+
+def _without_policy(condition, battery_hash, accuracy=0.75):
+    """A not-applicable row carrying the reading of the agent's static
+    steering alone, in the cross-engine shape."""
+    return {"condition": condition, "batteryHash": battery_hash,
+            "notApplicable": "interventionPolicy",
+            freeze_policy.WITHOUT_POLICY_KEY: {
+                "total": 4, "correct": 3, "accuracy": accuracy}}
+
+
+def test_only_a_policy_agent_with_static_steering_owes_a_static_part_reading(tmp_path):
+    root, name = _study(tmp_path, conditions=(POLICY, MIXED, PLAIN))
+    by_name = {vc["name"]: vc for vc in es.load_raw(name, root)["variantConditions"]}
+    assert freeze_policy.owes_static_part_reading(by_name[MIXED])
+    # A policy agent with no vectors or adapters stays exempt exactly as
+    # before, and a plain agent is not a policy agent at all.
+    assert not freeze_policy.owes_static_part_reading(by_name[POLICY])
+    assert not freeze_policy.owes_static_part_reading(by_name[PLAIN])
+    assert freeze_policy.without_policy_label(MIXED) == "mixed-agent without its policy"
+
+
+def test_the_gate_requires_the_static_part_reading(tmp_path):
+    root, name = _study(tmp_path, conditions=(MIXED,))
+    # The not-applicable row alone is not enough when the agent also carries
+    # static steering: attaching a policy no longer exempts the steering.
+    _validate_evidence(root, name, [
+        _baseline, lambda h: _not_applicable(MIXED, h)])
+    with pytest.raises(es.ExperimentStoreError) as refused:
+        es.freeze(name, force=False, root=root)
+    assert refused.value.gate == "batteryEvidence"
+    message = str(refused.value)
+    assert "a capability-battery reading of mixed-agent without its policy " \
+        "(its static steering alone)" in message
+    assert freeze_policy.BATTERY_SCOPE_PHRASE in message
+    # The repair says what the validate step scores.
+    assert freeze_policy.BATTERY_SCOPE_PHRASE in refused.value.repair_action
+
+    # With the reading inside the row, the study freezes cleanly: the stamp
+    # still says the battery was not applied to the agent as it runs.
+    _validate_evidence(root, name, [
+        _baseline, lambda h: _without_policy(MIXED, h)], stamp="w")
+    frozen = es.freeze(name, force=False, root=root)
+    assert frozen[freeze_policy.BATTERY_NOT_APPLIED_KEY] == [
+        {"condition": MIXED, "reason": "interventionPolicy"}]
+    assert "freezeForced" not in frozen
+
+
+def test_a_static_part_reading_that_failed_does_not_satisfy_the_gate(tmp_path):
+    root, name = _study(tmp_path, conditions=(MIXED,))
+    _validate_evidence(root, name, [
+        _baseline,
+        lambda h: {**_not_applicable(MIXED, h),
+                   freeze_policy.WITHOUT_POLICY_KEY: {"error": "no vector"}}])
+    with pytest.raises(es.ExperimentStoreError, match="without its policy") as refused:
+        es.freeze(name, force=False, root=root)
+    assert refused.value.gate == "batteryEvidence"
+
+
+def test_the_static_part_reading_never_stands_in_for_the_conditions_own_score(tmp_path):
+    # A plain agent owes its own score. A row shaped like a policy agent's,
+    # with a static-part reading inside, has no score for the condition and
+    # never satisfies the gate for it.
+    root, name = _study(tmp_path, conditions=(PLAIN,))
+    _validate_evidence(root, name, [
+        _baseline, lambda h: _without_policy(PLAIN, h, accuracy=1.0)])
+    with pytest.raises(es.ExperimentStoreError) as refused:
+        es.freeze(name, force=False, root=root)
+    assert refused.value.gate == "batteryEvidence"
+    assert "capability-battery results for condition(s) plain-agent" in str(
+        refused.value)
+
+
+def test_battery_drift_is_checked_for_the_static_part_reading(tmp_path):
+    root, name = _study(tmp_path, conditions=(MIXED,))
+    battery_hash = _write(
+        os.path.join(root, "prompts", "batteries", "basic.jsonl"),
+        '{"prompt": "2+2?", "answer": "4"}\n')
+    d = es.load_raw(name, root)
+    d["capabilityBatteryFile"] = "prompts/batteries/basic.jsonl"
+    d["capabilityBatteryHash"] = battery_hash
+    es.save_raw(d, root)
+    _validate_evidence(root, name, [
+        lambda h: _scored("baseline", battery_hash),
+        lambda h: _without_policy(MIXED, "00" * 32)])
+    with pytest.raises(es.ExperimentStoreError, match="battery drifted") as refused:
+        es.freeze(name, force=False, root=root)
+    assert "mixed-agent without its policy" in str(refused.value)
+
+
+def test_validation_reads_the_static_part_with_the_policies_removed(tmp_path, monkeypatch):
+    import steerlab_server.experiment.model_variant as _owner_model_variant
+    root, name = _study(tmp_path, conditions=(MIXED, POLICY))
+    battery_hash = _write(
+        os.path.join(root, "prompts", "batteries", "basic.jsonl"),
+        '{"prompt": "2+2?", "answer": "4"}\n')
+    d = es.load_raw(name, root)
+    d["capabilityBatteryFile"] = "prompts/batteries/basic.jsonl"
+    d["capabilityBatteryHash"] = battery_hash
+    manifest = Manifest.from_dict(d)
+    monkeypatch.setattr(_owner_generate, "generate", lambda *a, **k: "4")
+    built = []
+
+    def variant_injections(variant, **kwargs):
+        # The injection path refuses a policy without allow_policies; the
+        # static-part reading must reach it with the policies already gone.
+        assert not variant.intervention_policies
+        built.append(variant)
+        return []
+
+    monkeypatch.setattr(_owner_model_variant, "variant_injections", variant_injections)
+    logged = []
+
+    rows = _owner_validation_workflow._battery_results(
+        manifest, object(), root, logged.append)
+
+    by_condition = {r["condition"]: r for r in rows}
+    mixed = by_condition[MIXED]
+    # The condition's own row keeps NO score keys; the reading sits in its
+    # own sub-object, without a "condition" of its own.
+    assert mixed["notApplicable"] == "interventionPolicy"
+    assert "accuracy" not in mixed and "total" not in mixed
+    reading = mixed[freeze_policy.WITHOUT_POLICY_KEY]
+    assert reading["accuracy"] == 1.0 and reading["total"] == 1
+    assert "condition" not in reading and "batteryHash" not in reading
+    # It read the same agent: same steering, same name, policies removed.
+    assert [v.name for v in built] == [MIXED]
+    assert built[0].injections == [INJECTION]
+    # A policy agent with no static steering gets no reading at all.
+    assert freeze_policy.WITHOUT_POLICY_KEY not in by_condition[POLICY]
+    assert "battery: mixed-agent without its policy: 1/1" in logged

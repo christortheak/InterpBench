@@ -188,6 +188,37 @@ enum FreezePolicy {
         }
     }
 
+    /// Whether one variant condition's INLINE agent carries steering that
+    /// does not depend on a policy: steering vectors or adapters. Attaching a
+    /// policy keeps both, and the battery can run them, so a policy agent
+    /// that has any owes a reading of them alone. Server twin:
+    /// `freeze_policy.has_static_steering`.
+    static func hasStaticSteering(
+        _ variant: ExperimentManifest.VariantCondition
+    ) -> Bool {
+        !variant.artifact.injections.isEmpty || !variant.artifact.adapters.isEmpty
+    }
+
+    /// Whether the battery gate asks for a reading of this condition's agent
+    /// WITHOUT its policy: its agent uses an intervention policy (so the
+    /// battery cannot read the agent as it runs) and also carries static
+    /// steering (which the battery can read). A policy agent with no static
+    /// steering owes nothing, exactly as before. Server twin:
+    /// `freeze_policy.owes_static_part_reading`.
+    static func owesStaticPartReading(
+        _ variant: ExperimentManifest.VariantCondition
+    ) -> Bool {
+        batteryExemptionReason(variant)
+            == ExperimentManifest.BatteryNotApplied.interventionPolicyReason
+            && hasStaticSteering(variant)
+    }
+
+    /// How a static-part reading is named wherever it appears. Server twin:
+    /// `freeze_policy.without_policy_label`.
+    static func withoutPolicyLabel(_ condition: String) -> String {
+        "\(condition) without its policy"
+    }
+
     /// The researcher-facing sentence for one entry. Both engines emit it
     /// verbatim (server twin: `freeze_policy.battery_not_applied_sentence`).
     static func batteryNotAppliedSentence(
@@ -197,12 +228,23 @@ enum FreezePolicy {
             return "The capability battery was not applied to \(entry.condition), "
                 + "because its agent uses an intervention policy, which the "
                 + "battery cannot run. This study has no capability control "
-                + "for that agent."
+                + "for that agent as it runs. Any reading of its static "
+                + "steering alone, labelled "
+                + "\"\(withoutPolicyLabel(entry.condition))\", describes that "
+                + "steering, not the agent as it runs."
         }
         return "The capability battery was not applied to \(entry.condition) "
             + "(recorded reason: \(entry.reason)). This study has no capability "
             + "control for that agent."
     }
+
+    /// What the battery gate asks of each condition, said once for every
+    /// repair and refusal that names the validate step. Server twin:
+    /// `freeze_policy.BATTERY_SCOPE_PHRASE`.
+    static let batteryScopePhrase =
+        "each condition the battery can run is scored; a condition whose agent "
+        + "uses an intervention policy is recorded as not applicable, and its "
+        + "static steering, when it has any, is scored without the policy"
 
     /// The researcher-facing sentence for an ERROR row: the validate run
     /// could not run the battery for this condition, and `error` is the
@@ -260,33 +302,68 @@ enum FreezePolicy {
         // reading. It is missing evidence for the gate, exactly as on the
         // server, and the refusal carries the row's own account of why.
         let missing = required.filter { results[$0]?.isScored != true }
-        guard missing.isEmpty else {
-            let failures = missing.compactMap { condition in
-                results[condition]?.error.map {
-                    batteryErrorSentence(condition: condition, error: $0)
-                }
+        // A policy agent that also carries static steering owes a reading of
+        // that steering alone (maintainer ruling 2026-10-23): attaching a
+        // policy no longer exempts the agent's vectors and adapters from the
+        // check they would otherwise get. The reading lives inside the
+        // condition's not-applicable row (`withoutPolicy`), never as the
+        // condition's own score; a policy agent with no static steering owes
+        // nothing. Server twin: `owing` in `check_battery_evidence`.
+        let owing = manifest.variantConditions
+            .filter(owesStaticPartReading)
+            .map(\.name)
+        let missingStatic = owing.filter {
+            results[$0]?.withoutPolicy?.isScored != true
+        }
+        guard missing.isEmpty, missingStatic.isEmpty else {
+            var owed: [String] = []
+            if !missing.isEmpty {
+                owed.append(
+                    "capability-battery results for condition(s): "
+                        + missing.joined(separator: ", "))
             }
+            if !missingStatic.isEmpty {
+                owed.append(
+                    "a capability-battery reading of "
+                        + missingStatic.map(withoutPolicyLabel)
+                        .joined(separator: ", ")
+                        + " (its static steering alone)")
+            }
+            let lacking =
+                "cannot freeze '\(name)': matching validate evidence has no "
+                + owed.joined(separator: " and no ")
+            let failures =
+                missing.compactMap { condition in
+                    results[condition]?.error.map {
+                        batteryErrorSentence(condition: condition, error: $0)
+                    }
+                }
+                + missingStatic.compactMap { condition in
+                    results[condition]?.withoutPolicy?.error.map {
+                        batteryErrorSentence(
+                            condition: withoutPolicyLabel(condition), error: $0)
+                    }
+                }
             guard failures.isEmpty else {
                 throw ExperimentError(
-                    reason: "cannot freeze '\(name)': matching validate evidence has no "
-                        + "capability-battery results for condition(s): "
-                        + missing.joined(separator: ", ") + ". "
+                    reason: lacking + ". "
                         + failures.joined(separator: " ")
                         + " Repair what that message names, then re-run "
-                        + "'steerlab-cli experiment validate \(name)' (each variant "
-                        + "condition runs the pinned battery), or freeze --force")
+                        + "'steerlab-cli experiment validate \(name)' "
+                        + "(\(batteryScopePhrase)), or freeze --force")
             }
             throw ExperimentError(
-                reason: "cannot freeze '\(name)': matching validate evidence has no "
-                    + "capability-battery results for condition(s): "
-                    + missing.joined(separator: ", ")
-                    + " — re-run 'steerlab-cli experiment validate \(name)' (each "
-                    + "variant condition runs the pinned battery), or freeze --force")
+                reason: lacking
+                    + " — re-run 'steerlab-cli experiment validate \(name)' "
+                    + "(\(batteryScopePhrase)), or freeze --force")
         }
         if let expected = facts.expectedHash {
             let drifted =
-                required
+                (required
                 .filter { results[$0]?.batteryHash != expected }
+                + owing
+                .filter { results[$0]?.batteryHash != expected }
+                .map(withoutPolicyLabel))
                 .sorted()
             guard drifted.isEmpty else {
                 throw ExperimentError(

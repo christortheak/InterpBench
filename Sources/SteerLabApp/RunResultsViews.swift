@@ -1860,6 +1860,14 @@ struct ValidationReportSectionView: View {
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    // The static part's own reading, under its own label —
+                    // never in the score position beside the condition.
+                    if let line = row.withoutPolicyLine {
+                        Text(line)
+                            .font(.caption2)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
         }

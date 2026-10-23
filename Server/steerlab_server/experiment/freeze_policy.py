@@ -63,6 +63,59 @@ def battery_not_applied(d: dict) -> list[dict]:
     return entries
 
 
+def has_static_steering(vc) -> bool:
+    """Whether one variant condition's INLINE agent carries steering that does
+    not depend on a policy: steering vectors or adapters. Attaching a policy
+    keeps both (``policy_authoring.attachment_review``), and the battery can
+    run them, so a policy agent that has any owes a reading of them alone.
+    Swift twin: ``FreezePolicy.hasStaticSteering``."""
+    if not isinstance(vc, dict):
+        return False
+    artifact = vc.get("artifact")
+    if not isinstance(artifact, dict):
+        return False
+    return bool(artifact.get("injections")) or bool(artifact.get("adapters"))
+
+
+def owes_static_part_reading(vc) -> bool:
+    """Whether the battery gate asks for a reading of this condition's agent
+    WITHOUT its policy: its agent uses an intervention policy (so the battery
+    cannot read the agent as it runs) and also carries static steering (which
+    the battery can read). A policy agent with no static steering owes
+    nothing, exactly as before. Swift twin:
+    ``FreezePolicy.owesStaticPartReading``."""
+    return (battery_exemption_reason(vc) == BATTERY_REASON_INTERVENTION_POLICY
+            and has_static_steering(vc))
+
+
+#: Evidence-row key (cross-engine): the battery reading of a policy agent's
+#: static steering alone, taken with its policies removed. It lives INSIDE
+#: that condition's not-applicable row, as a sub-object —
+#: ``{"condition", "batteryHash", "notApplicable": "interventionPolicy",
+#: "withoutPolicy": {"total", "correct", "accuracy", "batteryFormat"?,
+#: "armingIsolated"?}}``, or ``"withoutPolicy": {"error": <what went wrong>}``
+#: when the reading could not be taken — so the condition's own row keeps NO
+#: score keys, and every reader that looks for ``accuracy`` on a row still
+#: finds none for the agent as it runs. Shown everywhere under
+#: :func:`without_policy_label`. Swift twin:
+#: ``CapabilityBatteryConditionResult.withoutPolicy``.
+WITHOUT_POLICY_KEY = "withoutPolicy"
+
+
+def without_policy_label(condition: str) -> str:
+    """How a static-part reading is named wherever it appears. Swift twin:
+    ``FreezePolicy.withoutPolicyLabel``."""
+    return f"{condition} without its policy"
+
+
+def without_policy_reading(row) -> dict | None:
+    """The static-part reading inside one evidence row, or None."""
+    if not isinstance(row, dict):
+        return None
+    reading = row.get(WITHOUT_POLICY_KEY)
+    return reading if isinstance(reading, dict) else None
+
+
 def battery_not_applied_sentence(condition: str, reason: str) -> str:
     """The researcher-facing sentence for one entry. Both engines emit it
     verbatim (Swift twin: ``FreezePolicy.batteryNotAppliedSentence``)."""
@@ -70,10 +123,22 @@ def battery_not_applied_sentence(condition: str, reason: str) -> str:
         return (f"The capability battery was not applied to {condition}, "
                 "because its agent uses an intervention policy, which the "
                 "battery cannot run. This study has no capability control "
-                "for that agent.")
+                "for that agent as it runs. Any reading of its static "
+                "steering alone, labelled "
+                f"\"{without_policy_label(condition)}\", describes that "
+                "steering, not the agent as it runs.")
     return (f"The capability battery was not applied to {condition} "
             f"(recorded reason: {reason}). This study has no capability "
             "control for that agent.")
+
+
+#: What the battery gate asks of each condition, said once for every repair
+#: and refusal that names the validate step. Swift twin:
+#: ``FreezePolicy.batteryScopePhrase``.
+BATTERY_SCOPE_PHRASE = (
+    "each condition the battery can run is scored; a condition whose agent "
+    "uses an intervention policy is recorded as not applicable, and its "
+    "static steering, when it has any, is scored without the policy")
 
 
 @dataclass(frozen=True)
@@ -185,9 +250,8 @@ def freeze_gate_repair(gate: str, name: str) -> str:
             "variantValidity": "save the agent again with hashed adapter "
                                f"weights and attach it again ({attach_agent})"
                                f", then {freeze_again}",
-            "batteryEvidence": f"{validate}  (each agent condition the "
-                               "capability battery can run is scored), then "
-                               f"{freeze_again}",
+            "batteryEvidence": f"{validate}  ({BATTERY_SCOPE_PHRASE}), "
+                               f"then {freeze_again}",
             "judgeValidity": "declare the rubric file and the judges: "
                              f"{pin_rubric}  (or apply a study pack, which "
                              "pins the rubric's bytes for you), then "
@@ -211,8 +275,7 @@ def freeze_gate_repair(gate: str, name: str) -> str:
                             f"engine will not satisfy it), then {freeze_again}",
         "variantValidity": "re-save the variant with hashed adapter weights "
                            f"and re-attach it, then {freeze_again}",
-        "batteryEvidence": f"{validate}  "
-                           "(each variant condition runs the pinned battery), "
+        "batteryEvidence": f"{validate}  ({BATTERY_SCOPE_PHRASE}), "
                            f"then {freeze_again}",
         "judgeValidity": f"{pin_rubric}. Then {freeze_again}",
         "gitClean": "commit the pinned inputs in the workspace git repo, then "
@@ -291,10 +354,12 @@ def check_variant_validity(name: str, d: dict, *, evidence_grade_variants: set[i
 def check_battery_evidence(name: str, d: dict, evidence: dict | None,
                            *, expected_hash: str | None) -> None:
     """Variant freeze gate, evidence half: the scope-matched validate evidence
-    must contain capability-battery results for the baseline and EVERY variant
-    condition, produced from the battery the manifest pins (or the live
-    default battery when unpinned). Hash pins alone say the artifact bytes are
-    stable; this says the variant still answers concept-unrelated probes."""
+    must contain capability-battery results for the baseline and every
+    variant condition the battery can run, plus a reading of the static
+    steering alone for each policy agent that has some, produced from the
+    battery the manifest pins (or the live default battery when unpinned).
+    Hash pins alone say the artifact bytes are stable; this says the variant
+    still answers concept-unrelated probes."""
     results = {r.get("condition"): r
                for r in (evidence or {}).get("batteryResults") or []
                if isinstance(r, dict)}
@@ -318,16 +383,38 @@ def check_battery_evidence(name: str, d: dict, evidence: dict | None,
                 if vocabulary.is_client() else f"experiment validate {name}")
     missing = [c for c in required
                if c not in results or results[c].get("accuracy") is None]
-    if missing:
+    # A policy agent that also carries static steering owes a reading of that
+    # steering alone (maintainer ruling 2026-10-23): attaching a policy no
+    # longer exempts the agent's vectors and adapters from the check they
+    # would otherwise get. The reading lives inside the condition's
+    # not-applicable row under WITHOUT_POLICY_KEY, never as the condition's
+    # own score, and a policy agent with no static steering owes nothing.
+    owing = [vc.get("name", "?") for vc in d.get("variantConditions") or []
+             if owes_static_part_reading(vc)]
+    missing_static = [
+        c for c in owing
+        if (without_policy_reading(results.get(c)) or {}).get("accuracy") is None]
+    if missing or missing_static:
+        owed = []
+        if missing:
+            owed.append("capability-battery results for condition(s) "
+                        + ", ".join(missing))
+        if missing_static:
+            owed.append("a capability-battery reading of "
+                        + ", ".join(without_policy_label(c)
+                                    for c in missing_static)
+                        + " (its static steering alone)")
         raise ExperimentStoreError(
-            f"cannot freeze '{name}': validate evidence has no capability-"
-            f"battery results for condition(s) {', '.join(missing)} — run "
-            f"'{validate}' (each variant condition runs the "
-            "pinned battery), or freeze --force")
+            f"cannot freeze '{name}': validate evidence has no "
+            + " and no ".join(owed) + f" — run '{validate}' "
+            f"({BATTERY_SCOPE_PHRASE}), or freeze --force")
     expected = expected_hash
     if expected:
-        drifted = sorted(c for c in required
-                         if results[c].get("batteryHash") != expected)
+        drifted = sorted(
+            [c for c in required
+             if results[c].get("batteryHash") != expected]
+            + [without_policy_label(c) for c in owing
+               if results[c].get("batteryHash") != expected])
         if drifted:
             raise ExperimentStoreError(
                 f"cannot freeze '{name}': capability battery drifted since "

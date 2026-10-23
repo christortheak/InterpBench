@@ -1545,11 +1545,31 @@ public enum ExperimentTasks {
                 // (the evidence file's shape): a zero accuracy here would be
                 // read as a measured failure.
                 if let reason = result.notApplicable {
-                    return [
+                    var row: [String: Any] = [
                         "condition": result.condition,
                         "batteryHash": result.batteryHash,
                         "notApplicable": reason,
-                    ] as [String: Any]
+                    ]
+                    // The static-part reading stays in its own sub-object,
+                    // exactly as the evidence file writes it.
+                    if let reading = result.withoutPolicy {
+                        var sub: [String: Any] = [:]
+                        if let message = reading.error {
+                            sub["error"] = message
+                        } else {
+                            sub["total"] = reading.total
+                            sub["correct"] = reading.correct
+                            sub["accuracy"] = reading.accuracy
+                            if let format = reading.batteryFormat {
+                                sub["batteryFormat"] = format
+                            }
+                            if let isolated = reading.armingIsolated {
+                                sub["armingIsolated"] = isolated
+                            }
+                        }
+                        row["withoutPolicy"] = sub
+                    }
+                    return row
                 }
                 // An error row is written the same way, for the same reason.
                 if let message = result.error {
@@ -1639,37 +1659,23 @@ public enum ExperimentTasks {
                     notApplicable: FreezePolicy.batteryExemptionReason($0))
             }
 
-        var results: [CapabilityBatteryConditionResult] = []
-        for runtime in runtimes {
-            // An agent that carries an intervention policy cannot be run by
-            // the battery (or by this engine at all). That is a fact about
-            // the instrument, not a failure of the agent: record an explicit
-            // not-applicable row and move on, where this loop used to throw
-            // and take the whole validation with it. Freeze's battery gate
-            // exempts exactly these conditions and stamps the frozen study.
-            if let reason = runtime.notApplicable {
-                results.append(
-                    CapabilityBatteryConditionResult(
-                        condition: runtime.name, batteryHash: batteryHash,
-                        notApplicable: reason))
-                print(
-                    "capability battery \(runtime.name): not applicable — "
-                        + FreezePolicy.batteryNotAppliedSentence(
-                            .init(condition: runtime.name, reason: reason)))
-                continue
-            }
+        /// The number of items one arm answers correctly — the baseline when
+        /// `variant` is nil — or nil when `cancel` observed a cancellation.
+        func correctCount(
+            _ variant: ModelVariantArtifact?, condition: String
+        ) async throws -> Int? {
             let activeAdapter: LoRAContainer?
-            if let variant = runtime.variant {
+            if let variant {
                 activeAdapter = try await loadAdapter(variant, into: container)
             } else {
                 activeAdapter = nil
             }
-            let conditionInjections = try runtime.variant.map(injections(for:)) ?? []
-            let promptMode = runtime.variant
+            let conditionInjections = try variant.map(injections(for:)) ?? []
+            let promptMode = variant
                 .flatMap { ExperimentManifest.PromptMode(rawValue: $0.promptMode) }
                 ?? (manifest.promptMode ?? .chatAssistant)
-            let systemPrompt = runtime.variant?.systemPrompt ?? manifest.systemPrompt
-            let qwenThinking = runtime.variant?.qwenThinkingEnabled
+            let systemPrompt = variant?.systemPrompt ?? manifest.systemPrompt
+            let qwenThinking = variant?.qwenThinkingEnabled
                 ?? manifest.qwenThinkingEnabled ?? false
             // `systemPrompt:` is the FORMAT-1 caller context and keeps its
             // historical replacement shape, so a legacy battery's pinned hash
@@ -1680,7 +1686,7 @@ public enum ExperimentTasks {
             let arming = battery.resolveArming(
                 promptMode: promptMode, systemPrompt: systemPrompt,
                 qwenThinkingEnabled: qwenThinking,
-                agentSystemPrompt: runtime.variant?.systemPrompt)
+                agentSystemPrompt: variant?.systemPrompt)
             if let advisory = battery.contaminationAdvisory(arming) {
                 print("WARNING: \(advisory)")
             }
@@ -1689,11 +1695,11 @@ public enum ExperimentTasks {
             do {
                 scored = try await ExperimentTasks.runBattery(
                     container, battery: battery, batteryHash: batteryHash,
-                    condition: runtime.name, modelID: manifest.modelID,
+                    condition: condition, modelID: manifest.modelID,
                     injections: conditionInjections, arming: arming,
                     cancel: { _ in
                         await cancel.observed(
-                            at: "battery evidence '\(runtime.name)'")
+                            at: "battery evidence '\(condition)'")
                     })
             } catch {
                 try? await setInterventions(container, [])
@@ -1706,8 +1712,51 @@ public enum ExperimentTasks {
             if let activeAdapter {
                 await unloadAdapter(activeAdapter, from: container)
             }
-            guard let scored else { return nil }
-            let correct = scored.records.count { $0.correct }
+            return scored.map { $0.records.count { $0.correct } }
+        }
+
+        var results: [CapabilityBatteryConditionResult] = []
+        for runtime in runtimes {
+            // An agent that carries an intervention policy cannot be run by
+            // the battery (or by this engine at all). That is a fact about
+            // the instrument, not a failure of the agent: record an explicit
+            // not-applicable row and move on, where this loop used to throw
+            // and take the whole validation with it. Freeze's battery gate
+            // exempts exactly these conditions and stamps the frozen study.
+            if let reason = runtime.notApplicable {
+                print(
+                    "capability battery \(runtime.name): not applicable — "
+                        + FreezePolicy.batteryNotAppliedSentence(
+                            .init(condition: runtime.name, reason: reason)))
+                // Its static steering alone (vectors, adapters), read with
+                // the policies removed and recorded INSIDE this row
+                // (`withoutPolicy`), so it can never be filed under or shown
+                // as the agent's own score. Server twin: the
+                // `_without_policy_row` reading in `_battery_results`.
+                var withoutPolicy: CapabilityBatteryConditionResult.WithoutPolicyReading?
+                if var policyFree = runtime.variant,
+                    !policyFree.injections.isEmpty || !policyFree.adapters.isEmpty
+                {
+                    policyFree.interventionPolicies = nil
+                    let label = FreezePolicy.withoutPolicyLabel(runtime.name)
+                    guard let correct = try await correctCount(policyFree, condition: label)
+                    else { return nil }
+                    withoutPolicy = .init(
+                        total: battery.items.count, correct: correct,
+                        accuracy: Double(correct) / Double(battery.items.count),
+                        batteryFormat: battery.formatVersion,
+                        armingIsolated: battery.isolated)
+                    print(
+                        "capability battery \(label): \(correct)/\(battery.items.count)")
+                }
+                results.append(
+                    CapabilityBatteryConditionResult(
+                        condition: runtime.name, batteryHash: batteryHash,
+                        notApplicable: reason, withoutPolicy: withoutPolicy))
+                continue
+            }
+            guard let correct = try await correctCount(runtime.variant, condition: runtime.name)
+            else { return nil }
             let accuracy = Double(correct) / Double(battery.items.count)
             results.append(
                 CapabilityBatteryConditionResult(
