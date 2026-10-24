@@ -637,12 +637,14 @@ directory when you want the engines to share one tree.
 | `STEERLAB_WORKSPACE_PARENT` | Python | none | When set, `/api/workspace/switch` may only select roots beneath it. |
 
 Swift precedence (`WorkspaceRoot`, `Sources/ExperimentKit/WorkspaceStore.swift`):
-`STEERLAB_WORKSPACE` → `--workspace <dir>` / app override → UserDefaults
-`SteerLabWorkspaceRoot` (only if the directory still exists) → the compiled-in
-seed root (the code checkout; dev/test fallback). Because the env var outranks
-everything, the app's workspace switcher reports "pinned by STEERLAB_WORKSPACE
-— switch by relaunching without it" rather than pretending a switch would
-stick.
+the command line's `--workspace <dir>` → `STEERLAB_WORKSPACE` → the app's
+override → UserDefaults `SteerLabWorkspaceRoot` (only if the directory still
+exists) → the compiled-in seed root (the code checkout; dev/test fallback).
+`--workspace` outranks the variable from 0.9.17 (earlier builds let the
+variable win, so a variable left over from another workspace silently beat the
+flag). The app's own switching still ranks below the variable, so the app's
+workspace switcher reports "pinned by STEERLAB_WORKSPACE — switch by
+relaunching without it" rather than pretending a switch would stick.
 
 Python precedence: `--root <dir>` → `STEERLAB_ROOT` → cwd. `--root` is popped
 globally before dispatch and the directory must exist (`--root '<path>' is not
@@ -907,7 +909,7 @@ accept only `1`/`true`/`yes` — **no `on`**. Use `1`.
 usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
 
   init [--home <dir>]                           Create the home layout's Workspaces/ and Sites/.
-  workspace init | inspect | handoff …          Create a workspace, or get the first steps for a coding assistant.
+  workspace init | inspect | handoff | guide …  Create a workspace, get the first steps for a coding assistant, or read its guide.
   setup start | inspect | plan | apply | repair …  First-run readiness and reviewed client setup.
   authoring study <intent> | prompt <kind> …    The study interview (start here), and generation prompts for missing study data.
   concept import-chat <name> …                  Create a concept from paired chat-format files.
@@ -921,7 +923,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   vectors <verb> …                              Vector artifacts.
   remote <verb> (--site <id> | --url <server>)  Cluster client.
   cluster <verb> …                              Cluster lifecycle.
-  install version | stamp | verify              This build's identity and the integrity of its install.
+  install version | link | stamp | verify       This build's identity, its link on your PATH, and the integrity of its install.
   science list [--brief] | guide <method> | operation <operation>  Shared method guidance and supported execution interfaces.
   docs cli-reference [--check | --write]        Regenerate the reference document.
   panel <verb> …                                Panel scenarios and seat casting.
@@ -931,7 +933,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   --config <path.json>                          Smoke-test / toy-concept tasks.
 
 global flags:
-  --workspace <dir>  Data workspace root (precedence: STEERLAB_WORKSPACE env > --workspace > app-persisted choice > the code checkout).
+  --workspace <dir>  Data workspace root (precedence: --workspace > STEERLAB_WORKSPACE env > app-persisted choice > the code checkout).
   --version          Print this build's version and install layout, and run nothing (the same report as `install version`).
   --help             Print this page. `<family> --help` lists a family's verbs; `<family> <verb> --help` prints one verb's arguments.
   --json             Declared on every agent-path verb: exactly one envelope on stdout, every diagnostic on stderr.
@@ -941,7 +943,7 @@ exit codes: 0 ok · 64 malformed invocation · 65 refused · 66 not found · 70 
 
 | Global flag | Effect |
 |---|---|
-| `--workspace <dir>` | Data workspace root (precedence: STEERLAB_WORKSPACE env > --workspace > app-persisted choice > the code checkout). |
+| `--workspace <dir>` | Data workspace root (precedence: --workspace > STEERLAB_WORKSPACE env > app-persisted choice > the code checkout). |
 | `--version` | Print this build's version and install layout, and run nothing (the same report as `install version`). |
 | `--help` | Print this page. `<family> --help` lists a family's verbs; `<family> <verb> --help` prints one verb's arguments. |
 | `--json` | Declared on every agent-path verb: exactly one envelope on stdout, every diagnostic on stderr. |
@@ -5086,7 +5088,7 @@ name no `qualificationArtifact` — a recorded outcome with no qualification evi
 behind it. Warnings never change the exit code: the roster is authored
 iteratively and the schema stays the verdict.
 
-### 6.8 `sae qualification` — feature qualification as citable evidence
+### 6.8 `sae qualification` — feature qualification evidence
 
 ```
 steerlab-server sae qualification record --inputs <inputs.json> \
@@ -5653,7 +5655,7 @@ and `--json OUT` also writes it to a file.
 `warn` with no `fail` → `okWithAdvisories` (**0**), one `siteQualifyWarning`
 advisory per warning; otherwise `ready` (**0**). **64** is a malformed
 invocation. **Skips never change the verdict** but are always counted in the
-summary line (`6 passed, 1 warning, 0 failed, 2 skipped of 9 checks`), so a
+summary line (`7 passed, 1 warning, 0 failed, 2 skipped of 10 checks`), so a
 report that verified almost nothing cannot read as a pass.
 
 `goldenRender`/`goldenTokens` need each fixture's tokenizer from the **local**

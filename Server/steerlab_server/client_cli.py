@@ -2721,12 +2721,10 @@ def _refuse_serve_on_unsupported_platform() -> None:
     with a code and a sentence, BEFORE a runner root is created and a bearer
     token minted for a service that was never going to answer.
 
-    What this does NOT say is "SteerLab does not work on Windows", because
-    that is false and the refusal must not imply it. Authoring — create,
-    attach, extract inputs, freeze, package — and the whole remote round trip
-    (``steerlab run --runner <url>``, ``runner upload/submit/jobs/evidence``,
-    ``bundle import``) are pure client work and are fully supported there. The
-    only thing Windows cannot be is the machine that executes.
+    It names the one thing known not to work, and promises nothing else:
+    authoring and the remote round trip are pure client work, but Windows is
+    untested and unsupported (README, AGENTS.md), so the repair says so
+    rather than calling that path supported.
     """
     if sys.platform != "win32":
         return
@@ -2738,13 +2736,11 @@ def _refuse_serve_on_unsupported_platform() -> None:
             "execution is macOS and Linux only. Nothing was created: no "
             "runner root, no token"),
         repair_action=(
-            "author here and execute elsewhere — that path is fully supported "
-            f"on Windows. Point `{PROGRAM} run <experiment> --runner <url>` at "
-            "a runner on a Mac, a Linux box, or a cluster login node; "
-            f"`{PROGRAM} runner upload/submit/jobs/evidence` and `{PROGRAM} "
-            "bundle import` all speak to it from here. To run a local runner "
-            "on this machine, serve it from WSL2 or a Linux container and "
-            "give it a workspace path that side"))
+            "run studies on a Mac or Linux machine instead. SteerLab does not "
+            "support Windows: nothing here is tested on it. Pure client "
+            f"verbs, such as `{PROGRAM} run <experiment> --runner <url>` "
+            "pointed at a runner on a Mac, a Linux machine, or a cluster "
+            "login node, may work from here, but that is untested"))
 
 
 def _require_runner_extra() -> None:

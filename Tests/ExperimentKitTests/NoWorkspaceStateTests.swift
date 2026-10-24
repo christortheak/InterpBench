@@ -99,6 +99,33 @@ import Testing
         #expect(!looked, "the developer checkout is the LAST rule, evaluated lazily")
     }
 
+    /// The command line's `--workspace` outranks `STEERLAB_WORKSPACE`
+    /// (2026-10-24): a variable left over from an earlier workspace must not
+    /// silently win over the flag typed on this command. The app's own
+    /// switching (`programmaticOverride`) still ranks below the environment,
+    /// so a pinned environment still pins the app.
+    @Test func theCommandLineFlagOutranksTheEnvironmentButTheAppDoesNot() {
+        let flag = WorkspaceRoot.resolution(
+            environment: [WorkspaceRoot.environmentKey: "/env/ws"],
+            programmaticOverride: URL(filePath: "/override/ws"),
+            persistedPath: nil, developerCheckout: nil,
+            commandLineOverride: URL(filePath: "/flag/ws"))
+        #expect(flag.source == .commandLineFlag)
+        #expect(flag.url.path == "/flag/ws")
+        #expect(
+            WorkspaceRoot.resolve(
+                environment: [WorkspaceRoot.environmentKey: "/env/ws"],
+                programmaticOverride: nil, persistedPath: nil,
+                fallback: URL(filePath: "/fallback"),
+                commandLineOverride: URL(filePath: "/flag/ws")).path == "/flag/ws")
+
+        let pinned = WorkspaceRoot.resolution(
+            environment: [WorkspaceRoot.environmentKey: "/env/ws"],
+            programmaticOverride: URL(filePath: "/override/ws"),
+            persistedPath: nil, developerCheckout: nil)
+        #expect(pinned.source == .environment, "the app's switch never beats a pinned environment")
+    }
+
     /// The older, URL-returning resolver keeps its exact behavior: it is what
     /// existing callers and `resolutionPrecedenceIsEnvOverrideDefaultsFallback`
     /// use, and the two must agree on rules 1–3.

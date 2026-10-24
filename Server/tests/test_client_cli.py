@@ -1314,9 +1314,10 @@ def test_runner_serve_refuses_on_windows_before_touching_the_filesystem(
     assert "Windows" in reason
     assert "macOS and Linux" in reason
     repair = document["error"]["repairAction"]
-    assert "--runner" in repair, \
-        "the refusal must name the path that DOES work from Windows"
-    assert "bundle import" in repair
+    assert "Mac or Linux" in repair, "the refusal must say where studies do run"
+    assert "does not support Windows" in repair and "untested" in repair, \
+        "the refusal must not promise Windows support the project does not give"
+    assert "--runner" in repair
     assert not runner_root.exists(), \
         "a refused serve created a runner root anyway"
 

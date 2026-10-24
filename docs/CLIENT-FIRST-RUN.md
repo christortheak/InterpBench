@@ -29,7 +29,7 @@ anything.
 
 | Step | How long | Disk space |
 |---|---|---|
-| Download SteerLab | a minute or two | the app is a download of about 65 MB; the client is a few MB |
+| Download SteerLab | a minute or two | the app is a download of about 75 MB; the client is about 11 MB |
 | Create a workspace | under a minute | about 1 MB to begin with; it grows with your studies and results |
 | Set up the study-design helper | a few minutes, with an internet connection | about 100 MB to download, and up to 1 GB once installed |
 | Download a model, when you are ready to run a study | depends on your connection | typically 3 to 35 GB for each model |
@@ -160,7 +160,9 @@ link: when the app opens a workspace, it records the command line's location
 in that workspace's `.steerlab/mac-app/command-line.json`. Always tell
 `steerlab-cli` which workspace to use, with
 `--workspace <folder>` before the command or with the `STEERLAB_WORKSPACE`
-environment variable. For example, `steerlab-cli workspace init <folder>`
+environment variable. When both are given, `--workspace` wins (from 0.9.17;
+earlier versions let the variable win), and every `--json` answer names the
+workspace it used in its `workspace` field. For example, `steerlab-cli workspace init <folder>`
 creates a workspace, `steerlab-cli workspace init <folder> --demo <backend>`
 opens a copy of a Demo Workspace, and `steerlab-cli --workspace <folder>
 results export <study>` exports results.
@@ -209,8 +211,8 @@ with that hash:
 sh install-client.sh install --expect <planSHA256> --yes
 ```
 
-This takes a few minutes, a download of about 100 MB, and up to 1 GB of
-disk. It downloads a verified copy of `uv`, a Python installer, and a managed
+This takes a few minutes, a download of about 100 MB on a Mac (about 150 MB
+on Linux), and up to 1 GB of disk. It downloads a verified copy of `uv`, a Python installer, and a managed
 copy of Python, then installs the client and its locked dependencies into a
 separate folder:
 `~/Library/Application Support/SteerLab/client-runtime` on a Mac, or
@@ -322,8 +324,11 @@ After an update:
   engine runs the earlier version's code and its setup says the two were
   built from different revisions.
 - If you run studies on a cluster, push the engine there again (the cluster
-  setup's Push step, or `steerlab-cli cluster push --site <site>`), then
-  restart its controller. Until then the cluster runs the engine from the
+  setup's Push step, or `steerlab-cli cluster push --site <site>`). When the
+  release notes say the dependency lock or bootstrap changed (as in 0.9.15),
+  also re-run the bootstrap: `steerlab-cli cluster bootstrap plan --site
+  <site>`, then `cluster bootstrap apply --site <site> --plan-hash <hash>`
+  with the hash the plan printed. Then restart its controller. Until then the cluster runs the engine from the
   earlier version, and submissions say so.
 
 A copy that cannot update itself keeps the notice and says why: one opened

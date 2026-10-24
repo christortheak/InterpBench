@@ -85,7 +85,7 @@ public enum VectorCatalog {
 
     /// The WORKSPACE root — the data folder holding prompts/, experiments/,
     /// runs/. Runtime-resolved (see `WorkspaceRoot` for the exact precedence:
-    /// STEERLAB_WORKSPACE env → programmatic override → persisted app choice
+    /// `--workspace` → STEERLAB_WORKSPACE env → programmatic override → persisted app choice
     /// → the legacy code-checkout fallback), so dev and test flows with
     /// nothing configured behave exactly as before. The app's working
     /// directory is unrelated to the workspace when launched from Xcode.

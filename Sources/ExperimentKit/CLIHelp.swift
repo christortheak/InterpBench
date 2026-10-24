@@ -652,8 +652,8 @@ public enum ExperimentCLIHelp {
     public static let globalFlags: [TopLevelEntry] = [
         .init(
             synopsis: "--workspace <dir>",
-            purpose: "Data workspace root (precedence: STEERLAB_WORKSPACE env > "
-                + "--workspace > app-persisted choice > the code checkout)."),
+            purpose: "Data workspace root (precedence: --workspace > "
+                + "STEERLAB_WORKSPACE env > app-persisted choice > the code checkout)."),
         .init(
             synopsis: "--version",
             purpose: "Print this build's version and install layout, and run "
@@ -679,8 +679,8 @@ public enum ExperimentCLIHelp {
                 synopsis: "init [--home <dir>]",
                 purpose: "Create the home layout's Workspaces/ and Sites/."),
             .init(
-                synopsis: "workspace init | inspect | handoff …",
-                purpose: "Create a workspace, or get the first steps for a coding assistant."),
+                synopsis: "workspace init | inspect | handoff | guide …",
+                purpose: "Create a workspace, get the first steps for a coding assistant, or read its guide."),
             .init(synopsis: "setup start | inspect | plan | apply | repair …",
                 purpose: "First-run readiness and reviewed client setup."),
             // Third, because it is where a new study starts: the interview
@@ -713,9 +713,9 @@ public enum ExperimentCLIHelp {
                 purpose: "Cluster client."),
             .init(synopsis: "cluster <verb> …", purpose: "Cluster lifecycle."),
             .init(
-                synopsis: "install version | stamp | verify",
-                purpose: "This build's identity and the integrity of its "
-                    + "install."),
+                synopsis: "install version | link | stamp | verify",
+                purpose: "This build's identity, its link on your PATH, and "
+                    + "the integrity of its install."),
             .init(
                 synopsis: "science list [--brief] | guide <method> | operation <operation>",
                 purpose: "Shared method guidance and supported execution interfaces."),

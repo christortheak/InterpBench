@@ -23,15 +23,17 @@ if CodeResources.enclosingAppBundle != nil {
 var arguments = CommandLine.arguments
 
 // Global --workspace <path>: applied before ANY verb runs (workspace-root
-// resolution precedence #2 — see WorkspaceRoot; STEERLAB_WORKSPACE is #1 and
-// needs no flag). Stripped from the argument list so verbs never see it.
+// resolution precedence #0 — see WorkspaceRoot; it outranks
+// STEERLAB_WORKSPACE, so a variable left over from an earlier workspace never
+// beats the flag typed on this command). Stripped from the argument list so
+// verbs never see it.
 if let flagIndex = arguments.firstIndex(of: "--workspace") {
     guard arguments.count > flagIndex + 1 else {
         FileHandle.standardError.write(
             Data("steerlab-cli: --workspace requires a directory path\n".utf8))
         exit(64)  // EX_USAGE
     }
-    WorkspaceRoot.programmaticOverride =
+    WorkspaceRoot.commandLineOverride =
         URL(filePath: arguments[flagIndex + 1]).standardizedFileURL
     arguments.removeSubrange(flagIndex ... flagIndex + 1)
 }

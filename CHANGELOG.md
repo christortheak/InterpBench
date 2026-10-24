@@ -12,6 +12,26 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **On the Mac command line, `--workspace` now wins over
+  `STEERLAB_WORKSPACE`.** Before, the environment variable outranked the flag,
+  so a variable left over from an earlier workspace silently won over the
+  folder you named on the command, and the command worked on the wrong
+  workspace. The flag typed on a command now takes precedence, as `--root`
+  already did on the app-free client. The app is unchanged: it still treats
+  `STEERLAB_WORKSPACE` as a pin that its own workspace switching does not
+  override. Every `--json` answer names the workspace it used.
+- **`steerlab-cli --help` lists `install link` and `workspace guide`,** which
+  the setup instructions send you to.
+- **The app-free client no longer says Windows is supported.** Its refusal to
+  start a local runner on Windows used to call authoring there "fully
+  supported"; it now says SteerLab does not support Windows and that client
+  verbs pointed at a runner elsewhere are untested there.
+- **Documentation corrections.** The guides now describe the 0.9.16 battery
+  rule for policy agents that also carry vectors or adapters, list every exit
+  code (including 10 to 13), give current download sizes, count `site
+  qualify`'s ten checks, add the bootstrap re-run to the cluster update steps,
+  and give manual setup steps for Linux as well as the Mac.
+
 ## [0.9.16] — 2026-10-23
 
 - **`instrumentation-cost` reads a study's task file.** A line of its prompt

@@ -338,7 +338,8 @@ always wins; nothing is overwritten. After that the old stores are read-only
 history that nothing writes to.
 
 Any layout works; the resolution order for "which workspace am I in" is
-`STEERLAB_WORKSPACE`, then `--workspace`, then the choice the app has persisted.
+`--workspace` on the command, then `STEERLAB_WORKSPACE`, then the choice the app
+has persisted (from 0.9.17; earlier versions put the variable first).
 
 ---
 
@@ -633,7 +634,7 @@ apply:
 | `measurementPins` | the pins that determine what is measured are present and valid |
 | `validateEvidence` | a `validate` run matching the exact pins, on this engine, that is not vacuous |
 | `variantValidity` | attached variants carry hashed weights and a pinnable dataset manifest |
-| `batteryEvidence` | baseline and each agent condition have scope-matched capability-battery evidence; a condition whose agent uses an intervention policy is exempt, and the frozen study records the exemption |
+| `batteryEvidence` | baseline and each agent condition have scope-matched capability-battery evidence; a condition whose agent uses an intervention policy is recorded as not applicable (`capabilityBatteryNotApplied`), and if that agent also carries vectors or adapters, validate (0.9.16 or later) must record a reading of them without the policy, labelled "`<agent>` without its policy" |
 | `judgeValidity` | a rubric *file* and at least one judge (a panel of two or more must be genuinely distinct) |
 | `gitClean` | every pinned input is committed in the workspace repository |
 
@@ -786,18 +787,18 @@ steerlab-server site qualify [--json] [--skip-model-fixtures]
 
 Run it right after provisioning a node, after any deploy that changes the
 engine, and before the first study on a site you have not used. It is cheap and
-needs no GPU. Nine checks ask whether this machine reproduces the contracts a
+needs no GPU. Ten checks ask whether this machine reproduces the contracts a
 result depends on — build identity, the measurement-stack fingerprint,
 dependency-lock agreement, the stimulus hash convention, prompt-render and
-tokenization goldens, vector-parity arithmetic, profile validation, GPU
-visibility — and none aborts the others, so a cold node always gets a complete
+tokenization goldens, vector-parity arithmetic, profile validation, the
+rendered controller script's provenance, GPU visibility — and none aborts the others, so a cold node always gets a complete
 report. Exit 0 clean or with warnings, 70 if anything failed.
 
 Read the summary line rather than the exit code alone, because **skipped checks
 never change the exit code but are always counted**:
 
 ```text
-5 passed, 1 warning, 0 failed, 3 skipped of 9 checks
+6 passed, 1 warning, 0 failed, 3 skipped of 10 checks
 ```
 
 A node with six skips passed almost nothing; it is unverified, not healthy.
@@ -939,8 +940,10 @@ say: `workspace`, `advisories[]`, `error` (with `code`, `gate`, `gates[]`,
 `repairAction`), `result`, and `nextAction` on successes. A missing key is a
 straight answer, not a null.
 
-`state` is authoritative and the exit code is a convenience: `0` ok, `64`
-malformed invocation, `65` refused by a gate, `66` not found, `70` failed.
+`state` is authoritative and the exit code is a convenience: `0` ok, `10` a
+person must sign in, `11` a permission flag is missing, `12` pending, `13`
+degraded (retry later), `64` malformed invocation, `65` refused by a gate, `66`
+not found, `70` failed.
 Without `--json` most failures still exit `1` — one more reason to always pass
 it. (`data check` is the one verb whose human-mode exit has migrated; an
 undeclared flag is `64` in both modes, refused before the verb does any work, so

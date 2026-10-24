@@ -94,7 +94,7 @@ grep -o '"tag_name": *"[^"]*"' "$D/release.json"
 grep -o '"browser_download_url": *"[^"]*/SteerLab-[^"]*\.zip"' "$D/release.json"
 ```
 
-Tell the researcher the version, that the app download is about 65 MB (the
+Tell the researcher the version, that the app download is about 75 MB (the
 release page lists the exact size), and that it will be installed as
 `~/SteerLab/SteerLab.app`, which needs no administrator password. Nothing
 else is installed at this step. When they agree, download the app and its
@@ -233,7 +233,7 @@ inside it.
 
 ## If you cannot run these steps
 
-Give the researcher these steps instead:
+Give the researcher these steps instead. On an Apple Silicon Mac:
 
 1. Open the [latest release](https://github.com/christortheak/InterpBench/releases/latest)
    and download `SteerLab-<version>+<revision>.zip`.
@@ -242,3 +242,20 @@ Give the researcher these steps instead:
 3. Open SteerLab and follow Research Setup to create a workspace.
 4. Choose **Copy Instructions for Your Coding Assistant**, open the workspace
    folder in your coding assistant, and paste them.
+
+On x86_64 Linux:
+
+1. Open the [latest release](https://github.com/christortheak/InterpBench/releases/latest)
+   and download `steerlab-client-<version>+<revision>.tar.gz` and its
+   `.sha256` file.
+2. Check the download: `sha256sum steerlab-client-*.tar.gz` must print the
+   same hash as the first field of the `.sha256` file. If it does not, stop.
+3. Extract it (`tar -xzf steerlab-client-*.tar.gz`) and, in the extracted
+   folder, run `sh install-client.sh plan`. Review what it will install and
+   where, then run `sh install-client.sh install --expect <planSHA256> --yes`
+   with the hash the plan printed.
+4. Create a workspace and get its first steps, using the executable path the
+   installer printed:
+   `<executable> setup start ~/steerlab-studies/first-study --create --json`.
+   Then open that folder in your coding assistant and ask it to read the
+   workspace's `AGENTS.md`.

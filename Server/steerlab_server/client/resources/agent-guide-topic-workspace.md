@@ -39,7 +39,8 @@ it.
 ## Pointing the client at this workspace
 
 The workspace is named with `--root <dir>` on each command, or with
-`STEERLAB_WORKSPACE` once for the session. There is no default: a command that
+`STEERLAB_WORKSPACE` once for the session; `--root` takes precedence over the
+variable. There is no default: a command that
 needs a workspace and was given none refuses with `error.code`
 `workspaceNotSet` and changes nothing.
 

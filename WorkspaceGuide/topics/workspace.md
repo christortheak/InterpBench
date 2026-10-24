@@ -42,10 +42,11 @@ it.
 
 <!-- client: mac -->
 
-Resolution order, exactly: (1) `STEERLAB_WORKSPACE`; (2) `--workspace <dir>`,
-or the app's in-process override; (3) the app's persisted choice, honored only
-while that directory still exists; (4) in a developer build only, the source
-checkout it was built from. With none of these, the command refuses with
+Resolution order, exactly: (1) `--workspace <dir>` on the command; (2)
+`STEERLAB_WORKSPACE`; (3) the app's in-process override; (4) the app's persisted
+choice, honored only while that directory still exists; (5) in a developer build
+only, the source checkout it was built from. (Before 0.9.17 the variable came
+first, so a variable left over from another workspace beat the flag.) With none of these, the command refuses with
 `noWorkspace` (exit 65): run `steerlab-cli workspace init <dir>`, then pass
 `--workspace <dir>` or set `STEERLAB_WORKSPACE`.
 
@@ -59,7 +60,8 @@ export STEERLAB_WORKSPACE=/abs/path/to/this/workspace
 <!-- client: python -->
 
 The workspace is named with `--root <dir>` on each command, or with
-`STEERLAB_WORKSPACE` once for the session. There is no default: a command that
+`STEERLAB_WORKSPACE` once for the session; `--root` takes precedence over the
+variable. There is no default: a command that
 needs a workspace and was given none refuses with `error.code`
 `workspaceNotSet` and changes nothing.
 

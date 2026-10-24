@@ -1131,13 +1131,13 @@ steerlab-server site qualify [--skip-model-fixtures]
 
 Run it on the node itself — after provisioning, after any deploy that changes
 the engine, and before the first study on a site you have not used; no GPU is
-needed for the core checks. Nine checks ask whether this machine reproduces the
+needed for the core checks. Ten checks ask whether this machine reproduces the
 contracts a result depends on (build identity, the measurement-stack
 fingerprint, dependency-lock agreement, the stimulus-hash convention,
 prompt-render and tokenization goldens, vector-parity arithmetic, profile
-validation, CUDA visibility), and none aborts the rest, so a cold node always
-gets a complete report. Read the **summary line** (`5 passed, 1 warning, 0
-failed, 3 skipped of 9 checks`), not the exit code alone: skips never change
+validation, the rendered controller script's provenance, CUDA visibility), and none aborts the rest, so a cold node always
+gets a complete report. Read the **summary line** (`6 passed, 1 warning, 0
+failed, 3 skipped of 10 checks`), not the exit code alone: skips never change
 the verdict but are always counted, and a node with six skips passed almost
 nothing. `vectorParity` uses same-engine synthetic fixtures — it qualifies the
 parity *arithmetic* on this node, not cross-substrate agreement, which is why

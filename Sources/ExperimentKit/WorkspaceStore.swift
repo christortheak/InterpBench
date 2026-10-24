@@ -15,9 +15,13 @@ import Observation
 /// Runtime resolution of the workspace root every artifact path funnels
 /// through (`VectorCatalog.projectRoot`). Precedence, exactly:
 ///
+/// 0. the command line's `--workspace` (`commandLineOverride`): an explicit
+///    flag on this one command outranks the environment (2026-10-24; it used
+///    to rank below `STEERLAB_WORKSPACE`, so a variable left over from an
+///    earlier workspace silently won over the flag a person typed)
 /// 1. `STEERLAB_WORKSPACE` environment variable
-/// 2. the process-wide programmatic override (CLI `--workspace`, the app's
-///    workspace manager)
+/// 2. the process-wide programmatic override (the app's workspace manager,
+///    and tests)
 /// 3. UserDefaults key `"SteerLabWorkspaceRoot"` (the app's persisted choice
 ///    — honored only while the directory actually exists, so a deleted
 ///    workspace degrades to the next rule instead of a dangling root)
@@ -38,9 +42,12 @@ public enum WorkspaceRoot {
 
     /// Which rule answered. `none` is the explicit "no workspace yet" state.
     public enum Source: String, Sendable, Equatable, CaseIterable {
+        /// The command line's `--workspace`, which outranks
+        /// `STEERLAB_WORKSPACE`.
+        case commandLineFlag
         /// `STEERLAB_WORKSPACE`.
         case environment
-        /// The command line's `--workspace`, or the app's workspace manager.
+        /// The app's workspace manager (or a test).
         case programmaticOverride
         /// The app's saved choice, while that folder still exists.
         case persistedChoice
@@ -79,6 +86,15 @@ public enum WorkspaceRoot {
         "No workspace is selected. A workspace is the folder that holds your "
         + "prompts, studies, and results, and this action needs one."
 
+    /// Precedence #0: the command line's `--workspace`, set once by
+    /// `steerlab-cli` before any verb runs, and by nothing else. Unlike
+    /// `programmaticOverride` it outranks `STEERLAB_WORKSPACE`, because a flag
+    /// typed on this command is the most specific choice there is; the app's
+    /// own switching stays below the environment, so a pinned environment
+    /// still pins the app. nonisolated(unsafe) on the same terms as
+    /// `programmaticOverride` below.
+    nonisolated(unsafe) public static var commandLineOverride: URL?
+
     /// Precedence #2. nonisolated(unsafe) is justified the same way as
     /// `ExperimentStore.rootOverride`: written once at CLI startup (before
     /// any verb runs) or from the main thread by the app's workspace manager
@@ -95,13 +111,19 @@ public enum WorkspaceRoot {
         !(environmentValue ?? "").trimmingCharacters(in: .whitespaces).isEmpty
     }
 
-    /// Rules 1–3, shared by both resolvers below: an explicit or saved choice,
+    /// Rules 0–3, shared by both resolvers below: an explicit or saved choice,
     /// or nil when there is none.
     private static func chosen(
         environment: [String: String],
         programmaticOverride: URL?,
-        persistedPath: String?
+        persistedPath: String?,
+        commandLineOverride: URL?
     ) -> Resolution? {
+        if let commandLineOverride {
+            return Resolution(
+                source: .commandLineFlag,
+                url: commandLineOverride.standardizedFileURL)
+        }
         if let env = environment[environmentKey]?
             .trimmingCharacters(in: .whitespacesAndNewlines), !env.isEmpty
         {
@@ -133,11 +155,13 @@ public enum WorkspaceRoot {
         environment: [String: String],
         programmaticOverride: URL?,
         persistedPath: String?,
-        fallback: URL
+        fallback: URL,
+        commandLineOverride: URL? = nil
     ) -> URL {
         chosen(
             environment: environment, programmaticOverride: programmaticOverride,
-            persistedPath: persistedPath)?.url ?? fallback
+            persistedPath: persistedPath,
+            commandLineOverride: commandLineOverride)?.url ?? fallback
     }
 
     /// The same precedence, answering WHICH rule won — including the
@@ -148,11 +172,12 @@ public enum WorkspaceRoot {
         environment: [String: String],
         programmaticOverride: URL?,
         persistedPath: String?,
-        developerCheckout: @autoclosure () -> URL?
+        developerCheckout: @autoclosure () -> URL?,
+        commandLineOverride: URL? = nil
     ) -> Resolution {
         if let chosen = chosen(
             environment: environment, programmaticOverride: programmaticOverride,
-            persistedPath: persistedPath)
+            persistedPath: persistedPath, commandLineOverride: commandLineOverride)
         {
             return chosen
         }
@@ -180,7 +205,8 @@ public enum WorkspaceRoot {
             environment: environmentValue.map { [environmentKey: $0] } ?? [:],
             programmaticOverride: programmaticOverride,
             persistedPath: UserDefaults.standard.string(forKey: defaultsKey),
-            developerCheckout: CodeResources.workspaceFallbackCheckout)
+            developerCheckout: CodeResources.workspaceFallbackCheckout,
+            commandLineOverride: commandLineOverride)
     }
 
     /// The live workspace root — `noWorkspacePlaceholder` in the "no

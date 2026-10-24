@@ -222,18 +222,19 @@ one on. It is cheap, it needs no GPU, and it runs *on the node being
 qualified* — a login node or a workstation shell.
 
 **What it answers:** whether this machine reproduces the contracts a result
-depends on, or merely runs. Nine checks — build identity, the measurement-stack
+depends on, or merely runs. Ten checks — build identity, the measurement-stack
 fingerprint, dependency-lock agreement, the stimulus SHA-256 convention, the
 committed prompt-render and tokenization goldens, the vector-parity arithmetic,
-this deployment's own profile validation, and GPU visibility against the site's
+this deployment's own profile validation, the rendered controller script's
+provenance, and GPU visibility against the site's
 declared GPU vocabulary. None aborts the others, so a cold node always gets a
 complete report, and every row states what it compared and why an instrument
 needs it.
 
 Exit **0** clean or with warnings only; **70** if any check failed, naming the
 failing ids and carrying that check's own remedy. **Skipped checks never change
-the exit code but are always counted** — `3 passed, 0 warnings, 0 failed, 6
-skipped of 9 checks` is a node that is mostly *unverified*, not a node that
+the exit code but are always counted** — `4 passed, 0 warnings, 0 failed, 6
+skipped of 10 checks` is a node that is mostly *unverified*, not a node that
 passed. Read the summary line, not the exit code alone.
 
 Two limits it states about itself rather than hiding: the parity fixtures are

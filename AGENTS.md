@@ -24,8 +24,9 @@ this machine gets, and each has its own verification banner.
   repair. Preserve existing data-integrity contracts until a reviewed change
   replaces them; do not bypass protected state.
 - **Every study-path verb speaks `--json`.** Use it. One envelope on stdout,
-  diagnostics on stderr, sorted keys, stable exit codes (`0` ok, `64`
-  malformed, `65` refused, `66` not found, `70` failed).
+  diagnostics on stderr, sorted keys, stable exit codes (`0` ok, `10` a
+  person must sign in, `11` a permission flag is missing, `12` pending, `13`
+  retry later, `64` malformed, `65` refused, `66` not found, `70` failed).
 - **Refusals are typed and carry a `repairAction`. Follow the repair.** A gate
   that declines is the instrument working, not an obstacle: never work around
   a refusal by editing state it protects, and use `--force` only when the
@@ -200,6 +201,10 @@ default — read `SECURITY.md` before changing that.
 steerlab-cli workspace init ~/SteerLab/Workspaces/<study-name>
 export STEERLAB_WORKSPACE=~/SteerLab/Workspaces/<study-name>
 ```
+
+`--workspace <dir>` on a single command outranks the variable (0.9.17 and
+later; on older builds the variable wins), and every `--json` envelope names
+the workspace it used in its `workspace` field: check it after switching.
 
 To start from a worked example instead, `workspace init <directory> --demo
 <mlx|mps|cuda>` (either client) opens a verified copy of a Demo Workspace;
