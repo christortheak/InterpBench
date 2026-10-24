@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.16] — 2026-10-23
+
 - **`instrumentation-cost` reads a study's task file.** A line of its prompt
   file may give the prompt as `text`, as study task files do, instead of
   `prompt`; when a line has both, `prompt` is used, as a study run reads it.
