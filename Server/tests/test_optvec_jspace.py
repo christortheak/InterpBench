@@ -1002,8 +1002,8 @@ def test_the_tier_and_the_qualification_caveat_are_stamped_verbatim(tmp_path,
     report = out["report"]
     assert report["qualification"] == (
         "unqualified for this runtime — no passing jlens qualification "
-        "(steerlab-server jlens qualify); exploratory analysis, not citable "
-        "evidence")
+        "(steerlab-server jlens qualify); exploratory analysis: the lens's "
+        "numerics are not verified on this runtime")
     assert report["qualification"] == optvec_jspace.QUALIFICATION_STAMP
     # The lens here is fitted on a model outside the supported table.
     assert report["evidenceTier"] == "unknown"

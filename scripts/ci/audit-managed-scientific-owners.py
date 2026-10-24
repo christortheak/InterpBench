@@ -95,9 +95,60 @@ ANALYSIS_WORKFLOW_CHANGES = (
      "        allow_unverified_epoch=allow_unverified_epoch)"),
 )
 
+#: Reviewed wording changes in other owners (approved by the maintainer,
+#: 2026-10-23): researcher-facing text states facts instead of citability
+#: verdicts ("citable", "not citable evidence"). Each is removed exactly once
+#: before the AST comparison, and the whole module must ALSO differ from the
+#: base only in string literals (check_wording_only), so no statement, value,
+#: name, or control flow can change under this exception.
+OWNER_WORDING_CHANGES = {
+    'optvec_eval': (
+        ("""                        "config. eval.json screens the vector on the test "
+                        "split; a confirm-style behavioral study with this "
+                        "vector attached as a pinned artifact measures the "
+                        "behavior in a frozen study.",""",
+         """                        "config. eval.json is screen-grade evidence — citable "
+                        "numbers come from a confirm-style behavioral study "
+                        "with this vector attached as a pinned artifact.","""),
+    ),
+    'optvec_jspace': (
+        ("""                       "exploratory analysis: the lens's numerics are not "
+                       "verified on this runtime")""",
+         """                       "exploratory analysis, not citable evidence")"""),
+    ),
+    'sae_qualification': (
+        ('roster records the outcome with no qualification evidence behind it; ',
+         'roster records the outcome with no citable evidence behind it; '),
+    ),
+    'sae_candidates': (
+        ('labels are regenerated, so the snapshot is the only stable ',
+         'labels are regenerated, so the snapshot is the only citable '),
+    ),
+}
+
 
 def tree(source):
     return ast.dump(ast.parse(source), include_attributes=False)
+
+
+def literals_blanked(source):
+    """The module's AST with every string literal emptied: equal for two
+    sources exactly when they differ only in string text."""
+    parsed = ast.parse(source)
+    for node in ast.walk(parsed):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            node.value = ''
+    return ast.dump(parsed, include_attributes=False)
+
+
+def check_wording_only(name, before, after):
+    """A declared wording change: the declared pairs revert to the base, and
+    nothing but string literals differs anywhere in the module."""
+    changes = OWNER_WORDING_CHANGES[name]
+    for new, _ in changes:
+        assert after.count(new) == 1, f'Declared {name} wording change missing or altered: ' + new.strip().splitlines()[0]
+    assert literals_blanked(after) == literals_blanked(before), name + ' changed more than string literals'
+    assert tree(without_declared_changes(after, changes)) == tree(before), name + ' changed scientific AST'
 
 
 def without_declared_changes(after, changes):
@@ -162,6 +213,21 @@ def main():
                     continue
                 raise AssertionError('Negative control was accepted: ' + label)
             after = without_declared_changes(after, ANALYSIS_WORKFLOW_CHANGES)
+        elif name in OWNER_WORDING_CHANGES:
+            check_wording_only(name, before, after)
+            # Mutation controls through the SAME gate: a declared change that
+            # is missing, and a change beyond string text, are both refused.
+            new, old = OWNER_WORDING_CHANGES[name][0]
+            for label, mutant in (
+                    ('missing wording change', after.replace(new, old, 1)),
+                    ('non-literal change', after + '\nAUDIT_NEGATIVE_CONTROL = True\n')):
+                assert mutant != after, 'Mutation control did not apply: ' + label
+                try:
+                    check_wording_only(name, before, mutant)
+                except AssertionError:
+                    continue
+                raise AssertionError('Negative control was accepted: ' + label + ' in ' + name)
+            after = without_declared_changes(after, OWNER_WORDING_CHANGES[name])
         assert tree(before) == tree(after), name + ' changed scientific AST'
         assert tree(after + '\nAUDIT_NEGATIVE_CONTROL = True\n') != tree(before)
     print(f'{len(OWNER_MODULES)} scientific owner ASTs unchanged; negative controls passed.')

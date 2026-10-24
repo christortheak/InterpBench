@@ -427,7 +427,7 @@ def _candidate(payload: object, index: int) -> Candidate:
         raise CandidateManifestError(
             f"{label}: a '{role}' candidate must carry a 'discovery' snapshot "
             "(explanationText + accessDate at minimum) — upstream auto-interp "
-            "labels are regenerated, so the snapshot is the only citable "
+            "labels are regenerated, so the snapshot is the only stable "
             "record of why this feature was nominated")
     discovery = None if discovery_payload is None \
         else _discovery(discovery_payload, label)

@@ -44,8 +44,10 @@ migration that rewrites frozen bytes.
   "Frozen — every freeze check passed" (or "that applies passed" when the
   capability battery did not apply to an agent) and "Frozen with force",
   with the skipped gates beside it. Freeze advisories, CLI help, results
-  pages, exports, the workspace guide, and the docs say the same in facts.
-  The stamps (`freezeForced`, `forcedGatesSkipped`,
+  pages, exports, the workspace guide, and the docs say the same in facts,
+  as do the trained-vector evaluation's note in `eval.json`, the J-space
+  readout's qualification stamp, and two SAE roster messages (their wording
+  only; every computation is unchanged). The stamps (`freezeForced`, `forcedGatesSkipped`,
   `capabilityBatteryNotApplied`), the content hash, the freeze gates, and
   `--force` are unchanged, and no stored manifest, run, or generated file is
   rewritten; pages and summaries generated from now on use the new wording.

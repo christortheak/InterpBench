@@ -1069,6 +1069,6 @@ def roster_warnings(manifest) -> list[str]:
             f"candidate '{candidate.construct_label}' (feature "
             f"{candidate.feature_id}, layer {candidate.layer}) has status "
             f"'{candidate.status}' but names no qualificationArtifact — the "
-            f"roster records the outcome with no citable evidence behind it; "
+            f"roster records the outcome with no qualification evidence behind it; "
             f"record one ({FILENAME}) and point at it")
     return warnings

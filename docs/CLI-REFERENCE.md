@@ -4724,7 +4724,7 @@ dataset needs its `sha256` pin; training requires single-token options (eval
 does not); the saved vector is born **without** `residualNormPerLayer` — run
 the norm backfill before any `alphaInNormUnits` condition uses it. The test
 split must not appear in the config at all: this verb sees train and val only,
-and citable numbers come from a confirm-style study, never from this run.
+and behavioral numbers come from a confirm-style study, not from this run.
 
 `eval` is the mirror-image firewall: it reads the TEST split only, and any
 config key ending `Train`/`Val` refuses with the rule quoted — the eval verb
@@ -4735,7 +4735,7 @@ stepped-KV instrument, plus a teacher-forced all-position fluency guard and a
 library-cosine table where every cosine carries a seeded random-direction null
 percentile. Output is its own `optvec-eval` run dir (`eval.json` +
 `eval-records.jsonl`) — the training run directory is never written into.
-`eval.json` is screen-grade evidence, not citable numbers.
+`eval.json` screens the vector on the test split; a confirm-style study measures the behavior.
 
 `geometry` is inference-free (no model load): ≥2 artifacts at one shared layer
 → pairwise cosine matrix and the participation ratio of the stacked matrix's
@@ -4787,7 +4787,7 @@ ladder and every energy schema-bound to its matched-norm-random null. Family
 mode reports raw vs propagated cosine/PR side by side (shallow-vs-deep
 multiplicity). Every artifact stamps the lens tier plus its qualification
 state **against the runtime that actually ran** (2026-08-15): an unqualified
-runtime is stamped exploratory, not citable evidence, with `jlens qualify` as
+runtime is stamped exploratory (the lens's numerics are not verified on that runtime), with `jlens qualify` as
 the named remedy; a runtime with a passing record is stamped with that
 record's id instead.
 
@@ -5082,7 +5082,7 @@ Config (closed keys):
 
 `check` additionally prints **warnings** (stderr, or a `warnings` array under
 `--json`) for entries whose `status` is `qualified` or `rejected` but which
-name no `qualificationArtifact` — a recorded outcome with no citable evidence
+name no `qualificationArtifact` — a recorded outcome with no qualification evidence
 behind it. Warnings never change the exit code: the roster is authored
 iteratively and the schema stays the verdict.
 

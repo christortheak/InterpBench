@@ -196,7 +196,8 @@ DEFAULT_TOP_K = 10
 #: statement about THIS runtime with a remedy attached, not about the engine.
 QUALIFICATION_STAMP = ("unqualified for this runtime — no passing jlens "
                        "qualification (steerlab-server jlens qualify); "
-                       "exploratory analysis, not citable evidence")
+                       "exploratory analysis: the lens's numerics are not "
+                       "verified on this runtime")
 
 #: How :func:`observation_layers` picks its default. Stated in the artifact as
 #: well as here so a reader never has to guess which layers were read and why.

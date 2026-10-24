@@ -1010,9 +1010,10 @@ def evaluate(config: OptVecEvalConfig, *, model=None,
             "split": "test",
             "firewall": "test split only: gradients ran on train, checkpoint "
                         "selection on val; neither is readable from this "
-                        "config. eval.json is screen-grade evidence — citable "
-                        "numbers come from a confirm-style behavioral study "
-                        "with this vector attached as a pinned artifact.",
+                        "config. eval.json screens the vector on the test "
+                        "split; a confirm-style behavioral study with this "
+                        "vector attached as a pinned artifact measures the "
+                        "behavior in a frozen study.",
             "artifact": artifact.identity(),
             "optvec": {"layer": target.layer,
                        "alphaAbsolute": target.alpha_absolute,

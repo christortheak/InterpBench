@@ -94,7 +94,7 @@ observed change in any logit the model produced. Same for `topKEmergent` over
 Whether it transfers to this probe set's prompt distribution at this dose is an
 empirical question, and the verb does not answer it: `jlens qualify` does. Until
 a runtime has a passing qualification record, every readout is stamped
-`claim: "exploratory"` and is not citable evidence.
+`claim: "exploratory"`: the lens's numerics are not verified on that runtime.
 
 ### (3) Behavioral / causal evidence — absent
 
