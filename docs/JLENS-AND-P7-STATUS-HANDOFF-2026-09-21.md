@@ -76,6 +76,27 @@ and the largest per-layer difference in either direction is 0.008. The
 difference remains small, and no uncertainty estimate accompanies it. See
 also the review section in the [J4 supplement](JLENS-QUALIFICATION-DECISION-J4-SUPPLEMENT-2026-09-21.md).
 
+### Status on 2026-10-25 (release 0.9.16)
+
+This section supersedes the P7-B, P7-C, P7-D, and P7-F rows of the
+2026-10-23 table above.
+
+| Item | Status on 2026-10-25 |
+|---|---|
+| P7-B behavioural assessment | Criterion met. The memo's criterion (§4) is a declared behavioral assessment with interpretable results, not a favorable outcome. The strength-8 run and the declared positive control at 16 and 32 each meet it. The positive control was optional; it showed no sensitivity for this direction, and no further control is planned. |
+| P7-C cancel, continue, custody | Passed. Both defects are fixed in 0.9.16 and passed a live regression on 0.9.16, on cluster L4 GPUs (the checks concern failure records and resume bookkeeping, not numerics). A policy that fails during generation now writes its failure record, with the failure's reason, the decision that failed, and the prompt tokens. A run that was paused and then resumed to completion now reads as complete, keeps the pause as history, and the resume message counts the responses actually kept. |
+| P7-D surface matrix and app journey | Design implemented in 0.9.16. Pages and messages state facts instead of citability verdicts. A policy agent that also carries vectors or adapters needs a battery reading of that steering alone, labelled "`<agent>` without its policy". The floor battery refuses a policy agent with a typed code and a repair. `CONDUCTING-A-STUDY.md` §5.2 says what a policy study can claim without a capability control. The app walkthrough is still pending; it needs the researcher. |
+| P7-F | Regression and independent review done. |
+
+**What remains.** Only the app walkthrough: authoring a policy agent and
+measurements in the app, running, interrupting, retrieving the evidence,
+reading the Results page, and checking that the Mac command line, the
+app-free client, and HTTP each offer a working path.
+
+**Support statement.** Unchanged: [SUBSTRATES.md](SUBSTRATES.md) keeps probe
+measurements and intervention policies at "implemented; comparison
+unqualified", for the reasons given above.
+
 ## 2. J-lens results since the closure handoff
 
 **Full 27B lens.** 828 WikiText-103 rows, bf16, dimension batch 4, fitted as
