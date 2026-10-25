@@ -1164,6 +1164,50 @@ struct ClusterCLIRunnerTests {
         #expect(harness.operationStore.pendingBootstrapJob(forSite: "test-cluster") == nil)
     }
 
+    /// `bootstrap plan` tells the reader to "review the plan above", so the
+    /// plan must BE above: the dry run's lines, in both output modes, ahead of
+    /// the hash they approve — and never the token.
+    @Test func bootstrapPlanPrintsThePlanItAsksTheReaderToReview() async throws {
+        let harness = try makeHarness("bootstrap-plan-shown", storedToken: Self.secretToken)
+        await scriptHealthySite(harness)
+        let torchLine =
+            "  [torchInstall]    pip install torch --index-url https://download.pytorch.org/whl/cu128"
+        let reportLine =
+            #"{"ok":true,"steps":{"torchInstall":"planned"},"envFile":"/e","prefix":"/p"}"#
+        await harness.shell.on(
+            "bootstrap", exit: 0,
+            lines: [
+                "bootstrap.sh plan (dry run — nothing executed):",
+                "  [envCreate]       conda create -p /p python=3.12  (reused if present)",
+                torchLine,
+                reportLine,
+            ])
+
+        let planned = await harness.runner.run(invocation(harness, .bootstrapPlan))
+        #expect(planned.envelope.state == ClusterLifecycleState.planned.rawValue)
+        let planHash = try #require(planned.envelope.planHash)
+        #expect(planned.envelope.nextAction?.detail?.contains(planHash) == true)
+
+        // --json: the plan travels in the envelope, minus the machine report.
+        let json = try planned.envelope.jsonText()
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        let transcript = try #require(object["planTranscript"] as? [String])
+        #expect(transcript.contains(torchLine))
+        #expect(transcript.contains { $0.hasPrefix("$ ") && $0.contains("--dry-run") })
+        #expect(!transcript.contains(reportLine))
+        #expect(!json.contains(Self.secretToken))
+
+        // Human: the same lines, verbatim, above the hash and the next step.
+        let text = ClusterCLIRenderer.humanText(planned.envelope)
+        let lines = text.components(separatedBy: "\n")
+        let torchIndex = try #require(lines.firstIndex(of: torchLine))
+        let hashIndex = try #require(lines.firstIndex(of: "  plan hash: \(planHash)"))
+        #expect(torchIndex < hashIndex)
+        #expect(!text.contains(reportLine))
+        #expect(!text.contains(Self.secretToken))
+    }
+
     @Test func aQueuedBootstrapJobIsResumedByTheNextInvocation() async throws {
         // The recovery the finding asked for: the Mac sleeps while the job is
         // still queued, so the first apply returns `pending` with the job
@@ -1603,7 +1647,7 @@ struct ClusterCLIRunnerTests {
 
         let verbs: [ClusterCLIVerb] = [
             .sitesList, .sitesShow, .preview, .status, .diagnose, .authCommand, .authStatus,
-            .bootstrapStatus, .validate, .controllerStatus, .tunnelStatus,
+            .bootstrapPlan, .bootstrapStatus, .validate, .controllerStatus, .tunnelStatus,
             .plan, .ensure,
         ]
         for verb in verbs {

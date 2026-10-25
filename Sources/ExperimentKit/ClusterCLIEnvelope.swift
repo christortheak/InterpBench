@@ -177,6 +177,13 @@ public struct ClusterCLIEnvelope: Encodable, Sendable, Equatable {
     public var command: [String]?
     /// The reviewed bootstrap plan's hash, for `bootstrap apply --plan-hash`.
     public var planHash: String?
+    /// `cluster bootstrap plan`: the dry run the hash approves, so a caller
+    /// can READ what `bootstrap apply` will run — the materialization line,
+    /// the exact composed command, and `bootstrap.sh`'s one line per step.
+    /// The script's trailing JSON report is left out: it is parsed, not read.
+    /// Holds no secret: the command carries paths and scheduler settings, and
+    /// the script's plan echoes the same.
+    public var planTranscript: [String]?
     /// Where a log lives on the far side — a path to read, not its contents.
     public var logPath: String?
     /// A file this verb wrote locally (`sites export`).
@@ -303,7 +310,10 @@ public struct ClusterCLIEnvelope: Encodable, Sendable, Equatable {
 public enum ClusterCLIRenderer {
 
     public static func humanText(_ envelope: ClusterCLIEnvelope) -> String {
-        var lines: [String] = []
+        // The bootstrap dry run comes FIRST and verbatim, the way the command
+        // printed it: its preamble points at "the plan hash below" and the
+        // summary's next step at "the plan above", and both must hold.
+        var lines: [String] = envelope.planTranscript ?? []
         let site = [envelope.siteName, envelope.siteID.map { "(\($0))" }]
             .compactMap { $0 }.joined(separator: " ")
         var header = "[\(envelope.state)] \(envelope.verb)"

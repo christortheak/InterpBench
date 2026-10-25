@@ -974,6 +974,11 @@ public struct ClusterCLIRunner: Sendable {
             outcome: outcome.outcome,
             successState: outcome.planHash == nil ? .ready : .planned)
         envelope.planHash = outcome.planHash
+        // The plan the next step asks the reader to review — and, when the dry
+        // run failed, the output that says why.
+        let transcript = BootstrapReport.readableLines(
+            ofTranscript: outcome.outcome.transcript)
+        if !transcript.isEmpty { envelope.planTranscript = transcript }
         if let planHash = outcome.planHash {
             envelope.nextAction = .init(
                 verb: ClusterCLIVerb.bootstrapApply.displayName,
@@ -1602,6 +1607,7 @@ extension ClusterCLIEnvelope {
         copy.logPath = logPath.map(redact)
         copy.outputPath = outputPath.map(redact)
         copy.command = command.map { $0.map(redact) }
+        copy.planTranscript = planTranscript.map { $0.map(redact) }
         copy.blockers = blockers.map { $0.map(redact) }
         copy.layers = layers.map {
             $0.map { Layer(layer: $0.layer, state: redact($0.state)) }

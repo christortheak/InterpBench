@@ -20,6 +20,12 @@ migration that rewrites frozen bytes.
   already did on the app-free client. The app is unchanged: it still treats
   `STEERLAB_WORKSPACE` as a pin that its own workspace switching does not
   override. Every `--json` answer names the workspace it used.
+- **`cluster bootstrap plan` shows the plan it asks you to approve.** It
+  printed only the plan's hash, so reviewing what `bootstrap apply` would run
+  meant finding the dry run in a log file. The answer now carries the dry run
+  itself (`planTranscript` under `--json`, printed first without it): the
+  environment file it installs, the exact command, and one line per bootstrap
+  step. Paths are redacted the same way as the rest of the answer.
 - **`steerlab-cli --help` lists `install link` and `workspace guide`,** which
   the setup instructions send you to.
 - **The app-free client no longer says Windows is supported.** Its refusal to

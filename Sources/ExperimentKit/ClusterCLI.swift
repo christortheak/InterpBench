@@ -239,7 +239,7 @@ public enum ClusterCLIVerb: String, CaseIterable, Sendable, Equatable {
         case .authStatus: "Check whether the shared SSH session is alive."
         case .authClose: "Close SteerLab's own SSH session, and no other."
         case .push: "Deploy the allowlisted server payload and re-stamp its build id."
-        case .bootstrapPlan: "Render the bootstrap dry run and print its plan hash."
+        case .bootstrapPlan: "Render the bootstrap dry run and print the plan and its hash."
         case .bootstrapApply: "Run exactly the reviewed bootstrap plan."
         case .bootstrapStatus: "Report whether the remote environment is valid."
         case .validate: "Run the remote engine's own profile validation."

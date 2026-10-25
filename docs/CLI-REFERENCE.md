@@ -2714,7 +2714,7 @@ steerlab-cli cluster ensure [--allow-bootstrap] [--allow-controller-start] [--al
 | `cluster auth status` | Check whether the shared SSH session is alive. |
 | `cluster auth close` | Close SteerLab's own SSH session, and no other. |
 | `cluster push` | Deploy the allowlisted server payload and re-stamp its build id. |
-| `cluster bootstrap plan` | Render the bootstrap dry run and print its plan hash. |
+| `cluster bootstrap plan` | Render the bootstrap dry run and print the plan and its hash. |
 | `cluster bootstrap apply` | Run exactly the reviewed bootstrap plan. |
 | `cluster bootstrap status` | Report whether the remote environment is valid. |
 | `cluster validate` | Run the remote engine's own profile validation. |
@@ -2749,7 +2749,7 @@ Every verb above also accepts `--json` and `--help`. `--site <id>` is required w
 | `auth status` | `ssh -O check`. Exit 0 alive, **10** absent/unresponsive. |
 | `auth close` | `ssh -O exit` scoped to SteerLab's own ControlPath; cannot touch an unrelated session. |
 | `push` | The compact allowlisted server payload. `--dry-run` prints the exact argv and runs nothing. A successful push **re-stamps the deployed `BUILD_COMMIT`** (the rsync template's `--delete` would otherwise remove it, silently erasing the engine's build identity — found live 2026-08-11); a stamp failure is a loud WARNING in the outcome, never silent. |
-| `bootstrap plan` | Renders the dry run and prints `planHash`. The review is **durable** — persisted so a later process (or `ensure`) honours it. |
+| `bootstrap plan` | Renders the dry run and prints the plan it renders — the materialization line, the exact composed command, and `bootstrap.sh`'s one line per step — then `planHash`. `--json` carries the same lines as `planTranscript`, without the script's trailing JSON report. The review is **durable** — persisted so a later process (or `ensure`) honours it. |
 | `bootstrap apply` | Runs only against the exact reviewed plan; a stale or missing hash refuses **before any command runs** (§3.9.4). On a Slurm site it **submits, records the job, and then polls it** with short separate commands — never one held-open session. A job that is still queued comes back `pending`: rerun the same command to resume following it (nothing is resubmitted). |
 | `bootstrap status` | Environment absent/valid/invalid/unknown. |
 | `validate` | Remote `steerlab-server profile validate`. |
@@ -2859,8 +2859,15 @@ Always present: `schemaVersion`, `verb`, `state`, `changed`, `observedAt`,
 optionals: `operationID`, `siteID`, `siteName`, `target`, `step`,
 `retryAfterSeconds`, `nextAction`, `endpoint`, `tokenAvailable`, `tokenSource`,
 `serverBuild`, `schedulerJobID`, `schedulerState`, `layers`, `plan`, `blockers`,
-`sites`, `command`, `planHash`, `logPath`, `outputPath`, `operations`,
-`preview`, `error`.
+`sites`, `command`, `planHash`, `planTranscript`, `logPath`, `outputPath`,
+`operations`, `preview`, `error`.
+
+`planTranscript` (from `cluster bootstrap plan` only) is the dry run that
+`planHash` approves, one string per line: the materialization line, the exact
+composed command (`$ …`), and `bootstrap.sh`'s plan with one `[step]` line per
+step. The script's trailing JSON report is omitted. Human mode prints the same
+lines verbatim, above the summary. When the dry run fails, it carries the
+output that says why.
 
 `preview` (from `cluster preview` only) is the WP5 §3.3 document:
 `siteName`, `schemaVersion` (**the profile's** schema stamp, not the

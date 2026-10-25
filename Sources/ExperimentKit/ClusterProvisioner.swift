@@ -1460,14 +1460,21 @@ public struct BootstrapReport: Codable, Equatable, Sendable {
     /// (later stderr noise cannot displace it — non-decoding lines skip).
     public static func parse(fromTranscript lines: [String]) -> BootstrapReport? {
         for line in lines.reversed() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard trimmed.hasPrefix("{"),
-                let report = try? JSONDecoder().decode(
-                    BootstrapReport.self, from: Data(trimmed.utf8))
-            else { continue }
-            return report
+            if let report = decode(line: line) { return report }
         }
         return nil
+    }
+
+    /// The transcript a person reads: every line but the machine report,
+    /// which is parsed rather than read.
+    public static func readableLines(ofTranscript lines: [String]) -> [String] {
+        lines.filter { decode(line: $0) == nil }
+    }
+
+    private static func decode(line: String) -> BootstrapReport? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("{") else { return nil }
+        return try? JSONDecoder().decode(BootstrapReport.self, from: Data(trimmed.utf8))
     }
 
     /// The transcript tail for one failed step, verbatim: the window of lines
