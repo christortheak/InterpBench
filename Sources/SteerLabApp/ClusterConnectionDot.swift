@@ -293,6 +293,9 @@ struct ClusterConnectionDot: View {
                 Button("Start the Engine on This Mac") {
                     localServer.start(host: service)
                 }
+                // Not while setup, Refresh Engine, or Reinstall Packages is
+                // replacing the engine's files or packages under it.
+                .disabled(localEngine.isBusy)
                 .help(
                     "runs scripts/start-local-server.sh: creates "
                         + "Server/.venv.nosync on first use and installs the "

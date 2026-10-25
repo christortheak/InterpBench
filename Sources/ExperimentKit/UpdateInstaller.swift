@@ -1601,7 +1601,8 @@ public enum UpdateInstallReview {
                     symbol: "server.rack",
                     text: "If you use the Python engine on this Mac, open its setup after "
                         + "the update and choose Refresh Engine; its installed packages are "
-                        + "kept."))
+                        + "kept. If the new version pins different packages, the setup then "
+                        + "offers Reinstall Packages and says the most it will download."))
         }
         facts.append(Fact(symbol: "network", text: UpdateAfterInstall.clusterLine))
         return facts
@@ -1614,9 +1615,9 @@ public enum UpdateInstallReview {
 public struct UpdateAfterInstallNotice: Sendable, Equatable {
     public let headline: String
     public let lines: [String]
-    /// The local engine was copied from the earlier version; the notice
-    /// offers to open the engine setup, where Refresh Engine brings it up
-    /// to date.
+    /// The local engine was copied from the earlier version, or its packages
+    /// from an earlier lock; the notice offers to open the engine setup,
+    /// where Refresh Engine and Reinstall Packages bring it up to date.
     public let offersEngineSetup: Bool
 }
 
@@ -1682,15 +1683,44 @@ public enum UpdateAfterInstall {
         + "engine setup and choose Refresh Engine: it copies this version's engine and "
         + "keeps the packages already installed."
 
+    /// The most a package reinstall can download, in the setup's own words.
+    private static var reinstallCeiling: String {
+        "up to about "
+            + LocalEngineDecisions.describeBytes(LocalEngineAction.lockInstallEstimatedBytes)
+    }
+
+    /// The engine is stale AND this version pins different packages from the
+    /// ones installed: Refresh Engine alone would leave them behind.
+    public static var engineAndPackagesLine: String {
+        "The Python engine on this Mac still holds the earlier version's code, and this "
+            + "version pins different packages from the ones installed. Open the engine "
+            + "setup and choose Refresh Engine, then Reinstall Packages when the setup "
+            + "offers it: the first copies this version's engine, and the second "
+            + "downloads the packages that changed (\(reinstallCeiling))."
+    }
+
+    /// The engine is current, but its packages were installed from another lock.
+    public static var packagesLine: String {
+        "The packages installed for the Python engine on this Mac were made from a "
+            + "different lock than this version's. Open the engine setup and choose "
+            + "Reinstall Packages: it downloads the packages that changed "
+            + "(\(reinstallCeiling))."
+    }
+
     /// - Parameters:
     ///   - lastLaunched: the recorded version of the previous launch (nil on
     ///     a first launch, or after a version that did not record one).
     ///   - previousCopyName: the kept copy beside the app, when one exists.
     ///   - engineIsStale: the materialized engine's stamp names a different
     ///     build from this app's.
+    ///   - packagesNeedReinstall: the materialized engine's packages are
+    ///     stamped with a different lock from the one this build ships
+    ///     (`LocalEngineDecisions.materializedEnvironmentLockMoved`). Never
+    ///     true for an unstamped environment.
     public static func notice(
         lastLaunched: String?, current: SemanticVersion, appName: String,
-        previousCopyName: String?, engineIsStale: Bool, hasClusterSites: Bool,
+        previousCopyName: String?, engineIsStale: Bool,
+        packagesNeedReinstall: Bool = false, hasClusterSites: Bool,
         sourceCheckout: URL? = nil
     ) -> UpdateAfterInstallNotice? {
         guard let lastLaunched, let earlier = SemanticVersion(lastLaunched),
@@ -1703,12 +1733,18 @@ public enum UpdateAfterInstall {
         if let sourceCheckout {
             lines.append(checkoutLineAfter(checkout: sourceCheckout, version: current))
         } else if engineIsStale {
-            lines.append(engineLine)
+            lines.append(packagesNeedReinstall ? engineAndPackagesLine : engineLine)
+        } else if packagesNeedReinstall {
+            lines.append(packagesLine)
         }
         if hasClusterSites { lines.append(clusterLine) }
         return UpdateAfterInstallNotice(
             headline: "SteerLab was updated from \(earlier.releaseDescription) to "
                 + "\(current.releaseDescription).",
-            lines: lines, offersEngineSetup: engineIsStale)
+            // With a checkout, the line above gives git commands; a button to
+            // the setup's Refresh Engine would contradict it.
+            lines: lines,
+            offersEngineSetup: sourceCheckout == nil
+                && (engineIsStale || packagesNeedReinstall))
     }
 }

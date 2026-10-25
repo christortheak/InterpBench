@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 
@@ -82,6 +83,77 @@ struct LocalEngineTreeRefreshTests {
         // No revision of its own (a dev bundle): it cannot tell, so it is quiet.
         try stamp("old99999")
         #expect(!LocalEngineDecisions.materializedEngineIsFromAnotherBuild(appRevision: nil))
+    }
+
+    /// The same first launch also asks whether Reinstall Packages will follow
+    /// Refresh Engine: the venv's lock stamp against the lock THIS build ships
+    /// in its payload, read without starting anything.
+    @Test func theFirstLaunchAfterAnUpdateComparesTheInstalledLockWithTheShippedOne() throws {
+        let fm = FileManager.default
+        let engine = fm.temporaryDirectory.appending(component: "steerlab-engine-\(UUID().uuidString)")
+        let home = fm.temporaryDirectory.appending(component: "steerlab-home-\(UUID().uuidString)")
+        let bundle = fm.temporaryDirectory.appending(component: "steerlab-bundle-\(UUID().uuidString)")
+        let venv = engine.appending(components: "Server", ".venv.nosync")
+        try fm.createDirectory(at: engine.appending(path: "Server/steerlab_server"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: venv, withIntermediateDirectories: true)
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        try fm.createDirectory(at: bundle.appending(component: "ServerPayload"), withIntermediateDirectories: true)
+        defer {
+            try? fm.removeItem(at: engine)
+            try? fm.removeItem(at: home)
+            try? fm.removeItem(at: bundle)
+        }
+        let shippedLock = Data("torch==9.9.9\n".utf8)
+        try shippedLock.write(
+            to: bundle.appending(components: "ServerPayload", LocalEngineLayout.lockFileName))
+        let shippedSHA = SHA256.hash(data: shippedLock).map { String(format: "%02x", $0) }.joined()
+
+        ExperimentRootOverrideLock.acquire()
+        CodeResources.modeOverrideForTesting = .release
+        CodeResources.bundleOverrideForTesting = bundle
+        CodeResources.engineRootOverrideForTesting = engine
+        CodeResources.executableHomesOverrideForTesting = [home]
+        defer {
+            CodeResources.modeOverrideForTesting = nil
+            CodeResources.bundleOverrideForTesting = nil
+            CodeResources.engineRootOverrideForTesting = nil
+            CodeResources.executableHomesOverrideForTesting = nil
+            ExperimentRootOverrideLock.release()
+        }
+        #expect(LocalEngineLayout.payloadLockSHA256() == shippedSHA)
+        func moved(app: String? = "new12345") -> Bool {
+            LocalEngineDecisions.materializedEnvironmentLockMoved(appRevision: app)
+        }
+        func installedFrom(_ sha: String) throws {
+            let stamp = LocalEngineLockStamp(
+                lockFile: LocalEngineLayout.lockFileName, lockSHA256: sha,
+                installedAt: "2026-10-17T00:00:00Z")
+            try JSONEncoder().encode(stamp).write(
+                to: venv.appending(component: LocalEngineLayout.lockStampFileName))
+        }
+
+        // A stamp but no interpreter: there is no environment to reinstall.
+        try installedFrom("0ld10ck")
+        #expect(!moved())
+        let python = venv.appending(components: "bin", "python")
+        try fm.createDirectory(at: python.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\n".utf8).write(to: python)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: python.path)
+
+        // No stamp: the developer case is never "moved", whatever ships.
+        try fm.removeItem(at: venv.appending(component: LocalEngineLayout.lockStampFileName))
+        #expect(!moved())
+        try installedFrom("0ld10ck")
+        #expect(moved())
+        try installedFrom(shippedSHA)
+        #expect(!moved())
+        // A build that ships no lock, or has no revision of its own (so it
+        // offers no Refresh Engine to bring its lock across), stays quiet.
+        try installedFrom("0ld10ck")
+        #expect(
+            !LocalEngineDecisions.materializedEnvironmentLockMoved(
+                appRevision: "new12345", payloadLockSHA256: nil))
+        #expect(!moved(app: nil))
     }
 
     // MARK: - The file work

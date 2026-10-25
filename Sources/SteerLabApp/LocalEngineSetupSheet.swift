@@ -40,6 +40,9 @@ struct LocalEngineSetupSheet: View {
     @State private var engineActionInFlight = false
     @State private var confirmingRestart = false
     @State private var restarting = false
+    /// The Reinstall Packages confirmation — the moment the download size is
+    /// in front of the researcher as they commit to it.
+    @State private var confirmingSync = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -49,6 +52,7 @@ struct LocalEngineSetupSheet: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if engineState != nil { engineControlsSection }
                     if !engine.downloadPreamble.isEmpty { downloadNotice }
+                    if !engine.environmentSyncPreamble.isEmpty { syncNotice }
                     stepList
                     if let report = engine.qualification {
                         qualificationSection(report)
@@ -104,7 +108,8 @@ struct LocalEngineSetupSheet: View {
                     + "method. Each step checks what is already there before "
                     + "it does anything, so stopping and running it again "
                     + "continues rather than starting over. Nothing is "
-                    + "downloaded until you press Set Up.")
+                    + "downloaded until you press Set Up, or confirm Reinstall "
+                    + "Packages when it is offered.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -188,7 +193,7 @@ struct LocalEngineSetupSheet: View {
                 Button(restarting ? "Restarting…" : "Restart Engine…") {
                     confirmingRestart = true
                 }
-                .disabled(restarting || engine.phase.isRunning)
+                .disabled(restarting || engine.isBusy)
                 .help(
                     "terminate the engine process and provision + start it "
                         + "again — the recovery of last resort when a slot "
@@ -325,6 +330,38 @@ struct LocalEngineSetupSheet: View {
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
     }
 
+    /// Reinstall Packages is offered, never part of Set Up, so its download is
+    /// stated here on its own rather than folded into the plan's preamble.
+    private var syncNotice: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label(
+                "The installed packages do not match this engine's lock",
+                systemImage: "shippingbox")
+                .font(.subheadline.weight(.semibold))
+            Text("Reinstall Packages would download:")
+                .font(.caption)
+            ForEach(Array(engine.environmentSyncPreamble.enumerated()), id: \.offset) { _, line in
+                Text("• " + line)
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(
+                Self.syncExplanation + " Nothing is fetched until you choose "
+                    + "Reinstall Packages and confirm.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private static let syncExplanation =
+        "Only packages that changed are fetched, and any already downloaded are "
+            + "reused, so the figure is a ceiling. Anything the lock does not list, "
+            + "including packages you added yourself, is removed. Once started, it "
+            + "runs to the end."
+
     // MARK: Steps
 
     private var stepList: some View {
@@ -445,8 +482,8 @@ struct LocalEngineSetupSheet: View {
                 .lineLimit(1)
             HStack {
                 Button("Re-check") { Task { await engine.refreshPlan() } }
-                    .disabled(engine.phase.isRunning)
-                    .help(engine.phase.isRunning
+                    .disabled(engine.isBusy)
+                    .help(engine.isBusy
                         ? "not while setup is running — it is already reporting "
                             + "each step as it goes"
                         : "re-read what is already installed without changing "
@@ -455,16 +492,34 @@ struct LocalEngineSetupSheet: View {
                 // build. Offered, never automatic; the packages are kept.
                 if let refresh = engine.refreshOffer {
                     Button("Refresh Engine") {
-                        Task { await engine.refreshEngine(host: service) }
+                        Task {
+                            // A version whose lock moved needs its packages
+                            // too: offer that at once, not as an advisory to
+                            // find in the step list.
+                            if await engine.refreshEngine(host: service),
+                                engine.environmentSyncOffer != nil
+                            {
+                                confirmingSync = true
+                            }
+                        }
                     }
-                    .disabled(engine.phase.isRunning)
+                    .disabled(engine.isBusy)
                     .help(
                         refresh.title + " — copies this app's engine and keeps the "
                             + "packages already installed. Stop the engine first if "
                             + "it is running.")
                 }
+                // The packages were installed from a different lock than the
+                // tree's. Offered, never automatic; confirmed with its size.
+                if let sync = engine.environmentSyncOffer {
+                    Button("Reinstall Packages…") { confirmingSync = true }
+                        .disabled(engine.isBusy)
+                        .help(
+                            sync.title + " — downloads only what changed. Stop the "
+                                + "engine first if it is running.")
+                }
                 Spacer()
-                if engine.phase.isRunning {
+                if engine.phase.isRunning, engine.offeredActionInFlight == nil {
                     // "Stop Setup", not "Cancel": the button beside it is
                     // Close, and one of the two aborts work while the other
                     // only dismisses (UI audit 2026-09-06).
@@ -482,10 +537,32 @@ struct LocalEngineSetupSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(engine.phase.isRunning || startIsBlocked)
+                .disabled(engine.isBusy || startIsBlocked)
                 .help(startHelp)
             }
         }
+        .confirmationDialog(
+            "Reinstall the engine's packages?",
+            isPresented: $confirmingSync,
+            titleVisibility: .visible
+        ) {
+            Button("Reinstall Packages") {
+                Task { await engine.syncEnvironment(host: service) }
+            }
+            Button("Not Now", role: .cancel) {}
+        } message: {
+            Text(syncConfirmationMessage)
+        }
+    }
+
+    /// Carries the preamble's total line, so the figure in the dialog is the
+    /// one the notice and the Activity feed state.
+    private var syncConfirmationMessage: String {
+        var parts = ["This engine's lock pins different packages from the ones installed."]
+        if let total = engine.environmentSyncPreamble.last { parts.append(total) }
+        parts.append(Self.syncExplanation)
+        parts.append("Stop the engine first if it is running.")
+        return parts.joined(separator: " ")
     }
 
     private var startTitle: String {

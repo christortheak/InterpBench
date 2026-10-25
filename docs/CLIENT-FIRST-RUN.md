@@ -308,7 +308,9 @@ After an update:
   on the notice the first launch after an update shows (or **Engine
   Details…** in the toolbar's connection menu), then **Refresh Engine**. It
   copies the new version's Python engine and keeps the packages already
-  installed.
+  installed. If the new version pins different packages, the setup then
+  offers **Reinstall Packages**, says the most it will download, and waits
+  for you to confirm.
 - If a SteerLab code checkout sits beside the app (or in your SteerLab
   folder), the Python engine on this Mac runs from that checkout rather than
   from the app. Bring it to the new release in Terminal, then restart the

@@ -60,7 +60,8 @@ final class UpdateSignpostModel {
 
     /// Supplied by the app: what is running right now.
     @ObservationIgnored var busyProbe: (@MainActor () async -> UpdateBusyState)?
-    /// Supplied by the app: opens the local engine setup (Refresh Engine).
+    /// Supplied by the app: opens the local engine setup (Refresh Engine,
+    /// Reinstall Packages).
     @ObservationIgnored var openEngineSetup: (@MainActor () -> Void)?
 
     private var lastAvailability: UpdateAvailability?
@@ -125,6 +126,7 @@ final class UpdateSignpostModel {
                 lastLaunched: last, current: current, appName: app.lastPathComponent,
                 previousCopyName: previousExists ? previousName : nil,
                 engineIsStale: LocalEngineDecisions.materializedEngineIsFromAnotherBuild(),
+                packagesNeedReinstall: LocalEngineDecisions.materializedEnvironmentLockMoved(),
                 hasClusterSites: hasClusterSites(),
                 sourceCheckout: UpdateInstallContextReader.sourceCheckout())
         }
@@ -502,7 +504,9 @@ private struct AfterInstallBanner: View {
             Spacer(minLength: 8)
             if notice.offersEngineSetup, let open = model.openEngineSetup {
                 Button("Open Engine Setup…") { open() }
-                    .help("the local Python engine's setup, where Refresh Engine brings it up to date")
+                    .help(
+                        "the local Python engine's setup, where Refresh Engine and "
+                            + "Reinstall Packages bring it up to date")
             }
             Button {
                 model.dismissAfterInstallNotice()

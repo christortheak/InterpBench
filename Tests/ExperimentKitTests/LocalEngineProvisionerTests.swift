@@ -160,6 +160,87 @@ import Testing
         #expect(state.actions.isEmpty)
     }
 
+    // MARK: Step 3 — Reinstall Packages (offered, never planned)
+
+    @Test func aMatchingStampIsOfferedNoReinstall() {
+        let matching = observation(
+            venvExists: true, stamp: stamp(sha: "aaaa1111"), lockSHA: "aaaa1111")
+        #expect(LocalEngineDecisions.environmentSyncOffer(matching) == nil)
+    }
+
+    /// The lock moved under a venv this flow installed: Reinstall Packages is
+    /// OFFERED, names both hashes, and states its download before anything
+    /// runs — while the plan itself still does nothing on its own.
+    @Test func aDriftedStampIsOfferedAReinstallThatStatesItsDownload() throws {
+        let drifted = observation(
+            venvExists: true, stamp: stamp(sha: "bbbb2222"), lockSHA: "cccc3333")
+        let offer = try #require(LocalEngineDecisions.environmentSyncOffer(drifted))
+        #expect(
+            offer
+                == .syncEnvironment(
+                    lock: "/code/Server/" + LocalEngineLayout.lockFileName,
+                    editableTarget: "/code/Server",
+                    installedSHA256: "bbbb2222", lockSHA256: "cccc3333"))
+        #expect(offer.title.contains("bbbb2222 → cccc3333"))
+        // Never part of the plan: Set Up does not reinstall unasked.
+        let state = LocalEngineDecisions.environmentState(drifted)
+        #expect(state.actions.isEmpty)
+        #expect(state.advisory?.contains("Reinstall Packages") == true)
+        // The first install's estimate, stated as a ceiling.
+        #expect(offer.estimatedDownloadBytes == LocalEngineAction.lockInstallEstimatedBytes)
+        #expect(
+            LocalEngineAction.installLock(lock: "l", editableTarget: "t")
+                .estimatedDownloadBytes == offer.estimatedDownloadBytes)
+        let preamble = LocalEngineDecisions.downloadPreamble(for: [offer])
+        #expect(preamble.count == 2)
+        #expect(preamble[0].hasSuffix(" — up to about 2.0 GB"))
+        #expect(preamble[1] == "Total: up to about 2.0 GB over the network.")
+    }
+
+    /// THE developer-protection property again: a venv with no stamp (made by
+    /// `start-local-server.sh`) keeps its advisory and is never offered a
+    /// reinstall.
+    @Test func anUnstampedVenvIsNeverOfferedAReinstall() {
+        let unstamped = observation(venvExists: true, stamp: nil, lockSHA: "cccc3333")
+        #expect(LocalEngineDecisions.environmentSyncOffer(unstamped) == nil)
+        #expect(
+            LocalEngineDecisions.environmentState(unstamped).advisory?
+                .contains("no lock stamp") == true)
+        #expect(!LocalEngineDecisions.lockMovedSinceInstall(stamp: nil, lockSHA256: "cccc3333"))
+    }
+
+    @Test func noVenvOrNoLockIsOfferedNoReinstall() {
+        // No venv yet: Set Up's own install covers it.
+        #expect(
+            LocalEngineDecisions.environmentSyncOffer(
+                observation(venvExists: false, stamp: stamp(sha: "bbbb2222"), lockSHA: "cccc3333"))
+                == nil)
+        // No lock: blocked, never resolved from floors.
+        #expect(
+            LocalEngineDecisions.environmentSyncOffer(
+                observation(venvExists: true, stamp: stamp(sha: "bbbb2222"), lockSHA: nil))
+                == nil)
+    }
+
+    /// While the engine answers, the reinstall stays offered (so it is not a
+    /// mystery where it went) but is refused, the same way Refresh Engine is.
+    @Test func aRunningEngineKeepsTheOfferButRefusesTheReinstall() throws {
+        let running = observation(
+            venvExists: true, stamp: stamp(sha: "bbbb2222"), lockSHA: "cccc3333",
+            serverAnswering: true)
+        #expect(LocalEngineDecisions.environmentSyncOffer(running) != nil)
+        let refusal = try #require(
+            LocalEngineDecisions.refusalWhileEngineAnswers(
+                running, actionName: "Reinstall Packages", replacing: "its packages"))
+        #expect(refusal.contains("stop the local engine first"))
+        #expect(refusal.contains("choose Reinstall Packages again"))
+        let stopped = observation(
+            venvExists: true, stamp: stamp(sha: "bbbb2222"), lockSHA: "cccc3333")
+        #expect(
+            LocalEngineDecisions.refusalWhileEngineAnswers(
+                stopped, actionName: "Reinstall Packages", replacing: "its packages") == nil)
+    }
+
     /// No lock in the tree is a REFUSAL, not a fallback to pyproject floors.
     /// An unpinned local environment is exactly the drift the committed locks
     /// exist to stop.
@@ -614,6 +695,20 @@ private final class GatedShell: ClusterShellRunner, @unchecked Sendable {
     }
 }
 
+/// Answers every command with success and keeps the argv, so a test asserts
+/// exactly what would have run — and that nothing ran at all.
+private final class RecordingShell: ClusterShellRunner, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [[String]] = []
+
+    var commands: [[String]] { lock.withLock { recorded } }
+
+    func run(_ argv: [String]) async -> ClusterShellResult {
+        lock.withLock { recorded.append(argv) }
+        return ClusterShellResult(exitCode: 0, lines: [])
+    }
+}
+
 @Suite struct LocalEngineDriverTests {
 
     private func warmEnvironment() -> FakeEngineEnvironment {
@@ -722,5 +817,140 @@ private final class GatedShell: ClusterShellRunner, @unchecked Sendable {
         #expect(provisioner.progress[.environment] == "blocked")
         // The steps BEFORE it still ran and reported.
         #expect(provisioner.progress[.engineSource] != nil)
+    }
+
+    // MARK: Reinstall Packages
+
+    private func driftedStamp() -> LocalEngineLockStamp {
+        LocalEngineLockStamp(
+            lockFile: LocalEngineLayout.lockFileName, lockSHA256: "bbbb2222",
+            installedAt: "2026-08-20T00:00:00Z")
+    }
+
+    /// Reinstall Packages syncs the EXISTING venv to the tree's lock, puts the
+    /// engine package back, and only then re-stamps the venv with the new
+    /// lock. The plan before it says what is left and what it would download.
+    @MainActor
+    @Test func reinstallPackagesSyncsTheLockAndReStampsTheVenv() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appending(component: "steerlab-sync-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+        let source = CodeResources.LocalEngineSource.checkout(
+            CodeResources.ExecutableCheckout(root: root, origin: .compiledCheckout))
+        let venv = source.serverDirectory.appending(component: ".venv.nosync")
+        try fm.createDirectory(at: venv, withIntermediateDirectories: true)
+        var environment = warmEnvironment()
+        environment.source = source
+        environment.stamp = driftedStamp()
+        environment.lockSHA = "cccc3333"
+        environment.answering = false
+        let shell = RecordingShell()
+        let provisioner = LocalEngineProvisioner(
+            environment: environment, shell: shell,
+            downloader: SubstitutedArtifactDownloader())
+
+        // The engine is stopped (as a reinstall requires), so serving is a
+        // step to run — and the status line still names the reinstall.
+        await provisioner.refreshPlan()
+        #expect(provisioner.phase == .needsSetup(actionCount: 2))
+        #expect(provisioner.environmentSyncOffer != nil)
+        #expect(provisioner.statusLine.contains("Reinstall Packages"))
+        #expect(provisioner.environmentSyncPreamble.last == "Total: up to about 2.0 GB over the network.")
+        // Offered, not performed: planning ran nothing.
+        #expect(shell.commands.isEmpty)
+
+        await provisioner.syncEnvironment()
+        // The fixture's own path, not a recomputed one: the layout's path
+        // follows a test override another suite may hold meanwhile.
+        let uv = try #require(environment.managedTool).path
+        let interpreter = source.venvPython.path
+        let lock = source.serverDirectory.appending(component: LocalEngineLayout.lockFileName).path
+        #expect(
+            shell.commands == [
+                ["/usr/bin/env", "MACOSX_DEPLOYMENT_TARGET=14.0", uv, "pip", "sync",
+                 "--python", interpreter, lock],
+                ["/usr/bin/env", "MACOSX_DEPLOYMENT_TARGET=14.0", uv, "pip", "install",
+                 "--python", interpreter, "--no-deps", "-e", source.serverDirectory.path],
+            ])
+        let restamped = try #require(LocalEngineLockStamp.read(venv: venv))
+        #expect(restamped.lockSHA256 == "cccc3333")
+        #expect(restamped.lockFile == LocalEngineLayout.lockFileName)
+    }
+
+    @MainActor
+    @Test func aRunningEngineRefusesReinstallPackagesAndRunsNothing() async {
+        var environment = warmEnvironment()  // answering
+        environment.stamp = driftedStamp()
+        environment.lockSHA = "cccc3333"
+        let shell = RecordingShell()
+        let provisioner = LocalEngineProvisioner(
+            environment: environment, shell: shell,
+            downloader: SubstitutedArtifactDownloader())
+        // Ready (the engine answers), and the status line says what is left
+        // and that the engine has to stop first.
+        await provisioner.refreshPlan()
+        guard case .ready = provisioner.phase else {
+            Issue.record("a drifted, running engine reported \(provisioner.phase)")
+            return
+        }
+        #expect(provisioner.statusLine.contains("stop the engine, then choose Reinstall Packages"))
+        await provisioner.syncEnvironment()
+        #expect(shell.commands.isEmpty)
+        #expect(provisioner.statusLine.contains("stop the local engine first"))
+        #expect(!provisioner.phase.isRunning)
+    }
+
+    /// A reinstall cannot be stopped between its two commands (that would
+    /// leave the engine package uninstalled), so Stop Setup says so rather
+    /// than promising a cancel; and while it runs, nothing else may start.
+    @MainActor
+    @Test func aReinstallInFlightIsNotCancelledAndBlocksEverythingElse() async {
+        var environment = warmEnvironment()
+        environment.stamp = driftedStamp()
+        environment.lockSHA = "cccc3333"
+        environment.answering = false
+        let shell = GatedShell()
+        let provisioner = LocalEngineProvisioner(
+            environment: environment, shell: shell,
+            downloader: SubstitutedArtifactDownloader())
+
+        let reinstall = Task { await provisioner.syncEnvironment() }
+        while !shell.hasEntered { await Task.yield() }
+        #expect(provisioner.isBusy)
+        #expect(provisioner.offeredActionInFlight == "Reinstall Packages")
+        provisioner.cancel()
+        #expect(provisioner.statusLine.contains("cannot be stopped partway"))
+        // A second Reinstall or a Refresh Engine while it runs is a no-op.
+        #expect(await provisioner.refreshEngine() == false)
+        shell.release()
+        await reinstall.value
+
+        #expect(!provisioner.isBusy)
+        #expect(provisioner.offeredActionInFlight == nil)
+        // It ran to the end rather than stopping after the first command.
+        #expect(provisioner.phase != .cancelled)
+        if case .failed(let reason) = provisioner.phase {
+            Issue.record("the reinstall failed: \(reason)")
+        }
+    }
+
+    /// The developer case end to end: an unstamped venv is never offered a
+    /// reinstall, and asking anyway runs nothing.
+    @MainActor
+    @Test func anUnstampedVenvIsNeverReinstalled() async {
+        var environment = warmEnvironment()
+        environment.stamp = nil
+        environment.lockSHA = "cccc3333"
+        environment.answering = false
+        let shell = RecordingShell()
+        let provisioner = LocalEngineProvisioner(
+            environment: environment, shell: shell,
+            downloader: SubstitutedArtifactDownloader())
+        await provisioner.refreshPlan()
+        #expect(provisioner.environmentSyncOffer == nil)
+        #expect(provisioner.environmentSyncPreamble.isEmpty)
+        await provisioner.syncEnvironment()
+        #expect(shell.commands.isEmpty)
+        #expect(provisioner.statusLine.contains("nothing to reinstall"))
     }
 }

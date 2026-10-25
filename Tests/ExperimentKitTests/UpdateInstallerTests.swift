@@ -335,6 +335,7 @@ struct UpdateInstallerTests {
             downloadSize: nil, previousCopy: previous, sourceCheckout: nil
         ).map(\.text)
         #expect(plain.contains { $0.contains("Refresh Engine") })
+        #expect(plain.contains { $0.contains("offers Reinstall Packages") })
         #expect(!plain.contains { $0.contains("code checkout") })
         #expect(plain.contains(UpdateInstallReview.olderCopiesLine))
     }
@@ -1341,5 +1342,49 @@ struct UpdateInstallerTests {
                 previousCopyName: nil, engineIsStale: false, hasClusterSites: false))
         #expect(quiet.lines.isEmpty)
         #expect(!quiet.offersEngineSetup)
+    }
+
+    /// When this version pins different packages from the ones installed, the
+    /// notice says Reinstall Packages follows Refresh Engine, and how much it
+    /// can download, instead of promising that the packages are simply kept.
+    @Test func theFirstLaunchAfterAnUpdateSaysWhenThePackagesNeedReinstalling() throws {
+        let both = try #require(
+            UpdateAfterInstall.notice(
+                lastLaunched: "0.9.13", current: SemanticVersion("0.9.14")!, appName: "SteerLab.app",
+                previousCopyName: nil, engineIsStale: true, packagesNeedReinstall: true,
+                hasClusterSites: false))
+        #expect(both.lines == [UpdateAfterInstall.engineAndPackagesLine])
+        #expect(both.lines[0].contains("Refresh Engine, then Reinstall Packages"))
+        #expect(both.lines[0].contains("up to about 2.0 GB"))
+        #expect(both.offersEngineSetup)
+
+        // The engine is current, but the packages are not.
+        let packagesOnly = try #require(
+            UpdateAfterInstall.notice(
+                lastLaunched: "0.9.13", current: SemanticVersion("0.9.14")!, appName: "SteerLab.app",
+                previousCopyName: nil, engineIsStale: false, packagesNeedReinstall: true,
+                hasClusterSites: false))
+        #expect(packagesOnly.lines == [UpdateAfterInstall.packagesLine])
+        #expect(!packagesOnly.lines[0].contains("Refresh Engine"))
+        #expect(packagesOnly.offersEngineSetup)
+
+        // The lock did not move: the original line, which keeps the packages.
+        let engineOnly = try #require(
+            UpdateAfterInstall.notice(
+                lastLaunched: "0.9.13", current: SemanticVersion("0.9.14")!, appName: "SteerLab.app",
+                previousCopyName: nil, engineIsStale: true, packagesNeedReinstall: false,
+                hasClusterSites: false))
+        #expect(engineOnly.lines == [UpdateAfterInstall.engineLine])
+        #expect(!engineOnly.lines[0].contains("Reinstall Packages"))
+
+        // A checkout runs the engine: its commands, never the engine lines.
+        let withClone = try #require(
+            UpdateAfterInstall.notice(
+                lastLaunched: "0.9.13", current: SemanticVersion("0.9.14")!, appName: "SteerLab.app",
+                previousCopyName: nil, engineIsStale: false, packagesNeedReinstall: true,
+                hasClusterSites: false, sourceCheckout: URL(filePath: "/opt/lab/SteerLab/InterpBench")))
+        #expect(withClone.lines.count == 1)
+        #expect(!withClone.lines[0].contains("Reinstall Packages"))
+        #expect(!withClone.offersEngineSetup)
     }
 }

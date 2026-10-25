@@ -20,6 +20,22 @@ migration that rewrites frozen bytes.
   already did on the app-free client. The app is unchanged: it still treats
   `STEERLAB_WORKSPACE` as a pin that its own workspace switching does not
   override. Every `--json` answer names the workspace it used.
+- **Reinstall Packages keeps the Python engine's packages in step with an
+  update.** Refresh Engine copies a new version's engine but keeps the
+  packages already installed, so when a release pins different packages (a
+  newer torch or transformers, say), the engine setup used to say only that
+  the lock had moved, and the one way to match it was to delete the
+  environment by hand. The setup now offers **Reinstall Packages** beside
+  Refresh Engine, and offers it as soon as Refresh Engine finishes when the
+  new version needs it. Before anything downloads, it says the most it will
+  fetch (up to about 2 GB; only packages that changed are fetched, and ones
+  already downloaded are reused) and asks you to confirm. Anything the lock
+  does not list, including packages you added to that environment yourself,
+  is removed. Like Refresh Engine, it will not start while the engine is
+  running. The notice on the first launch after an update now says when
+  this will be needed. An environment made by
+  `scripts/start-local-server.sh`, which records no lock, is never offered a
+  reinstall and is left as it is.
 - **`cluster bootstrap plan` shows the plan it asks you to approve.** It
   printed only the plan's hash, so reviewing what `bootstrap apply` would run
   meant finding the dry run in a log file. The answer now carries the dry run

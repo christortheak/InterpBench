@@ -133,6 +133,29 @@ public enum LocalEngineLayout: Sendable {
     /// than a re-resolution. Inside the venv deliberately: delete the venv and
     /// the claim goes with it.
     public static let lockStampFileName = "steerlab-lock-stamp.json"
+
+    /// Lowercase hex sha256 of a file's bytes; nil when it cannot be read.
+    public static func sha256Hex(ofFileAt url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// sha256 of the lock THIS app build ships in its engine payload — the
+    /// lock a Refresh Engine would copy — or nil when the build ships no
+    /// payload or no lock. Read without materializing or starting anything,
+    /// so the first launch after an update can ask "will the packages need
+    /// reinstalling?" before the researcher has touched the engine. Both
+    /// payload spellings are accepted, as `materialize` accepts them.
+    public static func payloadLockSHA256() -> String? {
+        guard let payload = try? CodeResources.serverPayload() else { return nil }
+        for candidate in [
+            payload.appending(component: lockFileName),
+            payload.appending(components: "Server", lockFileName),
+        ] {
+            if let sha = sha256Hex(ofFileAt: candidate) { return sha }
+        }
+        return nil
+    }
 }
 
 /// What a venv was built from. Absent on venvs created before WP3 (and on any
@@ -161,6 +184,13 @@ public struct LocalEngineLockStamp: Codable, Sendable, Equatable {
         self.installedAt = installedAt
         self.uvVersion = uvVersion
         self.pythonVersion = pythonVersion
+    }
+
+    /// The stamp inside `venv`, when there is one that decodes.
+    public static func read(venv: URL) -> LocalEngineLockStamp? {
+        let url = venv.appending(component: LocalEngineLayout.lockStampFileName)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(LocalEngineLockStamp.self, from: data)
     }
 }
 
@@ -228,8 +258,18 @@ public enum LocalEngineAction: Sendable, Equatable {
     case installCPython(minor: String)
     case createVenv(path: String)
     case installLock(lock: String, editableTarget: String)
+    /// Reinstall Packages: bring an EXISTING, stamped venv in line with the
+    /// lock the tree now carries. Offered, never planned (see
+    /// `LocalEngineDecisions.environmentSyncOffer`).
+    case syncEnvironment(
+        lock: String, editableTarget: String, installedSHA256: String, lockSHA256: String)
     case startServer(port: Int)
     case runQualification
+
+    /// The wheel set (torch, transformers, accelerate, sae-lens, …): the big
+    /// download, and the one people are surprised by. One figure for the
+    /// first install and for a reinstall, so the two can never disagree.
+    public static let lockInstallEstimatedBytes = 2_000_000_000
 
     public var title: String {
         switch self {
@@ -247,6 +287,10 @@ public enum LocalEngineAction: Sendable, Equatable {
             return "Create the virtual environment at \(path)"
         case .installLock(let lock, _):
             return "Install the pinned dependencies from \(lock)"
+        case .syncEnvironment(let lock, let editableTarget, let installed, let current):
+            return "Reinstall the packages in \(editableTarget)/.venv.nosync to match "
+                + "\(URL(filePath: lock).lastPathComponent) "
+                + "(sha256 \(String(installed.prefix(8))) → \(String(current.prefix(8))))"
         case .startServer(let port):
             return "Start the local server on 127.0.0.1:\(port)"
         case .runQualification:
@@ -259,9 +303,7 @@ public enum LocalEngineAction: Sendable, Equatable {
         switch self {
         case .downloadUV: return PinnedUV.byteCount
         case .installCPython: return PinnedCPython.approximateByteCount
-        // The wheel set (torch, transformers, accelerate, sae-lens, …) is the
-        // big one and the one people are surprised by.
-        case .installLock: return 2_000_000_000
+        case .installLock, .syncEnvironment: return Self.lockInstallEstimatedBytes
         case .materializeEngine, .refreshEngine, .createVenv, .startServer,
             .runQualification:
             return 0
@@ -274,6 +316,14 @@ public enum LocalEngineAction: Sendable, Equatable {
         case .downloadUV: return false
         default: return estimatedDownloadBytes > 0
         }
+    }
+
+    /// True when the estimate is a CEILING: a reinstall fetches only the
+    /// packages that changed and uv reuses what its cache already holds, so
+    /// the whole wheel set is the most it can download, not what it will.
+    public var downloadEstimateIsUpperBound: Bool {
+        if case .syncEnvironment = self { return true }
+        return false
     }
 }
 
@@ -500,6 +550,76 @@ public enum LocalEngineDecisions {
         return .refreshEngine(destination: path, from: stampRevision, to: appRevision)
     }
 
+    /// Whether a venv was installed from a different lock than `lockSHA256`.
+    /// FALSE with no stamp (the developer case: absence of evidence is never
+    /// drift) and with no lock to compare against.
+    public static func lockMovedSinceInstall(
+        stamp: LocalEngineLockStamp?, lockSHA256: String?
+    ) -> Bool {
+        guard let stamp, let lockSHA256 else { return false }
+        return stamp.lockSHA256 != lockSHA256
+    }
+
+    /// Reinstall Packages — OFFERED, never part of the plan and never
+    /// performed unasked: the venv this flow installed is stamped with a
+    /// different lock from the one the tree now carries (after Refresh Engine
+    /// copied a version whose lock moved, always). Nil when the stamp
+    /// matches, when there is no venv yet (Set Up installs one), and — the
+    /// developer case — when the venv carries no stamp at all: a venv made by
+    /// `scripts/start-local-server.sh` keeps its advisory and is never
+    /// offered a reinstall it did not ask for. Offered whether or not the
+    /// engine is answering; `refusalWhileEngineAnswers` is the gate on
+    /// performing it.
+    public static func environmentSyncOffer(_ observation: LocalEngineObservation)
+        -> LocalEngineAction?
+    {
+        guard observation.venvPythonExists,
+            let lockPath = observation.lockFilePath,
+            let lockSHA = observation.lockFileSHA256,
+            let stamp = observation.venvLockStamp,
+            lockMovedSinceInstall(stamp: stamp, lockSHA256: lockSHA)
+        else { return nil }
+        return .syncEnvironment(
+            lock: lockPath, editableTarget: observation.serverDirectoryForDisplay,
+            installedSHA256: stamp.lockSHA256, lockSHA256: lockSHA)
+    }
+
+    /// Why an offered action that replaces what a running engine has loaded
+    /// (Refresh Engine's files, Reinstall Packages' packages) must wait, or
+    /// nil when nothing is answering. Replacing either under a running engine
+    /// would mix two versions in one process.
+    public static func refusalWhileEngineAnswers(
+        _ observation: LocalEngineObservation, actionName: String, replacing: String
+    ) -> String? {
+        guard observation.serverAnswering else { return nil }
+        return "stop the local engine first (Stop in the Compute menu), then choose "
+            + "\(actionName) again — \(replacing) cannot be replaced while it is running"
+    }
+
+    /// Whether the packages installed for the materialized engine on this Mac
+    /// were made from a different lock than the one THIS app build ships —
+    /// read from the venv's stamp and the bundled lock, without starting or
+    /// probing anything, so the first launch after an update can say that
+    /// Reinstall Packages will follow Refresh Engine. False for a checkout,
+    /// for no engine or no venv yet, for an unstamped venv, and for a build
+    /// with no revision of its own (it offers no Refresh Engine, so the
+    /// shipped lock would never reach the tree for the setup to offer the
+    /// reinstall against).
+    public static func materializedEnvironmentLockMoved(
+        appRevision: String? = CodeResources.bundleSourceRevision,
+        payloadLockSHA256: @autoclosure () -> String? = LocalEngineLayout.payloadLockSHA256()
+    ) -> Bool {
+        guard appRevision != nil,
+            case .engineRoot(let engine)? = CodeResources.localEngineSource()
+        else { return false }
+        let source = CodeResources.LocalEngineSource.engineRoot(engine)
+        guard FileManager.default.isExecutableFile(atPath: source.venvPython.path),
+            let stamp = LocalEngineLockStamp.read(
+                venv: source.serverDirectory.appending(component: ".venv.nosync"))
+        else { return false }
+        return lockMovedSinceInstall(stamp: stamp, lockSHA256: payloadLockSHA256())
+    }
+
     public static func interpreterState(_ observation: LocalEngineObservation)
         -> LocalEngineStepState
     {
@@ -566,12 +686,17 @@ public enum LocalEngineDecisions {
                 "\(observation.venvPathForDisplay) matches \(stamp.lockFile) "
                     + "(sha256 \(String(stamp.lockSHA256.prefix(8))))")
         }
+        // Still an advisory, never an action: the researcher decides when
+        // gigabytes move, through the offered Reinstall Packages.
         return .satisfiedWithAdvisory(
             "\(observation.venvPathForDisplay) already exists",
             advisory: "it was installed from \(stamp.lockFile) sha256 "
                 + "\(String(stamp.lockSHA256.prefix(8))) but the tree now "
                 + "carries sha256 \(String(lockSHA.prefix(8))) — the lock "
-                + "moved under it; reinstall to match")
+                + "moved under it. Choose Reinstall Packages to match it "
+                + "(downloads up to about "
+                + "\(describeBytes(LocalEngineAction.lockInstallEstimatedBytes)); "
+                + "nothing is fetched until you confirm)")
     }
 
     public static func serveState(_ observation: LocalEngineObservation)
@@ -640,18 +765,27 @@ public enum LocalEngineDecisions {
     /// when the plan downloads nothing — and callers must render that as "no
     /// downloads", not as silence.
     public static func downloadPreamble(_ plan: [LocalEnginePlanEntry]) -> [String] {
+        downloadPreamble(for: plan.flatMap(\.state.actions))
+    }
+
+    /// The same statement for actions outside the plan — an offered Reinstall
+    /// Packages states its download through here before it runs.
+    public static func downloadPreamble(for actions: [LocalEngineAction]) -> [String] {
         var lines: [String] = []
         var total = 0
-        for entry in plan {
-            for action in entry.state.actions where action.estimatedDownloadBytes > 0 {
-                let size = describeBytes(action.estimatedDownloadBytes)
-                let qualifier = action.downloadEstimateIsApproximate ? "about " : ""
-                lines.append("\(action.title) — \(qualifier)\(size)")
-                total += action.estimatedDownloadBytes
-            }
+        var anyCeiling = false
+        for action in actions where action.estimatedDownloadBytes > 0 {
+            let size = describeBytes(action.estimatedDownloadBytes)
+            let qualifier = action.downloadEstimateIsUpperBound
+                ? "up to about " : action.downloadEstimateIsApproximate ? "about " : ""
+            lines.append("\(action.title) — \(qualifier)\(size)")
+            total += action.estimatedDownloadBytes
+            anyCeiling = anyCeiling || action.downloadEstimateIsUpperBound
         }
         guard !lines.isEmpty else { return [] }
-        lines.append("Total: about \(describeBytes(total)) over the network.")
+        lines.append(
+            "Total: \(anyCeiling ? "up to " : "")about \(describeBytes(total)) "
+                + "over the network.")
         return lines
     }
 }
@@ -840,14 +974,11 @@ public struct SystemLocalEngineEnvironment: LocalEngineEnvironment {
     }
 
     public func sha256OfFile(_ url: URL) -> String? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        LocalEngineLayout.sha256Hex(ofFileAt: url)
     }
 
     public func readLockStamp(venv: URL) -> LocalEngineLockStamp? {
-        let url = venv.appending(component: LocalEngineLayout.lockStampFileName)
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(LocalEngineLockStamp.self, from: data)
+        LocalEngineLockStamp.read(venv: venv)
     }
 
     public func serverAnswers(port: Int) -> Bool {
@@ -938,6 +1069,24 @@ public final class LocalEngineProvisioner {
     /// Refresh Engine, when the last look found something to refresh (see
     /// `LocalEngineDecisions.refreshOffer`). The setup sheet offers it.
     public private(set) var refreshOffer: LocalEngineAction?
+    /// Reinstall Packages, when the last look found the installed packages
+    /// stamped with a different lock (see
+    /// `LocalEngineDecisions.environmentSyncOffer`). The setup sheet offers it.
+    public private(set) var environmentSyncOffer: LocalEngineAction?
+    /// What Reinstall Packages would download, stated before it runs. Empty
+    /// when nothing is offered.
+    public var environmentSyncPreamble: [String] {
+        environmentSyncOffer.map { LocalEngineDecisions.downloadPreamble(for: [$0]) } ?? []
+    }
+    /// "Refresh Engine" or "Reinstall Packages" while one is in flight, set
+    /// BEFORE its first await so a second click, Set Up, or an engine start
+    /// cannot slip in while it is still looking. Neither can be stopped
+    /// partway (a reinstall stopped between its two commands would leave the
+    /// engine package uninstalled), so `cancel()` says so instead.
+    public private(set) var offeredActionInFlight: String?
+    /// True while setup or an offered action is running — what every control
+    /// that would start, stop, or replace the engine is gated on.
+    public var isBusy: Bool { phase.isRunning || offeredActionInFlight != nil }
     public private(set) var statusLine = "not checked yet"
     public var port = 8080
 
@@ -977,6 +1126,7 @@ public final class LocalEngineProvisioner {
         let plan = LocalEngineDecisions.plan(observation)
         self.plan = plan
         refreshOffer = LocalEngineDecisions.refreshOffer(observation)
+        environmentSyncOffer = LocalEngineDecisions.environmentSyncOffer(observation)
         downloadPreamble = LocalEngineDecisions.downloadPreamble(plan)
         if let blocked = plan.first(where: { $0.state.isBlocked }) {
             phase = .failed(blocked.state.summary)
@@ -986,20 +1136,39 @@ public final class LocalEngineProvisioner {
         let actionCount = plan.reduce(0) { $0 + $1.state.actions.count }
         if LocalEngineDecisions.isAlreadyProvisioned(plan) {
             phase = .ready("everything is already set up")
-            statusLine = "ready — everything is set up; re-running only "
-                + "re-verifies (\(plan.count) steps)"
+            // Set up, but "everything is set up" alone would hide the one
+            // thing left to do: the packages predate the lock in the tree.
+            // "Ready" means the engine is answering, and a reinstall waits
+            // until it is stopped, so the hint says both.
+            statusLine = environmentSyncOffer == nil
+                ? "ready — everything is set up; re-running only "
+                    + "re-verifies (\(plan.count) steps)"
+                : "set up, but the installed packages were made from an earlier "
+                    + "lock — stop the engine, then choose Reinstall Packages to "
+                    + "match this engine"
         } else {
             phase = .needsSetup(actionCount: actionCount)
             statusLine = "\(actionCount) step\(actionCount == 1 ? "" : "s") to "
                 + "run" + (downloadPreamble.isEmpty
                     ? " (nothing to download)"
                     : " — see what will be downloaded before starting")
+            // The usual shape after Refresh Engine: the engine is stopped, so
+            // serving is a step to run, and the packages still need matching.
+            if environmentSyncOffer != nil {
+                statusLine += "; the installed packages were made from an earlier "
+                    + "lock — choose Reinstall Packages to match this engine"
+            }
         }
     }
 
     // MARK: Running
 
     public func cancel() {
+        if let action = offeredActionInFlight {
+            statusLine = "\(action) cannot be stopped partway — it finishes on its "
+                + "own, and nothing else starts until it does"
+            return
+        }
         cancelRequested = true
         statusLine = "cancelling after the current step…"
     }
@@ -1017,7 +1186,7 @@ public final class LocalEngineProvisioner {
     /// step re-checks its own precondition first, so this is the same call
     /// whether it is the first attempt or the fifth.
     public func run(host: ChatService) {
-        guard work == nil else { return }
+        guard work == nil, offeredActionInFlight == nil else { return }
         work = Task { [weak self] in
             await self?.runAwaitingCompletion(host: host)
             self?.work = nil
@@ -1067,21 +1236,29 @@ public final class LocalEngineProvisioner {
     /// left behind by an update catches up without a 2 GB reinstall. Refused,
     /// with the reason, while the engine is answering: replacing files under
     /// a running engine would mix two versions in one process.
-    public func refreshEngine(host: ChatService? = nil) async {
-        guard work == nil, !phase.isRunning else { return }
+    ///
+    /// Returns true when the copy was made. The fresh plan it ends with
+    /// carries `environmentSyncOffer` when the copied lock differs from the
+    /// one the packages were installed from, so the caller can offer
+    /// Reinstall Packages at once instead of leaving only an advisory.
+    @discardableResult
+    public func refreshEngine(host: ChatService? = nil) async -> Bool {
+        guard work == nil, !isBusy else { return false }
+        offeredActionInFlight = "Refresh Engine"
+        defer { offeredActionInFlight = nil }
         let observation = await environment.observe(port: port)
         guard let offer = LocalEngineDecisions.refreshOffer(observation),
             case .refreshEngine(let destination, _, _) = offer
         else {
             refreshOffer = nil
             statusLine = "the engine already matches this app build — nothing to refresh"
-            return
+            return false
         }
-        guard !observation.serverAnswering else {
-            statusLine = "stop the local engine first (Stop in the Compute menu), then "
-                + "choose Refresh Engine again — its files cannot be replaced while it "
-                + "is running"
-            return
+        if let refusal = LocalEngineDecisions.refusalWhileEngineAnswers(
+            observation, actionName: "Refresh Engine", replacing: "its files")
+        {
+            statusLine = refusal
+            return false
         }
         logHost = host
         logLines = [offer.title]
@@ -1092,6 +1269,62 @@ public final class LocalEngineProvisioner {
                 to: URL(filePath: destination), step: .engineSource,
                 preservingEnvironment: true)
             emit("Refresh Engine: done — the installed packages were kept")
+        } catch let error as LocalEngineError {
+            phase = .failed(error.description)
+            statusLine = error.description
+            emit(statusLine)
+            return false
+        } catch {
+            phase = .failed(error.localizedDescription)
+            statusLine = error.localizedDescription
+            emit(statusLine)
+            return false
+        }
+        await refreshPlan()
+        if let sync = environmentSyncOffer {
+            emit(
+                "Refresh Engine: this version pins different packages — "
+                    + "Reinstall Packages is offered: " + sync.title)
+        }
+        return true
+    }
+
+    /// Reinstall Packages: bring the installed packages in line with the lock
+    /// the engine tree now carries, INTO the existing venv, then re-stamp it.
+    /// `uv pip sync` installs what changed, removes what the lock no longer
+    /// lists, and leaves the rest; the engine package is then reinstalled
+    /// editable, exactly as the first install does. Offered only (never
+    /// planned), stated before it runs (the download preamble goes to the
+    /// Activity feed first), and refused while the engine is answering, for
+    /// the same reason as Refresh Engine. A failure leaves the OLD stamp in
+    /// place, so the offer stands until a reinstall completes.
+    public func syncEnvironment(host: ChatService? = nil) async {
+        guard work == nil, !isBusy else { return }
+        offeredActionInFlight = "Reinstall Packages"
+        defer { offeredActionInFlight = nil }
+        let observation = await environment.observe(port: port)
+        guard let offer = LocalEngineDecisions.environmentSyncOffer(observation) else {
+            environmentSyncOffer = nil
+            statusLine = "nothing to reinstall — the installed packages are not "
+                + "recorded against a different lock"
+            return
+        }
+        if let refusal = LocalEngineDecisions.refusalWhileEngineAnswers(
+            observation, actionName: "Reinstall Packages", replacing: "its packages")
+        {
+            statusLine = refusal
+            return
+        }
+        logHost = host
+        logLines = [offer.title]
+        logID = host?.startLiveLog(title: logTitle, initialLine: offer.title)
+        for line in LocalEngineDecisions.downloadPreamble(for: [offer]) {
+            emit("will download: " + line)
+        }
+        phase = .running(.environment)
+        do {
+            try await perform(offer, step: .environment, observation: observation)
+            emit("Reinstall Packages: done — the packages match the engine's lock")
         } catch let error as LocalEngineError {
             phase = .failed(error.description)
             statusLine = error.description
@@ -1194,6 +1427,10 @@ public final class LocalEngineProvisioner {
             try await installDependencies(
                 lock: lock, serverDirectory: editableTarget,
                 observation: observation, step: step)
+        case .syncEnvironment(let lock, let editableTarget, _, _):
+            try await installDependencies(
+                lock: lock, serverDirectory: editableTarget,
+                observation: observation, step: step, syncing: true)
         case .startServer:
             try await startServer(observation: observation, step: step)
         case .runQualification:
@@ -1359,9 +1596,16 @@ public final class LocalEngineProvisioner {
     /// `torch==2.13.0` IS the Apple-silicon wheel we want — so the lock is
     /// installed whole. Copying the cluster's carve-out here would leave the
     /// venv with no torch at all.
+    ///
+    /// `syncing` is Reinstall Packages: `uv pip sync` instead of `install`,
+    /// so the existing venv ends up holding exactly the lock — a package the
+    /// lock dropped is removed rather than left behind under a stamp that
+    /// would then claim a match it does not have. Sync also removes the
+    /// editable engine package (the lock does not list it), which the second
+    /// command below puts back.
     private func installDependencies(
         lock: String, serverDirectory: String, observation: LocalEngineObservation,
-        step: LocalEngineStep
+        step: LocalEngineStep, syncing: Bool = false
     ) async throws {
         guard let uv = LocalEngineDecisions.chosenUV(observation) else {
             throw LocalEngineError.blocked(
@@ -1375,7 +1619,9 @@ public final class LocalEngineProvisioner {
         // quietly resolves a different torch.
         let overrides = ["MACOSX_DEPLOYMENT_TARGET": "14.0"]
         try await runOrThrow(
-            [uv.path, "pip", "install", "--python", interpreter, "-r", lock],
+            syncing
+                ? [uv.path, "pip", "sync", "--python", interpreter, lock]
+                : [uv.path, "pip", "install", "--python", interpreter, "-r", lock],
             step: step, extraEnvironment: overrides)
         // The lock pins third-party versions only; the engine package itself
         // is installed editable afterwards, exactly as bootstrap.sh does.

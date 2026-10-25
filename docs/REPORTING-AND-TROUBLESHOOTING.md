@@ -221,6 +221,7 @@ On these refusals, `error.code` names the problem directly.
 | **Install Update** stopped | A download, the checksum, or the signature check failed, or you cancelled. Nothing was replaced | Try again later, or download the release from the Releases page |
 | Going back after an update | The earlier version is kept beside the app as `SteerLab-<version>-previous.app` | Quit SteerLab, move `SteerLab.app` to the Trash, rename the kept copy to `SteerLab.app`, and open it |
 | The engine setup says the engine was copied by a different build | After an update, the Python engine on this Mac still holds the earlier version's code | Stop the engine if it is running, then choose **Refresh Engine** in its setup (**Engine Details…** in the toolbar's connection menu). Installed packages are kept |
+| The engine setup says the lock moved under the installed packages | The packages were installed from an earlier version's lock, and this version pins different ones | Stop the engine if it is running, then choose **Reinstall Packages** in its setup. It says the most it will download before it starts. An environment made by `scripts/start-local-server.sh` records no lock and is never offered this |
 
 ### Advisories worth knowing
 
