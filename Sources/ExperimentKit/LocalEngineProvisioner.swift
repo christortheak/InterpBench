@@ -1734,14 +1734,15 @@ public final class LocalEngineProvisioner {
                 throw LocalEngineError.fileOperationFailed(
                     step: step,
                     reason: "the packages were reinstalled, but \(stampURL.path) "
-                        + "could not be written, so the environment still reads "
-                        + "as unfinished — free some disk space and choose "
-                        + "Reinstall Packages again")
+                        + "could not be written; free some disk space")
             }
             emit(
-                "\(step.title): stamped the venv against "
-                    + "\(URL(filePath: lock).lastPathComponent) "
-                    + "(sha256 \(String(sha.prefix(8))))")
+                written
+                    ? "\(step.title): stamped the venv against "
+                        + "\(URL(filePath: lock).lastPathComponent) "
+                        + "(sha256 \(String(sha.prefix(8))))"
+                    : "\(step.title): could not write \(stampURL.path); the "
+                        + "packages are installed but not recorded against the lock")
         }
     }
 

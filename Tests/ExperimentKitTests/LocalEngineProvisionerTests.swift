@@ -755,6 +755,7 @@ private final class FailingReinstallShell: ClusterShellRunner, @unchecked Sendab
     private let lock = NSLock()
     private var recorded: [[String]] = []
     private var syncRan = false
+    private var stampAtSync: LocalEngineLockStamp?
     private let failing: Half
     private let syncChangesPackages: Bool
 
@@ -764,9 +765,18 @@ private final class FailingReinstallShell: ClusterShellRunner, @unchecked Sendab
     }
 
     var commands: [[String]] { lock.withLock { recorded } }
+    /// The venv's stamp on disk at the moment `uv pip sync` was called.
+    var stampWhenSyncRan: LocalEngineLockStamp? { lock.withLock { stampAtSync } }
 
     func run(_ argv: [String]) async -> ClusterShellResult {
-        lock.withLock {
+        if argv.contains("sync"), let flag = argv.firstIndex(of: "--python"), flag + 1 < argv.count {
+            // <venv>/bin/python → <venv>
+            let venv = URL(filePath: argv[flag + 1]).deletingLastPathComponent()
+                .deletingLastPathComponent()
+            let stamp = LocalEngineLockStamp.read(venv: venv)
+            lock.withLock { stampAtSync = stamp }
+        }
+        return lock.withLock {
             recorded.append(argv)
             if argv.contains("freeze") {
                 return ClusterShellResult(
@@ -1043,6 +1053,7 @@ private final class RecordingShell: ClusterShellRunner, @unchecked Sendable {
         await provisioner.syncEnvironment()
 
         #expect(shell.commands.count == 3, "snapshot, the failed sync, and a second snapshot")
+        #expect(shell.stampWhenSyncRan?.incomplete == true, "the mark is on disk before the sync runs")
         #expect(try #require(LocalEngineLockStamp.read(venv: venv)).incomplete == true)
         #expect(provisioner.statusLine.contains("choose Reinstall Packages again"))
         #expect(provisioner.plan.first { $0.step == .environment }?.state.isBlocked == true)
