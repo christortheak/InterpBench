@@ -6,21 +6,22 @@ command line.
 
 A language model's behavior can be nudged while it writes by adding a
 direction to its internal activations. SteerLab lets you make those
-directions from examples you write or import them from published
-interpretability work, apply them at a chosen strength, and compare the
-result against a fair baseline, with every number tied to the exact inputs
-and settings that produced it. You make the scientific choices; SteerLab
-keeps results traceable to their inputs and settings, and keeps the work
-organized.
+directions from examples you write, or import them from published
+interpretability work. You then apply them at a chosen strength and compare
+the result against a fair baseline. Every number is tied to the exact inputs
+and settings that produced it.
 
-Study one model, compare several configured agents, or investigate what
-happens when agents interact. Use the Mac app or your coding assistant to
-prepare studies, choose where they run, monitor execution, and inspect and
-export the evidence in your own workspace. A Mac on its own, laptops
-included, is enough to work with.
+You make the scientific choices. SteerLab keeps the work organized, records
+what ran and which checks applied, and leaves the judgment of what the
+results support to you.
+
+You can study one model, compare several configured versions of it, or watch
+what happens when they talk to each other. In SteerLab these configured
+models are called **agents**. Your **coding assistant** (such as Claude Code
+or Codex) is the separate tool that can help you drive SteerLab.
 
 **[Download from the Releases page](https://github.com/christortheak/InterpBench/releases/latest)**
-(the Mac app, or the app-free client archive) · **[Getting started](docs/CLIENT-FIRST-RUN.md)**
+· **[Getting started](docs/CLIENT-FIRST-RUN.md)**
 · **[Report a problem](CONTRIBUTING.md#reporting-a-problem)**
 
 *Pre-release research software. It has so far run in earnest on a small
@@ -29,17 +30,18 @@ diagnostic messages explain what needs attention. Which methods run on which
 hardware, and what has actually been measured, is recorded in
 [capabilities and measured limits](docs/SUBSTRATES.md).*
 
-## Start here
+## Choose how to start
 
-Start designing a study before downloading a model or choosing where it
-runs. Pick either route; you can move between the app and your coding
-assistant at any time, because both work on the same workspace folder.
-[Getting started](docs/CLIENT-FIRST-RUN.md) walks through each step, with how
-long it takes and how much disk space it needs.
+| You have | Start with | What you get |
+|---|---|---|
+| An Apple Silicon Mac (macOS 26.4 or later) | [The Mac app](#use-the-mac-app), or [one link for your coding assistant](#hand-one-link-to-your-coding-assistant) | Everything: design, run, and read studies on the Mac, or run them on another machine |
+| x86_64 Linux, or a Mac without the app | [The app-free client](#the-app-free-client-preview) (preview) | Design studies and send them to a runner someone has set up |
+| A development or GPU machine, and want the source | [Build from source](#build-from-source) | The command lines and the Python engine |
 
-Release files are named `SteerLab-<version>+<revision>.zip` and
-`steerlab-client-<version>+<revision>.tar.gz`, where `<revision>` is a short
-source revision. Each has a `.sha256` file beside it on the Releases page.
+Windows is not supported. You can start designing a study before you
+download a model or decide where it will run. The app and your coding
+assistant work on the same workspace folder, so you can switch between them
+at any time.
 
 ### Hand one link to your coding assistant
 
@@ -49,12 +51,12 @@ Give your coding assistant this sentence:
 > https://github.com/christortheak/InterpBench/blob/main/docs/AGENT-SETUP.md
 > and then help me design my first study.
 
-[That page](docs/AGENT-SETUP.md) is written for the assistant. It shows you a
-plan and asks before downloading anything. On an Apple Silicon Mac it installs
-and checks the app, creates a workspace for your study, and offers to open the
-app on it; on x86_64 Linux it sets up the app-free client described below. The assistant needs
-permission to run commands and to reach the internet. If it lacks either, the
-page ends with the same steps for you to do by hand.
+[That page](docs/AGENT-SETUP.md) is written for the assistant. It shows you
+a plan and asks before downloading anything. On an Apple Silicon Mac it
+installs and checks the app, creates a workspace for your study, and offers
+to open the app on it. On x86_64 Linux it sets up the app-free client. The
+assistant needs permission to run commands and to reach the internet; if it
+has neither, the page ends with the same steps for you to do by hand.
 
 ### Use the Mac app
 
@@ -76,69 +78,40 @@ page ends with the same steps for you to do by hand.
 > Help me choose the method and controls, prepare the data, and review a
 > draft before we run anything.
 
-Requires an Apple Silicon Mac on macOS 26.4 or later. No Xcode, no
-repository checkout, no separate Python. The one-time helper setup needs
-internet access. Choosing where studies run installs nothing by itself;
-downloading a model, and any setup the place you chose needs, are separate
-steps you take when you are ready.
-
-**Updating.** When a newer release is out, SteerLab says so at the top of
-its window. Choose **Install Update…**: SteerLab shows what will happen,
-downloads the release from GitHub, checks it, and then quits and reopens as
-the new version. It waits while a study or another task is running. The
-version you were running is kept beside the app as
-`SteerLab-<version>-previous.app`; to go back, quit SteerLab, move
-`SteerLab.app` to the Trash, rename the kept copy to `SteerLab.app`, and
-open it; older kept copies go to the Trash. If a SteerLab code checkout sits
-beside the app, the Python engine on this Mac runs from it, and SteerLab
-gives the two `git` commands that bring it to the same release. A copy that
-cannot update itself (for example one opened straight from the download,
-before you moved it to Applications or your SteerLab folder, or one you
-built yourself) says why and links to the Releases page.
+No Xcode, repository checkout, or separate Python is needed. The one-time
+helper setup needs internet access. Choosing where studies run installs
+nothing by itself; downloading a model, and any setup the place you chose
+needs, are separate steps you take when you are ready. When a newer release
+is out, SteerLab says so; choose **Install Update…**
+([details](docs/CLIENT-FIRST-RUN.md#updating-and-repairing)).
 
 <details>
 <summary>Prefer the command line on the Mac?</summary>
 
-The app carries its own command line, `steerlab-cli`, inside the bundle.
-Run it from where it is, or put it on your `PATH`:
+The app carries its own command line, `steerlab-cli`. Put it on your `PATH`
+with:
 
 ```sh
 "<path-to>/SteerLab.app/Contents/Helpers/steerlab-cli" install link
 ```
 
-`install link` (0.9.14 and later) makes `~/.local/bin/steerlab-cli` point
-into the app, and updates keep it working. It never replaces a file that is
-not SteerLab's, and it tells you when `~/.local/bin` is not on your `PATH` and
-the line to add. On an older app, make the link yourself:
-
-```sh
-mkdir -p ~/.local/bin
-ln -s "<path-to>/SteerLab.app/Contents/Helpers/steerlab-cli" ~/.local/bin/steerlab-cli
-```
-
-If `~/.local/bin` is not on your `PATH` yet, add this line to your shell
-profile (`~/.zshrc` for the Mac's default shell), then open a new terminal:
-
-```sh
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Then `steerlab-cli --version` reports 7/7 resource families resolved.
-
-Do not name the link `steerlab`; that name belongs to the app-free client
-below, a different product with a different verb surface.
+This makes `~/.local/bin/steerlab-cli` point into the app, and updates keep
+it working. It never replaces a file that is not SteerLab's, and it tells you
+when `~/.local/bin` is not on your `PATH` and the line to add. Then
+`steerlab-cli --version` reports 7/7 resource families resolved. Do not name
+the link `steerlab`: that name belongs to the app-free client, a different
+product.
 
 </details>
 
-### Let your coding agent set it up, without the Mac app
+### The app-free client (preview)
 
-The app-free client is a preview. It creates workspaces and authors
-studies, then submits them to a runner that someone has set up: a
-workstation, a cluster, or a local engine installed separately. It does not
-run models itself. To read results without the app, `results export` writes
-a completed run's stored tables, transcripts, and methods summary to files.
-On a Mac, the app is the supported route to running studies and reading
-their results.
+The app-free client creates workspaces and designs studies, then sends them
+to a runner that someone has set up: a workstation, a cluster, or a local
+engine installed separately. It does not run models itself.
+`results export` writes a completed run's tables, transcripts, and methods
+summary to files. On a Mac, the app is the supported route to running
+studies and reading their results.
 
 1. **Download `steerlab-client-<version>+<revision>.tar.gz`** from the
    Releases page and extract it into a folder.
@@ -152,148 +125,124 @@ their results.
 > workspace's AGENTS.md from there. I want to start by discussing my research
 > question; we can choose models and compute later.
 
-The folder's own AGENTS.md walks the agent through it: plan first, install
-only with the approved hash, use the returned executable, keep the research
-in a separate workspace. The installer provisions Python for you; no
-repository, preinstalled Python, or GPU is needed for authoring. It needs
-internet access, plus curl, tar, and a SHA-256 tool, and its plan checks for
-them and states the download size before anything is downloaded. A failed or
-interrupted install leaves the previous one in place, and running it again
-needs no cleanup. Supported: Apple Silicon macOS, and x86_64 Linux with
-glibc 2.28 or newer. Windows is not supported.
-
-<details>
-<summary>Prefer to run the installer yourself?</summary>
-
-From the extracted folder:
-
-```sh
-sh install-client.sh plan
-```
-
-Review the destination and actions, then install with the hash it printed:
-
-```sh
-sh install-client.sh install --expect <planSHA256> --yes
-```
-
-It returns the absolute path of the `steerlab` executable. Create a workspace
-and get its handoff:
-
-```sh
-<executable> setup start ~/steerlab-studies/first-study --create --json
-<executable> workspace handoff --root ~/steerlab-studies/first-study --json
-```
-
-</details>
+The installer provisions Python for you; no repository, preinstalled Python,
+or GPU is needed. It needs internet access, plus curl, tar, and a SHA-256
+tool, and its plan checks for them and states the download size before
+anything is downloaded. Supported: Apple Silicon macOS, and x86_64 Linux
+with glibc 2.28 or newer.
+[Getting started](docs/CLIENT-FIRST-RUN.md#route-2-the-app-free-client-preview)
+has the steps for running the installer yourself.
 
 ### Build from source
 
 For development, or to run the Python engine on your own GPU machine, start
-from a checkout: [AGENTS.md](AGENTS.md) is the contract for a coding
+from a checkout. [AGENTS.md](AGENTS.md) is the contract for a coding
 assistant pointed at this repository, and
-[ONBOARDING.md](docs/ONBOARDING.md) §4.3 is the walk for a person. Install the Python engine from the committed
-dependency lock for your platform rather than from the version floors, so
-that two machines resolve the same `torch` and `transformers`; the
-maintained instructions are in [Server/README.md](Server/README.md) under
-"Dependency locks". A source install gives you the command lines, not a
-workspace; create one with `workspace init` on either client.
+[ONBOARDING.md](docs/ONBOARDING.md) §4.3 is the walk for a person. Install
+the Python engine from the committed dependency lock for your platform
+([Server/README.md](Server/README.md), "Dependency locks"), so that two
+machines resolve the same `torch` and `transformers`. A source install gives
+you the command lines, not a workspace; create one with `workspace init` on
+either command line.
+
+## How a study goes
+
+1. **Ask the question.** The study interview helps you state what you want
+   to learn and choose controls, before any model is chosen.
+2. **Make a direction**, from pairs of example texts you write or by
+   importing one, and check that it separates held-out examples.
+3. **Choose a strength.** A sweep tries several layers and strengths on
+   prompts kept apart from the study, and you pick one by reading the
+   results.
+4. **Freeze the design.** Freezing locks the study's settings and inputs
+   before any behavior is measured, after checks that the inputs are pinned
+   and the model still answers unrelated questions sensibly.
+5. **Run and read the results**, on this Mac or another machine, against a
+   paired baseline and matched controls, with every result traceable to its
+   inputs.
+
+[Onboarding](docs/ONBOARDING.md) walks through each step, and
+[Conducting a study](docs/CONDUCTING-A-STUDY.md) explains what makes a result
+defensible.
 
 ## What you can do with it
 
-- **Make a direction** from contrastive examples you write, with five
-  extraction recipes, or import one from published interpretability work
-  such as sparse-autoencoder features and J-lens vectors.
-- **Optimize a direction** against a stated objective (OptVec training,
-  evaluation, geometry and family campaigns), or **fine-tune an adapter**
-  and compare it with steering on the same footing.
-- **Apply it** at a chosen layer and dose, or remove it, during generation;
-  inspect what an intervention does in J-space.
-- **Measure** against paired baselines and matched random controls, with
-  seeded sampling, judged outcomes, trained activation readers and
-  capability batteries.
-- **Study individual agents and groups.** Compare a base model with steered
-  or fine-tuned versions, or place configured agents into multi-agent
-  scenarios. Define the participants and conversation structure, vary the
-  interventions, and examine how individual behavior and group outcomes
-  change. (Throughout, "agent" means a configured model under study; your
-  coding assistant is the separate tool that helps you drive SteerLab.)
+- **Make and apply directions.** Extract a direction from contrastive
+  examples with one of five extraction methods, or import one from published
+  work, such as sparse-autoencoder features. Apply it at a chosen layer and
+  strength during generation, or remove it.
+- **Measure fairly.** Compare against paired baselines and matched random
+  controls, with seeded sampling, judged outcomes, and a capability battery
+  (a short set of unrelated questions that shows whether steering broke the
+  model).
+- **Compare agents, alone and together.** Compare a base model with steered
+  or fine-tuned versions, or seat several agents in a multi-agent scenario,
+  vary their interventions, and examine how individual and group behavior
+  change.
+- **Read the model while it writes.** Train a probe (a small classifier that
+  reads the model's internal state), record its readings while a study runs,
+  and give an agent an intervention policy that changes its steering based
+  on those readings.
 - **Try models by hand.** The Mac app downloads open-weight models into your
-  local cache and lets you chat with them, with or without an intervention
-  applied, before you design anything measured.
-- **Run where the work fits.** To run a study, you need a model and
-  somewhere to run it, and a Mac on its own is a supported place. Each
-  workspace runs its studies in one of three places: **This Mac, quick
-  start**, the engine built into the app, for core steering studies on small
-  models with nothing to install beyond a model; **This Mac, full
-  capabilities**, the Python engine on the Mac's own graphics processor,
-  which runs every method after a one-time setup of several gigabytes; or
-  **Another machine**, the Python engine on a workstation or cluster you
-  connect to. Choose by method, model size, and available memory. Remote
-  results return to your local workspace with their evidence verified.
-- **Start from a worked example.** A Demo Workspace holds a finished study
-  to read and a draft to run. SteerLab opens it as a copy in a folder you
-  choose: **Open Demo Workspace…** in Research Setup, or `workspace init
-  <folder> --demo <backend>` on either command line. A release may carry
-  none, and then says so.
-- **Read results that lead with your question.** Results lead with the
-  outcome the study is about: the primary outcome you declare, or else one
-  chosen by a stated order that puts judged outcomes before surface measures
-  such as word count. Every summary says which rule chose it.
-- **Take the results elsewhere.** `results export` on either command line,
-  or **Export Results…** in the app, writes a completed run's stored results
-  to a new folder: tables for R, Stata, SPSS, or a spreadsheet, transcripts
-  for coding by hand, a methods summary, and a codebook. Nothing is
-  recalculated. `science report` turns a stored J-lens assessment into one
-  self-contained web page.
+  local cache and lets you chat with them, with or without an intervention,
+  before you design anything measured.
+- **Read and export results.** Results lead with the outcome your study is
+  about. `results export`, or **Export Results…** in the app, writes a
+  completed run's results to a new folder: tables for R, Stata, SPSS, or a
+  spreadsheet, transcripts, a methods summary, and a codebook. Nothing is
+  recalculated.
+- **Go further.** Optimize a direction against a stated objective (OptVec),
+  fine-tune an adapter and compare it with steering on the same footing, or
+  inspect an intervention with a J-lens, which reads what each layer
+  represents in the model's own vocabulary. The
+  [glossary](docs/CONCEPTS-AND-GLOSSARY.md) explains these terms.
 
-The methods, their inputs and their limits are described in the shipped
-method guides your coding assistant can read (`science list`, `science guide
-<method>` on either command line).
+Your coding assistant can read the shipped method guides (`science list` and
+`science guide <method>` on either command line).
 
-### Investigate how behavior changes through interaction
+### Where studies run
 
-A change that affects an agent acting alone may behave differently in a
-group. SteerLab lets you author multi-agent scenarios, assign model
-configurations to participants, and compare baseline and intervention
-conditions. Retained transcripts and study records let you examine both the
-conversation and its measured outcomes.
+To run a study you need a model and somewhere to run it. Each workspace runs
+its studies in one of three places:
 
-Your coding assistant can help prepare the scenario and participant
-configurations; the app provides authoring and inspection tools for the same
-study.
+- **This Mac, quick start**: the engine built into the app, for core steering
+  studies on small models, with nothing to install beyond a model.
+- **This Mac, full capabilities**: the Python engine on the Mac's graphics
+  processor, which runs every method after a one-time setup of several
+  gigabytes.
+- **Another machine**: the Python engine on a workstation or a Slurm cluster
+  you connect to. You keep designing and reviewing locally; results come back
+  to your workspace with their evidence verified, and your coding assistant
+  can drive the cluster steps for you.
 
-### Run on a cluster from the app or your coding assistant
-
-Keep authoring and reviewing the study locally while a configured
-workstation or Slurm cluster performs the computation. From the Mac app or
-its command-line tools, you can configure connections, submit supported
-work, monitor jobs and logs, and bring verified results back into your
-workspace. Your coding assistant can drive those operations for you.
-
-If you have cluster documentation, your assistant can use it to help prepare
-a reviewed configuration and ask about missing details. Storage and transfer
-settings reflect the site's policies. Supported cleanup workflows let you
-review remote removal after verifying local evidence.
-
-Without the Mac app, the Python client can submit work to a configured
-runner and retrieve its results.
+A Mac laptop is enough for small models and core steering. Larger models,
+long multi-agent conversations, and some methods need a machine with more
+memory; [models, hardware, and limits](docs/MODELS-HARDWARE-AND-LIMITS.md)
+says what fits where. A Demo Workspace, a finished study to read and a draft
+to run, opens from **Open Demo Workspace…** in Research Setup, or with
+`workspace init <folder> --demo <backend>` on either command line (a
+release may carry none, and then says so).
 
 ## Where the depth is
 
-- [Getting started](docs/CLIENT-FIRST-RUN.md): both routes, step by step.
-- [Onboarding](docs/ONBOARDING.md): from "what is activation steering" to
-  a first frozen study, for a person at the keyboard.
+- [Getting started](docs/CLIENT-FIRST-RUN.md): both routes, step by step,
+  with time and disk space.
+- [Onboarding](docs/ONBOARDING.md): from "what is activation steering" to a
+  first frozen study, for a person at the keyboard.
 - [A general introduction](docs/GENERAL-INTRODUCTION.md): what steering is
   and how a study is built, for a reader new to the field.
 - [Conducting a study](docs/CONDUCTING-A-STUDY.md): what makes a result
   defensible.
-- [Concepts and glossary](docs/CONCEPTS-AND-GLOSSARY.md): the terms, and how they map to research methods you know.
-- [Working with a coding assistant](docs/WORKING-WITH-A-CODING-ASSISTANT.md): handing it a workspace, and what it asks before acting.
-- [Models, hardware, and limits](docs/MODELS-HARDWARE-AND-LIMITS.md): where studies run, disk and time, and what has been measured.
-- [Reporting and troubleshooting](docs/REPORTING-AND-TROUBLESHOOTING.md): writing up, citing, data ethics, and what each refusal means.
-- [Technical overview](docs/TECHNICAL-OVERVIEW.md): the engines, the
-  artifact model and the design philosophy, in full.
+- [Concepts and glossary](docs/CONCEPTS-AND-GLOSSARY.md): the terms, and how
+  they map to research methods you know.
+- [Working with a coding assistant](docs/WORKING-WITH-A-CODING-ASSISTANT.md):
+  handing it a workspace, and what it asks before acting.
+- [Models, hardware, and limits](docs/MODELS-HARDWARE-AND-LIMITS.md): where
+  studies run, disk and time, and what has been measured.
+- [Reporting and troubleshooting](docs/REPORTING-AND-TROUBLESHOOTING.md):
+  writing up, citing, data ethics, and what each refusal means.
+- [Technical overview](docs/TECHNICAL-OVERVIEW.md): the engines, the artifact
+  model, and the design philosophy.
 - [Capabilities and measured limits](docs/SUBSTRATES.md), the
   [CLI reference](docs/CLI-REFERENCE.md), the [changelog](CHANGELOG.md), and
   [SECURITY.md](SECURITY.md).
