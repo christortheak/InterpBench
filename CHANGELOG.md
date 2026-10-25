@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.17] — 2026-10-25
+
 - **On the Mac command line, `--workspace` now wins over
   `STEERLAB_WORKSPACE`.** Before, the environment variable outranked the flag,
   so a variable left over from an earlier workspace silently won over the
