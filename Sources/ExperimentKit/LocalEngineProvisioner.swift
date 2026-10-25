@@ -177,7 +177,9 @@ public struct LocalEngineLockStamp: Codable, Sendable, Equatable {
     /// the engine package before the editable install puts it back, so an
     /// interrupted reinstall can leave an environment that cannot import the
     /// engine; the environment step refuses to serve it and names the repair.
-    /// Absent on every stamp written before this field existed.
+    /// A sync that fails without changing what is installed puts the old,
+    /// unmarked stamp back. Absent on every stamp written before this field
+    /// existed; app builds from before it ignore it.
     public var incomplete: Bool?
 
     public init(
@@ -1331,8 +1333,10 @@ public final class LocalEngineProvisioner {
     /// editable, exactly as the first install does. Offered only (never
     /// planned), stated before it runs (the download preamble goes to the
     /// Activity feed first), and refused while the engine is answering, for
-    /// the same reason as Refresh Engine. A failure leaves the OLD stamp in
-    /// place, so the offer stands until a reinstall completes.
+    /// the same reason as Refresh Engine. A failure that changed nothing gives
+    /// the old stamp back, so the old environment keeps working and the offer
+    /// stands; a failure partway leaves the stamp marked incomplete, so the
+    /// engine does not start until a reinstall finishes.
     public func syncEnvironment(host: ChatService? = nil) async {
         guard work == nil, !isBusy else { return }
         offeredActionInFlight = "Reinstall Packages"
@@ -1370,21 +1374,23 @@ public final class LocalEngineProvisioner {
             return " — the reinstall did not finish; choose Reinstall Packages again "
                 + "to complete it before starting the engine"
         }
+        let failure: String
         do {
             try await perform(offer, step: .environment, observation: observation)
             emit("Reinstall Packages: done — the packages match the engine's lock")
+            await refreshPlan()
+            return
         } catch let error as LocalEngineError {
-            phase = .failed(error.description)
-            statusLine = error.description + unfinished()
-            emit(statusLine)
-            return
+            failure = error.description + unfinished()
         } catch {
-            phase = .failed(error.localizedDescription)
-            statusLine = error.localizedDescription + unfinished()
-            emit(statusLine)
-            return
+            failure = error.localizedDescription + unfinished()
         }
+        emit(failure)
+        // Re-read the rows (a marked environment now shows as blocked), then
+        // keep the failure itself as the status.
         await refreshPlan()
+        phase = .failed(failure)
+        statusLine = failure
     }
 
     private func execute() async throws {
@@ -1667,6 +1673,13 @@ public final class LocalEngineProvisioner {
         // quietly resolves a different torch.
         let overrides = ["MACOSX_DEPLOYMENT_TARGET": "14.0"]
         let stampURL = venv.appending(component: LocalEngineLayout.lockStampFileName)
+        // What is installed before a reinstall touches anything, so a sync that
+        // fails without changing the environment (offline, an index error, a
+        // wheel the lock names that cannot be fetched — uv fetches everything
+        // before it uninstalls or installs) gives the old stamp back instead
+        // of blocking an environment that still works.
+        var before: [String]?
+        if syncing { before = await installedPackages(uv: uv.path, interpreter: interpreter) }
         if syncing, var marked = observation.venvLockStamp {
             // From here until the new stamp is written, the environment may
             // lack packages (sync removes the editable engine first). The mark
@@ -1674,7 +1687,7 @@ public final class LocalEngineProvisioner {
             // install: the environment step refuses to serve it.
             marked.incomplete = true
             guard let data = try? JSONEncoder().encode(marked),
-                (try? data.write(to: stampURL)) != nil
+                (try? data.write(to: stampURL, options: .atomic)) != nil
             else {
                 throw LocalEngineError.fileOperationFailed(
                     step: step,
@@ -1682,11 +1695,23 @@ public final class LocalEngineProvisioner {
                         + "nothing was changed")
             }
         }
-        try await runOrThrow(
-            syncing
-                ? [uv.path, "pip", "sync", "--python", interpreter, lock]
-                : [uv.path, "pip", "install", "--python", interpreter, "-r", lock],
-            step: step, extraEnvironment: overrides)
+        do {
+            try await runOrThrow(
+                syncing
+                    ? [uv.path, "pip", "sync", "--python", interpreter, lock]
+                    : [uv.path, "pip", "install", "--python", interpreter, "-r", lock],
+                step: step, extraEnvironment: overrides)
+        } catch {
+            if syncing, let before, let original = observation.venvLockStamp,
+                await installedPackages(uv: uv.path, interpreter: interpreter) == before,
+                let data = try? JSONEncoder().encode(original),
+                (try? data.write(to: stampURL, options: .atomic)) != nil
+            {
+                emit("\(step.title): the installed packages did not change — the "
+                    + "environment is as it was before the reinstall")
+            }
+            throw error
+        }
         // The lock pins third-party versions only; the engine package itself
         // is installed editable afterwards, exactly as bootstrap.sh does.
         try await runOrThrow(
@@ -1700,8 +1725,18 @@ public final class LocalEngineProvisioner {
                 lockSHA256: sha,
                 installedAt: ISO8601DateFormatter().string(from: Date()),
                 uvVersion: uv.version, pythonVersion: PinnedCPython.minor)
-            if let data = try? JSONEncoder().encode(stamp) {
-                try? data.write(to: stampURL)
+            let written = (try? JSONEncoder().encode(stamp)).map {
+                (try? $0.write(to: stampURL, options: .atomic)) != nil
+            } ?? false
+            if !written, syncing {
+                // The packages are in, but the venv still carries the mark, so
+                // the engine will not start on it: say so rather than "done".
+                throw LocalEngineError.fileOperationFailed(
+                    step: step,
+                    reason: "the packages were reinstalled, but \(stampURL.path) "
+                        + "could not be written, so the environment still reads "
+                        + "as unfinished — free some disk space and choose "
+                        + "Reinstall Packages again")
             }
             emit(
                 "\(step.title): stamped the venv against "
@@ -1936,6 +1971,14 @@ public final class LocalEngineProvisioner {
     }
 
     // MARK: Command plumbing
+
+    /// `uv pip freeze` of the venv, or nil when it cannot be read — the
+    /// before-and-after comparison a failed reinstall uses to tell whether
+    /// anything changed. Not emitted: it is a check, not progress.
+    private func installedPackages(uv: String, interpreter: String) async -> [String]? {
+        let result = await shell.run([uv, "pip", "freeze", "--python", interpreter])
+        return result.succeeded ? result.lines : nil
+    }
 
     private func runOrThrow(
         _ argv: [String], step: LocalEngineStep,

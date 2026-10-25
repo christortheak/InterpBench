@@ -345,9 +345,12 @@ struct LocalEngineSetupSheet: View {
                     .font(.caption)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // The promise holds only until it starts.
             Text(
-                Self.syncExplanation + " Nothing is fetched until you choose "
-                    + "Reinstall Packages and confirm.")
+                Self.syncExplanation
+                    + (engine.offeredActionInFlight == "Reinstall Packages"
+                        ? "" : " Nothing is fetched until you choose "
+                            + "Reinstall Packages and confirm."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

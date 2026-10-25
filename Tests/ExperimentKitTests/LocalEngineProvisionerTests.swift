@@ -706,7 +706,12 @@ private struct FakeEngineEnvironment: LocalEngineEnvironment {
     func managedPythonIsInstalled(uv: LocalEngineTool) async -> Bool { pythonInstalled }
     func isExecutableFile(_ url: URL) -> Bool { venvExists }
     func sha256OfFile(_ url: URL) -> String? { lockSHA }
-    func readLockStamp(venv: URL) -> LocalEngineLockStamp? { stamp }
+    /// A stamp on disk wins over the fixture's: the reinstall tests run in a
+    /// real temporary venv, so what the provisioner wrote is what it reads
+    /// back. Everywhere else no such file exists and the fixture answers.
+    func readLockStamp(venv: URL) -> LocalEngineLockStamp? {
+        LocalEngineLockStamp.read(venv: venv) ?? stamp
+    }
     func serverAnswers(port: Int) -> Bool { answering }
 }
 
@@ -741,23 +746,48 @@ private final class GatedShell: ClusterShellRunner, @unchecked Sendable {
     }
 }
 
-/// Answers every command with success and keeps the argv, so a test asserts
-/// exactly what would have run — and that nothing ran at all.
-/// Records every command and fails the editable engine install (`-e`), the
-/// second half of Reinstall Packages.
-private final class FailingEditableInstallShell: ClusterShellRunner, @unchecked Sendable {
+/// Records every command and fails one half of Reinstall Packages: the
+/// `uv pip sync`, or the editable engine install (`-e`) after it. `uv pip
+/// freeze` answers the same list before and after, unless a failed sync is set
+/// to have changed the environment on its way down.
+private final class FailingReinstallShell: ClusterShellRunner, @unchecked Sendable {
+    enum Half { case sync, editableInstall }
     private let lock = NSLock()
     private var recorded: [[String]] = []
+    private var syncRan = false
+    private let failing: Half
+    private let syncChangesPackages: Bool
+
+    init(failing: Half, syncChangesPackages: Bool = false) {
+        self.failing = failing
+        self.syncChangesPackages = syncChangesPackages
+    }
 
     var commands: [[String]] { lock.withLock { recorded } }
 
     func run(_ argv: [String]) async -> ClusterShellResult {
-        lock.withLock { recorded.append(argv) }
-        return ClusterShellResult(
-            exitCode: argv.contains("-e") ? 1 : 0,
-            lines: argv.contains("-e") ? ["error: editable install failed"] : [])
+        lock.withLock {
+            recorded.append(argv)
+            if argv.contains("freeze") {
+                return ClusterShellResult(
+                    exitCode: 0,
+                    lines: syncRan && syncChangesPackages ? ["torch==2.9.0"] : ["torch==2.8.0"])
+            }
+            if argv.contains("sync") {
+                syncRan = true
+                return failing == .sync
+                    ? ClusterShellResult(exitCode: 1, lines: ["error: sync failed"])
+                    : ClusterShellResult(exitCode: 0, lines: [])
+            }
+            return failing == .editableInstall && argv.contains("-e")
+                ? ClusterShellResult(exitCode: 1, lines: ["error: editable install failed"])
+                : ClusterShellResult(exitCode: 0, lines: [])
+        }
     }
 }
+
+/// Answers every command with success and keeps the argv, so a test asserts
+/// exactly what would have run — and that nothing ran at all.
 
 private final class RecordingShell: ClusterShellRunner, @unchecked Sendable {
     private let lock = NSLock()
@@ -941,6 +971,7 @@ private final class RecordingShell: ClusterShellRunner, @unchecked Sendable {
         let lock = source.serverDirectory.appending(component: LocalEngineLayout.lockFileName).path
         #expect(
             shell.commands == [
+                [uv, "pip", "freeze", "--python", interpreter],
                 ["/usr/bin/env", "MACOSX_DEPLOYMENT_TARGET=14.0", uv, "pip", "sync",
                  "--python", interpreter, lock],
                 ["/usr/bin/env", "MACOSX_DEPLOYMENT_TARGET=14.0", uv, "pip", "install",
@@ -950,6 +981,9 @@ private final class RecordingShell: ClusterShellRunner, @unchecked Sendable {
         #expect(restamped.lockSHA256 == "cccc3333")
         #expect(restamped.lockFile == LocalEngineLayout.lockFileName)
         #expect(restamped.incomplete == nil, "a finished reinstall is not marked")
+        // The plan read back from the new stamp: nothing left to reinstall.
+        #expect(provisioner.environmentSyncOffer == nil)
+        #expect(provisioner.statusLine.contains("Reinstall Packages") == false)
     }
 
     /// The sync succeeds and the editable reinstall of the engine then fails:
@@ -965,23 +999,83 @@ private final class RecordingShell: ClusterShellRunner, @unchecked Sendable {
         environment.stamp = driftedStamp()
         environment.lockSHA = "cccc3333"
         environment.answering = false
-        let shell = FailingEditableInstallShell()
+        let shell = FailingReinstallShell(failing: .editableInstall)
         let provisioner = LocalEngineProvisioner(
             environment: environment, shell: shell,
             downloader: SubstitutedArtifactDownloader())
         await provisioner.refreshPlan()
         await provisioner.syncEnvironment()
 
-        #expect(shell.commands.count == 2, "the sync ran, then the editable install failed")
+        #expect(
+            shell.commands.count == 3,
+            "the snapshot and the sync ran, then the editable install failed")
         let marked = try #require(LocalEngineLockStamp.read(venv: venv))
         #expect(marked.incomplete == true)
         #expect(marked.lockSHA256 == "bbbb2222", "the old lock hash is kept until a reinstall finishes")
         #expect(provisioner.statusLine.contains("choose Reinstall Packages again"))
-        // The environment step, given that stamp, refuses to serve.
+        // The environment step, given that stamp, refuses to serve — and the
+        // rows were read again after the failure, so they already say so.
         var observed = environment
         observed.stamp = marked
         let observation = await observed.observe(port: 8080)
         #expect(LocalEngineDecisions.environmentState(observation).isBlocked)
+        #expect(provisioner.plan.first { $0.step == .environment }?.state.isBlocked == true)
+        #expect(provisioner.environmentSyncOffer != nil)
+    }
+
+    /// The window the mark exists for: the sync itself stops after it changed
+    /// the environment. The mark was written before the sync ran, so it is
+    /// already there.
+    @MainActor
+    @Test func aSyncThatStopsAfterChangingPackagesIsMarked() async throws {
+        let fixture = try engineRootEnvironment()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var environment = fixture.environment
+        let venv = try #require(environment.source).serverDirectory.appending(component: ".venv.nosync")
+        environment.stamp = driftedStamp()
+        environment.lockSHA = "cccc3333"
+        environment.answering = false
+        let shell = FailingReinstallShell(failing: .sync, syncChangesPackages: true)
+        let provisioner = LocalEngineProvisioner(
+            environment: environment, shell: shell,
+            downloader: SubstitutedArtifactDownloader())
+        await provisioner.refreshPlan()
+        await provisioner.syncEnvironment()
+
+        #expect(shell.commands.count == 3, "snapshot, the failed sync, and a second snapshot")
+        #expect(try #require(LocalEngineLockStamp.read(venv: venv)).incomplete == true)
+        #expect(provisioner.statusLine.contains("choose Reinstall Packages again"))
+        #expect(provisioner.plan.first { $0.step == .environment }?.state.isBlocked == true)
+    }
+
+    /// A sync that fails before it changes anything (offline, say: uv fetches
+    /// everything before it uninstalls or installs) gives the old stamp back,
+    /// so the old environment keeps working and the reinstall stays offered.
+    @MainActor
+    @Test func aSyncThatFailsBeforeChangingAnythingKeepsTheOldEnvironment() async throws {
+        let fixture = try engineRootEnvironment()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var environment = fixture.environment
+        let venv = try #require(environment.source).serverDirectory.appending(component: ".venv.nosync")
+        environment.stamp = driftedStamp()
+        environment.lockSHA = "cccc3333"
+        environment.answering = false
+        let shell = FailingReinstallShell(failing: .sync)
+        let provisioner = LocalEngineProvisioner(
+            environment: environment, shell: shell,
+            downloader: SubstitutedArtifactDownloader())
+        await provisioner.refreshPlan()
+        await provisioner.syncEnvironment()
+
+        #expect(shell.commands.count == 3, "snapshot, the failed sync, and a second snapshot")
+        #expect(try #require(LocalEngineLockStamp.read(venv: venv)) == driftedStamp())
+        #expect(!provisioner.statusLine.contains("choose Reinstall Packages again"))
+        #expect(provisioner.plan.first { $0.step == .environment }?.state.isBlocked == false)
+        #expect(provisioner.environmentSyncOffer != nil)
+        guard case .failed = provisioner.phase else {
+            Issue.record("a failed reinstall reported \(provisioner.phase)")
+            return
+        }
     }
 
     @MainActor
@@ -1040,8 +1134,12 @@ private final class RecordingShell: ClusterShellRunner, @unchecked Sendable {
         #expect(provisioner.offeredActionInFlight == "Reinstall Packages")
         provisioner.cancel()
         #expect(provisioner.statusLine.contains("cannot be stopped partway"))
-        // A second Reinstall or a Refresh Engine while it runs is a no-op.
+        // A second Reinstall or a Refresh Engine while it runs is a no-op: each
+        // returns at its guard, leaving the status and the run in flight alone.
+        await provisioner.syncEnvironment()
         #expect(await provisioner.refreshEngine() == false)
+        #expect(provisioner.statusLine.contains("cannot be stopped partway"))
+        #expect(provisioner.offeredActionInFlight == "Reinstall Packages")
         shell.release()
         await reinstall.value
 

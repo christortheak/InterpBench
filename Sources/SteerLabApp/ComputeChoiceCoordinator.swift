@@ -197,7 +197,7 @@ final class ComputeChoiceCoordinator {
     /// the engine is running, or open its setup sheet if it is not. A setup
     /// already in flight just gets its sheet back.
     private func prepareThisMacEngine() async {
-        if localEngine.phase.isRunning {
+        if localEngine.isBusy {
             showingEngineSetup = true
             return
         }

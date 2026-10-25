@@ -165,7 +165,7 @@ struct SteerLabApp: App {
                 extracting: jobs.isExtracting, sweeping: jobs.isSweeping,
                 evaluating: jobs.isEvaluating, generating: service.isGenerating,
                 submissions: UpdateBusyWork.shared.submissions,
-                engineSettingUp: localEngine.phase.isRunning,
+                engineSettingUp: localEngine.isBusy,
                 engineStartingOrStopping: localServer.phase == .starting
                     || localServer.phase == .stopping,
                 engineJobs: engineJobs,
