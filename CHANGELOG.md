@@ -33,15 +33,18 @@ migration that rewrites frozen bytes.
   does not list, including packages you added to that environment yourself,
   is removed. Like Refresh Engine, it will not start while the engine is
   running. The notice on the first launch after an update now says when
-  this will be needed. An environment made by
-  `scripts/start-local-server.sh`, which records no lock, is never offered a
-  reinstall and is left as it is.
+  this will be needed. If a reinstall stops partway, the engine will not
+  start until Reinstall Packages is run again and finishes. It is offered
+  only for the engine the app installs; an engine that runs from a code
+  checkout, including one made by `scripts/start-local-server.sh`, keeps the
+  notice that the lock moved and is left as it is.
 - **`cluster bootstrap plan` shows the plan it asks you to approve.** It
   printed only the plan's hash, so reviewing what `bootstrap apply` would run
   meant finding the dry run in a log file. The answer now carries the dry run
   itself (`planTranscript` under `--json`, printed first without it): the
   environment file it installs, the exact command, and one line per bootstrap
-  step. Paths are redacted the same way as the rest of the answer.
+  step. Like the command it describes, it shows the site's paths and
+  scheduler settings as they are, so check it before sharing it.
 - **`steerlab-cli --help` lists `install link` and `workspace guide`,** which
   the setup instructions send you to.
 - **The app-free client no longer says Windows is supported.** Its refusal to

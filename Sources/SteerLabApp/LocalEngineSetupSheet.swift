@@ -546,7 +546,7 @@ struct LocalEngineSetupSheet: View {
             isPresented: $confirmingSync,
             titleVisibility: .visible
         ) {
-            Button("Reinstall Packages") {
+            Button("Reinstall Packages", role: .destructive) {
                 Task { await engine.syncEnvironment(host: service) }
             }
             Button("Not Now", role: .cancel) {}
@@ -559,6 +559,11 @@ struct LocalEngineSetupSheet: View {
     /// one the notice and the Activity feed state.
     private var syncConfirmationMessage: String {
         var parts = ["This engine's lock pins different packages from the ones installed."]
+        // Name the environment it changes, so nobody confirms a sync of a
+        // folder they did not expect.
+        if case .syncEnvironment(_, let target, _, _)? = engine.environmentSyncOffer {
+            parts.append("It changes the packages in \(target)/.venv.nosync.")
+        }
         if let total = engine.environmentSyncPreamble.last { parts.append(total) }
         parts.append(Self.syncExplanation)
         parts.append("Stop the engine first if it is running.")

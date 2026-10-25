@@ -162,9 +162,14 @@ import Testing
 
     // MARK: Step 3 — Reinstall Packages (offered, never planned)
 
+    /// Reinstall Packages acts only on SteerLab's own materialized engine.
+    private let engineRoot = LocalEngineObservation.SourceState.engineRoot(
+        path: "/code", stampRevision: "app12345")
+
     @Test func aMatchingStampIsOfferedNoReinstall() {
         let matching = observation(
-            venvExists: true, stamp: stamp(sha: "aaaa1111"), lockSHA: "aaaa1111")
+            source: engineRoot, venvExists: true, stamp: stamp(sha: "aaaa1111"),
+            lockSHA: "aaaa1111")
         #expect(LocalEngineDecisions.environmentSyncOffer(matching) == nil)
     }
 
@@ -173,7 +178,8 @@ import Testing
     /// runs — while the plan itself still does nothing on its own.
     @Test func aDriftedStampIsOfferedAReinstallThatStatesItsDownload() throws {
         let drifted = observation(
-            venvExists: true, stamp: stamp(sha: "bbbb2222"), lockSHA: "cccc3333")
+            source: engineRoot, venvExists: true, stamp: stamp(sha: "bbbb2222"),
+            lockSHA: "cccc3333")
         let offer = try #require(LocalEngineDecisions.environmentSyncOffer(drifted))
         #expect(
             offer
@@ -201,7 +207,8 @@ import Testing
     /// `start-local-server.sh`) keeps its advisory and is never offered a
     /// reinstall.
     @Test func anUnstampedVenvIsNeverOfferedAReinstall() {
-        let unstamped = observation(venvExists: true, stamp: nil, lockSHA: "cccc3333")
+        let unstamped = observation(
+            source: engineRoot, venvExists: true, stamp: nil, lockSHA: "cccc3333")
         #expect(LocalEngineDecisions.environmentSyncOffer(unstamped) == nil)
         #expect(
             LocalEngineDecisions.environmentState(unstamped).advisory?
@@ -226,8 +233,8 @@ import Testing
     /// mystery where it went) but is refused, the same way Refresh Engine is.
     @Test func aRunningEngineKeepsTheOfferButRefusesTheReinstall() throws {
         let running = observation(
-            venvExists: true, stamp: stamp(sha: "bbbb2222"), lockSHA: "cccc3333",
-            serverAnswering: true)
+            source: engineRoot, venvExists: true, stamp: stamp(sha: "bbbb2222"),
+            lockSHA: "cccc3333", serverAnswering: true)
         #expect(LocalEngineDecisions.environmentSyncOffer(running) != nil)
         let refusal = try #require(
             LocalEngineDecisions.refusalWhileEngineAnswers(
@@ -235,10 +242,49 @@ import Testing
         #expect(refusal.contains("stop the local engine first"))
         #expect(refusal.contains("choose Reinstall Packages again"))
         let stopped = observation(
-            venvExists: true, stamp: stamp(sha: "bbbb2222"), lockSHA: "cccc3333")
+            source: engineRoot, venvExists: true, stamp: stamp(sha: "bbbb2222"),
+            lockSHA: "cccc3333")
         #expect(
             LocalEngineDecisions.refusalWhileEngineAnswers(
                 stopped, actionName: "Reinstall Packages", replacing: "its packages") == nil)
+    }
+
+    /// A checkout's venv is the developer's (it holds extras the lock does not
+    /// list, such as `Server[jlens]`), even when Set Up stamped it: never
+    /// offered a reinstall that would remove them, however far the lock moved.
+    /// It keeps the advisory that the lock moved.
+    @Test func aCheckoutIsNeverOfferedAReinstallEvenWhenStamped() {
+        let checkout = observation(
+            source: .checkout(path: "/code"), venvExists: true,
+            stamp: stamp(sha: "bbbb2222"), lockSHA: "cccc3333")
+        #expect(LocalEngineDecisions.environmentSyncOffer(checkout) == nil)
+        let state = LocalEngineDecisions.environmentState(checkout)
+        #expect(state.actions.isEmpty)
+        #expect(state.advisory?.contains("the lock moved under it") == true)
+        // It names the developer's own repair, not a button it does not offer.
+        #expect(state.advisory?.contains("Reinstall Packages") == false)
+        #expect(state.advisory?.contains("Dependency locks") == true)
+    }
+
+    /// A reinstall that stopped partway (stamp marked incomplete) may have left
+    /// the environment without the engine package: the environment step
+    /// refuses to serve it and names the repair, and the reinstall stays
+    /// offered even when the stamp's lock already equals the tree's.
+    @Test func anIncompleteReinstallBlocksServingAndStaysOffered() throws {
+        var unfinished = stamp(sha: "cccc3333")
+        unfinished.incomplete = true
+        let interrupted = observation(
+            source: engineRoot, venvExists: true, stamp: unfinished, lockSHA: "cccc3333")
+        let state = LocalEngineDecisions.environmentState(interrupted)
+        #expect(state.isBlocked)
+        #expect(state.summary.contains("did not finish"))
+        #expect(state.summary.contains("choose Reinstall Packages"))
+        #expect(LocalEngineDecisions.environmentSyncOffer(interrupted) != nil)
+        // An old stamp, written before the field existed, decodes as complete.
+        let legacy = #"{"schemaVersion":1,"lockFile":"l","lockSHA256":"a","installedAt":"t"}"#
+        let decoded = try JSONDecoder().decode(
+            LocalEngineLockStamp.self, from: Data(legacy.utf8))
+        #expect(decoded.incomplete == nil)
     }
 
     /// No lock in the tree is a REFUSAL, not a fallback to pyproject floors.
@@ -697,6 +743,22 @@ private final class GatedShell: ClusterShellRunner, @unchecked Sendable {
 
 /// Answers every command with success and keeps the argv, so a test asserts
 /// exactly what would have run — and that nothing ran at all.
+/// Records every command and fails the editable engine install (`-e`), the
+/// second half of Reinstall Packages.
+private final class FailingEditableInstallShell: ClusterShellRunner, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [[String]] = []
+
+    var commands: [[String]] { lock.withLock { recorded } }
+
+    func run(_ argv: [String]) async -> ClusterShellResult {
+        lock.withLock { recorded.append(argv) }
+        return ClusterShellResult(
+            exitCode: argv.contains("-e") ? 1 : 0,
+            lines: argv.contains("-e") ? ["error: editable install failed"] : [])
+    }
+}
+
 private final class RecordingShell: ClusterShellRunner, @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [[String]] = []
@@ -827,20 +889,32 @@ private final class RecordingShell: ClusterShellRunner, @unchecked Sendable {
             installedAt: "2026-08-20T00:00:00Z")
     }
 
+    /// A warm environment whose source is SteerLab's own materialized engine
+    /// in a fresh temporary root (the only tier ever offered a reinstall),
+    /// with its venv directory present so a stamp can be written there.
+    private func engineRootEnvironment() throws -> (environment: FakeEngineEnvironment, root: URL) {
+        let root = FileManager.default.temporaryDirectory.appending(
+            component: "steerlab-sync-\(UUID().uuidString)")
+        let source = CodeResources.LocalEngineSource.engineRoot(
+            CodeResources.EngineRoot(root: root, stamp: nil))
+        try FileManager.default.createDirectory(
+            at: source.serverDirectory.appending(component: ".venv.nosync"),
+            withIntermediateDirectories: true)
+        var environment = warmEnvironment()
+        environment.source = source
+        return (environment, root)
+    }
+
     /// Reinstall Packages syncs the EXISTING venv to the tree's lock, puts the
     /// engine package back, and only then re-stamps the venv with the new
     /// lock. The plan before it says what is left and what it would download.
     @MainActor
     @Test func reinstallPackagesSyncsTheLockAndReStampsTheVenv() async throws {
-        let fm = FileManager.default
-        let root = fm.temporaryDirectory.appending(component: "steerlab-sync-\(UUID().uuidString)")
-        defer { try? fm.removeItem(at: root) }
-        let source = CodeResources.LocalEngineSource.checkout(
-            CodeResources.ExecutableCheckout(root: root, origin: .compiledCheckout))
+        let fixture = try engineRootEnvironment()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var environment = fixture.environment
+        let source = try #require(environment.source)
         let venv = source.serverDirectory.appending(component: ".venv.nosync")
-        try fm.createDirectory(at: venv, withIntermediateDirectories: true)
-        var environment = warmEnvironment()
-        environment.source = source
         environment.stamp = driftedStamp()
         environment.lockSHA = "cccc3333"
         environment.answering = false
@@ -875,11 +949,46 @@ private final class RecordingShell: ClusterShellRunner, @unchecked Sendable {
         let restamped = try #require(LocalEngineLockStamp.read(venv: venv))
         #expect(restamped.lockSHA256 == "cccc3333")
         #expect(restamped.lockFile == LocalEngineLayout.lockFileName)
+        #expect(restamped.incomplete == nil, "a finished reinstall is not marked")
+    }
+
+    /// The sync succeeds and the editable reinstall of the engine then fails:
+    /// the environment may now lack the engine package, so the stamp is left
+    /// marked incomplete (the environment step then refuses to serve it) and
+    /// the failure says how to finish. The old lock hash is kept.
+    @MainActor
+    @Test func aReinstallThatStopsPartwayIsMarkedAndSaysHowToFinish() async throws {
+        let fixture = try engineRootEnvironment()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var environment = fixture.environment
+        let venv = try #require(environment.source).serverDirectory.appending(component: ".venv.nosync")
+        environment.stamp = driftedStamp()
+        environment.lockSHA = "cccc3333"
+        environment.answering = false
+        let shell = FailingEditableInstallShell()
+        let provisioner = LocalEngineProvisioner(
+            environment: environment, shell: shell,
+            downloader: SubstitutedArtifactDownloader())
+        await provisioner.refreshPlan()
+        await provisioner.syncEnvironment()
+
+        #expect(shell.commands.count == 2, "the sync ran, then the editable install failed")
+        let marked = try #require(LocalEngineLockStamp.read(venv: venv))
+        #expect(marked.incomplete == true)
+        #expect(marked.lockSHA256 == "bbbb2222", "the old lock hash is kept until a reinstall finishes")
+        #expect(provisioner.statusLine.contains("choose Reinstall Packages again"))
+        // The environment step, given that stamp, refuses to serve.
+        var observed = environment
+        observed.stamp = marked
+        let observation = await observed.observe(port: 8080)
+        #expect(LocalEngineDecisions.environmentState(observation).isBlocked)
     }
 
     @MainActor
-    @Test func aRunningEngineRefusesReinstallPackagesAndRunsNothing() async {
-        var environment = warmEnvironment()  // answering
+    @Test func aRunningEngineRefusesReinstallPackagesAndRunsNothing() async throws {
+        let fixture = try engineRootEnvironment()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var environment = fixture.environment  // answering
         environment.stamp = driftedStamp()
         environment.lockSHA = "cccc3333"
         let shell = RecordingShell()
@@ -904,8 +1013,10 @@ private final class RecordingShell: ClusterShellRunner, @unchecked Sendable {
     /// leave the engine package uninstalled), so Stop Setup says so rather
     /// than promising a cancel; and while it runs, nothing else may start.
     @MainActor
-    @Test func aReinstallInFlightIsNotCancelledAndBlocksEverythingElse() async {
-        var environment = warmEnvironment()
+    @Test func aReinstallInFlightIsNotCancelledAndBlocksEverythingElse() async throws {
+        let fixture = try engineRootEnvironment()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var environment = fixture.environment
         environment.stamp = driftedStamp()
         environment.lockSHA = "cccc3333"
         environment.answering = false
@@ -915,7 +1026,16 @@ private final class RecordingShell: ClusterShellRunner, @unchecked Sendable {
             downloader: SubstitutedArtifactDownloader())
 
         let reinstall = Task { await provisioner.syncEnvironment() }
-        while !shell.hasEntered { await Task.yield() }
+        // Bounded, so a reinstall that never reaches the shell fails the test
+        // instead of hanging the suite.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while !shell.hasEntered, ContinuousClock.now < deadline { await Task.yield() }
+        guard shell.hasEntered else {
+            Issue.record("the reinstall never reached the shell: \(provisioner.statusLine)")
+            shell.release()
+            await reinstall.value
+            return
+        }
         #expect(provisioner.isBusy)
         #expect(provisioner.offeredActionInFlight == "Reinstall Packages")
         provisioner.cancel()
@@ -937,8 +1057,10 @@ private final class RecordingShell: ClusterShellRunner, @unchecked Sendable {
     /// The developer case end to end: an unstamped venv is never offered a
     /// reinstall, and asking anyway runs nothing.
     @MainActor
-    @Test func anUnstampedVenvIsNeverReinstalled() async {
-        var environment = warmEnvironment()
+    @Test func anUnstampedVenvIsNeverReinstalled() async throws {
+        let fixture = try engineRootEnvironment()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var environment = fixture.environment
         environment.stamp = nil
         environment.lockSHA = "cccc3333"
         environment.answering = false

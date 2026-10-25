@@ -181,8 +181,10 @@ public struct ClusterCLIEnvelope: Encodable, Sendable, Equatable {
     /// can READ what `bootstrap apply` will run — the materialization line,
     /// the exact composed command, and `bootstrap.sh`'s one line per step.
     /// The script's trailing JSON report is left out: it is parsed, not read.
-    /// Holds no secret: the command carries paths and scheduler settings, and
-    /// the script's plan echoes the same.
+    /// It carries what the command and the dry run print: paths, scheduler
+    /// settings, and the site profile's values, which by contract hold no
+    /// secret (the token never enters the command). It is printed as is; only
+    /// `diagnose --redact` passes envelopes through `redacted()`.
     public var planTranscript: [String]?
     /// Where a log lives on the far side — a path to read, not its contents.
     public var logPath: String?

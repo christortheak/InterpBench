@@ -172,11 +172,19 @@ public struct LocalEngineLockStamp: Codable, Sendable, Equatable {
     public var installedAt: String
     public var uvVersion: String?
     public var pythonVersion: String?
+    /// Additive (2026-10-25): true while Reinstall Packages is replacing the
+    /// packages, and left true when it stops partway. `uv pip sync` removes
+    /// the engine package before the editable install puts it back, so an
+    /// interrupted reinstall can leave an environment that cannot import the
+    /// engine; the environment step refuses to serve it and names the repair.
+    /// Absent on every stamp written before this field existed.
+    public var incomplete: Bool?
 
     public init(
         schemaVersion: Int = LocalEngineLockStamp.currentSchemaVersion,
         lockFile: String, lockSHA256: String, installedAt: String,
-        uvVersion: String? = nil, pythonVersion: String? = nil
+        uvVersion: String? = nil, pythonVersion: String? = nil,
+        incomplete: Bool? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.lockFile = lockFile
@@ -184,6 +192,7 @@ public struct LocalEngineLockStamp: Codable, Sendable, Equatable {
         self.installedAt = installedAt
         self.uvVersion = uvVersion
         self.pythonVersion = pythonVersion
+        self.incomplete = incomplete
     }
 
     /// The stamp inside `venv`, when there is one that decodes.
@@ -567,17 +576,25 @@ public enum LocalEngineDecisions {
     /// matches, when there is no venv yet (Set Up installs one), and — the
     /// developer case — when the venv carries no stamp at all: a venv made by
     /// `scripts/start-local-server.sh` keeps its advisory and is never
-    /// offered a reinstall it did not ask for. Offered whether or not the
-    /// engine is answering; `refusalWhileEngineAnswers` is the gate on
+    /// offered a reinstall it did not ask for. Offered ONLY for SteerLab's own
+    /// materialized engine root (2026-10-25, review): a checkout's
+    /// `Server/.venv.nosync` can carry a stamp too (Set Up stamps whatever
+    /// tier it installed), but it is the developer's environment, holding
+    /// extras the lock does not list (`Server[jlens]`), and `uv pip sync`
+    /// would remove them. A checkout keeps the advisory. Also offered when a
+    /// previous reinstall stopped partway (`incomplete`). Offered whether or
+    /// not the engine is answering; `refusalWhileEngineAnswers` is the gate on
     /// performing it.
     public static func environmentSyncOffer(_ observation: LocalEngineObservation)
         -> LocalEngineAction?
     {
-        guard observation.venvPythonExists,
+        guard case .engineRoot = observation.source,
+            observation.venvPythonExists,
             let lockPath = observation.lockFilePath,
             let lockSHA = observation.lockFileSHA256,
             let stamp = observation.venvLockStamp,
-            lockMovedSinceInstall(stamp: stamp, lockSHA256: lockSHA)
+            stamp.incomplete == true
+                || lockMovedSinceInstall(stamp: stamp, lockSHA256: lockSHA)
         else { return nil }
         return .syncEnvironment(
             lock: lockPath, editableTarget: observation.serverDirectoryForDisplay,
@@ -681,22 +698,38 @@ public enum LocalEngineDecisions {
                     + "which installs from pyproject floors. Reinstall from "
                     + "the lock when you want the pinned set")
         }
+        if stamp.incomplete == true {
+            return .blocked(
+                "a Reinstall Packages run on \(observation.venvPathForDisplay) did "
+                    + "not finish, so it may be missing packages, the engine's own "
+                    + "included — choose Reinstall Packages to finish it before "
+                    + "starting the engine")
+        }
         if stamp.lockSHA256 == lockSHA {
             return .satisfied(
                 "\(observation.venvPathForDisplay) matches \(stamp.lockFile) "
                     + "(sha256 \(String(stamp.lockSHA256.prefix(8))))")
         }
         // Still an advisory, never an action: the researcher decides when
-        // gigabytes move, through the offered Reinstall Packages.
-        return .satisfiedWithAdvisory(
-            "\(observation.venvPathForDisplay) already exists",
-            advisory: "it was installed from \(stamp.lockFile) sha256 "
-                + "\(String(stamp.lockSHA256.prefix(8))) but the tree now "
-                + "carries sha256 \(String(lockSHA.prefix(8))) — the lock "
-                + "moved under it. Choose Reinstall Packages to match it "
-                + "(downloads up to about "
+        // gigabytes move, through the offered Reinstall Packages — offered
+        // only for the app's own engine (see environmentSyncOffer), so a
+        // checkout's advisory names the developer's own repair instead.
+        let moved = "it was installed from \(stamp.lockFile) sha256 "
+            + "\(String(stamp.lockSHA256.prefix(8))) but the tree now "
+            + "carries sha256 \(String(lockSHA.prefix(8))) — the lock "
+            + "moved under it. "
+        let repair: String
+        if case .engineRoot = observation.source {
+            repair = "Choose Reinstall Packages to match it (downloads up to about "
                 + "\(describeBytes(LocalEngineAction.lockInstallEstimatedBytes)); "
-                + "nothing is fetched until you confirm)")
+                + "nothing is fetched until you confirm)"
+        } else {
+            repair = "This environment belongs to the code checkout, so the app "
+                + "leaves it as it is; reinstall it from the lock yourself when "
+                + "you want the pinned set (Server/README.md, \"Dependency locks\")"
+        }
+        return .satisfiedWithAdvisory(
+            "\(observation.venvPathForDisplay) already exists", advisory: moved + repair)
     }
 
     public static func serveState(_ observation: LocalEngineObservation)
@@ -1154,9 +1187,11 @@ public final class LocalEngineProvisioner {
                     : " — see what will be downloaded before starting")
             // The usual shape after Refresh Engine: the engine is stopped, so
             // serving is a step to run, and the packages still need matching.
+            // Worded to hold for an unfinished reinstall too, whose stamp may
+            // already name this lock.
             if environmentSyncOffer != nil {
-                statusLine += "; the installed packages were made from an earlier "
-                    + "lock — choose Reinstall Packages to match this engine"
+                statusLine += "; the installed packages do not match this engine's "
+                    + "lock — choose Reinstall Packages to match it"
             }
         }
     }
@@ -1322,17 +1357,30 @@ public final class LocalEngineProvisioner {
             emit("will download: " + line)
         }
         phase = .running(.environment)
+        // A stop partway leaves the stamp marked incomplete (see
+        // installDependencies), so the engine will not start on it until a
+        // reinstall finishes; the failure says how to finish. The mark is read
+        // back from disk: a failure before it was written changed nothing.
+        func unfinished() -> String {
+            guard case .syncEnvironment(_, let target, _, _) = offer,
+                LocalEngineLockStamp.read(
+                    venv: URL(filePath: target).appending(component: ".venv.nosync"))?
+                    .incomplete == true
+            else { return "" }
+            return " — the reinstall did not finish; choose Reinstall Packages again "
+                + "to complete it before starting the engine"
+        }
         do {
             try await perform(offer, step: .environment, observation: observation)
             emit("Reinstall Packages: done — the packages match the engine's lock")
         } catch let error as LocalEngineError {
             phase = .failed(error.description)
-            statusLine = error.description
+            statusLine = error.description + unfinished()
             emit(statusLine)
             return
         } catch {
             phase = .failed(error.localizedDescription)
-            statusLine = error.localizedDescription
+            statusLine = error.localizedDescription + unfinished()
             emit(statusLine)
             return
         }
@@ -1618,6 +1666,22 @@ public final class LocalEngineProvisioner {
         // installing under a different target is how a "pinned" install
         // quietly resolves a different torch.
         let overrides = ["MACOSX_DEPLOYMENT_TARGET": "14.0"]
+        let stampURL = venv.appending(component: LocalEngineLayout.lockStampFileName)
+        if syncing, var marked = observation.venvLockStamp {
+            // From here until the new stamp is written, the environment may
+            // lack packages (sync removes the editable engine first). The mark
+            // is what keeps a stop partway from reading as an old, working
+            // install: the environment step refuses to serve it.
+            marked.incomplete = true
+            guard let data = try? JSONEncoder().encode(marked),
+                (try? data.write(to: stampURL)) != nil
+            else {
+                throw LocalEngineError.fileOperationFailed(
+                    step: step,
+                    reason: "could not mark \(stampURL.path) before reinstalling — "
+                        + "nothing was changed")
+            }
+        }
         try await runOrThrow(
             syncing
                 ? [uv.path, "pip", "sync", "--python", interpreter, lock]
@@ -1637,8 +1701,7 @@ public final class LocalEngineProvisioner {
                 installedAt: ISO8601DateFormatter().string(from: Date()),
                 uvVersion: uv.version, pythonVersion: PinnedCPython.minor)
             if let data = try? JSONEncoder().encode(stamp) {
-                try? data.write(
-                    to: venv.appending(component: LocalEngineLayout.lockStampFileName))
+                try? data.write(to: stampURL)
             }
             emit(
                 "\(step.title): stamped the venv against "
