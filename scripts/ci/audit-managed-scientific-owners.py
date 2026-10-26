@@ -155,13 +155,19 @@ def tree(source):
 #: The record reading analysis_workflow delegates to since 2026-10-25
 #: (reviewed, approved): source_snapshot parses the source's records and
 #: stamps the bytes it parsed. It has no base revision to compare against, so
-#: these two functions are pinned by their source text, with the docstring,
+#: the functions that decide which run is read and which of its records are
+#: parsed are pinned by their source text, with the docstring,
 #: comments, and whitespace normalized away (text rather than ast.dump, whose
 #: output differs between Python versions): a change to which records an
 #: analysis reads trips this audit, and a reviewed change updates the digest.
 SOURCE_SNAPSHOT_PINNED = {
+    # Which records of the source are parsed, and the stamp of those bytes.
     '_parse': '40492f431001ffb64e31f4f2533d5afd7125b527f6466b4d7bc9cd8db8317e50',
     'read_generations': '858ac1be46ff16baebd176418d8faf52c196a810fe85e0bf1f3cc45276f4c289',
+    # Which run is read: its status, the newest completed run, the choice.
+    'status': 'cfb10a9d3488db900c0e7597c07c70673331be4ddff25128fafaccf7f59b6a04',
+    'latest_completed_run': '440d03fa89b149dc318dd7eec0e4851874406b9b135f1e4c0eeb557ee9539fe7',
+    'choose_source': 'ca54d5672f5b0bcedf9ebc515ca1ce883029bde42745cb715a7e90dc1cd4030b',
 }
 
 
@@ -298,7 +304,10 @@ def main():
             ('blank lines parsed', snapshot.replace('        line = line.strip()\n        if line:\n            records.append',
                                                     '        line = line.strip()\n        if True:\n            records.append', 1)),
             ('status read after the bytes', snapshot.replace('    state = status(run_dir)\n', '', 1)
-             .replace('"status": state,', '"status": status(run_dir),', 1))):
+             .replace('"status": state,', '"status": status(run_dir),', 1)),
+            ('an unfinished run preferred by default', snapshot.replace(
+                'source_run or latest_completed_run(name, root) or latest_run(name, root)',
+                'source_run or latest_run(name, root)', 1))):
         assert mutant != snapshot, 'Mutation control did not apply: ' + label
         try:
             check_source_snapshot(mutant)

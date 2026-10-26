@@ -456,7 +456,12 @@ extension RunResults {
         artifacts.choiceRereadData = try? Data(
             contentsOf: runDirectory.appending(component: ChoiceReread.stampFile))
         // An analysis directory: the run it read, as that run stands now.
-        if let source = analyzedRunName(runDirectory),
+        // Only an analysis: an evaluation or a style rescore names a source
+        // run too, and this stamp is about what an analysis read.
+        if FirstStudyChecklist.matched(
+            runDirectory.standardizedFileURL.lastPathComponent, FirstStudyChecklist.analysisPattern)
+            != nil,
+            let source = analyzedRunName(runDirectory),
             source != runDirectory.standardizedFileURL.lastPathComponent
         {
             let sourceDirectory = runDirectory.deletingLastPathComponent().appending(

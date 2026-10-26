@@ -14,7 +14,7 @@
 // generations.jsonl is only ever appended to, so a size that moved means
 // records were added, and an unchanged size needs nothing read.
 
-import { recordValue } from "./discovery";
+import { recordValue, runKindOf } from "./discovery";
 import type { WorkspaceRun } from "./types";
 
 export const STAMP_FILE = "source-snapshot.json";
@@ -90,8 +90,10 @@ export const snapshotSentence = (found: SnapshotVerdict, run: string): string | 
 };
 
 /// An analysis's verdict against the run it read, as that run stands now.
-/// `source` is that run when it is in the workspace (`findSourceRun`); for
-/// a run directory that is not an analysis, null.
+/// `source` is that run when it is in the workspace (`findSourceRun`). Null
+/// for any run that is not an analysis: an evaluation or a style rescore
+/// names a source run too, but this stamp and its sentences are about what an
+/// ANALYSIS read.
 export type SourceSnapshotReading = { verdict: SnapshotVerdict; sentence: string | null };
 
 const readJSON = async (run: WorkspaceRun, name: string): Promise<Record<string, unknown>> => {
@@ -101,6 +103,7 @@ const readJSON = async (run: WorkspaceRun, name: string): Promise<Record<string,
 };
 
 export const loadSourceSnapshot = async (run: WorkspaceRun, source: WorkspaceRun | null): Promise<SourceSnapshotReading | null> => {
+  if (runKindOf(run) !== "analyze") return null;
   const stampFile = run.files.find((entry) => entry.path === STAMP_FILE);
   const stamp = stampFile ? parseSnapshotStamp(await readJSON(run, STAMP_FILE)) : null;
   const runName = stamp?.sourceRun || source?.name || "";

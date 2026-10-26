@@ -23,7 +23,7 @@ const file = (path: string, text: string): RunFile => {
   return { name: path, path, size: blob.size, modified: 0, handle: { getFile: async () => blob } } as unknown as RunFile;
 };
 
-const run = (name: string, files: RunFile[]): WorkspaceRun => ({ name, files } as unknown as WorkspaceRun);
+const run = (name: string, files: RunFile[], kind = "analyze"): WorkspaceRun => ({ name, files, kind } as unknown as WorkspaceRun);
 
 const RUN = "20261004T000000000-exp-tone-run";
 const lines = (count: number) => Array.from({ length: count }, (_, index) => `{"condition":"c${index % 2}","promptID":"item-${Math.floor(index / 2) + 1}"}`).join("\n") + "\n";
@@ -86,6 +86,12 @@ describe("an analysis beside its run", () => {
   });
 
   it("has nothing to say for a run that is not an analysis", async () => {
-    expect(await loadSourceSnapshot(run(RUN, [file("generations.jsonl", lines(2))]), null)).toBeNull();
+    expect(await loadSourceSnapshot(run(RUN, [file("generations.jsonl", lines(2))], "study-run"), null)).toBeNull();
+    // An evaluation names its source run too, and a continued run would
+    // otherwise read as "may predate the continuation": not its concern.
+    const continued = run(RUN, [file("generations.jsonl", lines(8)), file("report.json", "{}"),
+      file("run-status.json", JSON.stringify({ status: "completed", resumedFrom: { status: "checkpointed" } }))], "study-run");
+    expect(await loadSourceSnapshot(run("e", [file("judge-report.json", "{}")], "evaluate-paired"), continued)).toBeNull();
+    expect(await loadSourceSnapshot(run("s", [file("source-run.txt", RUN)], "rescore-style"), continued)).toBeNull();
   });
 });

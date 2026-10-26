@@ -243,9 +243,11 @@ export function AnalysisStampsCard({ run, onOpenFile }: { run: WorkspaceRun; onO
           <div>
             <dt>Source records</dt>
             <dd>
-              <p>{run.sourceSnapshot.sentence ?? (run.sourceSnapshot.verdict.state === "matches"
-                ? `This analysis read all ${run.sourceSnapshot.verdict.analyzedRecords} records the run holds now.`
-                : "Not recorded. This analysis was made before analyses recorded which of their run's records they read.")}</p>
+              <p>{run.sourceSnapshot.sentence ?? (run.sourceSnapshot.verdict.state !== "matches"
+                ? "Not recorded. This analysis was made before analyses recorded which of their run's records they read."
+                : run.sourceSnapshot.verdict.runRecords !== undefined
+                  ? `This analysis read all ${run.sourceSnapshot.verdict.analyzedRecords} records the run holds now.`
+                  : `This analysis read ${run.sourceSnapshot.verdict.analyzedRecords} records of the completed run. The run is not in this workspace, so they were not compared with it.`)}</p>
               {run.files.some((file) => file.path === "source-snapshot.json") && <small>Stamped in source-snapshot.json. {open("source-snapshot.json")}</small>}
             </dd>
           </div>

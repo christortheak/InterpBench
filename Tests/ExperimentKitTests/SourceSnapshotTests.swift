@@ -179,6 +179,19 @@ struct SourceSnapshotTests {
         #expect(RunResults.load(runDirectory: plain.analysis).sourceSnapshotNotice == nil)
     }
 
+    /// A style rescore names its source run in source-run.txt too; the
+    /// snapshot notice is about what an ANALYSIS read, so it says nothing.
+    @Test func aStyleRescoreOfAContinuedRunSaysNothing() throws {
+        let made = try workspace(records: 8, continued: true) { _ in nil }
+        defer { try? FileManager.default.removeItem(at: made.root) }
+        let rescore = made.root.appending(components: "runs", "20261004T020000000-exp-tone-rescore-style")
+        try FileManager.default.createDirectory(at: rescore, withIntermediateDirectories: true)
+        try Data((made.run + "\n").utf8).write(to: rescore.appending(component: "source-run.txt"))
+        #expect(RunResults.load(runDirectory: rescore).sourceSnapshotNotice == nil)
+        // The analysis beside it, unstamped, is the one that is flagged.
+        #expect(RunResults.load(runDirectory: made.analysis).sourceSnapshotNotice != nil)
+    }
+
     @Test func aRemotePageSpeaksFromTheStampAlone() throws {
         var artifacts = RunResults.ArtifactBytes()
         artifacts.assign(
