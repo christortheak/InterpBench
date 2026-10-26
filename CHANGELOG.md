@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.18] — 2026-10-25
+
 - **An analysis of an unfinished run is no longer presented as the finished
   run's.** A run paused at a checkpoint gains records when it is continued,
   in the same folder, and an analysis named its run by folder alone. So an
