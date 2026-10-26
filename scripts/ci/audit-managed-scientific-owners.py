@@ -3,8 +3,10 @@
 import argparse
 import ast
 import hashlib
+import io
 from pathlib import Path
 import subprocess
+import tokenize
 
 ROOT = Path(__file__).resolve().parents[2]
 OWNER_MODULES = (
@@ -153,23 +155,32 @@ def tree(source):
 #: The record reading analysis_workflow delegates to since 2026-10-25
 #: (reviewed, approved): source_snapshot parses the source's records and
 #: stamps the bytes it parsed. It has no base revision to compare against, so
-#: these two functions are pinned by their syntax trees (docstrings aside): a
-#: change to which records an analysis reads trips this audit, and a reviewed
-#: change updates the digest here.
+#: these two functions are pinned by their source text, with the docstring,
+#: comments, and whitespace normalized away (text rather than ast.dump, whose
+#: output differs between Python versions): a change to which records an
+#: analysis reads trips this audit, and a reviewed change updates the digest.
 SOURCE_SNAPSHOT_PINNED = {
-    '_parse': '90987ccdb3884bd34a3ef347e0c911a76c568945de863d477fc7e2135de847ab',
-    'read_generations': 'a9fee692608c59686bafa142a35b7dc02b885d00f3be74180bdeaf041edc443f',
+    '_parse': '40492f431001ffb64e31f4f2533d5afd7125b527f6466b4d7bc9cd8db8317e50',
+    'read_generations': '858ac1be46ff16baebd176418d8faf52c196a810fe85e0bf1f3cc45276f4c289',
 }
 
 
 def function_digest(source, name):
     node = next(n for n in ast.parse(source).body
                 if isinstance(n, ast.FunctionDef) and n.name == name)
-    body = node.body
-    if (body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)
-            and isinstance(body[0].value.value, str)):
-        node.body = body[1:]
-    return hashlib.sha256(ast.dump(node).encode()).hexdigest()
+    segment = ast.get_source_segment(source, node)
+    first = node.body[0]
+    if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)):
+        segment = segment.replace(ast.get_source_segment(source, first), '', 1)
+    lines = segment.splitlines(keepends=True)
+    comments = [token for token in tokenize.generate_tokens(io.StringIO(segment).readline)
+                if token.type == tokenize.COMMENT]
+    for token in reversed(comments):
+        (row, start), (_, end) = token.start, token.end
+        lines[row - 1] = lines[row - 1][:start] + lines[row - 1][end:]
+    text = ' '.join(''.join(lines).split())
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def check_source_snapshot(source):
@@ -294,7 +305,7 @@ def main():
         except AssertionError:
             continue
         raise AssertionError('Negative control was accepted: ' + label)
-    print('source_snapshot record reading matches its pinned syntax trees; mutation controls passed.')
+    print('source_snapshot record reading matches its pinned source; mutation controls passed.')
 
     for name in ('lens_store', 'qualification', 'g0'):
         before, after = read(name, 'jlens')
