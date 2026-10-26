@@ -45,6 +45,21 @@ export function FreezeNotice({ run }: { run: WorkspaceRun }) {
   );
 }
 
+/// An analysis of an earlier or unfinished state of its run, said before its
+/// numbers: they are not the run's as it stands (lib/sourceSnapshot.ts).
+/// Renders nothing when the analysis read the run as it stands, or when
+/// nothing says otherwise.
+export function SourceSnapshotNotice({ run }: { run: WorkspaceRun }) {
+  const sentence = run.sourceSnapshot?.sentence;
+  if (!sentence) return null;
+  return (
+    <div className="notice source-snapshot-notice" role="alert">
+      <span className="notice-icon">!</span>
+      <p><strong>An earlier state of the run.</strong> {sentence}</p>
+    </div>
+  );
+}
+
 /// "What the interval means", in plain words, beside a real run's effects.
 ///
 /// This card used to exist only on the invented demo page, where it quoted
@@ -224,6 +239,17 @@ export function AnalysisStampsCard({ run, onOpenFile }: { run: WorkspaceRun; onO
             {stamps.rescue && <small>Stamped in endpoint-reparse.json. {open("endpoint-reparse.json")}</small>}
           </dd>
         </div>
+        {run.sourceSnapshot && (
+          <div>
+            <dt>Source records</dt>
+            <dd>
+              <p>{run.sourceSnapshot.sentence ?? (run.sourceSnapshot.verdict.state === "matches"
+                ? `This analysis read all ${run.sourceSnapshot.verdict.analyzedRecords} records the run holds now.`
+                : "Not recorded. This analysis was made before analyses recorded which of their run's records they read.")}</p>
+              {run.files.some((file) => file.path === "source-snapshot.json") && <small>Stamped in source-snapshot.json. {open("source-snapshot.json")}</small>}
+            </dd>
+          </div>
+        )}
         <div>
           <dt>Choices re-read</dt>
           <dd>

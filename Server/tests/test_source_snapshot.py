@@ -254,6 +254,13 @@ def test_a_checkpoints_analysis_is_never_exported_as_the_completed_runs(root):
                 "its records.")
     with open(os.path.join(stale["exportDirectory"], "methods.md"), encoding="utf-8") as handle:
         assert "- Source records: " + sentence in handle.read()
+    # The results page says it first, before the headline drawn from it.
+    with open(os.path.join(stale["exportDirectory"], "report.html"), encoding="utf-8") as handle:
+        page = handle.read()
+    first = page.index("Read this first")
+    notice = page[first:page.index("</div>", first)]
+    assert sentence in notice
+    assert "The headline and effects on this page come from that analysis." in notice
     assert [entry for entry in stale["notAvailable"]
             if entry["what"] == "effects over the run's current records"
             and entry["why"] == sentence
@@ -273,6 +280,37 @@ def test_a_checkpoints_analysis_is_never_exported_as_the_completed_runs(root):
         assert json.load(handle)["analysisSourceSnapshot"]["state"] == "matches"
     assert not [entry for entry in current["notAvailable"]
                 if entry["what"] == "effects over the run's current records"]
+
+
+def test_a_run_continued_before_parks_were_settled_is_the_completed_run_it_is(root):
+    """A report beside a never-settled park (a run continued before 0.9.16):
+    its records are final, so it is the default source, its analysis is
+    stamped completed, and an export with no analysis yet names THIS run in
+    its repair rather than a bare analyze that would read another one."""
+    manifest, manifest_hash = _study(root)
+    older = f"20261003T000000000-exp-{STUDY}-run"
+    _write_run(root, manifest, _records(manifest_hash, [("item-1", 6), ("item-2", 6)]), name=older)
+    directory = _parked_run(root, manifest, manifest_hash)
+    with open(os.path.join(directory, "generations.jsonl"), "a", encoding="utf-8") as handle:
+        for row in _records(manifest_hash, [("item-3", 0), ("item-4", 0)]):
+            handle.write(json.dumps(row) + "\n")
+    with open(os.path.join(directory, "report.json"), "w", encoding="utf-8") as handle:
+        json.dump({"experiment": STUDY, "experimentHash": manifest_hash, "conditions": {},
+                   "truncation": {"classified": 8, "lengthStopped": 0}}, handle)
+    assert run_status.read_status(directory)["status"] == "checkpointed"  # never settled
+    assert source_snapshot.status(directory) == "completed"
+    assert source_snapshot.was_continued(directory)
+
+    exported = results_export.export_results(str(root), STUDY)
+    assert exported["run"] == "runs/" + RUN
+    assert [entry for entry in exported["notAvailable"] if entry["what"] == "effects.csv"
+            and entry["repair"].startswith(
+                f"steerlab run {STUDY} --runner <url> --verb analyze --source runs/{RUN}")]
+
+    analysis = tasks.analyze(STUDY, root=str(root), log=lambda _: None)
+    assert _stamp(analysis)["sourceRun"] == RUN and _stamp(analysis)["status"] == "completed"
+    assert _word_count_effect(analysis) == (3.0, 4)
+    assert source_snapshot.compare(analysis, directory)["state"] == source_snapshot.MATCHES
 
 
 def test_a_matching_analysis_is_preferred_to_a_newer_one_of_an_earlier_snapshot(root):

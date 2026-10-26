@@ -456,13 +456,13 @@ public enum CLIFlagVocabulary {
             + "is refused.",
         "results export --run":
             "The run directory to export; absent, the newest completed run, "
-            + "with its newest analysis and evaluation.",
+            + "with its newest analysis (one of its current records first) and evaluation.",
         "results report --out":
             "Write the page to this file (default: reports/<study>/<run>/report.html "
             + "in the workspace). A file inside runs/ is refused.",
         "results report --run":
             "The run directory to show; absent, the newest completed run, with its "
-            + "newest analysis and evaluation.",
+            + "newest analysis (one of its current records first) and evaluation.",
         "docs cli-reference --path": "The document to read or rewrite.",
         "cluster controller start --allow-controller-start":
             "Accepted and ignored: typing this verb IS the authorization.",

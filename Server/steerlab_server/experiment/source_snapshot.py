@@ -34,9 +34,13 @@ from . import paths, run_status
 STAMP_FILE = "source-snapshot.json"
 SCHEMA_VERSION = 1
 
-#: A source run's state as a snapshot records it. ``completed`` needs both
-#: the completion report and a status that does not say otherwise; every
-#: other value names why the run is not complete.
+#: A source run's state as a snapshot records it. ``completed`` means its
+#: records are final: the completion report is written, and no status says
+#: the run failed or cannot be read. A park left beside a report
+#: (``checkpointed`` or ``inProgress``, never settled because the run was
+#: continued before 0.9.16 settled parks) is completed too, since a run writes
+#: its report only once every record is in. Every other value names why the
+#: run is not complete.
 COMPLETED = "completed"
 NO_COMPLETION_REPORT = "noCompletionReport"
 UNREADABLE = "unreadable"
@@ -58,20 +62,26 @@ def status(run_dir: str) -> str:
     recorded = run_status.read_status(run_dir)
     if recorded is run_status.UNREADABLE:
         return UNREADABLE
+    reported = os.path.isfile(os.path.join(run_dir, "report.json"))
     if isinstance(recorded, dict):
-        value = str(recorded.get("status") or "")
-        if value and value != COMPLETED:
+        value = recorded.get("status")
+        if isinstance(value, str) and value and value != COMPLETED and not (
+                reported and value in run_status.PARKED_STATUSES):
             return value
-    if not os.path.isfile(os.path.join(run_dir, "report.json")):
-        return NO_COMPLETION_REPORT
-    return COMPLETED
+    return COMPLETED if reported else NO_COMPLETION_REPORT
 
 
 def was_continued(run_dir: str) -> bool:
-    """Whether the run's status records a park that a continuation settled
-    (``resumedFrom``, written by ``run_status.settle_after_resumed_completion``)."""
+    """Whether the run was parked and then continued: its status records a
+    settled park (``resumedFrom``, written by
+    ``run_status.settle_after_resumed_completion``), or a park was left beside
+    the completion report (continued before parks were settled)."""
     recorded = run_status.read_status(run_dir)
-    return isinstance(recorded, dict) and bool(recorded.get("resumedFrom"))
+    if not isinstance(recorded, dict):
+        return False
+    return bool(recorded.get("resumedFrom")) or (
+        recorded.get("status") in run_status.PARKED_STATUSES
+        and os.path.isfile(os.path.join(run_dir, "report.json")))
 
 
 def _parse(data: bytes) -> list:
@@ -87,10 +97,10 @@ def _parse(data: bytes) -> list:
 
 def _count(data: bytes) -> int:
     """Non-blank lines: the record count a snapshot states, read the same way
-    on both engines (no JSON decode, so a reader can count any run)."""
-    text = data.decode("utf-8", errors="replace")
-    return sum(1 for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-               if line.strip())
+    on both engines (no JSON decode, so a reader can count any run), one line
+    at a time rather than as copies of the whole file."""
+    lines = io.TextIOWrapper(io.BytesIO(data), encoding="utf-8", errors="replace")
+    return sum(1 for line in lines if line.strip())
 
 
 def describe(data: bytes) -> dict:
@@ -102,12 +112,15 @@ def describe(data: bytes) -> dict:
 def read_generations(run_dir: str) -> tuple[list, dict]:
     """The source's records and the snapshot they came from, read in ONE
     pass, so the stamp names exactly the bytes that were parsed even while a
-    running source keeps appending."""
+    running source keeps appending. The status is read FIRST: a source that
+    completes between the two reads is then stamped unfinished, which a
+    reader says, never completed over records that were not all there."""
+    state = status(run_dir)
     with open(os.path.join(run_dir, "generations.jsonl"), "rb") as handle:
         data = handle.read()
     stamp = {"schemaVersion": SCHEMA_VERSION,
              "sourceRun": os.path.basename(os.path.normpath(run_dir)),
-             "status": status(run_dir), **describe(data)}
+             "status": state, **describe(data)}
     return _parse(data), stamp
 
 
@@ -163,7 +176,9 @@ def read_stamp(analysis_dir: str) -> dict | None:
             stamp = json.load(handle)
     except (OSError, ValueError):
         return None
-    # As strict as the Swift twin's decoder: every key, of its type.
+    # Strict like the Swift twin's decoder: every key, of its type. (That
+    # decoder also takes an integral 8.0 where an integer is due; neither
+    # engine writes one.)
     typed = (("schemaVersion", int), ("sourceRun", str), ("status", str),
              ("records", int), ("generationsBytes", int), ("generationsSHA256", str))
     if not isinstance(stamp, dict) or any(

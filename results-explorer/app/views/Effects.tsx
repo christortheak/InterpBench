@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AnalysisStampsCard, IntervalNote } from "../components/stamps";
+import { AnalysisStampsCard, IntervalNote, SourceSnapshotNotice } from "../components/stamps";
 import { Badge, ExportButton, ForestRow, NoRunSelected } from "../components/ui";
 import { analysisStampsOf } from "../lib/analysisStamps";
 import { skippedLinesNote } from "../lib/csv";
@@ -125,6 +125,7 @@ export function EffectsView({ run, onOpenFile }: { run: WorkspaceRun | null; onO
       </section>
       {/* The stamps that say what the estimates below were measured on:
           the unit of analysis, exclusions, endpoint rescue, adjudication. */}
+      {run && <SourceSnapshotNotice run={run} />}
       {run && <AnalysisStampsCard run={run} onOpenFile={onOpenFile} />}
       <section className="card effect-table-card">
         <div className="effect-table-head"><span>Condition · endpoint</span><span>Effect with 95% CI</span><span>Estimate</span><span>Raw p</span><span>{correctionLabel}</span><span>Read</span></div>

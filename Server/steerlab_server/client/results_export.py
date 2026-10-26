@@ -2454,7 +2454,10 @@ def _collect(root, study, run_name, steps, now):
         missing.append({"what": "effects.csv",
                         "why": "no analysis of this run was found; analyze the run, "
                                "then export again",
-                        "repair": f"{steps['analyze']}, then {steps['export']}"})
+                        # Named: a bare analyze reads the newest COMPLETED run,
+                        # which need not be this one.
+                        "repair": steps["analyzeRun"].replace("{run}", run_name)
+                                  + f", then {steps['export']}"})
 
     # The evaluations: the newest completed one of each kind for this run.
     context_rows = {"judgmentRows": [], "codingRows": []}
@@ -2531,7 +2534,8 @@ def export_results(root, study, *, run=None, out=None, client=PYTHON_CLIENT, now
 
     ``run`` names a run directory (absolute, relative to the workspace, or a
     bare directory name under ``runs/``); absent, the newest completed run is
-    used, with its newest analysis and evaluation. ``out`` names a new or
+    used, with its newest analysis (one of its current records first) and
+    evaluation. ``out`` names a new or
     empty destination folder; absent, a new folder under ``exports/`` in the
     workspace. A relative ``out`` is taken from the workspace root.
 

@@ -33,8 +33,11 @@ REGENERATE = ("stale fixture — re-run "
 
 def _load(name):
     path = os.path.join(FIXTURES, name)
-    if not os.path.exists(path):
-        pytest.skip(f"{name} not generated yet")
+    # A committed fixture that is missing FAILS (golden_files): skipping let a
+    # deleted fixture pass unnoticed while the Swift suite read nothing.
+    assert os.path.exists(path), (
+        f"{name} is missing from Tests/Fixtures/cross-engine/. Restore it from git, or "
+        f"regenerate it: {REGENERATE}")
     with open(path, encoding="utf-8") as handle:
         return json.load(handle)
 

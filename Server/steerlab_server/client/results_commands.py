@@ -22,14 +22,16 @@ VERB_SPECS = (
     VerbSpec('results', 'export', positional='<study>',
              purpose="Export a completed run's results into a new folder outside runs/: tables that open in R, "
                      'Stata, SPSS, or a spreadsheet, transcripts for coding by hand, a methods summary, and a '
-                     'codebook. Uses the newest completed run with its newest analysis and evaluation unless '
-                     '--run names another. Runs no model, and recalculates nothing.',
+                     'codebook. Uses the newest completed run with its newest analysis (one of its current '
+                     'records first) and evaluation unless --run names another. Runs no model, and recalculates '
+                     'nothing.',
              value_flags=frozenset({'--run', '--out'})),
     VerbSpec('results', 'report', positional='<study>',
              purpose="Write a completed run's results as one readable page (HTML) outside runs/: the headline "
                      "outcome with its interval, every stored effect, each condition, controls, the judges' "
                      'agreement, exclusions, and how the study was frozen. Uses the newest completed run with its '
-                     'newest analysis and evaluation unless --run names another. The page goes under reports/ in '
+                     'newest analysis (one of its current records first) and evaluation unless --run names '
+                     'another. The page goes under reports/ in '
                      'the workspace unless --out names the file. Runs no model, and recalculates nothing.',
              value_flags=frozenset({'--run', '--out'})),
     VerbSpec('results', 'check-choices', positional='<study>',

@@ -161,7 +161,7 @@ struct SourceSnapshotTests {
     @Test func anAnalysisOfTheRunAsItStandsSaysNothing() throws {
         let made = try workspace(records: 8, continued: true) { source in
             SourceSnapshot.stamp(
-                runDirectory: source,
+                runDirectory: source, status: SourceSnapshot.status(of: source),
                 generations: try Data(contentsOf: source.appending(component: "generations.jsonl")))
         }
         defer { try? FileManager.default.removeItem(at: made.root) }

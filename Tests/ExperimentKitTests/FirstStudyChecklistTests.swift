@@ -256,6 +256,7 @@ import Testing
 
         let current = SourceSnapshot.stamp(
             runDirectory: root.appending(components: "runs", run),
+            status: SourceSnapshot.status(of: root.appending(components: "runs", run)),
             generations: try Data(
                 contentsOf: root.appending(components: "runs", run, "generations.jsonl")))
         try JSONEncoder().encode(current).write(to: stampURL)

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { FreezeNotice, TruncationCard } from "../components/stamps";
+import { FreezeNotice, SourceSnapshotNotice, TruncationCard } from "../components/stamps";
 import { Badge, ForestRow, NoRunSelected } from "../components/ui";
 import { DemoOverview, demoPreviewEnabled } from "../demo";
 import { findFile, runKindOf, runStatusOf } from "../lib/discovery";
@@ -229,6 +229,7 @@ export function LocalOverview({ run, onNavigate }: { run: WorkspaceRun; onNaviga
       </section>
 
       <FreezeNotice run={run} />
+      <SourceSnapshotNotice run={run} />
 
       <div className="notice local-notice" role="note">
         <span className="notice-icon">✓</span>

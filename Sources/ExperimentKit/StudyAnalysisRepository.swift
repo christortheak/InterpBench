@@ -272,7 +272,9 @@ struct StudyAnalysisRepository {
                 throw ExperimentError(reason: ExclusionEngine.noChecksMessage)
             }
         }
-        // Read once: the snapshot stamp names exactly the bytes parsed.
+        // Read once: the snapshot stamp names exactly the bytes parsed, and
+        // the status read before them (`SourceSnapshot.stamp`).
+        let sourceStatus = SourceSnapshot.status(of: sourceRun)
         let bytes = try Data(contentsOf: sourceRun.appending(component: "generations.jsonl"))
         guard let text = String(data: bytes, encoding: .utf8) else {
             throw ExperimentError(
@@ -292,7 +294,8 @@ struct StudyAnalysisRepository {
             epoch: epoch, generations: text, style: style,
             exclusionChecks: exclusionChecks, declaredTargets: declaredTargets,
             numericParser: numericParser(for: manifest))
-        input.sourceSnapshot = SourceSnapshot.stamp(runDirectory: sourceRun, generations: bytes)
+        input.sourceSnapshot = SourceSnapshot.stamp(
+            runDirectory: sourceRun, status: sourceStatus, generations: bytes)
         if rereadChoices {
             // Every stored choice read again with the current parser, against
             // the hash-verified task prompts the run names; refuses rather

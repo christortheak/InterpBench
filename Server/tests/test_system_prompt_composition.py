@@ -769,8 +769,10 @@ def test_the_cross_engine_composition_fixture_is_current():
     """The Swift suite consumes these bytes; a Python rule change that is not
     regenerated would leave both suites green over a broken seam."""
     path = os.path.join(FIXTURES, "system-prompt-composition.json")
-    if not os.path.exists(path):
-        pytest.skip("fixture not generated yet")
+    # Committed; a missing file fails rather than skipping (golden_files).
+    assert os.path.exists(path), (
+        "system-prompt-composition.json is missing from Tests/Fixtures/cross-engine/: "
+        "restore it from git, or regenerate it with scripts/regenerate-cross-engine-fixtures.py")
     with open(path, encoding="utf-8") as handle:
         fixture = json.load(handle)
     for case in fixture["composition"]:

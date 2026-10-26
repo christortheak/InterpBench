@@ -24,9 +24,10 @@ migration that rewrites frozen bytes.
   earlier or unfinished state of the run, the export copies it as before but
   says so beside the effects, in the methods summary, in `manifest.json`
   (`analysisSourceSnapshot`), and under what is not available, with the
-  command to analyze the run again. The app's Results page shows the same
-  notice above the headline, and the first-study checklist does not count such
-  an analysis as the run's results. An analysis made before this change records
+  command to analyze the run again. The results page (`results report`, and
+  `report.html` in an export) says so first, the app's Results page and the
+  Results Explorer show the same notice above the headline, and the
+  first-study checklist does not count such an analysis as the run's results. An analysis made before this change records
   nothing, so it is never assumed to match; it is flagged only when its run
   was paused and continued.
 - **On the Python engine, an analysis reads the newest completed run by
@@ -34,9 +35,11 @@ migration that rewrites frozen bytes.
   paused or running. When no run has completed, it still analyzes the newest
   run as it stands, and says so. Naming an unfinished run explicitly still
   works, with a warning, and the `--json` answer carries the new
-  `unfinishedSourceAnalyzed` advisory. The Mac engine analyzes completed runs
-  only, as before. No statistic changes: an analysis reads the same records
-  it always read.
+  `unfinishedSourceAnalyzed` advisory. A run continued before 0.9.16, whose
+  completion report sits beside a pause that was never settled, counts as
+  completed: its records are final. The Mac engine analyzes completed runs
+  only, as before. No statistic changes: given the same run, an analysis
+  reads the same records it always read.
 - **A missing expected file now fails the Python tests.** Five Python tests
   wrote their expected file (a "golden") when it was absent and passed, so
   deleting one by accident regenerated it from the code under test. A missing

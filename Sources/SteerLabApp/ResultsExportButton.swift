@@ -83,7 +83,8 @@ struct ResultsExportButton: View {
             Text(
                 (selectedRun.map { "The selected run, \($0.directoryName), is exported" }
                     ?? "The newest completed run is exported")
-                    + ", with its newest analysis and evaluation. Tables, "
+                    + ", with its newest analysis (one of its current records "
+                    + "first) and evaluation. Tables, "
                     + "transcripts, a methods summary, and a codebook are written "
                     + "to a new folder under exports/ in this workspace. Nothing "
                     + "in runs/ is changed, and no statistic is recalculated.")

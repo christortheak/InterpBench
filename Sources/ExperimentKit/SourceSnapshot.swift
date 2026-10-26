@@ -53,30 +53,45 @@ public enum SourceSnapshot {
     /// records (`checkpointed`, `inProgress`, `failed`, …), `unreadable` for a
     /// torn status file, or `noCompletionReport`. Read as the server reads it:
     /// the status file as plain JSON, so both engines agree on any file.
+    ///
+    /// `completed` means the records are final: the completion report is
+    /// written and no status says the run failed or cannot be read. A park
+    /// left beside a report (`checkpointed` or `inProgress`, never settled
+    /// because the run was continued before 0.9.16 settled parks) is
+    /// completed too: a run writes its report only once every record is in.
     public static func status(of runDirectory: URL) -> String {
+        let reported = FileManager.default.fileExists(
+            atPath: runDirectory.appending(component: "report.json").path)
         switch statusObject(runDirectory) {
         case .unreadable:
             return unreadable
         case .present(let object):
-            if let value = object["status"] as? String, !value.isEmpty, value != completed {
+            if let value = object["status"] as? String, !value.isEmpty, value != completed,
+                !(reported && parkedStatuses.contains(value))
+            {
                 return value
             }
         case .absent:
             break
         }
-        let report = runDirectory.appending(component: "report.json")
-        return FileManager.default.fileExists(atPath: report.path) ? completed : noCompletionReport
+        return reported ? completed : noCompletionReport
     }
 
-    /// Whether the run's status records a park that a continuation settled
-    /// (`resumedFrom`).
+    /// The statuses a parked attempt leaves (server twin:
+    /// `run_status.PARKED_STATUSES`).
+    static let parkedStatuses: Set<String> = ["checkpointed", "inProgress"]
+
+    /// Whether the run was parked and then continued: its status records a
+    /// settled park (`resumedFrom`), or a park was left beside the completion
+    /// report (continued before parks were settled).
     public static func wasContinued(_ runDirectory: URL) -> Bool {
-        if case .present(let object) = statusObject(runDirectory),
-            let parked = object["resumedFrom"] as? [String: Any], !parked.isEmpty
-        {
-            return true
+        guard case .present(let object) = statusObject(runDirectory) else { return false }
+        if let parked = object["resumedFrom"] as? [String: Any], !parked.isEmpty { return true }
+        guard let value = object["status"] as? String, parkedStatuses.contains(value) else {
+            return false
         }
-        return false
+        return FileManager.default.fileExists(
+            atPath: runDirectory.appending(component: "report.json").path)
     }
 
     private enum StatusObject {
@@ -108,13 +123,16 @@ public enum SourceSnapshot {
                 .joined())
     }
 
-    /// The stamp for the exact bytes an analysis parsed.
-    public static func stamp(runDirectory: URL, generations: Data) -> Stamp {
+    /// The stamp for the exact bytes an analysis parsed. `status` is read
+    /// BEFORE the bytes (`status(of:)`): a source that completes between the
+    /// two reads is then stamped unfinished, never completed over records
+    /// that were not all there.
+    public static func stamp(runDirectory: URL, status: String, generations: Data) -> Stamp {
         let described = describe(generations)
         return Stamp(
             schemaVersion: schemaVersion,
             sourceRun: runDirectory.standardizedFileURL.lastPathComponent,
-            status: status(of: runDirectory), records: described.records,
+            status: status, records: described.records,
             generationsBytes: described.generationsBytes,
             generationsSHA256: described.generationsSHA256)
     }
@@ -172,6 +190,25 @@ public enum SourceSnapshot {
             stamp: read(analysisDirectory: analysisDirectory),
             now: current(runDirectory: runDirectory),
             continued: wasContinued(runDirectory))
+    }
+
+    /// Whether an analysis reads its run as it stands, by the cheapest
+    /// evidence, for a page that looks at every analysis on each visit (the
+    /// first-study checklist): the stamp's status, and the size of the run's
+    /// records now. They only grow, so a size that moved means records were
+    /// added; nothing is hashed. With no stamp, only a run that was paused and
+    /// continued is in doubt (`notRecordedRunContinued`).
+    public static func coversTheRun(analysisDirectory: URL, runDirectory: URL) -> Bool {
+        guard let stamp = read(analysisDirectory: analysisDirectory) else {
+            return !wasContinued(runDirectory)
+        }
+        guard stamp.status == completed else { return false }
+        let generations = runDirectory.appending(component: "generations.jsonl").path
+        guard
+            let size = (try? FileManager.default.attributesOfItem(atPath: generations))?[.size]
+                as? NSNumber
+        else { return true }
+        return size.intValue == stamp.generationsBytes
     }
 
     static func statusWords(_ state: String) -> String {

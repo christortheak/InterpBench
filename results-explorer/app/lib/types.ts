@@ -5,6 +5,7 @@ import type { AnalysisStamps } from "./analysisStamps";
 import type { EffectUnit, PairedItems } from "./effectUnits";
 import type { FreezeStamp } from "./freeze";
 import type { RunKind, RunKindSource } from "./runKind";
+import type { SourceSnapshotReading } from "./sourceSnapshot";
 import type { StatusInfo } from "./status";
 
 export type View ="triage" | "overview" | "concepts" | "optimization" | "effects" | "battery" | "panels" | "generations" | "provenance" | "judged" | "coding" | "choice" | "residuals";
@@ -267,6 +268,11 @@ export type WorkspaceRun = {
   /// endpoint rescue, adjudication, and the unit of analysis. Read it with
   /// `analysisStampsOf`. See lib/analysisStamps.ts.
   analysisStamps?: AnalysisStamps;
+  /// For an analysis: whether it read its run as that run stands now, or an
+  /// earlier or unfinished state of it (`source-snapshot.json`). Absent until
+  /// the run is activated; null when there is nothing to compare. See
+  /// lib/sourceSnapshot.ts.
+  sourceSnapshot?: SourceSnapshotReading | null;
   /// Lines of effect-sizes.csv that had no readable endpoint, estimate, or
   /// interval, and so are not among `effectRows`. Absent or 0 when every
   /// line was read.

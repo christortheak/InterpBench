@@ -1,7 +1,8 @@
 """The results page of an ordinary study: one completed run, laid out for a reader.
 
 Input is the reading :func:`results_export.read_results` makes of a run, its
-newest analysis, and its newest completed evaluation. That reading is the
+newest analysis (one of the run's current records first), and its newest
+completed evaluation. That reading is the
 export's own, so this page and the files ``results export`` writes cannot
 disagree about what was stored. Output is one HTML page, and the same reading
 always gives the same page: it carries no date, no machine path, and no
@@ -263,6 +264,12 @@ class Page:
         if flags.get('measurementDrift'):
             items.append(join('The study’s measurement settings changed after the run was made. The analysis '
                               'recorded: ', str(flags['measurementDrift'])))
+        snapshot = self.context.get('analysisSourceSnapshot')
+        if isinstance(snapshot, dict):
+            from ...experiment import source_snapshot
+            line = source_snapshot.sentence(snapshot, self.context.get('runName') or '')
+            if line:
+                items.append(line + ' The headline and effects on this page come from that analysis.')
         reread = self.context.get('choiceReread')
         if isinstance(reread, dict):
             from ...experiment import choice_reread
@@ -911,8 +918,9 @@ class Page:
             'tables and text files.',
             'Numbers are rounded to four significant digits for reading. The files listed under Freeze and identity '
             'hold every digit.',
-            'This page reads the run’s newest analysis and its newest completed evaluation of each kind. Older ones '
-            'are not shown.']
+            'This page reads the run’s newest analysis of the records it holds now (when no analysis read them '
+            'all, its newest analysis, which Read this first names) and its newest completed evaluation of each '
+            'kind. Older ones are not shown.']
         return block(
             'Limits',
             el('h3', 'What the run did not store'),

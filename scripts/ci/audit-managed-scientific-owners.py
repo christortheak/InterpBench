@@ -2,6 +2,7 @@
 """Prove managed adapters leave the existing scientific owners' ASTs unchanged."""
 import argparse
 import ast
+import hashlib
 from pathlib import Path
 import subprocess
 
@@ -149,6 +150,34 @@ def tree(source):
     return ast.dump(ast.parse(source), include_attributes=False)
 
 
+#: The record reading analysis_workflow delegates to since 2026-10-25
+#: (reviewed, approved): source_snapshot parses the source's records and
+#: stamps the bytes it parsed. It has no base revision to compare against, so
+#: these two functions are pinned by their syntax trees (docstrings aside): a
+#: change to which records an analysis reads trips this audit, and a reviewed
+#: change updates the digest here.
+SOURCE_SNAPSHOT_PINNED = {
+    '_parse': '90987ccdb3884bd34a3ef347e0c911a76c568945de863d477fc7e2135de847ab',
+    'read_generations': 'a9fee692608c59686bafa142a35b7dc02b885d00f3be74180bdeaf041edc443f',
+}
+
+
+def function_digest(source, name):
+    node = next(n for n in ast.parse(source).body
+                if isinstance(n, ast.FunctionDef) and n.name == name)
+    body = node.body
+    if (body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)):
+        node.body = body[1:]
+    return hashlib.sha256(ast.dump(node).encode()).hexdigest()
+
+
+def check_source_snapshot(source):
+    for name, expected in SOURCE_SNAPSHOT_PINNED.items():
+        assert function_digest(source, name) == expected, (
+            f'source_snapshot.{name} changed: it decides which records an analysis reads')
+
+
 def literals_blanked(source):
     """The module's AST with every string literal emptied: equal for two
     sources exactly when they differ only in string text."""
@@ -251,6 +280,21 @@ def main():
         assert tree(before) == tree(after), name + ' changed scientific AST'
         assert tree(after + '\nAUDIT_NEGATIVE_CONTROL = True\n') != tree(before)
     print(f'{len(OWNER_MODULES)} scientific owner ASTs unchanged; negative controls passed.')
+
+    snapshot = (ROOT / 'Server/steerlab_server/experiment/source_snapshot.py').read_text()
+    check_source_snapshot(snapshot)
+    for label, mutant in (
+            ('blank lines parsed', snapshot.replace('        line = line.strip()\n        if line:\n            records.append',
+                                                    '        line = line.strip()\n        if True:\n            records.append', 1)),
+            ('status read after the bytes', snapshot.replace('    state = status(run_dir)\n', '', 1)
+             .replace('"status": state,', '"status": status(run_dir),', 1))):
+        assert mutant != snapshot, 'Mutation control did not apply: ' + label
+        try:
+            check_source_snapshot(mutant)
+        except AssertionError:
+            continue
+        raise AssertionError('Negative control was accepted: ' + label)
+    print('source_snapshot record reading matches its pinned syntax trees; mutation controls passed.')
 
     for name in ('lens_store', 'qualification', 'g0'):
         before, after = read(name, 'jlens')

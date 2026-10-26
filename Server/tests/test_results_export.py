@@ -759,7 +759,9 @@ def test_a_run_without_analysis_says_effects_are_not_available(root):
     assert not os.path.exists(os.path.join(result["exportDirectory"], "effects.csv"))
     [entry] = [e for e in result["notAvailable"] if e["what"] == "effects.csv"]
     assert "no analysis of this run was found" in entry["why"]
-    assert entry["repair"] == (f"steerlab-cli experiment analyze {STUDY}, then "
+    # The repair names the run: a bare analyze reads the newest COMPLETED
+    # run, which need not be this one.
+    assert entry["repair"] == (f"steerlab-cli experiment analyze {STUDY} --run runs/{RUN}, then "
                                f"steerlab-cli results export {STUDY}")
     methods = _read(result, "methods.md")
     assert "effects.csv was not written" in methods

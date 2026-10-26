@@ -9,6 +9,7 @@ import { effectKey } from "./effects";
 import { countPairedRecords, enginePairing, resolveUnits, type PairedItems } from "./effectUnits";
 import { parseFreezeStamp, type FreezeStamp } from "./freeze";
 import { GENERATION_INSTRUMENT_OUTPUT_PREFIX } from "./instruments";
+import { loadSourceSnapshot } from "./sourceSnapshot";
 import type {
   CosineMatrix,
   Effect,
@@ -328,7 +329,7 @@ export const loadPairedItems = async (run: WorkspaceRun, source: WorkspaceRun | 
 /// beside its run (`findSourceRun`); its records settle the effect rows'
 /// units.
 export const hydrateRun = async (run: WorkspaceRun, source: WorkspaceRun | null = null): Promise<WorkspaceRun> => {
-  const [effectTable, generationData, cosineMatrices, sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps] = await Promise.all([loadEffectTable(run), loadGenerations(run), loadCosineMatrices(run), loadSweepRows(run), loadSweepRecommendations(run), loadPanelEffects(run), loadFreezeStamp(run), loadAnalysisStamps(run)]);
+  const [effectTable, generationData, cosineMatrices, sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps, sourceSnapshot] = await Promise.all([loadEffectTable(run), loadGenerations(run), loadCosineMatrices(run), loadSweepRows(run), loadSweepRecommendations(run), loadPanelEffects(run), loadFreezeStamp(run), loadAnalysisStamps(run), loadSourceSnapshot(run, source)]);
   // The run's unit of analysis travels ON each row, so every surface that
   // prints a row's count prints it in the right unit (lib/effects.ts).
   const analysisUnit = analysisStamps.unit?.unit ?? "";
@@ -337,5 +338,5 @@ export const hydrateRun = async (run: WorkspaceRun, source: WorkspaceRun | null 
   // engine the directory's config.json names and the run's records. Never
   // assumed to be an item.
   const settled = await resolveUnits(stamped, analysisUnit, () => loadPairedItems(run, source), enginePairing(run.config));
-  return { ...run, effectRows: settled.rows, effectUnitRecords: settled.pairedItems, skippedEffectRows: effectTable.skipped, generationRows: generationData.rows, generationFile: generationData.handle, previewTruncated: generationData.truncated, skippedGenerationLines: generationData.skipped, cosineMatrices, validationConcepts: validationRows(run.validationReport), sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps };
+  return { ...run, effectRows: settled.rows, effectUnitRecords: settled.pairedItems, skippedEffectRows: effectTable.skipped, generationRows: generationData.rows, generationFile: generationData.handle, previewTruncated: generationData.truncated, skippedGenerationLines: generationData.skipped, cosineMatrices, validationConcepts: validationRows(run.validationReport), sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps, sourceSnapshot };
 };

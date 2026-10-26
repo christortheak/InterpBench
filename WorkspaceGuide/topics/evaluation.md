@@ -494,7 +494,8 @@ engine stored. It needs no permission beyond the researcher wanting the files.
 ```
 
 By default it exports the newest completed run with its newest analysis and
-evaluation, into a new folder under `exports/` in the workspace. `--run` names
+evaluation, into a new folder under `exports/` in the workspace. An analysis of
+the run's current records is preferred to one made of an earlier state. `--run` names
 another run, and `--out` names a new or empty folder. A folder inside `runs/`
 is refused. `result.exportDirectory` is the folder, and `result.files` lists
 what was written:
