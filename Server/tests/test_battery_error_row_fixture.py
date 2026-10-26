@@ -20,6 +20,7 @@ Swift twin: ``Tests/ExperimentKitTests/BatteryEvidenceRowTests.swift``.
 import json
 import os
 
+import golden_files
 import steerlab_server.experiment.generate as _owner_generate
 import steerlab_server.experiment.model_variant as _owner_model_variant
 import steerlab_server.experiment.validation_workflow as _owner_validation_workflow
@@ -30,9 +31,6 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 FIXTURE = os.path.join(
     REPO, "Tests", "Fixtures", "cross-engine", "validation-evidence-error-row.json")
 
-REGENERATE = ("stale fixture — delete it and re-run "
-              "`python -m pytest tests/test_battery_error_row_fixture.py`, "
-              "then commit")
 
 #: What the engine says when an adapter agent cannot be loaded because the
 #: adapter library is not installed. Raised here by a stand-in so the fixture
@@ -94,9 +92,6 @@ def test_validation_evidence_with_one_error_row_is_current(tmp_path, monkeypatch
         "error": LOAD_FAILURE}
     assert evidence["task"] == "validate" and evidence["schemaVersion"] == 1
 
-    if not os.path.exists(FIXTURE):
-        with open(FIXTURE, "w", encoding="utf-8") as handle:
-            handle.write(written)
-        return
-    with open(FIXTURE, encoding="utf-8") as handle:
-        assert written == handle.read(), REGENERATE
+    golden_files.check(FIXTURE, written, variable=golden_files.CROSS_ENGINE,
+                       test_file="tests/test_battery_error_row_fixture.py",
+                       label="validation-evidence-error-row.json")

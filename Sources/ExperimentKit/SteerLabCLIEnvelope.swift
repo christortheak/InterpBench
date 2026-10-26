@@ -287,6 +287,14 @@ public enum CLIAdvisory: String, CaseIterable, Sendable, Codable {
     /// `chat_concept_import`).
     case validationOverlapsExtraction
 
+    /// An analysis read a source run that had not completed (paused at a
+    /// checkpoint, still running, marked failed). Never a refusal; its
+    /// `source-snapshot.json` records the snapshot, so no reader presents it
+    /// as the finished run's analysis. The Mac engine analyzes completed runs
+    /// only, so today only the server emits it (`SourceSnapshot`; server twin
+    /// `source_snapshot`).
+    case unfinishedSourceAnalyzed
+
     public static let vocabulary: [String] = allCases.map(\.rawValue)
 }
 

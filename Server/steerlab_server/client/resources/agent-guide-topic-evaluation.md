@@ -99,6 +99,20 @@ its interval or its p-value as a finding.
 Zero effect-size entries is reported as an `emptyAnalysis` advisory, not a
 failure. It means the source run had no non-baseline condition. Check for it.
 
+Every analysis records which of its run's records it read, in
+`source-snapshot.json`. A run paused at a checkpoint gains records when it is
+continued, in the same folder. So an analysis made while it was paused, still
+running, or marked failed is not the completed run's analysis. The export and
+the results page say so, and `result.notAvailable` then lists "effects over the
+run's current records". On the server engine, naming such a run carries an
+`unfinishedSourceAnalyzed` advisory. Tell the researcher, and never report the
+earlier analysis as the completed run's. Once the run has completed, analyze
+it again:
+
+```bash
+steerlab run <name> --runner <url> --verb analyze --source runs/<run>
+```
+
 Both engines pair the same outcomes from the same records, under the same
 names. Every analysis also writes `outcome-coverage.json`: each outcome that
 reached the effect rows, with its definition in words, and each outcome the

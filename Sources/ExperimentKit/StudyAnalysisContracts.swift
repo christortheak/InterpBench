@@ -151,6 +151,9 @@ struct StudyAnalysisInput {
     var choiceRereads: [Int: String?] = [:]
     /// The stamp written as `choice-reread.json` when choices were re-read.
     var choiceRereadStamp: ChoiceReread.Stamp? = nil
+    /// Which records of the source were read: written as
+    /// `source-snapshot.json` (`SourceSnapshot`).
+    var sourceSnapshot: SourceSnapshot.Stamp? = nil
 }
 
 struct StudyAnalysisDiagnostic {

@@ -272,9 +272,12 @@ struct StudyAnalysisRepository {
                 throw ExperimentError(reason: ExclusionEngine.noChecksMessage)
             }
         }
-        let text = try String(
-            contentsOf: sourceRun.appending(component: "generations.jsonl"),
-            encoding: .utf8)
+        // Read once: the snapshot stamp names exactly the bytes parsed.
+        let bytes = try Data(contentsOf: sourceRun.appending(component: "generations.jsonl"))
+        guard let text = String(data: bytes, encoding: .utf8) else {
+            throw ExperimentError(
+                reason: "run '\(sourceRun.lastPathComponent)': generations.jsonl is not UTF-8 text")
+        }
         var declaredTargets: [String: Bool]? = nil
         if manifest.taskPromptsHash != nil,
             let loaded = try? prompts.load(for: manifest)
@@ -289,6 +292,7 @@ struct StudyAnalysisRepository {
             epoch: epoch, generations: text, style: style,
             exclusionChecks: exclusionChecks, declaredTargets: declaredTargets,
             numericParser: numericParser(for: manifest))
+        input.sourceSnapshot = SourceSnapshot.stamp(runDirectory: sourceRun, generations: bytes)
         if rereadChoices {
             // Every stored choice read again with the current parser, against
             // the hash-verified task prompts the run names; refuses rather

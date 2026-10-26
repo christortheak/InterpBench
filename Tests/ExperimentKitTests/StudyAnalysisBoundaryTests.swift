@@ -74,7 +74,20 @@ struct StudyAnalysisBoundaryTests {
         // definition in words (`outcome-coverage.json`).
         #expect(
             Set(artifacts.files.keys)
-                == ["analysis.json", "effect-sizes.csv", "outcome-coverage.json"])
+                == [
+                    "analysis.json", "effect-sizes.csv", "outcome-coverage.json",
+                    SourceSnapshot.stampFile,
+                ])
+        // The snapshot names the bytes that were read, captured before the
+        // source was removed.
+        let stampData = try #require(artifacts.files[SourceSnapshot.stampFile])
+        let stamp = try #require(SourceSnapshot.decode(stampData))
+        #expect(stamp.sourceRun == source.lastPathComponent)
+        #expect(stamp.status == SourceSnapshot.completed)
+        #expect(stamp.records == 2)
+        #expect(
+            stamp.generationsSHA256
+                == SourceSnapshot.describe(Data(records(shift: 3).utf8)).generationsSHA256)
     }
 
     @Test func writerPreservesSourceBytesAndPublishesDistinctProvenanceStampedDirectories() throws {

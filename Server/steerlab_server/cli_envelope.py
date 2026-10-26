@@ -179,6 +179,13 @@ ADVISORY_CODES: tuple[str, ...] = (
     # the source can land on both sides. Named for the MECHANISM, not the
     # importer; never a refusal, and the detail says how to hold out texts.
     "validationOverlapsExtraction",
+    # An analysis read a source run that had not completed (paused at a
+    # checkpoint, still running, marked failed). Never a refusal: the
+    # analysis is legitimate material, and its source-snapshot.json records
+    # the snapshot so no reader presents it as the finished run's. Named for
+    # the MECHANISM. The Mac engine analyzes completed runs only, so today only
+    # this engine emits it (``source_snapshot``; Swift twin ``SourceSnapshot``).
+    "unfinishedSourceAnalyzed",
 )
 
 

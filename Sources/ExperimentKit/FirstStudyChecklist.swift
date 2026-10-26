@@ -336,6 +336,8 @@ public enum FirstStudyChecklist {
         var completed: [Run] = []
         var studiesWithAnyRun = Set<String>()
         var sources = Set<String>()
+        // Each run's records as they stand, hashed at most once per scan.
+        var current: [String: SourceSnapshot.Description?] = [:]
         for name in directoryNames(runsRoot).sorted(by: >) {
             let directory = runsRoot.appending(component: name)
             if let study = study(ofRun: name, in: directory) ?? matched(name, runPattern) {
@@ -345,7 +347,25 @@ public enum FirstStudyChecklist {
                     completed.append(Run(directoryName: name, study: study))
                 }
             } else if matched(name, analysisPattern) != nil {
-                if let source = analysisSource(directory) { sources.insert(source) }
+                // An analysis of an earlier or unfinished snapshot of the run
+                // does not give the run its results (`SourceSnapshot`). Only a
+                // stamp of a completed run needs the run's records hashed.
+                if let source = analysisSource(directory) {
+                    let stamp = SourceSnapshot.read(analysisDirectory: directory)
+                    var now: SourceSnapshot.Description?
+                    if stamp?.status == SourceSnapshot.completed {
+                        if let known = current[source] {
+                            now = known
+                        } else {
+                            now = SourceSnapshot.current(
+                                runDirectory: runsRoot.appending(component: source))
+                            current[source] = now
+                        }
+                    }
+                    let state = SourceSnapshot.verdict(stamp: stamp, now: now, continued: false)
+                        .state
+                    if state != .unfinishedSource, state != .changed { sources.insert(source) }
+                }
             } else if matched(name, evaluationPattern) != nil {
                 if let source = evaluationSource(directory) { sources.insert(source) }
             }

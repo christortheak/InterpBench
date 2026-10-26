@@ -30,7 +30,14 @@ NEW_CALL = 'artifact_paths.converted_file(record.lensID, record.converted.path, 
 #: choices with the current parser in memory and stamps choice-reread.json;
 #: without it the analysis is unchanged. On 2026-10-22 (reviewed, approved)
 #: the epoch guard's call carries `--reread-choices` into its refusal's repair,
-#: so following the repair re-reads too; no statistic or input changes.
+#: so following the repair re-reads too; no statistic or input changes. On
+#: 2026-10-25 (reviewed, approved) the source run is chosen and read through
+#: source_snapshot: the default is the newest COMPLETED run (an unfinished one
+#: only when none has completed, with a warning), the records are parsed from
+#: the same bytes exactly as before, and source-snapshot.json records the
+#: source's status, record count, and the SHA-256 of those bytes, so a reader
+#: can tell a checkpoint's analysis from the finished run's. No statistic,
+#: endpoint, or record changes.
 ANALYSIS_WORKFLOW_CHANGES = (
     ("""            row.modality = modalities.get(condition, "")
             # What one difference is, recorded rather than left for readers.
@@ -75,8 +82,19 @@ ANALYSIS_WORKFLOW_CHANGES = (
         if entry["status"] == "notAvailable":
             _log(f"{entry['name']}: {entry['reason']}")
 """, ''),
-    ("from . import (choice_deltas, choice_reread, judicial, lifecycle_gates, paths,\n               turn_endpoint)\n",
+    ("from . import (choice_deltas, choice_reread, judicial, lifecycle_gates, paths,\n               source_snapshot, turn_endpoint)\n",
      "from . import choice_deltas, judicial, lifecycle_gates, paths, turn_endpoint\n"),
+    ("    run_dir = source_snapshot.choose_source(name, root, source_run, log=_log)\n",
+     "    run_dir = source_run or latest_run(name, root)\n"),
+    ("    records, snapshot_stamp = source_snapshot.read_generations(run_dir)\n",
+     """    records = []
+    with open(os.path.join(run_dir, "generations.jsonl"), encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+"""),
+    ("    source_snapshot.write(out, snapshot_stamp)\n", ''),
     ("            adjudicated_endpoint: str | None = None,\n            reread_choices: bool = False) -> str:",
      "            adjudicated_endpoint: str | None = None) -> str:"),
     ("""    # Opt-in choice re-read (--reread-choices): every stored parsedChoice is
@@ -205,6 +223,8 @@ def main():
                     ('re-read on by default', after.replace('reread_choices: bool = False', 'reread_choices: bool = True', 1)),
                     ('re-read without its gate', after.replace('    if reread_choices:\n        records, choice_reread_stamp', '    if True:\n        records, choice_reread_stamp', 1)),
                     ('removed repair change', after.replace('pin_required_repair()', 'PIN_REQUIRED_REPAIR', 1)),
+                    ('snapshot stamp not written', after.replace('    source_snapshot.write(out, snapshot_stamp)\n', '', 1)),
+                    ('source chosen without its admission', after.replace('source_snapshot.choose_source(name, root, source_run, log=_log)', 'source_run or latest_run(name, root)', 1)),
                     ('changed existing body', after.replace('    stratified_rows: list = []', '    stratified_rows: list = [None]', 1))):
                 assert mutant != after, 'Mutation control did not apply: ' + label
                 try:

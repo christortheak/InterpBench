@@ -10,8 +10,8 @@ separate sections:
    manifest passing the same canonicalization checks the Phase-0/1a fixtures
    pin (``docs/PORTABILITY-CONTRACTS.md`` §1). If this breaks, a client
    authors studies the Mac cannot open.
-2. **The envelope.** Goldens (write-if-missing, the ``test_cli_envelope.py``
-   rule) plus the exit-code table, one representative per state. If this
+2. **The envelope.** Goldens (the ``golden_files`` rule: a missing golden
+   fails; written only on request) plus the exit-code table, one representative per state. If this
    breaks, an agent mis-reads a refusal.
 3. **The import graph.** Out of process, because an in-process assertion about
    ``sys.modules`` proves nothing once another test module has already
@@ -28,6 +28,8 @@ import subprocess
 import sys
 
 import pytest
+
+import golden_files
 
 from steerlab_server import cli_envelope, client_cli
 from steerlab_server.experiment import experiment_store
@@ -713,17 +715,10 @@ def _check_golden(capsys, name: str, root, *, expect_state: str) -> dict:
     is_success = cli_envelope.exit_code_for(document["state"]) == 0
     assert ("error" in document) != is_success
 
-    os.makedirs(FIXTURES, exist_ok=True)
-    path = os.path.join(FIXTURES, f"{name}.json")
     canonical = _canonicalize(text, root)
-    if not os.path.exists(path):
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(canonical)
-        return document
-    with open(path, encoding="utf-8") as handle:
-        assert canonical == handle.read(), (
-            f"{name}: envelope drifted from tests/fixtures/cli-envelopes/"
-            f"{name}.json")
+    golden_files.check(os.path.join(FIXTURES, f"{name}.json"), canonical,
+                       variable=golden_files.CLI_ENVELOPES, test_file="tests/test_client_cli.py",
+                       label=name)
     return document
 
 

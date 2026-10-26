@@ -235,6 +235,34 @@ import Testing
         #expect(facts.runsWithResults == [run])
     }
 
+    /// An analysis of an earlier or unfinished snapshot of a run (a
+    /// checkpoint's, before the run was continued) does not give the run its
+    /// results; an analysis of the run as it stands does (`SourceSnapshot`).
+    @Test func aCheckpointsAnalysisIsNotTheRunsResults() throws {
+        let root = temporary("snapshot-results")
+        defer { try? fm.removeItem(at: root) }
+        try WorkspaceStore.create(at: root)
+        let run = "2026-10-05T090000000Z-exp-first-study-run"
+        try writeRun(run, study: "first-study", in: root)
+        let analysisName = "2026-10-05T091000000Z-exp-first-study-analyze"
+        try writeAnalysis(analysisName, of: run, in: root)
+        let stampURL = root.appending(components: "runs", analysisName, SourceSnapshot.stampFile)
+        let stale = SourceSnapshot.Stamp(
+            schemaVersion: 1, sourceRun: run, status: "checkpointed", records: 0,
+            generationsBytes: 0, generationsSHA256: String(repeating: "0", count: 64))
+        try JSONEncoder().encode(stale).write(to: stampURL)
+        #expect(FirstStudyChecklist.scan(root: root, carriedDemos: Self.demoFixtures)
+            .runsWithResults.isEmpty)
+
+        let current = SourceSnapshot.stamp(
+            runDirectory: root.appending(components: "runs", run),
+            generations: try Data(
+                contentsOf: root.appending(components: "runs", run, "generations.jsonl")))
+        try JSONEncoder().encode(current).write(to: stampURL)
+        #expect(FirstStudyChecklist.scan(root: root, carriedDemos: Self.demoFixtures)
+            .runsWithResults == [run])
+    }
+
     // MARK: Names and words
 
     @Test func runAnalysisAndEvaluationDirectoriesAreToldApart() {

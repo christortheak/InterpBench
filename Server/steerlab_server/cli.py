@@ -2769,6 +2769,14 @@ def _experiment(args: list[str]):
         # caseFamily trigger (tasks.analyze). Same advisory, same code, same
         # sentence as the run path — an agent matches on one string.
         advisories = _implicit_case_family_advisories(name, root)
+        # The source had not completed: analyzed as it stands, and said so
+        # in the envelope as well as on stderr (source_snapshot).
+        from .experiment import source_snapshot
+        stamp = source_snapshot.read_stamp(run_directory)
+        if stamp and stamp.get("status") != source_snapshot.COMPLETED:
+            advisories.append(advisory("unfinishedSourceAnalyzed", source_snapshot.sentence(
+                source_snapshot.verdict(stamp, None, continued=False),
+                str(stamp.get("sourceRun") or ""))))
         # An analysis with zero effect-size entries "succeeded" and measured
         # nothing (dry run #0's P0-2). WHY it measured nothing is read off
         # the source run rather than assumed (dry run #2): the fixed sentence

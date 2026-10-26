@@ -20,16 +20,19 @@ Two kinds of test live here and they are doing different jobs:
 2. **Golden envelopes.** One committed document per server agent-path verb
    under ``tests/fixtures/cli-envelopes/``, produced by driving ``cli.main``
    against a scratch root with a PINNED CLOCK — the same strategy the Swift
-   fixtures use (``ExperimentCLIEnvelopeTests``), including the
-   write-if-missing rule: the structural assertions always run on the freshly
-   produced document, and only the byte comparison waits for the file to be
-   committed. A fixture that EXISTS must match exactly.
+   fixtures use (``ExperimentCLIEnvelopeTests``), including the golden rule
+   (``golden_files``): the structural assertions always run on the freshly
+   produced document, a missing golden fails, a golden that exists must match
+   exactly, and goldens are written only on request
+   (``STEERLAB_WRITE_CLI_ENVELOPE_GOLDENS=1``).
 """
 
 import json
 import os
 
 import pytest
+
+import golden_files
 
 from steerlab_server import cli, cli_envelope
 from steerlab_server.experiment import (exclusions, experiment_store,
@@ -138,7 +141,7 @@ def test_advisory_codes_match_the_swift_literal():
         "singleRegimeCapabilityReading",
         "modelCapabilities", "capabilityControlNotApplied",
         "computeCannotRun", "storedChoicesReadDifferently",
-        "validationOverlapsExtraction",
+        "validationOverlapsExtraction", "unfinishedSourceAnalyzed",
     ]
     assert list(cli_envelope.ADVISORY_CODES) == contract
 
@@ -411,17 +414,10 @@ def _check(capsys, name: str, root, *, expect_state: str):
     is_success = cli_envelope.exit_code_for(document["state"]) == 0
     assert ("error" in document) != is_success
 
-    os.makedirs(FIXTURES, exist_ok=True)
-    path = os.path.join(FIXTURES, f"{name}.json")
     canonical = _canonicalize(text, root)
-    if not os.path.exists(path):
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(canonical)
-        return document
-    with open(path, encoding="utf-8") as handle:
-        assert canonical == handle.read(), (
-            f"{name}: envelope drifted from tests/fixtures/cli-envelopes/"
-            f"{name}.json")
+    golden_files.check(os.path.join(FIXTURES, f"{name}.json"), canonical,
+                       variable=golden_files.CLI_ENVELOPES, test_file="tests/test_cli_envelope.py",
+                       label=name)
     return document
 
 

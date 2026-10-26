@@ -43,6 +43,10 @@ extension RunResults {
         /// with the current choice parser (`analyze --reread-choices`). Shown
         /// as stored; nil for every analysis that did not re-read.
         public var choiceReread: ChoiceReread.Stamp?
+        /// Said when this analysis read an earlier or unfinished snapshot of
+        /// its run (`SourceSnapshot`): its effects are not the run's as it
+        /// stands. Nil when they are, or when nothing says otherwise.
+        public var sourceSnapshotNotice: String?
         public var alienResiduals: [AlienResidualRow]?
         public var promotedMovers: PromotedMovers?
         public var cosineMatrix: CosineMatrix?
@@ -170,6 +174,12 @@ extension RunResults {
         /// never shown, so it takes no part in `isEmpty`.
         public var analyzedRunGenerationsText: String?
         public var analyzedRunGenerationsTruncated = false
+        /// `source-snapshot.json`, and (read locally only) the analyzed run
+        /// as it stands: what the snapshot is compared with.
+        public var sourceSnapshotData: Data?
+        public var analyzedRunName: String?
+        public var analyzedRunNow: SourceSnapshot.Description?
+        public var analyzedRunContinued = false
         /// The directory's own `config.json`: its `substrate` and
         /// `appVersion` name the engine that wrote the effect table beside
         /// it, which settles how an unstamped row was paired
@@ -203,7 +213,7 @@ extension RunResults {
             "alien-residuals.csv", "promoted-movers.json",
             "cosine-matrix.csv", "panel-effects.csv", "unit-of-analysis.json",
             "config.json",
-            ChoiceReread.stampFile,
+            ChoiceReread.stampFile, SourceSnapshot.stampFile,
         ]
 
         /// Route one fetched file's bytes to its slot. `truncated` matters
@@ -241,6 +251,8 @@ extension RunResults {
                 configData = data
             case ChoiceReread.stampFile:
                 choiceRereadData = data
+            case SourceSnapshot.stampFile:
+                sourceSnapshotData = data
             default:
                 break
             }
@@ -335,6 +347,16 @@ extension RunResults {
 
         if let data = artifacts.choiceRereadData {
             model.choiceReread = try? JSONDecoder().decode(ChoiceReread.Stamp.self, from: data)
+        }
+        // Remote pages have only the stamp, so only an unfinished source
+        // speaks there; a local page also compares the run as it stands.
+        let stamp = artifacts.sourceSnapshotData.flatMap(SourceSnapshot.decode)
+        if let run = stamp?.sourceRun ?? artifacts.analyzedRunName {
+            model.sourceSnapshotNotice = SourceSnapshot.sentence(
+                SourceSnapshot.verdict(
+                    stamp: stamp, now: artifacts.analyzedRunNow,
+                    continued: artifacts.analyzedRunContinued),
+                run: run)
         }
         if let text = artifacts.alienResidualsText {
             model.alienResiduals = alienResiduals(fromCSV: text)
@@ -433,6 +455,22 @@ extension RunResults {
             contentsOf: runDirectory.appending(component: "config.json"))
         artifacts.choiceRereadData = try? Data(
             contentsOf: runDirectory.appending(component: ChoiceReread.stampFile))
+        // An analysis directory: the run it read, as that run stands now.
+        if let source = analyzedRunName(runDirectory),
+            source != runDirectory.standardizedFileURL.lastPathComponent
+        {
+            let sourceDirectory = runDirectory.deletingLastPathComponent().appending(
+                component: source)
+            artifacts.sourceSnapshotData = try? Data(
+                contentsOf: runDirectory.appending(component: SourceSnapshot.stampFile))
+            artifacts.analyzedRunName = source
+            artifacts.analyzedRunContinued = SourceSnapshot.wasContinued(sourceDirectory)
+            // The run's records are read (and hashed) only when there is a
+            // stamp to compare them with.
+            if artifacts.sourceSnapshotData != nil {
+                artifacts.analyzedRunNow = SourceSnapshot.current(runDirectory: sourceDirectory)
+            }
+        }
         artifacts.hasEvaluationReport =
             HeadlineOutcome.evaluationReport(forRunAt: runDirectory) != nil
 

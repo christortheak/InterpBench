@@ -1929,6 +1929,22 @@ cluster site, `steerlab-cli cluster push --site <id>`), then analyze again.
 An ordinary analysis whose run the current parser would read differently
 carries the non-blocking `storedChoicesReadDifferently` advisory.
 
+**Which records an analysis read (0.9.18).** Every analysis writes
+`source-snapshot.json`: the source run's status when it was read
+(`completed`, `checkpointed`, `inProgress`, `failed`, `unreadable`, or
+`noCompletionReport`), its record count, and the size and SHA-256 of the
+`generations.jsonl` bytes it parsed. Both engines write the same keys. A
+reader compares the stamp with the run as it stands. `results export` copies
+the analysis whose snapshot matches the run, and when the only analysis read
+an earlier or unfinished state, it says so in `methods.md`, in `manifest.json`
+(`analysisSourceSnapshot`), and under what is not available, with the command
+to analyze the run again. The app's Results page shows the same notice. The
+server's `experiment analyze` reads the newest completed run unless
+`--source` names another. When no run has completed, it reads the newest run
+with records, with a warning. Naming an unfinished run carries the
+non-blocking `unfinishedSourceAnalyzed` advisory. `steerlab-cli experiment
+analyze` reads completed runs only.
+
 **How a study declares its numeric endpoint — and the one deprecated implicit
 selection (2026-08-18).** The mechanism is the manifest's `numericParser`: the
 name of an entry in the workspace parser registry

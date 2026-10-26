@@ -12,6 +12,38 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **An analysis of an unfinished run is no longer presented as the finished
+  run's.** A run paused at a checkpoint gains records when it is continued,
+  in the same folder, and an analysis named its run by folder alone. So an
+  analysis made while a run was paused (for example, an effect of 6 over two
+  pairs) could later be exported as the completed run's analysis, although a
+  fresh analysis of all four pairs gives 3. Every analysis now records which
+  records it read, in `source-snapshot.json`: the run's status at that moment,
+  the number of records, and a SHA-256 hash of them. An export now copies the
+  analysis that matches the run as it stands. When the only analysis read an
+  earlier or unfinished state of the run, the export copies it as before but
+  says so beside the effects, in the methods summary, in `manifest.json`
+  (`analysisSourceSnapshot`), and under what is not available, with the
+  command to analyze the run again. The app's Results page shows the same
+  notice above the headline, and the first-study checklist does not count such
+  an analysis as the run's results. An analysis made before this change records
+  nothing, so it is never assumed to match; it is flagged only when its run
+  was paused and continued.
+- **On the Python engine, an analysis reads the newest completed run by
+  default.** Before, it read the newest run with any records, even one still
+  paused or running. When no run has completed, it still analyzes the newest
+  run as it stands, and says so. Naming an unfinished run explicitly still
+  works, with a warning, and the `--json` answer carries the new
+  `unfinishedSourceAnalyzed` advisory. The Mac engine analyzes completed runs
+  only, as before. No statistic changes: an analysis reads the same records
+  it always read.
+- **A missing expected file now fails the Python tests.** Five Python tests
+  wrote their expected file (a "golden") when it was absent and passed, so
+  deleting one by accident regenerated it from the code under test. A missing
+  golden now fails, as on the Mac. Writing one takes
+  `STEERLAB_WRITE_CLI_ENVELOPE_GOLDENS=1` or
+  `STEERLAB_WRITE_CROSS_ENGINE_GOLDENS=1`, the variables the Swift suites use.
+
 ## [0.9.17] — 2026-10-25
 
 - **On the Mac command line, `--workspace` now wins over

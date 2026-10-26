@@ -41,6 +41,12 @@ enum StudyAnalysisRendering {
             effectSizes: entries,
             exclusions: exclusionStamp)
         try artifacts.add("analysis.json", json: report)
+        // Which records of the source this analysis read, so a reader can
+        // tell it from an analysis of a later state of the same run (server
+        // twin: the same file, the same shape).
+        if let snapshot = input.sourceSnapshot {
+            try artifacts.add(SourceSnapshot.stampFile, json: snapshot)
+        }
         if let exclusionStamp {
             // The stamp file the server also writes — one artifact name to
             // look for on either engine.

@@ -426,9 +426,9 @@ def test_every_committed_fixture_has_a_staleness_test():
         # results explorer's test/headline.test.ts.
         "headline-outcome.json",
         # Phase-0 portability contracts. The two produced by THIS engine are
-        # write-if-missing goldens checked inline in
-        # test_portability_contracts.py (delete the file and re-run that
-        # module to regenerate). The third is produced by the SWIFT engine
+        # goldens checked inline in test_portability_contracts.py (a missing
+        # file fails; STEERLAB_WRITE_CROSS_ENGINE_GOLDENS=1 rewrites them,
+        # tests/golden_files.py). The third is produced by the SWIFT engine
         # (Tests/ExperimentKitTests/PortabilityContractTests.swift), so its
         # staleness check lives there, on the side that can rebuild it.
         # Hand-authored v1 inputs are validated/scored in test_probe_artifacts;
@@ -448,6 +448,11 @@ def test_every_committed_fixture_has_a_staleness_test():
         # regenerated; checked inline in test_choice_reread.py and
         # ChoiceRereadTests.swift.
         "choice-reread.json",
+        # Hand-authored contract (2026-10-25): which records of its source run
+        # an analysis read, the source's status, and each comparison with the
+        # run as it stands, with its sentence. Never regenerated; checked
+        # inline in test_source_snapshot.py and SourceSnapshotTests.swift.
+        "source-snapshot.json",
     }
     present = {f for f in os.listdir(FIXTURES) if f.endswith(".json")}
     assert present <= covered, (

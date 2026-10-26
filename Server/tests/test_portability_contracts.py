@@ -18,11 +18,10 @@ Three idioms are reused rather than reinvented:
    and ``test_fixture_staleness.py``): bytes committed under
    ``Tests/Fixtures/cross-engine/`` come from the engine that really produces
    them, so the consumer's test cannot pin its author's *belief* about the
-   other engine. The two fixtures written here follow the **write-if-missing**
-   rule the envelope goldens use (``test_cli_envelope.py::_check``): the
-   structural assertions always run against the freshly produced document, and
-   only the byte comparison waits for the file to be committed. To regenerate,
-   delete the file and re-run this module.
+   other engine. The two fixtures written here follow the golden rule
+   (``golden_files``): the structural assertions always run against the
+   freshly produced document, a missing file fails, and a file is written only
+   on request (``STEERLAB_WRITE_CROSS_ENGINE_GOLDENS=1``), as on the Swift side.
 
 2. **Twin literals** (``test_cli_envelope.py`` ↔ ``CLIEnvelopeParityTests.swift``):
    a constant belonging to the other engine is written out here as a literal
@@ -45,6 +44,8 @@ import tarfile
 
 import pytest
 
+import golden_files
+
 from steerlab_server.experiment import bundles
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment.manifest import Manifest
@@ -52,24 +53,14 @@ from steerlab_server.experiment.manifest import Manifest
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 FIXTURES = os.path.join(REPO, "Tests", "Fixtures", "cross-engine")
 
-REGENERATE = ("stale fixture — delete it and re-run "
-              "`Server/.venv.nosync/bin/python -m pytest "
-              "tests/test_portability_contracts.py`, then commit")
-
-
 def _write_or_compare(name: str, payload) -> None:
-    """The envelope goldens' write-if-missing rule, applied to a cross-engine
-    fixture. A MISSING file is written (the structural assertions above the
-    call already ran); a file that EXISTS must match byte for byte."""
-    os.makedirs(FIXTURES, exist_ok=True)
+    """The cross-engine golden rule (``golden_files``): the structural
+    assertions above the call already ran; the file must exist and match byte
+    for byte, and is written only on request."""
     text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-    path = os.path.join(FIXTURES, name)
-    if not os.path.exists(path):
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        return
-    with open(path, encoding="utf-8") as handle:
-        assert text == handle.read(), f"{name}: {REGENERATE}"
+    golden_files.check(os.path.join(FIXTURES, name), text,
+                       variable=golden_files.CROSS_ENGINE,
+                       test_file="tests/test_portability_contracts.py", label=name)
 
 
 def _load_fixture(name: str):

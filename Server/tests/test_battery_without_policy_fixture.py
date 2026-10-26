@@ -28,6 +28,7 @@ import steerlab_server.experiment.model_variant as _owner_model_variant
 import steerlab_server.experiment.validation_workflow as _owner_validation_workflow
 import steerlab_server.experiment.vector_materialization as _owner_vector_materialization
 from steerlab_server.experiment.manifest import Manifest
+import golden_files
 from test_intervention_policies import attached, setup
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -35,9 +36,6 @@ FIXTURE = os.path.join(
     REPO, "Tests", "Fixtures", "cross-engine",
     "validation-evidence-without-policy.json")
 
-REGENERATE = ("stale fixture — delete it and re-run "
-              "`python -m pytest tests/test_battery_without_policy_fixture.py`, "
-              "then commit")
 
 
 def _agent(name, *, policies=None, injections=()):
@@ -109,9 +107,6 @@ def test_validation_evidence_with_a_static_part_reading_is_current(tmp_path, mon
     assert mixed["withoutPolicy"]["accuracy"] == 0.5
     assert "condition" not in mixed["withoutPolicy"]
 
-    if not os.path.exists(FIXTURE):
-        with open(FIXTURE, "w", encoding="utf-8") as handle:
-            handle.write(written)
-        return
-    with open(FIXTURE, encoding="utf-8") as handle:
-        assert written == handle.read(), REGENERATE
+    golden_files.check(FIXTURE, written, variable=golden_files.CROSS_ENGINE,
+                       test_file="tests/test_battery_without_policy_fixture.py",
+                       label="validation-evidence-without-policy.json")

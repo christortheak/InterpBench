@@ -153,6 +153,16 @@ struct RunSemanticSectionsContent<AnalyzeRow: View>: View {
             // What the study is about leads, before any table: the headline
             // outcome, which rule chose it, and its plain sentence per
             // condition. The full effect table follows in the engine's order.
+            // An analysis of an earlier or unfinished snapshot of its run says
+            // so before its headline: its numbers are not the run's as it
+            // stands (`SourceSnapshot`).
+            if let notice = model.sourceSnapshotNotice {
+                Label(notice, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             RunHeadlineView(model: model)
             analyzeRow()
             recordCoverageCaptions

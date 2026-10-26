@@ -10,7 +10,7 @@ import os
 import sys
 from typing import Callable
 from . import (choice_deltas, choice_reread, judicial, lifecycle_gates, paths,
-               turn_endpoint)
+               source_snapshot, turn_endpoint)
 from .manifest import Manifest
 from .task_inputs import load_prompts as _load_prompts
 from .run_reporting import reasoning_style_summary as _reasoning_style_block
@@ -64,7 +64,7 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
     # each record's output through the pinned (hash-checked) taxonomy so
     # rs_<featureID> joins the same paired effect-size machinery.
     style = reasoning_style.load_pinned(manifest, root)
-    run_dir = source_run or latest_run(name, root)
+    run_dir = source_snapshot.choose_source(name, root, source_run, log=_log)
     if not run_dir:
         raise lifecycle_gates.refusing(
             lifecycle_gates.MISSING_PREREQUISITE,
@@ -85,12 +85,7 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
         _log(f"WARNING: source run '{os.path.basename(run_dir)}' carries no "
              "experiment-hash stamp — analyzing it under allowUnverifiedEpoch; "
              "the output is stamped epochUnverified")
-    records = []
-    with open(os.path.join(run_dir, "generations.jsonl"), encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if line:
-                records.append(json.loads(line))
+    records, snapshot_stamp = source_snapshot.read_generations(run_dir)
     # Records exist, but every one of them is the baseline: the paired
     # statistics have no contrast to compute, so this analysis is
     # structurally empty however many generations it read. A warning, not a
@@ -361,6 +356,7 @@ def analyze(name: str, root: str | None = None, source_run: str | None = None,
                                   or None))
     with open(os.path.join(out, "source-run.txt"), "w", encoding="utf-8") as handle:
         handle.write(os.path.basename(run_dir) + "\n")
+    source_snapshot.write(out, snapshot_stamp)
     if choice_reread_stamp is not None:
         choice_reread.write_stamp(out, choice_reread_stamp)
     if clustered:

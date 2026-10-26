@@ -188,6 +188,8 @@ public final class StudyResultsState {
         "panel-effects.csv": RunBrowser.jsonPreviewByteLimit,
         "unit-of-analysis.json": remoteReportByteLimit,
         ChoiceReread.stampFile: remoteReportByteLimit,
+        // Which records of its run an analysis read (`SourceSnapshot`).
+        SourceSnapshot.stampFile: 4096,
         // An analysis directory's source run, for settling its rows' unit.
         "source-run.txt": 4096,
         "analysis.json": remoteReportByteLimit,

@@ -1,0 +1,89 @@
+{
+  "about": "Hand-authored contract for which records of its source run an analysis read (source-snapshot.json). It states the INTENDED answers and is never regenerated from an engine: the record count, size, and SHA-256 of a generations.jsonl's bytes (hashes computed with the system shasum); a source run's status; and each comparison of an analysis's stamp with its run as it stands, with the sentence a reader is told. Two suites read it: Server/tests/test_source_snapshot.py and Tests/ExperimentKitTests/SourceSnapshotTests.swift.",
+  "describe": [
+    {
+      "label": "two records with a final newline",
+      "generations": "{\"a\":1}\n{\"a\":2}\n",
+      "expected": {"records": 2, "generationsBytes": 16, "generationsSHA256": "e91bd3062f38c3f1df2165d987872b022fb39a08c642a6fbc3b862dd2a2aaf24"}
+    },
+    {
+      "label": "CRLF, a blank line, a whitespace-only line, no final newline",
+      "generations": "{\"a\":1}\r\n\r\n  \n{\"a\":2}",
+      "expected": {"records": 2, "generationsBytes": 21, "generationsSHA256": "94f30803fed2f58034bf46961a10129704e00f8dad091d702db481734ea5e4e2"}
+    },
+    {
+      "label": "empty file",
+      "generations": "",
+      "expected": {"records": 0, "generationsBytes": 0, "generationsSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
+    }
+  ],
+  "status": [
+    {"label": "a run that completed without a status file", "statusFile": null, "report": true, "expected": "completed", "continued": false},
+    {"label": "a run with neither a status file nor a report", "statusFile": null, "report": false, "expected": "noCompletionReport", "continued": false},
+    {"label": "a completed status but no report", "statusFile": {"status": "completed"}, "report": false, "expected": "noCompletionReport", "continued": false},
+    {"label": "parked at a checkpoint", "statusFile": {"status": "checkpointed", "itemsWritten": 4}, "report": false, "expected": "checkpointed", "continued": false},
+    {"label": "a report beside a checkpoint that was never settled", "statusFile": {"status": "checkpointed"}, "report": true, "expected": "checkpointed", "continued": false},
+    {"label": "a continuation that completed and settled the park", "statusFile": {"status": "completed", "resumedFrom": {"status": "checkpointed", "itemsWritten": 4}}, "report": true, "expected": "completed", "continued": true},
+    {"label": "still running", "statusFile": {"status": "inProgress"}, "report": false, "expected": "inProgress", "continued": false},
+    {"label": "marked failed", "statusFile": {"status": "failed", "error": "boom"}, "report": false, "expected": "failed", "continued": false},
+    {"label": "a torn status file", "statusFileText": "{\"status\": \"chec", "report": true, "expected": "unreadable", "continued": false}
+  ],
+  "verdicts": [
+    {
+      "label": "an analysis of the completed run, unchanged since",
+      "stamp": {"schemaVersion": 1, "sourceRun": "R", "status": "completed", "records": 8, "generationsBytes": 800, "generationsSHA256": "b8"},
+      "now": {"records": 8, "generationsBytes": 800, "generationsSHA256": "b8"},
+      "continued": false,
+      "expected": {"state": "matches", "sentence": null}
+    },
+    {
+      "label": "a checkpoint's analysis, after the run was continued to completion",
+      "stamp": {"schemaVersion": 1, "sourceRun": "R", "status": "checkpointed", "records": 4, "generationsBytes": 400, "generationsSHA256": "a4"},
+      "now": {"records": 8, "generationsBytes": 800, "generationsSHA256": "b8"},
+      "continued": true,
+      "expected": {"state": "unfinishedSource", "sentence": "This analysis read run R while it was paused at a checkpoint, with 4 records, and the run now holds 8. Re-analyze the run for effects over all its records."}
+    },
+    {
+      "label": "a checkpoint's analysis while the run is still parked",
+      "stamp": {"schemaVersion": 1, "sourceRun": "R", "status": "checkpointed", "records": 4, "generationsBytes": 400, "generationsSHA256": "a4"},
+      "now": {"records": 4, "generationsBytes": 400, "generationsSHA256": "a4"},
+      "continued": false,
+      "expected": {"state": "unfinishedSource", "sentence": "This analysis read run R while it was paused at a checkpoint, with 4 records. Re-analyze the run for effects over all its records."}
+    },
+    {
+      "label": "a failed run's analysis, the run not readable now (a remote page has only the stamp)",
+      "stamp": {"schemaVersion": 1, "sourceRun": "R", "status": "failed", "records": 3, "generationsBytes": 300, "generationsSHA256": "c3"},
+      "now": null,
+      "continued": false,
+      "expected": {"state": "unfinishedSource", "sentence": "This analysis read run R while it was marked failed, with 3 records. Re-analyze the run for effects over all its records."}
+    },
+    {
+      "label": "a status this contract does not name",
+      "stamp": {"schemaVersion": 1, "sourceRun": "R", "status": "parked-elsewhere", "records": 2, "generationsBytes": 200, "generationsSHA256": "d2"},
+      "now": null,
+      "continued": false,
+      "expected": {"state": "unfinishedSource", "sentence": "This analysis read run R while it was not complete (status: parked-elsewhere), with 2 records. Re-analyze the run for effects over all its records."}
+    },
+    {
+      "label": "a completed run whose records changed after its analysis",
+      "stamp": {"schemaVersion": 1, "sourceRun": "R", "status": "completed", "records": 8, "generationsBytes": 800, "generationsSHA256": "b8"},
+      "now": {"records": 9, "generationsBytes": 900, "generationsSHA256": "e9"},
+      "continued": false,
+      "expected": {"state": "changed", "sentence": "This analysis read 8 records of run R, and the run's records have changed since (it now holds 9). Re-analyze the run for effects over its current records."}
+    },
+    {
+      "label": "an analysis made before the stamp existed",
+      "stamp": null,
+      "now": {"records": 8, "generationsBytes": 800, "generationsSHA256": "b8"},
+      "continued": false,
+      "expected": {"state": "notRecorded", "sentence": null}
+    },
+    {
+      "label": "an analysis made before the stamp existed, of a run that was paused and continued",
+      "stamp": null,
+      "now": {"records": 8, "generationsBytes": 800, "generationsSHA256": "b8"},
+      "continued": true,
+      "expected": {"state": "notRecordedRunContinued", "sentence": "This analysis does not record which of run R's records it read, and the run was paused and continued, so it may predate the continuation. Re-analyze the run to be sure its effects cover every record."}
+    }
+  ]
+}

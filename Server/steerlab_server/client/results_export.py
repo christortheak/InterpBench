@@ -87,6 +87,8 @@ def _steps(client, study):
             "list": "steerlab-cli experiment list  (the studies in this workspace)",
             "run": f"steerlab-cli experiment run {study}",
             "analyze": f"steerlab-cli experiment analyze {study}",
+            # One named run; "{run}" is its directory name.
+            "analyzeRun": f"steerlab-cli experiment analyze {study} --run runs/{{run}}",
             "evaluate": f"steerlab-cli experiment evaluate {study}",
             "export": f"steerlab-cli results export {study}",
             "newest": "Leave --run out to export the newest completed run.",
@@ -98,6 +100,7 @@ def _steps(client, study):
             "list": "Choose a study on the Studies page.",
             "run": "Run the study",
             "analyze": "Analyze the run",
+            "analyzeRun": "Analyze the run",
             "evaluate": "Evaluate the run with the study's judges",
             "export": "choose Export Results again",
             "newest": "Select a completed run in the study's results, or export "
@@ -108,6 +111,7 @@ def _steps(client, study):
         "list": "steerlab experiment list  (the studies in this workspace)",
         "run": f"steerlab run {study} --runner <url>",
         "analyze": f"steerlab run {study} --runner <url> --verb analyze",
+        "analyzeRun": f"steerlab run {study} --runner <url> --verb analyze --source runs/{{run}}",
         "evaluate": f"steerlab run {study} --runner <url> --verb evaluate",
         "export": f"steerlab results export {study}",
         "newest": "Leave --run out to export the newest completed run.",
@@ -264,15 +268,42 @@ def _analysis_source(directory):
 
 
 def _find_analysis(root, study, run_name):
+    found = _find_analysis_and_snapshot(root, study, run_name)
+    return found[0] if found else None
+
+
+def _find_analysis_and_snapshot(root, study, run_name):
+    """(analysis directory name, snapshot verdict) for the analysis of
+    ``run_name`` an export copies, or None.
+
+    A name alone cannot tell an analysis of the finished run from one made
+    while it was paused (source_snapshot), so the newest analysis whose
+    snapshot MATCHES the run as it stands wins; then the newest that records
+    no snapshot (made before the stamp existed, never assumed to match);
+    then the newest at all, whose verdict the export states."""
+    from ..experiment import source_snapshot
     runs_root = _runs_root(root)
     pattern = _analysis_pattern(study)
+    run_dir = os.path.join(runs_root, run_name)
+    # The run as it stands, read (and hashed) once for every candidate.
+    now, continued = None, False
+    candidates = []
     for name in _directories(runs_root):
         directory = os.path.join(runs_root, name)
         if (pattern.search(name)
                 and os.path.isfile(os.path.join(directory, "effect-sizes.csv"))
                 and _analysis_source(directory) == run_name):
-            return name
-    return None
+            if not candidates:
+                now = source_snapshot.current(run_dir)
+                continued = source_snapshot.was_continued(run_dir)
+            candidates.append((name, source_snapshot.verdict(
+                source_snapshot.read_stamp(directory), now, continued=continued)))
+    for wanted in ((source_snapshot.MATCHES,),
+                   (source_snapshot.NOT_RECORDED, source_snapshot.NOT_RECORDED_RUN_CONTINUED)):
+        for name, verdict in candidates:
+            if verdict["state"] in wanted:
+                return name, verdict
+    return candidates[0] if candidates else None
 
 
 #: The two shapes an evaluation takes, each with its completion report and its
@@ -2069,6 +2100,10 @@ def _methods(context):
             say("- The study's measurement settings changed after the run was "
                 "generated. The analysis recorded: "
                 + _one_line(str(context["analysisFlags"]["measurementDrift"])))
+        if context["analysisFlags"].get("sourceSnapshot"):
+            from ..experiment import source_snapshot
+            say("- Source records: " + source_snapshot.sentence(
+                context["analysisFlags"]["sourceSnapshot"], context["runName"]))
     say()
 
     # -- freeze and integrity
@@ -2323,9 +2358,11 @@ def _collect(root, study, run_name, steps, now):
         missing.append({"what": f"{loaded['unreadableLines']} line(s) of generations.jsonl",
                         "why": "they could not be read as JSON records"})
 
-    # The analysis: the newest analysis directory of this run, or the run's
-    # own effect table (the Mac engine writes one beside the generations).
-    analysis_name = _find_analysis(root, study, run_name)
+    # The analysis: the newest analysis directory of this run whose snapshot
+    # matches it (_find_analysis_and_snapshot), or the run's own effect table
+    # (the Mac engine writes one beside the generations).
+    found = _find_analysis_and_snapshot(root, study, run_name)
+    analysis_name, snapshot_verdict = found if found else (None, None)
     effects_directory = None
     if analysis_name:
         effects_directory = os.path.join(runs_root, analysis_name)
@@ -2360,6 +2397,18 @@ def _collect(root, study, run_name, steps, now):
                 stamp_file = sources.json(os.path.join(effects_directory, file), role)
                 if isinstance(stamp_file, dict) and stamp_file.get(flag):
                     analysis_flags[flag] = stamp_file[flag]
+            # An analysis of an earlier snapshot of this run (a checkpoint's,
+            # before the run was continued) is copied as it is, and said so:
+            # in the flags, beside the effects, and as what is not available.
+            from ..experiment import source_snapshot
+            snapshot_line = source_snapshot.sentence(snapshot_verdict or {}, run_name)
+            if snapshot_line:
+                analysis_flags["sourceSnapshot"] = snapshot_verdict
+                missing.append({
+                    "what": "effects over the run's current records",
+                    "why": snapshot_line,
+                    "repair": steps["analyzeRun"].replace("{run}", run_name)
+                              + f", then {steps['export']}"})
             stamp_file = sources.json(os.path.join(effects_directory, "exclusions.json"), role)
             if stamp_file is None and isinstance(analysis_report, dict):
                 stamp_file = analysis_report.get("exclusions")
@@ -2385,6 +2434,8 @@ def _collect(root, study, run_name, steps, now):
         pooled, strata = _effects_tables(
             study, run_name, os.path.basename(effects_directory), rows,
             effects_source, stamped_unit)
+        if analysis_flags.get("sourceSnapshot"):
+            pooled.notes.append(snapshot_line)
         tables.append(pooled)
         if strata.rows:
             tables.append(strata)
@@ -2456,6 +2507,7 @@ def _collect(root, study, run_name, steps, now):
         "unitSources": sorted(unit_sources),
         "strataRows": strata_rows, "effectsSource": effects_source,
         "analysisFlags": analysis_flags, "exclusions": exclusions,
+        "analysisSourceSnapshot": snapshot_verdict,
         "choiceReread": choice_reread_stamp,
         "experimentHash": experiment_hash, "effectRows": effect_rows,
         "stampedUnit": stamped_unit, **context_rows,
@@ -2533,6 +2585,9 @@ def export_results(root, study, *, run=None, out=None, client=PYTHON_CLIENT, now
         "engine": config.get("substrate"),
         "run": "runs/" + run_name,
         "analysis": analysis_label,
+        # Additive: which records of the run the copied analysis read, compared
+        # with the run as it stands (source_snapshot); null with no analysis.
+        "analysisSourceSnapshot": context.get("analysisSourceSnapshot"),
         "evaluations": {kind: ("runs/" + name if name else None) for kind, name in names.items()},
         "experimentHash": experiment_hash,
         "freezeForced": bool(snapshot.get("freezeForced")),
