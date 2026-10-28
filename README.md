@@ -4,6 +4,13 @@
 changed, fairly.** Works through a Mac app, your coding assistant, or the
 command line.
 
+One tool covers the whole loop. Try open-weight models on your Mac, then
+steer them with directions you extract from your own examples or with
+sparse-autoencoder features you found on Neuronpedia. Read what the model
+represents while it writes, with probes and J-lenses. Run the same study on
+your Mac or on a Slurm cluster, and let your coding assistant drive any of
+it.
+
 A language model's behavior can be nudged while it writes by adding a
 direction to its internal activations. SteerLab lets you make those
 directions from examples you write, or import them from published
