@@ -641,6 +641,85 @@ def _refuse_batch_only_verb(verb: str) -> None:
                "allocation")
 
 
+#: The managed operation a controller names when a J-lens probe cannot run
+#: in its own process. Kept here, beside the refusal, so the repair cannot
+#: drift from the operation's catalog id.
+JLENS_PROBE_BATCH_OPERATION = "jlens-probe-batch"
+
+
+#: The J-lens routes that load the model in the serving process, what each
+#: one is called in a refusal, and the managed operation that does the same
+#: work on a GPU node (None where there is none yet), with the engine command
+#: to run inside a GPU allocation instead.
+_JLENS_MODEL_ROUTES = {
+    "probe": ("The J-lens probe", JLENS_PROBE_BATCH_OPERATION, "steerlab-server jlens probe"),
+    "qualify": ("J-lens qualification", None, "steerlab-server jlens qualify"),
+    "g0": ("The J-lens G0 gate", None, "steerlab-server jlens g0"),
+}
+
+
+def _refuse_controller_jlens(route: str) -> None:
+    """Typed 409 for a model-loading J-lens route on a controller, before any job.
+
+    The same role gate the model-loading routes use. These routes run a
+    durable job that loads the model in THIS process, and they are
+    deliberately not forwarded to a GPU session: a session worker has no job
+    subsystem. Where a managed operation does the work on a GPU node, the
+    repair names it; where none exists, the repair says so and names the
+    engine command to run inside a GPU allocation."""
+    if not _controller_blocks_resident_models():
+        return
+    label, operation, command = _JLENS_MODEL_ROUTES[route]
+    session_state = _registered_session_state()
+    session_clause = (
+        f" A GPU session is registered (state: {session_state}), but this "
+        "route is not delegated to it: session workers have no job queue."
+        if session_state is not None else "")
+    escape = ("STEERLAB_ALLOW_RESIDENT_MODELS=1 remains the manual escape "
+              "hatch for a server running inside an interactive GPU "
+              "allocation.")
+    if operation is not None:
+        repair = (
+            f"Submit the work as the managed operation {operation}: author "
+            f"it with science interview, draft, and publish, review "
+            f"science-plan on this controller, then science-submit, and bring "
+            f"the run home with science-export and science-fetch (remote "
+            f"science-* on the Mac command line, runner science-* on the "
+            f"Python client). {escape}")
+    else:
+        repair = (
+            f"No managed operation runs this on a GPU node yet. Run "
+            f"`{command}` inside a GPU allocation, with the workspace on "
+            f"storage that allocation can reach, or call this route on a "
+            f"server started there. {escape}")
+    raise HTTPException(status_code=409, detail={
+        "code": "jlensNeedsGPUProcess",
+        "reason": f"{label} loads the model in the server's own process, and "
+                  "this server is a cluster controller (role: controller), "
+                  "which never holds a model." + session_clause,
+        "repairAction": repair,
+        "operation": operation,
+    })
+
+
+def _probe_count(body: dict, key: str, default, *, purpose: str):
+    """A non-negative integer setting of the probe route.
+
+    Absent (or null) means the default; an explicit 0 is passed through
+    exactly as the engine CLI passes ``--top-k 0`` and ``--stride 0``. A
+    boolean, a float, a string, or a negative number is refused here, before
+    a job exists, rather than coerced into a different request."""
+    value = body.get(key)
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{key} must be a non-negative integer ({purpose}); got "
+                   f"{value!r}")
+    return value
+
+
 def _retain_worker_partial(kind: str, exc: BaseException, log) -> dict | None:
     """Package what a GPU-session worker produced before failing.
 
@@ -2462,6 +2541,7 @@ def build_router(state: ServiceState) -> APIRouter:
         from ..jlens import qualification
         from ..jlens.schemas import JLensError
 
+        _refuse_controller_jlens("qualify")
         lens_id = str(body.get("lensID", "")).strip()
         model_id = str(body.get("modelID", "")).strip()
         if not lens_id or not model_id:
@@ -2530,6 +2610,7 @@ def build_router(state: ServiceState) -> APIRouter:
         from ..jlens import g0
         from ..jlens.schemas import JLensError
 
+        _refuse_controller_jlens("g0")
         model_id = str(body.get("modelID", "")).strip()
         if not model_id:
             raise HTTPException(status_code=400, detail="modelID is required")
@@ -2572,10 +2653,18 @@ def build_router(state: ServiceState) -> APIRouter:
         A durable job: it loads the model. Bounded by construction (one prompt
         × armed layers × positions), so it sits outside the study trace budget
         and refuses on its own projection ceiling rather than wedging a node.
+
+        It takes the engine CLI's agent and rendering settings
+        (``variantPath``, ``promptMode``, ``systemPrompt``) with the CLI's
+        precedence: an explicit value wins, then the agent's own, then the
+        default. On a cluster controller it refuses before any job and names
+        the managed batch operation, which is where GPU probing belongs.
         """
+        from ..experiment import prompt_render
         from ..jlens import importer, lens_store, probe as probe_mod
         from ..jlens.schemas import JLensError
 
+        _refuse_controller_jlens("probe")
         model_id = str(body.get("modelID", "")).strip()
         prompt = str(body.get("prompt", "")).strip()
         if not model_id or not prompt:
@@ -2589,6 +2678,43 @@ def build_router(state: ServiceState) -> APIRouter:
                 raise HTTPException(
                     status_code=400,
                     detail=f"{key} must be a list of integers")
+        top_k = _probe_count(body, "topK", 10,
+                             purpose="0 reads no vocabulary, for a "
+                                     "directions-only probe")
+        stride = _probe_count(body, "stride",
+                              probe_mod.DEFAULT_POSITION_STRIDE,
+                              purpose="every Nth position; 0 reads every "
+                                      "position, as the CLI does")
+        max_tokens = _probe_count(body, "maxTokens", None,
+                                  purpose="0 does not truncate")
+        prompt_mode = body.get("promptMode")
+        if prompt_mode is not None and prompt_mode not in (
+                prompt_render.CHAT_ASSISTANT, prompt_render.RAW_COMPLETION):
+            raise HTTPException(
+                status_code=400,
+                detail=f"promptMode must be {prompt_render.CHAT_ASSISTANT!r} "
+                       f"or {prompt_render.RAW_COMPLETION!r}; omit it for "
+                       f"the agent's own mode (or chat when there is no "
+                       f"agent)")
+        system_prompt = body.get("systemPrompt")
+        if system_prompt is not None and not isinstance(system_prompt, str):
+            raise HTTPException(
+                status_code=400,
+                detail="systemPrompt must be a string; omit it for the "
+                       "agent's own system prompt")
+        # The agent JSON is contained like every other caller-named workspace
+        # file (inside the root, no traversal); the owner then hashes it and
+        # everything it references.
+        variant_path = body.get("variantPath")
+        if variant_path is not None:
+            if not isinstance(variant_path, str) or not variant_path.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="variantPath must name an agent JSON file in the "
+                           "workspace")
+            variant_path = variant_path.strip()
+            state.resolver.require_file(variant_path,
+                                        allow_local_absolute=True)
         # Caller-named artifact locators are contained exactly like the
         # support route's vectorID.
         directions = []
@@ -2596,19 +2722,26 @@ def build_router(state: ServiceState) -> APIRouter:
             state.resolver.require_dir(os.path.dirname(str(reference)),
                                        allow_local_absolute=True)
             directions.append(str(reference))
+        if top_k == 0 and not (body.get("pin") or body.get("pinIDs")
+                               or directions):
+            raise HTTPException(
+                status_code=400,
+                detail="nothing to read: with topK 0, name pin, pinIDs, or "
+                       "directions")
 
         def work(job):
             job.log(f"probing {model_id} over {len(prompt)} char(s)")
             report = probe_mod.probe(
                 model_id, prompt=prompt, lens_id=body.get("lensID"),
                 revision=body.get("revision"), layers=body.get("layers"),
-                top_k=int(body.get("topK") or 10),
+                top_k=top_k,
                 pin_words=body.get("pin") or (),
                 pin_ids=body.get("pinIDs") or (),
                 directions=directions,
-                position_stride=int(
-                    body.get("stride") or probe_mod.DEFAULT_POSITION_STRIDE),
-                max_tokens=body.get("maxTokens"),
+                variant_path=variant_path,
+                prompt_mode=prompt_mode, system_prompt=system_prompt,
+                position_stride=stride,
+                max_tokens=max_tokens,
                 device=body.get("device"), dtype=body.get("dtype"),
                 log=job.log)
             job.log(f"{report['claim']} [{report['evidenceTier']}] → "
@@ -2671,29 +2804,6 @@ def build_router(state: ServiceState) -> APIRouter:
                                                 allow_local_absolute=True)
         name = os.path.basename(vector_ref)
         _safe_name(name)
-
-        # HOW the scaffold reaches the model. Absent = raw, byte-identically
-        # to every reader fitted before the option existed; a declaration is
-        # parsed HERE so a malformed one is a 400, never a failed job.
-        try:
-            fit_rendering = extraction_rendering.parse_declaration(
-                body.get("extractionRendering"))
-        except extraction_rendering.ExtractionRenderingError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-
-        # The unsupervised T+/T− orientation draw's seed. Stamped into every
-        # artifact, so a fit is reproducible from the artifact alone.
-        orientation_seed = body.get("orientationSeed")
-        if orientation_seed is None:
-            orientation_seed = repe_reader.DEFAULT_ORIENTATION_SEED
-        elif (not isinstance(orientation_seed, int)
-                or isinstance(orientation_seed, bool)
-                or orientation_seed < 0):
-            raise HTTPException(
-                status_code=400,
-                detail="orientationSeed must be a non-negative integer — it is "
-                       "stamped into the artifact so the unsupervised "
-                       "template-pair orientation draw can be reproduced")
 
         layers = body.get("layers")
         if layers is not None:

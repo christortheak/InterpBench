@@ -61,6 +61,19 @@ import Testing
         #expect(field.help.contains("float32"))
     }
 
+    @Test func batchProbeShowsTheEngineReviewAndItsBoundary() throws {
+        let value = try draft(#"{"operationReview":{"summary":["3 prompt(s) through 2 armed layer(s), every position: 96 full-vocabulary projections in all.","About 4.2 GiB of device memory."]}}"#)
+        let lines = FittingReviewSummary.lines(operation: "jlens-probe-batch", draft: value)
+        #expect(lines.first == "3 prompt(s) through 2 armed layer(s), every position: 96 full-vocabulary projections in all.")
+        #expect(lines.contains("About 4.2 GiB of device memory."))
+        #expect(lines.last?.contains("not evidence of what caused a behavior") == true)
+        let empty = FittingReviewSummary.lines(operation: "jlens-probe-batch", draft: try draft(#"{"operationReview":{}}"#))
+        #expect(empty.first?.contains("review is unavailable here") == true)
+        let workflow = try #require(ScienceCatalog.workflows().first { $0.id == "jlens-probe-batch" })
+        #expect(workflow.fields.filter(\.required).map(\.id) == ["modelID", "revision", "lensID", "prompts"])
+        #expect(Set(workflow.fields.map(\.kind)).isSubset(of: ["text", "integer", "integers", "boolean", "artifacts", "file", "fileRef", "texts"]))
+    }
+
     @Test func costMeasurementShowsItsWorkloadAndAdvisoriesBeforeAnythingRuns() throws {
         // Two planned configurations, two views, two prompts, and one warm-up plus three measured rounds.
         let value = try draft(#"{"operationReview":{"generations":32,"prompts":2,"warmupRounds":1,"measuredRounds":3,"generatedTokenBudget":192,"configurations":[{"id":"baseline","status":"planned"},{"id":"probeReadings","status":"planned"},{"id":"fixedPolicy","status":"notRequested","reason":"No fixedPolicy file was given."}],"advisories":["The policy given as conditional declares no rule that depends on a probe score."]}}"#)

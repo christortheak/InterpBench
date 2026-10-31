@@ -102,7 +102,7 @@ def input_plan(request, root):
         if request['operation'] == 'jlens-fit':
             from ..experiment.jlens_fit_review import review
             result['fittingReview'] = review(validated['effectiveConfig'], root)
-        if request['operation'] in ('jlens-fit-benchmark','jlens-fit-round','jlens-fit-merge','jlens-fit-assess'):
+        if request['operation'] in ('jlens-fit-benchmark','jlens-fit-round','jlens-fit-merge','jlens-fit-assess','jlens-probe-batch'):
             from ..experiment.jlens_fit_review import operation_review
             result['operationReview'] = operation_review(request['operation'], validated['effectiveConfig'], root)
         return result
@@ -196,6 +196,30 @@ def plan(request, profile, *, execution_capsule=None, round_submission=None, gpu
             resources.gres = 'gpu:' + gpu_type + ':' + str(resources.gpus)
             result['requestedGPUType'] = gpu_type
             result['gpuReview'] = science_placement.review(resources, result.get('fittingReview', result.get('operationReview')))
+        # An operation whose review itemizes device memory is compared with one
+        # GPU of the selected type here, where placement is known. Only the
+        # certain part (weights and Jacobians) can refuse: if it does not fit,
+        # the job cannot run, and saying so now beats failing after the queue.
+        # A full estimate over capacity rests on worst-case assumptions, so it
+        # is an advisory in the plan, never a refusal.
+        review = result.get('operationReview')
+        estimate = review.get('memoryEstimate') if isinstance(review, dict) else None
+        if isinstance(estimate, dict):
+            from . import science_placement
+            if selected_executor == 'slurm':
+                fit = science_placement.memory_fit(resources, estimate)
+            else:
+                fit = {'memoryFit': 'notChecked', 'summary': estimate.get('summary', '') + ' Local execution: '
+                       'compare the estimate with this machine; no declared capacity applies.'}
+            result['memoryFit'], result['memoryReview'] = fit['memoryFit'], fit
+            if fit['memoryFit'] == 'exceeds':
+                holds = fit['certainFittingGPUTypes']
+                error = ScientificRefusal(fit['summary'] + ' It would fail on the node after the queue wait; nothing was submitted.')
+                error.repair_action = (('Plan and submit with gpuType ' + (fit['fittingGPUTypes'] or holds)[0]
+                                        + ' (declared types that hold the weights and Jacobians: ' + ', '.join(holds) + '), or ')
+                                       if holds else 'No declared GPU type holds the weights and Jacobians on one card: ') \
+                    + 'arm fewer layers, use a lower precision, or choose a smaller model, then review a fresh plan.'
+                raise error
         # A walltime is execution shape like the GPU type: reviewed here, bound
         # into planSHA256 through the resources block, never in the request.
         # Without one, an operation with a calibrated workload estimate gets a

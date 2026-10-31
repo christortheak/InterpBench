@@ -68,7 +68,12 @@ def test_handoff_leads_with_the_interview_then_the_brief_catalog(tmp_path, capsy
     assert 'conceptStudy' in json.loads(capsys.readouterr().out)['error']['reason']
     assert client_cli.main(['science', 'list', '--brief', *where]) == 0
     brief = capsys.readouterr().out
-    assert json.loads(brief)['result']['brief'] is True and len(brief.encode()) < 12_000
+    # The budget is for the catalog text, so the workspace path the envelope
+    # names (a temporary directory of no fixed length) is not counted.
+    measured = brief
+    for path in {str(root), os.path.realpath(root), report['workspaceRoot']}:
+        measured = measured.replace(path, '')
+    assert json.loads(brief)['result']['brief'] is True and len(measured.encode()) < 12_000
 
     # `setup start` carries the same block.
     assert client_cli.main(['setup', 'start', str(root), '--json']) == 0

@@ -73,6 +73,11 @@ def inventory(operation, config, root):
     if operation == 'jlens-fit':
         from .jlens_fit import checkpoint_files
         for relative in checkpoint_files(config, root): add(relative)
+    if operation == 'jlens-probe-batch':
+        # The request names only the agent JSON; the probe also reads what it
+        # references (vectors, adapter, neutral basis), so those are pinned too.
+        from .jlens_probe_batch import agent_files
+        for relative in agent_files(config, root): add(relative)
     if operation == 'rescore-style':
         from . import experiment_store
         document = experiment_store.load_raw(config.get('experiment', ''), str(root))

@@ -50,6 +50,15 @@ public enum FittingReviewSummary {
                 result.append("These are tensor sizes, not peak memory. Allow additional space for model weights, forward activations, vocabulary logits, transfers, and file overhead. Temporary activations are removed when assessment exits normally or with an error.")
             }
             result.append("This compares readouts. It does not prove that the text is independent of fitting data or qualify the lens.")
+        case "jlens-probe-batch":
+            // The engine writes these sentences from its own counts and
+            // estimates; the Mac shows them rather than recomputing any.
+            if case .array(let sentences) = review["summary"] {
+                for case .string(let sentence) in sentences { result.append(sentence) }
+            } else {
+                result.append("The review is unavailable here. Review the plan on the prepared engine before submitting.")
+            }
+            result.append("Each prompt's outputs are what one probe of that prompt writes. They are readouts, not evidence of what caused a behavior.")
         case "instrumentation-cost":
             var planned = "unavailable"
             if case .array(let configurations) = review["configurations"] {

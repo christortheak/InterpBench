@@ -76,6 +76,48 @@ migration that rewrites frozen bytes.
   with the duplicate repair. Freezing, `data check`, and how a readout runs
   are unchanged.
 
+- **A prompt set can be probed through a J-lens on a cluster GPU.** The new
+  managed operation `jlens-probe-batch` reads every position of many prompts
+  as one GPU job: the model loads once, and the converted lens is verified and
+  its armed Jacobians are placed on the GPU once, however many prompts there
+  are. Before, the only route was the one-prompt probe, which loads the model
+  in the serving process, so a cluster run meant an ad hoc job that paid the
+  lens hash and the Jacobian transfer (about 6.6 GB for 63 layers at hidden
+  width 5120) on every prompt, with the results copied home by hand. The prompt
+  set is a pinned JSONL file (an id, the text, and optional labels such as a
+  condition), and the request takes the probe's settings plus an agent,
+  prompt mode, and system prompt; the agent's vectors, adapter, and neutral
+  basis travel with it, hash-checked. Before submission the plan states each
+  prompt's token and projection counts, an itemized memory estimate compared
+  with one GPU of the selected type, the output size, and a walltime from a
+  formula checked against one recorded A100 run. It refuses a prompt over the
+  probe's 200,000-projection ceiling, output one export cannot carry, and
+  weights plus Jacobians that alone do not fit the GPU, naming a declared type
+  that does; when only the worst-case activations push the estimate over, the
+  plan says so as an advisory with the levers. The run is one directory: a
+  `probe-batch.json` manifest and, per prompt, exactly what one probe of that
+  prompt writes, so it comes home with `science-export` and `science-fetch`
+  under custody. Author it with `science interview jlens-probe-batch` on
+  either client; the Mac's Research methods sheet shows the review.
+- **The J-lens probe route takes the CLI's agent and rendering settings, and
+  an explicit zero.** `POST /api/jlens/probe` accepts `variantPath`,
+  `promptMode`, and `systemPrompt` with the CLI's precedence, and `topK: 0`
+  now asks for a directions-only probe instead of being read as the default
+  of 10 (absent values still mean the defaults; a negative, fractional, or
+  text value gets a 400 before any job). On a cluster controller the route
+  refuses before starting a job, with a typed refusal whose repair names
+  `jlens-probe-batch`; it used to start a job that loaded the model on the
+  controller's CPU. `/api/jlens/qualify` and `/api/jlens/g0`, which also load
+  the model in the serving process, now refuse the same way. No managed
+  operation does their work on a GPU node yet, so their repair says so and
+  names the engine command (`steerlab-server jlens qualify` or `jlens g0`) to
+  run inside a GPU allocation.
+- **Reading a concept vector back through a J-lens works over HTTP again.**
+  `POST /api/jlens/support` answered every request with a server error before
+  starting a job: a reader-fit validation block had been copied into it by
+  mistake and named code the route never imports. The block is removed; the
+  route's own settings (`layers`, `budget`) are unchanged.
+
 ## [0.9.18] — 2026-10-25
 
 - **An analysis of an unfinished run is no longer presented as the finished
