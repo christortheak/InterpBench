@@ -923,14 +923,17 @@ if [ "$DO_VERIFY" -eq 1 ]; then
   # Through a SYMLINK, because that is what the docs tell people to make —
   # and it is the shape that fails differently from a direct invocation (see
   # "THE BUNDLED CLI"). The link lives in a scratch directory that is thrown
-  # away; nothing is installed on this machine by verifying.
+  # away; nothing is installed on this machine by verifying. `--version` also
+  # asks GitHub, at most once a day, whether a newer release is out, in the
+  # app's own preferences; the launch-check mode makes this run ask nothing
+  # and read only an isolated preferences suite.
   echo "  bundled CLI ($HELPERS_DIR_NAME/$CLI_EXECUTABLE, reached by symlink):"
   CLI_LOG="$OUTPUT/cli-check.log"
   CLI_LINK_DIR="${TMPDIR:-/tmp}/steerlab-cli-check.$$"
   mkdir -p "$CLI_LINK_DIR" || die "could not create $CLI_LINK_DIR"
   ln -sf "$HELPERS/$CLI_EXECUTABLE" "$CLI_LINK_DIR/$CLI_EXECUTABLE"
   if ( cd / && env -u DYLD_FRAMEWORK_PATH -u DYLD_LIBRARY_PATH -u DYLD_INSERT_LIBRARIES \
-        "$CLI_LINK_DIR/$CLI_EXECUTABLE" --version >"$CLI_LOG" 2>&1 ); then
+        STEERLAB_LAUNCH_CHECK=1 "$CLI_LINK_DIR/$CLI_EXECUTABLE" --version >"$CLI_LOG" 2>&1 ); then
     sed 's/^/    /' "$CLI_LOG"
   else
     sed 's/^/    /' "$CLI_LOG" >&2

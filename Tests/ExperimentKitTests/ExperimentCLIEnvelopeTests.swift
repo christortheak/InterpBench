@@ -827,6 +827,9 @@ import Testing
             // Putting this app's command line on PATH for a coding
             // assistant's later sessions (2026-10-21, docs/AGENT-SETUP.md).
             "install link",
+            // Updating that app from its command line, reviewed plan first
+            // (public issue #5, `CommandLineUpdate`).
+            "install update-plan", "install update",
             // OPEN-ISSUES §18: the panel family. `compile` is the new verb —
             // headless seat casting, previously reachable only from the app,
             // so the only headless path was a re-implementation of the compile

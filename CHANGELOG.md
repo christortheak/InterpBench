@@ -12,6 +12,45 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **The app's command line now says when SteerLab is out of date, and can
+  install the update once the researcher approves it** (public issue #5).
+  Some researchers use SteerLab only through a coding assistant running
+  `steerlab-cli`, and an update was invisible to it: studies were authored
+  with a 0.9.8 command line while 0.9.18 was current. `steerlab-cli --version
+  --json` (`install version`) now reports the newest release and whether it is
+  newer than this copy, an honest `unknown` when GitHub cannot be reached (and
+  the age of an earlier answer), and the SteerLab.app copies in
+  `/Applications`, `~/Applications`, the folder holding this app, and
+  `~/SteerLab`, with their versions and the one `~/.local/bin/steerlab-cli`
+  runs. It shares the app's update settings, read and written in the app's
+  own preferences domain: when the researcher turned automatic checks off in
+  the app, the command line does not check on its own either, and one daily
+  limit covers both. A check is recorded only once it got an answer, and the
+  app now shows at launch a newer release its command line found, so neither
+  hides the other's notice. Only `install version` may ask GitHub, at most
+  once a day, within 5 seconds, and `--check` asks once the way Check for
+  Updates… does; its probe of a code checkout beside the app never prompts on
+  the terminal. A new `clientUpdateAvailable` advisory names
+  both versions on `install version`, `workspace guide`, and `setup inspect`,
+  from the last recorded answer only; it is in both clients' advisory
+  vocabularies, and only the Mac command line emits it. `install update-plan`
+  says what an update would download, check, replace, and keep, and that each
+  cluster site needs a `cluster push` before it runs this version's engine,
+  with a `planSHA256` that binds it; it downloads nothing but the release
+  lookup. `install update --expect <planSHA256> --yes` re-derives that plan,
+  refuses if it changed (without offering the new digest, so a changed plan
+  goes back to the researcher), while SteerLab is open, or while another
+  `steerlab-cli` runs from that copy, and then runs the app's own installer
+  with every check unchanged (HTTPS from GitHub, checksum, signature and team,
+  stapled notarization, version, the `-previous` copy). Every command these
+  verbs print names the copy's own command line by its full path, since a bare
+  `steerlab-cli` may run another copy. The agent guide (guide
+  version 10) tells an assistant to run `--version` at the start of each
+  session and to install only a plan the researcher approved. The app now
+  records the newest release its own checks see, so its command line can read
+  it, and treats an update its command line is preparing as in progress. The
+  Python client's `steerlab --version` does not look for releases yet.
+
 - **An intervention policy's added vector now takes its strength in
   residual-norm units, like a static agent's α.** Before, a policy multiplied
   the stored vector by its strength directly, so a strength meant a different

@@ -923,7 +923,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
   vectors <verb> …                              Vector artifacts.
   remote <verb> (--site <id> | --url <server>)  Cluster client.
   cluster <verb> …                              Cluster lifecycle.
-  install version | link | stamp | verify       This build's identity, its link on your PATH, and the integrity of its install.
+  install version | update-plan | update | link | stamp | verify  This build's identity and whether a newer release is out, a reviewed update of the app, its link on your PATH, and the integrity of its install.
   science list [--brief] | guide <method> | operation <operation>  Shared method guidance and supported execution interfaces.
   docs cli-reference [--check | --write]        Regenerate the reference document.
   panel <verb> …                                Panel scenarios and seat casting.
@@ -934,7 +934,7 @@ usage: steerlab-cli [--workspace <dir>] <family> <verb> … [--help] [--json]
 
 global flags:
   --workspace <dir>  Data workspace root (precedence: --workspace > STEERLAB_WORKSPACE env > app-persisted choice > the code checkout).
-  --version          Print this build's version and install layout, and run nothing (the same report as `install version`).
+  --version          Print this build's version and install layout, and whether a newer SteerLab release is out (the same report as `install version`).
   --help             Print this page. `<family> --help` lists a family's verbs; `<family> <verb> --help` prints one verb's arguments.
   --json             Declared on every agent-path verb: exactly one envelope on stdout, every diagnostic on stderr.
 
@@ -944,7 +944,7 @@ exit codes: 0 ok · 64 malformed invocation · 65 refused · 66 not found · 70 
 | Global flag | Effect |
 |---|---|
 | `--workspace <dir>` | Data workspace root (precedence: --workspace > STEERLAB_WORKSPACE env > app-persisted choice > the code checkout). |
-| `--version` | Print this build's version and install layout, and run nothing (the same report as `install version`). |
+| `--version` | Print this build's version and install layout, and whether a newer SteerLab release is out (the same report as `install version`). |
 | `--help` | Print this page. `<family> --help` lists a family's verbs; `<family> <verb> --help` prints one verb's arguments. |
 | `--json` | Declared on every agent-path verb: exactly one envelope on stdout, every diagnostic on stderr. |
 <!-- GENERATED:swift-global END -->
@@ -3404,24 +3404,121 @@ and what it gates; the rules are one set, on both engines.
 <!-- Generated from the declarative verb table — `steerlab-cli docs cli-reference --write`. Edit the table, not this block. -->
 
 ```
-steerlab-cli install version
+steerlab-cli install version [--check]
 steerlab-cli install stamp [--revision <commit>] [--root <dir>]
 steerlab-cli install verify [--gpu] [--root <dir>]
 steerlab-cli install link [--directory <dir>] [--replace]
+steerlab-cli install update-plan
+steerlab-cli install update --expect <planSHA256> --yes
 ```
 
 | Verb | Purpose |
 |---|---|
-| `install version` | Report this build's version and where it is installed. |
+| `install version` | Report this build's version, where it is installed, every SteerLab.app found on this Mac, and whether a newer release is out. Asks GitHub at most once a day, only while the app's automatic update checks are on; --check asks once now. |
 | `install stamp` | Hash the installed tree into its resource manifest. |
 | `install verify` | Check the installed tree against its resource manifest. |
 | `install link` | Link ~/.local/bin/steerlab-cli to this app's command line, so a coding assistant finds it on PATH. |
+| `install update-plan` | Review an update of the SteerLab.app this command line belongs to: the release, the file and where its checksum comes from, what is checked, where the new copy goes, and what happens to the current one. Downloads nothing but the release lookup. |
+| `install update` | Install the reviewed update with the app's own installer: download, check the checksum, signature, notarization, and version, then put the new copy in place and keep the current one beside it. Refuses if the plan changed, while SteerLab is open, or while another steerlab-cli runs from this copy. |
 
 Every verb above also accepts `--help` (print its arguments and run nothing), `--json` (one envelope on stdout), and `--out <file>`.
 <!-- GENERATED:swift-install END -->
 
 `steerlab-cli --version` is a rewrite of `install version`: same report, same
 envelope, same `--json` mode.
+
+**Whether a newer release is out, and installing it.** `install version` also
+reports `result.update` (`state` is `releaseAvailable`, `newerSourceAvailable`,
+`upToDate`, or `unknown`, with `thisVersion`, `latestRelease`,
+`newerThanThisBuild`, `answeredBy`, the `reason` when nothing is known,
+`answerAgeSeconds` and `answerIsStale` for an answer from an earlier check,
+`pinnedReleaseTag`, and `planCommand`, the plan command by this copy's full
+path), `appCopies` (each `SteerLab*.app` in `/Applications`, `~/Applications`,
+the folder holding this app, and `~/SteerLab`, listed in `appCopiesSearched`,
+with its version, which one this command line belongs to, which one
+`~/.local/bin/steerlab-cli` runs, and `foreign` for one whose bundle identifier
+is not this SteerLab's), and `commandLineLink`. The command line shares the
+app's update settings: it opens the app's own preferences domain (its bundle
+identifier, shown as `update.settings.domain`), so the opt-out, the once-a-day
+stamp, a dismissed release, and the newest release the last check saw are one
+record for both.
+
+- Only `install version` may ask GitHub on its own, at most once a day, only
+  while automatic checks are on, and within 5 seconds; a lookup that cannot
+  finish is `unknown`, never "up to date". `--check` asks once whatever the
+  setting, as Check for Updates… does. The lookup is the app's: one
+  unauthenticated request to GitHub's release API, and, when a SteerLab code
+  checkout sits beside the app (or in `~/SteerLab`), `git ls-remote` in that
+  checkout through the person's own git credentials. From the command line
+  that probe runs with every prompt off (`GIT_TERMINAL_PROMPT=0`,
+  `GIT_SSH_COMMAND='ssh -oBatchMode=yes'`, `GCM_INTERACTIVE=never`), so it
+  never waits on the terminal. Nothing about the Mac is sent.
+- Only an answer is recorded: the daily stamp and the newest release
+  together. A lookup that reached nothing, or one pinned with
+  `STEERLAB_UPDATE_RELEASE_TAG` (which the report and the plan say), records
+  nothing. At launch, when no check of its own is due, the app shows a newer
+  release its command line recorded (checks on, not dismissed), with Check for
+  Updates… to fetch what Install Update… needs, so a check made by either never
+  hides the other's notice.
+- `clientUpdateAvailable` (an advisory, never a refusal) names this version and
+  the newer one. `install version` adds it by the app's banner rule (checks on,
+  and not a release the researcher dismissed in the app), or whenever `--check`
+  asked. `workspace guide` and `setup inspect`, the verbs an assistant runs at
+  the start of a session, add it from the last recorded answer only and never
+  ask the network. Other verbs do not carry it: one line on every envelope would
+  be noise.
+- `install update-plan` looks the release up and downloads nothing else. It
+  reports the release and tag, the archive's name, size, and address, where its
+  checksum comes from (the `.sha256` attached to the same release: integrity
+  only, while the code signature says who made it), the Developer ID team and
+  bundle identifier the download must carry, the install location (the copy
+  this command line belongs to), the `-previous` copy, any older kept copies
+  that go to the Trash, what happens to the link, what to bring up to date
+  afterwards, and `planSHA256`, which binds all of these. It also says that
+  each cluster site keeps the engine this Mac last pushed until `cluster push
+  --site <site>`: `cluster status` keeps reading that engine as current (it is
+  the one last pushed) with a warning that this version's engine-side changes
+  are not running, and `remote submit-bundle` prints the same warning; neither
+  refuses. The client identity check (`clientIdentity`) is a different thing:
+  it compares a running `steerlab-cli` with the Python client files on this
+  Mac, and refuses a stage made by a command that was already running when the
+  new copy was put in place.
+- Every command these verbs print, in prose, `nextAction`, the advisory, and
+  the plan's `apply` argv, names this copy's own command line by its full path:
+  a bare `steerlab-cli` may be a link to another copy, or absent from PATH.
+- `install update --expect <planSHA256> --yes` re-derives the plan and refuses
+  (`planChanged`) if the digest differs, without handing back the new digest:
+  approval is for a plan the researcher saw, so the repair is a fresh
+  `install update-plan` to show them. It then runs the app's own installer
+  (`UpdateInstaller`) with its checks unchanged: GitHub over HTTPS only, the
+  checksum, strict validation of the code signature against this copy's own
+  bundle identifier and Developer ID team plus the stapled notarization
+  ticket, the version, the `-previous` copy, and the move into place, with
+  the original put back on any failure. Without `--yes` it is
+  `needsApproval` (11). It refuses while SteerLab is open (`appRunning`, any
+  copy with this bundle identifier), while another process runs out of this
+  copy (`updateBusy`, the app's own busy wording), and wherever the
+  installer's eligibility rules refuse this copy (`updateNotEligible`, with
+  the installer's own sentence: not notarized, a kept `-previous` copy, a
+  translocated or read-only copy, a build folder). It checks the app and the
+  busy state again once the download is done, as the app does before its swap.
+  The running command line lives inside the bundle it replaces: the swap only
+  renames, so the process keeps running from the renamed copy and reads
+  nothing from its bundle afterwards, and Ctrl-C is held off during the last
+  signature check and the renames. `~/.local/bin/steerlab-cli` names the
+  helper by path, so when it pointed at this copy it runs the new version from
+  the next command on (`linkedVersion`). SteerLab is not opened afterwards.
+
+| Code | State | Meaning |
+|---|---|---|
+| `updateCheckUnavailable` | `degraded` (13) | GitHub could not be reached; nothing changed. |
+| `releaseFilesUnavailable` | `refused` (65) | The release has no app file or checksum GitHub hands out. |
+| `updateNotEligible` | `refused` (65) | The installer's eligibility rules refuse this copy. |
+| `planChanged` | `refused` (65) | The plan is not the one reviewed; show the researcher a fresh plan. |
+| `appRunning` | `refused` (65) | SteerLab is open; quit it first. |
+| `updateBusy` | `refused` (65) | Something runs out of this copy; wait for it. |
+| `updateRejected` | `refused` (65) | The download failed a check; nothing was replaced. |
+| `updateFailed`, `updateCancelled` | `failed` (70) | The download or the swap did not finish; the reason says where each copy is. |
 
 **What the install actually needs.** The executable statically links the whole
 package graph — MLX included — and carries **zero `@rpath` dylibs**, so the only
@@ -3459,7 +3556,7 @@ would then shadow the client's own console script by PATH order.)
 
 | Verb | What it does | Cost |
 |---|---|---|
-| `install version` | Version, layout, shader-library status, whether the tree is stamped. | Instant — no hashing. |
+| `install version` | Version, layout, shader-library status, whether the tree is stamped, and whether a newer release is out. | No hashing; at most one release lookup a day (5-second limit). |
 | `install stamp` | Writes `resource-manifest.json` over the install root. | Hashes the tree (~150 MB). |
 | `install verify` | Compares the tree against that manifest; refuses (65) on any `missing`/`unreadable`/`mismatch`. | Hashes the tree. |
 

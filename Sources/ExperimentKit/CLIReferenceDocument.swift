@@ -132,6 +132,7 @@ public enum CLIReferenceDocument {
             id: "swift-install",
             verbLabels: [
                 "install version", "install stamp", "install verify", "install link",
+                "install update-plan", "install update",
             ]),
     ]
 

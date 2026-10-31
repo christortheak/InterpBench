@@ -111,6 +111,41 @@ says so and changes nothing. A demo is a starting point to read and run, not
 the researcher's study: their own work goes in a new workspace, or in a
 `duplicate` of the demo's draft.
 
+<!-- client: mac -->
+
+## Keeping the Mac app current
+
+Start each session with `steerlab-cli --version --json`. Its `result.update`
+says whether a newer release is out: `state` is `releaseAvailable`,
+`upToDate`, `newerSourceAvailable`, or `unknown` (with the `reason`), beside
+`thisVersion` and `latestRelease`. An answer from an earlier check carries its
+age, and `answerIsStale` when it is more than a day old. `appCopies` lists
+the SteerLab.app copies in `/Applications`, `~/Applications`, the folder
+holding this app, and `~/SteerLab`, with each one's version, the one
+`~/.local/bin/steerlab-cli` runs, and any that is a different app
+(`foreign`). The command asks GitHub at most once a day, and only while the
+app's automatic update checks are on: it uses the app's own setting, so a
+researcher who turned checks off in the app has turned them off here too. No
+other command looks for updates. `--check` asks once now, as Check for
+Updates… does in the app.
+
+When the answer carries a `clientUpdateAvailable` advisory (`workspace guide`
+and `setup inspect` carry it too, from the last recorded check), tell the
+researcher, then show them the plan from `install update-plan --json`, run by
+the full path the advisory names: that copy's own command line, which a bare
+`steerlab-cli` may not be. The plan downloads nothing but the release lookup.
+It says what will be downloaded and checked, which copy is replaced, where the
+current one is kept, and what to bring up to date afterwards, including a
+`cluster push` for each cluster site. Install only after the researcher
+approves that plan, with the command its `apply` field gives
+(`install update --expect <planSHA256> --yes --json`). If it answers
+`planChanged`, the plan moved: review a fresh one with the researcher. It also
+refuses, with a repair, while SteerLab is open, or while another `steerlab-cli`
+command runs from that copy. An update replaces only the copy this command
+line belongs to.
+
+<!-- client: all -->
+
 ## Where things live
 
 | Path | What goes there | Shape |

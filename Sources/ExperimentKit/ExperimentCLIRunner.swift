@@ -126,6 +126,26 @@ public struct ExperimentCLIRunner: Sendable {
     /// `URLSession.shared`.
     @TaskLocal static var remoteSessionOverride: URLSession?
 
+    /// Tests only: the seams the updater verbs and the update advisory use,
+    /// for the tasks under `$commandLineUpdateOverride.withValue(…)`. Nil
+    /// (always, outside a test) is this machine (`CommandLineUpdate
+    /// .Environment.live`), which for a command line outside SteerLab.app
+    /// reads no settings and asks nothing on its own.
+    @TaskLocal static var commandLineUpdateOverride: CommandLineUpdate.Environment?
+
+    static func commandLineUpdateEnvironment() -> CommandLineUpdate.Environment {
+        commandLineUpdateOverride ?? .live()
+    }
+
+    /// The verbs that carry the recorded `clientUpdateAvailable` advisory
+    /// besides `install version`, which makes its own: the ones the guide
+    /// sends an assistant to at the start of a session. Not every verb: the
+    /// same line on every envelope is how an advisory becomes noise.
+    static func carriesClientUpdateAdvisory(namespace: String, verb: String?) -> Bool {
+        (namespace == "workspace" && verb == "guide")
+            || (namespace == "setup" && verb == "inspect")
+    }
+
     private let sink: ExperimentCLISink
     /// Injected clock, so a golden envelope fixture is stable. Same seam and
     /// same shape as `ClusterCLIRunner`'s `now`, which its tests pin to
@@ -258,7 +278,7 @@ public struct ExperimentCLIRunner: Sendable {
         }
 
         do {
-            let result: ExperimentCLIResult
+            var result: ExperimentCLIResult
             switch namespace {
             case "init": result = try runInitCommand(invocation)
             case "setup": result = try await ClientSetupCLI.run(invocation)
@@ -283,7 +303,7 @@ public struct ExperimentCLIRunner: Sendable {
                 result = try await ResultsExportCLI.run(
                     invocation, sink: sink, workspaceRoot: ExperimentStore.workspaceRoot)
             case "authoring": result = try runAuthoringCommand(invocation)
-            case "install": result = try runInstallCommand(invocation)
+            case "install": result = try await runInstallCommand(invocation)
             case "panel": result = try runPanelCommand(invocation)
             case "model": result = try await runModelCommand(invocation)
             default:
@@ -296,6 +316,14 @@ public struct ExperimentCLIRunner: Sendable {
                     code: "unknownVerbFamily",
                     repairAction: "families: "
                         + Self.namespaces.sorted().joined(separator: " | "))
+            }
+            // A newer SteerLab release, from the answer the last update check
+            // recorded: on the verbs an assistant runs at the start of a
+            // session only, never from the network, and never twice in one
+            // envelope (`install version` makes its own).
+            if Self.carriesClientUpdateAdvisory(namespace: namespace, verb: invocation.verb) {
+                result.advisories += CommandLineUpdate.ambientAdvisories(
+                    Self.commandLineUpdateEnvironment())
             }
             var envelope = SteerLabCLIEnvelope.success(
                 verb: verb, engine: SteerLabCLIEnvelope.localEngine,
@@ -337,6 +365,16 @@ public struct ExperimentCLIRunner: Sendable {
 
         } catch let refusal as DiagnosticWorkspace.Refusal {
             return outcome(for: refusal, namespace: namespace, verb: verb)
+
+        } catch let refusal as CommandLineUpdate.Refusal {
+            // New verbs, so both modes exit with the state's own code.
+            var refused = outcome(
+                namespace: namespace, verb: verb, state: refusal.state,
+                exitCode: refusal.state.exitCode,
+                failure: .init(reason: refusal.reason, repairAction: refusal.repairAction),
+                code: refusal.code, repairAction: refusal.repairAction)
+            if !refusal.payload.isEmpty { refused.envelope.result = refusal.payload }
+            return refused
 
         } catch let refusal as ChatConceptImport.Refusal {
             // A new verb, so no historical human exit code to hold still:
@@ -1219,7 +1257,12 @@ public struct ExperimentCLIRunner: Sendable {
     /// answer quickly. `verify` is the check, and it is the only hasher —
     /// `scripts/install-cli.sh --verify` runs this verb instead of
     /// re-implementing SHA-256 in shell.
-    func runInstallCommand(_ invocation: ExperimentCLIInvocation) throws
+    ///
+    /// `version` also says whether a newer SteerLab release is out, and
+    /// `update-plan` / `update` install it (public issue #5,
+    /// `CommandLineUpdate`). `version` is the one verb that may refresh the
+    /// recorded answer, at most once a day and with a short deadline.
+    func runInstallCommand(_ invocation: ExperimentCLIInvocation) async throws
         -> ExperimentCLIResult
     {
         let args = invocation.args
@@ -1239,7 +1282,11 @@ public struct ExperimentCLIRunner: Sendable {
 
         switch args.first {
         case "version":
+            let updates = Self.commandLineUpdateEnvironment()
+            let update = await CommandLineUpdate.report(
+                updates, explicitCheck: args.contains("--check"))
             sink.out(provenance.report, terminator: "")
+            for line in CommandLineUpdate.lines(update) { sink.out(line) }
             let whereFrom: String
             switch provenance.shape {
             case .installed: whereFrom = "installed at \(provenance.root.path)"
@@ -1248,15 +1295,107 @@ public struct ExperimentCLIRunner: Sendable {
                 whereFrom = "the command line bundled in "
                     + (provenance.app?.bundle.path ?? provenance.root.path)
             }
+            var payload = provenance.payload
+            payload.merge(CommandLineUpdate.payload(update)) { current, _ in current }
             var result = ExperimentCLIResult(
                 message: "\(provenance.engineVersion) — \(whereFrom)",
-                payload: provenance.payload)
-            if provenance.shape == .installed {
+                payload: payload)
+            if update.announces, let latest = update.latest {
+                result.advisories.append(CommandLineUpdate.advisory(latest: latest, env: updates))
+            }
+            if update.state == .releaseAvailable, update.updateTarget != nil {
+                result.nextAction = .init(
+                    verb: "install update-plan",
+                    detail: "show the researcher what the update would do, from this copy's "
+                        + "own command line (" + CommandLineUpdate.planCommand(updates)
+                        + "); install it only after they approve that plan")
+            } else if provenance.shape == .installed {
                 result.nextAction = .init(
                     verb: "install verify",
                     detail: "check the installed tree against its "
                         + "resource manifest")
             }
+            return result
+
+        case "update-plan":
+            let updates = Self.commandLineUpdateEnvironment()
+            switch try await CommandLineUpdate.plan(updates) {
+            case .current(let version, let latest, let state):
+                let sentence = "SteerLab \(version.releaseDescription) is the newest release"
+                    + (state == .newerSourceAvailable
+                        ? " (the repository's main has moved on, with no packaged release yet)"
+                        : "")
+                    + "; there is nothing to install."
+                sink.out(sentence)
+                return ExperimentCLIResult(
+                    message: sentence,
+                    payload: [
+                        "updateAvailable": .bool(false),
+                        "currentVersion": .string(version.releaseDescription),
+                        "state": .string(state.rawValue),
+                        "latestRelease": CommandLineUpdate.json(latest),
+                    ])
+            case .plan(let plan):
+                let version = plan.release.version.releaseDescription
+                sink.out(
+                    "Update SteerLab \(plan.currentVersion.releaseDescription) at "
+                        + "\(plan.target.appBundle.path) to \(version):")
+                for (index, step) in plan.steps.enumerated() { sink.out("  \(index + 1). \(step)") }
+                sink.out("Afterwards:")
+                for line in plan.afterInstall { sink.out("  - \(line)") }
+                for blocker in plan.blockers { sink.out("Not now: \(blocker)") }
+                // This copy's own command line by its full path, never a
+                // bare `steerlab-cli`, which may run another copy.
+                sink.out(
+                    "Install it, once the researcher approves this plan: "
+                        + plan.applyCommand)
+                var result = ExperimentCLIResult(
+                    message: "SteerLab \(version) can replace "
+                        + "\(plan.currentVersion.releaseDescription) at "
+                        + "\(plan.target.appBundle.path). Nothing was downloaded or changed.",
+                    state: .planned, payload: CommandLineUpdate.payload(plan))
+                result.nextAction = .init(
+                    verb: "install update --expect \(plan.digest) --yes",
+                    missingPermissionFlags: ["--yes"],
+                    detail: "only after the researcher approves this plan, as this copy's "
+                        + "own command line: " + plan.applyCommand)
+                return result
+            }
+
+        case "update":
+            let updates = Self.commandLineUpdateEnvironment()
+            let planCommand = CommandLineUpdate.planCommand(updates)
+            guard let expected = flag("--expect"),
+                expected.count == 64, expected.allSatisfy(\.isHexDigit)
+            else {
+                throw ExperimentError.malformed(
+                    "install update needs the plan's digest: --expect <planSHA256>, the 64 "
+                        + "hexadecimal characters install update-plan reported.",
+                    repair: planCommand)
+            }
+            guard args.contains("--yes") else {
+                throw CommandLineUpdate.Refusal(
+                    code: "approvalRequired", state: .needsApproval,
+                    reason: "install update replaces SteerLab.app, so it runs only with --yes, "
+                        + "after the researcher approves the reviewed plan.",
+                    repairAction: "Show the researcher the plan from \(planCommand). Only "
+                        + "once they approve it, run "
+                        + CommandLineUpdate.executable(updates)
+                        + " install update --expect <that plan's planSHA256> --yes --json")
+            }
+            let sink = self.sink
+            let progress = CommandLineUpdateProgress(sink: sink)
+            let receipt = try await CommandLineUpdate.apply(
+                updates, expected: expected, progress: { progress.report($0) })
+            let sentence = CommandLineUpdate.sentence(receipt)
+            sink.out(sentence)
+            for line in receipt.plan.afterInstall { sink.out("  - \(line)") }
+            var result = ExperimentCLIResult(
+                message: sentence, changed: true, payload: CommandLineUpdate.payload(receipt))
+            result.nextAction = .init(
+                verb: "install version",
+                detail: "confirm the new version; then bring the engine and any cluster "
+                    + "sites up to date as afterInstall says")
             return result
 
         case "link":
@@ -1380,8 +1519,9 @@ public struct ExperimentCLIRunner: Sendable {
 
         default:
             throw ExperimentError(
-                reason: "usage: install version | install stamp [--revision "
-                    + "<commit>] [--root <dir>] | install verify [--root <dir>]")
+                reason: "usage: install version [--check] | install stamp [--revision "
+                    + "<commit>] [--root <dir>] | install verify [--root <dir>] | install "
+                    + "link | install update-plan | install update --expect <planSHA256> --yes")
         }
     }
 

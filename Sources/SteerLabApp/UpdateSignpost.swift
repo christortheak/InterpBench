@@ -41,6 +41,10 @@ final class UpdateSignpostModel {
     private(set) var installTarget: UpdateInstallTarget?
     /// Why a newer release cannot be installed from here, in one plain line.
     private(set) var installRefusal: String?
+    /// The banner came from a recorded answer (this app's command line
+    /// checked), not a check this launch made: Check for Updates… fetches
+    /// what Install Update… needs.
+    private(set) var announcedFromRecord = false
     var showingInstallSheet = false
     private(set) var installState: InstallState = .reviewing
     /// What is still running, refreshed while the sheet is open.
@@ -147,9 +151,20 @@ final class UpdateSignpostModel {
         // on every launch by design, so skipping it is the correct answer,
         // not evidence of a path that should not exist.
         guard !LaunchCheckMode.isActive else { return }
-        guard preferences.shouldRunAutomaticCheck else { return }
+        guard preferences.shouldRunAutomaticCheck else {
+            // Not due, perhaps because this app's command line checked
+            // today. Announce what that check recorded, so a check made by
+            // either one counts for both.
+            if let recorded = preferences.recordedAnnouncement(currentVersion: service.version) {
+                applyRecorded(recorded)
+            }
+            return
+        }
         preferences.recordCheck()
         let result = await service.checkDetailed()
+        // Shared with this app's command line, which reads it instead of
+        // asking GitHub again (`CommandLineUpdate`).
+        preferences.recordAnswer(result)
         apply(result)
     }
 
@@ -161,6 +176,7 @@ final class UpdateSignpostModel {
         defer { isChecking = false }
         preferences.recordCheck()
         let result = await service.checkDetailed()
+        preferences.recordAnswer(result)
         apply(result)
         var report = UpdateCheckPolicy.manualReport(for: result.availability)
         if case .releaseAvailable = result.availability, let installRefusal {
@@ -187,8 +203,23 @@ final class UpdateSignpostModel {
         NSWorkspace.shared.open(downloadPage)
     }
 
+    /// A newer release known only from a recorded answer: the banner, and a
+    /// Check for Updates… button in place of Install Update…, because a
+    /// recorded answer carries no files to install from.
+    private func applyRecorded(_ availability: UpdateAvailability) {
+        lastAvailability = availability
+        bannerMessage = preferences.bannerMessage(for: availability)
+        if case .releaseAvailable(_, let page) = availability { downloadPage = page }
+        installableRelease = nil
+        installAssets = nil
+        installTarget = nil
+        installRefusal = nil
+        announcedFromRecord = bannerMessage != nil
+    }
+
     private func apply(_ result: UpdateCheckResult) {
         let availability = result.availability
+        announcedFromRecord = false
         lastAvailability = availability
         bannerMessage = preferences.bannerMessage(for: availability)
         if case .releaseAvailable(_, let page) = availability {
@@ -436,6 +467,15 @@ struct UpdateBanner: View {
                                 + "release, checks it, and asks before replacing anything")
                     Button("Release Notes…") { model.openDownloadPage() }
                         .help("open this release's page in your browser")
+                } else if model.announcedFromRecord {
+                    Button("Check for Updates…") { Task { await model.checkNow() } }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.isChecking)
+                        .help(
+                            "ask GitHub now; when this copy can update itself, Install "
+                                + "Update… follows")
+                    Button("Open Releases…") { model.openDownloadPage() }
+                        .help("open the repository's Releases page in your browser")
                 } else {
                     Button("Open Releases…") { model.openDownloadPage() }
                         .help("open the repository's Releases page in your browser")

@@ -304,6 +304,18 @@ public enum CLIAdvisory: String, CaseIterable, Sendable, Codable {
     /// `sampling.unused_seed_settings`), byte for byte.
     case seedSettingNotUsed
 
+    /// A newer SteerLab release than this command line is known, from the
+    /// answer the last update check recorded in the app's own settings. Said
+    /// by `install version` (`--version`), `workspace guide`, and `setup
+    /// inspect`, the verbs an assistant runs at the start of a session, and
+    /// by the app's banner rule: automatic checks on, and not a release the
+    /// researcher dismissed. Never a refusal, and never a network request:
+    /// only `install version` may refresh the answer. The detail names both
+    /// versions and the plan to show (`install update-plan`;
+    /// `CommandLineUpdate`). The Mac command line emits it; the Python client
+    /// carries it so the vocabulary stays one list.
+    case clientUpdateAvailable
+
     public static let vocabulary: [String] = allCases.map(\.rawValue)
 }
 

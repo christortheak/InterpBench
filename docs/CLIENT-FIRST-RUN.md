@@ -302,6 +302,35 @@ The version you were running is kept beside the app as
 `SteerLab.app` to the Trash, rename the kept copy to `SteerLab.app`, and open
 it.
 
+If you work through a coding assistant that runs the app's command line, it
+can see the same update and, with your approval, install it:
+
+- `steerlab-cli --version --json` reports this copy's version, whether a newer
+  release is out, and the SteerLab.app copies in `/Applications`,
+  `~/Applications`, the folder holding this app, and `~/SteerLab`, with the
+  one `~/.local/bin/steerlab-cli` runs. It uses the app's own setting: it asks
+  GitHub at most once a day, only while **Check for Updates Automatically** is
+  on. A check made by either one counts for both: a newer release the command
+  line found shows as the notice in the app at its next launch (unless you
+  dismissed that version), and the other way round. `--check` asks once now. No other command looks for updates;
+  `workspace guide` and `setup inspect` repeat the last answer as a
+  `clientUpdateAvailable` advisory.
+- `install update-plan --json`, run by the full path of the copy to update (the
+  advisory names it), shows what the update would do and downloads nothing but
+  the release lookup: the release, the file and its size, where its checksum
+  comes from, what is checked, which copy is replaced, where the current one
+  is kept, and what to bring up to date afterwards.
+- Once you approve that plan, the assistant runs the command its `apply` field
+  gives (`install update --expect <planSHA256> --yes --json`, by the same full
+  path). It looks the plan up again and refuses if anything in it changed,
+  without offering the new plan's digest: a changed plan is shown to you again
+  first. It then runs the app's own installer with the same checks. It refuses
+  while SteerLab is open (quit it first) or while another `steerlab-cli`
+  command runs from that copy. It replaces only that copy, keeps the current
+  one beside it as `SteerLab-<version>-previous.app`, and does not open
+  SteerLab afterwards. `~/.local/bin/steerlab-cli` runs the new version from
+  the next command on when it pointed at that copy.
+
 After an update:
 
 - If you use **This Mac, full capabilities**, choose **Open Engine Setup…**

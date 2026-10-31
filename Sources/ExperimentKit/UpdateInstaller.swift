@@ -1037,8 +1037,25 @@ public enum UpdateStaging {
         guard length > 0 else { return true }
         let path = String(
             decoding: buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) }, as: UTF8.self)
-        let name = Bundle.main.executableURL?.lastPathComponent ?? "SteerLabApp"
-        return path.hasSuffix("/Contents/MacOS/\(name)")
+        return isSteerLabExecutable(path: path)
+    }
+
+    /// Whether `path` is a copy of this app's own executable, or of the
+    /// command line bundled beside it. The command line prepares updates too
+    /// (`install update`), so an owner file it wrote must keep the app from
+    /// removing the update it is still downloading, and the reverse. The
+    /// app's executable is named from this process when it is the app, and
+    /// is the packaged name otherwise.
+    static func isSteerLabExecutable(
+        path: String, ownExecutable: URL? = Bundle.main.executableURL
+    ) -> Bool {
+        let appExecutable =
+            ownExecutable.flatMap {
+                $0.deletingLastPathComponent().lastPathComponent == "MacOS"
+                    ? $0.lastPathComponent : nil
+            } ?? "SteerLabApp"
+        return path.hasSuffix("/Contents/MacOS/\(appExecutable)")
+            || path.hasSuffix("/" + CommandLineLink.helperPath)
     }
 
     /// Inside a staging folder: an earlier kept copy moved aside during a
@@ -1437,18 +1454,28 @@ public struct UpdateInstaller: Sendable {
     /// Keep one previous copy: move older ones this updater named, of this
     /// same app, to the Trash (recoverable). Anything else is left alone.
     private func trashOlderPreviousCopies(keeping kept: URL) -> [URL] {
-        let folder = target.appBundle.deletingLastPathComponent()
-        guard let entries = try? fs.contents(of: folder) else { return [] }
         var trashed: [URL] = []
-        for entry in entries where entry.lastPathComponent != kept.lastPathComponent {
-            guard let version = UpdateStagingLayout.previousCopyVersion(
-                fromName: entry.lastPathComponent),
-                version < currentVersion,
-                fs.bundleInfo(at: entry).identifier == target.bundleIdentifier
-            else { continue }
+        for entry in olderPreviousCopies()
+        where entry.lastPathComponent != kept.lastPathComponent {
             if (try? fs.trash(entry)) != nil { trashed.append(entry) }
         }
         return trashed
+    }
+
+    /// The kept copies beside the app that an install would move to the
+    /// Trash: ones this updater named, of this same app, older than the
+    /// version running now. Read only, so a plan can list them beforehand.
+    public func olderPreviousCopies() -> [URL] {
+        let folder = target.appBundle.deletingLastPathComponent()
+        guard let entries = try? fs.contents(of: folder) else { return [] }
+        return entries.filter { entry in
+            guard let version = UpdateStagingLayout.previousCopyVersion(
+                fromName: entry.lastPathComponent),
+                version < currentVersion
+            else { return false }
+            return fs.bundleInfo(at: entry).identifier == target.bundleIdentifier
+        }
+        .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 }
 
@@ -1589,23 +1616,25 @@ public enum UpdateInstallReview {
                         + "kept copy to SteerLab.app."))
             facts.append(Fact(symbol: "trash", text: olderCopiesLine))
         }
-        if let sourceCheckout {
-            facts.append(
-                Fact(
-                    symbol: "server.rack",
-                    text: UpdateAfterInstall.checkoutLineBefore(
-                        checkout: sourceCheckout, version: newVersion)))
-        } else {
-            facts.append(
-                Fact(
-                    symbol: "server.rack",
-                    text: "If you use the Python engine on this Mac, open its setup after "
-                        + "the update and choose Refresh Engine; its installed packages are "
-                        + "kept. If the new version pins different packages, the setup then "
-                        + "offers Reinstall Packages and says the most it will download."))
-        }
+        facts.append(
+            Fact(
+                symbol: "server.rack",
+                text: engineLine(newVersion: newVersion, sourceCheckout: sourceCheckout)))
         facts.append(Fact(symbol: "network", text: UpdateAfterInstall.clusterLine))
         return facts
+    }
+
+    /// What to do about the Python engine on this Mac, said before an update
+    /// (the sheet, and the command line's `install update-plan`).
+    public static func engineLine(newVersion: SemanticVersion, sourceCheckout: URL?) -> String {
+        if let sourceCheckout {
+            return UpdateAfterInstall.checkoutLineBefore(
+                checkout: sourceCheckout, version: newVersion)
+        }
+        return "If you use the Python engine on this Mac, open its setup after "
+            + "the update and choose Refresh Engine; its installed packages are "
+            + "kept. If the new version pins different packages, the setup then "
+            + "offers Reinstall Packages and says the most it will download."
     }
 }
 

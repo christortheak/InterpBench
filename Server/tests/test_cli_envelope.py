@@ -142,7 +142,7 @@ def test_advisory_codes_match_the_swift_literal():
         "modelCapabilities", "capabilityControlNotApplied",
         "computeCannotRun", "storedChoicesReadDifferently",
         "validationOverlapsExtraction", "unfinishedSourceAnalyzed",
-        "seedSettingNotUsed",
+        "seedSettingNotUsed", "clientUpdateAvailable",
     ]
     assert list(cli_envelope.ADVISORY_CODES) == contract
 

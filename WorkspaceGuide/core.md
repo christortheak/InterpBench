@@ -1,7 +1,7 @@
 # AGENTS.md
 <!-- Source of the core workspace guide. scripts/ci/check-workspace-bootstrap.py generates both clients' copies from this directory. Keep this file client-neutral and within its size budget; depth belongs in topics/. Raise "Guide version" whenever this text changes, so a refresh only ever upgrades. -->
 
-Guide version: 9
+Guide version: 10
 
 You are a coding assistant working inside a **SteerLab data workspace**. This
 file is the core contract: read it before running anything. It is short on
@@ -81,8 +81,11 @@ The Python client is a preview: it authors studies and submits them to a runner
 someone has set up. It does not run models itself. On a Mac, the app is the
 supported route to running studies and reading their results.
 
-On a Mac, `.steerlab/mac-app/command-line.json` names the app's `steerlab-cli`;
-use it when the command is not on PATH, once `--version` confirms it.
+On a Mac, `.steerlab/mac-app/command-line.json` names the app's `steerlab-cli`
+for when it is not on PATH. Start each session with `steerlab-cli --version
+--json`; on `clientUpdateAvailable`, tell the researcher, show them the plan
+the advisory names, and install only a plan they approve (the `workspace`
+topic).
 
 Either client also reads `STEERLAB_WORKSPACE`; a workspace named on the
 command itself (`--workspace` on the Mac command line, `--root` on the client)

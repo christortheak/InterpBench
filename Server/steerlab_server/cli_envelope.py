@@ -194,6 +194,13 @@ ADVISORY_CODES: tuple[str, ...] = (
     # MECHANISM; the detail is ``sampling.unused_seed_settings`` (Swift twin
     # ``StudySampling.unusedSeedSettings``), byte for byte.
     "seedSettingNotUsed",
+    # A newer SteerLab release than the Mac app's command line is known, from
+    # the answer the last update check recorded in the app's own settings.
+    # Never a refusal and never a network request. Only the Mac command line
+    # emits it (``install version``, ``workspace guide``, ``setup inspect``;
+    # Swift twin ``CommandLineUpdate``); this client carries it so the
+    # vocabulary stays one list.
+    "clientUpdateAvailable",
 )
 
 
