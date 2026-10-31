@@ -12,7 +12,7 @@ from dataclasses import replace
 from . import policy_artifacts, probe_artifacts, probe_capture
 from .policy_artifacts import PolicyError
 from ..steering.runtime import Reading, DecisionProvider, Site, Context, SelectionSite
-from ..steering.policy_actions import Action, Decision, addition_scale, logits, apply_with_evidence
+from ..steering.policy_actions import Action, Decision, logits, apply_with_evidence
 
 
 class Execution:
@@ -170,16 +170,15 @@ class Execution:
                 mask = torch.zeros_like(value); mask[indices] = 1
                 actions.append(Action(spec, value * mask))
             rows = self.record(digest, doc, context, indices, scores, actions)
-            # The absolute multiplier of each addition's stored direction, from the conversion residual() applies.
-            kept = [row['inputTokenPosition'] - context.offset for row in rows]
-            scales = {a.specification['id']: addition_scale(a.strength, a.specification)[kept].detach().cpu().tolist()
-                      for a in actions if a.specification['kind'] == 'add'}
+            additions = {a.specification['id']: a.specification for a in actions if a.specification['kind'] == 'add'}
             def acknowledgement(action_id):
                 def completed(applied, reason, elapsed):
-                    for j, row in enumerate(rows):
+                    for row in rows:
                         row['actionOutcomes'][action_id] = {'status': 'applied' if applied else 'failed', 'hostSeconds': elapsed}
                         if applied: row['appliedStrengths'][action_id] = row['strengths'][action_id]
-                        if applied and action_id in scales: row['appliedScales'][action_id] = scales[action_id][j]
+                        # On the host, from the strength already recorded: no second device transfer.
+                        if applied and action_id in additions:
+                            row['appliedScales'][action_id] = policy_artifacts.absolute_scale(row['strengths'][action_id], additions[action_id])
                         if reason: row['actionOutcomes'][action_id]['reason'] = reason[:2048]
                         outcomes = list(row['actionOutcomes'].values())
                         row['status'] = 'failed' if any(x['status'] == 'failed' for x in outcomes) else 'applied' if len(outcomes) == len(row['strengths']) else 'requested'
@@ -233,7 +232,7 @@ class Execution:
             row['predictedTokenID'] = all_ids[predicted] if predicted < len(all_ids) else None
             row['generatedTokenIndex'] = predicted - len(self.prompt_ids) if predicted >= len(self.prompt_ids) else None
         return {'schemaVersion': 2, 'runtime': 'policy-v1', **self.context,
-                'declarations': [{'sha256': h, 'binding': d['binding'], 'site': d['site'],
+                'declarations': [{'sha256': h, 'schemaVersion': d['schemaVersion'], 'binding': d['binding'], 'site': d['site'],
                     'probes': [{'id': p['id'], 'sha256': p['sha256']} for p in d['probes']],
                     'actions': [{**{k: v for k, v in a.items() if k != 'vector'}, **({'vectorSHA256': hashlib.sha256(json.dumps(a['vector'], separators=(',', ':')).encode()).hexdigest()} if 'vector' in a else {})} for a in d['actions']], 'rules': d['rules'], 'stages': d['stages'], 'positions': d['positions'],
                     'providerSHA256': d.get('provider', {}).get('sourceSHA256'),

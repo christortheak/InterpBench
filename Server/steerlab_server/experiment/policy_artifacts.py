@@ -3,7 +3,9 @@ import copy
 import hashlib
 import json
 import math
+import struct
 from . import probe_artifacts as probes
+from ..steering import residual_norm_convention
 class PolicyError(probes.ProbeError):
     code = 'interventionPolicyRefused'
     repair_action = 'Review the policy inputs, bounds, and model binding; publish a corrected policy and attach it to a new agent version.'
@@ -28,6 +30,8 @@ RESIDUAL_NORM, RAW_MULTIPLIER = 'residualNorm', 'rawMultiplier'
 NORM_FIELDS = ('residualNorm', 'residualNormConvention', 'vectorNorm')
 #: Units of the other action kinds, which no version changes; named for evidence.
 FIXED_UNITS = {'ablate': 'fraction', 'logitBias': 'logit', 'allowTokens': 'onOff', 'forceToken': 'onOff'}
+#: The denominator stamps a sidecar can carry; ``None`` is a legacy pre-stamp sidecar.
+CONVENTIONS = (residual_norm_convention.WHOLE_CORPUS_MEAN, residual_norm_convention.PER_TEXT_MEAN)
 
 
 def keys(value, required, optional=()):
@@ -156,7 +160,13 @@ def declared_units(action, version):
         if declared != {'strengthUnits', *NORM_FIELDS}: raise PolicyError('A residual-norm addition records residualNorm, residualNormConvention, and vectorNorm from its vector artifact. Review the settings again.')
         for k in ('residualNorm', 'vectorNorm'):
             if number(action[k], k) <= 0: raise PolicyError('A residual-norm addition needs a positive ' + k + '.')
-        if action['residualNormConvention'] is not None: probes.text(action['residualNormConvention'], 'residualNormConvention')
+        if action['residualNormConvention'] is not None and action['residualNormConvention'] not in CONVENTIONS:
+            raise PolicyError('Record a known residualNormConvention, or null for a sidecar measured before the stamp.')
+        # R is only a stamped norm with the artifact it came from: review names it and pins its sidecar.
+        source = action.get('source')
+        if not isinstance(source, dict) or not isinstance(source.get('vectorArtifactID'), str) or not source['vectorArtifactID'].strip():
+            raise PolicyError('A residual-norm addition names its vector artifact in source.vectorArtifactID. Review it from that artifact.')
+        probes.digest(source.get('metadataSHA256'), 'source.metadataSHA256')
         # Review computed the norm of these exact values in float32; a mismatch is a different direction.
         if not math.isclose(math.sqrt(math.fsum(x * x for x in action['vector'])), action['vectorNorm'], rel_tol=1e-5):
             raise PolicyError('The recorded vectorNorm differs from the embedded direction. Review the settings again.')
@@ -167,6 +177,24 @@ def strength_units(action):
     """The units of an action's strength. A version-1 addition, which declares none, is a raw multiplier."""
     if action['kind'] == 'add': return action.get('strengthUnits', RAW_MULTIPLIER)
     return FIXED_UNITS[action['kind']]
+
+
+def single(value):
+    """``value`` rounded to float32, round-to-nearest-even, as execution stores it."""
+    return struct.unpack('<f', struct.pack('<f', value))[0]
+
+
+def absolute_scale(strength, action):
+    """Host twin of ``policy_actions.addition_scale`` for one recorded strength: the multiplier of the stored direction.
+
+    In residual-norm units it is ``vector_math.norm_unit_scale``'s float32 order,
+    (strength·R)/‖v‖. A float32 product or quotient formed in double and rounded
+    once to float32 is the correctly rounded float32 result, so this, numpy, torch
+    on the host, and Swift's ``Float`` all agree bit for bit. A raw multiplier is
+    the strength itself. Evidence records this, and the validators recompute it.
+    """
+    if strength_units(action) != RESIDUAL_NORM: return single(strength)
+    return single(single(single(strength) * single(action['residualNorm'])) / single(action['vectorNorm']))
 
 
 def action_units(doc):

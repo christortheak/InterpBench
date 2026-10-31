@@ -61,16 +61,25 @@ the units of a static agent's α. A strength α adds α × R / ‖v‖ × v at e
 selected position, where v is the stored direction and R is the vector
 sidecar's stamped mean residual norm at the policy layer. R and its averaging
 convention are the ones static steering reads for that vector and layer, so the
-added vector's norm is α × R, and a fixed policy at α over both stages at
-`lastPosition` adds what a static agent at α adds, at the same positions. A
-promoted agent's default is 0.1; a full residual norm (1.0) usually makes
-generation incoherent. Fixed, threshold, and affine values, action bounds, and
-the strengths an expert provider returns are all in these units.
+addition's norm is α × R. At a `residualPost` site, a fixed policy at α over both
+stages at `lastPosition` adds what a static agent at α adds, with no band or
+neutral basis, at the same positions and to activation precision: the static
+injector rounds α·v to the activation dtype before adding, while a policy adds in
+float32 and rounds once, so in bf16 a few elements can differ by one unit in the
+last place. A `residualPre` policy acts at the block's input instead. 0.1, a
+tenth of the layer's typical residual norm, is the usual starting strength (the
+Playground's default when no promoted agent exists); a full norm (1.0) usually
+makes generation incoherent. Fixed, threshold, and affine values, action bounds,
+and the strengths an expert provider returns are all in these units.
 
 Review records what execution needs on the action: `strengthUnits`,
 `residualNorm`, `residualNormConvention` (`null` for a sidecar measured before
-the convention was stamped), and `vectorNorm`. The policy's hash covers them, so
-execution and evidence never reread the vector library. A vector with no stamped
+the convention was stamped), and `vectorNorm`, beside the `source` that names the
+vector artifact and the SHA-256 of its sidecar. A residual-norm addition without
+that source is refused. The policy's hash covers these fields, so execution and
+evidence never reread the vector library. Attachment review rereads the sidecar
+when it is in the workspace and refuses if its residual norm or convention
+differs from what the policy recorded. A vector with no stamped
 residual norm at the policy layer, or a direction given as numbers, is refused
 (`policyResidualNormMissing`). The repair is to measure the norms with
 `vectors backfill-norms`, which writes a new vector artifact, or to choose

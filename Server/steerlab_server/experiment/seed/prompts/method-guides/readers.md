@@ -327,8 +327,10 @@ neutral-basis projection.
 
 Addition strength is in residual-norm units, like a static agent's α: strength α
 adds α × R / ‖v‖ × v, where R is the vector's stamped mean residual norm at the
-policy layer and ‖v‖ is the direction's norm. A promoted agent's default is 0.1,
-and a full residual norm (1.0) usually makes generation incoherent. Rule values,
+policy layer and ‖v‖ is the direction's norm. 0.1, a tenth of the layer's typical
+residual norm, is the usual starting strength (the Playground's default when no
+promoted agent exists); a full norm (1.0) usually makes generation incoherent.
+Rule values,
 bounds, and provider strengths are all in these units. Review writes
 `"strengthUnits": "residualNorm"` and records R, its convention, and ‖v‖ on the
 action, so the policy's hash covers them. A vector with no stamped norm at that

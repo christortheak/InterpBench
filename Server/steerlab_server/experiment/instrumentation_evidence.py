@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 import struct
 from .probe_artifacts import ProbeError
-from . import policy_authoring
+from . import policy_artifacts, policy_authoring
 
 MAX_LINE_BYTES = 64 * 1024 * 1024
 
@@ -19,6 +19,25 @@ def single(value):
     fractional bound, such as 0.2 residual-norm units, records that bound's float32 value."""
     try: return struct.unpack('<f', struct.pack('<f', value))[0]
     except OverflowError: return value
+
+
+def declared_units(action, version):
+    """An evidence declaration's units for one action, or None when the declaration contradicts its version."""
+    kind = action.get('kind')
+    if kind != 'add': return policy_artifacts.FIXED_UNITS.get(kind)
+    units = action.get('strengthUnits')
+    if version == 1: return None if units is not None else policy_artifacts.RAW_MULTIPLIER
+    if version == 2: return units if units in (policy_artifacts.RESIDUAL_NORM, policy_artifacts.RAW_MULTIPLIER) else None
+    return policy_artifacts.RAW_MULTIPLIER if units is None else units  # recorded before declarations stated a version
+
+
+def expected_scale(strength, action, version):
+    """What an applied addition's appliedScales must be, recomputed from its declaration; None if it cannot be."""
+    units = declared_units(action, version)
+    if units == policy_artifacts.RAW_MULTIPLIER: return strength
+    if units != policy_artifacts.RESIDUAL_NORM or not all(finite(action.get(k)) and action[k] > 0 for k in ('residualNorm', 'vectorNorm')): return None
+    try: return policy_artifacts.absolute_scale(strength, action)
+    except OverflowError: return None
 
 
 def validate_record(record):
@@ -45,6 +64,10 @@ def validate_record(record):
             if not isinstance(docs, list) or not isinstance(policies, list) or any(not isinstance(x, str) for x in policies): raise ProbeError('Policy evidence must bind its declarations and policy hashes.')
             for doc in docs:
                 if not isinstance(doc, dict) or not isinstance(doc.get('sha256'), str) or not isinstance(doc.get('actions'), list): raise ProbeError('Malformed policy evidence declaration.')
+                # Additive: declarations recorded before it existed state no schemaVersion.
+                if 'schemaVersion' in doc and (type(doc['schemaVersion']) is not int or doc['schemaVersion'] not in policy_artifacts.SCHEMA_VERSIONS
+                                               or any(isinstance(a, dict) and a.get('kind') == 'add' and declared_units(a, doc['schemaVersion']) is None for a in doc['actions'])):
+                    raise ProbeError('A policy declaration’s schema version and its additions’ units disagree.')
                 declarations[doc['sha256']] = doc
             if len(declarations) != len(docs) or sorted(declarations) != sorted(policies): raise ProbeError('Policy evidence declarations disagree with the executed policy hashes.')
         for row in block[rows_key]:
@@ -70,9 +93,14 @@ def validate_record(record):
                 if any(k not in requested or requested[k] != v or outcomes.get(k, {}).get('status') != 'applied' for k, v in applied.items()): raise ProbeError('Applied policy strengths lack matching successful action acknowledgements.')
                 if row.get('status') == 'applied' and applied != requested: raise ProbeError('An applied decision has unacknowledged actions.')
                 # Units and absolute scales are additive: rows written before they existed have neither.
-                units = row.get('strengthUnits', {}); scales = row.get('appliedScales', {})
-                if not isinstance(units, dict) or any(k not in requested or not isinstance(v, str) for k, v in units.items()): raise ProbeError('Strength units must name requested actions.')
-                if not isinstance(scales, dict) or any(k not in applied or not finite(v) for k, v in scales.items()): raise ProbeError('Applied scales must be finite and belong to applied actions.')
+                # Present, they must be the declaration's own: a row cannot restate what its policy meant.
+                version = declaration.get('schemaVersion'); units = row.get('strengthUnits'); scales = row.get('appliedScales')
+                if units is not None and (not isinstance(units, dict) or set(units) != set(requested)
+                                          or any(v != declared_units(specs[k], version) for k, v in units.items())):
+                    raise ProbeError('Strength units must be the declared units of each requested action.')
+                if scales is not None and (not isinstance(scales, dict) or set(scales) != {k for k in applied if specs[k].get('kind') == 'add'}
+                                           or any(not finite(v) or v != expected_scale(applied[k], specs[k], version) for k, v in scales.items())):
+                    raise ProbeError('Applied scales must be each applied addition’s declared multiplier of its stored direction.')
     return record
 
 
@@ -113,9 +141,12 @@ def summarize(source):
             if field == 'interventionDecisions' and block['schemaVersion'] == 1: counts['legacyDecisionResponses'] += 1
             elapsed = block.get('timing', {}).get('decisionHostSeconds')
             if finite(elapsed): latency.add(elapsed)
+            versions = {d.get('sha256'): d.get('schemaVersion') for d in block.get('declarations', []) if isinstance(d, dict)}
             for row in block[rows_key]:
                 descriptor = {'condition': record.get('condition', block.get('condition', '')), 'agent': block.get('agent') or record.get('speakerAgentID', ''),
                     'kind': field, 'label': row.get('probeLabel', row.get('policyName', '')), 'artifactSHA256': row.get(identity, ''), 'site': row.get('site'), 'recordingStage': row.get('recordingStage', 'decision')}
+                # Which policy schema the group's strengths belong to; absent from older evidence.
+                if versions.get(row.get(identity)) is not None: descriptor['policySchemaVersion'] = versions[row.get(identity)]
                 key = json.dumps(descriptor, sort_keys=True)
                 group = groups.setdefault(key, {'descriptor': descriptor, 'statuses': {}, 'scores': {}, 'requested': {}, 'applied': {}, 'appliedScales': {}, 'strengthUnits': {}})
                 status = row.get('status', 'unknown'); group['statuses'][status] = group['statuses'].get(status, 0) + 1

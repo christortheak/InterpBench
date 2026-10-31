@@ -92,6 +92,7 @@
             "value": 0.1
           }
         ],
+        "schemaVersion": 2,
         "sha256": "cc9c6eb288c61d5cb0afd00eceb0e6ce7dc9acf456d42fccfcc9e6b10b1a8646",
         "site": {
           "kind": "residualPost",
