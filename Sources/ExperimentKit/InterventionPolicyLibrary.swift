@@ -22,11 +22,24 @@ public enum InterventionPolicyLibrary {
                   seen.insert(sha).inserted else {
                 throw ExperimentError(reason: "An attached policy’s exact bytes do not match its digest, or the attachment is duplicated.")
             }
+            // Version 1 additions multiply the stored vector; version 2 declares each addition's
+            // units. The Python owner validates either in full; an unknown version is refused.
             guard case .object(let policy) = try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)),
-                  policy["schemaVersion"] == .number(1) else {
-                throw ExperimentError(reason: "Use a version-1 intervention policy published by science policy-publish.")
+                  let version = policy["schemaVersion"], schemaVersions.contains(version) else {
+                throw ExperimentError(reason: "Use an intervention policy published by science policy-publish, schema version 1 or 2. A newer version needs a newer SteerLab.")
             }
         }
+    }
+
+    /// Policy schema versions this build reads. Twin: `policy_artifacts.SCHEMA_VERSIONS`.
+    public static let schemaVersions: [JSONValue] = [.number(1), .number(2)]
+
+    /// Guided defaults for one action kind, matching static steering for additions:
+    /// a promoted agent's default α is 0.1 residual-norm units, and a full norm
+    /// usually makes generation incoherent. Removal is a fraction, and token
+    /// constraints are on or off, so both keep bounds of 0 and 1.
+    public static func strengthDefaults(action: String) -> (strength: Double, lower: Double, upper: Double, slope: Double) {
+        action == "add" ? (0.1, 0, 0.2, 0.05) : (1, 0, 1, 1)
     }
 
     public static func call(_ action: String, root: URL, settings: JSONValue? = nil, hash: String? = nil, path: String? = nil) async throws -> JSONValue {
@@ -58,6 +71,8 @@ public enum InterventionPolicyLibrary {
         var target: [String: JSONValue] = ["id": .string("action"), "kind": .string(action), "bounds": .array([.number(lower), .number(upper)])]
         if logit { target["tokens"] = .array(tokens.map { .number(Double($0)) }) }
         else { target["vectorArtifactID"] = .string(vectorPath) }
+        // Review records the vector's stamped residual norm for this choice, or refuses without one.
+        if action == "add" { target["strengthUnits"] = .string("residualNorm") }
         var decision: [String: JSONValue] = ["action": .string("action"), "kind": .string(rule)]
         if rule == "fixed" { decision["value"] = .number(strength) }
         else {
@@ -66,7 +81,7 @@ public enum InterventionPolicyLibrary {
                 decision["threshold"] = .number(threshold); decision["below"] = .number(0); decision["above"] = .number(strength)
             } else { decision["slope"] = .number(slope); decision["intercept"] = .number(intercept) }
         }
-        return .object(["schemaVersion": .number(1), "name": .string(name), "binding": .object(binding),
+        return .object(["schemaVersion": .number(2), "name": .string(name), "binding": .object(binding),
                         "site": logit ? .object(["kind": .string("logitsPreSelection")]) : site,
                         "stages": .array([.string("prefill"), .string("decode")]), "positions": .string("lastPosition"),
                         "probes": .array([.object(["id": .string("reader"), "path": .string(probe.path)])]),

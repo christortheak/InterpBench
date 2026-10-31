@@ -45,6 +45,9 @@ import Testing
         let snapshot = try AgentArtifactSnapshot(workspaceRoot: root, path: path)
         #expect(snapshot.record.artifact.interventionPolicies == modified.interventionPolicies)
     }
+    private func attachment(_ text: String) -> JSONValue {
+        .object(["json": .string(text), "sha256": .string(SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined())])
+    }
     @Test func corruptedAndDuplicatedAttachmentsFailButAbsentDoesNotChangeEncoding() throws {
         try InterventionPolicyLibrary.validateAttachments(nil)
         let text = "{\"schemaVersion\":1}"
@@ -53,5 +56,39 @@ import Testing
         try InterventionPolicyLibrary.validateAttachments([good])
         #expect(throws: (any Error).self) { try InterventionPolicyLibrary.validateAttachments([good, good]) }
         #expect(throws: (any Error).self) { try InterventionPolicyLibrary.validateAttachments([.object(["json": .string(text + " "), "sha256": .string(sha)])]) }
+    }
+    @Test func versionTwoAttachmentsAreReadBesideVersionOneAndNewerOnesAreRefused() throws {
+        // A frozen study pins version-1 policies by hash; they keep loading beside version 2.
+        try InterventionPolicyLibrary.validateAttachments([attachment("{\"schemaVersion\":1}"), attachment("{\"schemaVersion\":2}")])
+        for text in ["{\"schemaVersion\":3}", "{\"schemaVersion\":\"2\"}", "{}"] {
+            #expect(throws: (any Error).self) { try InterventionPolicyLibrary.validateAttachments([attachment(text)]) }
+        }
+        let required = InstrumentationSupport.requirements(.object(["interventionPolicies": .array([attachment("{\"schemaVersion\":2}")])]))
+        #expect(required == ["policy-v1", "policy-v2", "policy-evidence-v2"])
+        #expect(InstrumentationSupport.requirements(.object(["interventionPolicies": .array([attachment("{\"schemaVersion\":1}")])])) == ["policy-v1", "policy-evidence-v2"])
+        // The previous release's engine offers exactly what version 1 needs, and is told to update for version 2.
+        #expect(throws: (any Error).self) { try InstrumentationSupport.require(required, offered: ["policy-evidence-v2", "policy-v1", "probe-readings-v1"]) }
+    }
+    @Test func guidedAdditionsStartInResidualNormUnitsAndOtherActionsKeepTheirScales() throws {
+        let fixtures = try JSONDecoder().decode([String: JSONValue].self, from: Data(contentsOf: repository.appending(path: "Tests/Fixtures/cross-engine/probe-artifacts.json")))
+        let probe = try #require(fixtures["linear"])
+        let record = ProbeLibrary.Record(path: "runs/example/example.probe.json", sha256: String(repeating: "a", count: 64), format: "activation-probe-v1", label: "Example", modelID: "example/model", layer: 1, method: "linear-logit-v1", createdAt: nil, limitations: [], document: probe)
+        func target(_ action: String) throws -> [String: JSONValue] {
+            let defaults = InterventionPolicyLibrary.strengthDefaults(action: action)
+            let settings = try InterventionPolicyLibrary.starter(probe: record, name: "example-policy", rule: "fixed", action: action, threshold: 0, strength: defaults.strength, lower: defaults.lower, upper: defaults.upper, slope: defaults.slope, intercept: 0, vectorPath: "runs/example/vector", tokens: [4])
+            guard case .object(let document) = settings, case .array(let actions) = document["actions"], case .object(let target) = actions.first else { throw ExperimentError(reason: "Missing starter action.") }
+            #expect(document["schemaVersion"] == .number(2))
+            return target
+        }
+        let addition = try target("add")
+        #expect(addition["strengthUnits"] == .string("residualNorm"))
+        #expect(addition["bounds"] == .array([.number(0), .number(0.2)]))
+        // Static steering's promoted default is 0.1 norm units; a full norm is incoherent, so it is not the default ceiling.
+        #expect(InterventionPolicyLibrary.strengthDefaults(action: "add").strength == 0.1)
+        for action in ["ablate", "logitBias", "forceToken"] {
+            let other = try target(action)
+            #expect(other["strengthUnits"] == nil)
+            #expect(other["bounds"] == .array([.number(0), .number(1)]))
+        }
     }
 }

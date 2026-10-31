@@ -35,7 +35,35 @@ def read(path, root):
     return raw
 
 
-def materialize(settings, root):
+def denominate(action, sidecar, path, layer, notes):
+    """Record what a version-2 addition's units need at execution, from the vector's own sidecar.
+
+    A residual-norm strength α adds α·R/‖v‖·v, with R the sidecar's stamped mean
+    residual norm at this layer: the R, convention, and refusal rule a static
+    agent applies to the same vector and layer (``model_variant.variant_injections``).
+    """
+    from ..steering import residual_norm_convention, vector_math as vm
+    supplied = [k for k in artifacts.NORM_FIELDS if k in action]
+    if supplied: raise PolicyError('Review records ' + ', '.join(supplied) + ' from the vector artifact. Remove them from the settings and name the vector with vectorArtifactID.')
+    units = action.setdefault('strengthUnits', artifacts.RESIDUAL_NORM)
+    norms = sidecar.residualNormPerLayer if sidecar is not None else None
+    usable = sidecar is not None and residual_norm_convention.table_length_problem(norms, layer_count=sidecar.layerCount, artifact=path) is None \
+        and residual_norm_convention.residual_norm_problem(norms, layer, artifact=path) is None and float(norms[layer]) > 0
+    label = str(action.get('id'))
+    if units != artifacts.RESIDUAL_NORM:
+        if units == artifacts.RAW_MULTIPLIER and usable:
+            notes.append(f'Action {label} uses a raw multiplier although its vector has a stamped residual norm at layer {layer}. Its strengths are not comparable with a static agent’s α; residual-norm units would make them so.')
+        return  # validate() names an unknown spelling.
+    if sidecar is None:
+        raise artifacts.NormUnitsUnavailable(f'Action {label} gives its direction as numbers, so there is no stamped residual norm to express its strength in residual-norm units.')
+    if not usable:
+        raise artifacts.NormUnitsUnavailable(f'The vector artifact {path} has no stamped residual norm at layer {layer}, so action {label} cannot express its strength in residual-norm units.')
+    action.update(residualNorm=float(norms[layer]), residualNormConvention=sidecar.residualNormConvention,
+                  vectorNorm=vm.l2_norm(action['vector']))
+
+
+def materialize(settings, root, notes=None):
+    notes = [] if notes is None else notes
     doc = copy.deepcopy(settings)
     if not isinstance(doc, dict): raise PolicyError('Supply a policy settings object.')
     for key in ('probes', 'actions'):
@@ -48,6 +76,7 @@ def materialize(settings, root):
             raw = read(p.pop('path'), root)
             p.update(json=raw.decode(), sha256=hashlib.sha256(raw).hexdigest())
     for action in doc.get('actions', []):
+        sidecar = path = None
         if isinstance(action, dict) and 'vectorArtifactID' in action:
             from safetensors.numpy import load
             from ..steering.vector_store import require_native_substrate, SteeringVectorSidecar
@@ -72,6 +101,8 @@ def materialize(settings, root):
             action['vector'] = direction.tolist()
             action['source'] = {'vectorArtifactID': path, 'tensorSHA256': hashlib.sha256(raw).hexdigest(),
                                 'metadataSHA256': hashlib.sha256(meta_raw).hexdigest(), 'revision': revision}
+        if isinstance(action, dict) and action.get('kind') == 'add' and doc.get('schemaVersion') == artifacts.SCHEMA_VERSION:
+            denominate(action, sidecar, path, doc.get('site', {}).get('layer'), notes)
     provider = doc.get('provider')
     if isinstance(provider, dict) and 'sourcePath' in provider:
         import base64
@@ -85,15 +116,43 @@ def materialize(settings, root):
     return artifacts.validate(doc)
 
 
+class VersionOneSettings(PolicyError):
+    code = 'policyVersionOneSettings'
+    repair_action = ('Set "schemaVersion": 2. Additions then take strengths in residual-norm units; to keep the version-1 meaning '
+                     'for an action, add "strengthUnits": "rawMultiplier" to it.')
+
+
+def unit_notes(doc):
+    """Plain statements of what each kind of strength in this policy means."""
+    kinds = {artifacts.strength_units(a) for a in doc['actions']}
+    notes = []
+    if artifacts.RESIDUAL_NORM in kinds:
+        notes.append('Addition strength is in residual-norm units, like a static agent’s α: strength s adds s × R / ‖v‖ × v, where R is the '
+                     'vector’s stamped mean residual norm at the policy layer and ‖v‖ is the direction’s norm. A promoted agent’s default is 0.1; '
+                     'a full residual norm (1.0) usually makes generation incoherent.')
+    if artifacts.RAW_MULTIPLIER in kinds:
+        notes.append('A raw-multiplier addition multiplies the stored direction directly. Its strength is not in residual-norm units and is '
+                     'not comparable with a static agent’s α.')
+    if any(a['kind'] == 'add' for a in doc['actions']):
+        notes.append('An addition uses the direction as stored at the policy’s one layer, with no layer band or neutral-basis projection.')
+    if 'fraction' in kinds: notes.append('Ablation strength is a dimensionless fraction of the direction’s component, as in static steering.')
+    return notes
+
+
 def review(settings, root):
-    root = probe_library.workspace(root); doc = materialize(settings, root)
+    root = probe_library.workspace(root)
+    if isinstance(settings, dict) and settings.get('schemaVersion') == 1:
+        raise VersionOneSettings('New policies use schemaVersion 2, which records each addition’s strength units. Published version-1 '
+                                 'policies keep their meaning, a raw multiplier of the stored vector, and still attach and run.')
+    notes = []; doc = materialize(settings, root, notes)
     raw = encode(doc)
     notes = ['Validate the complete modified agent on held-out data. A useful probe does not by itself establish a useful intervention.',
-             'Strength multiplies the stored vector directly; it is not a residual-norm unit. Policy ablation follows existing static steering.',
+             *unit_notes(doc), *notes,
              'Execution uses the Python engine, with one unpadded sequence per response.']
-    if doc.get('provider'): notes.append('Expert provider: publishing pins trusted Python source and assets. Execution runs this code with the engine’s permissions; it is not sandboxed.')
+    if doc.get('provider'): notes.append('Expert provider: publishing pins trusted Python source and assets. Execution runs this code with the engine’s permissions; it is not sandboxed. The strengths it returns are in each action’s declared units.')
     if any(a.get('source', {}).get('revision') is None for a in doc['actions'] if 'vector' in a): notes.append('At least one direction has no recorded source revision. Confirm its provenance before interpreting transfer.')
-    return {'document': doc, 'planSHA256': hashlib.sha256(raw).hexdigest(), 'limitations': notes, 'changed': False}
+    return {'document': doc, 'planSHA256': hashlib.sha256(raw).hexdigest(), 'actionUnits': artifacts.action_units(doc),
+            'limitations': notes, 'changed': False}
 
 
 def publish_document(root, document, *, policy):
@@ -117,13 +176,13 @@ def publish_document(root, document, *, policy):
 def publish(settings, root, expected):
     root = probe_library.workspace(root); plan = review(settings, root)
     if plan['planSHA256'] != expected: raise PolicyError('The policy settings or input bytes changed. Review again before publishing.')
-    return publish_document(root, plan['document'], policy=True)
+    return {**publish_document(root, plan['document'], policy=True), 'actionUnits': plan['actionUnits']}
 
 
 def inspect(path, root):
     root = probe_library.workspace(root); raw = read(path, root)
     doc = artifacts.validate(artifacts.probes.read_json(raw))
-    return {'path': str(path), 'sha256': hashlib.sha256(raw).hexdigest(), 'document': doc, 'changed': False}
+    return {'path': str(path), 'sha256': hashlib.sha256(raw).hexdigest(), 'document': doc, 'actionUnits': artifacts.action_units(doc), 'changed': False}
 
 
 def inventory(root):

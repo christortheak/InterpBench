@@ -16,10 +16,11 @@ struct InterventionPoliciesView: View {
     @State private var rule = "threshold"
     @State private var action = "add"
     @State private var threshold = 0.0
-    @State private var strength = 1.0
-    @State private var lower = 0.0
-    @State private var upper = 1.0
-    @State private var slope = 1.0
+    // The starting action is an addition: strengths in residual-norm units, as a static agent's α.
+    @State private var strength = InterventionPolicyLibrary.strengthDefaults(action: "add").strength
+    @State private var lower = InterventionPolicyLibrary.strengthDefaults(action: "add").lower
+    @State private var upper = InterventionPolicyLibrary.strengthDefaults(action: "add").upper
+    @State private var slope = InterventionPolicyLibrary.strengthDefaults(action: "add").slope
     @State private var intercept = 0.0
     @State private var vectorPath = ""
     @State private var tokenText = ""
@@ -72,6 +73,9 @@ struct InterventionPoliciesView: View {
                                 TextField("Added strength", value: $intercept, format: .number)
                                 Text("Strength = score × multiplier + added strength, clipped to your bounds.").font(.caption)
                             } else { TextField("Action strength", value: $strength, format: .number) }
+                            if action == "add" {
+                                Text("Strengths for an added vector are in residual-norm units, like a static agent’s α: 0.1 adds a tenth of the layer’s typical residual norm, the default for a promoted agent. A full norm (1.0) usually makes generation incoherent.").font(.caption)
+                            }
                         }.padding(8)
                     }
                     GroupBox("2. Choose the change") {
@@ -86,7 +90,9 @@ struct InterventionPoliciesView: View {
                             if action == "add" || action == "ablate" {
                                 HStack { Text(vectorPath.isEmpty ? "Choose a Python vector artifact for this model." : vectorPath).textSelection(.enabled)
                                     Button("Choose vector…") { chooseVector() } }
-                                Text("The action runs at the probe’s layer and input/output site. Addition uses the vector’s stored units; removal strength 1 removes its component, and 0 leaves it alone.").font(.caption)
+                                Text(action == "add"
+                                     ? "The action runs at the probe’s layer and input/output site, using the direction as stored at that one layer. A strength s adds the direction scaled to s times the layer’s measured residual norm, so choose a vector whose residual norms were measured. For one without, measure them with vectors backfill-norms, or choose a raw multiplier in advanced settings."
+                                     : "The action runs at the probe’s layer and input/output site, using the direction as stored at that one layer. Removal strength 1 removes its component, and 0 leaves it alone.").font(.caption)
                             } else {
                                 TextField("Exact token IDs, separated by commas", text: $tokenText)
                                 Text("IDs belong to this probe’s pinned tokenizer. Bias changes preference; token constraints are on above zero and never override existing forbidden tokens. Constraints use bounds 0 and 1.").font(.caption)
@@ -138,8 +144,20 @@ struct InterventionPoliciesView: View {
             if !status.isEmpty { Text(status).textSelection(.enabled) }
         }.padding(24).frame(minWidth: 760, idealWidth: 840, minHeight: 700)
         .task { work { try await refresh() } }
+        .onChange(of: action) { previous, current in applyStrengthDefaults(from: previous, to: current) }
         // The notice's switch opens the engine setup on this sheet.
         .hostsComputeSheets()
+    }
+
+    /// An addition's strengths are residual-norm units and a removal's are fractions, so each
+    /// kind starts from its own defaults. A value the researcher has already changed is kept.
+    private func applyStrengthDefaults(from previous: String, to current: String) {
+        let old = InterventionPolicyLibrary.strengthDefaults(action: previous)
+        let new = InterventionPolicyLibrary.strengthDefaults(action: current)
+        if strength == old.strength { strength = new.strength }
+        if lower == old.lower { lower = new.lower }
+        if upper == old.upper { upper = new.upper }
+        if slope == old.slope { slope = new.slope }
     }
 
     private func work(_ operation: @escaping @MainActor () async throws -> Void) {

@@ -29,6 +29,9 @@ struct InstrumentationEvidenceView: View {
         let scores: [String: Moments]
         let requested: [String: Moments]
         let applied: [String: Moments]
+        // Absent from summaries made before policies recorded their units.
+        let strengthUnits: [String: String]?
+        let appliedScales: [String: Moments]?
         var heading: String { "\(condition) · \(agent.isEmpty ? "agent" : agent) · \(label) · \(artifactSHA256.prefix(12)) · \(recordingStage)" }
     }
     private struct Report: Decodable {
@@ -59,8 +62,12 @@ struct InstrumentationEvidenceView: View {
                                         if let site = group.site { Text((try? InterventionPolicyLibrary.formatted(site)) ?? "").font(.caption.monospaced()) }
                                         Text(group.statuses.keys.sorted().map { "\($0): \(group.statuses[$0]!)" }.joined(separator: ", ")).font(.caption)
                                         metrics("Probe scores", group.scores)
+                                        if let units = group.strengthUnits, !units.isEmpty {
+                                            Text("Strength units: " + units.keys.sorted().map { "\($0) \(units[$0]!)" }.joined(separator: ", ")).font(.caption)
+                                        }
                                         metrics("Requested strengths", group.requested)
                                         metrics("Applied strengths", group.applied)
+                                        metrics("Applied multipliers of each added vector’s stored direction", group.appliedScales ?? [:])
                                     }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                                 }
                             }

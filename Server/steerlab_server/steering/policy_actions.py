@@ -1,4 +1,4 @@
-"""Version-1 policy action arithmetic, separate from legacy steering owners."""
+"""Policy action arithmetic (schema versions 1 and 2), separate from legacy steering owners."""
 from dataclasses import dataclass
 import torch
 from .ablator import orthonormalized
@@ -14,8 +14,23 @@ class Decision:
 @dataclass(frozen=True)
 class Action:
     specification: dict
-    strength: torch.Tensor  # [tokens], already bounded and schedule-masked
+    strength: torch.Tensor  # [tokens] in the action's declared units, already bounded and schedule-masked
     on_result: object = None  # Response-owned evidence callback; no global state.
+
+
+def addition_scale(strength, specification):
+    """The one conversion from an addition's declared strength to the multiplier of its stored direction.
+
+    ``strength`` is float32, one value per consumed position. In residual-norm
+    units the result is strength·R/‖v‖ with the review-recorded R and ‖v‖, the
+    same float32 arithmetic as static steering's ``vector_math.norm_unit_scale``,
+    so the added perturbation has norm strength × R. A raw multiplier, which is
+    every version-1 addition, is the multiplier itself. Evidence records what
+    this returns, and :func:`residual` applies it.
+    """
+    if specification.get('strengthUnits', 'rawMultiplier') == 'rawMultiplier': return strength
+    def scalar(key): return torch.tensor(specification[key], dtype=torch.float32, device=strength.device)
+    return strength.float() * scalar('residualNorm') / scalar('vectorNorm')
 
 
 def apply_with_evidence(operation, tensor, actions):
@@ -48,7 +63,7 @@ def residual(h, actions):
     for action in actions:
         if action.specification['kind'] != 'add': continue
         v = torch.tensor(action.specification['vector'], dtype=torch.float32, device=h.device)
-        result = (result.float() + action.strength[None, :, None] * v).to(h.dtype)
+        result = (result.float() + addition_scale(action.strength, action.specification)[None, :, None] * v).to(h.dtype)
     if not torch.isfinite(result).all(): raise ValueError('Policy actions produced non-finite activations. Reduce their strength bounds.')
     return result
 

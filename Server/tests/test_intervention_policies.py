@@ -1,4 +1,5 @@
 """Independent policy math, publication, timing, state, and conflict acceptance."""
+from contextlib import contextmanager
 import copy
 import hashlib
 import json
@@ -28,8 +29,26 @@ def attached(doc, root):
     raw=owner.encode(owner.materialize(doc,root)); return [{'json':raw.decode(),'sha256':hashlib.sha256(raw).hexdigest()}]
 
 
+def authored(doc):
+    """setup()'s version-1 meaning as new settings: version 2 with each addition's raw multiplier chosen explicitly."""
+    doc=copy.deepcopy(doc);doc['schemaVersion']=2
+    for action in doc['actions']:
+        if action['kind']=='add':action['strengthUnits']='rawMultiplier'
+    return doc
+
+
 def forward(model, ids):
     return model.model(input_ids=torch.tensor([ids]),attention_mask=torch.ones((1,len(ids))))
+
+
+class Deltas:
+    """A read-only observer: what each forward's action phase changed at one residual site (post minus pre)."""
+    def __init__(self, site): self.site=site;self.passes=[];self.before={}
+    @contextmanager
+    def observe_session(self, model, rendered):
+        def before(h,context,state):self.before[context.offset]=h.detach().clone()
+        def after(h,context,state):self.passes.append((context.offset,(h.detach()-self.before.pop(context.offset))[0]))
+        with model.hooked.readings([Reading('before',self.site,'preAction',before),Reading('after',self.site,'postAction',after)]):yield
 
 
 @pytest.mark.parametrize('site,expected', [('residualPre', [23,19]),('residualPost',[19,19])])
@@ -136,7 +155,7 @@ def test_logit_bias_mask_force_intersection_and_never_unmask():
 
 
 def test_publication_stale_bytes_new_agent_exact_inline_and_no_execution(tmp_path):
-    doc,_,_=setup(tmp_path);plan=owner.review(doc,tmp_path)
+    doc,_,_=setup(tmp_path);doc=authored(doc);plan=owner.review(doc,tmp_path)
     original=tmp_path/'runs/fit/trained.probe.json';original.write_text(original.read_text()+' ')
     with pytest.raises(ValueError,match='changed'):owner.publish(doc,tmp_path,plan['planSHA256'])
     plan=owner.review(doc,tmp_path);saved=owner.publish(doc,tmp_path,plan['planSHA256'])
@@ -154,11 +173,11 @@ def test_publication_stale_bytes_new_agent_exact_inline_and_no_execution(tmp_pat
 
 
 def test_missing_workspace_and_symbolic_inputs_refuse(tmp_path):
-    doc,_,_=setup(tmp_path)
+    doc,_,_=setup(tmp_path);doc=authored(doc)
     with pytest.raises(ValueError,match='existing workspace'):owner.review(doc,tmp_path/'absent')
     assert not (tmp_path/'absent').exists()
     original=tmp_path/'runs/fit/trained.probe.json'; original.rename(original.with_name('other.json'));original.symlink_to('other.json')
-    with pytest.raises(ValueError):owner.review(doc,tmp_path)
+    with pytest.raises(ValueError,match='ordinary'):owner.review(doc,tmp_path)
 
 
 def test_policy_session_is_closed_immediately_when_stream_is_superseded(tmp_path):
@@ -217,7 +236,7 @@ def test_http_cli_and_isolated_agent_bundle_keep_exact_policy(tmp_path,monkeypat
     from steerlab_server.api.diagnostic_transport_routes import build_router
     from steerlab_server.experiment import experiment_store,bundles,manifest
     from steerlab_server.client_cli import main
-    doc,_,model=setup(tmp_path);monkeypatch.setenv('STEERLAB_ROOT',str(tmp_path))
+    doc,_,model=setup(tmp_path);doc=authored(doc);monkeypatch.setenv('STEERLAB_ROOT',str(tmp_path))
     app=FastAPI();app.include_router(build_router(SimpleNamespace()))
     payload={'workspaceRoot':str(tmp_path),'settingsText':json.dumps(doc)}
     with TestClient(app) as client:
@@ -243,25 +262,111 @@ def test_http_cli_and_isolated_agent_bundle_keep_exact_policy(tmp_path,monkeypat
     assert p.events
 
 
-def test_real_vector_file_resolves_verified_direction_and_rejects_foreign_substrate(tmp_path):
+def vector_artifact(root, values, **sidecar):
+    """A real one-layer vector artifact: safetensors bytes and a sidecar with the required core fields."""
     import numpy as np
     from safetensors.numpy import save
-    from steerlab_server.steering.vector_store import SteeringVectorSidecar
-    doc,_,_=setup(tmp_path)
-    doc['actions'][0].pop('vector');doc['actions'][0]['vectorArtifactID']='runs/fit/example'
-    raw=save({'layer_0':np.array([.5,1.],dtype=np.float32)})
-    (tmp_path/'runs/fit/example.safetensors').write_bytes(raw)
-    # Real sidecar defaults plus the required core fields.
-    import inspect
-    fields=inspect.signature(SteeringVectorSidecar).parameters
-    meta={k:None for k,v in fields.items() if v.default is inspect.Parameter.empty}
-    meta.update(modelID='example/model',concept='example',layerCount=1,hiddenSize=2,substrate='python-hf-transformers')
-    path=tmp_path/'runs/fit/example.json';path.write_text(json.dumps(meta))
+    raw=save({'layer_0':np.array(values,dtype=np.float32)})
+    (root/'runs/fit').mkdir(parents=True,exist_ok=True);(root/'runs/fit/example.safetensors').write_bytes(raw)
+    meta={'modelID':'example/model','concept':'example','stimulusSetHash':'c'*64,'layerCount':1,'hiddenSize':len(values),'normsPerLayer':[1.],
+          'extractionDate':'2026-01-01T00:00:00Z','substrate':'python-hf-transformers',**sidecar}
+    (root/'runs/fit/example.json').write_text(json.dumps(meta))
+    return raw, meta
+
+
+def norm_unit_settings(root, value=.1):
+    """New settings as guided authoring writes them: a library direction, units left to their default."""
+    doc,_,_=setup(root);doc['schemaVersion']=2
+    doc['actions']=[{'id':'change','kind':'add','bounds':[0,.2],'vectorArtifactID':'runs/fit/example'}]
+    doc['rules']=[{'action':'change','kind':'fixed','value':value}]
+    return doc
+
+
+def test_real_vector_file_resolves_verified_direction_and_rejects_foreign_substrate(tmp_path):
+    from steerlab_server.steering import vector_math as vm
+    raw,meta=vector_artifact(tmp_path,[.5,1.],residualNormPerLayer=[7.5],residualNormConvention='perTextMean-v1')
+    doc=norm_unit_settings(tmp_path)
     plan=owner.review(doc,tmp_path)
     action=plan['document']['actions'][0]
     assert action['vector']==[.5,1.] and action['source']['tensorSHA256']==hashlib.sha256(raw).hexdigest()
-    meta['substrate']='swift-mlx';path.write_text(json.dumps(meta))
+    # Review writes the default units and what execution needs, inside the hashed document.
+    assert (action['strengthUnits'],action['residualNorm'],action['residualNormConvention'])==('residualNorm',7.5,'perTextMean-v1')
+    assert action['vectorNorm']==vm.l2_norm([.5,1.]) and plan['planSHA256']==hashlib.sha256(owner.encode(plan['document'])).hexdigest()
+    assert plan['actionUnits']==[{'id':'change','kind':'add','bounds':[0,.2],'strengthUnits':'residualNorm','residualNorm':7.5,
+                                  'residualNormConvention':'perTextMean-v1','vectorNorm':action['vectorNorm']}]
+    assert any('residual-norm units' in note for note in plan['limitations']) and not any('directly' in note for note in plan['limitations'])
+    saved=owner.publish(doc,tmp_path,plan['planSHA256'])
+    assert saved['actionUnits']==plan['actionUnits'] and owner.inspect(saved['path'],tmp_path)['actionUnits']==plan['actionUnits']
+    path=tmp_path/'runs/fit/example.json';meta['substrate']='swift-mlx';path.write_text(json.dumps(meta))
     with pytest.raises(ValueError,match='substrate'):owner.review(doc,tmp_path)
+
+
+@pytest.mark.parametrize('case', ['absent', 'short', 'zero', 'numbers'])
+def test_residual_norm_units_without_a_stamped_norm_refuse_with_a_repair(tmp_path, case, capsys):
+    from steerlab_server.client_cli import main
+    norms={'absent':{},'short':{'layerCount':2,'residualNormPerLayer':[3.]},'zero':{'residualNormPerLayer':[0.]},'numbers':{'residualNormPerLayer':[7.5]}}[case]
+    vector_artifact(tmp_path,[.5,1.],**norms);doc=norm_unit_settings(tmp_path)
+    if case=='numbers':doc['actions'][0].pop('vectorArtifactID');doc['actions'][0]['vector']=[.5,1.]
+    with pytest.raises(artifacts.NormUnitsUnavailable) as raised:owner.review(doc,tmp_path)
+    assert raised.value.code=='policyResidualNormMissing'
+    assert 'backfill-norms' in raised.value.repair_action and '"strengthUnits": "rawMultiplier"' in raised.value.repair_action
+    file=tmp_path/'settings.json';file.write_text(json.dumps(doc))
+    capsys.readouterr();assert main(['science','policy-review',str(file),'--root',str(tmp_path),'--json'])==65
+    error=json.loads(capsys.readouterr().out)['error']
+    assert error['code']=='policyResidualNormMissing' and error['repairAction']==raised.value.repair_action
+    # The repair: an explicit, recorded raw multiplier. Nothing about residual norms is recorded for it.
+    doc['actions'][0]['strengthUnits']='rawMultiplier';plan=owner.review(doc,tmp_path)
+    assert plan['actionUnits'][0]['strengthUnits']=='rawMultiplier' and not set(artifacts.NORM_FIELDS)&set(plan['document']['actions'][0])
+    assert any('not comparable' in note for note in plan['limitations'])
+
+
+def test_a_raw_multiplier_beside_a_stamped_norm_is_allowed_and_explained(tmp_path):
+    vector_artifact(tmp_path,[.5,1.],residualNormPerLayer=[7.5]);doc=norm_unit_settings(tmp_path)
+    doc['actions'][0]['strengthUnits']='rawMultiplier'
+    notes=owner.review(doc,tmp_path)['limitations']
+    assert any('has a stamped residual norm at layer 0' in note for note in notes)
+
+
+def test_version_one_settings_refuse_at_review_and_published_ones_keep_their_raw_meaning(tmp_path):
+    doc,_,model=setup(tmp_path)
+    with pytest.raises(owner.VersionOneSettings) as raised:owner.review(doc,tmp_path)
+    assert raised.value.code=='policyVersionOneSettings' and '"strengthUnits": "rawMultiplier"' in raised.value.repair_action
+    # A published version-1 policy: strength 2 multiplies the stored direction, whatever its norm.
+    doc['actions'][0]['vector']=[3.,4.];policy=runtime.Execution(attached(doc,tmp_path),rendering='rawCompletion')
+    deltas=Deltas(Site('residualPost',0));rendered=prompt_render.RenderedPrompt('',[1,2,3],3)
+    with model.hooked.session([]),deltas.observe_session(model,rendered),policy.observe_session(model,rendered):forward(model,[1,2,3])
+    [(_,delta)]=deltas.passes
+    assert delta[-1].tolist()==[6.,8.] and not delta[:-1].any()
+    [row]=policy.result([4])['decisions']
+    assert row['strengthUnits']=={'change':'rawMultiplier'} and row['appliedScales']=={'change':2.} and row['appliedStrengths']=={'change':2.}
+    [summary]=artifacts.summaries(attached(doc,tmp_path))
+    assert summary['schemaVersion']==1 and summary['actions']==[{'id':'change','kind':'add','bounds':[0,2],'strengthUnits':'rawMultiplier'}]
+    # Version 1 has no unit declarations to read; one written into it is refused, not reinterpreted.
+    published=owner.materialize(doc,tmp_path)
+    for field,value in (('strengthUnits','residualNorm'),('residualNorm',1.)):
+        changed=copy.deepcopy(published);changed['actions'][0][field]=value
+        with pytest.raises(ValueError):artifacts.validate(changed)
+
+
+def test_version_two_validation_checks_the_recorded_units(tmp_path):
+    vector_artifact(tmp_path,[.5,1.],residualNormPerLayer=[7.5],residualNormConvention='perTextMean-v1')
+    published=owner.review(norm_unit_settings(tmp_path),tmp_path)['document']
+    artifacts.validate(published)
+    for change in ({'strengthUnits':'other'},{'vectorNorm':2.},{'residualNorm':0},{'residualNorm':None},{'residualNormConvention':''}):
+        broken=copy.deepcopy(published);broken['actions'][0].update(change)
+        with pytest.raises(ValueError):artifacts.validate(broken)
+    broken=copy.deepcopy(published);del broken['actions'][0]['residualNorm']
+    with pytest.raises(ValueError,match='records residualNorm'):artifacts.validate(broken)
+    # A legacy pre-stamp denominator is recorded as such, exactly as static steering reads it.
+    vector_artifact(tmp_path,[.5,1.],residualNormPerLayer=[7.5])
+    assert owner.review(norm_unit_settings(tmp_path),tmp_path)['document']['actions'][0]['residualNormConvention'] is None
+    # Hand-entered norms are not stamped norms; review alone records them.
+    settings=norm_unit_settings(tmp_path);settings['actions'][0]['residualNorm']=7.5
+    with pytest.raises(ValueError,match='Review records residualNorm'):owner.review(settings,tmp_path)
+    # Only additions declare units: ablation keeps its fraction, and token actions their own scales.
+    ablation=norm_unit_settings(tmp_path);ablation['actions'][0].update(kind='ablate',strengthUnits='residualNorm');ablation['rules'][0]['value']=.1
+    with pytest.raises(ValueError,match='Only additions'):owner.review(ablation,tmp_path)
+    ablation['actions'][0].pop('strengthUnits');assert owner.review(ablation,tmp_path)['actionUnits'][0]['strengthUnits']=='fraction'
 
 
 def test_sampled_study_records_policy_and_resume_preserves_bytes(tmp_path,monkeypatch):
@@ -323,7 +428,7 @@ def test_nonlinear_policy_scores_match_independent_portable_reference(tmp_path):
 
 @pytest.mark.parametrize('value',[None,[],0,'example'])
 def test_malformed_provenance_and_agent_paths_have_typed_repairs(tmp_path,value):
-    doc,_,_=setup(tmp_path);doc['actions'][0]['source']=value
+    doc,_,_=setup(tmp_path);doc=authored(doc);doc['actions'][0]['source']=value
     with pytest.raises(ValueError,match='provenance'):owner.review(doc,tmp_path)
     with pytest.raises(ValueError):owner.attachment_review({'agentPath':value,'name':'example','policyPaths':[]},tmp_path)
 
@@ -479,3 +584,53 @@ def test_multi_turn_agent_chat_runs_the_policy_and_returns_its_decisions(tmp_pat
     baseline=variant_chat.generate_with_variant(model,variant,request(strip_interventions=True))
     assert streamed==result['output']!=baseline['output'] and 'interventionDecisions' not in baseline
     assert not model.hooked.runtime.subscriptions and not model.hooked._pre_handles
+
+
+def test_a_norm_unit_policy_adds_what_a_static_agent_adds_at_the_same_positions(tmp_path):
+    """The equivalence the units promise, on a real model through generate(): a fixed residual-norm strength α over
+    prefill and decode at lastPosition makes the same addition, at the same positions, as a static agent at α."""
+    from steerlab_server.experiment.generate import generate
+    from steerlab_server.experiment.model_variant import variant_injections
+    model=tiny_llama();alpha=.1;site=Site('residualPost',0)
+    vector_artifact(tmp_path,[.3,-.4],residualNormPerLayer=[7.5],residualNormConvention='perTextMean-v1',revision='a'*40)
+    static=ModelVariant(name='static',base_model_id='example/model',base_revision='a'*40,prompt_mode='rawCompletion',alpha_in_norm_units=True,
+                        injections=[{'concept':'example','vectorArtifactID':'runs/fit/example','layer':0,'alpha':alpha}])
+    cells=variant_injections(static,root=str(tmp_path))
+    settings=norm_unit_settings(tmp_path,alpha);settings.update(probes=[])
+    settings['binding']['tokenizerSHA256']=runtime.probe_capture.tokenizer_identity(model.tokenizer)
+    raw=owner.encode(owner.review(settings,tmp_path)['document']);attachment=[{'json':raw.decode(),'sha256':hashlib.sha256(raw).hexdigest()}]
+    policy=runtime.Execution(attachment,rendering='rawCompletion')
+    runs={}
+    for name,injections,observers in (('static',cells,[]),('policy',[],[policy])):
+        deltas=Deltas(site);ids=[]
+        generate(model,'example selected example',model_id=model.model_id,prompt_mode='rawCompletion',max_tokens=3,temperature=0,
+                 injections=injections,observers=[deltas,*observers],token_ids_out=ids)
+        runs[name]=(deltas.passes,ids)
+    (static_passes,static_ids),(policy_passes,policy_ids)=runs['static'],runs['policy']
+    assert static_ids==policy_ids and [o for o,_ in static_passes]==[o for o,_ in policy_passes]==[0,3,4]
+    for (_,expected),(_,actual) in zip(static_passes,policy_passes):
+        changed=expected.abs().sum(-1)>0
+        assert torch.equal(changed,actual.abs().sum(-1)>0) and changed[-1] and not changed[:-1].any()
+        assert torch.allclose(actual,expected,rtol=1e-6,atol=1e-7)
+        # Its norm is α times the residual norm: what "in residual-norm units" means.
+        assert actual[-1].norm().item()==pytest.approx(alpha*7.5,rel=1e-5)
+    # Evidence states the units, and the absolute scale is the static agent's raw scalar.
+    rows=policy.result(policy_ids)['decisions']
+    assert [r['inputTokenPosition'] for r in rows]==[2,3,4]
+    for row in rows:
+        assert row['strengths']==row['appliedStrengths']=={'change':pytest.approx(alpha)} and row['strengthUnits']=={'change':'residualNorm'}
+        assert row['appliedScales']['change']==pytest.approx(cells[0].alpha,rel=1e-6)
+    [summary]=artifacts.summaries(attachment)
+    assert summary['schemaVersion']==2 and summary['actions'][0]['strengthUnits']=='residualNorm' and summary['actions'][0]['residualNorm']==7.5
+
+
+def test_the_scope_sidecar_states_policy_units(tmp_path):
+    from steerlab_server.experiment import intervention_scope
+    vector_artifact(tmp_path,[.5,1.],residualNormPerLayer=[7.5]);raw=owner.encode(owner.review(norm_unit_settings(tmp_path),tmp_path)['document'])
+    variant=ModelVariant(name='modified',base_model_id='example/model',base_revision='a'*40,prompt_mode='rawCompletion',
+                         intervention_policies=[{'json':raw.decode(),'sha256':hashlib.sha256(raw).hexdigest()}])
+    path=intervention_scope.stamp_run(str(tmp_path),experiment='example',variant_conditions=[SimpleNamespace(name='modified')],
+                                      resolve_variant=lambda _:SimpleNamespace(variant=variant,intervention_state={},injections=[]))
+    [entry]=json.loads(Path(path).read_text())['conditions']
+    [policy]=entry['interventionPolicies']
+    assert policy['schemaVersion']==2 and policy['actions'][0]['strengthUnits']=='residualNorm' and policy['actions'][0]['residualNorm']==7.5

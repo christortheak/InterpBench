@@ -15,6 +15,9 @@
             "status": "applied"
           }
         },
+        "appliedScales": {
+          "change": 2.0
+        },
         "appliedStrengths": {
           "change": 2.0
         },
@@ -33,6 +36,9 @@
           "layer": 0
         },
         "status": "applied",
+        "strengthUnits": {
+          "change": "rawMultiplier"
+        },
         "strengths": {
           "change": 2.0
         }
@@ -91,6 +97,7 @@
     "failures": [],
     "limitations": [
       "Requested strengths and acknowledged applied strengths are distinct. Applied means the site tensor operation succeeded; a failed response is not completed evidence.",
+      "Strengths are in each action\u2019s declared units (strengthUnits); a residual-norm strength compares directly with a static agent\u2019s \u03b1. For an addition, appliedScales is the multiplier applied to the stored direction: strength \u00d7 residualNorm / vectorNorm in residual-norm units, or the strength itself for a raw multiplier.",
       "Policy scores use float32 on the activation device; measurements retain their own scoring precision.",
       "Expert providers are trusted Python code. Their declared RNG is response-local random.Random; they must not use global randomness or mutate model state."
     ],
