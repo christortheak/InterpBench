@@ -406,14 +406,15 @@ review's hash:
  "name": "reading-location", "span": {"kind": "substring", "text": "The room was quiet."}}
 ```
 
-A random-direction control replaces each direction with a seeded random unit
-direction and keeps the layer, site, span, rules, bounds, dose mode, and R, so
-it adds the same norm and only the direction differs. A location control keeps
-the directions, strengths, and dose and moves them to another span, typically
-a neutral sentence of the same prompt. Its span must have as many tokens as
-the controlled span on every item; the run checks this before generating
-anything and names each item where the counts differ, so edit the sentence
-until they agree. Each control records its kind, the policy it controls, and
+A random-direction control replaces each direction with a seeded random
+direction of the same norm and keeps the layer, site, span, rules, bounds, dose
+mode, and R, so each span token receives an offset of the same norm, in either
+unit, and only the direction differs. A location control keeps the
+directions, strengths, and dose and moves them to another span, typically a
+neutral sentence of the same prompt. Its span must have as many tokens as the
+controlled span on every item and share none of its tokens; the run checks
+both before generating anything and names each item where they fail, so edit
+the sentence until they hold. Each control records its kind, the policy it controls, and
 its seed or the controlled span. Attach each control to its own agent version
 with `"staticSteering": "remove"`, exactly as the span policy was attached,
 and compare the arms on the same items.

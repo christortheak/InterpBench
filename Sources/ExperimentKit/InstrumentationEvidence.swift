@@ -52,6 +52,7 @@ public enum InstrumentationEvidence {
             for (name, value) in summaries {
                 guard case .object(let summary) = value, let spec = specs[name], case .string(let units) = summary["strengthUnits"],
                       units == declaredUnits(spec, version: declaration["schemaVersion"]) else { try refuse("Span dose units must be the declared units of each action."); return [:] }
+                guard summary.keys.contains("perPositionStrength"), summary.keys.contains("summedDose") else { try refuse("A span summary states its per-position strength and summed dose, null when they do not apply."); return [:] }
                 guard case .number(let count) = summary["appliedPositions"], count.rounded() == count, count >= 0, count <= Double(positions.count) else { try refuse("A span’s applied positions must count span tokens."); return [:] }
                 let strength = number(summary["perPositionStrength"])
                 if summary["perPositionStrength"] != .null, strength == nil { try refuse("A per-position span strength must be finite.") }

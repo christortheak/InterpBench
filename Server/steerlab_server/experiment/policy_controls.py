@@ -8,13 +8,16 @@ one from settings that name the policy it controls in ``controlOf``,
 shows it, and it is seated as its own agent arm.
 
 - **randomDirection**: every residual action's direction becomes a seeded
-  random unit direction of the same width (:data:`RANDOM_DIRECTION_ALGORITHM`,
-  the isotropic-Gaussian construction static steering's random controls use),
-  at the same layer and site, with the same span, rules, bounds, dose mode,
-  and R. In residual-norm units the added norm is strength × R whatever the
-  direction, so only the direction differs. R stays the controlled
-  direction's, so the action's ``source`` keeps naming that vector's sidecar,
-  and records the seed and the direction it replaced.
+  random direction of the same width and the same L2 norm
+  (:data:`RANDOM_DIRECTION_ALGORITHM`, the isotropic-Gaussian construction
+  static steering's ``randomMatchedNorm`` uses), at the same layer and site,
+  with the same span, rules, bounds, dose mode, R, and recorded ‖v‖. Each
+  span token therefore receives an offset of the same norm in either unit: in
+  residual-norm units strength × R, and as a raw multiplier strength × ‖v‖.
+  Only the direction differs. R stays the controlled direction's, so the
+  action's ``source`` keeps naming that vector's sidecar, and records the
+  seed, the matched norm, and the direction it replaced; validation redraws
+  the direction from them.
 - **location**: the same directions, strengths, and dose over a different
   declared span, typically a neutral sentence of the same prompt. Its token
   length must equal the controlled span's on every prompt. That needs the
@@ -43,14 +46,13 @@ No model, tokenizer, or GPU import: review runs on any authoring client.
 import copy
 import hashlib
 import math
-import random
 
 from . import policy_artifacts as artifacts
 from .policy_artifacts import PolicyError
 
 RANDOM_DIRECTION, LOCATION = artifacts.CONTROL_KINDS
 #: Static steering's random-direction construction, by the same name
-#: (``condition_execution.RANDOM_VECTOR_ALGORITHM``), scaled here to unit norm.
+#: (``condition_execution.RANDOM_VECTOR_ALGORITHM``), rescaled to the controlled direction's norm.
 RANDOM_DIRECTION_ALGORITHM = artifacts.RANDOM_DIRECTION_ALGORITHM
 
 _REQUIRED = {RANDOM_DIRECTION: ('controlOf', 'control', 'name', 'seed'),
@@ -65,15 +67,6 @@ class ControlRefused(PolicyError):
 
 def is_control_settings(settings) -> bool:
     return isinstance(settings, dict) and 'controlOf' in settings
-
-
-def unit_direction(seed_text: str, dimension: int) -> list[float]:
-    """A seeded isotropic-Gaussian direction scaled to unit L2 norm. Seeded by
-    string, so it is the same on every process and platform."""
-    rng = random.Random(seed_text)
-    direction = [rng.gauss(0.0, 1.0) for _ in range(dimension)]
-    norm = math.sqrt(math.fsum(x * x for x in direction))
-    return [x / norm for x in direction]
 
 
 def materialize(settings, root, read):
@@ -98,17 +91,19 @@ def materialize(settings, root, read):
             if 'vector' not in action: continue
             text = f'{seed}:{action["id"]}'
             original = action.get('source') if isinstance(action.get('source'), dict) else {}
+            # The controlled direction's own norm, so a raw multiplier adds strength × ‖v‖ in both arms.
+            norm = math.sqrt(math.fsum(x * x for x in action['vector']))
             # R is still the controlled direction's, so the sidecar it came from stays named.
             action['source'] = {**{k: original[k] for k in ('vectorArtifactID', 'metadataSHA256', 'revision') if k in original},
-                                'randomDirection': {'seed': seed, 'seedText': text, 'algorithm': RANDOM_DIRECTION_ALGORITHM},
+                                'randomDirection': {'seed': seed, 'seedText': text, 'algorithm': RANDOM_DIRECTION_ALGORITHM, 'matchedNorm': norm},
                                 'controls': {'policySHA256': digest, 'actionID': action['id'], 'tensorSHA256': original.get('tensorSHA256')}}
-            action['vector'] = unit_direction(text, len(action['vector']))
-            if action.get('strengthUnits') == artifacts.RESIDUAL_NORM:
-                action['vectorNorm'] = math.sqrt(math.fsum(x * x for x in action['vector']))
+            action['vector'] = artifacts.matched_direction(text, len(action['vector']), norm)
+            # vectorNorm is kept as reviewed, so a residual-norm scale strength × R / ‖v‖ is exactly the treatment's.
         doc['control'] = {'kind': RANDOM_DIRECTION, 'of': digest, 'seed': seed, 'algorithm': RANDOM_DIRECTION_ALGORITHM}
-        notes = [f'A random-direction control of policy {source["name"]} ({digest[:12]}…): each direction is a seeded random unit direction '
-                 f'(seed {seed!r}, {RANDOM_DIRECTION_ALGORITHM}) at the same layer and site, with the same span, rules, bounds, dose mode, and R. '
-                 'In residual-norm units it adds the same norm, strength × R, so only the direction differs.']
+        notes = [f'A random-direction control of policy {source["name"]} ({digest[:12]}…): each direction is a seeded random direction '
+                 f'(seed {seed!r}, {RANDOM_DIRECTION_ALGORITHM}) with the controlled direction’s norm, at the same layer and site, with the same '
+                 'span, rules, bounds, dose mode, and R. Each span token receives an offset of the same norm as in the treatment, in residual-norm '
+                 'units and as a raw multiplier alike, so only the direction differs.']
     else:
         span = artifacts.span_declaration(settings['span'])
         if span == source['span']: raise ControlRefused('A location control acts on a different span. Declare the neutral part of the prompt to steer instead.')

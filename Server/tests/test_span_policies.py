@@ -5,6 +5,7 @@ from contextlib import closing
 import copy
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -303,6 +304,24 @@ def test_a_run_resolves_spans_once_up_front_and_stamps_them_once(tmp_path):
     scope = json.loads((run / 'intervention-scope.json').read_text())
     [policy] = next(e for e in scope['conditions'] if e['condition'] == 'reader')['interventionPolicies']
     assert policy['scopes'][0]['path'] == 'policySpanAddition'
+    # Moved into place whole: no temporary file is left beside it.
+    assert not list(run.glob('.span-resolutions-*'))
+
+
+def test_a_resumed_run_checks_its_sidecar_and_refuses_one_it_cannot_read(tmp_path):
+    from steerlab_server.experiment import manifest as manifest_module, tasks, task_inputs
+    model = tiny_llama()
+    prompts = agent_study(tmp_path, model, [PROMPT])
+    run = Path(tasks.run('spans', prompts, str(tmp_path), model_provider=model_provider(model), log=lambda *_: None))
+    study_manifest = manifest_module.Manifest.load('spans', str(tmp_path))
+    items = task_inputs.load_prompts(study_manifest, prompts, str(tmp_path))
+    def again(): return policy_spans.run_preflight(model, study_manifest, items, str(tmp_path), wants_choice=False, run_directory=str(run))
+    sidecar = run / policy_spans.SIDECAR_FILENAME; original = sidecar.read_bytes()
+    assert again() is not None and sidecar.read_bytes() == original
+    for damage in (b'{"schemaVersion": 1', b'{"schemaVersion": 1, "resolutions": {}}'):
+        sidecar.write_bytes(damage)
+        with pytest.raises(lifecycle_gates.LifecycleError) as raised: again()
+        assert lifecycle_gates.gate_of(raised.value) == lifecycle_gates.STUDY_DECLARATION and 'start a new run' in raised.value.repair_action
 
 
 @pytest.mark.parametrize('stage', ['beforeTheModelLoads', 'withTheTokenizer'])
@@ -360,7 +379,8 @@ def span_record(root):
     return response_record(policy, ids)
 
 
-@pytest.mark.parametrize('mutation', ['tokens', 'range', 'count', 'dose', 'units', 'summed', 'scale', 'outside', 'absent', 'duplicate', 'foreign'])
+@pytest.mark.parametrize('mutation', ['tokens', 'range', 'count', 'dose', 'units', 'summed', 'scale', 'outside', 'absent', 'duplicate', 'foreign',
+                                      'absentStrength', 'absentDose'])
 def test_tampered_span_evidence_is_not_admitted(tmp_path, mutation):
     record = span_record(tmp_path); evidence.validate_record(record)
     block = record['interventionDecisions']; span = block['spans'][0]; row = block['decisions'][0]
@@ -375,6 +395,8 @@ def test_tampered_span_evidence_is_not_admitted(tmp_path, mutation):
     if mutation == 'absent': block.pop('spans')
     if mutation == 'duplicate': block['spans'].append(copy.deepcopy(span))
     if mutation == 'foreign': span['policySHA256'] = 'b' * 64
+    if mutation == 'absentStrength': span['actions']['change'].pop('perPositionStrength')
+    if mutation == 'absentDose': span['actions']['change'].pop('summedDose')
     with pytest.raises(ValueError): evidence.validate_record(record)
 
 
@@ -438,9 +460,10 @@ def test_a_random_direction_control_matches_everything_but_the_direction(tmp_pat
     same = ('site', 'span', 'spanDose', 'stages', 'positions', 'rules', 'binding', 'probes', 'onError', 'maxEvents')
     assert {k: document[k] for k in same} == {k: original[k] for k in same}
     assert (action['residualNorm'], action['residualNormConvention'], action['bounds']) == (before['residualNorm'], before['residualNormConvention'], before['bounds'])
-    assert action['vector'] != before['vector'] and action['vectorNorm'] == pytest.approx(1.0)
-    # The construction static steering's random controls use, scaled to unit norm.
-    assert action['vector'] == pytest.approx(condition_execution._matched_norm_random('7:change', 2, 1.0))
+    # The construction of static steering's randomMatchedNorm, at the controlled direction's norm (‖v‖ = 0.5).
+    assert action['vector'] != before['vector'] and action['vectorNorm'] == before['vectorNorm']
+    assert action['vector'] == pytest.approx(condition_execution._matched_norm_random('7:change', 2, .5))
+    assert action['source']['randomDirection']['matchedNorm'] == pytest.approx(.5)
     assert condition_execution.RANDOM_VECTOR_ALGORITHM == document['control']['algorithm']
     # R is still the controlled direction's, so its sidecar stays named; the replaced tensor is recorded as such.
     assert action['source']['vectorArtifactID'] == before['source']['vectorArtifactID'] and 'tensorSHA256' not in action['source']
@@ -459,6 +482,10 @@ def test_a_random_direction_control_matches_everything_but_the_direction(tmp_pat
     assert not torch.allclose(random[1], main[1])
     record = response_record(policy, ids); evidence.validate_record(record)
     assert record['interventionDecisions']['declarations'][0]['control']['of'] == source['sha256']
+    # In residual-norm units the scale is unchanged: strength / n × R / ‖v‖, exactly the treatment's.
+    _, spans = spans_for(model)
+    _, treated_ids, treated = generated(model, [{'json': (tmp_path / source['path']).read_text(), 'sha256': source['sha256']}], spans=spans)
+    assert [r['appliedScales'] for r in record['interventionDecisions']['decisions']] == [r['appliedScales'] for r in treated.result(treated_ids)['decisions']]
     [row] = intervention_scope.span_policy_scopes(document)
     assert (row['detail']['controlKind'], row['detail']['controlOf']) == ('randomDirection', source['sha256'])
     # Attachment re-reads R from the sidecar the control still names.
@@ -466,6 +493,38 @@ def test_a_random_direction_control_matches_everything_but_the_direction(tmp_pat
     (tmp_path / 'runs/agent/agent.json').write_text(json.dumps(ModelVariant(name='base', base_model_id='example/model', base_revision='a' * 40,
                                                                             prompt_mode='rawCompletion').to_dict()))
     owner.attachment_review({'agentPath': 'runs/agent/agent.json', 'name': 'random-arm', 'policyPaths': [saved['path']], 'staticSteering': 'remove'}, tmp_path)
+
+
+def test_a_random_direction_control_of_a_raw_multiplier_adds_the_same_norm(tmp_path):
+    """A raw multiplier adds strength × v, so the control's direction carries the controlled direction's norm (here 5)."""
+    model = tiny_llama(); settings = span_settings(tmp_path, model)
+    settings['actions'] = [{'id': 'change', 'kind': 'add', 'bounds': [0, .2], 'vector': [3., 4.], 'strengthUnits': 'rawMultiplier'}]
+    source = owner.publish(settings, tmp_path, owner.review(settings, tmp_path)['planSHA256'])
+    plan, _, attachment = control(tmp_path, {'controlOf': source['path'], 'control': 'randomDirection', 'name': 'span-random', 'seed': '7'})
+    action = plan['document']['actions'][0]
+    assert action['strengthUnits'] == 'rawMultiplier' and 'vectorNorm' not in action
+    assert math.sqrt(math.fsum(x * x for x in action['vector'])) == pytest.approx(5.)
+    _, spans = spans_for(model)
+    [(_, main), *_], _, _ = generated(model, [{'json': (tmp_path / source['path']).read_text(), 'sha256': source['sha256']}], spans=spans)
+    _, spans = spans_for(model)
+    [(_, random), *_], ids, policy = generated(model, [attachment], spans=spans)
+    for position in (1, 2):
+        assert main[position].norm().item() == pytest.approx(.1 * 5, rel=1e-5)
+        assert random[position].norm().item() == pytest.approx(main[position].norm().item(), rel=1e-5)
+    evidence.validate_record(response_record(policy, ids))
+
+
+def test_a_random_direction_control_must_be_the_direction_its_seed_gives(tmp_path):
+    model = tiny_llama(); source = published_source(tmp_path, model)
+    document = owner.review({'controlOf': source['path'], 'control': 'randomDirection', 'name': 'span-random', 'seed': '7'}, tmp_path)['document']
+    artifacts.validate(document)
+    for change in ('vector', 'seedText', 'matchedNorm', 'seed'):
+        tampered = copy.deepcopy(document); action = tampered['actions'][0]
+        if change == 'vector': action['vector'] = [-x for x in action['vector']]
+        if change == 'seedText': action['source']['randomDirection']['seedText'] = '8:change'
+        if change == 'matchedNorm': action['source']['randomDirection']['matchedNorm'] = 1.
+        if change == 'seed': tampered['control']['seed'] = '8'
+        with pytest.raises(ValueError, match='recorded seed'): artifacts.validate(tampered)
 
 
 def test_a_location_control_moves_the_same_dose_to_another_span(tmp_path):
@@ -481,14 +540,37 @@ def test_a_location_control_moves_the_same_dose_to_another_span(tmp_path):
     evidence.validate_record(response_record(policy, ids))
     with pytest.raises(ValueError, match='different span'):
         owner.review({'controlOf': source['path'], 'control': 'location', 'name': 'same', 'span': SPAN}, tmp_path)
+    from steerlab_server.experiment import intervention_scope
+    [row] = intervention_scope.span_policy_scopes(document)
+    assert (row['detail']['controlKind'], row['detail']['controlSourceSpan']) == ('location', SPAN)
+
+
+@pytest.mark.parametrize('case,span,shared', [
+    # A different declaration that resolves to exactly the controlled tokens.
+    ('identical', {'kind': 'anchors', 'start': 'selected', 'end': 'example', 'startOccurrence': 1, 'endOccurrence': 1}, [1, 2]),
+    ('overlapping', {'kind': 'substring', 'text': 'example selected', 'occurrence': 2}, [2])])
+def test_a_location_control_sharing_the_controlled_tokens_refuses_before_generation(tmp_path, monkeypatch, case, span, shared):
+    from steerlab_server.experiment import resume
+    model = tiny_llama(); source = published_source(tmp_path, model)
+    _, _, attachment = control(tmp_path, {'controlOf': source['path'], 'control': 'location', 'name': 'span-location', 'span': span})
+    execution, eff, directory, kwargs, items = study(tmp_path, model, attachment, prompts=[PROMPT])
+    generations = []
+    monkeypatch.setattr(execution.generate, 'generate', lambda *a, **k: generations.append(a) or '')
+    with pytest.raises(policy_spans.SpanPreflightRefusal) as raised:
+        with closing(resume.GenerationWriter(str(directory))) as writer:
+            execution.execute_condition(model, eff, items, writer, **kwargs)
+    [problem] = raised.value.problems
+    assert generations == [] and (problem['code'], problem['promptID']) == (policy_spans.LOCATION_OVERLAP, 'item-0')
+    assert f'position(s) {shared}' in problem['reason']
 
 
 def test_a_location_control_of_another_length_refuses_before_generation(tmp_path, monkeypatch):
     from steerlab_server.experiment import resume
     model = tiny_llama(); source = published_source(tmp_path, model)
-    longer = {'kind': 'anchors', 'start': 'selected', 'end': 'example', 'startOccurrence': 1, 'endOccurrence': 2}
+    # Tokens 3 to 5 of the first item: three tokens, none of them the controlled span's 1 and 2.
+    longer = {'kind': 'anchors', 'start': 'selected', 'end': 'example', 'startOccurrence': 2, 'endOccurrence': 2}
     _, _, attachment = control(tmp_path, {'controlOf': source['path'], 'control': 'location', 'name': 'span-location', 'span': longer})
-    execution, eff, directory, kwargs, items = study(tmp_path, model, attachment, prompts=[PROMPT, 'selected example'])
+    execution, eff, directory, kwargs, items = study(tmp_path, model, attachment, prompts=[PROMPT + ' example', 'selected example'])
     generations = []
     monkeypatch.setattr(execution.generate, 'generate', lambda *a, **k: generations.append(a) or '')
     with pytest.raises(policy_spans.SpanPreflightRefusal) as raised:
@@ -496,8 +578,8 @@ def test_a_location_control_of_another_length_refuses_before_generation(tmp_path
             execution.execute_condition(model, eff, items, writer, **kwargs)
     first, second = raised.value.problems
     assert generations == [] and (first['code'], first['promptID']) == (policy_spans.LENGTH_MISMATCH, 'item-0')
-    assert '4 token(s)' in first['reason'] and '2 token(s)' in first['reason']
-    # On the second item the longer span has no second "example" after "selected": named as this control's own anchor.
+    assert '3 token(s)' in first['reason'] and '2 token(s)' in first['reason']
+    # The second item has one "selected": named as this control's own missing anchor.
     assert (second['code'], second['promptID']) == (prompt_span.ANCHOR_MISSING, 'item-1')
 
 

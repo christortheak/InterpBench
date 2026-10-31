@@ -149,6 +149,13 @@ struct InstrumentationEvidenceTests {
             { entry, _, _ in
                 var actions = entry["actions"] as? [String: [String: Any]] ?? [:]
                 actions["change"]?["summedDose"] = 0.2; entry["actions"] = actions },
+            // Both summary keys are required, null when they do not apply; Python refuses their absence too.
+            { entry, _, _ in
+                var actions = entry["actions"] as? [String: [String: Any]] ?? [:]
+                actions["change"]?.removeValue(forKey: "perPositionStrength"); entry["actions"] = actions },
+            { entry, _, _ in
+                var actions = entry["actions"] as? [String: [String: Any]] ?? [:]
+                actions["change"]?.removeValue(forKey: "summedDose"); entry["actions"] = actions },
             { _, events, _ in events[0]["appliedScales"] = ["change": 1.5] },
             { _, events, _ in
                 events[0]["inputTokenPosition"] = 0; events[0]["predictsTokenPosition"] = 1

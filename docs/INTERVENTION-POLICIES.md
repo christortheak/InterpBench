@@ -124,9 +124,10 @@ provider all work, and only the span's tokens receive them.
 **Dose.** With `perPosition` (the default), each span token gets the strength,
 so the summed dose grows with the span's length. With `fixedTotal`, the
 strength is a total: each of the span's n tokens gets strength / n, so the
-summed dose is the strength whatever the span's length. Strengths stay in
-residual-norm units, so a span token at strength s receives an offset of norm
-s × R. A `fixedTotal` dose applies to additions only, since a removal is a
+summed dose is the strength whatever the span's length. Strengths are in each
+action's units: in residual-norm units, the default, a span token at strength
+s receives an offset of norm s × R, and a raw multiplier multiplies the stored
+direction. A `fixedTotal` dose applies to additions only, since a removal is a
 fraction at each position; put a removal in its own `perPosition` policy.
 
 **Resolution.** One declaration applies to the whole study. The run resolves
@@ -202,20 +203,28 @@ so each control is reviewed, immutable, and inspectable like any policy:
  "name": "reading-location", "span": {"kind": "substring", "text": "The room was quiet."}}
 ```
 
-- **Random direction.** Each direction becomes a seeded random unit direction
-  of the same width (`gaussian-isotropic-v1`, the construction static
-  steering's random controls use), at the same layer and site, with the same
-  span, rules, bounds, dose mode, and R. In residual-norm units the added norm
-  is strength × R whatever the direction, so only the direction differs. The
-  seed is recorded, and the same seed always gives the same control.
+- **Random direction.** Each direction becomes a seeded random direction of
+  the same width and the same L2 norm (`gaussian-isotropic-v1`, the
+  construction of static steering's `randomMatchedNorm`), at the same layer
+  and site, with the same span, rules, bounds, dose mode, R, and recorded ‖v‖.
+  Each span token therefore receives an offset of the same norm as in the
+  treatment, strength × R in residual-norm units and strength × ‖v‖ as a raw
+  multiplier, so only the direction differs. The seed and the matched norm
+  are recorded, the same seed always gives the same control, and validation
+  redraws the direction from them and refuses one that differs.
 - **Location.** The same directions, strengths, and dose over a different
-  declared span, typically a neutral sentence of the same prompt. Its token
-  count must equal the controlled span's on every prompt, so the run's span
-  preflight resolves both and refuses before generating anything when they
-  differ, naming each item and both counts. A span of another length receives
-  a different summed dose (`perPosition`) or a different strength at each
-  token (`fixedTotal`), so a mismatch would confound place with dose. The
-  repair is to edit the neutral sentence until the counts agree.
+  declared span, typically a neutral sentence of the same prompt. On every
+  prompt its token count must equal the controlled span's, and it must share
+  none of the controlled span's tokens. The run's span preflight resolves both
+  spans and refuses before generating anything when either rule fails, naming
+  each item (`spanLengthMismatch` with both counts, or `spanLocationOverlap`
+  with the shared positions). A span of another length receives a different
+  summed dose (`perPosition`) or a different strength at each token
+  (`fixedTotal`), so a mismatch would confound place with dose; a span that
+  shares tokens steers part of the same place, so it is not a location
+  control. Two different declarations can still resolve to the same tokens,
+  which is why the rule is checked on the resolved positions. The repair is to
+  edit the neutral sentence.
 
 Each control's document records what it is in `control`: its kind, the
 controlled policy's SHA-256 (`of`), and the seed and algorithm, or the span it
