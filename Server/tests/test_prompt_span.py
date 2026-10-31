@@ -403,9 +403,18 @@ def test_a_template_that_normalizes_whitespace_is_aligned():
     assert "\r" not in text and "\t" not in text
     assert ev["userTextLocation"]["normalization"] == "whitespace"
     assert text[slice(*ev["renderedCharRange"])] == "\nbe kind."
-    # The "\r\n" became one newline, so one character was not rendered; the
-    # tab rendered as a space is rewritten, not dropped.
-    assert ev["unrenderedCharacters"] == 1
+    assert ev["unrenderedCharacters"] == 2  # the "\r", and the tab rendered as a space
+
+
+@pytest.mark.parametrize("user, window, expected", [
+    # A dropped space before a kept newline: the newline keeps its own index,
+    # so a span ending at the space never reaches the newline.
+    ("A: \nB", "A:\nB", [0, 1, None, 2, 3]),
+    # A CRLF rendered as LF: the newline maps to the newline, not the "\r".
+    ("x\r\ny", "x\ny", [0, None, 1, 2]),
+])
+def test_dropped_whitespace_never_takes_a_kept_characters_index(user, window, expected):
+    assert prompt_span._align(user, window) == expected
 
 
 # --- evidence ------------------------------------------------------------------

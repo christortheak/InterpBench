@@ -70,7 +70,8 @@ every kind today; a tuple so later kinds may select several) — and
 - ``userCharRange`` (None for ``allPrompt``) and ``renderedCharRange`` —
   the declared characters in user-text and in rendered-text coordinates,
   half-open; ``unrenderedCharacters`` counts declared characters the
-  template dropped (stripped or collapsed whitespace), and
+  template did not render verbatim (whitespace it stripped, collapsed, or
+  rewrote as other whitespace, such as a tab rendered as a space), and
   ``uncoveredCharacters`` rendered characters of the range that no
   token's offsets cover (both None for ``allPrompt``);
 - ``match`` — the chosen occurrence and match count (per anchor for
@@ -389,16 +390,18 @@ def declared_user_range(declaration, prompt: str) -> tuple[tuple[int, int] | Non
 
 def _align(user: str, window: str) -> list[int | None] | None:
     """Each user character's index in ``window`` (None for whitespace the
-    template dropped), or None when the two differ beyond whitespace.
-    Non-whitespace characters match one for one, in order; whitespace on
-    either side may be skipped, and whitespace the template rewrote as other
-    whitespace (a tab as a space) maps to what it became."""
+    template dropped or rewrote), or None when the two differ beyond
+    whitespace. Non-whitespace characters match one for one, in order;
+    whitespace on either side may be skipped. Whitespace is never paired
+    with DIFFERENT whitespace: a dropped character would then take the
+    index of a kept one, and a span ending at it would reach past its
+    declared text."""
     if user == window:
         return list(range(len(user)))
     mapping: list[int | None] = [None] * len(user)
     i = j = 0
     while i < len(user) and j < len(window):
-        if user[i] == window[j] or (user[i].isspace() and window[j].isspace()):
+        if user[i] == window[j]:
             mapping[i] = j
             i += 1
             j += 1
