@@ -447,10 +447,10 @@ class Page:
         samples = self.config.get('samplesPerItem') or snapshot.get('samplesPerItem')
         if samples:
             sampling.append(f'{_plural(samples, "sample")} for each item')
-        policy = self.config.get('seedPolicy') or snapshot.get('seedPolicy') or (
-            observed['seedPolicy'][0] if observed['seedPolicy'] else None)
+        # The responses' records, not the settings, say which seeds they used.
+        policy = source._seed_policy_text(self.config, snapshot, observed, code=str)
         if policy:
-            sampling.append(f'seed policy {policy}')
+            sampling.append(policy)
         if snapshot.get('reasoningEffort'):
             sampling.append(f'reasoning effort {snapshot["reasoningEffort"]}')
         mode = snapshot.get('promptMode') or (observed['promptMode'][0] if observed['promptMode'] else None)

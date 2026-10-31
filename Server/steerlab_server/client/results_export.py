@@ -1432,6 +1432,35 @@ def _code(value):
     return f"`{value}`"
 
 
+def _seed_policy_text(config, snapshot, observed, code=_code):
+    """The seed policy the responses were generated with, for the sampling
+    summary of methods.md and the results page.
+
+    The responses' own records are the authority: each sampled record stamps
+    the policy its seed came from. A run's settings can say otherwise. A
+    Python-engine run made before the declared policy was honored at one
+    sample per item (issue #3) stamped the DECLARED derivedSHA256 in
+    config.json while every record says manifestSeeds, so the settings are
+    read only when no record says, and a disagreement is stated, never
+    resolved by picking one."""
+    recorded = list(observed.get("seedPolicy") or [])
+    stated = config.get("seedPolicy") or snapshot.get("seedPolicy")
+    if not recorded:
+        return f"seed policy {code(stated)}" if stated else None
+    names = _and(code(policy) for policy in recorded)
+    if len(recorded) > 1:
+        text = (f"seed policies {names}: the responses' records do not all "
+                "state the same one")
+    elif stated and stated != recorded[0]:
+        text = f"seed policy {names}, as every response's record states it"
+    else:
+        return f"seed policy {names}"
+    if stated and stated not in recorded:
+        text += (f" (the run's settings say {code(stated)}, which is not the "
+                 "policy the responses were generated with)")
+    return text
+
+
 def _strength(value, norm_units):
     if norm_units is True:
         return f"{_number(value)} (in units of the typical activation size at that layer)"
@@ -1816,10 +1845,9 @@ def _methods(context):
     samples = config.get("samplesPerItem") or snapshot.get("samplesPerItem")
     if samples:
         sampling.append(f"{samples} sample{'s' if samples != 1 else ''} for each item")
-    policy = config.get("seedPolicy") or snapshot.get("seedPolicy") or (
-        observed["seedPolicy"][0] if observed["seedPolicy"] else None)
+    policy = _seed_policy_text(config, snapshot, observed)
     if policy:
-        sampling.append(f"seed policy {_code(policy)}")
+        sampling.append(policy)
     if snapshot.get("seeds"):
         sampling.append("declared seeds " + _and(snapshot["seeds"]))
     if snapshot.get("reasoningEffort"):
