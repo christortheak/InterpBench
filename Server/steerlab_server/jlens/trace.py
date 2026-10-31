@@ -315,15 +315,40 @@ class TraceSession:
             config, record=record, qualification_id=qualification_id,
             tokenizer_hash=tokenizer_hash, budget=budget))
 
+    @staticmethod
+    def run_tokenizer_hash(model_id: str | None,
+                           model_revision: str | None = None) -> str | None:
+        """The tokenizer hash a run stamps and folds into its configuration
+        hash, or None when it cannot be read (absence is recorded, not fatal).
+
+        Read at the study's PINNED revision when it declares one. A machine
+        that caches several snapshots of a model has no reason for the newest
+        one to be the revision the run loads, and the authoring verb pins the
+        declared revision's tokenizer, so hashing the newest snapshot made a
+        pinned ``tokenizerHash``/``configHash`` disagree at run start. With no
+        revision declared it is the newest snapshot, as it always was.
+        """
+        if not model_id:
+            return None
+        from .derive import tokenizer_identity_hash
+
+        try:
+            return tokenizer_identity_hash(model_id, model_revision or None)
+        except Exception:  # noqa: BLE001 - absence is recorded, not fatal
+            return None
+
     @classmethod
     def open(cls, *, run_directory: str, lens_id: str, config, model,
              root=None, checkpoint=None, resume: bool = False, log=None,
              evidence_tier: str = "testing", qualification_id: str | None = None,
-             budget=None, condition_identities: dict | None = None):
+             budget=None, condition_identities: dict | None = None,
+             model_revision: str | None = None):
         """Resolve and validate at RUN START, not at first use.
 
         A misconfigured readout must refuse before the model slot is spent, not
-        after the first item has already generated.
+        after the first item has already generated. ``model_revision`` is the
+        study's pinned revision, which selects the tokenizer snapshot hashed
+        (:meth:`run_tokenizer_hash`).
         """
         from . import lens_store
         from .readout import LensReadout
@@ -333,14 +358,8 @@ class TraceSession:
                                     root=root)
         writer = TraceWriter(run_directory, checkpoint=checkpoint,
                              resume=resume, log=log)
-        tokenizer_hash = None
-        if record.fit.modelID:
-            from .derive import tokenizer_identity_hash
-
-            try:
-                tokenizer_hash = tokenizer_identity_hash(record.fit.modelID)
-            except Exception:  # noqa: BLE001 - absence is recorded, not fatal
-                tokenizer_hash = None
+        tokenizer_hash = cls.run_tokenizer_hash(record.fit.modelID,
+                                                model_revision)
         return cls(record=record, config=config, readout=readout, writer=writer,
                    run_id=os.path.basename(run_directory.rstrip(os.sep)),
                    evidence_tier=evidence_tier,

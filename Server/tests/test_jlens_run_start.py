@@ -286,3 +286,65 @@ def test_the_budget_prices_seeds_not_just_samplesPerItem():
         m(seeds=[1, 2, 3], samplesPerItem=5, temperature=0.7)) == 5
     assert effective_sample_count(
         m(seeds=[1, 2, 3], samplesPerItem=5, temperature=0.0)) == 3
+
+
+# --- the tokenizer the configuration hash covers -------------------------------
+
+def _two_snapshots(tmp_path, monkeypatch):
+    """A model cache holding two snapshots of the study model with different
+    tokenizers. The pinned revision sorts FIRST, so "the newest snapshot" (the
+    last in name order) is the other one."""
+    hub = tmp_path / "hub"
+    monkeypatch.setenv("HF_HUB_CACHE", str(hub))
+    snapshots = hub / ("models--" + MODEL.replace("/", "--")) / "snapshots"
+    pinned, other = "0" * 40, "f" * 40
+    for revision in (pinned, other):
+        (snapshots / revision).mkdir(parents=True)
+        (snapshots / revision / "tokenizer.json").write_text(
+            '{"revision": "%s"}' % revision)
+    return pinned, other
+
+
+def test_run_start_hashes_the_tokenizer_at_the_pinned_revision(
+        tmp_path, monkeypatch):
+    """The authoring verb pins the declared revision's tokenizer
+    (`jlens_readout_authoring.tokenizer_hash`). Run start used to hash the
+    newest cached snapshot whatever the study pinned, so on a machine caching
+    two snapshots the pinned tokenizerHash and configHash disagreed with the
+    session's."""
+    from steerlab_server.experiment import jlens_readout_authoring
+    from steerlab_server.jlens.derive import tokenizer_identity_hash
+
+    pinned, other = _two_snapshots(tmp_path, monkeypatch)
+    record = _lens(tmp_path)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    block = {"lensID": record.lensID, "layers": [0], "watchlist": [3]}
+    session = run_readouts.open_jlens_trace(
+        Manifest.from_dict({"name": "s", "modelID": MODEL,
+                            "modelRevision": pinned, "jlensReadout": block}),
+        _FakeModel(), str(tmp_path / "ws"), run_directory=str(run_dir),
+        checkpoint=None, resuming=False, log=lambda _m: None)
+    assert session.tokenizer_hash == tokenizer_identity_hash(MODEL, pinned)
+    assert session.tokenizer_hash != tokenizer_identity_hash(MODEL, other)
+    # The same bytes the authoring verb pins for that study.
+    assert session.tokenizer_hash == \
+        jlens_readout_authoring.tokenizer_hash(MODEL, pinned)
+
+
+def test_with_no_revision_run_start_hashes_the_newest_snapshot(
+        tmp_path, monkeypatch):
+    """Unchanged behaviour for a study that pins no revision."""
+    from steerlab_server.jlens.derive import tokenizer_identity_hash
+    from steerlab_server.jlens.trace import TraceSession
+
+    _pinned, other = _two_snapshots(tmp_path, monkeypatch)
+    newest = tokenizer_identity_hash(MODEL, other)
+    assert TraceSession.run_tokenizer_hash(MODEL) == newest
+    record = _lens(tmp_path)
+    session = _open(tmp_path, {"lensID": record.lensID, "layers": [0],
+                               "watchlist": [3]})
+    assert session.tokenizer_hash == newest
+    # A pinned revision the cache does not hold is recorded as absent rather
+    # than replaced by another snapshot's tokenizer.
+    assert TraceSession.run_tokenizer_hash(MODEL, "1" * 40) is None

@@ -894,8 +894,10 @@ vocabulary it is made of; `token-options` and `derive` mint a steering
 direction indexed by an exact token; `probe` reads one prompt by position and
 layer; `g0` is the feasibility gate for a model, with two separately
 verdicted arms; `report` rolls readouts up across conditions. A study opts
-in through the manifest's `jlensReadout` block, which freeze checks against
-the lens's qualification for the study's exact model, revision and dtype.
+in through the manifest's `jlensReadout` block, which `experiment
+set-jlens-readout` declares on a draft (on either command line) and freeze
+checks against the lens's qualification for the study's exact model,
+revision, and dtype.
 [CLI-REFERENCE.md](CLI-REFERENCE.md) §6.3 has every flag.
 
 ---

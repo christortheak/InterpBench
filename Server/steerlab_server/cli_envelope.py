@@ -723,6 +723,14 @@ MAC_AUTHORITY_VERBS: dict = {
         # declaration off the manifest it is handed and never writes one.
         "set-primary-outcome": "steerlab-cli experiment set-primary-outcome "
                                "<name> <outcome>",
+        # The J-lens RUN READOUT. This engine reads, prices, and enforces the
+        # block at run start, and never writes one: the pins it carries are
+        # derived when the study is authored, on the client.
+        "set-jlens-readout": "steerlab-cli experiment set-jlens-readout "
+                             "<name> <lens-id> --lens-sha256 <sha256> "
+                             "--lens-model <model-id> --fitted-layers <l,…> "
+                             "--layers <l,…> [--top-k <k>] "
+                             "[--watchlist <token-id,…>]",
         "set-sweep-selection": "steerlab-cli experiment set-sweep-selection "
                                "<name> --objective <metric>",
         "set-sweep-grid": "steerlab-cli experiment set-sweep-grid <name> "

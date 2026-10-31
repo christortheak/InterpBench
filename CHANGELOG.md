@@ -51,6 +51,31 @@ migration that rewrites frozen bytes.
   fractional bound, such as 0.2, is no longer refused when evidence is
   collected: execution bounds strengths in float32, and the check now does too.
 
+- **A study can now declare a J-lens run readout.** The Python engine has long
+  read, priced, and enforced a study's `jlensReadout` block, but no command
+  wrote it, so no researcher could arm one. `experiment set-jlens-readout
+  <name> <lens-id> --layers <l,…>` declares it on a draft, on both command
+  lines: the top-k tokens (`--top-k`, up to 50) and the watched tokens'
+  scores (`--watchlist`, up to 64 token ids) at the chosen source layers, at
+  the final prompt position and every generated token. The logit-lens
+  companion rides along unless `--no-companion`, `--qualification` pins a
+  passing qualification, `--keep-tokens` keeps the exact sampled tokens,
+  and `""` as the lens id clears the readout. The verb prices one response at
+  the study's token cap the way run start does and says how many responses
+  the budget covers: at a 2,048-token cap, top-50 at 8 layers with the
+  companion costs 32,768 full-vocabulary projections and about 41 MB of trace
+  per response, so the default budget covers 6 responses. The `--max-…` flags
+  declare other ceilings, and a readout that cannot fit one response is
+  refused. The Python client reads the pins from the workspace's imported
+  lens and the model cache, and pins the qualification and configuration
+  hashes run start recomputes. `steerlab-cli` never reads a lens, so it takes
+  the lens's pins as flags; the client's `--dry-run` prints them with the
+  exact `steerlab-cli` spelling (`result.macCommand`), and both write the same
+  block. A lens that is missing or fitted on another model is refused with a
+  repair, as is a layer the lens never fitted, and a frozen study refuses
+  with the duplicate repair. Freezing, `data check`, and how a readout runs
+  are unchanged.
+
 ## [0.9.18] — 2026-10-25
 
 - **An analysis of an unfinished run is no longer presented as the finished

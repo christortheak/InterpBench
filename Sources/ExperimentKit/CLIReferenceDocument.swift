@@ -70,6 +70,7 @@ public enum CLIReferenceDocument {
                 "experiment set-exclusions", "experiment set-system-prompt",
                 "experiment set-parser",
                 "experiment set-instrument-scope",
+                "experiment set-jlens-readout",
                 "experiment set-evaluation-sampling",
                 "experiment set-primary-outcome",
                 "experiment set-style-taxonomy",

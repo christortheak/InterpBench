@@ -208,7 +208,11 @@ def open_jlens_trace(manifest, model, root, *, run_directory, checkpoint,
             model=model, root=root, checkpoint=checkpoint, resume=resuming,
             log=log, evidence_tier=resolved_tier,
             qualification_id=resolved_id, budget=budget,
-            condition_identities=verified_identities)
+            condition_identities=verified_identities,
+            # The tokenizer the configuration hash covers is the pinned
+            # revision's, the one `set-jlens-readout` pinned, not whichever
+            # snapshot of the model happens to be newest in this cache.
+            model_revision=getattr(manifest, "model_revision", None))
     except JLensError as exc:
         raise RuntimeError(
             f"jlensReadout is declared but cannot be armed: {exc}") from exc

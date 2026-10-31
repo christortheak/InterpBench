@@ -797,6 +797,10 @@ import Testing
             // without the second, a mixed-format study could only follow the
             // run-start gate's LOSSY repair and drop its instrument.
             "experiment set-parser", "experiment set-instrument-scope",
+            // The J-lens run readout: read, priced, and enforced by the
+            // Python engine, and writable by no verb until this one, so no
+            // study could arm a readout at all.
+            "experiment set-jlens-readout",
             // The third declaration of that shape: the evaluate subsample's
             // DESIGN (`evaluationSampling`), whose draw rule is derived from
             // the engine and can no more be typed than a registry hash can.
@@ -892,9 +896,10 @@ import Testing
         // declares the outcome a study is about so that every results
         // summary leads with it — `acknowledge-custom-code`, which
         // records that the researcher trusts a shared study's custom code —
+        // `set-jlens-readout`, the J-lens run readout no verb wrote before —
         // and `rename` and `delete`, for drafts.
         #expect(
-            declared.filter { $0.hasPrefix("experiment ") }.count == 40,
+            declared.filter { $0.hasPrefix("experiment ") }.count == 41,
             "the experiment lifecycle includes reviewed agent/vector attachment and prompt import")
     }
 
