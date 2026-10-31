@@ -466,6 +466,14 @@ def test_a_malformed_declaration_is_refused(qwen, declaration):
     _refusal(prompt_span.DECLARATION_INVALID, qwen, declaration, INSTRUCTION, QWEN_ID)
 
 
+def test_a_hand_built_declaration_is_validated_like_a_dict(qwen):
+    _refusal(prompt_span.DECLARATION_INVALID, qwen,
+             prompt_span.SpanDeclaration(prompt_span.SUBSTRING, text="Rule:", occurrence=0),
+             RULES, QWEN_ID)
+    built = prompt_span.SpanDeclaration(prompt_span.SUBSTRING, text="Rule:", occurrence=2)
+    assert _resolve(qwen, built, RULES, QWEN_ID).evidence["declaration"] == built.to_dict()
+
+
 def test_a_missing_anchor_is_refused_with_a_near_miss_named(qwen):
     _refusal(prompt_span.ANCHOR_MISSING, qwen, {"kind": "substring", "text": "Obey"}, INSTRUCTION, QWEN_ID)
     case = _refusal(prompt_span.ANCHOR_MISSING, qwen, {"kind": "substring", "text": "ignore all"},

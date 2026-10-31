@@ -270,9 +270,11 @@ def _occurrence(raw: dict, key: str) -> int | None:
 def parse_declaration(raw) -> SpanDeclaration:
     """Validate one declaration object; refuses with
     :data:`DECLARATION_INVALID`. Needs no tokenizer, so an authoring surface
-    can check the shape before anything is rendered."""
+    can check the shape before anything is rendered. A
+    :class:`SpanDeclaration` built by hand is validated through its wire
+    form like any other."""
     if isinstance(raw, SpanDeclaration):
-        return raw
+        raw = raw.to_dict()
     if not isinstance(raw, dict):
         raise _invalid(f"a span declaration must be an object — got {type(raw).__name__}")
     kind = raw.get("kind")
