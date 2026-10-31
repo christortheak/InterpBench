@@ -183,8 +183,60 @@ and strength:
 - The baseline, as always.
 
 Read each arm against the baseline, then compare them on the same items. A
-span arm needs its own controls; a random direction or another sentence of the
-prompt can change the output too.
+span arm needs its own controls, since a random direction or another sentence
+of the prompt can change the output too (next section).
+
+### Matched controls for a span policy
+
+A span arm needs controls of its own: static steering's control cells
+(`randomMatchedNorm`, `randomDirectionAblation`) cover concept conditions, not
+agent arms. Two matched controls are policies too. `science policy-review`
+derives one from a published span policy when the settings name it in
+`controlOf`, and `science policy-publish` publishes it with the review's hash,
+so each control is reviewed, immutable, and inspectable like any policy:
+
+```json
+{"controlOf": "runs/<run>/intervention.policy.json", "control": "randomDirection",
+ "name": "reading-random-direction", "seed": "1"}
+{"controlOf": "runs/<run>/intervention.policy.json", "control": "location",
+ "name": "reading-location", "span": {"kind": "substring", "text": "The room was quiet."}}
+```
+
+- **Random direction.** Each direction becomes a seeded random unit direction
+  of the same width (`gaussian-isotropic-v1`, the construction static
+  steering's random controls use), at the same layer and site, with the same
+  span, rules, bounds, dose mode, and R. In residual-norm units the added norm
+  is strength × R whatever the direction, so only the direction differs. The
+  seed is recorded, and the same seed always gives the same control.
+- **Location.** The same directions, strengths, and dose over a different
+  declared span, typically a neutral sentence of the same prompt. Its token
+  count must equal the controlled span's on every prompt, so the run's span
+  preflight resolves both and refuses before generating anything when they
+  differ, naming each item and both counts. A span of another length receives
+  a different summed dose (`perPosition`) or a different strength at each
+  token (`fixedTotal`), so a mismatch would confound place with dose. The
+  repair is to edit the neutral sentence until the counts agree.
+
+Each control's document records what it is in `control`: its kind, the
+controlled policy's SHA-256 (`of`), and the seed and algorithm, or the span it
+controls (`sourceSpan`). The hash covers it, so every response's evidence and
+the run's scope stamp name the control and what it controls. A control cannot
+be derived from another control or from a policy that does not act on a span.
+
+**Seating the controls.** Attach each control to its own new agent version,
+exactly as the span policy was attached, with `science policy-attach-review`
+and `science policy-attach`, and `"staticSteering": "remove"`:
+
+```json
+{"agentPath": "runs/<source-run>/agent.json", "name": "reading-random-direction",
+ "policyPaths": ["runs/<control-run>/intervention.policy.json"], "staticSteering": "remove"}
+```
+
+Then attach every agent version to the study with `experiment attach-agent`.
+A complete design has the baseline, the span arm, its two controls, and, for
+the reading-versus-responding question, the `lastPosition` arm. The span
+arm's effect is the part of its difference from the baseline that the random
+direction and the other location do not also produce.
 
 ## Authoring and attachment
 

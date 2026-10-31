@@ -296,7 +296,7 @@ Policies that do not act on a span keep the summary they had.
 | **Decode** | does not apply. A second policy at `lastPosition`, over prefill and decode, steers the response |
 | **Centering** | not applicable to an addition; a removal uses the direction as stored (`none`) |
 | **Dose units** | residual-norm units, as a static agent's α: `perPosition` gives each span token the strength, and `fixedTotal` spreads the strength as a total, strength / n per token. A removal (`policySpanAblation`) keeps λ, a fraction at each span token |
-| **Control** | none synthesized at run time. A matched control is its own policy and agent arm: a seeded random direction with the same span, strength, dose mode, and R, or the same direction over a different declared span of the same token length |
+| **Control** | none synthesized at run time. A matched control is its own policy and agent arm, derived by `science policy-review` from the span policy it controls (`controlOf`): a seeded random direction with the same span, strength, dose mode, and R, or the same direction over a different declared span of the same token length, which the run checks on every prompt. A control's row names its kind and the policy it controls in `detail` (`controlKind`, `controlOf`) |
 | **Pinned by** | `tests/test_span_policies.py::test_span_positions_are_applied_exactly_in_a_real_generation`, `::test_a_fixed_total_dose_spreads_the_strength_over_the_span`, `::test_the_scope_stamp_describes_where_a_span_policy_lands` |
 
 `detail` names the policy and action, the site kind, the canonical `span`

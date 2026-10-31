@@ -285,7 +285,7 @@ class Execution:
                 'declarations': [{'sha256': h, 'schemaVersion': d['schemaVersion'], 'binding': d['binding'], 'site': d['site'],
                     'probes': [{'id': p['id'], 'sha256': p['sha256']} for p in d['probes']],
                     'actions': [{**{k: v for k, v in a.items() if k != 'vector'}, **({'vectorSHA256': hashlib.sha256(json.dumps(a['vector'], separators=(',', ':')).encode()).hexdigest()} if 'vector' in a else {})} for a in d['actions']], 'rules': d['rules'], 'stages': d['stages'], 'positions': d['positions'],
-                    **{k: d[k] for k in ('span', 'spanDose') if k in d},
+                    **{k: d[k] for k in ('span', 'spanDose', 'control') if k in d},
                     'providerSHA256': d.get('provider', {}).get('sourceSHA256'),
                     'assetSHA256': {k: v['sha256'] for k, v in d.get('provider', {}).get('assets', {}).items()},
                     'onError': d['onError'], 'maxEvents': d['maxEvents']} for h, d in self.policies],

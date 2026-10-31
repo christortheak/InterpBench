@@ -412,3 +412,107 @@ def test_the_scope_stamp_describes_where_a_span_policy_lands(tmp_path):
                              'residualNorm': R, 'residualNormConvention': 'perTextMean-v1'}
     # Only the value kinds the Swift scope reader decodes: no arrays or booleans in detail.
     assert all(not isinstance(value, (list, bool)) for value in row['detail'].values())
+
+
+# --- matched controls ---------------------------------------------------------------
+
+def published_source(root, model, **changes):
+    settings = span_settings(root, model, **changes)
+    return owner.publish(settings, root, owner.review(settings, root)['planSHA256'])
+
+
+def control(root, request):
+    plan = owner.review(request, root)
+    saved = owner.publish(request, root, plan['planSHA256'])
+    return plan, saved, {'json': (root / saved['path']).read_text(), 'sha256': saved['sha256']}
+
+
+def test_a_random_direction_control_matches_everything_but_the_direction(tmp_path):
+    from steerlab_server.experiment import condition_execution, intervention_scope
+    model = tiny_llama(); source = published_source(tmp_path, model, dose='fixedTotal')
+    request = {'controlOf': source['path'], 'control': 'randomDirection', 'name': 'span-random', 'seed': '7'}
+    plan, saved, attachment = control(tmp_path, request)
+    document, original = plan['document'], source['document']
+    action, before = document['actions'][0], original['actions'][0]
+    assert document['control'] == {'kind': 'randomDirection', 'of': source['sha256'], 'seed': '7', 'algorithm': 'gaussian-isotropic-v1'}
+    same = ('site', 'span', 'spanDose', 'stages', 'positions', 'rules', 'binding', 'probes', 'onError', 'maxEvents')
+    assert {k: document[k] for k in same} == {k: original[k] for k in same}
+    assert (action['residualNorm'], action['residualNormConvention'], action['bounds']) == (before['residualNorm'], before['residualNormConvention'], before['bounds'])
+    assert action['vector'] != before['vector'] and action['vectorNorm'] == pytest.approx(1.0)
+    # The construction static steering's random controls use, scaled to unit norm.
+    assert action['vector'] == pytest.approx(condition_execution._matched_norm_random('7:change', 2, 1.0))
+    assert condition_execution.RANDOM_VECTOR_ALGORITHM == document['control']['algorithm']
+    # R is still the controlled direction's, so its sidecar stays named; the replaced tensor is recorded as such.
+    assert action['source']['vectorArtifactID'] == before['source']['vectorArtifactID'] and 'tensorSHA256' not in action['source']
+    assert action['source']['controls'] == {'policySHA256': source['sha256'], 'actionID': 'change', 'tensorSHA256': before['source']['tensorSHA256']}
+    assert any('only the direction differs' in note for note in plan['limitations'])
+    assert owner.inspect(saved['path'], tmp_path)['document']['control'] == document['control']
+    # Reproducible: the same seed reviews to the same document; another seed does not.
+    assert owner.review(request, tmp_path)['planSHA256'] == plan['planSHA256'] != owner.review({**request, 'seed': '8'}, tmp_path)['planSHA256']
+    # Executed, it adds the same norm at the same tokens, strength / n × R, whatever the direction.
+    _, spans = spans_for(model)
+    [(_, main), *_], _, _ = generated(model, [{'json': (tmp_path / source['path']).read_text(), 'sha256': source['sha256']}], spans=spans)
+    _, spans = spans_for(model)
+    [(_, random), *_], ids, policy = generated(model, [attachment], spans=spans)
+    assert (random.abs().sum(-1) > 0).nonzero().flatten().tolist() == [1, 2]
+    for position in (1, 2): assert random[position].norm().item() == pytest.approx(main[position].norm().item(), rel=1e-5)
+    assert not torch.allclose(random[1], main[1])
+    record = response_record(policy, ids); evidence.validate_record(record)
+    assert record['interventionDecisions']['declarations'][0]['control']['of'] == source['sha256']
+    [row] = intervention_scope.span_policy_scopes(document)
+    assert (row['detail']['controlKind'], row['detail']['controlOf']) == ('randomDirection', source['sha256'])
+    # Attachment re-reads R from the sidecar the control still names.
+    (tmp_path / 'runs/agent').mkdir(parents=True)
+    (tmp_path / 'runs/agent/agent.json').write_text(json.dumps(ModelVariant(name='base', base_model_id='example/model', base_revision='a' * 40,
+                                                                            prompt_mode='rawCompletion').to_dict()))
+    owner.attachment_review({'agentPath': 'runs/agent/agent.json', 'name': 'random-arm', 'policyPaths': [saved['path']], 'staticSteering': 'remove'}, tmp_path)
+
+
+def test_a_location_control_moves_the_same_dose_to_another_span(tmp_path):
+    model = tiny_llama(); source = published_source(tmp_path, model)
+    location = {'kind': 'substring', 'text': 'selected example', 'occurrence': 2}
+    plan, _, attachment = control(tmp_path, {'controlOf': source['path'], 'control': 'location', 'name': 'span-location', 'span': location})
+    document = plan['document']
+    assert document['span'] == location and document['control'] == {'kind': 'location', 'of': source['sha256'], 'sourceSpan': SPAN}
+    assert document['actions'] == source['document']['actions']
+    _, spans = spans_for(model)
+    [(_, prefill), *_], ids, policy = generated(model, [attachment], spans=spans)
+    assert (prefill.abs().sum(-1) > 0).nonzero().flatten().tolist() == [3, 4]
+    evidence.validate_record(response_record(policy, ids))
+    with pytest.raises(ValueError, match='different span'):
+        owner.review({'controlOf': source['path'], 'control': 'location', 'name': 'same', 'span': SPAN}, tmp_path)
+
+
+def test_a_location_control_of_another_length_refuses_before_generation(tmp_path, monkeypatch):
+    from steerlab_server.experiment import resume
+    model = tiny_llama(); source = published_source(tmp_path, model)
+    longer = {'kind': 'anchors', 'start': 'selected', 'end': 'example', 'startOccurrence': 1, 'endOccurrence': 2}
+    _, _, attachment = control(tmp_path, {'controlOf': source['path'], 'control': 'location', 'name': 'span-location', 'span': longer})
+    execution, eff, directory, kwargs, items = study(tmp_path, model, attachment, prompts=[PROMPT, 'selected example'])
+    generations = []
+    monkeypatch.setattr(execution.generate, 'generate', lambda *a, **k: generations.append(a) or '')
+    with pytest.raises(policy_spans.SpanPreflightRefusal) as raised:
+        with closing(resume.GenerationWriter(str(directory))) as writer:
+            execution.execute_condition(model, eff, items, writer, **kwargs)
+    first, second = raised.value.problems
+    assert generations == [] and (first['code'], first['promptID']) == (policy_spans.LENGTH_MISMATCH, 'item-0')
+    assert '4 token(s)' in first['reason'] and '2 token(s)' in first['reason']
+    # On the second item the longer span has no second "example" after "selected": named as this control's own anchor.
+    assert (second['code'], second['promptID']) == (prompt_span.ANCHOR_MISSING, 'item-1')
+
+
+@pytest.mark.parametrize('case', ['notSpan', 'ofControl', 'seed', 'kind', 'extra', 'tampered'])
+def test_control_settings_that_cannot_make_a_matched_control_refuse(tmp_path, case):
+    model = tiny_llama(); source = published_source(tmp_path, model)
+    request = {'controlOf': source['path'], 'control': 'randomDirection', 'name': 'span-random', 'seed': '7'}
+    if case == 'notSpan': request['controlOf'] = published_source(tmp_path, model, positions='lastPosition', stages=('prefill', 'decode'))['path']
+    if case == 'ofControl': request['controlOf'] = control(tmp_path, request)[1]['path']
+    if case == 'seed': request['seed'] = ' '
+    if case == 'kind': request['control'] = 'shuffled'
+    if case == 'extra': request['span'] = SPAN
+    if case == 'tampered':
+        document = owner.review(request, tmp_path)['document']; document['control']['algorithm'] = 'other'
+        with pytest.raises(ValueError, match='algorithm'): artifacts.validate(document)
+        return
+    with pytest.raises(ValueError) as raised: owner.review(request, tmp_path)
+    assert raised.value.code == 'policyControlRefused'

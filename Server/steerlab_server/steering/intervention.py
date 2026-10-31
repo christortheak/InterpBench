@@ -229,9 +229,11 @@ DOSE_UNITS_SPAN_FIXED_TOTAL = (
     "strength whatever the span's length")
 CONTROL_POLICY_SPAN = (
     "none synthesized at run time: a matched control is its own policy and "
-    "agent arm — a seeded random direction with the same span, strength, dose "
-    "mode, and R, or the same direction over a different declared span of the "
-    "same token length")
+    "agent arm, derived by science policy-review from the span policy it "
+    "controls (controlOf) — a seeded random direction with the same span, "
+    "strength, dose mode, and R, or the same direction over a different "
+    "declared span of the same token length, which the run checks on every "
+    "prompt")
 CLAIM_LIMITS_POLICY_SPAN = (
     "Changes how these prompt tokens are represented while the prompt is "
     "read. A behavioural change shows that reading this span differently "

@@ -40,6 +40,10 @@ SPAN = 'span'
 #: the strength, or the strength is a total and each position gets strength / n.
 PER_POSITION, FIXED_TOTAL = 'perPosition', 'fixedTotal'
 SPAN_DOSES = (PER_POSITION, FIXED_TOTAL)
+#: A span policy may be a matched control of another (``policy_controls``): a seeded
+#: random direction, or the same direction over another span of equal token length.
+CONTROL_KINDS = ('randomDirection', 'location')
+RANDOM_DIRECTION_ALGORITHM = 'gaussian-isotropic-v1'
 
 
 class SpanPolicyRefused(PolicyError):
@@ -80,7 +84,7 @@ def inline(text, digest):
 def validate(doc):
     probes.finite_json(doc)
     if len(json.dumps(doc).encode()) > MAX_BYTES: raise PolicyError('Keep a self-contained policy under 16 MiB.')
-    keys(doc, ('schemaVersion', 'name', 'binding', 'site', 'stages', 'positions', 'probes', 'actions', 'rules', 'onError', 'maxEvents'), ('provider', 'span', 'spanDose'))
+    keys(doc, ('schemaVersion', 'name', 'binding', 'site', 'stages', 'positions', 'probes', 'actions', 'rules', 'onError', 'maxEvents'), ('provider', 'span', 'spanDose', 'control'))
     if type(doc['schemaVersion']) is not int or doc['schemaVersion'] not in SCHEMA_VERSIONS: raise PolicyError('Use policy schemaVersion 2, or a published version-1 policy. A newer version needs a newer engine.')
     probes.text(doc['name'], 'policy name'); site(doc['site'])
     binding = doc['binding']
@@ -163,7 +167,7 @@ def validate(doc):
             if hashlib.sha256(raw).hexdigest() != asset['sha256']: raise PolicyError('Provider asset hash differs.')
         if used: raise PolicyError('Choose built-in rules or an expert provider in one policy. Combine policies to use both.')
     elif used != action_ids: raise PolicyError('Every declared action needs a rule.')
-    span_schedule(doc)
+    span_schedule(doc); control_record(doc)
     if len(json.dumps(doc).encode()) > MAX_BYTES: raise PolicyError('Keep a self-contained policy under 16 MiB.')
     return copy.deepcopy(doc)
 
@@ -192,6 +196,23 @@ def span_schedule(doc):
     if doc['spanDose'] == FIXED_TOTAL and any(a['kind'] != 'add' for a in doc['actions']):
         raise SpanPolicyRefused('A fixedTotal dose spreads one total strength over the span, which only an addition has. Removal is a fraction at each position: '
                                 'use perPosition, or put the removal in its own policy.')
+
+
+def control_record(doc):
+    """What a matched control policy records about itself: its kind, the controlled policy's
+    SHA-256, and the seed and algorithm, or the span it moves the dose from."""
+    if 'control' not in doc: return
+    control = doc['control']
+    if doc['positions'] != SPAN: raise PolicyError('A matched control is a span policy, derived from the span policy it controls.')
+    kind = control.get('kind') if isinstance(control, dict) else None
+    if kind not in CONTROL_KINDS: raise PolicyError('A control records its kind: randomDirection or location.')
+    keys(control, ('kind', 'of', 'seed', 'algorithm') if kind == 'randomDirection' else ('kind', 'of', 'sourceSpan'))
+    probes.digest(control['of'], 'controlled policy SHA-256')
+    if kind == 'randomDirection':
+        probes.text(control['seed'], 'control seed')
+        if control['algorithm'] != RANDOM_DIRECTION_ALGORITHM: raise PolicyError('A random-direction control records its algorithm, ' + RANDOM_DIRECTION_ALGORITHM + '.')
+    elif span_declaration(control['sourceSpan']) != control['sourceSpan'] or control['sourceSpan'] == doc['span']:
+        raise PolicyError('A location control records the controlled span in its canonical form, and acts on a different span.')
 
 
 def span_policies(values):
@@ -280,7 +301,7 @@ def load_attached(values):
 
 def summaries(values):
     return [{'sha256': digest, **{k: doc[k] for k in ('schemaVersion', 'name', 'binding', 'site', 'stages', 'positions', 'onError')},
-             **{k: doc[k] for k in ('span', 'spanDose') if k in doc},
+             **{k: doc[k] for k in ('span', 'spanDose', 'control') if k in doc},
              'actions': action_units(doc),
              'providerSHA256': doc.get('provider', {}).get('sourceSHA256')}
             for digest, doc in load_attached(values)]

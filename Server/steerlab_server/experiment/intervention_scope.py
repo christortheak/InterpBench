@@ -187,6 +187,9 @@ def span_policy_scopes(doc: dict) -> list[dict]:
         if units == policy_artifacts.RESIDUAL_NORM:
             detail.update(residualNorm=action["residualNorm"],
                           residualNormConvention=action["residualNormConvention"])
+        if "control" in doc:
+            # A matched control names what it controls, so its row cannot be read as a treatment.
+            detail.update(controlKind=doc["control"]["kind"], controlOf=doc["control"]["of"])
         rows.append(vocabulary.InterventionScope(
             path=vocabulary.POLICY_SPAN_ADDITION if addition else vocabulary.POLICY_SPAN_ABLATION,
             site=(vocabulary.SITE_BLOCK_INPUT if site["kind"] == "residualPre"

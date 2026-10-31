@@ -70,6 +70,17 @@ migration that rewrites frozen bytes.
   `residualPost` site adds what a static agent adds. Span policies run in single-prompt sampled studies on the
   Python engine; scripted transcripts, panels, and agent chat refuse them, and
   per-item declarations are later work.
+- **A span policy has matched controls.** `science policy-review` derives
+  one from a published span policy when the settings name it in
+  `controlOf`, and `policy-publish` publishes it with the review's hash. A
+  random-direction control replaces each direction with a seeded random unit
+  direction at the same layer, with the same span, strength, dose, and R, so
+  it adds the same norm. A location control moves the same dose to another
+  declared span, typically a neutral sentence; its token count must equal the
+  controlled span's on every prompt, and the run refuses before generating
+  anything, naming each item and both counts, when it does not. Each control
+  records its kind, seed or controlled span, and the policy it controls, and
+  that record travels into every response's evidence and the scope stamp.
 - **A new agent version can drop its static steering.** `science
   policy-attach-review` and `policy-attach` take `"staticSteering": "remove"`,
   which makes a version that changes the model only through its policies, so a

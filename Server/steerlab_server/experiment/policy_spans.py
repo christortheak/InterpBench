@@ -23,7 +23,10 @@ with :func:`prompt_span.declared_user_range` before the model loads (no
 tokenizer needed), and :func:`run_preflight` resolves every (span policy,
 prompt) pair with the loaded tokenizer before the first generation of the run.
 Any failure refuses the whole run up front with the resolver's typed refusal,
-its code and its repair, as a ``studyDeclaration`` refusal. Scripted
+its code and its repair, as a ``studyDeclaration`` refusal. A location
+control (``policy_controls``) also resolves the span it is matched to, and
+refuses (:data:`LENGTH_MISMATCH`) on any prompt where the two token counts
+differ. Scripted
 transcripts and panels are refused there too: phase 1 resolves single-prompt
 renders only.
 
@@ -179,9 +182,22 @@ def refuse(problems: list[dict], *, when: str) -> None:
         repair="; ".join(repairs[:4]), problems=problems)
 
 
-def _problem(condition, policy, prompt_id, exc) -> dict:
-    return {"condition": condition, "policy": policy, "promptID": prompt_id,
-            "code": exc.code, "reason": exc.reason, "repairAction": exc.repair_action}
+def _problem(condition, policy, prompt_id, exc, label=None) -> dict:
+    return {"condition": condition, "policy": policy, "promptID": prompt_id, "code": exc.code,
+            "reason": f"{label}: {exc.reason}" if label else exc.reason, "repairAction": exc.repair_action}
+
+
+def _declarations(doc):
+    """The spans one policy needs on every prompt: its own, and a location control's
+    controlled span, whose token count its own must equal."""
+    yield doc["span"], None
+    control = doc.get("control") or {}
+    if control.get("kind") == "location":
+        yield control["sourceSpan"], "the span this location control is matched to"
+
+
+#: A location control whose span has another token count than the span it controls.
+LENGTH_MISMATCH = "spanLengthMismatch"
 
 
 def _transcript_problems(condition, policy, prompts) -> list[dict]:
@@ -206,10 +222,11 @@ def declared_problems(condition: str, variant, prompts) -> list[dict]:
         for prompt in prompts:
             if prompt.get("transcript"):
                 continue
-            try:
-                prompt_span.declared_user_range(doc["span"], prompt["prompt"])
-            except prompt_span.SpanRefusal as exc:
-                problems.append(_problem(condition, doc["name"], prompt.get("id"), exc))
+            for declaration, label in _declarations(doc):
+                try:
+                    prompt_span.declared_user_range(declaration, prompt["prompt"])
+                except prompt_span.SpanRefusal as exc:
+                    problems.append(_problem(condition, doc["name"], prompt.get("id"), exc, label))
     return problems
 
 
@@ -243,12 +260,29 @@ def resolve_condition(resolutions: SpanResolutions, condition: str, variant, pro
         if transcripts:
             problems += transcripts
             continue
+        control = doc.get("control") or {}
         for prompt in prompts:
             try:
-                _, identifier = resolutions.resolve(doc["span"], prompt=prompt["prompt"], render=render)
+                resolved, identifier = resolutions.resolve(doc["span"], prompt=prompt["prompt"], render=render)
             except prompt_span.SpanRefusal as exc:
                 problems.append(_problem(condition, doc["name"], prompt.get("id"), exc))
                 continue
+            if control.get("kind") == "location":
+                # Matched on length, or not matched: a span of another length gets another dose.
+                try:
+                    controlled, _ = resolutions.resolve(control["sourceSpan"], prompt=prompt["prompt"], render=render)
+                except prompt_span.SpanRefusal as exc:
+                    problems.append(_problem(condition, doc["name"], prompt.get("id"), exc,
+                                             "the span this location control is matched to"))
+                    continue
+                if controlled.token_count != resolved.token_count:
+                    problems.append({
+                        "condition": condition, "policy": doc["name"], "promptID": prompt.get("id"), "code": LENGTH_MISMATCH,
+                        "reason": (f"this location control's span is {resolved.token_count} token(s) here, but the span it "
+                                   f"controls is {controlled.token_count} token(s), so the two would receive different doses"),
+                        "repairAction": ("edit the location control's span until it has as many tokens as the controlled span "
+                                         "on every item (the counts are named per item), then review and publish the control again")})
+                    continue
             resolutions.record_use(condition=condition, policy=digest,
                                    prompt_id=prompt.get("id"), identifier=identifier)
     return problems

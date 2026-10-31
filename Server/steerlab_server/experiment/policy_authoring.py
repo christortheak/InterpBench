@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 import uuid
 
-from . import policy_artifacts as artifacts, probe_library, diagnostic_archives as archives
+from . import policy_artifacts as artifacts, policy_controls, probe_library, diagnostic_archives as archives
 from .policy_artifacts import PolicyError
 from ..client import design_files
 
@@ -167,7 +167,8 @@ def review(settings, root):
     if isinstance(settings, dict) and settings.get('schemaVersion') == 1:
         raise VersionOneSettings('New policies use schemaVersion 2, which records each addition’s strength units. Published version-1 '
                                  'policies keep their meaning, a raw multiplier of the stored vector, and still attach and run.')
-    notes = []; doc = materialize(settings, root, notes)
+    if policy_controls.is_control_settings(settings): doc, notes = policy_controls.materialize(settings, root, read)
+    else: notes = []; doc = materialize(settings, root, notes)
     raw = encode(doc)
     notes = ['Validate the complete modified agent on held-out data. A useful probe does not by itself establish a useful intervention.',
              *unit_notes(doc), *span_notes(doc), *notes,
