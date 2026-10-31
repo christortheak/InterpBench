@@ -354,6 +354,149 @@ def test_probe_submits_a_durable_job(client, tmp_path, monkeypatch):
     assert (seen["model"], seen["prompt"]) == ("google/gemma-3-4b-it", "hello")
     assert seen["kwargs"]["layers"] == [0, 1]
     assert seen["kwargs"]["top_k"] == 10
+    # Absent stride is the default, and absent agent and rendering settings
+    # leave the owner's own precedence (agent's, then the default) in charge.
+    assert seen["kwargs"]["position_stride"] == 1
+    assert seen["kwargs"]["max_tokens"] is None
+    assert seen["kwargs"]["variant_path"] is None
+    assert seen["kwargs"]["prompt_mode"] is None
+    assert seen["kwargs"]["system_prompt"] is None
+
+
+def _stub_probe(monkeypatch):
+    from steerlab_server.jlens import probe as probe_mod
+
+    seen = {}
+
+    def _fake_probe(model_id, *, prompt, **kw):
+        seen.update(kw)
+        return {"claim": "stubbed", "evidenceTier": "testing",
+                "runDirectory": "runs/probe-test"}
+
+    monkeypatch.setattr(probe_mod, "probe", _fake_probe)
+    return seen
+
+
+def _probe_body(**extra):
+    return {"modelID": "google/gemma-3-4b-it", "prompt": "hello", **extra}
+
+
+def test_probe_carries_the_cli_agent_and_rendering_settings(client, tmp_path,
+                                                            monkeypatch):
+    """`--variant`, `--prompt-mode`, and `--system-prompt` reach the owner
+    unchanged, so the route reads the same condition the CLI would."""
+    seen = _stub_probe(monkeypatch)
+    _import_a_lens(tmp_path)
+    agent = tmp_path / "ws" / "runs" / "model-variants" / "agent.json"
+    agent.parent.mkdir(parents=True)
+    agent.write_text("{}")
+    resp = client.post("/api/jlens/probe", json=_probe_body(
+        variantPath="runs/model-variants/agent.json",
+        promptMode="rawCompletion", systemPrompt=""))
+    assert resp.status_code == 200, resp.json()
+    job = _wait_for_job(client, resp.json()["jobId"])
+    assert job["status"] == "succeeded", job
+    assert seen["variant_path"] == "runs/model-variants/agent.json"
+    assert seen["prompt_mode"] == "rawCompletion"
+    # An explicit empty system prompt is a value, not an absence: it
+    # overrides the agent's own, exactly as `--system-prompt ""` does.
+    assert seen["system_prompt"] == ""
+
+
+@pytest.mark.parametrize("reference, status", [
+    ("../outside.json", 400),            # traversal out of the workspace
+    ("runs/model-variants/none.json", 404),
+    ("", 400),
+])
+def test_probe_contains_the_agent_path(client, tmp_path, monkeypatch,
+                                       reference, status):
+    _stub_probe(monkeypatch)
+    _import_a_lens(tmp_path)
+    (tmp_path / "outside.json").write_text("{}")
+    resp = client.post("/api/jlens/probe",
+                       json=_probe_body(variantPath=reference))
+    assert resp.status_code == status
+    assert "jobId" not in resp.json()
+
+
+def test_probe_refuses_an_unknown_prompt_mode(client, tmp_path, monkeypatch):
+    _stub_probe(monkeypatch)
+    _import_a_lens(tmp_path)
+    resp = client.post("/api/jlens/probe",
+                       json=_probe_body(promptMode="chat"))
+    assert resp.status_code == 400
+    assert "promptMode" in resp.json()["detail"]
+
+
+def test_probe_honors_an_explicit_zero(client, tmp_path, monkeypatch):
+    """`topK: 0` is a directions-only probe and `stride: 0` reads every
+    position, as `--top-k 0` and `--stride 0` do on the CLI; `or 10` used to
+    turn both back into the defaults."""
+    seen = _stub_probe(monkeypatch)
+    _import_a_lens(tmp_path)
+    (tmp_path / "ws" / "runs" / "v").mkdir(parents=True)
+    resp = client.post("/api/jlens/probe", json=_probe_body(
+        topK=0, stride=0, maxTokens=0, directions=["runs/v/concept"]))
+    assert resp.status_code == 200, resp.json()
+    job = _wait_for_job(client, resp.json()["jobId"])
+    assert job["status"] == "succeeded", job
+    assert (seen["top_k"], seen["position_stride"], seen["max_tokens"]) == (0, 0, 0)
+    assert seen["directions"] == ["runs/v/concept"]
+
+
+@pytest.mark.parametrize("key, value", [
+    ("topK", -1), ("topK", "5"), ("topK", 2.5), ("topK", True),
+    ("stride", -2), ("stride", "1"), ("maxTokens", -1), ("maxTokens", "64"),
+])
+def test_probe_refuses_an_invalid_count_before_any_job(client, tmp_path,
+                                                       monkeypatch, key, value):
+    _stub_probe(monkeypatch)
+    _import_a_lens(tmp_path)
+    resp = client.post("/api/jlens/probe", json=_probe_body(**{key: value}))
+    assert resp.status_code == 400
+    assert key in resp.json()["detail"]
+    assert "non-negative integer" in resp.json()["detail"]
+
+
+def test_a_directions_only_probe_needs_something_to_read(client, tmp_path,
+                                                         monkeypatch):
+    _stub_probe(monkeypatch)
+    _import_a_lens(tmp_path)
+    resp = client.post("/api/jlens/probe", json=_probe_body(topK=0))
+    assert resp.status_code == 400
+    assert "nothing to read" in resp.json()["detail"]
+
+
+def test_a_controller_refuses_the_probe_and_names_the_batch_operation(
+        client, tmp_path, monkeypatch):
+    """The model would load in a process that never holds one. The same role
+    gate the model-loading routes use decides, the refusal is typed, and its
+    repair names the managed operation that runs the probe as a GPU job."""
+    _stub_probe(monkeypatch)
+    _import_a_lens(tmp_path)
+    monkeypatch.setenv("STEERLAB_SERVER_ROLE", "controller")
+    monkeypatch.delenv("STEERLAB_ALLOW_RESIDENT_MODELS", raising=False)
+    resp = client.post("/api/jlens/probe", json=_probe_body())
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail["code"] == "jlensProbeNeedsGPUJob"
+    assert detail["operation"] == "jlens-probe-batch"
+    assert "jlens-probe-batch" in detail["repairAction"]
+    assert "science-plan" in detail["repairAction"]
+    assert "jobId" not in resp.json()
+
+
+def test_the_resident_model_escape_hatch_still_admits_the_probe(
+        client, tmp_path, monkeypatch):
+    """A server run by hand inside a GPU allocation opts in exactly as it
+    does for /api/load."""
+    _stub_probe(monkeypatch)
+    _import_a_lens(tmp_path)
+    monkeypatch.setenv("STEERLAB_SERVER_ROLE", "controller")
+    monkeypatch.setenv("STEERLAB_ALLOW_RESIDENT_MODELS", "1")
+    resp = client.post("/api/jlens/probe", json=_probe_body())
+    assert resp.status_code == 200, resp.json()
+    assert _wait_for_job(client, resp.json()["jobId"])["status"] == "succeeded"
 
 
 def test_qualify_contains_caller_named_file_inputs(client, tmp_path):

@@ -641,6 +641,65 @@ def _refuse_batch_only_verb(verb: str) -> None:
                "allocation")
 
 
+#: The managed operation a controller names when a J-lens probe cannot run
+#: in its own process. Kept here, beside the refusal, so the repair cannot
+#: drift from the operation's catalog id.
+JLENS_PROBE_BATCH_OPERATION = "jlens-probe-batch"
+
+
+def _refuse_controller_jlens_probe() -> None:
+    """Typed 409 for ``/api/jlens/probe`` on a controller, before any job.
+
+    The same role gate the model-loading routes use. The probe is a durable
+    job that loads the model in THIS process, and it is deliberately not
+    forwarded to a GPU session: a session worker has no job subsystem. The
+    repair is the managed batch operation, which plans the GPU job, re-checks
+    its inputs on the node, and brings the run home under custody."""
+    if not _controller_blocks_resident_models():
+        return
+    session_state = _registered_session_state()
+    session_clause = (
+        f" A GPU session is registered (state: {session_state}), but this "
+        "route is not delegated to it: session workers have no job queue."
+        if session_state is not None else "")
+    raise HTTPException(status_code=409, detail={
+        "code": "jlensProbeNeedsGPUJob",
+        "reason": "The J-lens probe loads the model in the server's own "
+                  "process, and this server is a cluster controller "
+                  "(role: controller), which never holds a model."
+                  + session_clause,
+        "repairAction": (
+            f"Submit the prompts as the managed operation "
+            f"{JLENS_PROBE_BATCH_OPERATION}: author it with science "
+            f"interview, draft, and publish, review science-plan on this "
+            f"controller, then science-submit, and bring the run home with "
+            f"science-export and science-fetch (remote science-* on the Mac "
+            f"command line, runner science-* on the Python client). "
+            f"STEERLAB_ALLOW_RESIDENT_MODELS=1 remains the manual escape "
+            f"hatch for a server running inside an interactive GPU "
+            f"allocation."),
+        "operation": JLENS_PROBE_BATCH_OPERATION,
+    })
+
+
+def _probe_count(body: dict, key: str, default, *, purpose: str):
+    """A non-negative integer setting of the probe route.
+
+    Absent (or null) means the default; an explicit 0 is passed through
+    exactly as the engine CLI passes ``--top-k 0`` and ``--stride 0``. A
+    boolean, a float, a string, or a negative number is refused here, before
+    a job exists, rather than coerced into a different request."""
+    value = body.get(key)
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{key} must be a non-negative integer ({purpose}); got "
+                   f"{value!r}")
+    return value
+
+
 def _retain_worker_partial(kind: str, exc: BaseException, log) -> dict | None:
     """Package what a GPU-session worker produced before failing.
 
@@ -2572,10 +2631,18 @@ def build_router(state: ServiceState) -> APIRouter:
         A durable job: it loads the model. Bounded by construction (one prompt
         × armed layers × positions), so it sits outside the study trace budget
         and refuses on its own projection ceiling rather than wedging a node.
+
+        It takes the engine CLI's agent and rendering settings
+        (``variantPath``, ``promptMode``, ``systemPrompt``) with the CLI's
+        precedence: an explicit value wins, then the agent's own, then the
+        default. On a cluster controller it refuses before any job and names
+        the managed batch operation, which is where GPU probing belongs.
         """
+        from ..experiment import prompt_render
         from ..jlens import importer, lens_store, probe as probe_mod
         from ..jlens.schemas import JLensError
 
+        _refuse_controller_jlens_probe()
         model_id = str(body.get("modelID", "")).strip()
         prompt = str(body.get("prompt", "")).strip()
         if not model_id or not prompt:
@@ -2589,6 +2656,43 @@ def build_router(state: ServiceState) -> APIRouter:
                 raise HTTPException(
                     status_code=400,
                     detail=f"{key} must be a list of integers")
+        top_k = _probe_count(body, "topK", 10,
+                             purpose="0 reads no vocabulary, for a "
+                                     "directions-only probe")
+        stride = _probe_count(body, "stride",
+                              probe_mod.DEFAULT_POSITION_STRIDE,
+                              purpose="every Nth position; 0 reads every "
+                                      "position, as the CLI does")
+        max_tokens = _probe_count(body, "maxTokens", None,
+                                  purpose="0 does not truncate")
+        prompt_mode = body.get("promptMode")
+        if prompt_mode is not None and prompt_mode not in (
+                prompt_render.CHAT_ASSISTANT, prompt_render.RAW_COMPLETION):
+            raise HTTPException(
+                status_code=400,
+                detail=f"promptMode must be {prompt_render.CHAT_ASSISTANT!r} "
+                       f"or {prompt_render.RAW_COMPLETION!r}; omit it for "
+                       f"the agent's own mode (or chat when there is no "
+                       f"agent)")
+        system_prompt = body.get("systemPrompt")
+        if system_prompt is not None and not isinstance(system_prompt, str):
+            raise HTTPException(
+                status_code=400,
+                detail="systemPrompt must be a string; omit it for the "
+                       "agent's own system prompt")
+        # The agent JSON is contained like every other caller-named workspace
+        # file (inside the root, no traversal); the owner then hashes it and
+        # everything it references.
+        variant_path = body.get("variantPath")
+        if variant_path is not None:
+            if not isinstance(variant_path, str) or not variant_path.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="variantPath must name an agent JSON file in the "
+                           "workspace")
+            variant_path = variant_path.strip()
+            state.resolver.require_file(variant_path,
+                                        allow_local_absolute=True)
         # Caller-named artifact locators are contained exactly like the
         # support route's vectorID.
         directions = []
@@ -2596,19 +2700,26 @@ def build_router(state: ServiceState) -> APIRouter:
             state.resolver.require_dir(os.path.dirname(str(reference)),
                                        allow_local_absolute=True)
             directions.append(str(reference))
+        if top_k == 0 and not (body.get("pin") or body.get("pinIDs")
+                               or directions):
+            raise HTTPException(
+                status_code=400,
+                detail="nothing to read: with topK 0, name pin, pinIDs, or "
+                       "directions")
 
         def work(job):
             job.log(f"probing {model_id} over {len(prompt)} char(s)")
             report = probe_mod.probe(
                 model_id, prompt=prompt, lens_id=body.get("lensID"),
                 revision=body.get("revision"), layers=body.get("layers"),
-                top_k=int(body.get("topK") or 10),
+                top_k=top_k,
                 pin_words=body.get("pin") or (),
                 pin_ids=body.get("pinIDs") or (),
                 directions=directions,
-                position_stride=int(
-                    body.get("stride") or probe_mod.DEFAULT_POSITION_STRIDE),
-                max_tokens=body.get("maxTokens"),
+                variant_path=variant_path,
+                prompt_mode=prompt_mode, system_prompt=system_prompt,
+                position_stride=stride,
+                max_tokens=max_tokens,
                 device=body.get("device"), dtype=body.get("dtype"),
                 log=job.log)
             job.log(f"{report['claim']} [{report['evidenceTier']}] → "
