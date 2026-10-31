@@ -142,10 +142,17 @@ def classify(manifest, verb: str) -> Family | None:
             + ", ".join(sorted(set(manifest.outcome_instruments))))
     stochastic = (manifest.temperature or 0) > 0 or manifest.samples_per_item > 1
     if stochastic:
+        # The run's own per-item count: a panel's play-throughs, else
+        # `sampling.sample_count` (one per listed seed, or samplesPerItem
+        # under derived seeds).
+        from ..experiment import sampling
+        per_item = (manifest.samples_per_item
+                    if getattr(manifest, "study_kind", "") == "multiAgent"
+                    else sampling.sample_count(manifest))
         return Family(
             SAMPLED_STOCHASTIC,
             f"sampled generation at temperature {manifest.temperature} × "
-            f"{manifest.samples_per_item} sample(s) per item")
+            f"{per_item} sample(s) per item")
     return Family(
         LONG_FORM_TEXT,
         f"greedy sampled text up to {manifest.max_tokens} tokens per record")

@@ -128,7 +128,7 @@ import Testing
             "singleRegimeCapabilityReading", "modelCapabilities",
             "capabilityControlNotApplied", "computeCannotRun",
             "storedChoicesReadDifferently", "validationOverlapsExtraction",
-            "unfinishedSourceAnalyzed",
+            "unfinishedSourceAnalyzed", "seedSettingNotUsed",
         ]
         #expect(CLIAdvisory.vocabulary == serverLiteral)
     }

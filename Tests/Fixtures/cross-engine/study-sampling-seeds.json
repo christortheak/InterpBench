@@ -1,0 +1,455 @@
+{
+  "cases": [
+    {
+      "advisories": [
+        "the seed list (3 seeds) is not used under seedPolicy derivedSHA256: each item runs samplesPerItem (1) time, each with its own seed derived from the study hash, condition, prompt ID, and sample index. To generate more responses per item, raise samplesPerItem."
+      ],
+      "derivesSeeds": true,
+      "label": "derivedSHA256, one sample per item, warm, seed list",
+      "manifest": {
+        "samplesPerItem": 1,
+        "seedPolicy": "derivedSHA256",
+        "seeds": [
+          11,
+          22,
+          33
+        ],
+        "temperature": 0.7
+      },
+      "records": [
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 1060262012863694703
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 807249983815239017
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 5974560820258424598
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 315500303309602878
+        }
+      ],
+      "sampleCount": 1,
+      "seedPolicy": "derivedSHA256"
+    },
+    {
+      "advisories": [],
+      "derivesSeeds": true,
+      "label": "derivedSHA256, one sample per item, warm, one seed",
+      "manifest": {
+        "samplesPerItem": 1,
+        "seedPolicy": "derivedSHA256",
+        "seeds": [
+          11
+        ],
+        "temperature": 0.7
+      },
+      "records": [
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 1060262012863694703
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 807249983815239017
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 5974560820258424598
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 315500303309602878
+        }
+      ],
+      "sampleCount": 1,
+      "seedPolicy": "derivedSHA256"
+    },
+    {
+      "advisories": [],
+      "derivesSeeds": true,
+      "label": "derivedSHA256, three samples per item, warm",
+      "manifest": {
+        "samplesPerItem": 3,
+        "seedPolicy": "derivedSHA256",
+        "seeds": [
+          11
+        ],
+        "temperature": 0.7
+      },
+      "records": [
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 1060262012863694703
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 1,
+          "seed": 2839364802549012291
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 2,
+          "seed": 1534090220425388826
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 807249983815239017
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 1,
+          "seed": 5009250354031290793
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 2,
+          "seed": 8647773190567914552
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 5974560820258424598
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 1,
+          "seed": 4472760989959544728
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 2,
+          "seed": 7322491089035115478
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 315500303309602878
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 1,
+          "seed": 5394555581451716526
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 2,
+          "seed": 4329227765912701248
+        }
+      ],
+      "sampleCount": 3,
+      "seedPolicy": "derivedSHA256"
+    },
+    {
+      "advisories": [],
+      "derivesSeeds": false,
+      "label": "manifestSeeds, warm",
+      "manifest": {
+        "seedPolicy": "manifestSeeds",
+        "seeds": [
+          11,
+          22,
+          33
+        ],
+        "temperature": 0.7
+      },
+      "records": [
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 2,
+          "seed": 33
+        }
+      ],
+      "sampleCount": 3,
+      "seedPolicy": "manifestSeeds"
+    },
+    {
+      "advisories": [],
+      "derivesSeeds": false,
+      "label": "undeclared, warm",
+      "manifest": {
+        "seeds": [
+          11,
+          22,
+          33
+        ],
+        "temperature": 0.7
+      },
+      "records": [
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 2,
+          "seed": 33
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 1,
+          "seed": 22
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 2,
+          "seed": 33
+        }
+      ],
+      "sampleCount": 3,
+      "seedPolicy": "manifestSeeds"
+    },
+    {
+      "advisories": [
+        "seedPolicy derivedSHA256 has no effect at temperature 0: decoding is greedy and no seed is used. Seeds are derived per record only when the temperature is above 0."
+      ],
+      "derivesSeeds": false,
+      "label": "derivedSHA256, greedy",
+      "manifest": {
+        "seedPolicy": "derivedSHA256",
+        "seeds": [
+          11
+        ],
+        "temperature": 0.0
+      },
+      "records": [
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        }
+      ],
+      "sampleCount": 1,
+      "seedPolicy": "manifestSeeds"
+    },
+    {
+      "advisories": [],
+      "derivesSeeds": false,
+      "label": "undeclared, greedy",
+      "manifest": {
+        "seeds": [
+          11
+        ],
+        "temperature": 0.0
+      },
+      "records": [
+        {
+          "condition": "baseline",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "baseline",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-001",
+          "sampleIndex": 0,
+          "seed": 11
+        },
+        {
+          "condition": "steered",
+          "promptID": "respondent-002",
+          "sampleIndex": 0,
+          "seed": 11
+        }
+      ],
+      "sampleCount": 1,
+      "seedPolicy": "manifestSeeds"
+    }
+  ],
+  "conditions": [
+    "baseline",
+    "steered"
+  ],
+  "experimentHash": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+  "note": "the seed rule of an ordinary study's sampled records: a declared derivedSHA256 above temperature 0 derives one seed per (condition, promptID, sampleIndex) for samplesPerItem samples, at any samplesPerItem; otherwise each item runs once per listed seed",
+  "prompts": [
+    {
+      "id": "respondent-001",
+      "prompt": "Describe your week in one sentence."
+    },
+    {
+      "id": "respondent-002",
+      "prompt": "Describe your week in one sentence."
+    }
+  ]
+}

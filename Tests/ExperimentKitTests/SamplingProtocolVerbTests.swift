@@ -289,6 +289,57 @@ import Testing
         }
     }
 
+    /// A seed setting the run will not read advises where it is written and
+    /// again at verify: derivedSHA256 at temperature 0 (greedy, no seed), and
+    /// derivedSHA256 beside a seed list it sets aside. Server twin: the
+    /// client's `set-protocol` and `verify` (`test_study_sampling_seeds.py`).
+    @Test func anUnusedSeedSettingAdvisesAtDeclarationAndVerify() async throws {
+        try await withTempRoot { root in
+            try draft("demo")
+            let greedy = await invoke(
+                ["set-sampling", "demo", "--seed-policy", "derivedSHA256"])
+            #expect(greedy.envelope.exitCode == 0)
+            #expect(greedy.envelope.state == .okWithAdvisories)
+            let greedyNotes = (greedy.envelope.advisories ?? []).filter {
+                $0.code == CLIAdvisory.seedSettingNotUsed.rawValue
+            }
+            #expect(greedyNotes.count == 1)
+            #expect(greedyNotes.first?.detail.contains("greedy") == true)
+
+            var manifest = try ExperimentStore.load(name: "demo")
+            manifest.seeds = [11, 22, 33]
+            try ExperimentStore.save(manifest)
+            let warm = await invoke(["set-sampling", "demo", "--temperature", "0.7"])
+            #expect(warm.envelope.exitCode == 0)
+            let warmNotes = (warm.envelope.advisories ?? []).filter {
+                $0.code == CLIAdvisory.seedSettingNotUsed.rawValue
+            }
+            let loaded = try ExperimentStore.load(name: "demo")
+            #expect(warmNotes.map(\.detail) == StudySampling.unusedSeedSettings(loaded))
+            #expect(warmNotes.first?.detail.contains("(3 seeds) is not used") == true)
+
+            // A study that measures something verifies, and verify says it too.
+            let concept = root.appending(path: "prompts/concepts/fair")
+            try FileManager.default.createDirectory(at: concept, withIntermediateDirectories: true)
+            try Data("{\"text\": \"fair\"}\n".utf8).write(to: concept.appending(component: "positive.jsonl"))
+            try Data("{\"text\": \"unfair\"}\n".utf8).write(to: concept.appending(component: "negative.jsonl"))
+            let attached = await invoke(["attach", "demo", "fair"])
+            #expect(attached.envelope.exitCode == 0, "\(attached.envelope)")
+            let verified = await invoke(["verify", "demo"])
+            #expect(verified.envelope.exitCode == 0, "\(verified.envelope)")
+            #expect(
+                (verified.envelope.advisories ?? []).map(\.code)
+                    == [CLIAdvisory.seedSettingNotUsed.rawValue])
+
+            let fixed = await invoke(
+                ["set-sampling", "demo", "--seed-policy", "manifestSeeds"])
+            #expect(
+                !(fixed.envelope.advisories ?? []).contains {
+                    $0.code == CLIAdvisory.seedSettingNotUsed.rawValue
+                })
+        }
+    }
+
     // MARK: - The set-exclusions verb
 
     @Test func rulesAreDeclaredWithTheirBoundsAndEchoed() async throws {

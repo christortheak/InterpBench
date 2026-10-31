@@ -31,6 +31,92 @@ def derive_seed(experiment_hash: str, condition: str, prompt_id: str,
     return int.from_bytes(hashlib.sha256(blob).digest()[:8], "big") % (2 ** 63)
 
 
+DERIVED_SHA256 = "derivedSHA256"
+MANIFEST_SEEDS = "manifestSeeds"
+
+
+def derives_seeds(temperature, samples_per_item, seed_policy) -> bool:
+    """The seed rule of an ordinary study's sampled records — the ONE place
+    it is decided (Swift twin ``StudySampling.derivesSeeds``).
+
+    Records derive per-record seeds (:func:`derive_seed`) when decoding is
+    stochastic and the study either declares ``derivedSHA256`` or samples an
+    item more than once; ``samplesPerItem`` then sets the per-item count, at
+    any value including 1. Otherwise they enumerate the manifest's fixed seed
+    list, one generation per listed seed — the behaviour of every undeclared
+    and ``manifestSeeds`` study, unchanged. At temperature 0 decoding is
+    greedy and no seed is drawn, so the declaration has nothing to decide.
+
+    Before 2026-10-31 only ``samplesPerItem > 1`` selected derived seeds, so a
+    study declaring ``derivedSHA256`` with one sample per item reused the
+    fixed list for every item (public issue #3). Its records said so: they
+    stamp ``seedPolicy`` per record."""
+    if not temperature or temperature <= 0:
+        return False
+    return (samples_per_item or 1) > 1 or seed_policy == DERIVED_SHA256
+
+
+def manifest_derives_seeds(manifest, temperature=None) -> bool:
+    """:func:`derives_seeds` for a loaded manifest, at ``temperature`` when
+    given (a condition's effective temperature) and the study's otherwise."""
+    return derives_seeds(
+        manifest.temperature if temperature is None else temperature,
+        manifest.samples_per_item, manifest.seed_policy)
+
+
+def sample_count(manifest) -> int:
+    """Generations per (condition, prompt) under the seed rule above: the
+    declared ``samplesPerItem`` when seeds are derived, else one per listed
+    seed."""
+    if manifest_derives_seeds(manifest):
+        return max(1, manifest.samples_per_item)
+    return max(1, len(manifest.seeds))
+
+
+def record_seeds(manifest, *, experiment_hash: str, condition: str,
+                 prompt_id: str, temperature=None) -> tuple[str, list]:
+    """The seed policy in effect and the ``(sampleIndex, seed)`` pairs one
+    (condition, prompt) cell generates, in emission order."""
+    if manifest_derives_seeds(manifest, temperature):
+        return DERIVED_SHA256, [
+            (index, derive_seed(experiment_hash, condition, prompt_id, index))
+            for index in range(max(1, manifest.samples_per_item))]
+    return MANIFEST_SEEDS, list(enumerate(manifest.seeds))
+
+
+def unused_seed_settings(temperature, samples_per_item, seed_policy, seeds,
+                         study_kind=None) -> list[str]:
+    """Declared seed settings an ordinary study's run will not read — said at
+    ``verify`` and at the sampling write, never refused (advisory code
+    ``seedSettingNotUsed``). A panel (``multiAgent``) says nothing here: its
+    turns take seeds by their own rule and never read the policy or the list.
+    Byte-identical to the Swift twin ``StudySampling.unusedSeedSettings``; the
+    shared fixture ``Tests/Fixtures/cross-engine/study-sampling-seeds.json``
+    pins both."""
+    if seed_policy != DERIVED_SHA256 or study_kind == "multiAgent":
+        return []
+    if not temperature or temperature <= 0:
+        return ["seedPolicy derivedSHA256 has no effect at temperature 0: "
+                "decoding is greedy and no seed is used. Seeds are derived "
+                "per record only when the temperature is above 0."]
+    count = len(seeds or [])
+    if count > 1:
+        runs = max(1, samples_per_item or 1)
+        return [f"the seed list ({count} seeds) is not used under seedPolicy "
+                f"derivedSHA256: each item runs samplesPerItem ({runs}) "
+                f"time{'' if runs == 1 else 's'}, each with its own seed "
+                "derived from the study hash, condition, prompt ID, and "
+                "sample index. To generate more responses per item, raise "
+                "samplesPerItem."]
+    return []
+
+
+def manifest_unused_seed_settings(manifest) -> list[str]:
+    """:func:`unused_seed_settings` for a loaded manifest."""
+    return unused_seed_settings(manifest.temperature, manifest.samples_per_item,
+                                manifest.seed_policy, manifest.seeds,
+                                study_kind=manifest.study_kind)
+
 
 @contextmanager
 def seeded_generation(temperature: float, seed: int):

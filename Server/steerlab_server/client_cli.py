@@ -1894,11 +1894,24 @@ def _experiment(invocation: Invocation) -> CLIResult:
         # declared — an effort level ASSUMED from the model id because no
         # probed record exists, for one — said at the write, not at the run.
         advisories = []
+        from .cli_envelope import advisory as _advisory
         if "reasoningEffort" in fields or "systemPrompt" in fields:
-            from .cli_envelope import advisory as _advisory
             for note in store.capability_advisories(document):
                 sys.stderr.write(f"ADVISORY: {note}\n")
                 advisories.append(_advisory("modelCapabilities", note))
+        # A seed setting the run will not read, said where it was written.
+        # Swift twin: `set-sampling`'s advisories.
+        if any(key in fields for key in (
+                "temperature", "samplesPerItem", "seedPolicy", "seeds")):
+            from .experiment import sampling as _sampling
+            for note in _sampling.unused_seed_settings(
+                    document.get("temperature", 0.0),
+                    document.get("samplesPerItem", 1),
+                    document.get("seedPolicy"),
+                    document.get("seeds") or [0],
+                    study_kind=document.get("studyKind")):
+                sys.stderr.write(f"ADVISORY: {note}\n")
+                advisories.append(_advisory("seedSettingNotUsed", note))
         return CLIResult(
             message=line, changed=bool(applied),
             state="okWithAdvisories" if advisories else "ready",
@@ -2195,6 +2208,13 @@ def _experiment(invocation: Invocation) -> CLIResult:
                     manifest.raw, _paths.project_root(), program=PROGRAM):
                 sys.stderr.write(f"ADVISORY: {note}\n")
                 advisories.append(_advisory("computeCannotRun", note))
+            # A declared seed setting the run will not read (seedPolicy
+            # derivedSHA256 at temperature 0, or beside a seed list it sets
+            # aside). Swift twin: the Mac `experiment verify`.
+            from .experiment import sampling as _sampling
+            for note in _sampling.manifest_unused_seed_settings(manifest):
+                sys.stderr.write(f"ADVISORY: {note}\n")
+                advisories.append(_advisory("seedSettingNotUsed", note))
             return CLIResult(
                 message="OK — all pinned inputs verified",
                 state="okWithAdvisories" if advisories else "ready",

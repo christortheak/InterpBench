@@ -389,6 +389,10 @@ def test_every_committed_fixture_has_a_staleness_test():
         # Checked inline in test_sampled_effect_pairing.py (analyze re-run
         # over the committed records, and the derived seeds re-derived).
         "sampled-effect-pairing.json",
+        # Checked inline in test_study_sampling_seeds.py (every case re-run
+        # through the seed rule: policy, count, seeds, and advisories) and
+        # read by StudySamplingTests.swift.
+        "study-sampling-seeds.json",
         # Checked inline in test_effect_outcomes.py (analyze re-run over the
         # committed records; rows, outcome list, and definitions compared).
         "effect-outcomes.json",
