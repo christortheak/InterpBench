@@ -303,6 +303,18 @@ def test_the_engine_advertises_the_rule_and_a_client_can_read_it():
     assert not sampling.remote_honors_declared_seed_policy(
         {"remoteStudy": {"variantStudySampling": True}})
     assert not sampling.remote_honors_declared_seed_policy(None)
+    # A nested value wins over the dotted one when both are present, as in
+    # ClusterCapabilities.supportsDeclaredSeedPolicy; a nested null does not
+    # count as present.
+    assert not sampling.remote_honors_declared_seed_policy(
+        {"remoteStudy": {"declaredSeedPolicy": False},
+         "features": {"remoteStudy.declaredSeedPolicy": True}})
+    assert sampling.remote_honors_declared_seed_policy(
+        {"remoteStudy": {"declaredSeedPolicy": True},
+         "features": {"remoteStudy.declaredSeedPolicy": False}})
+    assert sampling.remote_honors_declared_seed_policy(
+        {"remoteStudy": {"declaredSeedPolicy": None},
+         "features": {"remoteStudy.declaredSeedPolicy": True}})
 
 
 def test_the_refusal_is_the_mac_clients_sentence():
