@@ -876,6 +876,22 @@ class Manifest:
         from . import experiment_store
         return experiment_store.capability_advisories(self.raw, root)
 
+    def _baseline_only_rubric_violations(self, base: str) -> list[str]:
+        """The paired-rubric refusal for a study of the baseline alone (see
+        :meth:`verify`): only when the study is that shape, its effective
+        evaluation is judged, and its pinned rubric reads as paired."""
+        if not baseline_only_study(self.raw):
+            return []
+        spec, _source = self.effective_evaluation()
+        if spec is None or spec.kind != "pairedJudge":
+            return []
+        from . import evaluate_subsample, verification_refusal
+        text = evaluate_subsample.pinned_rubric_text(self.judge_rubric_file, base)
+        if text is None or evaluate_subsample.rubric_honors_sampling(text) is not False:
+            return []
+        return [verification_refusal.baseline_only_paired_rubric_violation(
+            self.judge_rubric_file)]
+
     def verify(self, root: str | None = None) -> list[str]:
         """Re-hash all pinned inputs, reporting drift (parallel to Swift
         ``ExperimentStore.verify``). Empty list = verified."""
@@ -1169,6 +1185,15 @@ class Manifest:
             _evaluate_subsample.pinned_rubric_text(
                 self.judge_rubric_file, base),
             rubric_file=self.judge_rubric_file)
+        # A study that measures the baseline agent alone and is judged with a
+        # PAIRED rubric: paired judging compares a condition with the
+        # baseline, and this study has one arm, so evaluate would refuse it
+        # after the run. Caught here, before a freeze and a run are spent on
+        # it. The mode is read the way evaluate forks
+        # (evaluate_subsample.rubric_honors_sampling); an unreadable rubric
+        # is its own violation and a malformed one its own refusal. Swift
+        # twin: ExperimentStore.verify → baselineOnlyRubricViolations.
+        violations += self._baseline_only_rubric_violations(base)
         # Sweep-input pins (firewall closure, 2026-07-20 — cross-engine
         # contract keys "sweep.devPromptsHash" + "sweep.batteryHash"): the
         # sweep's dev prompts and capability battery decide which cell WINS,

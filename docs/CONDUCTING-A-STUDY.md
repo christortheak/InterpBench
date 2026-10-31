@@ -849,8 +849,10 @@ codings as descriptions of this model on these items under these settings.
 Freeze asks for no validation evidence and no capability battery, because
 nothing is steered. If the study is judged, use a rubric that codes each
 response (`perResponseCoding`): paired judging compares a condition with the
-baseline. An undeclared draft with nothing attached is still refused as
-`emptyStudy`, so a study only measures the baseline alone when it says so.
+baseline, so `verify` refuses a paired rubric here (`studyDeclaration`) rather
+than letting the study freeze, run, and refuse at `evaluate`. An undeclared
+draft with nothing attached is still refused as `emptyStudy`, so a study only
+measures the baseline alone when it says so.
 Multi-slot conditions are legal and hash as one condition — several slots *are*
 the linear mix `h + Σ αᵢ·vᵢ` — so treat each mix as a first-class arm, keeping
 in mind that mixes multiply the matrix fast.

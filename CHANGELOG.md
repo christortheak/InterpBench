@@ -33,6 +33,13 @@ migration that rewrites frozen bytes.
   declared concept study, with nothing attached is still refused as
   `emptyStudy`, and the concept study's refusal that recommends declaring
   `agentComparison` now leads to a study that runs.
+- **A baseline-only study's paired rubric is refused at `verify`.** A study
+  of the baseline alone that pins a paired comparison rubric used to freeze,
+  run, and then refuse at `evaluate`, because paired judging compares a
+  condition with the baseline. Both engines now refuse it at `verify`, and so
+  at freeze, under `studyDeclaration`, and the repair names
+  `experiment pin-rubric` with a rubric that codes each response
+  (`perResponseCoding`).
 - **An intervention policy's added vector now takes its strength in
   residual-norm units, like a static agent's α.** Before, a policy multiplied
   the stored vector by its strength directly, so a strength meant a different

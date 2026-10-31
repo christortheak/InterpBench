@@ -26,6 +26,9 @@ import Testing
 ///    start-time refusals all let the shape through to one arm.
 /// 3. `analyze` of such a run has no rows and says `baselineOnlyStudy` instead
 ///    of `emptyAnalysis`.
+/// 4. A paired rubric, which has nothing to pair with one arm, is refused at
+///    verify under `studyDeclaration` with the per-response route as the
+///    repair; a rubric that codes each response verifies.
 ///
 /// Server twin: `Server/tests/test_baseline_only_study.py`.
 ///
@@ -83,6 +86,17 @@ import Testing
                 as? [String: Any])
     }
 
+    /// Writes the fixture's rubrics into the workspace at their paths.
+    func writeRubrics(_ fixture: [String: Any], into root: URL) throws {
+        let rubrics = try #require(fixture["rubrics"] as? [String: String])
+        for (relative, text) in rubrics {
+            let url = root.appending(path: relative)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
     func decode(_ object: Any) throws -> ExperimentManifest {
         try JSONDecoder().decode(
             ExperimentManifest.self,
@@ -92,8 +106,13 @@ import Testing
     // MARK: - 1. The cross-engine fixture
 
     @Test func theFixtureIsThisEnginesAnswerForEveryShape() async throws {
-        try await withTempRoot { _ in
+        try await withTempRoot { root in
             let fixture = try fixture()
+            try writeRubrics(fixture, into: root)
+            #expect(
+                VerificationRefusal.baselineOnlyPairedRubricViolation(
+                    rubricFile: "prompts/rubrics/paired.md")
+                    == fixture["pairedRubricViolation"] as? String)
             #expect(ExperimentStore.baselineOnlyStudyAdvisory == fixture["advisory"] as? String)
             #expect(ExperimentStore.baselineOnlySummary == fixture["summary"] as? String)
             let effects = try #require(fixture["effectsSentence"] as? String)
@@ -107,10 +126,14 @@ import Testing
                 #expect(
                     ExperimentStore.isBaselineOnlyStudy(manifest)
                         == (entry["baselineOnly"] as? Bool), "\(label)")
+                let violations = ExperimentStore.verify(manifest)
                 #expect(
-                    ExperimentStore.verify(manifest).contains(
-                        VerificationRefusal.emptyModelOutputViolation)
+                    violations.contains(VerificationRefusal.emptyModelOutputViolation)
                         == (entry["emptyStudy"] as? Bool), "\(label)")
+                #expect(
+                    violations.contains {
+                        $0.hasPrefix(VerificationRefusal.baselineOnlyPairedRubricPrefix)
+                    } == (entry["pairedRubricRefused"] as? Bool), "\(label)")
                 if let executed = entry["executedConditions"] as? [String] {
                     #expect(
                         ExperimentTasks.effectiveConditionNames(for: manifest)
@@ -223,6 +246,58 @@ import Testing
                 let outcome = await invoke("experiment", ["verify", "replication", "--json"])
                 #expect(outcome.envelope.error?.code == LifecycleGate.emptyStudy.rawValue)
             }
+        }
+    }
+
+    // MARK: - 4. Judging a study of the baseline alone
+
+    @Test func aPairedRubricIsRefusedAtVerifyWithThePerResponseRoute() async throws {
+        try await withTempRoot { root in
+            let fixture = try fixture()
+            try writeRubrics(fixture, into: root)
+            try makeBaselineOnlyDraft("replication")
+
+            let paired = await invoke(
+                "experiment",
+                [
+                    "pin-rubric", "replication", "prompts/rubrics/paired.md",
+                    "--judges", "coder:claude",
+                ])
+            #expect(paired.exitCode == 0, "\(paired.envelope.message)")
+            for verb in ["verify", "freeze"] {
+                let outcome = await invoke("experiment", [verb, "replication", "--json"])
+                #expect(outcome.envelope.exitCode == 65, "\(verb): \(outcome.envelope.message)")
+                #expect(
+                    outcome.envelope.error?.code == LifecycleGate.studyDeclaration.rawValue,
+                    "\(verb)")
+                let repair = outcome.envelope.error?.repairAction ?? ""
+                #expect(repair.contains("perResponseCoding"), "\(verb)")
+                #expect(
+                    repair.contains(
+                        "steerlab-cli experiment pin-rubric replication prompts/rubrics/"),
+                    "\(verb)")
+            }
+            let refused = await invoke("experiment", ["verify", "replication", "--json"])
+            #expect(
+                refused.envelope.result?["violations"]
+                    == .array([
+                        .string(
+                            VerificationRefusal.baselineOnlyPairedRubricViolation(
+                                rubricFile: "prompts/rubrics/paired.md"))
+                    ]))
+            #expect(try ExperimentStore.load(name: "replication").status == .draft)
+
+            // The route, followed: a rubric that codes each response.
+            let coded = await invoke(
+                "experiment",
+                [
+                    "pin-rubric", "replication", "prompts/rubrics/coded.md",
+                    "--judges", "coder:claude",
+                ])
+            #expect(coded.exitCode == 0, "\(coded.envelope.message)")
+            let verified = await invoke("experiment", ["verify", "replication", "--json"])
+            #expect(verified.exitCode == 0, "\(verified.envelope.message)")
+            #expect(codes(verified).contains(CLIAdvisory.baselineOnlyStudy.rawValue))
         }
     }
 

@@ -17,7 +17,10 @@ What is pinned here:
    answer for every shape, and the settings summary's Statistics section.
 3. The client's verify and freeze: clean, a ``baselineOnlyStudy`` advisory,
    no validation or battery evidence asked for, not forced, and no
-   capability-battery stamp.
+   capability-battery stamp. A paired rubric, which has nothing to pair with
+   one arm, is refused at verify under ``studyDeclaration`` with the
+   per-response route as the repair; a rubric that codes each response
+   verifies.
 4. End to end on a fake model: the run executes one arm, a sharded run plans
    and merges the same records, submission sizing prices them, the analysis
    has no rows and says ``baselineOnlyStudy`` instead of ``emptyAnalysis``,
@@ -152,6 +155,14 @@ def test_freeze_asks_for_no_validation_and_no_battery_evidence():
 
 def test_the_fixture_is_this_engines_answer_for_every_shape(tmp_path):
     fixture = _fixture()
+    for relative, text in fixture["rubrics"].items():
+        (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / relative).write_text(text, encoding="utf-8")
+    assert fixture["pairedRubricViolation"] == \
+        refusal.baseline_only_paired_rubric_violation(
+            "prompts/rubrics/paired.md"), REGENERATE
+    assert {case["label"] for case in fixture["cases"]
+            if case["pairedRubricRefused"]} == {"declared-with-a-paired-rubric"}
     assert fixture["advisory"] == m.BASELINE_ONLY_STUDY_ADVISORY, REGENERATE
     assert fixture["summary"] == m.BASELINE_ONLY_SUMMARY, REGENERATE
     assert fixture["effectsSentence"] == results_export.BASELINE_ONLY_EFFECTS, \
@@ -165,8 +176,11 @@ def test_the_fixture_is_this_engines_answer_for_every_shape(tmp_path):
         parsed = m.Manifest.from_dict(json.loads(json.dumps(manifest)))
         assert m.baseline_only_study(manifest) is case["baselineOnly"], \
             f"{case['label']}: {REGENERATE}"
-        assert (refusal.EMPTY_MODEL_OUTPUT_VIOLATION
-                in parsed.verify(str(tmp_path))) is case["emptyStudy"], \
+        violations = parsed.verify(str(tmp_path))
+        assert (refusal.EMPTY_MODEL_OUTPUT_VIOLATION in violations) \
+            is case["emptyStudy"], f"{case['label']}: {REGENERATE}"
+        assert any(v.startswith(refusal.BASELINE_ONLY_PAIRED_RUBRIC_PREFIX)
+                   for v in violations) is case["pairedRubricRefused"], \
             f"{case['label']}: {REGENERATE}"
         if case["executedConditions"] is not None:
             assert m.effective_condition_names(parsed) == \
@@ -271,6 +285,67 @@ def test_an_undeclared_empty_draft_is_still_refused(workspace, capsys):
     code, document = _client(["experiment", "verify", STUDY], capsys)
     assert code == 65
     assert document["error"]["code"] == "emptyStudy"
+
+
+def _pin_rubric(root, relative, text):
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    raw = es.load_raw(STUDY, str(root))
+    raw.update({"judges": [{"name": "coder", "kind": "claude"}],
+                "judgeRubricFile": relative,
+                "judgeRubricHash": hashlib.sha256(path.read_bytes()).hexdigest()})
+    es.save_raw(raw, str(root))
+
+
+def test_a_paired_rubric_is_refused_at_verify_with_the_per_response_route(
+        workspace, capsys):
+    """Paired judging compares a condition with the baseline. With one arm
+    there is nothing to pair, so such a study used to freeze, run, and then
+    refuse at evaluate. verify refuses it now, before any of that."""
+    rubrics = _fixture()["rubrics"]
+    _pin_rubric(workspace, "prompts/rubrics/paired.md",
+                rubrics["prompts/rubrics/paired.md"])
+    for verb in ("verify", "freeze"):
+        code, document = _client(["experiment", verb, STUDY], capsys)
+        assert code == 65, (verb, document)
+        assert document["error"]["code"] == "studyDeclaration", verb
+        repair = document["error"]["repairAction"]
+        assert "perResponseCoding" in repair, verb
+        assert f"steerlab experiment pin-rubric {STUDY} prompts/rubrics/" in repair
+    code, verified = _client(["experiment", "verify", STUDY], capsys)
+    assert verified["result"]["violations"] == [
+        refusal.baseline_only_paired_rubric_violation("prompts/rubrics/paired.md")]
+    assert es.load_raw(STUDY, str(workspace))["status"] == "draft"
+
+    # The route, followed: a rubric that codes each response verifies.
+    _pin_rubric(workspace, "prompts/rubrics/coded.md",
+                rubrics["prompts/rubrics/coded.md"])
+    code, verified = _client(["experiment", "verify", STUDY], capsys)
+    assert code == 0, verified
+    assert _codes(verified) == ["baselineOnlyStudy"]
+
+
+def test_the_same_paired_rubric_is_ordinary_beside_an_agent(tmp_path):
+    """The refusal is about one arm, not about paired rubrics."""
+    rubric = tmp_path / "prompts" / "rubrics" / "paired.md"
+    rubric.parent.mkdir(parents=True)
+    rubric.write_text("Which response is better?\n", encoding="utf-8")
+    judged = {"judges": [{"name": "coder", "kind": "claude"}],
+              "judgeRubricFile": "prompts/rubrics/paired.md",
+              "judgeRubricHash": hashlib.sha256(rubric.read_bytes()).hexdigest()}
+    alone = m.Manifest.from_dict(_raw(**judged)).verify(str(tmp_path))
+    assert [v for v in alone
+            if v.startswith(refusal.BASELINE_ONLY_PAIRED_RUBRIC_PREFIX)]
+    concept = m.Manifest.from_dict(
+        _raw(studyType="conceptStudy", **judged)).verify(str(tmp_path))
+    assert not [v for v in concept
+                if v.startswith(refusal.BASELINE_ONLY_PAIRED_RUBRIC_PREFIX)]
+    # Judging switched off: no evaluate will run, so nothing to refuse.
+    off = m.Manifest.from_dict(
+        _raw(evaluation={"kind": "none"}, **judged)).verify(str(tmp_path))
+    assert not [v for v in off
+                if v.startswith(refusal.BASELINE_ONLY_PAIRED_RUBRIC_PREFIX)]
 
 
 def test_it_runs_one_arm_analyzes_and_exports(workspace, capsys, monkeypatch):

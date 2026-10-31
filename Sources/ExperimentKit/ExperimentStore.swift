@@ -4997,7 +4997,30 @@ public enum ExperimentStore {
                 manifest.evaluationSampling,
                 rubricText: pinnedRubricText(manifest),
                 rubricFile: manifest.judgeRubricFile))
+        // A study that measures the baseline agent alone and is judged with a
+        // PAIRED rubric: paired judging compares a condition with the
+        // baseline, and this study has one arm, so evaluate would refuse it
+        // after the run. Caught here, before a freeze and a run are spent on
+        // it (server twin: Manifest.verify → _baseline_only_rubric_violations).
+        violations.append(contentsOf: baselineOnlyRubricViolations(manifest))
         return violations
+    }
+
+    /// The paired-rubric refusal for a study of the baseline alone: only when
+    /// the study is that shape, its effective evaluation is judged, and its
+    /// pinned rubric reads as paired. The mode is read the way evaluate forks
+    /// (`EvaluateSubsample.rubricHonorsSampling`); an unreadable rubric is its
+    /// own violation and a malformed one its own refusal.
+    static func baselineOnlyRubricViolations(_ manifest: ExperimentManifest) -> [String] {
+        guard isBaselineOnlyStudy(manifest),
+            effectiveEvaluation(manifest)?.spec.kind == .pairedJudge,
+            let text = pinnedRubricText(manifest),
+            EvaluateSubsample.rubricHonorsSampling(text) == false
+        else { return [] }
+        return [
+            VerificationRefusal.baselineOnlyPairedRubricViolation(
+                rubricFile: manifest.judgeRubricFile)
+        ]
     }
 
     /// The pinned judge rubric's bytes as text, or nil when there is no pin

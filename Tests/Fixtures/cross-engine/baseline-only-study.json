@@ -1,5 +1,5 @@
 {
-  "about": "A study that measures the baseline agent alone: a declared agentComparison with no agent, injection, or SAE latent arm. Produced by the Python engine (scripts/regenerate-cross-engine-fixtures.py, baseline_only_study) and read by the Swift suite and the results explorer. executedConditions is null where the engines' arm vocabularies differ by design.",
+  "about": "A study that measures the baseline agent alone: a declared agentComparison with no agent, injection, or SAE latent arm. Produced by the Python engine (scripts/regenerate-cross-engine-fixtures.py, baseline_only_study) and read by the Swift suite and the results explorer. executedConditions is null where the engines' arm vocabularies differ by design. A reader writes each rubric under rubrics into its workspace, at its path, before verifying the cases.",
   "advisory": "This study measures the baseline agent alone: the pinned base model, with no vectors or adapters, at the study's sampling settings. With no comparison arm, analyze computes no effects; the run's summaries describe the baseline's responses. If the study is judged, use a rubric that codes each response (perResponseCoding), because paired judging compares a condition with the baseline and has nothing to pair here.",
   "cases": [
     {
@@ -26,7 +26,8 @@
         "studyType": "agentComparison",
         "temperature": 0,
         "variantConditions": []
-      }
+      },
+      "pairedRubricRefused": false
     },
     {
       "baselineOnly": true,
@@ -59,7 +60,8 @@
         "studyType": "agentComparison",
         "temperature": 0,
         "variantConditions": []
-      }
+      },
+      "pairedRubricRefused": false
     },
     {
       "baselineOnly": true,
@@ -97,7 +99,8 @@
         "studyType": "agentComparison",
         "temperature": 0,
         "variantConditions": []
-      }
+      },
+      "pairedRubricRefused": false
     },
     {
       "baselineOnly": false,
@@ -122,7 +125,8 @@
         "studyKind": "modelOutput",
         "temperature": 0,
         "variantConditions": []
-      }
+      },
+      "pairedRubricRefused": false
     },
     {
       "baselineOnly": false,
@@ -148,7 +152,8 @@
         "studyType": "conceptStudy",
         "temperature": 0,
         "variantConditions": []
-      }
+      },
+      "pairedRubricRefused": false
     },
     {
       "baselineOnly": false,
@@ -199,7 +204,8 @@
         "studyType": "agentComparison",
         "temperature": 0,
         "variantConditions": []
-      }
+      },
+      "pairedRubricRefused": false
     },
     {
       "baselineOnly": false,
@@ -253,7 +259,8 @@
             "name": "french-l28-a15"
           }
         ]
-      }
+      },
+      "pairedRubricRefused": false
     },
     {
       "baselineOnly": false,
@@ -288,7 +295,8 @@
         "studyType": "agentComparison",
         "temperature": 0,
         "variantConditions": []
-      }
+      },
+      "pairedRubricRefused": false
     },
     {
       "baselineOnly": false,
@@ -312,10 +320,145 @@
         "studyType": "multiAgent",
         "temperature": 0,
         "variantConditions": []
-      }
+      },
+      "pairedRubricRefused": false
+    },
+    {
+      "baselineOnly": true,
+      "emptyStudy": false,
+      "executedConditions": [
+        "baseline"
+      ],
+      "label": "declared-with-a-paired-rubric",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "judgeRubricFile": "prompts/rubrics/paired.md",
+        "judgeRubricHash": "02d7b7bb88f3521254ac36d1c58fad82a69359aff6a3d75f2ee37b8b72e87e2e",
+        "judges": [
+          {
+            "kind": "claude",
+            "name": "coder"
+          }
+        ],
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-with-a-paired-rubric",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "temperature": 0,
+        "variantConditions": []
+      },
+      "pairedRubricRefused": true
+    },
+    {
+      "baselineOnly": true,
+      "emptyStudy": false,
+      "executedConditions": [
+        "baseline"
+      ],
+      "label": "declared-with-a-coding-rubric",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "judgeRubricFile": "prompts/rubrics/coded.md",
+        "judgeRubricHash": "82dc2316b0280568b21394747d14c1879060fad09391f8f408f053071b625b7c",
+        "judges": [
+          {
+            "kind": "claude",
+            "name": "coder"
+          }
+        ],
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-with-a-coding-rubric",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "temperature": 0,
+        "variantConditions": []
+      },
+      "pairedRubricRefused": false
+    },
+    {
+      "baselineOnly": false,
+      "emptyStudy": false,
+      "executedConditions": [
+        "baseline",
+        "french-l28-a15"
+      ],
+      "label": "an-agent-with-a-paired-rubric",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "judgeRubricFile": "prompts/rubrics/paired.md",
+        "judgeRubricHash": "02d7b7bb88f3521254ac36d1c58fad82a69359aff6a3d75f2ee37b8b72e87e2e",
+        "judges": [
+          {
+            "kind": "claude",
+            "name": "coder"
+          }
+        ],
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "an-agent-with-a-paired-rubric",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "temperature": 0,
+        "variantConditions": [
+          {
+            "artifact": {
+              "adapters": [],
+              "alphaInNormUnits": true,
+              "bandWidth": 1,
+              "baseModelID": "test/model",
+              "baseRevision": "abc123",
+              "createdAt": "2026-10-19T00:00:00Z",
+              "injections": [
+                {
+                  "alpha": 0.15,
+                  "concept": "french",
+                  "layer": 28,
+                  "vectorArtifactID": "runs/fixture-sweep/french"
+                }
+              ],
+              "name": "french-l28-a15",
+              "promptMode": "chatAssistant",
+              "qwenThinkingEnabled": false,
+              "schemaVersion": 1,
+              "temperature": 0
+            },
+            "artifactHash": "6f49d6249159723336b97584fb5dd2fff8d9bce97ef95c0ce4e2fc5e1dba9606",
+            "artifactPath": "experiments/prereg/pinned/variant-french-l28-a15.json",
+            "name": "french-l28-a15"
+          }
+        ]
+      },
+      "pairedRubricRefused": false
     }
   ],
   "effectsSentence": "Baseline only: this study measures the baseline agent alone, so it has no comparison arm and its analysis has no effects.",
+  "pairedRubricViolation": "this study measures the baseline agent alone, but its judge rubric ('prompts/rubrics/paired.md') is a PAIRED comparison rubric: paired judging compares each condition's response with the baseline's, and a study with one arm has nothing to pair, so evaluate would refuse it after the run. Pin a perResponseCoding rubric, which codes each response on its own, or remove the study's judges",
   "preregistrationStatistics": {
     "baselineOnly": {
       "manifest": {
@@ -392,6 +535,10 @@
       },
       "statisticsSection": "- Paired to each item's same-case baseline; percentile bootstrap CIs on the mean paired difference; Wilcoxon signed-rank as the nonparametric companion.\n- Multiple comparisons: BH-FDR across concepts at screen; Holm within the pre-registered family at confirm."
     }
+  },
+  "rubrics": {
+    "prompts/rubrics/coded.md": "---\nmode: perResponseCoding\nfield: statesAReason boolean\n---\nDoes the response state a reason?\n",
+    "prompts/rubrics/paired.md": "Which response answers the question better?\n"
   },
   "summary": "Baseline only: this study measures the baseline agent alone (the pinned base model, with no vectors or adapters). It has no comparison arm, so its analysis reports no effects."
 }

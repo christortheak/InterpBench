@@ -2904,15 +2904,35 @@ def preregistration_arms() -> None:
     _write(os.path.join(FIXTURES, "preregistration-arms.json"), cases)
 
 
+#: The judge rubrics the baseline-only cases pin, by workspace path: one
+#: paired (no frontmatter) and one that codes each response.
+BASELINE_ONLY_RUBRICS = {
+    "prompts/rubrics/paired.md": "Which response answers the question better?\n",
+    "prompts/rubrics/coded.md": ("---\nmode: perResponseCoding\n"
+                                 "field: statesAReason boolean\n---\n"
+                                 "Does the response state a reason?\n"),
+}
+
+
 def _baseline_only_cases() -> list[tuple[str, dict, bool]]:
     """One draft per study shape the baseline-only rule tells apart, with
-    whether it is a baseline-only study. Drafts, with nothing pinned, so
-    ``verify`` reads the study's shape and no file."""
+    whether it is a baseline-only study. Drafts, so ``verify`` reads the
+    study's shape; the only files any of them pins are the two rubrics in
+    :data:`BASELINE_ONLY_RUBRICS`, which a reader writes into its workspace
+    before verifying."""
+    import hashlib
+
     def draft(name: str, **fields) -> dict:
         manifest = _prereg_manifest(name, status="draft", **fields)
         for key in ("frozenAt", "freezeHash", "gitCommit"):
             manifest.pop(key)
         return manifest
+
+    def judged(rubric: str) -> dict:
+        return {"judges": [{"name": "coder", "kind": "claude"}],
+                "judgeRubricFile": rubric,
+                "judgeRubricHash": hashlib.sha256(
+                    BASELINE_ONLY_RUBRICS[rubric].encode("utf-8")).hexdigest()}
 
     fear = {"name": "fear", "stimulusSetHash": "a" * 64, "validationHash": None,
             "options": {"method": "meanDifference",
@@ -2960,6 +2980,20 @@ def _baseline_only_cases() -> list[tuple[str, dict, bool]]:
         ("multi-agent-panel", draft(
             "multi-agent-panel", studyKind="multiAgent",
             studyType="multiAgent"), False),
+        # Judged: a paired rubric has nothing to pair with one arm, and verify
+        # refuses it; a rubric that codes each response is the route. The
+        # same paired rubric on a study with an agent is the ordinary design.
+        ("declared-with-a-paired-rubric", draft(
+            "declared-with-a-paired-rubric", studyType="agentComparison",
+            **judged("prompts/rubrics/paired.md")), True),
+        ("declared-with-a-coding-rubric", draft(
+            "declared-with-a-coding-rubric", studyType="agentComparison",
+            **judged("prompts/rubrics/coded.md")), True),
+        ("an-agent-with-a-paired-rubric", draft(
+            "an-agent-with-a-paired-rubric", studyType="agentComparison",
+            variantConditions=[_prereg_agent(
+                "french-l28-a15", [_prereg_injection("french", 28, 0.15)])],
+            **judged("prompts/rubrics/paired.md")), False),
     ]
 
 
@@ -2986,6 +3020,12 @@ def baseline_only_study() -> None:
 
     cases = []
     with tempfile.TemporaryDirectory() as root:
+        for relative, text in BASELINE_ONLY_RUBRICS.items():
+            os.makedirs(os.path.dirname(os.path.join(root, relative)),
+                        exist_ok=True)
+            with open(os.path.join(root, relative), "w",
+                      encoding="utf-8") as handle:
+                handle.write(text)
         for label, manifest, expected in _baseline_only_cases():
             parsed = m.Manifest.from_dict(json.loads(json.dumps(manifest)))
             assert m.baseline_only_study(manifest) is expected, label
@@ -2999,6 +3039,9 @@ def baseline_only_study() -> None:
             cases.append({
                 "label": label, "manifest": manifest, "baselineOnly": expected,
                 "emptyStudy": refusal.EMPTY_MODEL_OUTPUT_VIOLATION in violations,
+                "pairedRubricRefused": any(
+                    v.startswith(refusal.BASELINE_ONLY_PAIRED_RUBRIC_PREFIX)
+                    for v in violations),
                 "executedConditions": executed})
         statistics = {}
         for key, label in (("baselineOnly", "declared-nothing-attached"),
@@ -3024,10 +3067,15 @@ def baseline_only_study() -> None:
                   "(scripts/regenerate-cross-engine-fixtures.py, "
                   "baseline_only_study) and read by the Swift suite and the "
                   "results explorer. executedConditions is null where the "
-                  "engines' arm vocabularies differ by design."),
+                  "engines' arm vocabularies differ by design. A reader "
+                  "writes each rubric under rubrics into its workspace, at "
+                  "its path, before verifying the cases."),
         "advisory": m.BASELINE_ONLY_STUDY_ADVISORY,
         "summary": m.BASELINE_ONLY_SUMMARY,
         "effectsSentence": results_export.BASELINE_ONLY_EFFECTS,
+        "rubrics": BASELINE_ONLY_RUBRICS,
+        "pairedRubricViolation": refusal.baseline_only_paired_rubric_violation(
+            "prompts/rubrics/paired.md"),
         "cases": cases,
         "preregistrationStatistics": statistics,
     })

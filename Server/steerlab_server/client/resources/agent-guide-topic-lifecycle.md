@@ -301,7 +301,9 @@ is generated once for each sample, with no second arm to repeat it.
   the results page describe the baseline's responses.
 - If the study is judged, its rubric must code each response
   (`perResponseCoding`). Paired judging compares a condition with the
-  baseline, so it has nothing to pair here.
+  baseline, so it has nothing to pair here: `verify`, and so `freeze`, refuse
+  a paired rubric under `studyDeclaration`, and the repair names
+  `experiment pin-rubric` with a rubric that codes each response.
 
 Declare the type in a study pack (`steerlab pack apply`) or with
 `steerlab experiment set-protocol <name> --set studyType=agentComparison`.
