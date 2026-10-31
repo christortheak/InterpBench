@@ -348,3 +348,108 @@ def test_with_no_revision_run_start_hashes_the_newest_snapshot(
     # A pinned revision the cache does not hold is recorded as absent rather
     # than replaced by another snapshot's tokenizer.
     assert TraceSession.run_tokenizer_hash(MODEL, "1" * 40) is None
+
+
+# --- the configuration hash names the block's OWN qualification pin -----------
+
+def _qualify(record, root, qid="q1"):
+    """A passing qualification for the evidence runtime `_runtime()` presents,
+    bound to the lens bytes and covering every fitted layer."""
+    from steerlab_server.jlens import schemas
+
+    record.qualifications.append(schemas.Qualification(
+        qualificationID=qid, modelID=EVIDENCE_MODEL, revision=REV,
+        dtype="bfloat16", tier="evidence", passed=True,
+        lensSHA256=record.source.tensorSHA256,
+        convertedSHA256=record.converted.sha256, layers=[0, 1, 2]))
+    lens_store.save(record, root)
+
+
+def _authored_without_a_qualification(tmp_path, monkeypatch, *,
+                                      qualified_first=False):
+    """A draft written by `set-jlens-readout` with every pin but a
+    qualification. A new draft declares no dtype, so the verb matches no
+    qualification to it even when the lens already has a passing one."""
+    from steerlab_server.experiment import experiment_store as store
+    from steerlab_server.experiment import jlens_readout_authoring as readout
+
+    root = str(tmp_path / "ws")
+    record = _import(tmp_path, EVIDENCE_MODEL)
+    if qualified_first:
+        _qualify(record, root)
+    hub = tmp_path / "hub"
+    monkeypatch.setenv("HF_HUB_CACHE", str(hub))
+    snapshot = (hub / ("models--" + EVIDENCE_MODEL.replace("/", "--"))
+                / "snapshots" / REV)
+    snapshot.mkdir(parents=True)
+    (snapshot / "tokenizer.json").write_text('{"model": "evidence"}')
+    store.create("authored", model_id=EVIDENCE_MODEL, revision=REV, root=root)
+    report = readout.declare("authored", record.lensID,
+                             readout.Settings(layers=[0, 1], watchlist=[11]),
+                             root=root)
+    block = report["block"]
+    assert "qualificationID" not in block and "configHash" in block
+    return root, record, store.load_raw("authored", root)
+
+
+def _start(document, root, log):
+    return run_readouts.open_jlens_trace(
+        Manifest.from_dict(dict(document)), _runtime(REV), root,
+        run_directory=str(root), checkpoint=None, resuming=False, log=log,
+        expected_generations=1)
+
+
+@pytest.mark.parametrize("qualified_first", [True, False])
+def test_a_block_without_a_qualification_runs_on_a_qualified_lens(
+        tmp_path, monkeypatch, qualified_first):
+    """Run start used to fold the qualification IT resolved into the hash it
+    compared, so a block the verb wrote with no qualification refused as
+    "drifted" as soon as the lens had a passing one for the runtime — whether
+    it already had one the verb could not match (no dtype declared) or gained
+    one afterwards. The comparison now uses the block's own pin; the resolved
+    qualification is stamped on the rows and logged, as information."""
+    root, record, document = _authored_without_a_qualification(
+        tmp_path, monkeypatch, qualified_first=qualified_first)
+    if not qualified_first:
+        _qualify(lens_store.resolve(record.lensID, root), root)
+    lines = []
+    session = _start(document, root, lines.append)
+    block = document["jlensReadout"]
+    assert session.configHash == block["configHash"]
+    assert session.qualification_id == "q1"           # stamped on every row
+    assert any("qualification q1 passes for this runtime" in line
+               for line in lines)
+
+
+def test_a_pin_computed_with_the_resolved_qualification_still_runs(
+        tmp_path, monkeypatch):
+    """The old comparison's hash is still accepted, so a block that ran before
+    the rule changed runs unchanged."""
+    root, record, document = _authored_without_a_qualification(
+        tmp_path, monkeypatch)
+    _qualify(lens_store.resolve(record.lensID, root), root)
+    declared = document["jlensReadout"]["configHash"]
+    old_style = _start(document, root, lambda _m: None).config_hash_for("q1")
+    assert declared != old_style
+    document["jlensReadout"] = dict(document["jlensReadout"],
+                                    configHash=old_style)
+    assert _start(document, root, lambda _m: None).configHash == old_style
+    # …and anything else still refuses as drift.
+    document["jlensReadout"]["configHash"] = "f" * 64
+    with pytest.raises(RuntimeError, match="drifted from its pinned hash"):
+        _start(document, root, lambda _m: None)
+
+
+def test_a_pinned_qualification_hashes_as_it_always_did(tmp_path, monkeypatch):
+    """For a block that pins its qualification the two hashes are one."""
+    root, record, document = _authored_without_a_qualification(
+        tmp_path, monkeypatch)
+    _qualify(lens_store.resolve(record.lensID, root), root)
+    from steerlab_server.experiment import jlens_readout_authoring as readout
+
+    block = dict(document["jlensReadout"], qualificationID="q1")
+    block["configHash"] = readout.configuration_hash(block)
+    document["jlensReadout"] = block
+    session = _start(document, root, lambda _m: None)
+    assert session.configHash == block["configHash"]
+    assert session.configHash == session.config_hash_for("q1")

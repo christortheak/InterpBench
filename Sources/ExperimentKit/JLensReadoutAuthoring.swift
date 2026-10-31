@@ -326,7 +326,9 @@ public enum JLensReadoutAuthoring {
         case .null: return "null"
         case .bool(let flag): return flag ? "true" : "false"
         case .number(let number):
-            return number.rounded() == number && abs(number) < 1e15
+            // Inclusive: 10^15 is the largest budget value both clients
+            // accept, and Python writes it as an integer.
+            return number.rounded() == number && abs(number) <= 1e15
                 ? String(Int64(number)) : "\(number)"
         case .string(let text):
             var out = "\""
@@ -529,10 +531,9 @@ public enum JLensReadoutAuthoring {
         if block["qualificationID"] == nil {
             notes.append(
                 "No qualification is pinned, so a run is exploratory and freeze refuses. "
-                    + "When this lens has a passing qualification for this runtime, pass it "
-                    + "with --qualification: a run would otherwise refuse, because the "
-                    + "configuration hash would name none. Otherwise qualify the runtime "
-                    + "(steerlab-server jlens qualify) and run this verb again.")
+                    + "Pass a passing qualification of this lens for the study's runtime "
+                    + "with --qualification, or qualify the runtime first (steerlab-server "
+                    + "jlens qualify) and run this verb again.")
         }
         if (manifest.modelRevision ?? "").isEmpty || (manifest.dtype ?? "").isEmpty {
             notes.append(

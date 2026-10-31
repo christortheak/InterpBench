@@ -121,7 +121,9 @@ This client reads the pins itself: the lens's bytes and fitted layers from
 `runs/jlens-lenses/<lens-id>/lens.json`, the tokenizer hash from the study
 model's files in this machine's model cache (or `--tokenizer-hash` when the
 model is not installed here), and the newest passing qualification for the
-study's runtime when `--qualification` is not given. `--dry-run` writes
+study's declared revision and dtype when `--qualification` is not given (a
+named one is checked against its own revision and dtype when the study
+declares none). `--dry-run` writes
 nothing and reports the pins in `result.pins`, with the Mac command line's
 spelling of the same declaration in `result.macCommand`.
 

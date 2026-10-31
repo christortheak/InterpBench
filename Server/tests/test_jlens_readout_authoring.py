@@ -185,6 +185,38 @@ def test_the_newest_passing_qualification_is_pinned_and_a_named_one_kept(
         "qualificationID"] == "q1"
 
 
+def test_a_named_qualification_pins_on_a_draft_with_no_dtype(workspace, capsys):
+    """A new draft declares no dtype, which `qualification_for` cannot match
+    against. A NAMED qualification is checked against its own revision and
+    dtype instead (run start still checks it against the runtime); with none
+    named, nothing is matched, and the note says why."""
+    _qualify(lens_store.resolve("lens-a", workspace), workspace)
+    store.create("fresh", model_id=MODEL, revision=REVISION, root=workspace)
+    assert "dtype" not in store.load_raw("fresh", workspace)
+
+    code = _client(workspace, "fresh", "lens-a", "--layers", "20", "--top-k",
+                   "3")
+    document = _document(capsys)
+    assert code == 0
+    assert "qualificationID" not in document["result"]["jlensReadout"]
+    assert any("declares no model revision and dtype" in note
+               for note in document["result"]["notes"])
+
+    code = _client(workspace, "fresh", "lens-a", "--layers", "20", "--top-k",
+                   "3", "--qualification", "q1")
+    document = _document(capsys)
+    assert code == 0, document
+    assert store.load_raw("fresh", workspace)["jlensReadout"][
+        "qualificationID"] == "q1"
+
+    # A qualification for layers it never tested still refuses.
+    code = _client(workspace, "fresh", "lens-a", "--layers", "30", "--top-k",
+                   "3", "--qualification", "q1")
+    document = _document(capsys)
+    assert code == 64
+    assert "does not pass" in document["error"]["reason"]
+
+
 def test_without_a_cached_tokenizer_the_hash_pins_are_left_out(
         workspace, capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "empty-hub"))

@@ -311,9 +311,14 @@ class TraceSession:
         # that bounds what the run may record, so an edit to it after freeze
         # must be a verify violation like any other measurement-side change
         # (external review 2026-08-16).
-        self.configHash = config_hash(readout_config_payload(
-            config, record=record, qualification_id=qualification_id,
-            tokenizer_hash=tokenizer_hash, budget=budget))
+        self.configHash = self.config_hash_for(qualification_id)
+
+    def config_hash_for(self, qualification_id: str | None) -> str:
+        """This session's configuration hash with ``qualification_id`` as the
+        qualification it names — the session's own, or a declaration's pin."""
+        return config_hash(readout_config_payload(
+            self.config, record=self.record, qualification_id=qualification_id,
+            tokenizer_hash=self.tokenizer_hash, budget=self.budget))
 
     @staticmethod
     def run_tokenizer_hash(model_id: str | None,

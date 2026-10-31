@@ -410,8 +410,10 @@ def tokenizer_hash(model_id: str, revision: str | None = None) -> str | None:
 # --- the verb -------------------------------------------------------------------
 
 def _require_draft(document: dict, name: str) -> None:
-    """Refuse a non-draft BEFORE the lens is read, so a frozen study answers
-    with its one repair whatever else is wrong. Swift twin: ``updateDraft``."""
+    """Refuse a non-draft before the lens is read. The flags are shape-checked
+    first, on both clients, so a frozen study given well-formed settings
+    answers with its duplicate repair rather than with a lens problem. Swift
+    twin: ``updateDraft``."""
     status = document.get("status")
     if status != "draft":
         raise store.ExperimentStoreError(
@@ -496,26 +498,49 @@ def _check_lens(record, document: dict, settings: Settings, *, name: str,
 
 def _resolve_qualification(record, document: dict, settings: Settings, *,
                            name: str, lens_id: str) -> str | None:
-    """A named qualification must pass for this study's runtime and cover the
-    armed layers. With none named, the newest passing one is pinned — the one
-    run start would otherwise resolve, so the configuration hash names it."""
+    """The qualification the block pins, or None.
+
+    A NAMED one must be a passing record for this study's model, bound to
+    these lens bytes, covering the armed layers. Where the study declares its
+    revision and dtype it must pass for exactly that runtime; where it does
+    not (a new draft has no dtype), the record's own revision and dtype stand
+    in, and run start still refuses the pin on a runtime the record does not
+    describe. With none named, the newest passing one for the declared
+    runtime is pinned, because freeze needs a pin; with no declared runtime
+    there is nothing to match, and none is. An unpinned block stays valid
+    when the lens is qualified later: run start compares the configuration
+    hash against the block's own pin, not against what it resolves."""
     model_id = document.get("modelID") or ""
-    revision = document.get("modelRevision") or ""
-    dtype = document.get("dtype") or ""
-    found = record.qualification_for(
-        model_id, revision, dtype, document.get("quantization"),
-        layers=settings.layers, qualification_id=settings.qualification_id)
-    if settings.qualification_id and found is None:
+    revision = document.get("modelRevision") or None
+    dtype = document.get("dtype") or None
+    quantization = document.get("quantization")
+    named = settings.qualification_id
+    if not named:
+        if not (revision and dtype):
+            return None
+        found = record.qualification_for(model_id, revision, dtype,
+                                         quantization, layers=settings.layers)
+        return found.qualificationID if found is not None else None
+    found = next(
+        (match for q in record.qualifications if q.qualificationID == named
+         for match in [record.qualification_for(
+             model_id, revision or q.revision, dtype or q.dtype, quantization,
+             layers=settings.layers, qualification_id=named)]
+         if match is not None), None)
+    if found is None:
+        runtime = (f"{model_id}@{revision}/{dtype}" if revision and dtype
+                   else model_id)
         raise _malformed(
-            f"qualification '{settings.qualification_id}' of '{lens_id}' does "
-            f"not pass for {model_id}@{revision or '?'}/{dtype or '?'} over "
-            f"layers {compact_layers(settings.layers)} — a pinned "
-            "qualification must be bound to these lens bytes and cover the "
-            "armed layers", name, vocabulary.CLIENT_PROGRAM,
+            f"qualification '{named}' of '{lens_id}' does not pass for "
+            f"{runtime} over layers {compact_layers(settings.layers)} — a "
+            "pinned qualification must be a passing record for the study's "
+            "model (and its declared revision and dtype), bound to these lens "
+            "bytes, and covering the armed layers", name,
+            vocabulary.CLIENT_PROGRAM,
             repair=(f"{vocabulary.ENGINE_PROGRAM} jlens inspect {lens_id}  "
                     "(its qualifications), then name a passing one with "
                     "--qualification, or leave the flag out"))
-    return found.qualificationID if found is not None else None
+    return found.qualificationID
 
 
 def notes_for(document: dict, block: dict, *, tier: str | None = None,
@@ -539,7 +564,13 @@ def notes_for(document: dict, block: dict, *, tier: str | None = None,
             "lens covers this runtime and these layers yet, so a run is "
             "exploratory and freeze refuses. Qualify the runtime "
             f"({vocabulary.ENGINE_PROGRAM} jlens qualify), then run this "
-            "verb again so the pin names the qualification.")
+            "verb again, or name one with --qualification."
+            if document.get("modelRevision") and document.get("dtype") else
+            "No qualification is pinned: the study declares no model "
+            "revision and dtype to match one against, so a run is "
+            "exploratory and freeze refuses. Name one with --qualification "
+            f"({vocabulary.ENGINE_PROGRAM} jlens inspect "
+            f"{block['lensID']} lists them).")
     if tier is not None and tier != "evidence":
         notes.append(
             f"This lens is {tier}-tier for {model_id}: it exercises the "
