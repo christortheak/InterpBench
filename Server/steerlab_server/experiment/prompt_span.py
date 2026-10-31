@@ -391,13 +391,14 @@ def _align(user: str, window: str) -> list[int | None] | None:
     """Each user character's index in ``window`` (None for whitespace the
     template dropped), or None when the two differ beyond whitespace.
     Non-whitespace characters match one for one, in order; whitespace on
-    either side may be skipped."""
+    either side may be skipped, and whitespace the template rewrote as other
+    whitespace (a tab as a space) maps to what it became."""
     if user == window:
         return list(range(len(user)))
     mapping: list[int | None] = [None] * len(user)
     i = j = 0
     while i < len(user) and j < len(window):
-        if user[i] == window[j]:
+        if user[i] == window[j] or (user[i].isspace() and window[j].isspace()):
             mapping[i] = j
             i += 1
             j += 1
