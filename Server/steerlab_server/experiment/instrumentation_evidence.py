@@ -72,7 +72,8 @@ def validate_spans(block, declarations, prompt):
         if not isinstance(actions, dict) or set(actions) != set(specs): raise ProbeError('A resolved span summarizes each of its policy’s actions once.')
         for name, summary in actions.items():
             if not isinstance(summary, dict) or summary.get('strengthUnits') != declared_units(specs[name], declaration.get('schemaVersion')): raise ProbeError('Span dose units must be the declared units of each action.')
-            count, strength, dose = summary.get('appliedPositions'), summary.get('perPositionStrength'), summary.get('summedDose')
+            if 'perPositionStrength' not in summary or 'summedDose' not in summary: raise ProbeError('A span summary states its per-position strength and summed dose, null when they do not apply.')
+            count, strength, dose = summary.get('appliedPositions'), summary['perPositionStrength'], summary['summedDose']
             if type(count) is not int or not 0 <= count <= len(positions): raise ProbeError('A span’s applied positions must count span tokens.')
             if strength is not None and not finite(strength): raise ProbeError('A per-position span strength must be finite.')
             if specs[name].get('kind') == 'add':

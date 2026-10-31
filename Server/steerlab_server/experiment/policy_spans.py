@@ -25,8 +25,9 @@ prompt) pair with the loaded tokenizer before the first generation of the run.
 Any failure refuses the whole run up front with the resolver's typed refusal,
 its code and its repair, as a ``studyDeclaration`` refusal. A location
 control (``policy_controls``) also resolves the span it is matched to, and
-refuses (:data:`LENGTH_MISMATCH`) on any prompt where the two token counts
-differ. Scripted
+refuses on any prompt where the two spans share a token
+(:data:`LOCATION_OVERLAP`) or their token counts differ
+(:data:`LENGTH_MISMATCH`). Scripted
 transcripts and panels are refused there too: phase 1 resolves single-prompt
 renders only.
 
@@ -47,6 +48,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
+import tempfile
 
 from . import lifecycle_gates, paths, policy_artifacts, prompt_render, prompt_span
 
@@ -198,6 +200,8 @@ def _declarations(doc):
 
 #: A location control whose span has another token count than the span it controls.
 LENGTH_MISMATCH = "spanLengthMismatch"
+#: A location control whose span shares a token with the span it controls.
+LOCATION_OVERLAP = "spanLocationOverlap"
 
 
 def _transcript_problems(condition, policy, prompts) -> list[dict]:
@@ -275,6 +279,17 @@ def resolve_condition(resolutions: SpanResolutions, condition: str, variant, pro
                     problems.append(_problem(condition, doc["name"], prompt.get("id"), exc,
                                              "the span this location control is matched to"))
                     continue
+                shared = sorted(set(resolved.positions()) & set(controlled.positions()))
+                if shared:
+                    # Checked on resolved tokens: two different declarations can name the same tokens.
+                    problems.append({
+                        "condition": condition, "policy": doc["name"], "promptID": prompt.get("id"), "code": LOCATION_OVERLAP,
+                        "reason": (f"this location control's span shares token position(s) {shared} with the span it controls "
+                                   f"(its tokens {resolved.positions()}, the controlled span's {controlled.positions()}), so it "
+                                   "steers part of the same place"),
+                        "repairAction": ("declare the location control on a part of the prompt that shares no token with the "
+                                         "controlled span on any item, then review and publish the control again")})
+                    continue
                 if controlled.token_count != resolved.token_count:
                     problems.append({
                         "condition": condition, "policy": doc["name"], "promptID": prompt.get("id"), "code": LENGTH_MISMATCH,
@@ -330,8 +345,16 @@ def run_preflight(model, manifest, prompts, root, *, wants_choice: bool, run_dir
     document = resolutions.document(manifest.name)
     path = os.path.join(run_directory, SIDECAR_FILENAME)
     if os.path.exists(path):
-        with open(path, encoding="utf-8") as handle:
-            existing = json.load(handle)
+        try:
+            with open(path, encoding="utf-8") as handle:
+                existing = json.load(handle)
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            raise lifecycle_gates.refusing(
+                lifecycle_gates.STUDY_DECLARATION,
+                f"{SIDECAR_FILENAME} in this run cannot be read ({exc}), so its existing responses' "
+                "span references cannot be checked against what this engine resolves",
+                repair=("start a new run of the study; keep this run as it is and report the damaged "
+                        f"{SIDECAR_FILENAME}")) from exc
         if existing != document:
             raise lifecycle_gates.refusing(
                 lifecycle_gates.STUDY_DECLARATION,
@@ -341,9 +364,18 @@ def run_preflight(model, manifest, prompts, root, *, wants_choice: bool, run_dir
                 repair=("start a new run of the study; keep this run as it is, since "
                         "its existing responses match its own span-resolutions.json"))
     else:
-        with open(path, "w", encoding="utf-8") as handle:
-            json.dump(document, handle, indent=2, sort_keys=True, ensure_ascii=False)
-            handle.write("\n")
+        # Whole or absent: written beside the run's files, then moved into place.
+        handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=run_directory,
+                                             prefix=".span-resolutions-", suffix=".json", delete=False)
+        try:
+            with handle:
+                json.dump(document, handle, indent=2, sort_keys=True, ensure_ascii=False)
+                handle.write("\n")
+            os.replace(handle.name, path)
+        except BaseException:
+            try: os.unlink(handle.name)
+            except OSError: pass
+            raise
     if log is not None:
         log(f"span policies: {len(document['resolutions'])} distinct span resolution(s) "
             f"for {len(document['uses'])} use(s) → {SIDECAR_FILENAME}")

@@ -232,8 +232,8 @@ CONTROL_POLICY_SPAN = (
     "agent arm, derived by science policy-review from the span policy it "
     "controls (controlOf) — a seeded random direction with the same span, "
     "strength, dose mode, and R, or the same direction over a different "
-    "declared span of the same token length, which the run checks on every "
-    "prompt")
+    "declared span of the same token length that shares none of its tokens, "
+    "which the run checks on every prompt")
 CLAIM_LIMITS_POLICY_SPAN = (
     "Changes how these prompt tokens are represented while the prompt is "
     "read. A behavioural change shows that reading this span differently "

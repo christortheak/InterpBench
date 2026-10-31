@@ -30,7 +30,7 @@ human half. The two are meant to be edited together.
 | `ablation` | `steering/ablator.py` `SubspaceAblator` | every position, prefill and decode | λ, a dimensionless fraction of the projected component | `randomDirectionAblation` |
 | `trainableAdditive` | `steering/trainable_injector.py` `TrainableVectorInjector` / `AdditiveDeltaProbe` | each item's answer position, or every non-pad position, in one teacher-forced pass | α as an absolute L2 norm at the layer | S0 shuffled-target null + `randomMatchedNorm` (declared by the confirm study) |
 | `saeLatent` | `steering/sae_latent.py` `SAELatentIntervention` | same as `additive` — it reuses that gate | β in **latent** units | none synthesized; the baseline arm is the contrast |
-| `policySpanAddition` | `experiment/policy_execution.py` `Execution`, a span policy (§10) | the prompt tokens a declared span resolves to, prefill only | residual-norm units, `perPosition` or `fixedTotal` | none synthesized; matched control policies are their own arms |
+| `policySpanAddition` / `policySpanAblation` | `experiment/policy_execution.py` `Execution`, a span policy (§10) | the prompt tokens a declared span resolves to, prefill only | the action's units (residual-norm units by default), `perPosition` or `fixedTotal`; λ for a removal | none synthesized; matched control policies are their own arms |
 
 Every path's site is the same tensor: **the residual stream at the block output
 of the named layer(s)** — what a forward hook receives from decoder block *L*,
@@ -295,8 +295,8 @@ Policies that do not act on a span keep the summary they had.
 | **Prefill** | applies at each span token while the prompt is read, in whichever prefill chunk holds it |
 | **Decode** | does not apply. A second policy at `lastPosition`, over prefill and decode, steers the response |
 | **Centering** | not applicable to an addition; a removal uses the direction as stored (`none`) |
-| **Dose units** | residual-norm units, as a static agent's α: `perPosition` gives each span token the strength, and `fixedTotal` spreads the strength as a total, strength / n per token. A removal (`policySpanAblation`) keeps λ, a fraction at each span token |
-| **Control** | none synthesized at run time. A matched control is its own policy and agent arm, derived by `science policy-review` from the span policy it controls (`controlOf`): a seeded random direction with the same span, strength, dose mode, and R, or the same direction over a different declared span of the same token length, which the run checks on every prompt. A control's row names its kind and the policy it controls in `detail` (`controlKind`, `controlOf`) |
+| **Dose units** | the action's units: residual-norm units by default, as a static agent's α, or a raw multiplier of the stored direction when the action chose one. `perPosition` gives each span token the strength, and `fixedTotal` spreads the strength as a total, strength / n per token. A removal (`policySpanAblation`) keeps λ, a fraction at each span token |
+| **Control** | none synthesized at run time. A matched control is its own policy and agent arm, derived by `science policy-review` from the span policy it controls (`controlOf`): a seeded random direction with the same span, strength, dose mode, and R, or the same direction over a different declared span of the same token length, which the run checks on every prompt, together with sharing none of its tokens. A control's row names its kind and the policy it controls in `detail` (`controlKind`, `controlOf`), and a location control's also names the span it is matched to (`controlSourceSpan`) |
 | **Pinned by** | `tests/test_span_policies.py::test_span_positions_are_applied_exactly_in_a_real_generation`, `::test_a_fixed_total_dose_spreads_the_strength_over_the_span`, `::test_the_scope_stamp_describes_where_a_span_policy_lands` |
 
 `detail` names the policy and action, the site kind, the canonical `span`
