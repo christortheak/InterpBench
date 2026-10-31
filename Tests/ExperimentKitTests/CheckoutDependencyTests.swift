@@ -339,6 +339,20 @@ extension CheckoutDependency {
                 + "public release feed, and reports \"unknown\" with a reason when "
                 + "that is unavailable too — never \"up to date\""),
         .init(
+            file: "Sources/ExperimentKit/CommandLineUpdate.swift",
+            token: "executableCheckout",
+            resolves:
+                "READ-ONLY: the same `git ls-remote` probe as the app's update "
+                + "signpost, run by the command line's `install version` with a "
+                + "non-interactive git environment. It uses bucket B's resolver "
+                + "but never writes into the tree, so the assumption is a "
+                + "developer-style observation, not a mutable-tree claim",
+            bucket: .developerOnly,
+            withoutACheckout:
+                "the git half is skipped; the release feed alone answers, and the "
+                + "report says \"unknown\" with a reason when that is unavailable "
+                + "too — never \"up to date\""),
+        .init(
             file: "Sources/ExperimentKit/UpdateInstallerLive.swift",
             token: "executableCheckout",
             resolves:
