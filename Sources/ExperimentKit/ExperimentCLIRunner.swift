@@ -1306,8 +1306,9 @@ public struct ExperimentCLIRunner: Sendable {
             if update.state == .releaseAvailable, update.updateTarget != nil {
                 result.nextAction = .init(
                     verb: "install update-plan",
-                    detail: "show the researcher what the update would do; install it "
-                        + "only after they approve that plan")
+                    detail: "show the researcher what the update would do, from this copy's "
+                        + "own command line (" + CommandLineUpdate.planCommand(updates)
+                        + "); install it only after they approve that plan")
             } else if provenance.shape == .installed {
                 result.nextAction = .init(
                     verb: "install verify",
@@ -1343,9 +1344,11 @@ public struct ExperimentCLIRunner: Sendable {
                 sink.out("Afterwards:")
                 for line in plan.afterInstall { sink.out("  - \(line)") }
                 for blocker in plan.blockers { sink.out("Not now: \(blocker)") }
+                // This copy's own command line by its full path, never a
+                // bare `steerlab-cli`, which may run another copy.
                 sink.out(
-                    "Install it, once the researcher approves this plan: steerlab-cli install "
-                        + "update --expect \(plan.digest) --yes")
+                    "Install it, once the researcher approves this plan: "
+                        + plan.applyCommand)
                 var result = ExperimentCLIResult(
                     message: "SteerLab \(version) can replace "
                         + "\(plan.currentVersion.releaseDescription) at "
@@ -1354,29 +1357,32 @@ public struct ExperimentCLIRunner: Sendable {
                 result.nextAction = .init(
                     verb: "install update --expect \(plan.digest) --yes",
                     missingPermissionFlags: ["--yes"],
-                    detail: "only after the researcher approves this plan")
+                    detail: "only after the researcher approves this plan, as this copy's "
+                        + "own command line: " + plan.applyCommand)
                 return result
             }
 
         case "update":
+            let updates = Self.commandLineUpdateEnvironment()
+            let planCommand = CommandLineUpdate.planCommand(updates)
             guard let expected = flag("--expect"),
                 expected.count == 64, expected.allSatisfy(\.isHexDigit)
             else {
                 throw ExperimentError.malformed(
                     "install update needs the plan's digest: --expect <planSHA256>, the 64 "
                         + "hexadecimal characters install update-plan reported.",
-                    repair: "steerlab-cli install update-plan --json")
+                    repair: planCommand)
             }
             guard args.contains("--yes") else {
                 throw CommandLineUpdate.Refusal(
                     code: "approvalRequired", state: .needsApproval,
                     reason: "install update replaces SteerLab.app, so it runs only with --yes, "
                         + "after the researcher approves the reviewed plan.",
-                    repairAction: "Show the researcher steerlab-cli install update-plan; once "
-                        + "they approve it, run steerlab-cli install update --expect "
-                        + "\(expected) --yes")
+                    repairAction: "Show the researcher the plan from \(planCommand). Only "
+                        + "once they approve it, run "
+                        + CommandLineUpdate.executable(updates)
+                        + " install update --expect <that plan's planSHA256> --yes --json")
             }
-            let updates = Self.commandLineUpdateEnvironment()
             let sink = self.sink
             let progress = CommandLineUpdateProgress(sink: sink)
             let receipt = try await CommandLineUpdate.apply(

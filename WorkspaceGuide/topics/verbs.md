@@ -34,9 +34,10 @@ its heading (`{{cli}} workspace guide <topic>`) or ask the verb itself
 
 <!-- client: mac -->
 - First, the app's version: `steerlab-cli --version`. On
-  `clientUpdateAvailable`, tell the researcher and show them
-  `steerlab-cli install update-plan`; run `steerlab-cli install update
-  --expect <planSHA256> --yes` only once they approve that plan.
+  `clientUpdateAvailable`, tell the researcher and show them the plan, from
+  the full path the advisory names (`install update-plan`); run its `apply`
+  command (`install update --expect <planSHA256> --yes`) only once they
+  approve that plan.
 <!-- client: all -->
 - Readiness and a workspace: `{{cli}} setup start <dir> --create`
 - A finished example: `{{cli}} workspace init <new-dir> --demo <mlx|mps|cuda>`

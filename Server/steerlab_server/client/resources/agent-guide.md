@@ -82,9 +82,9 @@ supported route to running studies and reading their results.
 
 On a Mac, `.steerlab/mac-app/command-line.json` names the app's `steerlab-cli`
 for when it is not on PATH. Start each session with `steerlab-cli --version
---json`; on `clientUpdateAvailable`, tell the researcher, show them
-`steerlab-cli install update-plan`, and install only a plan they approve (the
-`workspace` topic).
+--json`; on `clientUpdateAvailable`, tell the researcher, show them the plan
+the advisory names, and install only a plan they approve (the `workspace`
+topic).
 
 Either client also reads `STEERLAB_WORKSPACE`; a workspace named on the
 command itself (`--workspace` on the Mac command line, `--root` on the client)

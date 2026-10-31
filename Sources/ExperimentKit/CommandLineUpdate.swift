@@ -16,17 +16,26 @@ import Foundation
 // where the app already has an answer:
 //
 //   * THE CHECK is `UpdateCheckService`, with the app's privacy contract
-//     unchanged: one unauthenticated release lookup, nothing about this Mac
-//     sent. Its SETTINGS are the app's: the opt-out, the once-a-day stamp,
-//     the dismissed release, and the newest release the last check saw all
-//     live in the app's own preferences domain (its bundle identifier), which
-//     the command line opens by name (`UpdateCheckPreferences.forApp`). So a
-//     researcher who turned checks off in the app has turned them off here,
-//     and a check made by either counts for both.
+//     unchanged: one unauthenticated release lookup to GitHub's API, and,
+//     when a SteerLab code checkout sits beside the app, `git ls-remote` in
+//     that checkout through the person's own git credentials (here with
+//     every prompt turned off, `SystemUpdateGitProbe.nonInteractiveEnvironment`,
+//     because a terminal is attached). Nothing about this Mac is sent. Its
+//     SETTINGS are the app's: the opt-out, the once-a-day stamp, the
+//     dismissed release, and the newest release the last check saw all live
+//     in the app's own preferences domain (its bundle identifier), which the
+//     command line opens by name (`UpdateCheckPreferences.forApp`). So a
+//     researcher who turned checks off in the app has turned them off here.
+//     A check is stamped only once it produced an answer, and the app's
+//     launch announces what its command line recorded
+//     (`UpdateCheckPolicy.recordedAnnouncement`), so a check made by either
+//     counts for both and never silences the other.
 //   * Only `install version` (`--version`) may refresh a stale answer, with a
 //     short deadline, and only while automatic checks are on. `--check` asks
 //     once whatever the setting, as Check for Updates… does. Every other verb
-//     reads the recorded answer and never waits on the network.
+//     reads the recorded answer and never looks for updates itself.
+//   * EVERY COMMAND IT PRINTS names this copy's own command line by its full
+//     path, never a bare `steerlab-cli`, which may run another copy.
 //   * THE INSTALL is `UpdateInstaller`, unchanged in every check it makes:
 //     GitHub over HTTPS only, the checksum, the code signature and its team,
 //     the stapled notarization, the version, the kept `-previous` copy, and
@@ -114,6 +123,11 @@ public enum CommandLineUpdate {
         /// Ignore Ctrl-C and hang-ups while the app is being swapped, so an
         /// interruption cannot stop between two renames. Off in tests.
         public var deferSignalsDuringSwap: Bool
+        /// The release tag the check is pinned to
+        /// (`UpdateCheckOverrides.releaseTagVariable`), when one is. Said in
+        /// the report and the plan, and nothing it finds is recorded.
+        public var pinnedReleaseTag: String?
+        public var now: @Sendable () -> Date
 
         public init(
             app: App?, version: SemanticVersion,
@@ -128,8 +142,12 @@ public enum CommandLineUpdate {
             openApps: @escaping @Sendable (String) -> [String],
             copyFolders: [URL], linkDirectory: URL,
             fileSystem: any UpdateFileSystem = LiveUpdateFileSystem(),
-            deferSignalsDuringSwap: Bool = false
+            deferSignalsDuringSwap: Bool = false,
+            pinnedReleaseTag: String? = nil,
+            now: @escaping @Sendable () -> Date = Date.init
         ) {
+            self.pinnedReleaseTag = pinnedReleaseTag
+            self.now = now
             self.app = app
             self.version = version
             self.preferences = preferences
@@ -177,6 +195,7 @@ public enum CommandLineUpdate {
             }
             let preferences = domain.flatMap { UpdateCheckPreferences.forApp(bundleIdentifier: $0) }
             let revision = app?.sourceRevision
+            let pinned = UpdateCheckOverrides.releaseTag(environment: environment)
             var folders = [
                 URL(filePath: "/Applications"),
                 FileManager.default.homeDirectoryForCurrentUser.appending(component: "Applications"),
@@ -188,11 +207,15 @@ public enum CommandLineUpdate {
                 preferencesDomain: preferences == nil ? nil : domain,
                 offlineReason: offline,
                 makeService: { explicit in
+                    // A terminal is attached here, so the checkout probe
+                    // must never stop to ask for a password or passphrase.
                     UpdateCheckService(
                         currentVersion: version, builtRevision: revision,
                         checkout: CodeResources.executableCheckoutRoot,
-                        feed: GitHubReleaseFeed(timeout: explicit ? 8 : 4),
-                        git: SystemUpdateGitProbe(timeout: explicit ? .seconds(10) : .seconds(4)))
+                        feed: GitHubReleaseFeed(timeout: explicit ? 8 : 4, releaseTag: pinned),
+                        git: SystemUpdateGitProbe(
+                            timeout: explicit ? .seconds(10) : .seconds(4),
+                            environment: SystemUpdateGitProbe.nonInteractiveEnvironment))
                 },
                 installContext: { UpdateInstallContextReader.context(forApp: $0) },
                 installEnvironment: {
@@ -209,7 +232,8 @@ public enum CommandLineUpdate {
                 copyFolders: uniqueFolders(folders),
                 linkDirectory: CommandLineLink.defaultDirectory,
                 fileSystem: fileSystem,
-                deferSignalsDuringSwap: true)
+                deferSignalsDuringSwap: true,
+                pinnedReleaseTag: pinned)
         }
 
         static func uniqueFolders(_ folders: [URL]) -> [URL] {
@@ -231,7 +255,15 @@ public enum CommandLineUpdate {
         public var isLinked: Bool
         /// A copy an earlier update kept (`SteerLab-<version>-previous.app`).
         public var isKeptCopy: Bool
+        /// Its bundle identifier is not this SteerLab's: another app with a
+        /// similar name, or a build with an identifier of its own. Listed so
+        /// nothing is hidden, and never what an update replaces.
+        public var isForeign: Bool
     }
+
+    /// The identifier `scripts/build-app.sh` gives the packaged app; what a
+    /// copy is compared with when this command line is not inside one.
+    public static let packagedBundleIdentifier = "org.steerlab.SteerLab"
 
     /// What `~/.local/bin/steerlab-cli` is.
     public enum LinkState: Sendable, Equatable {
@@ -286,6 +318,7 @@ public enum CommandLineUpdate {
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         }
         if let linked = link.app { candidates.append(linked) }
+        let ours = env.app?.bundleIdentifier ?? packagedBundleIdentifier
         var seen: Set<String> = []
         var found: [AppCopy] = []
         for candidate in candidates {
@@ -300,9 +333,15 @@ public enum CommandLineUpdate {
                     path: candidate.standardizedFileURL, version: info.version,
                     bundleIdentifier: info.identifier, isThisCopy: isThis, isLinked: isLinked,
                     isKeptCopy: UpdateStagingLayout.previousCopyVersion(
-                        fromName: candidate.lastPathComponent) != nil))
+                        fromName: candidate.lastPathComponent) != nil,
+                    isForeign: !isThis && info.identifier != ours))
         }
         return found
+    }
+
+    /// The folders searched, as a reader would name them.
+    public static func searchedFolders(_ env: Environment) -> [String] {
+        env.copyFolders.map(\.path)
     }
 
     // MARK: - The report (`install version`)
@@ -340,6 +379,15 @@ public enum CommandLineUpdate {
         public var link: LinkState
         /// The copy an update would replace.
         public var updateTarget: URL?
+        /// How old the recorded answer is, when `answeredBy` is `lastCheck`.
+        public var answerAge: TimeInterval? = nil
+        /// The recorded answer is older than the daily window, so a newer
+        /// release may have come out since.
+        public var answerIsStale: Bool = false
+        /// The release tag the check is pinned to, when one is.
+        public var pinnedReleaseTag: String? = nil
+        /// The folders searched for copies.
+        public var searchedFolders: [String] = []
     }
 
     /// One check, bounded by `deadline`. A lookup that runs out of time is
@@ -364,11 +412,25 @@ public enum CommandLineUpdate {
         }
     }
 
+    /// Record a finished check in the app's settings, but only an ANSWER:
+    /// the daily stamp and the newest release together. A check that reached
+    /// nothing records nothing, so it never stands in for the app's own
+    /// check; neither does one pinned to a tag, which is not an answer about
+    /// the latest release. The app announces what is recorded here
+    /// (`UpdateCheckPolicy.recordedAnnouncement`) even when its own check is
+    /// not due, so a check made here never hides its banner.
+    static func record(_ result: UpdateCheckResult, _ env: Environment) {
+        guard let preferences = env.preferences, env.pinnedReleaseTag == nil else { return }
+        if case .unknown = result.availability { return }
+        preferences.recordCheck()
+        preferences.recordAnswer(result, releaseTagOverride: nil)
+    }
+
     /// The report, refreshing the recorded answer first when that is
     /// allowed: `explicitCheck` (`--check`) always asks, as the app's Check
     /// for Updates… does; otherwise only a due automatic check asks, and
-    /// only while automatic checks are on. Both record the check in the
-    /// app's own settings, the way the app does.
+    /// only while automatic checks are on. An answer is recorded in the
+    /// app's own settings (`record`).
     public static func report(_ env: Environment, explicitCheck: Bool) async -> Report {
         let link = linkState(directory: env.linkDirectory)
         var report = Report(
@@ -379,19 +441,19 @@ public enum CommandLineUpdate {
             dismissedVersion: env.preferences?.dismissedVersion,
             preferencesDomain: env.preferencesDomain, announces: false,
             copies: copies(env, link: link), link: link, updateTarget: env.app?.bundle)
+        report.pinnedReleaseTag = env.pinnedReleaseTag
+        report.searchedFolders = searchedFolders(env)
 
         var live: UpdateCheckResult?
         if let offline = env.offlineReason {
             report.reason = "not checked: \(offline)"
         } else if explicitCheck {
-            env.preferences?.recordCheck()
             live = await check(env.makeService(true), within: env.explicitDeadline)
         } else if let preferences = env.preferences, preferences.shouldRunAutomaticCheck {
-            preferences.recordCheck()
             live = await check(env.makeService(false), within: env.automaticDeadline)
         }
         if let live {
-            env.preferences?.recordAnswer(live)
+            record(live, env)
             report.checkedNow = true
         }
 
@@ -421,6 +483,13 @@ public enum CommandLineUpdate {
             report.latest = recorded
             report.state = recorded.version > env.version ? .releaseAvailable : .upToDate
             report.answeredBy = "lastCheck"
+            if let observedAt = recorded.observedAt {
+                let age = max(0, env.now().timeIntervalSince(observedAt))
+                report.answerAge = age
+                report.answerIsStale = age >= UpdateCheckPolicy.automaticInterval
+            } else {
+                report.answerIsStale = true
+            }
         }
         if report.answeredBy == "nothing", report.reason == nil {
             report.reason = noAnswerReason(env)
@@ -455,22 +524,44 @@ public enum CommandLineUpdate {
         return "no check has recorded an answer yet; install version --check asks GitHub now"
     }
 
-    /// The rule for saying so without being asked: the app's banner rule. A
-    /// newer release recorded by a check, automatic checks on, and not a
-    /// release the researcher dismissed in the app.
+    /// The rule for saying so without being asked: the app's banner rule,
+    /// the same one the app's launch uses for a recorded answer
+    /// (`UpdateCheckPolicy.recordedAnnouncement`).
     static func announcesAmbiently(_ env: Environment, latest: UpdateLatestRelease?) -> Bool {
-        guard let preferences = env.preferences, env.app != nil,
-            preferences.automaticChecksEnabled,
-            let latest, latest.version > env.version
-        else { return false }
-        return preferences.bannerMessage(
-            for: .releaseAvailable(version: latest.version, page: latest.page ?? releasesPage))
-            != nil
+        guard let preferences = env.preferences, env.app != nil else { return false }
+        return UpdateCheckPolicy.recordedAnnouncement(
+            latest: latest, currentVersion: env.version,
+            automaticChecksEnabled: preferences.automaticChecksEnabled,
+            dismissedVersion: preferences.dismissedVersion) != nil
+    }
+
+    // MARK: - Commands this copy prints
+
+    /// This copy's own command line, quoted for a shell: the app's helper by
+    /// its full path. A bare `steerlab-cli` may be a link to another copy,
+    /// or not on PATH at all.
+    static func executable(_ env: Environment) -> String {
+        env.app.map { CommandLineLink.shellQuoted($0.helper.path) } ?? "steerlab-cli"
+    }
+
+    /// The argv form of the same, for `result`.
+    static func executableWord(_ env: Environment) -> String {
+        env.app?.helper.path ?? "steerlab-cli"
+    }
+
+    static func planCommand(_ env: Environment) -> String {
+        executable(env) + " install update-plan --json"
+    }
+
+    static func applyCommand(_ env: Environment, digest: String) -> String {
+        executable(env) + " install update --expect \(digest) --yes --json"
     }
 
     // MARK: - The advisory
 
-    /// `clientUpdateAvailable`, naming both versions.
+    /// `clientUpdateAvailable`, naming both versions, and what to do with
+    /// THIS copy: show the plan from its own command line, or, for a
+    /// command line outside an app, the rebuild or the Releases page.
     public static func advisory(
         latest: UpdateLatestRelease, env: Environment
     ) -> SteerLabCLIEnvelope.Advisory {
@@ -479,9 +570,15 @@ public enum CommandLineUpdate {
             detail += " (as of \(observedAt.ISO8601Format()))"
         }
         detail += "; this command line is SteerLab \(env.version.releaseDescription)"
-        if let app = env.app { detail += ", part of \(app.bundle.path)" }
-        detail += ". Tell the researcher, show them the plan from steerlab-cli install "
-            + "update-plan --json, and install it only after they approve that plan."
+        if let app = env.app {
+            detail += ", part of \(app.bundle.path). Tell the researcher, show them the plan "
+                + "from \(planCommand(env)), and install it only after they approve that plan."
+        } else {
+            detail += ", built from source rather than part of SteerLab.app, so it cannot "
+                + "update itself. Tell the researcher: update the checkout and rebuild it "
+                + "(scripts/install-cli.sh), or download the release from the Releases page: "
+                + releasesPage.absoluteString
+        }
         return .init(.clientUpdateAvailable, detail)
     }
 
@@ -624,6 +721,17 @@ public enum CommandLineUpdate {
         /// again, twice.
         public var blockers: [String]
         public var digest: String
+        /// The release tag the lookup was pinned to, when one was.
+        public var pinnedReleaseTag: String? = nil
+
+        /// This copy's own command line, which runs the install.
+        public var helper: URL { target.appBundle.appending(path: CommandLineLink.helperPath) }
+
+        /// The install command for this plan, by this copy's full path.
+        public var applyCommand: String {
+            CommandLineLink.shellQuoted(helper.path)
+                + " install update --expect \(digest) --yes --json"
+        }
 
         /// The sentences a researcher approves, in order.
         public var steps: [String] {
@@ -632,7 +740,14 @@ public enum CommandLineUpdate {
             } ?? ""
             let version = release.version.releaseDescription
             let folder = target.appBundle.deletingLastPathComponent().path
-            var steps = [
+            var steps: [String] = []
+            if let pinnedReleaseTag {
+                steps.append(
+                    "This plan is for the release tagged \(pinnedReleaseTag), as "
+                        + "\(UpdateCheckOverrides.releaseTagVariable) requests, not "
+                        + "necessarily the latest release.")
+            }
+            steps += [
                 "Download \(assets.archive.name) (\(size)from the project's GitHub "
                     + "Releases page, release \(release.tag)) and its checksum file "
                     + "\(assets.checksum.name) from the same release, over HTTPS from "
@@ -669,10 +784,13 @@ public enum CommandLineUpdate {
             case .steerLab(let path, let app):
                 steps.append(
                     "\(path.path) runs the copy at \(app.path), which this update does "
-                        + "not touch.")
+                        + "not touch. Run this copy's command line by its full path: "
+                        + CommandLineLink.shellQuoted(helper.path) + ".")
             case .absent(let path), .other(let path):
                 steps.append(
-                    "\(path.path) does not run this copy; nothing on PATH changes.")
+                    "\(path.path) does not run this copy; nothing on PATH changes. Run "
+                        + "this copy's command line by its full path: "
+                        + CommandLineLink.shellQuoted(helper.path) + ".")
             }
             steps.append(
                 "Your workspaces, studies, and models are not touched, and SteerLab is not "
@@ -685,7 +803,7 @@ public enum CommandLineUpdate {
             [
                 UpdateInstallReview.engineLine(
                     newVersion: release.version, sourceCheckout: target.sourceCheckout),
-                CommandLineUpdate.clusterStagingLine,
+                CommandLineUpdate.clusterStagingLine(executable: CommandLineLink.shellQuoted(helper.path)),
                 CommandLineUpdate.identityCheckLine,
             ]
         }
@@ -694,14 +812,17 @@ public enum CommandLineUpdate {
     /// The cluster consequence, named after the checks that report it: the
     /// deployed-payload currency check (`cluster status`, `cluster ensure`)
     /// and the engine-lag warning `remote submit-bundle` prints. Neither
-    /// refuses (`ClusterProvisioningOperations.engineLagConsequence`).
-    public static let clusterStagingLine =
+    /// refuses (`ClusterProvisioningOperations.engineLagConsequence`). The
+    /// push names the updated copy's own command line, which carries this
+    /// version's engine; another copy would push its own.
+    public static func clusterStagingLine(executable: String) -> String {
         "Each cluster site keeps the engine this Mac last pushed. Before staging or "
-        + "submitting studies there again, run steerlab-cli cluster push --site <site> "
-        + "for that site, then restart its controller. Until then cluster status still "
-        + "reads the deployed engine as current (it is the one last pushed) and adds that "
-        + "this version's engine-side changes are not running there, and remote "
-        + "submit-bundle prints the same warning; neither refuses."
+            + "submitting studies there again, run \(executable) cluster push --site <site> "
+            + "for that site, then restart its controller. Until then cluster status still "
+            + "reads the deployed engine as current (it is the one last pushed) and adds "
+            + "that this version's engine-side changes are not running there, and remote "
+            + "submit-bundle prints the same warning; neither refuses."
+    }
 
     /// The client identity check, named accurately: it compares this Mac's
     /// compiled command line with the Python client files on this Mac, and
@@ -747,10 +868,10 @@ public enum CommandLineUpdate {
         case plan(Plan)
     }
 
-    /// Look the release up (the one request this makes), and say exactly
-    /// what installing it would do. Downloads nothing else and changes
-    /// nothing but the check's own record in the app's settings, as Check for
-    /// Updates… does.
+    /// Look the release up (the check's requests, nothing else), and say
+    /// exactly what installing it would do. Downloads nothing else and
+    /// changes nothing but the check's own record in the app's settings
+    /// (`record`).
     public static func plan(_ env: Environment) async throws(Refusal) -> PlanAnswer {
         guard let app = env.app else {
             throw eligibilityRefusal(.notAnAppBundle, app: nil)
@@ -761,9 +882,8 @@ public enum CommandLineUpdate {
                 reason: "SteerLab did not look for a release: \(offline).",
                 repairAction: "Run this outside the launch check.")
         }
-        env.preferences?.recordCheck()
         let result = await check(env.makeService(true), within: env.explicitDeadline)
-        env.preferences?.recordAnswer(result)
+        record(result, env)
 
         let available: SemanticVersion
         switch result.availability {
@@ -826,7 +946,7 @@ public enum CommandLineUpdate {
                 olderCopiesToTrash: older, link: linkState(directory: env.linkDirectory),
                 blockers: blockers(env, app: target.appBundle, identifier: target.bundleIdentifier)
                     .map(\.reason),
-                digest: digest(binding)))
+                digest: digest(binding), pinnedReleaseTag: env.pinnedReleaseTag))
     }
 
     // MARK: - What stands in the way
@@ -886,22 +1006,24 @@ public enum CommandLineUpdate {
                     + "available now"
                     + (latest.map { " (the newest is \($0.version.releaseDescription))" } ?? "")
                     + ", so there is nothing to install.",
-                repairAction: "Nothing was changed. Run "
-                    + planCommand(app: env.app?.bundle) + " to see what is current.")
+                repairAction: "Nothing was changed. Run " + planCommand(env)
+                    + " to see what is current.")
         case .plan(let derived):
             plan = derived
         }
+        // The new digest is deliberately NOT handed back, here or anywhere
+        // in the refusal: approval is for a plan the researcher saw, so the
+        // only way to a new digest is a new review (`install-client.sh`'s
+        // planChanged says the same).
         guard plan.digest == expected.lowercased() else {
             throw Refusal(
                 code: "planChanged",
-                reason: "The update plan changed since it was reviewed (reviewed "
-                    + "\(expected.prefix(12)), now \(plan.digest.prefix(12))): the release, "
-                    + "its files, or what happens to the copies here is not what was "
-                    + "approved.",
-                repairAction: "Nothing was changed. Run " + planCommand(app: env.app?.bundle)
-                    + ", review the new plan with the researcher, and install it with its "
-                    + "own digest.",
-                payload: ["planSHA256": .string(plan.digest)])
+                reason: "The update plan changed since it was reviewed: the release, its "
+                    + "files, or what happens to the copies here is not what was approved. "
+                    + "Nothing was changed.",
+                repairAction: "Review a fresh plan before installing: run "
+                    + planCommand(env) + ", show the new plan to the researcher, and "
+                    + "install only once they approve it.")
         }
         if let first = blockers(env, app: plan.target.appBundle, identifier: plan.target.bundleIdentifier).first {
             throw first
@@ -995,6 +1117,16 @@ public enum CommandLineUpdate {
         ]
         if let reason = report.reason { update["reason"] = .string(reason) }
         if let remote = report.remoteMainRevision { update["remoteMainRevision"] = .string(remote) }
+        if report.answeredBy == "lastCheck" {
+            update["answerAgeSeconds"] = report.answerAge.map { .number($0.rounded()) } ?? .null
+            update["answerIsStale"] = .bool(report.answerIsStale)
+        }
+        update["pinnedReleaseTag"] = report.pinnedReleaseTag.map(JSONValue.string) ?? .null
+        if let target = report.updateTarget {
+            update["planCommand"] = .array(
+                [target.appending(path: CommandLineLink.helperPath).path,
+                 "install", "update-plan", "--json"].map(JSONValue.string))
+        }
         if let domain = report.preferencesDomain {
             update["settings"] = .object([
                 "domain": .string(domain),
@@ -1017,10 +1149,20 @@ public enum CommandLineUpdate {
                         "thisCopy": .bool(copy.isThisCopy),
                         "linked": .bool(copy.isLinked),
                         "keptCopy": .bool(copy.isKeptCopy),
+                        "foreign": .bool(copy.isForeign),
                     ])
                 }),
+            "appCopiesSearched": .array(report.searchedFolders.map(JSONValue.string)),
             "commandLineLink": json(report.link, thisCopy: report.updateTarget),
         ]
+    }
+
+    /// How long ago, in a reader's words.
+    static func describe(age: TimeInterval) -> String {
+        let hours = Int(age / 3600)
+        if hours < 1 { return "less than an hour ago" }
+        if hours < 48 { return "\(hours) hour\(hours == 1 ? "" : "s") ago" }
+        return "\(hours / 24) days ago"
     }
 
     /// The rows `install version` adds to its human report.
@@ -1033,10 +1175,13 @@ public enum CommandLineUpdate {
         switch report.state {
         case .releaseAvailable:
             let latest = report.latest?.version.releaseDescription ?? "a newer release"
+            let review = report.updateTarget.map {
+                ". Review it: "
+                    + CommandLineLink.shellQuoted($0.appending(path: CommandLineLink.helperPath).path)
+                    + " install update-plan"
+            } ?? "; update the checkout and rebuild, or use the Releases page"
             lines.append(
-                row("update", "SteerLab \(latest) is available; this copy is \(this)"
-                    + (report.updateTarget == nil
-                        ? "" : ". Review it: steerlab-cli install update-plan")))
+                row("update", "SteerLab \(latest) is available; this copy is \(this)" + review))
         case .newerSourceAvailable:
             lines.append(
                 row("update", "no newer release; the repository's main is at "
@@ -1049,8 +1194,19 @@ public enum CommandLineUpdate {
         if report.state != .unknown, let reason = report.reason {
             lines.append(row("", reason))
         }
-        if report.answeredBy == "lastCheck", let at = report.latest?.observedAt {
-            lines.append(row("", "as of the check at \(at.ISO8601Format())"))
+        if report.answeredBy == "lastCheck" {
+            var asOf = report.latest?.observedAt.map { "as of the check at \($0.ISO8601Format())" }
+                ?? "as of a check at an unrecorded time"
+            if let age = report.answerAge { asOf += " (\(describe(age: age)))" }
+            if report.answerIsStale {
+                asOf += "; older than a day, so a newer release may be out since"
+            }
+            lines.append(row("", asOf))
+        }
+        if let pinned = report.pinnedReleaseTag {
+            lines.append(
+                row("", "this check asked for the release tagged \(pinned), as "
+                    + "\(UpdateCheckOverrides.releaseTagVariable) requests"))
         }
         if let domain = report.preferencesDomain {
             let mode = report.automaticChecksEnabled == false
@@ -1064,6 +1220,10 @@ public enum CommandLineUpdate {
             if copy.isThisCopy { notes.append("this copy") }
             if copy.isLinked { notes.append("\(report.link.link.path) runs it") }
             if copy.isKeptCopy { notes.append("kept by an earlier update") }
+            if copy.isForeign {
+                notes.append(
+                    "a different app: identifier \(copy.bundleIdentifier ?? "not recorded")")
+            }
             lines.append(
                 row(index == 0 ? "app copies" : "", "\(copy.path.path) "
                     + (copy.version ?? "version not recorded")
@@ -1111,8 +1271,11 @@ public enum CommandLineUpdate {
             "afterInstall": .array(plan.afterInstall.map(JSONValue.string)),
             "blockers": .array(plan.blockers.map(JSONValue.string)),
             "planSHA256": .string(plan.digest),
+            "pinnedReleaseTag": plan.pinnedReleaseTag.map(JSONValue.string) ?? .null,
+            // This copy's own command line by its full path: a bare
+            // `steerlab-cli` may run another copy.
             "apply": .array(
-                ["steerlab-cli", "install", "update", "--expect", plan.digest, "--yes", "--json"]
+                [plan.helper.path, "install", "update", "--expect", plan.digest, "--yes", "--json"]
                     .map(JSONValue.string)),
         ]
     }

@@ -3426,20 +3426,36 @@ envelope, same `--json` mode.
 **Whether a newer release is out, and installing it.** `install version` also
 reports `result.update` (`state` is `releaseAvailable`, `newerSourceAvailable`,
 `upToDate`, or `unknown`, with `thisVersion`, `latestRelease`,
-`newerThanThisBuild`, `answeredBy`, and the `reason` when nothing is known),
-`appCopies` (every `SteerLab*.app` in `/Applications`, `~/Applications`, the
-folder holding this app, and `~/SteerLab`, with its version, which one this
-command line belongs to, and which one `~/.local/bin/steerlab-cli` runs), and
-`commandLineLink`. The command line shares the app's update settings: it opens
-the app's own preferences domain (its bundle identifier, shown as
-`update.settings.domain`), so the opt-out, the once-a-day stamp, a dismissed
-release, and the newest release the last check saw are one record for both.
+`newerThanThisBuild`, `answeredBy`, the `reason` when nothing is known,
+`answerAgeSeconds` and `answerIsStale` for an answer from an earlier check,
+`pinnedReleaseTag`, and `planCommand`, the plan command by this copy's full
+path), `appCopies` (each `SteerLab*.app` in `/Applications`, `~/Applications`,
+the folder holding this app, and `~/SteerLab`, listed in `appCopiesSearched`,
+with its version, which one this command line belongs to, which one
+`~/.local/bin/steerlab-cli` runs, and `foreign` for one whose bundle identifier
+is not this SteerLab's), and `commandLineLink`. The command line shares the
+app's update settings: it opens the app's own preferences domain (its bundle
+identifier, shown as `update.settings.domain`), so the opt-out, the once-a-day
+stamp, a dismissed release, and the newest release the last check saw are one
+record for both.
 
 - Only `install version` may ask GitHub on its own, at most once a day, only
   while automatic checks are on, and within 5 seconds; a lookup that cannot
   finish is `unknown`, never "up to date". `--check` asks once whatever the
   setting, as Check for Updates… does. The lookup is the app's: one
-  unauthenticated request, and nothing about the Mac is sent.
+  unauthenticated request to GitHub's release API, and, when a SteerLab code
+  checkout sits beside the app (or in `~/SteerLab`), `git ls-remote` in that
+  checkout through the person's own git credentials. From the command line
+  that probe runs with every prompt off (`GIT_TERMINAL_PROMPT=0`,
+  `GIT_SSH_COMMAND='ssh -oBatchMode=yes'`, `GCM_INTERACTIVE=never`), so it
+  never waits on the terminal. Nothing about the Mac is sent.
+- Only an answer is recorded: the daily stamp and the newest release
+  together. A lookup that reached nothing, or one pinned with
+  `STEERLAB_UPDATE_RELEASE_TAG` (which the report and the plan say), records
+  nothing. At launch, when no check of its own is due, the app shows a newer
+  release its command line recorded (checks on, not dismissed), with Check for
+  Updates… to fetch what Install Update… needs, so a check made by either never
+  hides the other's notice.
 - `clientUpdateAvailable` (an advisory, never a refusal) names this version and
   the newer one. `install version` adds it by the app's banner rule (checks on,
   and not a release the researcher dismissed in the app), or whenever `--check`
@@ -3463,8 +3479,13 @@ release, and the newest release the last check saw are one record for both.
   it compares a running `steerlab-cli` with the Python client files on this
   Mac, and refuses a stage made by a command that was already running when the
   new copy was put in place.
+- Every command these verbs print, in prose, `nextAction`, the advisory, and
+  the plan's `apply` argv, names this copy's own command line by its full path:
+  a bare `steerlab-cli` may be a link to another copy, or absent from PATH.
 - `install update --expect <planSHA256> --yes` re-derives the plan and refuses
-  (`planChanged`) if the digest differs, then runs the app's own installer
+  (`planChanged`) if the digest differs, without handing back the new digest:
+  approval is for a plan the researcher saw, so the repair is a fresh
+  `install update-plan` to show them. It then runs the app's own installer
   (`UpdateInstaller`) with its checks unchanged: GitHub over HTTPS only, the
   checksum, strict validation of the code signature against this copy's own
   bundle identifier and Developer ID team plus the stapled notarization
@@ -3480,16 +3501,16 @@ release, and the newest release the last check saw are one record for both.
   The running command line lives inside the bundle it replaces: the swap only
   renames, so the process keeps running from the renamed copy and reads
   nothing from its bundle afterwards, and Ctrl-C is held off during the last
-  signature check and the renames. `~/.local/bin/steerlab-cli` names the helper by path, so it runs the
-  new version from the next command on (`linkedVersion`). SteerLab is not
-  opened afterwards.
+  signature check and the renames. `~/.local/bin/steerlab-cli` names the
+  helper by path, so when it pointed at this copy it runs the new version from
+  the next command on (`linkedVersion`). SteerLab is not opened afterwards.
 
 | Code | State | Meaning |
 |---|---|---|
 | `updateCheckUnavailable` | `degraded` (13) | GitHub could not be reached; nothing changed. |
 | `releaseFilesUnavailable` | `refused` (65) | The release has no app file or checksum GitHub hands out. |
 | `updateNotEligible` | `refused` (65) | The installer's eligibility rules refuse this copy. |
-| `planChanged` | `refused` (65) | The plan is not the one reviewed; review the new one. |
+| `planChanged` | `refused` (65) | The plan is not the one reviewed; show the researcher a fresh plan. |
 | `appRunning` | `refused` (65) | SteerLab is open; quit it first. |
 | `updateBusy` | `refused` (65) | Something runs out of this copy; wait for it. |
 | `updateRejected` | `refused` (65) | The download failed a check; nothing was replaced. |

@@ -18,14 +18,19 @@ migration that rewrites frozen bytes.
   `steerlab-cli`, and an update was invisible to it: studies were authored
   with a 0.9.8 command line while 0.9.18 was current. `steerlab-cli --version
   --json` (`install version`) now reports the newest release and whether it is
-  newer than this copy, an honest `unknown` when GitHub cannot be reached, and
-  every SteerLab.app on this Mac with its version and the one
-  `~/.local/bin/steerlab-cli` runs. It shares the app's update settings,
-  read and written in the app's own preferences domain: when the researcher
-  turned automatic checks off in the app, the command line does not check on
-  its own either, and one daily limit covers both. Only `install version` may
-  ask GitHub, at most once a day, within 5 seconds, and `--check` asks once
-  the way Check for Updates… does. A new `clientUpdateAvailable` advisory names
+  newer than this copy, an honest `unknown` when GitHub cannot be reached (and
+  the age of an earlier answer), and the SteerLab.app copies in
+  `/Applications`, `~/Applications`, the folder holding this app, and
+  `~/SteerLab`, with their versions and the one `~/.local/bin/steerlab-cli`
+  runs. It shares the app's update settings, read and written in the app's
+  own preferences domain: when the researcher turned automatic checks off in
+  the app, the command line does not check on its own either, and one daily
+  limit covers both. A check is recorded only once it got an answer, and the
+  app now shows at launch a newer release its command line found, so neither
+  hides the other's notice. Only `install version` may ask GitHub, at most
+  once a day, within 5 seconds, and `--check` asks once the way Check for
+  Updates… does; its probe of a code checkout beside the app never prompts on
+  the terminal. A new `clientUpdateAvailable` advisory names
   both versions on `install version`, `workspace guide`, and `setup inspect`,
   from the last recorded answer only; it is in both clients' advisory
   vocabularies, and only the Mac command line emits it. `install update-plan`
@@ -33,10 +38,13 @@ migration that rewrites frozen bytes.
   cluster site needs a `cluster push` before it runs this version's engine,
   with a `planSHA256` that binds it; it downloads nothing but the release
   lookup. `install update --expect <planSHA256> --yes` re-derives that plan,
-  refuses if it changed, while SteerLab is open, or while another
+  refuses if it changed (without offering the new digest, so a changed plan
+  goes back to the researcher), while SteerLab is open, or while another
   `steerlab-cli` runs from that copy, and then runs the app's own installer
   with every check unchanged (HTTPS from GitHub, checksum, signature and team,
-  stapled notarization, version, the `-previous` copy). The agent guide (guide
+  stapled notarization, version, the `-previous` copy). Every command these
+  verbs print names the copy's own command line by its full path, since a bare
+  `steerlab-cli` may run another copy. The agent guide (guide
   version 10) tells an assistant to run `--version` at the start of each
   session and to install only a plan the researcher approved. The app now
   records the newest release its own checks see, so its command line can read
