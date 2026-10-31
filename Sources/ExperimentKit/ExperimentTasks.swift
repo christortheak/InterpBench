@@ -5968,11 +5968,20 @@ public enum ExperimentTasks {
         let candidates = generations.filter { $0.condition != "baseline" }
         guard !baseline.isEmpty, !candidates.isEmpty else {
             let excludedAll = (exclusionStamp?.excludedRecords ?? 0) > 0
+            // A study of the baseline alone has no other condition to pair
+            // with: said as what it is, with the per-response route.
+            let baselineAlone = !excludedAll && !baseline.isEmpty
+                && ExperimentStore.isBaselineOnlyStudy(manifest)
             throw ExperimentError(
                 reason: "paired judge requires baseline and non-baseline generations"
                     + (excludedAll
                         ? " — the declared exclusion rules left none to judge"
-                        : ""))
+                        : baselineAlone
+                            ? " — this study measures the baseline agent alone, "
+                                + "so there is no other condition to pair with the "
+                                + "baseline; judge it with a rubric that codes each "
+                                + "response (perResponseCoding)"
+                            : ""))
         }
         // Zero-pairs refusal (P0 message family shared verbatim with the
         // server): both sides present but no candidate shares a cell with
@@ -7300,7 +7309,10 @@ public enum ExperimentTasks {
         "paired judging produced zero pairs: records join on (promptID, "
         + "sampleIndex) and every non-baseline record needs a baseline record "
         + "in the same cell — this source run has none. Likely causes: the "
-        + "run has no baseline condition, or no sampled text records "
+        + "run has no baseline condition; the study measures the baseline "
+        + "agent alone, so it has no other condition to pair with the "
+        + "baseline (judge it with a rubric that codes each response, "
+        + "perResponseCoding); or the run has no sampled text records "
         + "(instrument readouts and error records are never judged). Refusing "
         + "to write an empty judged report."
 

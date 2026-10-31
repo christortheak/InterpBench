@@ -272,5 +272,8 @@ import Testing
         #expect(message.contains("baseline"))
         #expect(message.contains("instrument readouts and error records"))
         #expect(message.contains("Refusing"))
+        // A study of the baseline alone is one of the causes, with its route.
+        #expect(message.contains("baseline agent alone"))
+        #expect(message.contains("perResponseCoding"))
     }
 }

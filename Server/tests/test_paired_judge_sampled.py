@@ -131,6 +131,9 @@ def test_no_pairs_message_names_join_key_and_likely_cause():
     assert "baseline" in message
     assert "instrument readouts and error records" in message
     assert "Refusing" in message
+    # A study of the baseline alone is one of the causes, with its route.
+    assert "baseline agent alone" in message
+    assert "perResponseCoding" in message
 
 
 def test_full_evaluate_task_refuses_zero_pairs_before_any_judging(
