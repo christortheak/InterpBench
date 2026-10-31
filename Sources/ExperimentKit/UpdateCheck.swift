@@ -434,17 +434,44 @@ public protocol UpdateGitProbe: Sendable {
 public struct SystemUpdateGitProbe: UpdateGitProbe {
     private let runner: any ProvisionCommandRunner
     private let timeout: Duration
+    private let environment: [String: String]
 
+    /// For a probe run from a terminal, such as the app's command line in a
+    /// coding assistant's session: git, ssh, and Git Credential Manager may
+    /// use the person's stored credentials but never stop to ask on the
+    /// terminal. A remote that needs a typed answer fails, and the check
+    /// reads it as one more thing that did not answer.
+    public static let nonInteractiveEnvironment: [String: String] = [
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_SSH_COMMAND": "ssh -oBatchMode=yes",
+        "GCM_INTERACTIVE": "never",
+    ]
+
+    /// - Parameter environment: variables set for each `git` it runs (the
+    ///   app passes none; its command line passes `nonInteractiveEnvironment`).
     public init(
         runner: any ProvisionCommandRunner = SystemProvisionRunner(),
-        timeout: Duration = .seconds(10)
+        timeout: Duration = .seconds(10),
+        environment: [String: String] = [:]
     ) {
         self.runner = runner
         self.timeout = timeout
+        self.environment = environment
+    }
+
+    /// The command for one `git` run: through `/usr/bin/env` when variables
+    /// are set, so they reach git and ssh without touching this process.
+    static func argv(
+        _ arguments: [String], checkout: URL, environment: [String: String]
+    ) -> [String] {
+        let git = ["/usr/bin/git", "-C", checkout.path] + arguments
+        guard !environment.isEmpty else { return git }
+        return ["/usr/bin/env"]
+            + environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" } + git
     }
 
     public func git(_ arguments: [String], in checkout: URL) async -> UpdateGitOutcome {
-        let argv = ["/usr/bin/git", "-C", checkout.path] + arguments
+        let argv = Self.argv(arguments, checkout: checkout, environment: environment)
         let lines = ProvisionLineBuffer()
         let runner = self.runner
         let verb = arguments.first ?? "git"
@@ -790,6 +817,27 @@ public enum UpdateCheckPolicy {
         return "SteerLab \(version.releaseDescription) is available"
     }
 
+    /// The release to announce from a RECORDED answer, with no check now:
+    /// the newest release a check saw (the app's own, or its command
+    /// line's), when it is newer than `currentVersion`, automatic checks are
+    /// on, and it is not a release the researcher dismissed. The app's launch
+    /// uses it when no check is due, so a check its command line made
+    /// announces in the app as well as there; the command line uses it for
+    /// the advisory it adds unasked. Nil otherwise.
+    public static func recordedAnnouncement(
+        latest: UpdateLatestRelease?, currentVersion: SemanticVersion,
+        automaticChecksEnabled: Bool, dismissedVersion: String?
+    ) -> UpdateAvailability? {
+        guard automaticChecksEnabled, let latest, latest.version > currentVersion else {
+            return nil
+        }
+        let availability = UpdateAvailability.releaseAvailable(
+            version: latest.version,
+            page: latest.page ?? UpdateRepository.default.releasePage(tag: latest.tag))
+        return bannerMessage(for: availability, dismissedVersion: dismissedVersion) == nil
+            ? nil : availability
+    }
+
     /// What a MANUAL check reports — every state gets an honest sentence,
     /// including the ones an automatic check passes over in silence.
     public static func manualReport(for availability: UpdateAvailability) -> String {
@@ -953,5 +1001,13 @@ public struct UpdateCheckPreferences: @unchecked Sendable {
     public func bannerMessage(for availability: UpdateAvailability) -> String? {
         UpdateCheckPolicy.bannerMessage(
             for: availability, dismissedVersion: dismissedVersion)
+    }
+
+    /// `UpdateCheckPolicy.recordedAnnouncement` over this record.
+    public func recordedAnnouncement(currentVersion: SemanticVersion) -> UpdateAvailability? {
+        UpdateCheckPolicy.recordedAnnouncement(
+            latest: latestRelease, currentVersion: currentVersion,
+            automaticChecksEnabled: automaticChecksEnabled,
+            dismissedVersion: dismissedVersion)
     }
 }
