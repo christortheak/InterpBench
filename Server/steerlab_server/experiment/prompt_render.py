@@ -662,6 +662,15 @@ def _apply_chat_template(tokenizer, chat, *, model_id: str, **kwargs) -> str:
         raise
 
 
+def tokenizes_with_special_tokens(prompt_mode: str) -> bool:
+    """Whether :func:`render` tokenizes its text WITH the tokenizer's own
+    special tokens: a raw completion does (matching the Swift raw-text path,
+    which adds them once), a chat render does not (the template already wrote
+    them — the double-BOS guard). One rule, read by :func:`render` and by
+    ``prompt_span``, which re-tokenizes the same text with offsets."""
+    return prompt_mode == RAW_COMPLETION
+
+
 def render(tokenizer, prompt: str, *, model_id: str,
            prompt_mode: str = CHAT_ASSISTANT, system_prompt: str | None = None,
            qwen_thinking_enabled: bool = False,
@@ -696,7 +705,8 @@ def render(tokenizer, prompt: str, *, model_id: str,
             text += " /no_think" if effort == REASONING_OFF else " /think"
         # Raw completion: tokenize as-is (special tokens per tokenizer default,
         # matching the Swift raw-text path which adds them once).
-        ids = tokenizer(text, add_special_tokens=True).input_ids
+        ids = tokenizer(text, add_special_tokens=tokenizes_with_special_tokens(
+            prompt_mode)).input_ids
         return RenderedPrompt(text=text, input_ids=list(ids), prompt_token_count=len(ids))
 
     # chatAssistant
@@ -719,7 +729,8 @@ def render(tokenizer, prompt: str, *, model_id: str,
         **template_kwargs)
     # The template already emits BOS/special markers; tokenize without adding a
     # second set (double-BOS guard, esp. for Gemma).
-    ids = tokenizer(text, add_special_tokens=False).input_ids
+    ids = tokenizer(text, add_special_tokens=tokenizes_with_special_tokens(
+        prompt_mode)).input_ids
     return RenderedPrompt(text=text, input_ids=list(ids), prompt_token_count=len(ids))
 
 
