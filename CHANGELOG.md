@@ -34,8 +34,21 @@ migration that rewrites frozen bytes.
   exact `steerlab-cli` spelling (`result.macCommand`), and both write the same
   block. A lens that is missing or fitted on another model is refused with a
   repair, as is a layer the lens never fitted, and a frozen study refuses
-  with the duplicate repair. Freezing, `data check`, and how a readout runs
-  are unchanged.
+  with the duplicate repair. Freezing and `data check` are unchanged.
+- **Two run-start changes keep a declared readout valid.** On the Python
+  engine, run start now compares the readout's `configHash` with the
+  qualification the block itself pins (none, when it pins none). Before, it
+  used whatever qualification the runtime resolved, so a block that pinned
+  none refused as "drifted" once the lens had a passing qualification for the
+  runtime. A qualification run start resolves is still stamped on every trace
+  row, and is now also logged. A block that pins its qualification hashes
+  exactly as before, and a pin computed the old way is still accepted. Run
+  start also hashes the tokenizer of the study's pinned revision, where it
+  read the newest cached snapshot whatever the study pinned. So a study whose
+  pinned revision is a ref name such as `main`, or a revision this machine's
+  model cache does not hold, now records no tokenizer hash (`null`), where it
+  used to hash the newest snapshot. A study that pins no revision still reads
+  the newest snapshot.
 
 ## [0.9.18] — 2026-10-25
 
