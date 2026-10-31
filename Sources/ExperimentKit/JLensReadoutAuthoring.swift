@@ -531,9 +531,11 @@ public enum JLensReadoutAuthoring {
         if block["qualificationID"] == nil {
             notes.append(
                 "No qualification is pinned, so a run is exploratory and freeze refuses. "
-                    + "Pass a passing qualification of this lens for the study's runtime "
-                    + "with --qualification, or qualify the runtime first (steerlab-server "
-                    + "jlens qualify) and run this verb again.")
+                    + "This command line never resolves one: name it with --qualification "
+                    + "<id>, whose id the Python client's --dry-run of this verb prints "
+                    + "(result.pins.qualificationID), or run the Python client's verb, "
+                    + "which pins the newest passing one for the study's declared "
+                    + "revision and dtype.")
         }
         if (manifest.modelRevision ?? "").isEmpty || (manifest.dtype ?? "").isEmpty {
             notes.append(
