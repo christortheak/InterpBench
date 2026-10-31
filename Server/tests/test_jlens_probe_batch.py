@@ -409,29 +409,132 @@ def test_a_signal_during_the_forward_pass_stops_at_the_next_layer(workspace, mon
     assert _whole_prompt_directories(run) == ["case-1"]
 
 
-def test_a_real_signal_uses_the_engine_flag_and_the_handlers_are_restored(workspace, monkeypatch):
-    """SIGUSR1, the walltime warning the scheduler script forwards, reaches
-    the batch through resume.CheckpointFlag; afterwards the process's own
+def _send_during_prompt(monkeypatch, number, at=2):
+    import signal
+    read = probe.read_prompt
+    count = []
+
+    def signalled(*a, **k):
+        count.append(1)
+        if len(count) == at:
+            os.kill(os.getpid(), number)
+        return read(*a, **k)
+
+    monkeypatch.setattr(probe, "read_prompt", signalled)
+
+
+def test_a_real_term_stops_the_batch_and_the_handlers_are_restored(workspace, monkeypatch):
+    """TERM (a cancel, or the walltime itself) is forwarded by the scheduler
+    script; the batch stops at the next layer. Afterwards the process's own
     handlers are back."""
     import signal
     before = (signal.getsignal(signal.SIGUSR1), signal.getsignal(signal.SIGTERM))
+    _send_during_prompt(monkeypatch, signal.SIGTERM)
+    created = []
+    with pytest.raises(batch.ProbeBatchInterrupted) as stopped:
+        batch.probe_batch(config_for(workspace), root=str(workspace), log=lambda *_: None,
+                          model=tiny_model(), on_run_created=created.append)
+    assert stopped.value.scheduler_interrupted is True
+    # The repair says what the export allows: an interrupted batch does not come home.
+    assert "not exported" in str(stopped.value) and "walltime estimate" in str(stopped.value)
+    manifest = json.loads((Path(created[0]) / batch.MANIFEST).read_text())
+    assert manifest["status"] == "interrupted"
+    assert _statuses(manifest) == {"case-1": "completed", "case-2": "interrupted", "case-3": "notRead"}
+    assert (signal.getsignal(signal.SIGUSR1), signal.getsignal(signal.SIGTERM)) == before
+
+
+def test_the_walltime_warning_is_recorded_and_reading_continues(workspace, monkeypatch):
+    """USR1 comes signal_seconds before the walltime. There is nothing to
+    checkpoint, so the batch notes it and keeps reading: here it finishes."""
+    import signal
+    before = (signal.getsignal(signal.SIGUSR1), signal.getsignal(signal.SIGTERM))
+    _send_during_prompt(monkeypatch, signal.SIGUSR1)
+    result = batch.probe_batch(config_for(workspace), root=str(workspace), log=lambda *_: None,
+                               model=tiny_model())
+    manifest = json.loads(Path(result["reportPath"]).read_text())
+    assert manifest["status"] == "completed" and set(_statuses(manifest).values()) == {"completed"}
+    assert manifest["walltimeWarningSeenAt"].endswith("Z")
+    assert (Path(result["runDirectory"]) / "COMPLETED").exists()
+    assert (signal.getsignal(signal.SIGUSR1), signal.getsignal(signal.SIGTERM)) == before
+
+
+# --- the job record: an interruption never overrides the scheduler's outcome ---
+
+def _interrupted_child(managed, monkeypatch, signals):
+    """Run the managed child as the scheduler would, delivering ``signals``
+    while prompt 2 is read; return the record it wrote and its exit code."""
+    from steerlab_server.api import scientific_execution
+    from steerlab_server.steering import model_loader
+    root, profile = managed
     read = probe.read_prompt
     count = []
 
     def signalled(*a, **k):
         count.append(1)
         if len(count) == 2:
-            os.kill(os.getpid(), signal.SIGUSR1)
+            for number in signals:
+                os.kill(os.getpid(), number)
         return read(*a, **k)
 
     monkeypatch.setattr(probe, "read_prompt", signalled)
-    created = []
-    with pytest.raises(batch.ProbeBatchInterrupted):
-        batch.probe_batch(config_for(workspace), root=str(workspace), log=lambda *_: None,
-                          model=tiny_model(), on_run_created=created.append)
-    manifest = json.loads((Path(created[0]) / batch.MANIFEST).read_text())
-    assert manifest["status"] == "interrupted" and _statuses(manifest)["case-1"] == "completed"
-    assert (signal.getsignal(signal.SIGUSR1), signal.getsignal(signal.SIGTERM)) == before
+    monkeypatch.setattr(model_loader, "load", lambda *a, **k: tiny_model())
+    plan = scientific_execution.plan(_request(root), profile)
+    packet = root / "packet.json"
+    packet.write_text(json.dumps(plan))
+    records = root / "records"
+    records.mkdir()
+    code = scientific_execution.execute_packet(packet, "probe-job", records / "probe-job.json")
+    return json.loads((records / "probe-job.json").read_text()), code, records
+
+
+def _fold(root, records, scheduler_status):
+    """The controller's view: the poll loop has set the scheduler's terminal
+    state, then folds the child's record over it."""
+    from steerlab_server.api.jobs import DurableJobStore, JobManager
+    jobs = JobManager(store=DurableJobStore(str(root / "jobs.sqlite")), sweep_orphans=False)
+    job = jobs.record_external("science:" + batch.OPERATION, status=scheduler_status, executor="slurm",
+                               job_id="probe-job", result={"recordsDirectory": str(records)})
+    assert job.id == "probe-job"
+    jobs.reconcile(str(records), force=True)
+    return jobs.get("probe-job")
+
+
+@pytest.mark.parametrize("signals, scheduler_status", [
+    ("TERM", "cancelled"),           # a person's scancel, or the app's cancel
+    ("USR1+TERM", "failed"),         # the walltime: the warning, then TERM; Slurm's TIMEOUT maps to failed
+])
+def test_an_interrupted_batch_leaves_the_scheduler_outcome_on_the_job(managed, monkeypatch, signals,
+                                                                      scheduler_status):
+    import signal
+    numbers = {"TERM": [signal.SIGTERM], "USR1+TERM": [signal.SIGUSR1, signal.SIGTERM]}[signals]
+    record, code, records = _interrupted_child(managed, monkeypatch, numbers)
+    assert code != 0
+    assert "status" not in record                 # nothing to override the scheduler with
+    assert "Interrupted by a scheduler signal" in record["error"]
+    run = Path(record["result"]["runDirectory"])
+    manifest = json.loads((run / batch.MANIFEST).read_text())
+    assert manifest["status"] == "interrupted"
+    assert ("walltimeWarningSeenAt" in manifest) is (signals == "USR1+TERM")
+    job = _fold(managed[0], records, scheduler_status)
+    assert job.status == scheduler_status
+    assert job.result["runDirectory"] == str(run)
+
+
+def test_a_genuine_failure_still_records_failed(managed, monkeypatch):
+    from steerlab_server.api import scientific_execution
+    from steerlab_server.steering import model_loader
+    root, profile = managed
+    monkeypatch.setattr(model_loader, "load", lambda *a, **k: tiny_model())
+    monkeypatch.setattr(probe, "read_prompt", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bad device")))
+    plan = scientific_execution.plan(_request(root), profile)
+    packet = root / "packet.json"
+    packet.write_text(json.dumps(plan))
+    records = root / "records"
+    records.mkdir()
+    assert scientific_execution.execute_packet(packet, "probe-job", records / "probe-job.json") == 70
+    record = json.loads((records / "probe-job.json").read_text())
+    assert record["status"] == "failed" and "bad device" in record["error"]
+    assert _fold(root, records, "failed").status == "failed"
 
 
 def test_a_pinned_id_beyond_the_output_head_refuses_before_any_run(workspace):
@@ -849,7 +952,7 @@ def test_an_unknown_capacity_is_said(managed, monkeypatch):
 
 
 @pytest.mark.parametrize("request_text, fit", [("64G", "fits"), ("4K", "mayExceed"), ("1K", "exceeds"),
-                                                ("plenty", "notChecked")])
+                                                ("plenty", "notChecked"), ("0", "notChecked")])
 def test_host_capture_is_compared_with_the_memory_request_as_an_advisory(
         managed, tokenizer_cached, monkeypatch, request_text, fit):
     """The capture holds every armed layer × position in float32 on the host.
@@ -876,6 +979,7 @@ def test_slurm_memory_values_are_read_in_its_own_units():
     assert slurm_memory_bytes("512mb") == 512 * 1024**2
     assert slurm_memory_bytes("2T") == 2 * 1024**4
     assert slurm_memory_bytes(None) is None and slurm_memory_bytes("lots") is None
+    assert slurm_memory_bytes("0") == 0   # all of the node; host_memory_fit does not compare it
 
 
 def test_other_operations_keep_their_plans(managed):

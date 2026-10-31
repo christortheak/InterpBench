@@ -27,6 +27,7 @@ import os
 from pathlib import Path
 import re
 import time
+from datetime import datetime, timezone
 
 from . import diagnostic_archives as archives
 
@@ -744,33 +745,46 @@ def preflight(config, root):
 #: only once complete, so a prompt directory under ``prompts/`` is always whole.
 PARTIAL_DIRECTORY = '.partial'
 
-INTERRUPTION_REPAIR = ('The prompts marked completed in probe-batch.json are whole. Submit the prompts marked '
-                       'interrupted or notRead as a new request (a fresh prompt set), with a longer walltime if '
-                       'the scheduler stopped this one.')
+INTERRUPTION_REPAIR = ('An interrupted batch is not exported: only a completed job\'s run comes home. Resubmit '
+                       'the whole prompt set with a longer walltime, or split it into smaller batches that each '
+                       'fit the walltime estimate the review states for sizing them.')
 
 
 class ProbeBatchInterrupted(RuntimeError):
-    """A scheduler signal stopped the batch; its manifest records where."""
+    """A scheduler signal stopped the batch; its manifest records where.
+
+    ``scheduler_interrupted`` tells the managed child to leave the job's
+    status to the scheduler (cancelled, or the walltime's outcome) rather
+    than write ``failed`` over it.
+    """
+
+    scheduler_interrupted = True
 
 
 def _scheduler_signals():
-    """The engine's checkpoint convention, ``resume.CheckpointFlag``.
+    """The engine's checkpoint flags (``resume.CheckpointFlag``), one per signal.
 
-    The rendered Slurm script forwards USR1 (the walltime warning) and TERM
-    (a cancel) to the child; the flag records either, and the batch polls it
-    before each prompt and between layers, so it stops well inside the
-    script's grace period. Bound only on the main thread, where Python can
-    bind signals, and the previous handlers are restored afterwards.
+    The rendered Slurm script forwards TERM (a cancel, or the walltime
+    itself) and USR1 (the walltime warning, ``signal_seconds`` before it) to
+    the child. This batch has no checkpoint to resume from, so the two mean
+    different things here. TERM stops it: the batch polls before each prompt
+    and between layers, so it stops well inside the script's grace period.
+    USR1 is noted in the manifest and reading goes on, using the remaining
+    time; parking on it would end the job early as a failure, where letting
+    the walltime arrive leaves the scheduler's own outcome on the record.
+    Bound only on the main thread, where Python can bind signals, and the
+    previous handlers are restored afterwards.
     """
     import signal
     import threading
     from .resume import CheckpointFlag
-    flag = CheckpointFlag()
+    stop, warning = CheckpointFlag(), CheckpointFlag()
     if threading.current_thread() is not threading.main_thread():
-        return flag, None
+        return stop, warning, None
     previous = {number: signal.getsignal(number) for number in (signal.SIGUSR1, signal.SIGTERM)}
-    flag.install()
-    return flag, previous
+    signal.signal(signal.SIGTERM, stop.request)
+    signal.signal(signal.SIGUSR1, warning.request)
+    return stop, warning, previous
 
 
 def _restore_signals(previous):
@@ -779,19 +793,26 @@ def _restore_signals(previous):
         signal.signal(number, handler if handler is not None else signal.SIG_DFL)
 
 
-def probe_batch(config, *, root, log=print, on_run_created=None, model=None, checkpoint=None):
+def probe_batch(config, *, root, log=print, on_run_created=None, model=None, checkpoint=None,
+                warning=None):
     """Read every prompt under one condition; write one run directory.
 
     ``probe-batch.json`` exists from the start (status ``running``) and is
-    replaced atomically before and after every prompt, so it always says
-    which prompts are whole, which one is being read, and what each cost.
-    Each prompt is written under ``prompts/.partial/<id>`` and renamed to
-    ``prompts/<id>`` only when complete. A scheduler signal (``checkpoint``,
-    the engine's flag; tests pass their own) stops at the next layer and
-    leaves status ``interrupted``; an exception leaves ``failed``; a kill
-    that allows no handler leaves the last rewrite, ``running``, with the
-    in-flight prompt marked ``running`` and nothing of it under
-    ``prompts/<id>``. Only a completed run gets ``COMPLETED``.
+    replaced atomically before and after every prompt, so it says which
+    prompts are whole, which one is being read, and what each cost. Each
+    prompt is written under ``prompts/.partial/<id>`` and renamed to
+    ``prompts/<id>`` only when complete.
+
+    A stop signal (``checkpoint``: TERM, a cancel or the walltime) stops at
+    the next layer and leaves status ``interrupted``; the walltime warning
+    (``warning``: USR1) is recorded and reading continues. Tests pass their
+    own flags. An exception leaves ``failed``. A kill that allows no handler
+    leaves the last rewrite, ``running``: the in-flight prompt is marked
+    ``running``, and normally nothing of it is under ``prompts/<id>``. The one
+    exception is a kill in the instant between that prompt's rename into
+    ``prompts/<id>`` and the rewrite that follows it: the directory is then
+    whole while the manifest still says ``running`` for it. Only a completed
+    run gets ``COMPLETED``.
 
     Returns a small record for the job: the run, its manifest, and the
     counts. The per-prompt reports stay on disk, never in the job record.
@@ -835,10 +856,11 @@ def probe_batch(config, *, root, log=print, on_run_created=None, model=None, che
         on_run_created(str(run))
     ledger = _Ledger(run, config, session, record, layers, rows, planned,
                      {'modelLoadSeconds': round(load_seconds, 3)}, started)
-    if checkpoint is None:
-        checkpoint, previous = _scheduler_signals()
-    else:
-        previous = None
+    previous = None
+    if checkpoint is None and warning is None:
+        checkpoint, warning, previous = _scheduler_signals()
+    checkpoint = checkpoint or _never()
+    warning = warning or _never()
     partial = run / PROMPTS_DIRECTORY / PARTIAL_DIRECTORY
     current = None
     try:
@@ -849,6 +871,7 @@ def probe_batch(config, *, root, log=print, on_run_created=None, model=None, che
         for index, (row, plan) in enumerate(zip(rows, planned)):
             if checkpoint.requested:
                 raise probe.ProbeInterrupted('a scheduler signal arrived before this prompt')
+            ledger.note_warning(warning.requested, log)
             current = index
             ledger.start(index)
             log(f"[jlens-probe-batch] prompt {index + 1}/{len(rows)}: {row['id']}")
@@ -865,13 +888,15 @@ def probe_batch(config, *, root, log=print, on_run_created=None, model=None, che
             ledger.finish(index, report, final, time.monotonic() - prompt_started)
             current = None
             del report
+        ledger.note_warning(warning.requested, log)
         partial.rmdir()
     except probe.ProbeInterrupted as exc:
         _discard(partial)
+        ledger.note_warning(warning.requested, log)
         ledger.stop(current, 'interrupted', f'{exc}')
         raise ProbeBatchInterrupted(
             f"Interrupted by a scheduler signal after {ledger.completed} of {len(rows)} prompt(s); "
-            f"probe-batch.json in {run.name} records which are whole. {INTERRUPTION_REPAIR}") from exc
+            f"probe-batch.json in {run.name} records which finished. {INTERRUPTION_REPAIR}") from exc
     except Exception as exc:
         _discard(partial)
         ledger.stop(current, 'failed', f'{type(exc).__name__}: {exc}')
@@ -885,6 +910,11 @@ def probe_batch(config, *, root, log=print, on_run_created=None, model=None, che
     return {'runDirectory': str(run), 'reportPath': str(run / MANIFEST), 'prompts': len(rows),
             'projections': manifest['totals']['projections'], 'claim': manifest['claim'],
             'evidenceTier': manifest['evidenceTier']}
+
+
+def _never():
+    from .resume import CheckpointFlag
+    return CheckpointFlag()
 
 
 def _require_pins_in_head(session):
@@ -958,7 +988,9 @@ class _Ledger:
                              'records runDirectory relative to the workspace, and runID is the prompt id.',
                 'progress': 'This file is replaced atomically before and after every prompt. A prompt directory '
                             'appears under prompts/ only when complete; an unfinished one is written under '
-                            'prompts/.partial/. A run that stopped without a final status still says running.',
+                            'prompts/.partial/. A run that stopped without a final status still says running; if '
+                            'it stopped between a prompt\'s rename and the next rewrite, that prompt\'s directory '
+                            'is whole although this file says running for it.',
                 'sharedCosts': 'The model loaded once; the converted lens was re-hashed and its armed Jacobians '
                                'placed on the device once for the whole set.'},
             'limitations': 'Counts, ranks, and cosines per prompt; no null and no interval. A readout is not '
@@ -966,6 +998,14 @@ class _Ledger:
                            'intervention study.',
         }
         self.write('running')
+
+    def note_warning(self, warned, log):
+        """Record the walltime warning once, when the batch first sees it."""
+        if warned and 'walltimeWarningSeenAt' not in self.fixed:
+            self.fixed['walltimeWarningSeenAt'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            log("[jlens-probe-batch] the scheduler's walltime warning arrived; reading continues until the "
+                'walltime stops it')
+            self.write('running')
 
     @property
     def completed(self):

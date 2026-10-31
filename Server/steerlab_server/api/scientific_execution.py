@@ -397,11 +397,17 @@ def execute_packet(packet, job_id, record, expected_plan_sha256=None):
         status = 'succeeded'
     except Exception as exc:
         error = str(exc)
+        if getattr(exc, 'scheduler_interrupted', False):
+            # A scheduler signal stopped the owner (a cancel, or the walltime).
+            # The record names no status, like the in-progress record above,
+            # so the scheduler's own terminal state stands when it is folded
+            # instead of reading as a failure.
+            status = None
         print(error, file=sys.stderr)
     finally:
         write_json(Path(record), {'id': job_id, 'kind': 'science:' + reviewed['request']['operation'],
-            'status': status, 'result': result, 'error': error, 'finishedAt': time.time(), **executor_identity,
-            'elapsedSeconds': time.time() - started})
+            **({'status': status} if status is not None else {}), 'result': result, 'error': error,
+            'finishedAt': time.time(), **executor_identity, 'elapsedSeconds': time.time() - started})
     os.chdir(prior_cwd)
     for key, value in prior_environment.items():
         if value is None: os.environ.pop(key, None)

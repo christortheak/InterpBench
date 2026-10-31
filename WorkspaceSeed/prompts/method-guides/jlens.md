@@ -686,11 +686,17 @@ relative to the workspace, and its `runID` is the prompt id.
 The manifest is written when the run starts and replaced after every prompt,
 with each prompt's status (`completed`, `running`, `pending`, `interrupted`,
 `failed`, or `notRead`) and timing. A prompt is written under
-`prompts/.partial/` and appears as `prompts/<id>/` only when complete. The
-scheduler's walltime warning or a cancel stops the batch at the next layer and
-marks the run `interrupted`; an error marks it `failed`; only a finished run gets
-`COMPLETED`. To finish an interrupted set, submit the prompts not marked
-`completed` as a new request.
+`prompts/.partial/` and appears as `prompts/<id>/` only when complete. A
+cancel, or the walltime itself, stops the batch at the next layer and marks the
+run `interrupted`; the job then keeps the scheduler's own outcome (cancelled,
+or the walltime's), not a failure of its own. The scheduler's walltime warning
+is noted in the manifest and reading continues until then. An error marks the
+run `failed`; only a finished run gets `COMPLETED`.
+
+An interrupted batch is not exported: only a completed job's run comes home.
+Resubmit the whole prompt set with a longer walltime, or split it into smaller
+batches that each fit the walltime estimate the review states; that estimate
+is there for sizing them.
 
 Read it as you would one
 probe per prompt: counts, ranks, and cosines beside their logit-lens
