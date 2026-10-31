@@ -144,7 +144,8 @@ import Testing
                     code = client_cli.main(["--root", root, "experiment", "set-jlens-readout", "py",
                         "lens-a", "--layers", "20-22,26", "--top-k", "7", "--top-k-layers", "21,26",
                         "--watchlist", "11,3", "--no-companion", "--max-full-vocab-projections",
-                        "500000", "--keep-tokens", "--json"])
+                        "500000", "--max-trace-bytes", "1000000000000000", "--keep-tokens",
+                        "--json"])
                 envelope = json.loads(out.getvalue())
                 block = store.load_raw("py", root)["jlensReadout"]
                 print(json.dumps({"code": code, "envelope": envelope,
@@ -392,6 +393,10 @@ import Testing
         let expected = #"{"a":"q"# + escape("2014") + #"\"\\\n/"# + escape("007f")
             + escape("d83d") + escape("de00") + #"","b":[1,2147483648,false,null]}"#
         #expect(JLensReadoutAuthoring.pythonJSON(value) == expected)
+        // The largest budget value either client accepts is still an integer,
+        // as Python writes it, so the configuration hash cannot diverge there.
+        #expect(JLensReadoutAuthoring.pythonJSON(.number(1e15)) == "1000000000000000")
+        #expect(JLensReadoutAuthoring.maxBudgetValue == 1_000_000_000_000_000)
         #expect(JLensReadoutAuthoring.compactLayers([5, 0, 1, 2, 7, 8]) == "0-2,5,7-8")
     }
 }
