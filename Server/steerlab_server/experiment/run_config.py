@@ -27,8 +27,9 @@ Schema rules (cross-engine contract, mirrored by Swift ``RunMetadata``):
 
 Schema 2 (2026-07-12) added: ``runId`` (directory basename), ``platform``,
 ``temperature`` / ``samplesPerItem`` / ``seedPolicy`` (the sampling policy of
-generation-bearing runs; null elsewhere), ``jobId`` (Slurm job id when run
-under one), and ``notes``. Schema 1 keys kept their spellings so existing
+generation-bearing runs; null elsewhere — ``seedPolicy`` is the operative
+policy the run's records stamp, ``sampling.run_seed_policy``, on both
+engines), ``jobId`` (Slurm job id when run under one), and ``notes``. Schema 1 keys kept their spellings so existing
 readers (catalog listing, Swift RunBrowser) read both versions.
 
 Schema 3 (2026-07-24) added: ``dtype`` — the numeric precision the model

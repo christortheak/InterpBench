@@ -73,6 +73,8 @@ def test_fixture_is_what_the_seed_rule_gives(case):
                            for index, seed in samples)
     assert records == case["records"], REGENERATE
     assert sampling.manifest_derives_seeds(manifest) == case["derivesSeeds"]
+    # The run's config.json stamps the policy its records stamp.
+    assert sampling.run_seed_policy(manifest) == case["seedPolicy"]
     assert sampling.sample_count(manifest) == case["sampleCount"], REGENERATE
     assert condition_execution.effective_sample_count(manifest) \
         == case["sampleCount"]
@@ -246,6 +248,11 @@ def _sampled_records(run_dir):
     return [r for r in records if "instrument" not in r and "error" not in r]
 
 
+def _config_seed_policy(run_dir):
+    with open(os.path.join(run_dir, "config.json"), encoding="utf-8") as h:
+        return json.load(h)["seedPolicy"]
+
+
 def test_the_run_loop_derives_seeds_for_one_declared_sample(tmp_path,
                                                              monkeypatch):
     root = str(tmp_path)
@@ -265,6 +272,7 @@ def test_the_run_loop_derives_seeds_for_one_declared_sample(tmp_path,
             experiment_hash, record["condition"], record["promptID"], 0)
     seeds = {(r["condition"], r["promptID"]): r["seed"] for r in records}
     assert len(set(seeds.values())) == 4
+    assert _config_seed_policy(run_dir) == "derivedSHA256"
 
 
 def test_the_run_loop_keeps_the_fixed_list_when_nothing_is_declared(
@@ -279,6 +287,7 @@ def test_the_run_loop_keeps_the_fixed_list_when_nothing_is_declared(
     for record in records:
         assert record["seedPolicy"] == "manifestSeeds"
         assert record["seed"] == [11, 22, 33][record["sampleIndex"]]
+    assert _config_seed_policy(run_dir) == "manifestSeeds"
 
 
 # --- the advisories reach the client's envelopes -------------------------------

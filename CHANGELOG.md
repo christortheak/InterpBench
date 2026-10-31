@@ -168,7 +168,10 @@ migration that rewrites frozen bytes.
   accurate about what they did. The
   per-item count now follows the same rule everywhere it is computed:
   sharding, the J-lens readout budget, submission sizing, and the throughput
-  family's description.
+  family's description. The Python engine's run `config.json` now stamps the
+  seed policy the records use rather than the declared one, as the Mac
+  engine's already did, so a declared `derivedSHA256` at temperature 0 stamps
+  `manifestSeeds` there too.
   Derived seeds include the condition, so arms draw distinct streams for the
   same item: the design is paired at the prompt level, not by common random
   numbers, whereas the fixed list reuses one set of seeds across every item

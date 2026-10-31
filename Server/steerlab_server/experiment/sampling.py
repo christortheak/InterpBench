@@ -73,6 +73,20 @@ def sample_count(manifest) -> int:
     return max(1, len(manifest.seeds))
 
 
+def run_seed_policy(manifest) -> str:
+    """The seed policy a generating run's ``config.json`` stamps: the
+    OPERATIVE one, which its sampled records stamp too, not the declaration.
+    A panel's turns derive their seeds whenever the temperature is above 0
+    (``multi_agent``); every other study follows :func:`derives_seeds`. Swift
+    twin: the ``seedPolicy`` argument ``ExperimentTasks`` passes to
+    ``RunMetadata.write`` (``StudySampling.policy``, and the panel rule)."""
+    if manifest.study_kind == "multiAgent":
+        derived = bool(manifest.temperature) and manifest.temperature > 0
+    else:
+        derived = manifest_derives_seeds(manifest)
+    return DERIVED_SHA256 if derived else MANIFEST_SEEDS
+
+
 def record_seeds(manifest, *, experiment_hash: str, condition: str,
                  prompt_id: str, temperature=None) -> tuple[str, list]:
     """The seed policy in effect and the ``(sampleIndex, seed)`` pairs one

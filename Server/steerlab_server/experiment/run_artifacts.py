@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json
 import os
-from . import paths, prompt_render
+from . import paths, prompt_render, sampling
 from .manifest import Manifest
 from .run_config import write_run_config
 
@@ -63,14 +63,18 @@ def write_config_snapshot(manifest: Manifest, run_directory: str, task: str,
     # only for generation-bearing tasks (study runs — incl. the multi-agent
     # study path, which passes task "run" — and sweeps); extract/validate/
     # evaluate/analyze do not sample by the manifest's policy, so they stamp
-    # null rather than inventing one.
+    # null rather than inventing one. The seed policy is the OPERATIVE one —
+    # what the run's records stamp, by the same rule — not the declaration:
+    # a declared derivedSHA256 at temperature 0 draws no seed, and the stamp
+    # used to say otherwise (and to disagree with the Mac engine's).
     generates = task in ("run", "sweep")
     write_run_config(run_directory, task,
                      model_id=manifest.model_id, revision=manifest.model_revision,
                      experiment=manifest.name, experiment_hash=manifest.content_hash(),
                      temperature=manifest.temperature if generates else None,
                      samples_per_item=manifest.samples_per_item if generates else None,
-                     seed_policy=manifest.seed_policy if generates else None,
+                     seed_policy=(sampling.run_seed_policy(manifest)
+                                  if generates else None),
                      # Schema 3: the precision the model ACTUALLY ran in.
                      # Stamped for every task that loaded a model, not just
                      # generation-bearing ones — extraction reads activations

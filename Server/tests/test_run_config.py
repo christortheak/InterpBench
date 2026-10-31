@@ -210,6 +210,29 @@ def test_config_snapshot_stamps_sampling_policy_for_generating_tasks(tmp_path):
     assert config["samplesPerItem"] == 3
     assert config["seedPolicy"] == "derivedSHA256"
 
+    # The OPERATIVE policy, the one the records stamp, not the declaration.
+    # Swift twin: `StudySampling.policy` and the panel rule in
+    # `ExperimentTasks`' `RunMetadata.write` call.
+    for fields, expected in (
+            ({"temperature": 0.0, "seedPolicy": "derivedSHA256"},
+             "manifestSeeds"),  # greedy: no seed is drawn
+            ({"temperature": 0.7, "seedPolicy": "derivedSHA256"},
+             "derivedSHA256"),  # one sample per item, declared
+            ({"temperature": 0.7, "seeds": [1, 2, 3]}, "manifestSeeds"),
+            ({"temperature": 0.7, "seedPolicy": "manifestSeeds"},
+             "manifestSeeds"),
+            ({"temperature": 0.7, "studyKind": "multiAgent"},
+             "derivedSHA256"),  # panel turns derive whenever warm
+            ({"temperature": 0.0, "studyKind": "multiAgent",
+              "seedPolicy": "derivedSHA256"}, "manifestSeeds")):
+        stamped_dir = tmp_path / f"stamp-{len(list(tmp_path.iterdir()))}"
+        stamped_dir.mkdir()
+        run_artifacts.write_config_snapshot(
+            Manifest.from_dict({"name": "s", "modelID": "org/m", **fields}),
+            str(stamped_dir), "run")
+        stamped = json.load(open(stamped_dir / "config.json"))
+        assert stamped["seedPolicy"] == expected, fields
+
     # Non-generating tasks stamp null — validate/extract don't sample by the
     # manifest's policy, so the stamp must not invent one.
     validate_dir = tmp_path / "validate"
