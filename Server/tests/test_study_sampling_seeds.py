@@ -412,9 +412,14 @@ def test_a_resume_across_the_seed_rule_change_refuses(tmp_path, monkeypatch):
         tasks.run("seeds-resume", prompts, root, model_provider=_fake_model,
                   log=lambda *_: None, run_directory=run_dir)
     assert "refusing to mix two seed rules in one run" in str(refusal.value)
-    assert "seedPolicy manifestSeeds with up to 3 sample(s)" in str(refusal.value)
+    assert ("its sampled records use seedPolicy manifestSeeds with up to 3 "
+            "sample(s) per item, but this engine runs 'seeds-resume' with "
+            "seedPolicy derivedSHA256 and 1 sample(s)") in str(refusal.value)
+    assert "shard plan" not in str(refusal.value)
     assert refusal.value.gate == "manifestEpoch"
-    assert "steerlab-server experiment run seeds-resume" in refusal.value.repair_action
+    # The repair leads with the command, like its neighbours.
+    assert refusal.value.repair_action.startswith(
+        "steerlab-server experiment run seeds-resume  (a fresh run")
     assert isinstance(refusal.value, resume_mod.ResumeError)
     # Nothing was written: the parked run is still the old engine's.
     assert open(os.path.join(run_dir, "generations.jsonl"), "rb").read() == before
@@ -468,10 +473,17 @@ def test_a_shard_stamp_from_the_old_rule_refuses(tmp_path):
                          for index in range(3)]}), encoding="utf-8")
     manifest = _manifest({"temperature": 0.7, "seedPolicy": "derivedSHA256",
                           "seeds": [11, 22, 33]})
-    with pytest.raises(resume_mod.ResumeRefusal):
+    with pytest.raises(resume_mod.ResumeRefusal) as refusal:
         run_preflight.seed_rule_admission(
             str(run_dir), name="seeds", manifest=manifest,
             shard_stamp=json.loads((run_dir / "shard.json").read_text()))
+    # The empty partial is said as such, and the count is the plan's.
+    assert ("it has no sampled records yet, and its shard plan (shard.json) "
+            "expects up to 3 sample(s) per item") in str(refusal.value)
+    assert "no stated policy" not in str(refusal.value)
+    assert refusal.value.repair_action.startswith(
+        "steerlab-server study submit seeds --verb run --executor slurm "
+        "--parallel 2  (a fresh fan-out")
     # The same stamp under a fixed-list study is that study's own plan.
     run_preflight.seed_rule_admission(
         str(run_dir), name="seeds",
