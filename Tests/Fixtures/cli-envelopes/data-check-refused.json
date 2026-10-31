@@ -112,7 +112,7 @@
         "title" : "capability battery"
       },
       {
-        "detail" : "no J-lens readout declared, so a run records none. Arm one with experiment set-jlens-readout demo <lens-id>: its pins come from the Python engine's lens record, and the Python client's --dry-run prints them with the matching steerlab-cli command. Only the Python engine runs a readout (any model with a published lens); this engine never does.",
+        "detail" : "no J-lens readout declared, so a run records none. Arm one with experiment set-jlens-readout demo <lens-id>: its pins come from the Python engine's lens record, and the Python client's --dry-run prints them with the matching steerlab-cli command. Only the Python engine runs a readout (server-only by rule; any model with a published lens); this engine never does.",
         "id" : "jlensReadout",
         "kind" : "jlensReadout",
         "path" : "experiments/demo/experiment.json",

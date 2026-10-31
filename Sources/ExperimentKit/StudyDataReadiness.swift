@@ -1187,7 +1187,8 @@ public enum StudyDataReadiness {
                     + "its pins come from the Python engine's lens record, and the "
                     + "Python client's --dry-run prints them with the matching "
                     + "steerlab-cli command. Only the Python engine runs a readout "
-                    + "(any model with a published lens); this engine never does.")
+                    + "(server-only by rule; any model with a published lens); this "
+                    + "engine never does.")
         }
 
         func text(_ key: String) -> String? {
