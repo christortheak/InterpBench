@@ -12,7 +12,7 @@ from dataclasses import replace
 from . import policy_artifacts, probe_artifacts, probe_capture
 from .policy_artifacts import PolicyError
 from ..steering.runtime import Reading, DecisionProvider, Site, Context, SelectionSite
-from ..steering.policy_actions import Action, Decision, logits, apply_with_evidence
+from ..steering.policy_actions import Action, Decision, addition_scale, logits, apply_with_evidence
 
 
 class Execution:
@@ -170,11 +170,16 @@ class Execution:
                 mask = torch.zeros_like(value); mask[indices] = 1
                 actions.append(Action(spec, value * mask))
             rows = self.record(digest, doc, context, indices, scores, actions)
+            # The absolute multiplier of each addition's stored direction, from the conversion residual() applies.
+            kept = [row['inputTokenPosition'] - context.offset for row in rows]
+            scales = {a.specification['id']: addition_scale(a.strength, a.specification)[kept].detach().cpu().tolist()
+                      for a in actions if a.specification['kind'] == 'add'}
             def acknowledgement(action_id):
                 def completed(applied, reason, elapsed):
-                    for row in rows:
+                    for j, row in enumerate(rows):
                         row['actionOutcomes'][action_id] = {'status': 'applied' if applied else 'failed', 'hostSeconds': elapsed}
                         if applied: row['appliedStrengths'][action_id] = row['strengths'][action_id]
+                        if applied and action_id in scales: row['appliedScales'][action_id] = scales[action_id][j]
                         if reason: row['actionOutcomes'][action_id]['reason'] = reason[:2048]
                         outcomes = list(row['actionOutcomes'].values())
                         row['status'] = 'failed' if any(x['status'] == 'failed' for x in outcomes) else 'applied' if len(outcomes) == len(row['strengths']) else 'requested'
@@ -194,12 +199,13 @@ class Execution:
         self.counts[digest] = self.counts.get(digest, 0) + len(kept)
         values = {k: v[kept].detach().cpu().tolist() for k, v in scores.items()}
         strengths = {a.specification['id']: a.strength[kept].detach().cpu().tolist() for a in actions}
+        units = {a.specification['id']: policy_artifacts.strength_units(a.specification) for a in actions}
         rows = []
         for j, i in enumerate(kept):
             row = {'policySHA256': digest, 'policyName': doc['name'], 'site': doc['site'],
                    'inputTokenPosition': context.offset+i, 'predictsTokenPosition': context.offset+i+1,
                    'status': 'skipped' if error else 'requested' if actions else 'noAction', 'appliedStrengths': {}, 'actionOutcomes': {}, 'scores': {k: v[j] for k, v in values.items()},
-                   'strengths': {k: v[j] for k, v in strengths.items()}}
+                   'strengths': {k: v[j] for k, v in strengths.items()}, 'strengthUnits': dict(units), 'appliedScales': {}}
             if error: row['reason'] = error
             self.events.append(row); rows.append(row)
         if error: self.failure(doc['name'] + ': ' + error)
@@ -243,6 +249,7 @@ class Execution:
                 'omittedDecisions': self.omitted, 'failures': self.failures, 'failureCount': self.failure_count,
                 'status': 'partial' if self.omitted or self.failures or any(r['status'] in ('requested', 'failed', 'skipped') for r in self.events) else 'complete',
                 'limitations': ['Requested strengths and acknowledged applied strengths are distinct. Applied means the site tensor operation succeeded; a failed response is not completed evidence.',
+                               'Strengths are in each action’s declared units (strengthUnits); a residual-norm strength compares directly with a static agent’s α. For an addition, appliedScales is the multiplier applied to the stored direction: strength × residualNorm / vectorNorm in residual-norm units, or the strength itself for a raw multiplier.',
                                'Policy scores use float32 on the activation device; measurements retain their own scoring precision.',
                                'Expert providers are trusted Python code. Their declared RNG is response-local random.Random; they must not use global randomness or mutate model state.']}
 

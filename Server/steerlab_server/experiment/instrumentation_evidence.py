@@ -3,6 +3,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import struct
 from .probe_artifacts import ProbeError
 from . import policy_authoring
 
@@ -11,6 +12,13 @@ MAX_LINE_BYTES = 64 * 1024 * 1024
 
 def finite(value):
     return type(value) in (int, float) and math.isfinite(value)
+
+
+def single(value):
+    """``value`` rounded to float32. Execution bounds strengths in float32, so a strength at a
+    fractional bound, such as 0.2 residual-norm units, records that bound's float32 value."""
+    try: return struct.unpack('<f', struct.pack('<f', value))[0]
+    except OverflowError: return value
 
 
 def validate_record(record):
@@ -56,11 +64,15 @@ def validate_record(record):
                 specs = {a['id']: a for a in declaration['actions'] if isinstance(a, dict) and isinstance(a.get('id'), str)}
                 for name, strength in requested.items():
                     bounds = specs.get(name, {}).get('bounds')
-                    if not isinstance(bounds, list) or len(bounds) != 2 or not all(finite(x) for x in [strength, *bounds]) or not bounds[0] <= strength <= bounds[1]: raise ProbeError('A requested action is undeclared or outside its recorded bounds.')
+                    if not isinstance(bounds, list) or len(bounds) != 2 or not all(finite(x) for x in [strength, *bounds]) or not single(bounds[0]) <= strength <= single(bounds[1]): raise ProbeError('A requested action is undeclared or outside its recorded bounds.')
                 if any(not finite(x) for x in [*requested.values(), *applied.values()]): raise ProbeError('Policy strengths must be finite.')
                 if any(not isinstance(value, dict) for value in outcomes.values()): raise ProbeError('Action outcomes must be acknowledgement objects.')
                 if any(k not in requested or requested[k] != v or outcomes.get(k, {}).get('status') != 'applied' for k, v in applied.items()): raise ProbeError('Applied policy strengths lack matching successful action acknowledgements.')
                 if row.get('status') == 'applied' and applied != requested: raise ProbeError('An applied decision has unacknowledged actions.')
+                # Units and absolute scales are additive: rows written before they existed have neither.
+                units = row.get('strengthUnits', {}); scales = row.get('appliedScales', {})
+                if not isinstance(units, dict) or any(k not in requested or not isinstance(v, str) for k, v in units.items()): raise ProbeError('Strength units must name requested actions.')
+                if not isinstance(scales, dict) or any(k not in applied or not finite(v) for k, v in scales.items()): raise ProbeError('Applied scales must be finite and belong to applied actions.')
     return record
 
 
@@ -105,10 +117,11 @@ def summarize(source):
                 descriptor = {'condition': record.get('condition', block.get('condition', '')), 'agent': block.get('agent') or record.get('speakerAgentID', ''),
                     'kind': field, 'label': row.get('probeLabel', row.get('policyName', '')), 'artifactSHA256': row.get(identity, ''), 'site': row.get('site'), 'recordingStage': row.get('recordingStage', 'decision')}
                 key = json.dumps(descriptor, sort_keys=True)
-                group = groups.setdefault(key, {'descriptor': descriptor, 'statuses': {}, 'scores': {}, 'requested': {}, 'applied': {}})
+                group = groups.setdefault(key, {'descriptor': descriptor, 'statuses': {}, 'scores': {}, 'requested': {}, 'applied': {}, 'appliedScales': {}, 'strengthUnits': {}})
                 status = row.get('status', 'unknown'); group['statuses'][status] = group['statuses'].get(status, 0) + 1
+                group['strengthUnits'].update(row.get('strengthUnits', {}))
                 scores = row.get('scores', {}) if field == 'interventionDecisions' else {'score': row['score']} if row.get('status') == 'recorded' else {}
-                for category, values in [('scores', scores), ('requested', row.get('strengths', {})), ('applied', row.get('appliedStrengths', {}))]:
+                for category, values in [('scores', scores), ('requested', row.get('strengths', {})), ('applied', row.get('appliedStrengths', {})), ('appliedScales', row.get('appliedScales', {}))]:
                     for label, number in values.items():
                         if not finite(number): raise ProbeError('An evidence summary encountered a non-finite value.')
                         group[category].setdefault(label, Moments()).add(number)
@@ -116,10 +129,12 @@ def summarize(source):
     output = []
     for key in sorted(groups):
         group = groups[key]
-        output.append({**group['descriptor'], 'statuses': group['statuses'], **{c: {k: v.result() for k, v in group[c].items()} for c in ('scores', 'requested', 'applied')}})
+        output.append({**group['descriptor'], 'statuses': group['statuses'], 'strengthUnits': group['strengthUnits'],
+                       **{c: {k: v.result() for k, v in group[c].items()} for c in ('scores', 'requested', 'applied', 'appliedScales')}})
     return {'schemaVersion': 1, **counts, 'groups': output, 'decisionHostSeconds': latency.result(), 'changed': False,
         'limitations': ['These are descriptive summaries of retained events, not independent samples or causal effects. Compare behavioral outcomes on held-out examples.',
                        'Counts and strength distributions exclude budget-omitted events; nonzero applied counts describe acknowledged tensor actions, not behavioral success.',
+                       'Requested and applied strengths are in each action’s strengthUnits. appliedScales is the multiplier an addition applied to its stored direction; responses recorded before it existed have none.',
                        'Legacy version-1 decisions record requests only; no applied action is inferred.',
                        'Host timing includes scoring and recording and does not synchronize GPU kernels. P7 measures execution overhead.',
                        'Token IDs and absolute consumed/predicted positions remain in the source; no extra pass observes the final emitted token.']}

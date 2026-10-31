@@ -13,9 +13,17 @@ from steerlab_server.client.runner import RunnerClient, RunnerRefusal
 from test_intervention_policies import setup, attached, forward
 
 
-def response(root):
+def response(root, norm_units=None):
     doc, _, model = setup(root)
-    execution = policy_execution.Execution(attached(doc, root), rendering='rawCompletion', context={'condition': 'modified', 'agent': 'first'})
+    attachment = attached(doc, root)
+    if norm_units is not None:
+        # Version 2, as guided authoring writes it: a strength in residual-norm units of a stamped norm of 10, bounds [0, 0.2].
+        from test_intervention_policies import vector_artifact, norm_unit_settings
+        from steerlab_server.experiment import policy_authoring
+        vector_artifact(root, [3., 4.], residualNormPerLayer=[10.], residualNormConvention='perTextMean-v1')
+        raw = policy_authoring.encode(policy_authoring.review(norm_unit_settings(root, norm_units), root)['document'])
+        attachment = [{'json': raw.decode(), 'sha256': hashlib.sha256(raw).hexdigest()}]
+    execution = policy_execution.Execution(attachment, rendering='rawCompletion', context={'condition': 'modified', 'agent': 'first'})
     with model.hooked.session([]), execution.observe_session(model, prompt_render.RenderedPrompt('', [1, 2], 2)):
         forward(model, [1, 2])
     return {'condition': 'modified', 'promptID': 'example', 'outputTokenIDs': [3],
@@ -26,6 +34,8 @@ def test_applied_evidence_and_alignment_come_from_real_forward(tmp_path):
     row = response(tmp_path); block = row['interventionDecisions']; event = block['decisions'][0]
     assert event['status'] == 'applied'
     assert event['strengths'] == event['appliedStrengths'] == {'change': 2.0}
+    # A version-1 addition is a raw multiplier: its absolute scale is its strength.
+    assert event['strengthUnits'] == {'change': 'rawMultiplier'} and event['appliedScales'] == {'change': 2.0}
     assert event['inputTokenID'] == 2 and event['predictedTokenID'] == 3 and event['generatedTokenIndex'] == 0
     assert block['declarations'][0]['probes'][0]['sha256']
     assert 'vector' not in block['declarations'][0]['actions'][0]
@@ -34,9 +44,13 @@ def test_applied_evidence_and_alignment_come_from_real_forward(tmp_path):
     group = summary['groups'][0]
     assert summary['responses'] == 2 and summary['uninstrumentedResponses'] == 1
     assert group['applied']['change'] == {'count': 1, 'mean': 2., 'minimum': 2., 'maximum': 2., 'standardDeviation': None, 'nonzeroCount': 1}
+    assert group['appliedScales']['change']['mean'] == 2. and group['strengthUnits'] == {'change': 'rawMultiplier'}
+    # Rows recorded before units and scales existed remain admissible evidence.
+    for event in block['decisions']: event.pop('strengthUnits'); event.pop('appliedScales')
+    evidence.validate_record(row)
 
 
-@pytest.mark.parametrize('mutation', ['alignment', 'missing', 'acknowledgement', 'strength', 'condition'])
+@pytest.mark.parametrize('mutation', ['alignment', 'missing', 'acknowledgement', 'strength', 'condition', 'scale', 'unappliedScale', 'units'])
 def test_semantic_corruption_is_not_successful_evidence(tmp_path, mutation):
     row = response(tmp_path); block = row['interventionDecisions']; event = block['decisions'][0]
     if mutation == 'alignment': event['predictedTokenID'] = 4
@@ -44,6 +58,9 @@ def test_semantic_corruption_is_not_successful_evidence(tmp_path, mutation):
     if mutation == 'acknowledgement': event['actionOutcomes'] = {}
     if mutation == 'strength': event['appliedStrengths']['change'] = 1
     if mutation == 'condition': block['condition'] = 'other'
+    if mutation == 'scale': event['appliedScales']['change'] = float('inf')
+    if mutation == 'unappliedScale': event['appliedScales']['other'] = 1.
+    if mutation == 'units': event['strengthUnits']['other'] = 'rawMultiplier'
     with pytest.raises(ValueError): evidence.validate_record(row)
 
 
@@ -101,11 +118,22 @@ def test_cli_and_http_share_offline_analysis(tmp_path, monkeypatch, capsys):
 
 def test_requirements_include_embedded_panel_and_unknown_runtime():
     document = {'agents': [{'artifact': {'interventionPolicies': [{}]}}], 'probeMeasurements': {'probes': [{}]}}
-    assert contract.requirements(document) == list(contract.SUPPORTED)
+    assert contract.requirements(document) == list(contract.UNMARKED)
     contract.require(contract.requirements(document), {'instrumentation': list(contract.SUPPORTED)})
     for offered in ({}, {'instrumentation': ['policy-v1']}):
         with pytest.raises(ValueError, match='restart'): contract.require(contract.requirements(document), offered)
     with pytest.raises(ValueError): contract.require(['future-v3'], {'instrumentation': contract.SUPPORTED})
+
+
+def test_a_version_two_policy_requires_an_engine_that_knows_it():
+    # A version-1 attachment needs what it always needed; an engine of the previous release still runs it.
+    first, second = ({'json': json.dumps({'schemaVersion': version})} for version in (1, 2))
+    previous = {'instrumentation': list(contract.UNMARKED)}
+    contract.require(contract.requirements({'interventionPolicies': [first]}), previous)
+    document = {'agents': [{'artifact': {'interventionPolicies': [first, second]}}], 'probeMeasurements': {'probes': [{}]}}
+    assert contract.requirements(document) == list(contract.SUPPORTED)
+    with pytest.raises(ValueError, match='policy-v2'): contract.require(contract.requirements(document), previous)
+    contract.require(contract.requirements(document), {'instrumentation': list(contract.SUPPORTED)})
 
 
 @pytest.mark.parametrize('offered', [[], ['policy-v1'], list(contract.SUPPORTED)])
@@ -152,13 +180,32 @@ def test_requirements_and_archive_hash_use_the_same_captured_json(tmp_path, monk
     assert required == {'policy-v1', 'policy-evidence-v2'} and source.read_text() == '{}'
 
 
-def test_policy_evidence_fixture_is_current(tmp_path):
+@pytest.mark.parametrize('name,norm_units', [('policy-evidence.json', None), ('policy-evidence-norm-units.json', .1)])
+def test_policy_evidence_fixture_is_current(tmp_path, name, norm_units):
     from test_portability_contracts import _write_or_compare
-    row = response(tmp_path)
+    row = response(tmp_path, norm_units)
     row['interventionDecisions']['timing']['decisionHostSeconds'] = 0
     for event in row['interventionDecisions']['decisions']:
         for outcome in event['actionOutcomes'].values(): outcome['hostSeconds'] = 0
-    _write_or_compare('policy-evidence.json', row)
+    _write_or_compare(name, row)
+
+
+def test_a_strength_at_a_fractional_bound_is_admissible_evidence(tmp_path):
+    # Execution bounds in float32, so 0.2 is recorded as float32(0.2), a little above the declared double.
+    row = response(tmp_path, norm_units=.2); [event] = row['interventionDecisions']['decisions']
+    assert event['appliedStrengths']['change'] > .2
+    evidence.validate_record(row)
+
+
+def test_norm_unit_evidence_states_units_and_the_absolute_scale(tmp_path):
+    row = response(tmp_path, norm_units=.1); evidence.validate_record(row)
+    block = row['interventionDecisions']; [event] = block['decisions']; [declaration] = block['declarations']
+    assert event['strengths'] == event['appliedStrengths'] == {'change': pytest.approx(.1)} and event['strengthUnits'] == {'change': 'residualNorm'}
+    # strength × residualNorm / vectorNorm = 0.1 × 10 / 5, the static agent's raw scalar for α = 0.1.
+    assert event['appliedScales'] == {'change': pytest.approx(.2)}
+    action = declaration['actions'][0]
+    assert (action['strengthUnits'], action['residualNorm'], action['residualNormConvention'], action['vectorNorm']) == ('residualNorm', 10., 'perTextMean-v1', 5.)
+    assert any('appliedScales' in note for note in block['limitations'])
 
 
 def test_queued_child_guard_refuses_old_or_incompatible_installations(tmp_path, monkeypatch):

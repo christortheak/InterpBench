@@ -285,8 +285,8 @@ explain the supported route. The Python agent-chat API executes policies; study
 runs are the durable comparison path. Decision traces accompany responses and
 identify score inputs, action strengths, omitted records, and failures. They do
 not turn a probe score into a probability or establish causal importance.
-See the repository's `docs/INTERVENTION-POLICIES.md` for the version-1 format,
-action ordering, provider ABI, and examples.
+See the repository's `docs/INTERVENTION-POLICIES.md` for the format, strength
+units, action ordering, provider ABI, and examples.
 
 ## Complete policy format and provider ABI
 
@@ -297,7 +297,7 @@ A minimal fixed-direction settings file (synthetic model and revision):
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "name": "fixed-comparison",
   "binding": {
     "modelID": "example/model",
@@ -310,26 +310,42 @@ A minimal fixed-direction settings file (synthetic model and revision):
   "stages": ["prefill", "decode"],
   "positions": "lastPosition",
   "probes": [],
-  "actions": [{"id": "offset", "kind": "add", "bounds": [0, 1], "vector": [1, 0]}],
-  "rules": [{"action": "offset", "kind": "fixed", "value": 1}],
+  "actions": [{"id": "offset", "kind": "add", "bounds": [0, 0.2],
+               "vectorArtifactID": "runs/<run>/<vector-stem>"}],
+  "rules": [{"action": "offset", "kind": "fixed", "value": 0.1}],
   "onError": "stop",
   "maxEvents": 2048
 }
 ```
 
-Replace the synthetic binding and direction with the actual model and artifact.
-For a library direction, replace `vector` with
-`"vectorArtifactID": "runs/<run>/<vector-stem>"`. Review reads the `.safetensors`
-and `.json` files, verifies known model/substrate/revision compatibility, and
-embeds the selected layer's direction plus both source hashes. A missing source
-revision is an explicit provenance limitation, not invented compatibility.
-An explicit numeric `vector` is expert input and carries no automatic extraction
-provenance. Neither direction is silently normalized for addition.
+Replace the synthetic binding and vector path with the actual model and artifact.
+Review reads the `.safetensors` and `.json` files, verifies known
+model/substrate/revision compatibility, and embeds the direction as stored at the
+policy layer plus both source hashes. A missing source revision is an explicit
+provenance limitation, not invented compatibility. There is no layer band or
+neutral-basis projection.
+
+Addition strength is in residual-norm units, like a static agent's α: strength α
+adds α × R / ‖v‖ × v, where R is the vector's stamped mean residual norm at the
+policy layer and ‖v‖ is the direction's norm. A promoted agent's default is 0.1,
+and a full residual norm (1.0) usually makes generation incoherent. Rule values,
+bounds, and provider strengths are all in these units. Review writes
+`"strengthUnits": "residualNorm"` and records R, its convention, and ‖v‖ on the
+action, so the policy's hash covers them. A vector with no stamped norm at that
+layer is refused (`policyResidualNormMissing`): measure its norms with
+`vectors backfill-norms`, which writes a new vector artifact, or add
+`"strengthUnits": "rawMultiplier"` to the action. A raw multiplier multiplies the
+stored direction directly; its strength is not comparable with a static agent's
+α. An explicit numeric `vector` is expert input, carries no extraction provenance
+or stamped norm, and therefore needs `rawMultiplier`. Published version-1
+policies keep their meaning, a raw multiplier, and still attach and run; review
+authors version 2 only. Ablation strength stays a dimensionless fraction, and
+token actions keep their own scales.
 
 To use a probe, add `{"id":"reader","path":"runs/<run>/<name>.probe.json"}`
 to `probes`. Publication embeds its exact UTF-8 text and SHA-256. A threshold rule
 is `{"action":"offset","kind":"threshold","weights":{"reader":1},
-"threshold":0,"below":0,"above":1}`. The comparison is strictly greater than;
+"threshold":0,"below":0,"above":0.1}`. The comparison is strictly greater than;
 equality takes `below`. An affine rule has `weights`, `slope`, and `intercept`
 instead; its strength is clipped to the action bounds. Fixed and threshold
 strengths must already be inside their declared bounds. Weighted sums combine
@@ -380,7 +396,7 @@ entry point is:
 def decide(context, tensor, scores, state, rng, assets):
     state["calls"] = state.get("calls", 0) + 1
     # Decision is supplied in the provider namespace.
-    return [Decision("offset", min(1.0, rng.random()))]
+    return [Decision("offset", 0.2 * rng.random())]
 ```
 
 - `context` supplies `site`, absolute consumed-token `offset`, `token_count`,
@@ -398,7 +414,9 @@ def decide(context, tensor, scores, state, rng, assets):
 - `assets` maps names to the exact pinned bytes. Do not open undeclared files,
   fetch new inputs, execute another model, or change generation control flow.
 - Return a list of `Decision(actionID, strength)` objects, each action at most
-  once. Strength is a scalar or a tensor of shape `[tokens]`; declarations,
+  once. Strength is in the action's declared units (residual-norm units for an
+  addition, unless it chose a raw multiplier), as a scalar or a tensor of shape
+  `[tokens]`; declarations,
   finiteness, bounds, and schedules are checked before any action is applied.
   Omitting an action means no action at that call. Built-in rules and an expert
   provider are exclusive within one policy; separate policies can compose.
@@ -445,8 +463,13 @@ held-out behavioral outcomes and compare the complete agent against a baseline.
 
 Version-2 decision records preserve the consumed token, the next prediction,
 requested/applied strengths, provider and input hashes, reset/RNG conventions,
-and exceptional outcomes. They do not add a forward pass for the final emitted
-token. Version-1 records remain readable as requests only. Recording-budget
+and exceptional outcomes. Strengths are in each action's declared units, which
+each row names in `strengthUnits`. For an addition, `appliedScales` is the
+multiplier applied to its stored direction; in residual-norm units it is the raw
+scalar a static agent applies at the same α, so the two compare directly.
+Records made before these fields existed lack them. No record adds a forward
+pass for the final emitted token. Version-1 records remain readable as requests
+only. Recording-budget
 omissions, missing readings, and partial responses are reported; descriptive
 means cover retained events and do not treat correlated tokens as independent
 experimental units. Host elapsed timing is not synchronized GPU kernel latency.

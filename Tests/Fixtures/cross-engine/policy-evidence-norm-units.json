@@ -1,0 +1,141 @@
+{
+  "condition": "modified",
+  "instrumentationRequirements": [
+    "policy-v1",
+    "policy-evidence-v2"
+  ],
+  "interventionDecisions": {
+    "agent": "first",
+    "condition": "modified",
+    "decisions": [
+      {
+        "actionOutcomes": {
+          "change": {
+            "hostSeconds": 0,
+            "status": "applied"
+          }
+        },
+        "appliedScales": {
+          "change": 0.20000000298023224
+        },
+        "appliedStrengths": {
+          "change": 0.10000000149011612
+        },
+        "generatedTokenIndex": 0,
+        "inputTokenID": 2,
+        "inputTokenPosition": 1,
+        "policyName": "example-policy",
+        "policySHA256": "cc9c6eb288c61d5cb0afd00eceb0e6ce7dc9acf456d42fccfcc9e6b10b1a8646",
+        "predictedTokenID": 3,
+        "predictsTokenPosition": 2,
+        "scores": {
+          "reader": 3.5
+        },
+        "site": {
+          "kind": "residualPost",
+          "layer": 0
+        },
+        "status": "applied",
+        "strengthUnits": {
+          "change": "residualNorm"
+        },
+        "strengths": {
+          "change": 0.10000000149011612
+        }
+      }
+    ],
+    "declarations": [
+      {
+        "actions": [
+          {
+            "bounds": [
+              0,
+              0.2
+            ],
+            "id": "change",
+            "kind": "add",
+            "residualNorm": 10.0,
+            "residualNormConvention": "perTextMean-v1",
+            "source": {
+              "metadataSHA256": "82b74cc24eb13afde8c3582361376b0ea7d7d32dd69a7d600d11fd124ecf7ddd",
+              "revision": null,
+              "tensorSHA256": "ea605af388a673e7d6958ba9e0699391e397e79501982fa0c339c09226190476",
+              "vectorArtifactID": "runs/fit/example"
+            },
+            "strengthUnits": "residualNorm",
+            "vectorNorm": 5.0,
+            "vectorSHA256": "f8ea94b84c82c4121ae255fac7d2fd9eb15c956e49ad083f92587f3b24fc3a78"
+          }
+        ],
+        "assetSHA256": {},
+        "binding": {
+          "coordinateConvention": "hf-decoder-block-v1/model.layers",
+          "modelID": "example/model",
+          "rendering": "raw",
+          "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "tokenizerSHA256": null
+        },
+        "maxEvents": 100,
+        "onError": "stop",
+        "positions": "lastPosition",
+        "probes": [
+          {
+            "id": "reader",
+            "sha256": "76cafa6b7e14d33b47a2fa47cb9f2a684a4bd7903bf1c2603114cbdbc5bb15fa"
+          }
+        ],
+        "providerSHA256": null,
+        "rules": [
+          {
+            "action": "change",
+            "kind": "fixed",
+            "value": 0.1
+          }
+        ],
+        "sha256": "cc9c6eb288c61d5cb0afd00eceb0e6ce7dc9acf456d42fccfcc9e6b10b1a8646",
+        "site": {
+          "kind": "residualPost",
+          "layer": 0
+        },
+        "stages": [
+          "prefill",
+          "decode"
+        ]
+      }
+    ],
+    "failureCount": 0,
+    "failures": [],
+    "limitations": [
+      "Requested strengths and acknowledged applied strengths are distinct. Applied means the site tensor operation succeeded; a failed response is not completed evidence.",
+      "Strengths are in each action\u2019s declared units (strengthUnits); a residual-norm strength compares directly with a static agent\u2019s \u03b1. For an addition, appliedScales is the multiplier applied to the stored direction: strength \u00d7 residualNorm / vectorNorm in residual-norm units, or the strength itself for a raw multiplier.",
+      "Policy scores use float32 on the activation device; measurements retain their own scoring precision.",
+      "Expert providers are trusted Python code. Their declared RNG is response-local random.Random; they must not use global randomness or mutate model state."
+    ],
+    "omittedDecisions": 0,
+    "ordering": "preAction; decisions; legacy chain; joint ablation; ordered additions; postAction; logits before sampling warpers",
+    "outputTokenIDs": [
+      3
+    ],
+    "policies": [
+      "cc9c6eb288c61d5cb0afd00eceb0e6ce7dc9acf456d42fccfcc9e6b10b1a8646"
+    ],
+    "promptTokenIDs": [
+      1,
+      2
+    ],
+    "rngConvention": "random.Random seeded by SHA256(policy digest + sorted response context JSON)",
+    "runtime": "policy-v1",
+    "schemaVersion": 2,
+    "stateConvention": "empty dictionary per policy per response; skipPolicy retains prior state",
+    "status": "complete",
+    "timing": {
+      "decisionCalls": 1,
+      "decisionHostSeconds": 0,
+      "interpretation": "Host elapsed time, including scoring and recording. Asynchronous GPU work is not synchronized; this is not GPU kernel latency."
+    }
+  },
+  "outputTokenIDs": [
+    3
+  ],
+  "promptID": "example"
+}

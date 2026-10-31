@@ -8,6 +8,8 @@ public enum InstrumentationSupport {
             var result = Set<String>()
             if case .array(let policies) = object["interventionPolicies"], !policies.isEmpty {
                 result.formUnion(["policy-v1", "policy-evidence-v2"])
+                // An engine that knows only version 1 would refuse these at execution; say so before submission.
+                if policies.contains(where: { policySchemaVersion($0) == .number(2) }) { result.insert("policy-v2") }
             }
             if case .object(let measurements) = object["probeMeasurements"], case .array(let probes) = measurements["probes"], !probes.isEmpty {
                 result.insert("probe-readings-v1")
@@ -23,6 +25,14 @@ public enum InstrumentationSupport {
         case .array(let values): return values.reduce(into: Set<String>()) { $0.formUnion(requirements($1)) }
         default: return []
         }
+    }
+
+    /// An attachment's schema version, read from its exact bytes; unreadable bytes are refused elsewhere.
+    /// Twin: `instrumentation_contract.policy_versions`.
+    static func policySchemaVersion(_ attachment: JSONValue) -> JSONValue? {
+        guard case .object(let item) = attachment, case .string(let text) = item["json"],
+              case .object(let policy)? = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)) else { return nil }
+        return policy["schemaVersion"]
     }
 
     public static func require(_ required: Set<String>, offered: [String]?) throws {

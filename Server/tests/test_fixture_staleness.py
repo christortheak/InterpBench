@@ -438,6 +438,7 @@ def test_every_committed_fixture_has_a_staleness_test():
         # its legacy writer test and native ProbeLibraryTests check producers.
         "probe-artifacts.json",
         "policy-evidence.json",  # test_instrumentation_evidence: real forward, timing normalized
+        "policy-evidence-norm-units.json",  # the same, from a version-2 residual-norm addition
         "manifest-interop.json", "run-bundle-metadata.json",
         "swift-authored-manifest.json",
         # Hand-authored contract (2026-10-17): the intended reading of each

@@ -37,6 +37,47 @@ struct InstrumentationEvidenceTests {
         #expect(object["responses"] == .number(1))
         #expect(strength["mean"] == .number(2))
     }
+    @Test func normUnitEvidenceStatesUnitsAndScalesAndTamperedScalesDoNot() throws {
+        let raw = try Data(contentsOf: repository.appending(path: "Tests/Fixtures/cross-engine/policy-evidence-norm-units.json"))
+        try InstrumentationEvidence.validate(try JSONDecoder().decode(JSONValue.self, from: raw))
+        let document = try #require(JSONSerialization.jsonObject(with: raw) as? [String: Any])
+        let block = try #require(document["interventionDecisions"] as? [String: Any])
+        let row = try #require((block["decisions"] as? [[String: Any]])?.first)
+        #expect(row["strengthUnits"] as? [String: String] == ["change": "residualNorm"])
+        // The requested strength is float32(0.1); the absolute scale is 0.1 × residual norm 10 / vector norm 5.
+        let scale = try #require((row["appliedScales"] as? [String: Double])?["change"])
+        #expect(abs(scale - 0.2) < 1e-6)
+        func tampered(_ field: String, _ value: Any) throws -> JSONValue {
+            var changed = row; changed[field] = value
+            var copy = block; copy["decisions"] = [changed]
+            var outer = document; outer["interventionDecisions"] = copy
+            return try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: outer))
+        }
+        for (field, value) in [("appliedScales", ["other": 1.0] as Any), ("strengthUnits", ["other": "residualNorm"] as Any), ("appliedScales", "0.2" as Any)] {
+            let corrupt = try tampered(field, value)
+            #expect(throws: (any Error).self) { try InstrumentationEvidence.validate(corrupt) }
+        }
+        // Rows recorded before units and scales existed remain admissible.
+        var older = row; older.removeValue(forKey: "appliedScales"); older.removeValue(forKey: "strengthUnits")
+        var copy = block; copy["decisions"] = [older]
+        var outer = document; outer["interventionDecisions"] = copy
+        try InstrumentationEvidence.validate(try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: outer)))
+    }
+    @Test func aStrengthAtAFractionalBoundIsAdmittedAtFloat32Precision() throws {
+        let raw = try Data(contentsOf: repository.appending(path: "Tests/Fixtures/cross-engine/policy-evidence-norm-units.json"))
+        var document = try #require(JSONSerialization.jsonObject(with: raw) as? [String: Any])
+        var block = try #require(document["interventionDecisions"] as? [String: Any])
+        var rows = try #require(block["decisions"] as? [[String: Any]])
+        // Execution clamps to float32(0.2), a little above the declared double 0.2.
+        let bound = Double(Float(0.2))
+        rows[0]["strengths"] = ["change": bound]; rows[0]["appliedStrengths"] = ["change": bound]
+        block["decisions"] = rows; document["interventionDecisions"] = block
+        try InstrumentationEvidence.validate(try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: document)))
+        rows[0]["strengths"] = ["change": 0.21]; rows[0]["appliedStrengths"] = ["change": 0.21]
+        block["decisions"] = rows; document["interventionDecisions"] = block
+        let outside = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: document))
+        #expect(throws: (any Error).self) { try InstrumentationEvidence.validate(outside) }
+    }
     @Test func nestedPanelRequirementsAndOldServerAdmission() throws {
         let value: JSONValue = .object(["agents": .array([.object(["artifact": .object(["interventionPolicies": .array([.object([:])])])])]), "probeMeasurements": .object(["probes": .array([.object([:])])])])
         let required = InstrumentationSupport.requirements(value)

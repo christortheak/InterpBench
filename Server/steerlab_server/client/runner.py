@@ -859,7 +859,7 @@ class RunnerClient:
         from ..experiment import instrumentation_contract
         required = instrumentation_contract.requirements(staged)
         if "runtimeRequirements" not in staged:
-            required = list(instrumentation_contract.SUPPORTED)  # Older archives may hide additive fields; repackage for explicit empty requirements.
+            required = list(instrumentation_contract.UNMARKED)  # Older archives may hide additive fields; repackage for explicit empty requirements.
         if required:
             try: instrumentation_contract.require(required, self.capabilities())
             except ValueError as exc:

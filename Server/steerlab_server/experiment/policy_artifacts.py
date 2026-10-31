@@ -2,12 +2,32 @@
 import copy
 import hashlib
 import json
+import math
 from . import probe_artifacts as probes
 class PolicyError(probes.ProbeError):
     code = 'interventionPolicyRefused'
     repair_action = 'Review the policy inputs, bounds, and model binding; publish a corrected policy and attach it to a new agent version.'
 
+
+class NormUnitsUnavailable(PolicyError):
+    """A residual-norm addition whose direction has no stamped norm at the policy layer."""
+    code = 'policyResidualNormMissing'
+    repair_action = ('Measure the vector’s residual norms with vectors backfill-norms, which writes a new vector artifact, and name '
+                     'that artifact; or add "strengthUnits": "rawMultiplier" to this action to multiply the stored direction directly.')
+
+
 MAX_BYTES = 16 * 1024 * 1024
+#: Version 1 (P5) additions multiply the stored direction directly and declare no
+#: units; every published version-1 policy keeps that meaning. Version 2 declares
+#: each addition's units, and review writes the declaration.
+SCHEMA_VERSIONS = (1, 2)
+SCHEMA_VERSION = 2
+RESIDUAL_NORM, RAW_MULTIPLIER = 'residualNorm', 'rawMultiplier'
+#: What execution needs to turn a residual-norm strength into an absolute scale.
+#: Review records them from the vector sidecar, so the policy's hash covers them.
+NORM_FIELDS = ('residualNorm', 'residualNormConvention', 'vectorNorm')
+#: Units of the other action kinds, which no version changes; named for evidence.
+FIXED_UNITS = {'ablate': 'fraction', 'logitBias': 'logit', 'allowTokens': 'onOff', 'forceToken': 'onOff'}
 
 
 def keys(value, required, optional=()):
@@ -36,7 +56,7 @@ def validate(doc):
     probes.finite_json(doc)
     if len(json.dumps(doc).encode()) > MAX_BYTES: raise PolicyError('Keep a self-contained policy under 16 MiB.')
     keys(doc, ('schemaVersion', 'name', 'binding', 'site', 'stages', 'positions', 'probes', 'actions', 'rules', 'onError', 'maxEvents'), ('provider',))
-    if type(doc['schemaVersion']) is not int or doc['schemaVersion'] != 1: raise PolicyError('Use policy schemaVersion 1.')
+    if type(doc['schemaVersion']) is not int or doc['schemaVersion'] not in SCHEMA_VERSIONS: raise PolicyError('Use policy schemaVersion 2, or a published version-1 policy. A newer version needs a newer engine.')
     probes.text(doc['name'], 'policy name'); site(doc['site'])
     binding = doc['binding']
     keys(binding, ('modelID', 'revision', 'tokenizerSHA256', 'rendering', 'coordinateConvention'))
@@ -63,7 +83,7 @@ def validate(doc):
     if not isinstance(doc['actions'], list) or not 1 <= len(doc['actions']) <= 16: raise PolicyError('Declare between 1 and 16 actions.')
     action_ids = set()
     for action in doc['actions']:
-        keys(action, ('id', 'kind', 'bounds'), ('vector', 'source', 'tokens'))
+        keys(action, ('id', 'kind', 'bounds'), ('vector', 'source', 'tokens') + ((('strengthUnits',) + NORM_FIELDS) if doc['schemaVersion'] >= 2 else ()))
         if 'source' in action and not isinstance(action['source'], dict): raise PolicyError('Direction provenance must be a JSON object.')
         probes.text(action['id'], 'action ID')
         if action['id'] in action_ids: raise PolicyError('Action IDs must be unique.')
@@ -80,6 +100,7 @@ def validate(doc):
             if len(set(tokens)) != len(tokens) or (action['kind'] == 'forceToken' and len(tokens) != 1): raise PolicyError('Use distinct IDs; forceToken requires one exact token.')
             if action['kind'] != 'logitBias' and (lo != 0 or hi != 1): raise PolicyError('Token constraints use an on/off strength bounded by [0, 1].')
             if 'vector' in action: raise PolicyError('Logit actions do not take a residual vector.')
+            declared_units(action, doc['schemaVersion'])
         else:
             probes.choice(action['kind'], ('add', 'ablate'), 'residual action')
             vector = action.get('vector')
@@ -87,6 +108,7 @@ def validate(doc):
             for x in vector: number(x, 'direction value')
             if not any(x != 0 for x in vector): raise PolicyError('Choose a nonzero direction.')
             if 'tokens' in action: raise PolicyError('Residual actions do not take token IDs.')
+            declared_units(action, doc['schemaVersion'])
     if not isinstance(doc['rules'], list) or len(doc['rules']) > 16: raise PolicyError('Declare at most 16 rules.')
     used = set()
     for rule in doc['rules']:
@@ -120,6 +142,43 @@ def validate(doc):
     return copy.deepcopy(doc)
 
 
+def declared_units(action, version):
+    """How an action declares its strength units. Only a version-2 addition declares them."""
+    declared = {k for k in ('strengthUnits',) + NORM_FIELDS if k in action}
+    if version < 2 or action['kind'] != 'add':
+        if declared and version < 2: raise PolicyError('Version-1 policies declare no strength units: their additions multiply the stored vector directly. Use schemaVersion 2 to declare units.')
+        if declared: raise PolicyError('Only additions declare strength units. Ablation keeps its dimensionless fraction, and token actions keep their own scales.')
+        return
+    units = action.get('strengthUnits')
+    if units == RAW_MULTIPLIER:
+        if declared != {'strengthUnits'}: raise PolicyError('A raw-multiplier addition multiplies the stored direction directly and records no residual norm.')
+    elif units == RESIDUAL_NORM:
+        if declared != {'strengthUnits', *NORM_FIELDS}: raise PolicyError('A residual-norm addition records residualNorm, residualNormConvention, and vectorNorm from its vector artifact. Review the settings again.')
+        for k in ('residualNorm', 'vectorNorm'):
+            if number(action[k], k) <= 0: raise PolicyError('A residual-norm addition needs a positive ' + k + '.')
+        if action['residualNormConvention'] is not None: probes.text(action['residualNormConvention'], 'residualNormConvention')
+        # Review computed the norm of these exact values in float32; a mismatch is a different direction.
+        if not math.isclose(math.sqrt(math.fsum(x * x for x in action['vector'])), action['vectorNorm'], rel_tol=1e-5):
+            raise PolicyError('The recorded vectorNorm differs from the embedded direction. Review the settings again.')
+    else: raise PolicyError('Choose strengthUnits residualNorm or rawMultiplier for each addition.')
+
+
+def strength_units(action):
+    """The units of an action's strength. A version-1 addition, which declares none, is a raw multiplier."""
+    if action['kind'] == 'add': return action.get('strengthUnits', RAW_MULTIPLIER)
+    return FIXED_UNITS[action['kind']]
+
+
+def action_units(doc):
+    """What each action's strength means, for review, publication, inspection, and scope reports."""
+    rows = []
+    for action in doc['actions']:
+        row = {'id': action['id'], 'kind': action['kind'], 'bounds': action['bounds'], 'strengthUnits': strength_units(action)}
+        if row['strengthUnits'] == RESIDUAL_NORM: row.update({k: action[k] for k in NORM_FIELDS})
+        rows.append(row)
+    return rows
+
+
 def load_attached(values):
     if values is None: return []
     if not isinstance(values, list) or len(values) > 16: raise PolicyError('Attach at most 16 policies to an agent.')
@@ -133,7 +192,7 @@ def load_attached(values):
 
 
 def summaries(values):
-    return [{'sha256': digest, **{k: doc[k] for k in ('name', 'binding', 'site', 'stages', 'positions', 'onError')},
-             'actions': [{k: a[k] for k in ('id', 'kind', 'bounds')} for a in doc['actions']],
+    return [{'sha256': digest, **{k: doc[k] for k in ('schemaVersion', 'name', 'binding', 'site', 'stages', 'positions', 'onError')},
+             'actions': action_units(doc),
              'providerSHA256': doc.get('provider', {}).get('sourceSHA256')}
             for digest, doc in load_attached(values)]

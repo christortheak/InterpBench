@@ -57,16 +57,18 @@ def workspace(root, model, prompts=None, provider=None):
              'training': {'recipeID': 'synthetic-fixture-v1', 'data': [{'role': 'fit', 'sha256': 'c' * 64}], 'settings': {}}}
     (root / 'runs/fit/trained.probe.json').write_text(json.dumps(probe))
     reader = {'id': 'reader', 'path': 'runs/fit/trained.probe.json'}
-    early = {'schemaVersion': 1, 'binding': {**binding, 'rendering': 'raw'}, 'site': {'kind': 'residualPre', 'layer': 0},
+    early = {'schemaVersion': 2, 'binding': {**binding, 'rendering': 'raw'}, 'site': {'kind': 'residualPre', 'layer': 0},
              'stages': ['prefill', 'decode'], 'positions': 'lastPosition', 'onError': 'stop', 'maxEvents': 4096}
+    # A synthetic direction given as numbers has no stamped residual norm, so it is an explicit raw multiplier.
+    shift = {'id': 'shift', 'kind': 'add', 'bounds': [0, 1], 'vector': [0, 1, 0, 0, 0, 0, 0, 0], 'strengthUnits': 'rawMultiplier'}
     settings = {
-        'zeroActionPolicy': {**early, 'name': 'never-acts', 'probes': [reader], 'actions': [{'id': 'shift', 'kind': 'add', 'bounds': [0, 1], 'vector': [0, 1, 0, 0, 0, 0, 0, 0]}],
+        'zeroActionPolicy': {**early, 'name': 'never-acts', 'probes': [reader], 'actions': [shift],
                              'rules': [{'action': 'shift', 'kind': 'fixed', 'value': 0}]},
         # A large fixed bias toward the stop token ends ordinary generation at once, whatever the random weights are.
         'fixedPolicy': {**early, 'name': 'always-acts', 'site': {'kind': 'logitsPreSelection'}, 'probes': [],
                         'actions': [{'id': 'prefer-stop', 'kind': 'logitBias', 'bounds': [0, 100], 'tokens': [EOS]}],
                         'rules': [{'action': 'prefer-stop', 'kind': 'fixed', 'value': 50}]},
-        'conditionalPolicy': {**early, 'name': 'acts-on-odd', 'probes': [reader], 'actions': [{'id': 'shift', 'kind': 'add', 'bounds': [0, 1], 'vector': [0, 1, 0, 0, 0, 0, 0, 0]}],
+        'conditionalPolicy': {**early, 'name': 'acts-on-odd', 'probes': [reader], 'actions': [shift],
                               'rules': [{'action': 'shift', 'kind': 'threshold', 'weights': {'reader': 1}, 'threshold': 0, 'below': 0, 'above': 0.5}]},
     }
     if provider is not None:

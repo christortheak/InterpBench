@@ -3,6 +3,9 @@ import Foundation
 /// Structural evidence admission, mirrored by Python and exercised on its real output.
 /// Hash verification precedes this check; scientific qualification remains separate.
 public enum InstrumentationEvidence {
+    private static func isText(_ value: JSONValue) -> Bool { if case .string = value { return true }; return false }
+    private static func isFiniteNumber(_ value: JSONValue) -> Bool { if case .number(let x) = value { return x.isFinite }; return false }
+
     public static func validate(_ value: JSONValue) throws {
         func refuse(_ reason: String) throws { throw ExperimentError(reason: reason + " Retain the source and recollect complete evidence.") }
         guard case .object(let record) = value else { try refuse("Each evidence row must be a JSON object."); return }
@@ -55,7 +58,8 @@ public enum InstrumentationEvidence {
                             let spec = actions.compactMap { value -> [String: JSONValue]? in
                                 if case .object(let object) = value, object["id"] == .string(name) { return object }; return nil
                             }.first
-                            guard case .array(let bounds) = spec?["bounds"], bounds.count == 2, case .number(let low) = bounds[0], case .number(let high) = bounds[1], case .number(let number) = strength, low.isFinite, high.isFinite, number >= low, number <= high else { try refuse("A requested action is undeclared or outside its bounds."); return }
+                            // Execution bounds strengths in float32, so a strength at a fractional bound records that bound's float32 value.
+                            guard case .array(let bounds) = spec?["bounds"], bounds.count == 2, case .number(let low) = bounds[0], case .number(let high) = bounds[1], case .number(let number) = strength, low.isFinite, high.isFinite, number >= Double(Float(low)), number <= Double(Float(high)) else { try refuse("A requested action is undeclared or outside its bounds."); return }
                         }
                     }
                     for value in Array(requested.values) + Array(applied.values) {
@@ -68,6 +72,13 @@ public enum InstrumentationEvidence {
                         guard requested[id] == strength, case .object(let outcome) = outcomes[id], outcome["status"] == .string("applied") else { try refuse("An applied strength lacks a successful action acknowledgement."); return }
                     }
                     if row["status"] == .string("applied"), requested != applied { try refuse("An applied decision has unacknowledged actions.") }
+                    // Units and absolute scales are additive: rows written before they existed have neither.
+                    if let value = row["strengthUnits"] {
+                        guard case .object(let units) = value, units.allSatisfy({ requested[$0.key] != nil && isText($0.value) }) else { try refuse("Strength units must name requested actions."); return }
+                    }
+                    if let value = row["appliedScales"] {
+                        guard case .object(let scales) = value, scales.allSatisfy({ applied[$0.key] != nil && isFiniteNumber($0.value) }) else { try refuse("Applied scales must be finite and belong to applied actions."); return }
+                    }
                 }
             }
         }
