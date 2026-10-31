@@ -414,8 +414,50 @@ prompts is refused before anything is uploaded. A local runner is
 `run` refuses, before the model loads, a concept-bearing manifest with no
 injection, variant, or SAE arm. That refusal is not an obstacle: it is the
 firewall telling you the study would have measured nothing. Declare a condition
-(step 6) or promote an agent (`workspace guide sweep`), or declare the baseline-only study
-explicitly if that is genuinely what you want.
+(step 6) or promote an agent (`workspace guide sweep`), or, if measuring the
+unmodified model is genuinely what you want, declare a study of the baseline
+alone (below).
+
+## A study of the baseline alone
+
+A study whose only subject is the unmodified base model, such as a replication
+of a published study on that model, declares `studyType` `agentComparison`,
+pins its task prompts (step 5), and attaches no injection condition, agent, or
+SAE latent arm. Concepts it carries are inert and never run. It verifies,
+freezes, and runs as exactly one arm, `baseline`: the pinned model, with no
+vectors or adapters, at the study's sampling settings. Each item is generated
+once for each sample, with no second arm to repeat it.
+
+- `verify`, `freeze`, and `analyze` carry a `baselineOnlyStudy` advisory that
+  says so. A draft with nothing attached that does not declare the type, or
+  declares `conceptStudy`, is still refused as `emptyStudy`, because there the
+  emptiness is a mistake; that refusal's repair names the declaration.
+- The task prompts are the only input such a study measures, so `verify`, and
+  so `freeze`, refuse it under `studyDeclaration` until they are pinned; the
+  repair names the verb that pins them.
+- Freeze asks for no validation evidence and no capability-battery evidence,
+  because nothing is steered. Nothing is exempted or forced, and the settings
+  summary says the study has one arm and no paired statistics.
+- `analyze` writes its usual files with no effect rows, since there is no
+  comparison arm. The run's summary for each condition, `results export`, and
+  the results page describe the baseline's responses.
+- If the study is judged, its rubric must code each response
+  (`perResponseCoding`). Paired judging compares a condition with the
+  baseline, so it has nothing to pair here: `verify`, and so `freeze`, refuse
+  a paired rubric under `studyDeclaration`, and the repair names
+  `experiment pin-rubric` with a rubric that codes each response.
+
+<!-- client: mac -->
+
+Declare the type in a study pack (`steerlab-cli pack apply`) or with the
+app's study type, Compare agents.
+
+<!-- client: python -->
+
+Declare the type in a study pack (`steerlab pack apply`) or with
+`steerlab experiment set-protocol <name> --set studyType=agentComparison`.
+
+<!-- client: all -->
 
 ## 10. Evaluate and analyze
 

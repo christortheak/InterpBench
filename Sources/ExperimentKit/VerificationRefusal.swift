@@ -35,6 +35,41 @@ enum VerificationRefusal {
     /// The same state for a multi-agent study: no panel scenario is pinned.
     static let emptyMultiAgentViolation = "multi-agent study needs a pinned scenario"
 
+    /// How `verify`'s sentence opens for a study that measures the baseline
+    /// agent alone and pins a PAIRED rubric (`ExperimentStore.isBaselineOnlyStudy`).
+    /// A declaration problem, refused under `studyDeclaration`; matched by
+    /// this opening so the repair can name the per-response route.
+    static let baselineOnlyPairedRubricPrefix =
+        "this study measures the baseline agent alone, but its judge rubric"
+
+    /// `verify`'s sentence for a study that measures the baseline agent
+    /// alone and does not pin its task prompts, the only input it measures.
+    /// A declaration problem, refused under `studyDeclaration` with a repair
+    /// that names the verb that pins them. Server twin:
+    /// `verification_refusal.BASELINE_ONLY_UNPINNED_PROMPTS_VIOLATION`.
+    static let baselineOnlyUnpinnedPromptsViolation =
+        "this study measures the baseline agent alone, but its task prompts are "
+        + "not pinned: they are the only input it measures, and its run reads its "
+        + "items from them. Pin a task prompts file (taskPromptsFile and "
+        + "taskPromptsHash)"
+
+    /// `verify`'s sentence for a study that measures the baseline agent
+    /// alone and pins a paired comparison rubric. Paired judging compares
+    /// each condition's response with the baseline's, so such a study froze
+    /// and then refused at evaluate, after the run. No program name appears:
+    /// a violation is a plain string with no repair to carry one. Server
+    /// twin: `verification_refusal.baseline_only_paired_rubric_violation`,
+    /// byte for byte.
+    static func baselineOnlyPairedRubricViolation(rubricFile: String?) -> String {
+        let named = rubricFile.map { "'\($0)'" } ?? "the pinned rubric"
+        return "\(baselineOnlyPairedRubricPrefix) (\(named)) is a PAIRED "
+            + "comparison rubric: paired judging compares each condition's "
+            + "response with the baseline's, and a study with one arm has "
+            + "nothing to pair, so evaluate would refuse it after the run. Pin "
+            + "a perResponseCoding rubric, which codes each response on its "
+            + "own, or remove the study's judges"
+    }
+
     /// Phrases a violation uses when it reports BYTES — a pinned file that
     /// changed, is gone, or turned up after being pinned as absent. A
     /// violation containing any of them is drift.
@@ -116,7 +151,39 @@ enum VerificationRefusal {
             + "A concept: \(program) experiment attach \(name) <concept>. "
             + "An agent: \(program) agent list, then \(program) experiment "
             + "attach-agent \(name) (its --help names the reviewed-file flags). "
+            // A study of the baseline alone is not empty when it says so.
+            // This command line has no verb for the study type: a study pack
+            // declares it, or the app's study type (server twin:
+            // `verification_refusal.baseline_only_route`).
+            + "To measure the unmodified model alone, declare studyType "
+            + "agentComparison: in a study pack (\(program) pack apply), or "
+            + "with the app's study type, Compare agents. "
             + "\(template) \(interview)conceptStudy --json."
+    }
+
+    /// How this client pins the task prompts a study of the baseline alone
+    /// measures. Said before the declaration repair. Server twin:
+    /// `verification_refusal.unpinned_prompts_repair`.
+    static func unpinnedPromptsRepair(
+        name: String, program: String = ExperimentCLIHelp.program
+    ) -> String {
+        "Pin the task prompts this study measures: \(program) experiment "
+            + "pin-prompts \(name) prompts/tasks/<file>.jsonl. "
+    }
+
+    /// The route a study of the baseline alone takes when it pins a paired
+    /// rubric: a rubric that codes each response. Said before the
+    /// declaration repair, which still covers anything else the list names.
+    /// Server twin: `verification_refusal.paired_rubric_repair`.
+    static func pairedRubricRepair(
+        name: String, program: String = ExperimentCLIHelp.program
+    ) -> String {
+        "Pin a rubric that codes each response on its own: a rubric file that "
+            + "opens with a 'mode: perResponseCoding' block "
+            + "(prompts/rubrics/README.md shows one), pinned with "
+            + "\(program) experiment pin-rubric \(name) prompts/rubrics/<file>.md "
+            + "(its --help names the judge and reviewed-file flags). Or remove "
+            + "the study's judges. "
     }
 
     /// The repair when no file changed and the declaration is the problem.
@@ -136,7 +203,15 @@ enum VerificationRefusal {
     static func repair(name: String, violations: [String]) -> String {
         switch gate(violations) {
         case .emptyStudy: emptyRepair(name: name, violations: violations)
-        case .studyDeclaration: declarationRepair(name: name)
+        // A study of the baseline alone gets its specific routes first, then
+        // the declaration repair, which covers anything else the list names.
+        case .studyDeclaration:
+            (violations.contains(baselineOnlyUnpinnedPromptsViolation)
+                ? unpinnedPromptsRepair(name: name) : "")
+                + (violations.contains(where: {
+                    $0.hasPrefix(baselineOnlyPairedRubricPrefix)
+                }) ? pairedRubricRepair(name: name) : "")
+                + declarationRepair(name: name)
         default: ExperimentTasks.pinDriftRepair(name: name, violations: violations)
         }
     }

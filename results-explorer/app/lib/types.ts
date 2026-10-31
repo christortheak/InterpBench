@@ -282,6 +282,10 @@ export type WorkspaceRun = {
   /// null when a stamp settled every row or no records could be read;
   /// absent until the run is activated. See lib/effectUnits.ts.
   effectUnitRecords?: PairedItems | null;
+  /// Whether the run's manifest snapshot is a study that measures the
+  /// baseline agent alone, whose analysis has no effects by design. Absent
+  /// until the run is activated. See lib/baselineOnly.ts.
+  baselineOnly?: boolean;
 };
 
 export type FilePreview = {

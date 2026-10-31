@@ -3584,6 +3584,12 @@ public enum ExperimentTasks {
         if let inertNote = ExperimentStore.inertMachineryNote(manifest) {
             print("WARNING: \(inertNote)")
         }
+        // A study that measures the baseline agent alone runs one arm by
+        // design; said at start so its log reads as what it is (server twin:
+        // `_run_impl`).
+        if ExperimentStore.isBaselineOnlyStudy(manifest) {
+            print("note: \(ExperimentStore.baselineOnlyStudyAdvisory)")
+        }
         let conditions = ordinaryRunConditions(for: manifest)
         guard !conditions.isEmpty else {
             throw ExperimentError.refusing(
@@ -5263,6 +5269,37 @@ public enum ExperimentTasks {
         StudyAnalysisRepository.analysisSourceRecords(at: runDirectory)
     }
 
+    /// Whether an analysis with zero effect-size entries is that of a study
+    /// measuring the baseline agent alone (`ExperimentStore.isBaselineOnlyStudy`),
+    /// whose source run holds baseline records and nothing else. Read from
+    /// the manifest the analysis stamped beside itself, which the epoch guard
+    /// tied to the run. Then no effects is the design, and the analysis says
+    /// `baselineOnlyStudy` rather than `emptyAnalysis`. Tolerant: anything
+    /// unreadable is not this case. Server twin:
+    /// `cli_payloads.is_baseline_only_analysis`.
+    static func isBaselineOnlyAnalysis(
+        analysisDirectory: URL, recordCount: Int?, conditions: Set<String>
+    ) -> Bool {
+        guard let recordCount, recordCount > 0, conditions == ["baseline"],
+            let data = try? Data(
+                contentsOf: analysisDirectory.appending(component: "experiment.json")),
+            let manifest = try? JSONDecoder().decode(ExperimentManifest.self, from: data)
+        else { return false }
+        return ExperimentStore.isBaselineOnlyStudy(manifest)
+    }
+
+    /// The same question for a named source run under the workspace's
+    /// `runs/`.
+    public static func isBaselineOnlyAnalysis(
+        at analysisDirectory: URL, sourceRunNamed runName: String
+    ) -> Bool {
+        let (count, conditions) = analysisSourceRecords(
+            at: ExperimentStore.runsDirectory.appending(path: runName))
+        return isBaselineOnlyAnalysis(
+            analysisDirectory: analysisDirectory, recordCount: count,
+            conditions: conditions)
+    }
+
     /// The detail for a named source run under the workspace's `runs/`.
     public static func emptyAnalysisDetail(sourceRunNamed runName: String) -> String {
         let (count, conditions) = analysisSourceRecords(
@@ -5931,11 +5968,20 @@ public enum ExperimentTasks {
         let candidates = generations.filter { $0.condition != "baseline" }
         guard !baseline.isEmpty, !candidates.isEmpty else {
             let excludedAll = (exclusionStamp?.excludedRecords ?? 0) > 0
+            // A study of the baseline alone has no other condition to pair
+            // with: said as what it is, with the per-response route.
+            let baselineAlone = !excludedAll && !baseline.isEmpty
+                && ExperimentStore.isBaselineOnlyStudy(manifest)
             throw ExperimentError(
                 reason: "paired judge requires baseline and non-baseline generations"
                     + (excludedAll
                         ? " — the declared exclusion rules left none to judge"
-                        : ""))
+                        : baselineAlone
+                            ? " — this study measures the baseline agent alone, "
+                                + "so there is no other condition to pair with the "
+                                + "baseline; judge it with a rubric that codes each "
+                                + "response (perResponseCoding)"
+                            : ""))
         }
         // Zero-pairs refusal (P0 message family shared verbatim with the
         // server): both sides present but no candidate shares a cell with
@@ -7263,7 +7309,10 @@ public enum ExperimentTasks {
         "paired judging produced zero pairs: records join on (promptID, "
         + "sampleIndex) and every non-baseline record needs a baseline record "
         + "in the same cell — this source run has none. Likely causes: the "
-        + "run has no baseline condition, or no sampled text records "
+        + "run has no baseline condition; the study measures the baseline "
+        + "agent alone, so it has no other condition to pair with the "
+        + "baseline (judge it with a rubric that codes each response, "
+        + "perResponseCoding); or the run has no sampled text records "
         + "(instrument readouts and error records are never judged). Refusing "
         + "to write an empty judged report."
 

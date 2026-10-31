@@ -4445,6 +4445,12 @@ def _write_preregistration(d: dict, root: str | None) -> None:
     if inert:
         lines += ["", "Declared but not run by this study design: "
                   + ", ".join(inert) + "."]
+    # A study that measures the baseline agent alone says so where its arms
+    # are listed, so the one arm is not read as a missing comparison. Swift
+    # twin: the same line in `preregistrationMarkdown`.
+    from .manifest import BASELINE_ONLY_SUMMARY, baseline_only_study
+    if baseline_only_study(d):
+        lines += ["", BASELINE_ONLY_SUMMARY]
     not_applied = freeze_policy.battery_not_applied(d)
     if not_applied:
         lines += ["", "## Capability battery", ""]
@@ -4477,15 +4483,21 @@ def _write_preregistration(d: dict, root: str | None) -> None:
             f"- `{hb.get('path')}` (SHA-256 `{hb.get('hash')}`)",
             "- Residual: R = delta_model − delta_human, per endpoint.",
         ]
-    lines += [
-        "",
-        "## Statistics",
-        "",
+    # A study with one arm has no paired statistics to promise. Swift twin:
+    # the same lines in `preregistrationMarkdown`.
+    statistics = ([
+        "- None: the study has one arm, the baseline, so there is no paired "
+        "difference to estimate or test."] if baseline_only_study(d) else [
         "- Paired to each item's same-case baseline; percentile bootstrap CIs "
         "on the mean paired difference; Wilcoxon signed-rank as the "
         "nonparametric companion.",
         "- Multiple comparisons: BH-FDR across concepts at screen; Holm within "
-        "the pre-registered family at confirm.",
+        "the pre-registered family at confirm."])
+    lines += [
+        "",
+        "## Statistics",
+        "",
+        *statistics,
         "",
         PREREG_GENERATED_MARKER
         + " Duplicate the experiment to change anything.*",

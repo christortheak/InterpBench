@@ -2371,8 +2371,18 @@ def _experiment(args: list[str]):
         violations = manifest.verify(root)
         if not violations:
             print("OK — all pinned inputs verified")
+            # A study that measures the baseline agent alone verifies, and
+            # says what it is (the client's and the Mac's `verify` twin).
+            from .experiment import manifest as manifest_module
+            verified_advisories = []
+            if manifest_module.baseline_only_study(manifest.raw):
+                note = manifest_module.BASELINE_ONLY_STUDY_ADVISORY
+                sys.stderr.write(f"ADVISORY: {note}\n")
+                verified_advisories.append(advisory("baselineOnlyStudy", note))
             return CLIResult(
                 message="OK — all pinned inputs verified",
+                state="okWithAdvisories" if verified_advisories else "ready",
+                advisories=verified_advisories,
                 payload={"experiment": manifest.name,
                          "status": manifest.status,
                          "verified": True, "violations": [],
@@ -2784,6 +2794,7 @@ def _experiment(args: list[str]):
         # and 24 records, which is the one thing the reader must not be told.
         if entries == 0:
             source_run = payload.get("sourceRun")
+            count, conditions = None, set()
             if isinstance(source_run, str) and source_run:
                 # Sibling of the analyze directory: both live under the
                 # workspace's runs/, and `root` is None here unless --root was
@@ -2794,7 +2805,15 @@ def _experiment(args: list[str]):
                     source_run, count, conditions)
             else:
                 detail = cli_payloads.EMPTY_ANALYSIS_NO_CONTRAST
-            advisories.append(advisory("emptyAnalysis", detail))
+            # A study that measures the baseline agent alone has no effects
+            # by design: said as what it is, never as an empty analysis.
+            if cli_payloads.is_baseline_only_analysis(
+                    run_directory, count, conditions):
+                from .experiment.manifest import BASELINE_ONLY_STUDY_ADVISORY
+                advisories.append(advisory("baselineOnlyStudy",
+                                           BASELINE_ONLY_STUDY_ADVISORY))
+            else:
+                advisories.append(advisory("emptyAnalysis", detail))
         # Entries that are ALL exactly zero are a different fact: the pairing
         # worked and every intervention moved nothing, which is either a real
         # null or an arm declared and never actually injected (P14).

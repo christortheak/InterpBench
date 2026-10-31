@@ -31,6 +31,11 @@ from ..steering.reading_position import (LAST_TOKEN, ReadingPosition, from_label
 from ..steering.stimulus_set import StimulusSet, load_texts
 from ..steering.vector_store import SUBSTRATE as _THIS_SUBSTRATE
 from . import paths, prompt_render, truncation_gate
+# A study that measures the baseline agent alone (public issue #4): the rule
+# and its sentences live in the standard-library module `study_shape`, so the
+# results export and page can ask it too. Re-exported here.
+from .study_shape import (BASELINE_ONLY_STUDY_ADVISORY,  # noqa: F401
+                          BASELINE_ONLY_SUMMARY, baseline_only_study)
 
 # The closed ``ordinalAggregation`` vocabulary for the ``ordinalScale``
 # outcome instrument (kept torch-free here; ``logprob.ORDINAL_AGGREGATIONS``
@@ -871,6 +876,22 @@ class Manifest:
         from . import experiment_store
         return experiment_store.capability_advisories(self.raw, root)
 
+    def _baseline_only_rubric_violations(self, base: str) -> list[str]:
+        """The paired-rubric refusal for a study of the baseline alone (see
+        :meth:`verify`): only when the study is that shape, its effective
+        evaluation is judged, and its pinned rubric reads as paired."""
+        if not baseline_only_study(self.raw):
+            return []
+        spec, _source = self.effective_evaluation()
+        if spec is None or spec.kind != "pairedJudge":
+            return []
+        from . import evaluate_subsample, verification_refusal
+        text = evaluate_subsample.pinned_rubric_text(self.judge_rubric_file, base)
+        if text is None or evaluate_subsample.rubric_honors_sampling(text) is not False:
+            return []
+        return [verification_refusal.baseline_only_paired_rubric_violation(
+            self.judge_rubric_file)]
+
     def verify(self, root: str | None = None) -> list[str]:
         """Re-hash all pinned inputs, reporting drift (parallel to Swift
         ``ExperimentStore.verify``). Empty list = verified."""
@@ -882,8 +903,13 @@ class Manifest:
             try: probe_measurements.load(self.raw['probeMeasurements'], base)
             except (ValueError, OSError) as exc: violations.append(str(exc))
 
-        # Multi-agent studies pin a scenario; model-output studies pin concepts
-        # or variants (must have at least one of them).
+        # Multi-agent studies pin a scenario; model-output studies attach a
+        # concept, an agent, or an SAE latent arm (the server executes latent
+        # arms, and a latent-only study is legal) — unless the study is
+        # DECLARED baseline-only, whose one arm is the unmodified base model
+        # (public issue #4; :func:`baseline_only_study`). An undeclared or
+        # concept-study draft with nothing attached is still the empty study.
+        latent = self.raw.get("saeLatentConditions")
         if self.study_kind == "multiAgent":
             if self.multi_agent_scenario_path and self.multi_agent_scenario_hash:
                 violations += _verify_file_hash(
@@ -891,8 +917,19 @@ class Manifest:
                     f"multi-agent scenario '{self.multi_agent_scenario_path}'")
             else:
                 violations.append("multi-agent study needs a pinned scenario")
-        elif not self.concepts and not self.variant_conditions:
+        elif (not self.concepts and not self.variant_conditions
+              and not (isinstance(latent, list) and latent)
+              and not baseline_only_study(self.raw)):
             violations.append("no concepts or variants attached")
+        # A study of the baseline alone measures its task prompts and nothing
+        # else, so they must be pinned: without them it froze cleanly and its
+        # run refused, by which time the repair was a duplicate. Swift twin:
+        # ExperimentStore.verify.
+        if baseline_only_study(self.raw) and not (
+                self.task_prompts_file and self.task_prompts_hash):
+            from . import verification_refusal as _verification_refusal
+            violations.append(
+                _verification_refusal.BASELINE_ONLY_UNPINNED_PROMPTS_VIOLATION)
 
         # Executable condition names must be UNIQUE. `resume.record_key`
         # leads with the condition NAME, so two executed conditions sharing
@@ -1160,6 +1197,15 @@ class Manifest:
             _evaluate_subsample.pinned_rubric_text(
                 self.judge_rubric_file, base),
             rubric_file=self.judge_rubric_file)
+        # A study that measures the baseline agent alone and is judged with a
+        # PAIRED rubric: paired judging compares a condition with the
+        # baseline, and this study has one arm, so evaluate would refuse it
+        # after the run. Caught here, before a freeze and a run are spent on
+        # it. The mode is read the way evaluate forks
+        # (evaluate_subsample.rubric_honors_sampling); an unreadable rubric
+        # is its own violation and a malformed one its own refusal. Swift
+        # twin: ExperimentStore.verify → baselineOnlyRubricViolations.
+        violations += self._baseline_only_rubric_violations(base)
         # Sweep-input pins (firewall closure, 2026-07-20 — cross-engine
         # contract keys "sweep.devPromptsHash" + "sweep.batteryHash"): the
         # sweep's dev prompts and capability battery decide which cell WINS,
@@ -2486,9 +2532,10 @@ def no_measured_conditions_problem(d: dict) -> str | None:
         "analyze would then report zero effect sizes. Add an arm: sweep "
         f"layer×alpha and 'experiment promote {d.get('name')} <concept>' "
         "mints one from the winning cell, or declare a condition naming a "
-        "concept, layer and alpha. For a DELIBERATE baseline-only run, "
-        "declare studyType 'agentComparison' — the manifest then says "
-        "baseline-only instead of implying it")
+        "concept, layer and alpha. For a DELIBERATE baseline-only study, "
+        "declare studyType 'agentComparison' and detach the concepts it "
+        "does not use — the study then measures the baseline agent alone, "
+        "and verify, analyze, and its results say so")
 
 
 def inert_machinery_note(d: dict) -> dict | None:

@@ -2679,6 +2679,10 @@ def _preregistration_arm_cases() -> list[tuple[str, dict]]:
          "mode": "add", "beta": 2.5},
     ]
     return [
+        # A study that measures the baseline agent alone (public issue #4):
+        # one arm, and the summary says so.
+        ("baseline-only-study", _prereg_manifest(
+            "baseline-only-study", studyType="agentComparison")),
         # The field report: arms attached as agents, the baseline implicit.
         ("compare-agents", _prereg_manifest(
             "compare-agents", studyType="agentComparison",
@@ -2900,6 +2904,208 @@ def preregistration_arms() -> None:
     _write(os.path.join(FIXTURES, "preregistration-arms.json"), cases)
 
 
+#: The files the baseline-only cases pin, by workspace path: the task items a
+#: study of the baseline alone measures, a paired judge rubric (no
+#: frontmatter), and one that codes each response.
+BASELINE_ONLY_FILES = {
+    "prompts/tasks/items.jsonl": ('{"id": "p0", "prompt": "Decide the case."}\n'
+                                  '{"id": "p1", "prompt": "Explain the ruling."}\n'),
+    "prompts/rubrics/paired.md": "Which response answers the question better?\n",
+    "prompts/rubrics/coded.md": ("---\nmode: perResponseCoding\n"
+                                 "field: statesAReason boolean\n---\n"
+                                 "Does the response state a reason?\n"),
+}
+
+
+def _baseline_only_cases() -> list[tuple[str, dict, bool]]:
+    """One draft per study shape the baseline-only rule tells apart, with
+    whether it is a baseline-only study. Drafts, so ``verify`` reads the
+    study's shape; every one pins the task items, all but one case the
+    items alone, and the only other files any of them pins are the rubrics
+    in :data:`BASELINE_ONLY_FILES`, which a reader writes into its workspace
+    before verifying."""
+    import hashlib
+
+    def pin(relative: str) -> str:
+        return hashlib.sha256(
+            BASELINE_ONLY_FILES[relative].encode("utf-8")).hexdigest()
+
+    def draft(name: str, **fields) -> dict:
+        manifest = _prereg_manifest(
+            name, status="draft", taskPromptsFile="prompts/tasks/items.jsonl",
+            taskPromptsHash=pin("prompts/tasks/items.jsonl"), **fields)
+        for key in ("frozenAt", "freezeHash", "gitCommit"):
+            manifest.pop(key)
+        return manifest
+
+    def judged(rubric: str) -> dict:
+        return {"judges": [{"name": "coder", "kind": "claude"}],
+                "judgeRubricFile": rubric, "judgeRubricHash": pin(rubric)}
+
+    unpinned = draft("declared-without-task-prompts", studyType="agentComparison")
+    for key in ("taskPromptsFile", "taskPromptsHash"):
+        unpinned.pop(key)
+    fear = {"name": "fear", "stimulusSetHash": "a" * 64, "validationHash": None,
+            "options": {"method": "meanDifference",
+                        "readingPosition": {"lastToken": {}}}}
+    return [
+        # The sanctioned spelling: a declared agentComparison, nothing else.
+        ("declared-nothing-attached", draft(
+            "declared-nothing-attached", studyType="agentComparison"), True),
+        # Its task prompts are the only input it measures, so verify refuses
+        # the shape without them.
+        ("declared-without-task-prompts", unpinned, True),
+        # The canonical baseline is not an injection condition.
+        ("declared-with-canonical-baseline", draft(
+            "declared-with-canonical-baseline", studyType="agentComparison",
+            conditions=[_prereg_condition("baseline", [])]), True),
+        # Carried concepts are inert in an agent comparison: still the
+        # baseline alone.
+        ("declared-carrying-concepts", draft(
+            "declared-carrying-concepts", studyType="agentComparison",
+            concepts=[fear]), True),
+        # Undeclared and declared concept studies with nothing attached stay
+        # the empty study: there the emptiness is the mistake.
+        ("undeclared-nothing-attached", draft("undeclared-nothing-attached"),
+         False),
+        ("declared-concept-study-nothing-attached", draft(
+            "declared-concept-study-nothing-attached",
+            studyType="conceptStudy"), False),
+        # A declared agentComparison carrying injection conditions and no
+        # agent is the 2026-08-11 silent-baseline shape, refused elsewhere.
+        ("declared-carrying-injection-conditions", draft(
+            "declared-carrying-injection-conditions",
+            studyType="agentComparison", concepts=[fear],
+            conditions=[_prereg_condition("fear-mid", [("fear", 14, 0.8)])]),
+         False),
+        # Any arm makes it a comparison, and is attached: an SAE latent arm
+        # too, which the server executes.
+        ("declared-with-an-agent", draft(
+            "declared-with-an-agent", studyType="agentComparison",
+            variantConditions=[_prereg_agent(
+                "french-l28-a15", [_prereg_injection("french", 28, 0.15)])]),
+         False),
+        ("declared-with-an-sae-latent-arm", draft(
+            "declared-with-an-sae-latent-arm", studyType="agentComparison",
+            saeLatentConditions=[{
+                "name": "clamp-42", "interventionType": "saeLatent",
+                "serverOnly": True, "release": "gemma-scope-2b-pt-res",
+                "saeID": "layer_12/width_16k/average_l0_82", "feature": 42,
+                "layer": 12, "mode": "clamp", "beta": 0.5}]), False),
+        # A panel is never a model-output study; with no scenario it is the
+        # multi-agent empty study.
+        ("multi-agent-panel", draft(
+            "multi-agent-panel", studyKind="multiAgent",
+            studyType="multiAgent"), False),
+        # Judged: a paired rubric has nothing to pair with one arm, and verify
+        # refuses it; a rubric that codes each response is the route. The
+        # same paired rubric on a study with an agent is the ordinary design.
+        ("declared-with-a-paired-rubric", draft(
+            "declared-with-a-paired-rubric", studyType="agentComparison",
+            **judged("prompts/rubrics/paired.md")), True),
+        ("declared-with-a-coding-rubric", draft(
+            "declared-with-a-coding-rubric", studyType="agentComparison",
+            **judged("prompts/rubrics/coded.md")), True),
+        ("an-agent-with-a-paired-rubric", draft(
+            "an-agent-with-a-paired-rubric", studyType="agentComparison",
+            variantConditions=[_prereg_agent(
+                "french-l28-a15", [_prereg_injection("french", 28, 0.15)])],
+            **judged("prompts/rubrics/paired.md")), False),
+    ]
+
+
+def preregistration_section(text: str, heading: str) -> str:
+    """The body of one section of a preregistration: everything after its
+    heading, up to the next section's heading or the generated marker."""
+    start = text.index(f"## {heading}\n\n") + len(f"## {heading}\n\n")
+    return text[start:text.index("\n\n", start)]
+
+
+#: How every sentence ``verify`` says about a study of the baseline alone
+#: opens; the fixture records each case's sentences that open so.
+BASELINE_ONLY_SENTENCE_OPENING = "this study measures the baseline agent alone"
+
+
+def baseline_only_study() -> None:
+    """A study that measures the baseline agent alone (public issue #4), as
+    this engine reads it: for each shape, whether it is one, the empty-study
+    sentence verify reports (model-output or multi-agent, or none), verify's
+    sentences about a study of the baseline alone (task prompts not pinned, a
+    paired rubric), and which arms a run executes; the advisory and summary
+    sentences, and the sentence every results reader shows in place of
+    effects; and the settings summary's Statistics section for a
+    baseline-only study and for a comparison. The Swift suite reads the same
+    manifests and must give the same answers (BaselineOnlyStudyTests.swift),
+    and so must the results explorer (test/baselineOnly.test.ts)."""
+    from steerlab_server.client import results_export
+    from steerlab_server.experiment import experiment_store as es
+    from steerlab_server.experiment import manifest as m
+    from steerlab_server.experiment import verification_refusal as refusal
+
+    cases = []
+    with tempfile.TemporaryDirectory() as root:
+        for relative, text in BASELINE_ONLY_FILES.items():
+            os.makedirs(os.path.dirname(os.path.join(root, relative)),
+                        exist_ok=True)
+            with open(os.path.join(root, relative), "w",
+                      encoding="utf-8") as handle:
+                handle.write(text)
+        for label, manifest, expected in _baseline_only_cases():
+            parsed = m.Manifest.from_dict(json.loads(json.dumps(manifest)))
+            assert m.baseline_only_study(manifest) is expected, label
+            violations = parsed.verify(root)
+            # The panel's arms and SAE latent arms are each engine's own
+            # vocabulary (the Mac engine carries latent arms and does not run
+            # them), so only the model-output matrix is compared.
+            executed = (None if manifest["studyKind"] != "modelOutput"
+                        or manifest.get("saeLatentConditions")
+                        else m.effective_condition_names(parsed))
+            cases.append({
+                "label": label, "manifest": manifest, "baselineOnly": expected,
+                "emptyStudySentence": refusal.empty_violation(violations),
+                "baselineOnlySentences": [
+                    v for v in violations
+                    if v.startswith(BASELINE_ONLY_SENTENCE_OPENING)],
+                "executedConditions": executed})
+        statistics = {}
+        for key, label in (("baselineOnly", "declared-nothing-attached"),
+                           ("comparison", "declared-with-an-agent")):
+            manifest = next(case["manifest"] for case in cases
+                            if case["label"] == label)
+            frozen = _prereg_manifest(manifest["name"],
+                                      **{k: v for k, v in manifest.items()
+                                         if k not in ("status", "name")})
+            directory = os.path.join(root, "experiments", frozen["name"])
+            os.makedirs(directory, exist_ok=True)
+            es._write_preregistration(json.loads(json.dumps(frozen)), root)
+            with open(os.path.join(directory, es.PREREG_FILENAME),
+                      encoding="utf-8") as handle:
+                statistics[key] = {
+                    "manifest": frozen,
+                    "statisticsSection": preregistration_section(
+                        handle.read(), "Statistics")}
+    _write(os.path.join(FIXTURES, "baseline-only-study.json"), {
+        "about": ("A study that measures the baseline agent alone: a declared "
+                  "agentComparison with no agent, injection, or SAE latent "
+                  "arm; concepts it carries are inert. Produced by the Python "
+                  "engine (scripts/regenerate-cross-engine-fixtures.py, "
+                  "baseline_only_study) and read by the Swift suite and the "
+                  "results explorer. emptyStudySentence is the empty-study "
+                  "sentence verify reports, or null. baselineOnlySentences "
+                  "are verify's sentences that open with "
+                  f"'{BASELINE_ONLY_SENTENCE_OPENING}'. executedConditions is "
+                  "null where the engines' arm vocabularies differ by design. "
+                  "A reader writes each of files into its workspace, at its "
+                  "path, before verifying the cases."),
+        "advisory": m.BASELINE_ONLY_STUDY_ADVISORY,
+        "summary": m.BASELINE_ONLY_SUMMARY,
+        "effectsSentence": results_export.BASELINE_ONLY_EFFECTS,
+        "files": BASELINE_ONLY_FILES,
+        "cases": cases,
+        "preregistrationStatistics": statistics,
+    })
+
+
 def main() -> int:
     os.makedirs(FIXTURES, exist_ok=True)
     effect_units()
@@ -2914,6 +3120,7 @@ def main() -> int:
     extraction_rendering_and_positions()
     model_capabilities()
     preregistration_arms()
+    baseline_only_study()
     system_prompt_composition()
     server_minted_agent()
     server_minted_adapter_agent()

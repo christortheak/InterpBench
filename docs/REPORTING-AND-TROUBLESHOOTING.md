@@ -187,7 +187,7 @@ On these refusals, `error.code` names the problem directly.
 
 | Code | What it means | What to do |
 |---|---|---|
-| `emptyStudy` | Nothing is attached yet, so there is nothing to measure | Attach a concept or an agent, or start from a template. If the study is not planned yet, start with the study interview: `authoring study <intent>` |
+| `emptyStudy` | Nothing is attached yet, so there is nothing to measure | Attach a concept or an agent, or start from a template. If the study is not planned yet, start with the study interview: `authoring study <intent>`. To measure the unmodified model alone, declare `studyType` `agentComparison` (CONDUCTING-A-STUDY.md §5.1, "A study of the baseline alone") |
 | `statusImmutable` | The study is frozen, so it cannot change | `experiment duplicate <name> <new-name>`, and change the copy |
 | `pinDrift` | A file the study pinned has changed, is missing, or has appeared | `experiment verify <name>` names each file. Restore it, or duplicate the study and pin the new version |
 | `studyDeclaration` | The study's own settings are incomplete or contradict each other | Correct each setting the refusal lists, then `experiment verify <name>` |

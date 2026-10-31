@@ -309,6 +309,28 @@ def source_run_records(run_directory: str):
     return len(lines), conditions
 
 
+def is_baseline_only_analysis(analysis_directory: str, record_count,
+                              conditions) -> bool:
+    """Whether an analysis with zero effect-size entries is that of a study
+    measuring the baseline agent alone (``manifest.baseline_only_study``),
+    whose source run holds baseline records and nothing else. Read from the
+    manifest the analysis stamped beside itself, which the epoch guard tied
+    to the run. Then no effects is the design, and the analysis says
+    ``baselineOnlyStudy`` rather than ``emptyAnalysis``. Tolerant: anything
+    unreadable is not this case. Swift twin:
+    ``ExperimentTasks.isBaselineOnlyAnalysis``."""
+    from .experiment.study_shape import baseline_only_study
+    if not record_count or set(conditions) != {"baseline"}:
+        return False
+    try:
+        with open(os.path.join(analysis_directory, "experiment.json"),
+                  encoding="utf-8") as handle:
+            document = json.load(handle)
+    except (OSError, ValueError):
+        return False
+    return isinstance(document, dict) and baseline_only_study(document)
+
+
 def analysis_payload(run_directory: str) -> dict:
     """A compact summary of an analyze run's ``effect-sizes.csv`` — the effect
     size LEDGER, not the full table, which stays in the CSV beside it.

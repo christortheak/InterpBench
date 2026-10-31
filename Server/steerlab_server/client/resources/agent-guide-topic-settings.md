@@ -26,7 +26,9 @@ fields: `experimentDescription`, `taskDescription`, `outcomeMeasures`,
 `reasoningStyleTaxonomyHash`, `exclusionRules`, `outcomeInstruments`, and
 `sweep`. Prefer a dedicated verb, a study pack, or `import-prompts` wherever
 one exists: they compute hashes from real bytes, and a hash typed by hand is a
-claim nothing checked.
+claim nothing checked. `--set studyType=agentComparison` on a study with
+nothing attached declares a study of the baseline alone (`workspace guide
+lifecycle`).
 
 The generation protocol is set here. `promptMode` is `chatAssistant` or
 `rawCompletion`; `seedPolicy` is `manifestSeeds` or `derivedSHA256`. A non-off

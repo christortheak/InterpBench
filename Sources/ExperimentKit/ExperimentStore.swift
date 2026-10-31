@@ -3508,8 +3508,27 @@ public enum ExperimentStore {
             } else {
                 violations.append("multi-agent study needs a pinned scenario")
             }
-        } else if manifest.concepts.isEmpty && manifest.variantConditions.isEmpty {
+        } else if manifest.concepts.isEmpty && manifest.variantConditions.isEmpty,
+            saeLatentConditionCount(manifest) == 0,
+            !isBaselineOnlyStudy(manifest)
+        {
+            // An SAE latent arm is attached: the server executes it, and a
+            // latent-only study is legal (`latentArmsNotExecutableProblem`
+            // refuses only this engine's run). A study DECLARED baseline-only
+            // has one arm, the unmodified base model (public issue #4;
+            // `isBaselineOnlyStudy`). An undeclared or concept-study draft
+            // with nothing attached is still the empty study. Server twin:
+            // `Manifest.verify`.
             violations.append("no concepts or variants attached")
+        }
+        // A study of the baseline alone measures its task prompts and nothing
+        // else, so they must be pinned: without them it froze cleanly and its
+        // run refused, by which time the repair was a duplicate. Server twin:
+        // `Manifest.verify`.
+        if isBaselineOnlyStudy(manifest),
+            (manifest.taskPromptsFile ?? "").isEmpty || (manifest.taskPromptsHash ?? "").isEmpty
+        {
+            violations.append(VerificationRefusal.baselineOnlyUnpinnedPromptsViolation)
         }
         violations += studyTypeContractViolations(manifest)
         // F2 (2026-07-19): pins are checked for the study kind that
@@ -3834,9 +3853,55 @@ public enum ExperimentStore {
             + "mints one from the winning cell, or declare one directly — "
             + "'steerlab-cli experiment declare-condition \(manifest.name) "
             + "<condition> --slots <concept>:<layer>:<alpha>'. For a DELIBERATE "
-            + "baseline-only run, declare studyType 'agentComparison' — the "
-            + "manifest then says baseline-only instead of implying it"
+            + "baseline-only study, declare studyType 'agentComparison' and "
+            + "detach the concepts it does not use — the study then measures "
+            + "the baseline agent alone, and verify, analyze, and its results "
+            + "say so"
     }
+
+    /// Whether a model-output study measures the BASELINE AGENT ALONE, by
+    /// declaration (public issue #4: replicating published studies on an
+    /// unmodified model). The shape: a declared `studyType` that keeps the
+    /// concept machinery inert (an `agentComparison` with no forward-
+    /// referenced agents), no agent (variant) condition, no SAE latent arm,
+    /// and no injection condition other than the canonical baseline. Its run
+    /// executes exactly one arm, `baseline` (`ordinaryRunConditions`).
+    /// Concepts may be carried, as any agent comparison may carry them; they
+    /// are inert and never execute.
+    ///
+    /// `verify` accepts this shape with nothing attached, where an undeclared
+    /// draft or a declared concept study with nothing attached is still the
+    /// empty study: there the emptiness is the mistake it catches. A declared
+    /// agentComparison that carries injection conditions and no agents is not
+    /// this shape either; `inertConditionsProblem` refuses it. Python twin:
+    /// `study_shape.baseline_only_study`.
+    public static func isBaselineOnlyStudy(_ manifest: ExperimentManifest) -> Bool {
+        manifest.studyKind == .modelOutput
+            && !conceptMachineryOperative(manifest)
+            && manifest.variantConditions.isEmpty
+            && saeLatentConditionCount(manifest) == 0
+            && manifest.conditions.allSatisfy(isCanonicalBaseline)
+    }
+
+    /// The `baselineOnlyStudy` advisory's detail, said at verify, at freeze,
+    /// and by an analysis of such a study's run. Python twin:
+    /// `study_shape.BASELINE_ONLY_STUDY_ADVISORY`, byte for byte.
+    public static let baselineOnlyStudyAdvisory =
+        "This study measures the baseline agent alone: the pinned base model, "
+        + "with no vectors or adapters, at the study's sampling settings. With "
+        + "no comparison arm, analyze computes no effects; the run's summaries "
+        + "describe the baseline's responses. If the study is judged, use a "
+        + "rubric that codes each response (perResponseCoding), because paired "
+        + "judging compares a condition with the baseline and has nothing to "
+        + "pair here."
+
+    /// The sentence the settings summary (`preregistration.md`) adds under
+    /// Conditions for a baseline-only study. Python twin:
+    /// `study_shape.BASELINE_ONLY_SUMMARY`, byte for byte.
+    static let baselineOnlySummary =
+        "Baseline only: this study measures the baseline agent alone (the "
+        + "pinned base model, with no vectors or adapters). It has no "
+        + "comparison arm, so its analysis reports no effects."
 
     /// How many SAE latent arms the manifest declares (server-only to RUN,
     /// carried verbatim here). Counting them keeps the baseline-only refusal
@@ -4945,7 +5010,30 @@ public enum ExperimentStore {
                 manifest.evaluationSampling,
                 rubricText: pinnedRubricText(manifest),
                 rubricFile: manifest.judgeRubricFile))
+        // A study that measures the baseline agent alone and is judged with a
+        // PAIRED rubric: paired judging compares a condition with the
+        // baseline, and this study has one arm, so evaluate would refuse it
+        // after the run. Caught here, before a freeze and a run are spent on
+        // it (server twin: Manifest.verify → _baseline_only_rubric_violations).
+        violations.append(contentsOf: baselineOnlyRubricViolations(manifest))
         return violations
+    }
+
+    /// The paired-rubric refusal for a study of the baseline alone: only when
+    /// the study is that shape, its effective evaluation is judged, and its
+    /// pinned rubric reads as paired. The mode is read the way evaluate forks
+    /// (`EvaluateSubsample.rubricHonorsSampling`); an unreadable rubric is its
+    /// own violation and a malformed one its own refusal.
+    static func baselineOnlyRubricViolations(_ manifest: ExperimentManifest) -> [String] {
+        guard isBaselineOnlyStudy(manifest),
+            effectiveEvaluation(manifest)?.spec.kind == .pairedJudge,
+            let text = pinnedRubricText(manifest),
+            EvaluateSubsample.rubricHonorsSampling(text) == false
+        else { return [] }
+        return [
+            VerificationRefusal.baselineOnlyPairedRubricViolation(
+                rubricFile: manifest.judgeRubricFile)
+        ]
     }
 
     /// The pinned judge rubric's bytes as text, or nil when there is no pin
@@ -6203,7 +6291,7 @@ public enum ExperimentStore {
         // for gates freeze no longer asks of it (external review round 13).
         let modelOutputSurfaces = modelOutputSurfacesOperative(probe)
         if modelOutputSurfaces, usesLegacyConceptVectors,
-            !optvecExemptFromValidateGate(probe)
+            !optvecExemptFromValidateGate(probe), !isBaselineOnlyStudy(probe)
         {
             if validationEvidence(for: probe, runSubstrate: runSubstrate) == nil {
                 gates.append(
@@ -7170,7 +7258,8 @@ public enum ExperimentStore {
             FreezeGateEntry(gate: .validateEvidence) { manifest in
                 guard modelOutputSurfacesOperative(manifest),
                     !manifest.concepts.isEmpty || !manifest.conditions.isEmpty,
-                    !optvecExemptFromValidateGate(manifest)
+                    !optvecExemptFromValidateGate(manifest),
+                    !isBaselineOnlyStudy(manifest)
                 else { return nil }
                 var facts = FreezePolicy.ValidationFacts(
                     hasMatchingEvidence: validationEvidence(
@@ -7807,6 +7896,12 @@ public enum ExperimentStore {
                     + arms.inert.joined(separator: ", ") + ".",
             ]
         }
+        // A study that measures the baseline agent alone says so where its
+        // arms are listed, so the one arm is not read as a missing
+        // comparison. Server twin: the same line in `_write_preregistration`.
+        if isBaselineOnlyStudy(manifest) {
+            lines += ["", baselineOnlySummary]
+        }
         let batteryNotApplied = batteryNotAppliedSentences(manifest)
         if !batteryNotApplied.isEmpty {
             lines += ["", "## Capability battery", ""]
@@ -7841,15 +7936,22 @@ public enum ExperimentStore {
                 "- Residual: R = delta_model − delta_human, per endpoint.",
             ]
         }
-        lines += [
-            "",
-            "## Statistics",
-            "",
-            "- Paired to each item's same-case baseline; percentile bootstrap CIs "
-                + "on the mean paired difference; Wilcoxon signed-rank as the "
-                + "nonparametric companion.",
-            "- Multiple comparisons: BH-FDR across concepts at screen; Holm within "
-                + "the pre-registered family at confirm.",
+        // A study with one arm has no paired statistics to promise. Server
+        // twin: the same lines in `_write_preregistration`.
+        let statistics: [String] =
+            isBaselineOnlyStudy(manifest)
+            ? [
+                "- None: the study has one arm, the baseline, so there is no "
+                    + "paired difference to estimate or test."
+            ]
+            : [
+                "- Paired to each item's same-case baseline; percentile bootstrap "
+                    + "CIs on the mean paired difference; Wilcoxon signed-rank as "
+                    + "the nonparametric companion.",
+                "- Multiple comparisons: BH-FDR across concepts at screen; Holm "
+                    + "within the pre-registered family at confirm.",
+            ]
+        lines += ["", "## Statistics", ""] + statistics + [
             "",
             preregistrationGeneratedMarker
                 + " Duplicate the experiment to change anything.*",

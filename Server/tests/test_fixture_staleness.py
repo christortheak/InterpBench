@@ -383,6 +383,12 @@ def test_every_committed_fixture_has_a_staleness_test():
         # Conditions section re-rendered by the freeze writer) and read by
         # PreregistrationArmsTests.swift.
         "preregistration-arms.json",
+        # Checked inline in test_baseline_only_study.py (every shape re-run
+        # through the baseline-only rule, verify, and the execution matrix;
+        # the Statistics sections re-rendered) and read by
+        # BaselineOnlyStudyTests.swift and the results explorer's
+        # test/baselineOnly.test.ts.
+        "baseline-only-study.json",
         # Checked inline in test_model_capabilities.py (the records against
         # the schema, the probe verdicts, hashes, gates and sentences).
         "model-capabilities.json", "model-capabilities.schema.json",

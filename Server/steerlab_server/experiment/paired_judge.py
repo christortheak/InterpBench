@@ -1075,9 +1075,11 @@ NO_PAIRS_MESSAGE = (
     "paired judging produced zero pairs: records join on (promptID, "
     "sampleIndex) and every non-baseline record needs a baseline record in "
     "the same cell — this source run has none. Likely causes: the run has "
-    "no baseline condition, or no sampled text records (instrument readouts "
-    "and error records are never judged). Refusing to write an empty judged "
-    "report.")
+    "no baseline condition; the study measures the baseline agent alone, so "
+    "it has no other condition to pair with the baseline (judge it with a "
+    "rubric that codes each response, perResponseCoding); or the run has no "
+    "sampled text records (instrument readouts and error records are never "
+    "judged). Refusing to write an empty judged report.")
 
 
 def _pair_generations(generations: list[dict]) -> list[dict]:

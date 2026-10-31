@@ -99,8 +99,12 @@ enum FreezePolicy {
         guard ManifestDeclarationPolicy.modelOutputSurfacesOperative(manifest) else { return nil }
         let usesLegacyConceptVectors =
             !manifest.concepts.isEmpty || !manifest.conditions.isEmpty
+        // A study of the baseline alone derives no vector and steers
+        // nothing; any concept or canonical baseline it carries is inert.
+        // Server twin: `freeze_policy.needs_validation`.
         guard usesLegacyConceptVectors,
-            !ManifestDeclarationPolicy.optvecExemptFromValidateGate(manifest)
+            !ManifestDeclarationPolicy.optvecExemptFromValidateGate(manifest),
+            !ExperimentStore.isBaselineOnlyStudy(manifest)
         else { return nil }
         guard
             facts.hasMatchingEvidence

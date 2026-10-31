@@ -1,0 +1,605 @@
+{
+  "about": "A study that measures the baseline agent alone: a declared agentComparison with no agent, injection, or SAE latent arm; concepts it carries are inert. Produced by the Python engine (scripts/regenerate-cross-engine-fixtures.py, baseline_only_study) and read by the Swift suite and the results explorer. emptyStudySentence is the empty-study sentence verify reports, or null. baselineOnlySentences are verify's sentences that open with 'this study measures the baseline agent alone'. executedConditions is null where the engines' arm vocabularies differ by design. A reader writes each of files into its workspace, at its path, before verifying the cases.",
+  "advisory": "This study measures the baseline agent alone: the pinned base model, with no vectors or adapters, at the study's sampling settings. With no comparison arm, analyze computes no effects; the run's summaries describe the baseline's responses. If the study is judged, use a rubric that codes each response (perResponseCoding), because paired judging compares a condition with the baseline and has nothing to pair here.",
+  "cases": [
+    {
+      "baselineOnly": true,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": null,
+      "executedConditions": [
+        "baseline"
+      ],
+      "label": "declared-nothing-attached",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-nothing-attached",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": true,
+      "baselineOnlySentences": [
+        "this study measures the baseline agent alone, but its task prompts are not pinned: they are the only input it measures, and its run reads its items from them. Pin a task prompts file (taskPromptsFile and taskPromptsHash)"
+      ],
+      "emptyStudySentence": null,
+      "executedConditions": [
+        "baseline"
+      ],
+      "label": "declared-without-task-prompts",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-without-task-prompts",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": true,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": null,
+      "executedConditions": [
+        "baseline"
+      ],
+      "label": "declared-with-canonical-baseline",
+      "manifest": {
+        "concepts": [],
+        "conditions": [
+          {
+            "alphaInNormUnits": true,
+            "bandWidth": 1,
+            "name": "baseline",
+            "slots": []
+          }
+        ],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-with-canonical-baseline",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": true,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": null,
+      "executedConditions": [
+        "baseline"
+      ],
+      "label": "declared-carrying-concepts",
+      "manifest": {
+        "concepts": [
+          {
+            "name": "fear",
+            "options": {
+              "method": "meanDifference",
+              "readingPosition": {
+                "lastToken": {}
+              }
+            },
+            "stimulusSetHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "validationHash": null
+          }
+        ],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-carrying-concepts",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": false,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": "no concepts or variants attached",
+      "executedConditions": [
+        "baseline"
+      ],
+      "label": "undeclared-nothing-attached",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "undeclared-nothing-attached",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": false,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": "no concepts or variants attached",
+      "executedConditions": [
+        "baseline"
+      ],
+      "label": "declared-concept-study-nothing-attached",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-concept-study-nothing-attached",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "conceptStudy",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": false,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": null,
+      "executedConditions": [
+        "baseline"
+      ],
+      "label": "declared-carrying-injection-conditions",
+      "manifest": {
+        "concepts": [
+          {
+            "name": "fear",
+            "options": {
+              "method": "meanDifference",
+              "readingPosition": {
+                "lastToken": {}
+              }
+            },
+            "stimulusSetHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "validationHash": null
+          }
+        ],
+        "conditions": [
+          {
+            "alphaInNormUnits": true,
+            "bandWidth": 1,
+            "name": "fear-mid",
+            "slots": [
+              {
+                "alpha": 0.8,
+                "concept": "fear",
+                "layer": 14
+              }
+            ]
+          }
+        ],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-carrying-injection-conditions",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": false,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": null,
+      "executedConditions": [
+        "baseline",
+        "french-l28-a15"
+      ],
+      "label": "declared-with-an-agent",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-with-an-agent",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
+        "temperature": 0,
+        "variantConditions": [
+          {
+            "artifact": {
+              "adapters": [],
+              "alphaInNormUnits": true,
+              "bandWidth": 1,
+              "baseModelID": "test/model",
+              "baseRevision": "abc123",
+              "createdAt": "2026-10-19T00:00:00Z",
+              "injections": [
+                {
+                  "alpha": 0.15,
+                  "concept": "french",
+                  "layer": 28,
+                  "vectorArtifactID": "runs/fixture-sweep/french"
+                }
+              ],
+              "name": "french-l28-a15",
+              "promptMode": "chatAssistant",
+              "qwenThinkingEnabled": false,
+              "schemaVersion": 1,
+              "temperature": 0
+            },
+            "artifactHash": "6f49d6249159723336b97584fb5dd2fff8d9bce97ef95c0ce4e2fc5e1dba9606",
+            "artifactPath": "experiments/prereg/pinned/variant-french-l28-a15.json",
+            "name": "french-l28-a15"
+          }
+        ]
+      }
+    },
+    {
+      "baselineOnly": false,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": null,
+      "executedConditions": null,
+      "label": "declared-with-an-sae-latent-arm",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-with-an-sae-latent-arm",
+        "saeLatentConditions": [
+          {
+            "beta": 0.5,
+            "feature": 42,
+            "interventionType": "saeLatent",
+            "layer": 12,
+            "mode": "clamp",
+            "name": "clamp-42",
+            "release": "gemma-scope-2b-pt-res",
+            "saeID": "layer_12/width_16k/average_l0_82",
+            "serverOnly": true
+          }
+        ],
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": false,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": "multi-agent study needs a pinned scenario",
+      "executedConditions": null,
+      "label": "multi-agent-panel",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "multi-agent-panel",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "multiAgent",
+        "studyType": "multiAgent",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": true,
+      "baselineOnlySentences": [
+        "this study measures the baseline agent alone, but its judge rubric ('prompts/rubrics/paired.md') is a PAIRED comparison rubric: paired judging compares each condition's response with the baseline's, and a study with one arm has nothing to pair, so evaluate would refuse it after the run. Pin a perResponseCoding rubric, which codes each response on its own, or remove the study's judges"
+      ],
+      "emptyStudySentence": null,
+      "executedConditions": [
+        "baseline"
+      ],
+      "label": "declared-with-a-paired-rubric",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "judgeRubricFile": "prompts/rubrics/paired.md",
+        "judgeRubricHash": "02d7b7bb88f3521254ac36d1c58fad82a69359aff6a3d75f2ee37b8b72e87e2e",
+        "judges": [
+          {
+            "kind": "claude",
+            "name": "coder"
+          }
+        ],
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-with-a-paired-rubric",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": true,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": null,
+      "executedConditions": [
+        "baseline"
+      ],
+      "label": "declared-with-a-coding-rubric",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "judgeRubricFile": "prompts/rubrics/coded.md",
+        "judgeRubricHash": "82dc2316b0280568b21394747d14c1879060fad09391f8f408f053071b625b7c",
+        "judges": [
+          {
+            "kind": "claude",
+            "name": "coder"
+          }
+        ],
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-with-a-coding-rubric",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": false,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": null,
+      "executedConditions": [
+        "baseline",
+        "french-l28-a15"
+      ],
+      "label": "an-agent-with-a-paired-rubric",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "judgeRubricFile": "prompts/rubrics/paired.md",
+        "judgeRubricHash": "02d7b7bb88f3521254ac36d1c58fad82a69359aff6a3d75f2ee37b8b72e87e2e",
+        "judges": [
+          {
+            "kind": "claude",
+            "name": "coder"
+          }
+        ],
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "an-agent-with-a-paired-rubric",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
+        "temperature": 0,
+        "variantConditions": [
+          {
+            "artifact": {
+              "adapters": [],
+              "alphaInNormUnits": true,
+              "bandWidth": 1,
+              "baseModelID": "test/model",
+              "baseRevision": "abc123",
+              "createdAt": "2026-10-19T00:00:00Z",
+              "injections": [
+                {
+                  "alpha": 0.15,
+                  "concept": "french",
+                  "layer": 28,
+                  "vectorArtifactID": "runs/fixture-sweep/french"
+                }
+              ],
+              "name": "french-l28-a15",
+              "promptMode": "chatAssistant",
+              "qwenThinkingEnabled": false,
+              "schemaVersion": 1,
+              "temperature": 0
+            },
+            "artifactHash": "6f49d6249159723336b97584fb5dd2fff8d9bce97ef95c0ce4e2fc5e1dba9606",
+            "artifactPath": "experiments/prereg/pinned/variant-french-l28-a15.json",
+            "name": "french-l28-a15"
+          }
+        ]
+      }
+    }
+  ],
+  "effectsSentence": "Baseline only: this study measures the baseline agent alone, so it has no comparison arm and its analysis has no effects.",
+  "files": {
+    "prompts/rubrics/coded.md": "---\nmode: perResponseCoding\nfield: statesAReason boolean\n---\nDoes the response state a reason?\n",
+    "prompts/rubrics/paired.md": "Which response answers the question better?\n",
+    "prompts/tasks/items.jsonl": "{\"id\": \"p0\", \"prompt\": \"Decide the case.\"}\n{\"id\": \"p1\", \"prompt\": \"Explain the ruling.\"}\n"
+  },
+  "preregistrationStatistics": {
+    "baselineOnly": {
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "freezeHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "frozenAt": "2026-10-19T00:00:00Z",
+        "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-nothing-attached",
+        "seeds": [
+          20260610
+        ],
+        "status": "frozen",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
+        "temperature": 0,
+        "variantConditions": []
+      },
+      "statisticsSection": "- None: the study has one arm, the baseline, so there is no paired difference to estimate or test."
+    },
+    "comparison": {
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "freezeHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "frozenAt": "2026-10-19T00:00:00Z",
+        "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-with-an-agent",
+        "seeds": [
+          20260610
+        ],
+        "status": "frozen",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
+        "temperature": 0,
+        "variantConditions": [
+          {
+            "artifact": {
+              "adapters": [],
+              "alphaInNormUnits": true,
+              "bandWidth": 1,
+              "baseModelID": "test/model",
+              "baseRevision": "abc123",
+              "createdAt": "2026-10-19T00:00:00Z",
+              "injections": [
+                {
+                  "alpha": 0.15,
+                  "concept": "french",
+                  "layer": 28,
+                  "vectorArtifactID": "runs/fixture-sweep/french"
+                }
+              ],
+              "name": "french-l28-a15",
+              "promptMode": "chatAssistant",
+              "qwenThinkingEnabled": false,
+              "schemaVersion": 1,
+              "temperature": 0
+            },
+            "artifactHash": "6f49d6249159723336b97584fb5dd2fff8d9bce97ef95c0ce4e2fc5e1dba9606",
+            "artifactPath": "experiments/prereg/pinned/variant-french-l28-a15.json",
+            "name": "french-l28-a15"
+          }
+        ]
+      },
+      "statisticsSection": "- Paired to each item's same-case baseline; percentile bootstrap CIs on the mean paired difference; Wilcoxon signed-rank as the nonparametric companion.\n- Multiple comparisons: BH-FDR across concepts at screen; Holm within the pre-registered family at confirm."
+    }
+  },
+  "summary": "Baseline only: this study measures the baseline agent alone (the pinned base model, with no vectors or adapters). It has no comparison arm, so its analysis reports no effects."
+}

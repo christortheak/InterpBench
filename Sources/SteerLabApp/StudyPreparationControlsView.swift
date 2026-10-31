@@ -52,7 +52,10 @@ struct StudyPreparationControlsView: View {
             pendingModelJob: $pendingModelJob,
             runOnServerExpanded: $runOnServerExpanded)
 
-        Text(StudyControlCopy.validateCaption(variantsPresent: !manifest.variantConditions.isEmpty))
+        Text(
+            StudyControlCopy.validateCaption(
+                variantsPresent: !manifest.variantConditions.isEmpty,
+                baselineOnly: ExperimentStore.isBaselineOnlyStudy(manifest)))
             .font(.caption2)
             .foregroundStyle(.secondary)
         if bundleValidate {

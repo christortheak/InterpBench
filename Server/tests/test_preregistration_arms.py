@@ -41,6 +41,7 @@ FIXTURE = os.path.join(REPO, "Tests", "Fixtures", "cross-engine",
 REGENERATE = ("stale fixture — re-run preregistration_arms() in "
               "scripts/regenerate-cross-engine-fixtures.py and commit")
 SHAPES = {
+    "baseline-only-study",
     "compare-agents", "compare-agents-carrying-conditions",
     "agent-interventions", "agent-band-and-units", "agent-ablation-layer-subset",
     "concept-study-implicit-baseline",

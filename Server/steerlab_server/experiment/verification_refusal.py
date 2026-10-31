@@ -27,6 +27,7 @@ phrase a refusal and must not pull an engine dependency to do so.
 from __future__ import annotations
 
 from . import lifecycle_gates
+from .command_vocabulary import MAC_PROGRAM
 from .manifest_errors import ExperimentStoreError
 
 #: ``verify()``'s sentence for a model-output study with no concept and no
@@ -34,6 +35,42 @@ from .manifest_errors import ExperimentStoreError
 EMPTY_MODEL_OUTPUT_VIOLATION = "no concepts or variants attached"
 #: The same state for a multi-agent study: no panel scenario is pinned.
 EMPTY_MULTI_AGENT_VIOLATION = "multi-agent study needs a pinned scenario"
+
+#: How ``verify()``'s sentence opens for a study that measures the baseline
+#: agent alone and pins a PAIRED rubric (``manifest.baseline_only_study``).
+#: A declaration problem, refused under ``studyDeclaration``; matched by this
+#: opening so the repair can name the per-response route.
+BASELINE_ONLY_PAIRED_RUBRIC_PREFIX = (
+    "this study measures the baseline agent alone, but its judge rubric")
+
+
+#: ``verify()``'s sentence for a study that measures the baseline agent
+#: alone and does not pin its task prompts, the only input it measures. A
+#: declaration problem, refused under ``studyDeclaration`` with a repair that
+#: names the verb that pins them. Swift twin:
+#: ``VerificationRefusal.baselineOnlyUnpinnedPromptsViolation``.
+BASELINE_ONLY_UNPINNED_PROMPTS_VIOLATION = (
+    "this study measures the baseline agent alone, but its task prompts are "
+    "not pinned: they are the only input it measures, and its run reads its "
+    "items from them. Pin a task prompts file (taskPromptsFile and "
+    "taskPromptsHash)")
+
+
+def baseline_only_paired_rubric_violation(rubric_file: str | None) -> str:
+    """``verify()``'s sentence for a study that measures the baseline agent
+    alone and pins a paired comparison rubric. Paired judging compares each
+    condition's response with the baseline's, so such a study froze and then
+    refused at evaluate, after the run. No program name appears: a violation
+    is a plain string with no repair to carry one. Swift twin:
+    ``VerificationRefusal.baselineOnlyPairedRubricViolation``, byte for
+    byte."""
+    named = f"'{rubric_file}'" if rubric_file else "the pinned rubric"
+    return (f"{BASELINE_ONLY_PAIRED_RUBRIC_PREFIX} ({named}) is a PAIRED "
+            "comparison rubric: paired judging compares each condition's "
+            "response with the baseline's, and a study with one arm has "
+            "nothing to pair, so evaluate would refuse it after the run. Pin "
+            "a perResponseCoding rubric, which codes each response on its "
+            "own, or remove the study's judges")
 
 #: Phrases a violation uses when it reports BYTES — a pinned file that
 #: changed, is gone, or turned up after being pinned as absent. A violation
@@ -113,7 +150,47 @@ def empty_repair(name: str, violations, program: str) -> str:
             f"A concept: {program} experiment attach {name} <concept>. "
             f"An agent: {program} agent list, then {program} experiment "
             f"attach-agent {name} (its --help names the reviewed-file flags). "
+            "To measure the unmodified model alone, declare studyType "
+            f"agentComparison: {baseline_only_route(name, program)}. "
             f"{template} {interview}conceptStudy --json.")
+
+
+def baseline_only_route(name: str, program: str) -> str:
+    """How the answering client declares a study of the baseline alone. The
+    Mac command line has no verb for the study type: a study pack declares
+    it, or the app's study type. Swift twin: the same clause in
+    ``VerificationRefusal.emptyRepair``."""
+    if program == MAC_PROGRAM:
+        return (f"in a study pack ({program} pack apply), or with the app's "
+                "study type, Compare agents")
+    return (f"{program} experiment set-protocol {name} --set "
+            f"studyType=agentComparison, or in a study pack ({program} pack "
+            "apply)")
+
+
+def unpinned_prompts_repair(name: str, program: str) -> str:
+    """How the answering client pins the task prompts a study of the
+    baseline alone measures. Said before the declaration repair. Swift twin:
+    ``VerificationRefusal.unpinnedPromptsRepair``."""
+    if program == MAC_PROGRAM:
+        pin = f"{program} experiment pin-prompts {name} prompts/tasks/<file>.jsonl"
+    else:
+        pin = (f"{program} experiment import-prompts {name} --file "
+               "prompts/tasks/<file>.jsonl (its --help names the reviewed-file "
+               "flags)")
+    return f"Pin the task prompts this study measures: {pin}. "
+
+
+def paired_rubric_repair(name: str, program: str) -> str:
+    """The route a study of the baseline alone takes when it pins a paired
+    rubric: a rubric that codes each response. Said before the declaration
+    repair, which still covers anything else the list names."""
+    return ("Pin a rubric that codes each response on its own: a rubric file "
+            "that opens with a 'mode: perResponseCoding' block "
+            "(prompts/rubrics/README.md shows one), pinned with "
+            f"{program} experiment pin-rubric {name} prompts/rubrics/<file>.md "
+            "(its --help names the judge and reviewed-file flags). Or remove "
+            "the study's judges. ")
 
 
 def declaration_repair(name: str, program: str) -> str:
@@ -140,7 +217,14 @@ def repair(name: str, violations, *, program: str = "steerlab") -> str:
         return drift_repair(name, program)
     if which == lifecycle_gates.EMPTY_STUDY:
         return empty_repair(name, violations, program)
-    return declaration_repair(name, program)
+    # A study of the baseline alone gets its specific routes first, then the
+    # declaration repair, which covers anything else the list names.
+    specific = ""
+    if BASELINE_ONLY_UNPINNED_PROMPTS_VIOLATION in violations:
+        specific += unpinned_prompts_repair(name, program)
+    if any(v.startswith(BASELINE_ONLY_PAIRED_RUBRIC_PREFIX) for v in violations):
+        specific += paired_rubric_repair(name, program)
+    return specific + declaration_repair(name, program)
 
 
 def error(name: str, violations, reason: str, *,

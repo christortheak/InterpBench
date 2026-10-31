@@ -201,6 +201,15 @@ ADVISORY_CODES: tuple[str, ...] = (
     # Swift twin ``CommandLineUpdate``); this client carries it so the
     # vocabulary stays one list.
     "clientUpdateAvailable",
+    # The study measures the baseline agent alone: a declared
+    # agentComparison with no agent, injection, or SAE latent arm, whose run
+    # executes the one arm ``baseline`` (``manifest.baseline_only_study``).
+    # Legal, and said at verify, at freeze, and by its analysis, where it
+    # takes the place of ``emptyAnalysis``: no effects is what this design
+    # produces, not a sign that something went wrong. The detail is
+    # ``manifest.BASELINE_ONLY_STUDY_ADVISORY`` (Swift twin
+    # ``ExperimentStore.baselineOnlyStudyAdvisory``), byte for byte.
+    "baselineOnlyStudy",
 )
 
 

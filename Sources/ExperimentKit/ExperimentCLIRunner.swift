@@ -4071,6 +4071,13 @@ public struct ExperimentCLIRunner: Sendable {
                     sink.err("ADVISORY: \(note)\n")
                     capabilityAdvisories.append(.init(CLIAdvisory.seedSettingNotUsed, note))
                 }
+                // A study that measures the baseline agent alone verifies,
+                // and says what it is. Server twin: the client's `verify`.
+                if ExperimentStore.isBaselineOnlyStudy(manifest) {
+                    let note = ExperimentStore.baselineOnlyStudyAdvisory
+                    sink.err("ADVISORY: \(note)\n")
+                    capabilityAdvisories.append(.init(CLIAdvisory.baselineOnlyStudy, note))
+                }
                 return ExperimentCLIResult(
                     message: "OK [\(manifest.status.rawValue)] — all pinned "
                         + "inputs verified",
@@ -4230,6 +4237,15 @@ public struct ExperimentCLIRunner: Sendable {
                     advisories.append(
                         .init(CLIAdvisory.capabilityControlNotApplied, sentence))
                 }
+            }
+            // A study that measures the baseline agent alone froze with no
+            // validation or battery evidence asked of it, because it steers
+            // nothing; the result says what the frozen design measures.
+            // Server twin: the client's `freeze`.
+            if ExperimentStore.isBaselineOnlyStudy(manifest) {
+                let note = ExperimentStore.baselineOnlyStudyAdvisory
+                sink.err("ADVISORY: \(note)\n")
+                advisories.append(.init(CLIAdvisory.baselineOnlyStudy, note))
             }
             // A study frozen for the server runs there: its next step is the
             // bundle, not this Mac's `experiment run`.
@@ -4452,7 +4468,20 @@ public struct ExperimentCLIRunner: Sendable {
                     } else {
                         ExperimentTasks.emptyAnalysisNoContrast
                     }
-                advisories.append(.init(CLIAdvisory.emptyAnalysis, detail))
+                // A study that measures the baseline agent alone has no
+                // effects by design: said as what it is, never as an empty
+                // analysis. Server twin: the engine's `analyze`.
+                if case .string(let sourceRun)? = payload["sourceRun"],
+                    ExperimentTasks.isBaselineOnlyAnalysis(
+                        at: runDirectory, sourceRunNamed: sourceRun)
+                {
+                    advisories.append(
+                        .init(
+                            CLIAdvisory.baselineOnlyStudy,
+                            ExperimentStore.baselineOnlyStudyAdvisory))
+                } else {
+                    advisories.append(.init(CLIAdvisory.emptyAnalysis, detail))
+                }
             }
             // Zero ENTRIES had an advisory; entries that are all exactly zero
             // did not (punch list #1, P14). They are a different fact: the

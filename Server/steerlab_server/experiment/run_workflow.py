@@ -259,6 +259,11 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
              f"{len(inert_note['inertConcepts'])} concept(s) will NOT "
              "execute; this run measures baseline and agent (variant) "
              "conditions only")
+    # A study that measures the baseline agent alone runs one arm by design;
+    # said at start so its log reads as what it is (Swift twin: runImpl).
+    from .manifest import BASELINE_ONLY_STUDY_ADVISORY, baseline_only_study
+    if baseline_only_study(manifest.raw):
+        _log(f"note: {BASELINE_ONLY_STUDY_ADVISORY}")
     # SAE latent conditions re-derive here, alongside the concept vectors and
     # for the same reason: the manifest pins the RECIPE, the run re-derives the
     # intervention from the pinned source. Done BEFORE the run directory is

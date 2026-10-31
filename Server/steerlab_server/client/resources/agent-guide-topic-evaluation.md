@@ -98,6 +98,9 @@ its interval or its p-value as a finding.
 
 Zero effect-size entries is reported as an `emptyAnalysis` advisory, not a
 failure. It means the source run had no non-baseline condition. Check for it.
+A study that measures the baseline agent alone reports `baselineOnlyStudy`
+instead, because no effects is what that design produces: report the
+baseline's per-condition summaries, not effects.
 
 Every analysis records which of its run's records it read, in
 `source-snapshot.json`. A run paused at a checkpoint gains records when it is

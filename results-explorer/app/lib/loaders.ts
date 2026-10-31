@@ -3,6 +3,7 @@
 // nothing is inferred or substituted.
 
 import { parseAnalysisStamps, type AnalysisStamps } from "./analysisStamps";
+import { isBaselineOnlyStudy } from "./baselineOnly";
 import { splitCSV, strictNumber } from "./csv";
 import { findFile, recordValue } from "./discovery";
 import { effectKey } from "./effects";
@@ -292,6 +293,11 @@ export const readRunJSON = async (run: WorkspaceRun, name: string): Promise<Reco
 export const loadFreezeStamp = async (run: WorkspaceRun): Promise<FreezeStamp> =>
   parseFreezeStamp(await readRunJSON(run, "experiment.json"), run.report);
 
+/// Whether the run's manifest snapshot is a study that measures the
+/// baseline agent alone (lib/baselineOnly.ts).
+export const loadBaselineOnly = async (run: WorkspaceRun): Promise<boolean> =>
+  isBaselineOnlyStudy(await readRunJSON(run, "experiment.json"));
+
 /// The stamps an analysis leaves beside its effect table: exclusions,
 /// endpoint rescue, adjudication, and the unit of analysis. Each is its own
 /// small file at the top of the run directory; a file the run does not
@@ -329,7 +335,7 @@ export const loadPairedItems = async (run: WorkspaceRun, source: WorkspaceRun | 
 /// beside its run (`findSourceRun`); its records settle the effect rows'
 /// units.
 export const hydrateRun = async (run: WorkspaceRun, source: WorkspaceRun | null = null): Promise<WorkspaceRun> => {
-  const [effectTable, generationData, cosineMatrices, sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps, sourceSnapshot] = await Promise.all([loadEffectTable(run), loadGenerations(run), loadCosineMatrices(run), loadSweepRows(run), loadSweepRecommendations(run), loadPanelEffects(run), loadFreezeStamp(run), loadAnalysisStamps(run), loadSourceSnapshot(run, source)]);
+  const [effectTable, generationData, cosineMatrices, sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps, sourceSnapshot, baselineOnly] = await Promise.all([loadEffectTable(run), loadGenerations(run), loadCosineMatrices(run), loadSweepRows(run), loadSweepRecommendations(run), loadPanelEffects(run), loadFreezeStamp(run), loadAnalysisStamps(run), loadSourceSnapshot(run, source), loadBaselineOnly(run)]);
   // The run's unit of analysis travels ON each row, so every surface that
   // prints a row's count prints it in the right unit (lib/effects.ts).
   const analysisUnit = analysisStamps.unit?.unit ?? "";
@@ -338,5 +344,5 @@ export const hydrateRun = async (run: WorkspaceRun, source: WorkspaceRun | null 
   // engine the directory's config.json names and the run's records. Never
   // assumed to be an item.
   const settled = await resolveUnits(stamped, analysisUnit, () => loadPairedItems(run, source), enginePairing(run.config));
-  return { ...run, effectRows: settled.rows, effectUnitRecords: settled.pairedItems, skippedEffectRows: effectTable.skipped, generationRows: generationData.rows, generationFile: generationData.handle, previewTruncated: generationData.truncated, skippedGenerationLines: generationData.skipped, cosineMatrices, validationConcepts: validationRows(run.validationReport), sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps, sourceSnapshot };
+  return { ...run, effectRows: settled.rows, effectUnitRecords: settled.pairedItems, skippedEffectRows: effectTable.skipped, generationRows: generationData.rows, generationFile: generationData.handle, previewTruncated: generationData.truncated, skippedGenerationLines: generationData.skipped, cosineMatrices, validationConcepts: validationRows(run.validationReport), sweepRows, sweepRecommendations, panelEffects, freeze, analysisStamps, sourceSnapshot, baselineOnly };
 };

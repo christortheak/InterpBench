@@ -197,6 +197,17 @@ import Testing
         cases.append([
             VerificationRefusal.emptyModelOutputViolation, Self.driftSentences[0],
         ])
+        // A study of the baseline alone with a paired rubric: a declaration
+        // problem whose repair names the per-response route.
+        let pairedRubric = VerificationRefusal.baselineOnlyPairedRubricViolation(
+            rubricFile: "prompts/rubrics/paired.md")
+        cases.append([pairedRubric])
+        cases.append([pairedRubric, Self.declarationSentences[0]])
+        // …and one that does not pin its task prompts, alone and with the
+        // paired rubric: each route is said, in order, before the rest.
+        let unpinned = VerificationRefusal.baselineOnlyUnpinnedPromptsViolation
+        cases.append([unpinned])
+        cases.append([unpinned, pairedRubric, Self.declarationSentences[0]])
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         let python = ProcessInfo.processInfo.environment["STEERLAB_TEST_PYTHON"] ?? "python3"
@@ -214,7 +225,9 @@ import Testing
                     'emptyReason': r.empty_reason('demo', case) if gate == 'emptyStudy' else '',
                 })
             print(json.dumps({'rows': rows, 'markers': list(r.DRIFT_MARKERS),
-                              'sentinels': [r.EMPTY_MODEL_OUTPUT_VIOLATION, r.EMPTY_MULTI_AGENT_VIOLATION]}))
+                              'sentinels': [r.EMPTY_MODEL_OUTPUT_VIOLATION, r.EMPTY_MULTI_AGENT_VIOLATION],
+                              'pairedRubric': r.baseline_only_paired_rubric_violation('prompts/rubrics/paired.md'),
+                              'unpinnedPrompts': r.BASELINE_ONLY_UNPINNED_PROMPTS_VIOLATION}))
             """,
             String(decoding: try JSONEncoder().encode(cases), as: UTF8.self),
         ]
@@ -242,9 +255,13 @@ import Testing
             let rows: [Row]
             let markers: [String]
             let sentinels: [String]
+            let pairedRubric: String
+            let unpinnedPrompts: String
         }
         let answer = try JSONDecoder().decode(Answer.self, from: bytes)
         #expect(answer.markers == VerificationRefusal.driftMarkers)
+        #expect(answer.pairedRubric == pairedRubric)
+        #expect(answer.unpinnedPrompts == unpinned)
         #expect(
             answer.sentinels == [
                 VerificationRefusal.emptyModelOutputViolation,
@@ -298,10 +315,12 @@ import Testing
             #expect(reason.contains("nothing is attached yet"))
             let repair = refusals[0].repairAction
             // Plain words, and THIS client's commands: a concept, an agent, a
-            // template, or the interview.
+            // study of the baseline alone, a template, or the interview.
             for command in [
                 "steerlab-cli experiment attach demo <concept>",
                 "steerlab-cli experiment attach-agent demo",
+                "declare studyType agentComparison",
+                "steerlab-cli pack apply",
                 "steerlab-cli design list",
                 "steerlab-cli authoring study conceptStudy --json",
             ] {

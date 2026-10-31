@@ -51,6 +51,51 @@ migration that rewrites frozen bytes.
   it, and treats an update its command line is preparing as in progress. The
   Python client's `steerlab --version` does not look for releases yet.
 
+
+- **A study can measure the baseline agent alone** (public issue #4). A study
+  whose only subject is the unmodified base model, such as a replication of a
+  published study on that model, declares `studyType` `agentComparison`, pins
+  its task prompts, and attaches no injection condition, agent, or SAE latent
+  arm; concepts it carries are inert. Such a draft used to pass `pack apply`
+  and `data check` and then refuse at
+  `verify` as `emptyStudy`, and so at freeze, which `--force` does not reach;
+  the only workaround, an agent with no interventions, ran every item twice.
+  It now verifies, freezes, and runs on both engines as exactly one arm,
+  `baseline`, with each item generated once for each sample. A new
+  `baselineOnlyStudy` advisory says so at `verify`, at `freeze`, and from
+  `analyze`, where it replaces `emptyAnalysis` because no effects is what the
+  design produces. Freeze asks for no validation or capability-battery
+  evidence, because nothing is steered: nothing is exempted or stamped, and
+  the study is not marked forced. The settings summary says the study has one
+  arm and promises no paired statistics. `results export`, the results page,
+  the app's Results, and the results explorer describe the baseline as the
+  only arm and say there is no comparison arm and so no effects, instead of
+  reporting a missing analysis or an empty table. An undeclared draft, or a
+  declared concept study, with nothing attached is still refused as
+  `emptyStudy`, and the concept study's refusal that recommends declaring
+  `agentComparison` now leads to a study that runs.
+- **A baseline-only study's task prompts must be pinned.** They are the only
+  input it measures, and a draft without them froze cleanly and then refused
+  to run, when the repair was a duplicate. `verify`, and so freeze, now
+  refuse it under `studyDeclaration`, and the repair names the verb that pins
+  them: `experiment pin-prompts` on the Mac, `experiment import-prompts` on
+  the cross-platform client.
+- **An SAE latent arm counts as attached.** A declared study whose only arm
+  is an SAE latent arm was refused as `emptyStudy` ("nothing is attached").
+  The server executes latent arms, so both engines' `verify` now accept it;
+  the Mac engine's run still says such arms run on the server.
+- **A baseline-only study's paired rubric is refused at `verify`.** A study
+  of the baseline alone that pins a paired comparison rubric used to freeze,
+  run, and then refuse at `evaluate`, because paired judging compares a
+  condition with the baseline. Both engines now refuse it at `verify`, and so
+  at freeze, under `studyDeclaration`, and the repair names
+  `experiment pin-rubric` with a rubric that codes each response
+  (`perResponseCoding`).
+- **The empty-study refusal names the baseline-only declaration.** The
+  `emptyStudy` repair now says that, to measure the unmodified model alone, a
+  study declares `studyType` `agentComparison`, and how: a study pack, or the
+  app's study type on the Mac; `experiment set-protocol <name> --set
+  studyType=agentComparison` or a study pack on the cross-platform client.
 - **An intervention policy's added vector now takes its strength in
   residual-norm units, like a static agent's α.** Before, a policy multiplied
   the stored vector by its strength directly, so a strength meant a different
