@@ -186,6 +186,14 @@ ADVISORY_CODES: tuple[str, ...] = (
     # the MECHANISM. The Mac engine analyzes completed runs only, so today only
     # this engine emits it (``source_snapshot``; Swift twin ``SourceSnapshot``).
     "unfinishedSourceAnalyzed",
+    # A declared seed setting the run will not read. Today's two instances,
+    # both under seedPolicy derivedSHA256: at temperature 0 decoding is greedy
+    # and no seed is used, and above it the fixed seed list is set aside for
+    # samplesPerItem derived seeds. Said at `verify` and at the sampling write
+    # (`set-sampling`, `set-protocol`), never a refusal. Named for the
+    # MECHANISM; the detail is ``sampling.unused_seed_settings`` (Swift twin
+    # ``StudySampling.unusedSeedSettings``), byte for byte.
+    "seedSettingNotUsed",
 )
 
 

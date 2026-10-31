@@ -728,16 +728,16 @@ def _adapters_suspended(model, active: bool):
 def effective_sample_count(manifest) -> int:
     """Generations per (condition, prompt) — the ONE resolver.
 
-    Not ``samplesPerItem``: with ``samplesPerItem == 1`` the run loop emits one
-    generation per declared SEED, so a temperature study with three seeds
-    produces three. Sharding has always computed it this way; the J-lens budget
-    briefly used ``max(1, samplesPerItem)`` and therefore priced such a study at
-    a third of its real size (external review round 2). Two call sites, one
-    rule, so they cannot disagree again.
+    Not ``samplesPerItem`` alone: under the fixed seed list the run loop emits
+    one generation per declared SEED, so a temperature study with three seeds
+    and no derived policy produces three. Sharding has always computed it this
+    way; the J-lens budget briefly used ``max(1, samplesPerItem)`` and
+    therefore priced such a study at a third of its real size (external review
+    round 2). The rule itself is ``sampling.sample_count``, the same one the
+    executor's seed choice below reads, so the count and the records cannot
+    disagree again.
     """
-    if manifest.samples_per_item > 1 and manifest.temperature > 0:
-        return manifest.samples_per_item
-    return max(1, len(manifest.seeds))
+    return sampling_module.sample_count(manifest)
 
 
 def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
@@ -918,14 +918,12 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
 
         if not wants_sampled:
             continue
-        if manifest.samples_per_item > 1 and eff.temperature > 0:
-            samples = [(i, sampling_module.derive_seed(experiment_hash, eff.name,
-                                       prompt["id"], i))
-                       for i in range(manifest.samples_per_item)]
-            seed_policy = "derivedSHA256"
-        else:
-            samples = list(enumerate(manifest.seeds))
-            seed_policy = "manifestSeeds"
+        # One rule for the seed policy and the per-item count
+        # (`sampling.derives_seeds`): a declared derivedSHA256 derives
+        # per-record seeds at any samplesPerItem above temperature 0.
+        seed_policy, samples = sampling_module.record_seeds(
+            manifest, experiment_hash=experiment_hash, condition=eff.name,
+            prompt_id=prompt["id"], temperature=eff.temperature)
         for sample_index, seed in samples:
             if writer.skip(eff.name, prompt_index, prompt["id"],
                            sample_index, resume_mod.KIND_SAMPLED):

@@ -286,6 +286,9 @@ def test_the_budget_prices_seeds_not_just_samplesPerItem():
         m(seeds=[1, 2, 3], samplesPerItem=5, temperature=0.7)) == 5
     assert effective_sample_count(
         m(seeds=[1, 2, 3], samplesPerItem=5, temperature=0.0)) == 3
+    # A declared derivedSHA256 sets the list aside at any samplesPerItem.
+    assert effective_sample_count(
+        m(seeds=[1, 2, 3], seedPolicy="derivedSHA256", temperature=0.7)) == 1
 
 
 # --- the tokenizer the configuration hash covers -------------------------------

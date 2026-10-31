@@ -295,6 +295,15 @@ public enum CLIAdvisory: String, CaseIterable, Sendable, Codable {
     /// `source_snapshot`).
     case unfinishedSourceAnalyzed
 
+    /// A declared seed setting the run will not read. Today's two instances,
+    /// both under seedPolicy derivedSHA256: at temperature 0 decoding is
+    /// greedy and no seed is used, and above it the fixed seed list is set
+    /// aside for samplesPerItem derived seeds. Said at `verify` and at
+    /// `set-sampling`, never a refusal. Named for the MECHANISM; the detail is
+    /// `StudySampling.unusedSeedSettings` (server twin
+    /// `sampling.unused_seed_settings`), byte for byte.
+    case seedSettingNotUsed
+
     public static let vocabulary: [String] = allCases.map(\.rawValue)
 }
 

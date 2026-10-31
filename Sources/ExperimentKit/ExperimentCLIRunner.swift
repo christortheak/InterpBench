@@ -3924,6 +3924,13 @@ public struct ExperimentCLIRunner: Sendable {
                     sink.err("ADVISORY: \(note)\n")
                     capabilityAdvisories.append(.init(CLIAdvisory.computeCannotRun, note))
                 }
+                // A declared seed setting the run will not read (seedPolicy
+                // derivedSHA256 at temperature 0, or beside a seed list it
+                // sets aside). Server twin: the client's `verify`.
+                for note in StudySampling.unusedSeedSettings(manifest) {
+                    sink.err("ADVISORY: \(note)\n")
+                    capabilityAdvisories.append(.init(CLIAdvisory.seedSettingNotUsed, note))
+                }
                 return ExperimentCLIResult(
                     message: "OK [\(manifest.status.rawValue)] — all pinned "
                         + "inputs verified",
@@ -4837,6 +4844,12 @@ public struct ExperimentCLIRunner: Sendable {
             {
                 samplingAdvisories.append(
                     .init(CLIAdvisory.choiceItemsWithoutInstrument, inert))
+            }
+            // A seed setting the run will not read, said where it was
+            // written. Server twin: `set-protocol`'s advisories.
+            for note in StudySampling.unusedSeedSettings(sampling) {
+                sink.err("ADVISORY: \(note)\n")
+                samplingAdvisories.append(.init(CLIAdvisory.seedSettingNotUsed, note))
             }
             // The capability record's non-blocking notes on what was just
             // declared — an effort level ASSUMED from the model id because

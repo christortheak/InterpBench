@@ -64,7 +64,7 @@ Do not implement the original brief's single simplified seed formula.
 
 | Path | Effective seed today | Swift obligation |
 | --- | --- | --- |
-| Ordinary sampled record, `samplesPerItem > 1` and positive effective temperature | `derive_seed(experimentHash, conditionName, promptID, sampleIndex)`; stamp `derivedSHA256` | Match each seed and index; resume must not shift subsequent streams. |
+| Ordinary sampled record, positive effective temperature and either `samplesPerItem > 1` or a declared `seedPolicy: derivedSHA256` (`sampling.derives_seeds`) | `derive_seed(experimentHash, conditionName, promptID, sampleIndex)` for `samplesPerItem` samples; stamp `derivedSHA256` | Match each seed and index; resume must not shift subsequent streams. |
 | Ordinary record otherwise | Enumerate the manifest's declared seeds; stamp `manifestSeeds` | Preserve literal seed values and indexing; do not hash them into another policy. |
 | Multi-agent sampled turn | `derive_seed(experimentHash, "", turnID, replicateIndex)` | Preserve the deliberate shared stream across conditions; include neither condition nor an invented seat field. |
 | Greedy turn/record | No RNG draw | Keep existing path-specific record conventions; never stamp a seed as controlling sampling that did not occur. |

@@ -177,6 +177,37 @@ migration that rewrites frozen bytes.
   mistake and named code the route never imports. The block is removed; the
   route's own settings (`layers`, `budget`) are unchanged.
 
+- **A declared `seedPolicy: derivedSHA256` now decides the seeds at one
+  sample per item (issue #3).** Both engines chose the seed rule from
+  `samplesPerItem` alone, so a study that declared `derivedSHA256` with
+  `samplesPerItem` 1 and a temperature above 0 reused the fixed seed list
+  for every item, silently. Two items with the same text then drew the same
+  random stream, and a design that draws respondents with replacement
+  reproduced earlier answers exactly. Such a study now draws a seed per
+  record, derived from the study hash, condition, prompt ID, and sample
+  index, and each item runs `samplesPerItem` times, not once per listed seed.
+  Studies that declare `manifestSeeds`, or no policy, are unchanged: each item
+  runs once per listed seed. Earlier runs of such a study stamped
+  `seedPolicy: manifestSeeds` on every sampled record, so their records stay
+  accurate about what they did. The
+  per-item count now follows the same rule everywhere it is computed:
+  sharding, the J-lens readout budget, submission sizing, and the throughput
+  family's description. The Python engine's run `config.json` now stamps the
+  seed policy the records use rather than the declared one, as the Mac
+  engine's already did, so a declared `derivedSHA256` at temperature 0 stamps
+  `manifestSeeds` there too.
+  Derived seeds include the condition, so arms draw distinct streams for the
+  same item: the design is paired at the prompt level, not by common random
+  numbers, whereas the fixed list reuses one set of seeds across every item
+  and arm. A new advisory, `seedSettingNotUsed`, says at `verify` and at the
+  sampling write (`set-sampling` on the Mac, `set-protocol` on the client)
+  when a declared seed setting will not be read: `derivedSHA256` at
+  temperature 0, where decoding is greedy and no seed is used, or
+  `derivedSHA256` beside a seed list of more than one entry. The study help
+  in the app and the CLI now says what each policy does and when. Manifests,
+  their content hashes, and frozen-manifest verification are unchanged; only
+  execution changes.
+
 ## [0.9.18] — 2026-10-25
 
 - **An analysis of an unfinished run is no longer presented as the finished

@@ -1547,6 +1547,91 @@ def sampled_effect_pairing() -> None:
     })
 
 
+#: The study-sampling-seeds fixture's design, shared by its staleness test
+#: (`Server/tests/test_study_sampling_seeds.py` re-derives every case through
+#: the engine's seed rule; `StudySamplingTests.swift` reads the same file).
+STUDY_SAMPLING_EXPERIMENT_HASH = "fedcba9876543210" * 4
+#: Two items with the SAME text under different IDs, as a design that draws
+#: simulated respondents with replacement produces: only the ID tells the
+#: repeats apart, so only a seed rule that reads the ID keeps them apart.
+STUDY_SAMPLING_PROMPTS = [
+    {"id": "respondent-001", "prompt": "Describe your week in one sentence."},
+    {"id": "respondent-002", "prompt": "Describe your week in one sentence."},
+]
+STUDY_SAMPLING_CONDITIONS = ("baseline", "steered")
+#: label → the manifest's sampling fields (absent keys are undeclared).
+STUDY_SAMPLING_CASES = [
+    ("derivedSHA256, one sample per item, warm, seed list",
+     {"temperature": 0.7, "samplesPerItem": 1, "seedPolicy": "derivedSHA256",
+      "seeds": [11, 22, 33]}),
+    ("derivedSHA256, one sample per item, warm, one seed",
+     {"temperature": 0.7, "samplesPerItem": 1, "seedPolicy": "derivedSHA256",
+      "seeds": [11]}),
+    ("derivedSHA256, three samples per item, warm",
+     {"temperature": 0.7, "samplesPerItem": 3, "seedPolicy": "derivedSHA256",
+      "seeds": [11]}),
+    ("manifestSeeds, warm",
+     {"temperature": 0.7, "seedPolicy": "manifestSeeds", "seeds": [11, 22, 33]}),
+    ("undeclared, warm", {"temperature": 0.7, "seeds": [11, 22, 33]}),
+    ("derivedSHA256, greedy",
+     {"temperature": 0.0, "seedPolicy": "derivedSHA256", "seeds": [11]}),
+    ("undeclared, greedy", {"temperature": 0.0, "seeds": [11]}),
+]
+
+
+def study_sampling_case(label: str, fields: dict) -> dict:
+    """One case through the Python engine's seed rule: the policy in effect,
+    the per-item count, every sampled record's seed in emission order
+    (condition, prompt, sample), and the advisories `verify` would give."""
+    from steerlab_server.experiment import sampling
+    from steerlab_server.experiment.manifest import Manifest
+
+    manifest = Manifest.from_dict({"name": "seeds", "modelID": "test/model",
+                                   "concepts": [], **fields})
+    records = []
+    policy = None
+    for condition in STUDY_SAMPLING_CONDITIONS:
+        for prompt in STUDY_SAMPLING_PROMPTS:
+            policy, samples = sampling.record_seeds(
+                manifest, experiment_hash=STUDY_SAMPLING_EXPERIMENT_HASH,
+                condition=condition, prompt_id=prompt["id"])
+            records.extend({"condition": condition, "promptID": prompt["id"],
+                            "sampleIndex": index, "seed": seed}
+                           for index, seed in samples)
+    return {
+        "label": label,
+        "manifest": fields,
+        "derivesSeeds": sampling.manifest_derives_seeds(manifest),
+        "seedPolicy": policy,
+        "sampleCount": sampling.sample_count(manifest),
+        "records": records,
+        "advisories": sampling.manifest_unused_seed_settings(manifest),
+    }
+
+
+def study_sampling_seeds() -> None:
+    """Which seed each sampled record of an ordinary study draws, and how many
+    records an item gets, under each seed policy.
+
+    A declared ``derivedSHA256`` derives every record's seed from the study
+    hash, condition, prompt ID, and sample index whenever the temperature is
+    above 0, at any ``samplesPerItem`` including 1; undeclared and
+    ``manifestSeeds`` studies enumerate the fixed list, one record per listed
+    seed. Both engines must give the same answer for every case."""
+    _write(os.path.join(FIXTURES, "study-sampling-seeds.json"), {
+        "note": "the seed rule of an ordinary study's sampled records: a "
+                "declared derivedSHA256 above temperature 0 derives one seed "
+                "per (condition, promptID, sampleIndex) for samplesPerItem "
+                "samples, at any samplesPerItem; otherwise each item runs "
+                "once per listed seed",
+        "experimentHash": STUDY_SAMPLING_EXPERIMENT_HASH,
+        "prompts": STUDY_SAMPLING_PROMPTS,
+        "conditions": list(STUDY_SAMPLING_CONDITIONS),
+        "cases": [study_sampling_case(label, fields)
+                  for label, fields in STUDY_SAMPLING_CASES],
+    })
+
+
 #: The effect-outcomes fixture's design: ONE record set that reaches every
 #: outcome either engine's `analyze` pairs, so both suites can hold the same
 #: outcome list, estimates, counts, and stamps
@@ -2821,6 +2906,7 @@ def main() -> int:
     marker_scoring()
     panel_transcript_analysis_fixture()
     sampled_effect_pairing()
+    study_sampling_seeds()
     effect_outcomes()
     promotion_keys()
     paired_difference_pca()

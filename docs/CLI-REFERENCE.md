@@ -1331,15 +1331,15 @@ pattern: six manifest fields that had no writer on either CLI until 2026-08-28,
 which is how a stochastic replication arm (25 samples × T=0.7 × 1024 tokens)
 came to be uncuttable-from-a-design-by-hand. Draft-only, and it **merges**:
 only the flags given move, `""` clears `--prompt-mode`/`--seed-policy`, and
-`--samples-per-item 1` clears back to the deterministic default.
+`--samples-per-item 1` clears back to the default of one.
 
 | Flag | Meaning |
 |---|---|
 | `--temperature <t>` | Sampling temperature. Non-numeric is refused at the write — a bad value bricks the manifest at the next decode. |
 | `--max-tokens <n>` | Generation length for the measured run (not the sweep's per-cell budget, which is `set-sweep-grid --max-tokens`). |
 | `--prompt-mode <chatAssistant\|rawCompletion>` | Closed vocabulary. Out-of-vocabulary is refused: downstream reads are equality tests, so a typo would silently behave as the default. |
-| `--samples-per-item <n>` | Stochastic replication count. |
-| `--seed-policy <manifestSeeds\|derivedSHA256>` | How each record's seed is derived. Closed vocabulary, same reason. |
+| `--samples-per-item <n>` | Responses per item under `derivedSHA256`, at any count including 1. Under the fixed seed list each item runs once per listed seed instead. |
+| `--seed-policy <manifestSeeds\|derivedSHA256>` | How each record's seed is chosen above temperature 0: `derivedSHA256` derives one seed per (condition, prompt ID, sample index); `manifestSeeds`, the default, reuses the fixed list for every item and arm. Closed vocabulary, same reason. |
 | `--reasoning-effort <off\|on\|low\|medium\|high\|xhigh>` | The reasoning protocol (2026-09-03; `on` and `high` since 2026-09-05). `off` renders `enable_thinking=false`, byte for byte what every study always rendered; `on` is thinking at the template's default with no effort variable; a LEVEL is refused unless the model's capability record (§3.14, §4.4) says the pinned template accepts it — Qwen3-14B/-32B read the switch and IGNORE the level (declare `on`), Qwen3.8 accepts low/medium/xhigh and raises on high. A non-off effort needs `--reasoning-max-tokens`. |
 
 The **joint** stochastic rules — `samplesPerItem > 1` requires
@@ -1348,6 +1348,12 @@ rather than write-time refusals, deliberately: the fields must be declarable
 one flag at a time, and a merge-style writer that refused a half-built
 protocol could never reach the finished one. Declaring the protocol is legal
 on either engine, and either engine runs it (§3.4).
+
+A declared seed setting the run will not read carries a `seedSettingNotUsed`
+advisory here and at `verify`, never a refusal: `derivedSHA256` at
+temperature 0, where decoding is greedy and no seed is used, and
+`derivedSHA256` beside a seed list of more than one entry, which the run sets
+aside (each item runs `samplesPerItem` times).
 
 **`set-exclusions <name> <rule>[,…]`** — the declared record-exclusion rules
 analysis applies (`failedAttentionCheck`, `unparseableEndpoint`,
@@ -1668,9 +1674,15 @@ is greedy: no random draws are made and every record stamps `seedInert: true`.
 Several seeds at temperature 0 give identical records, so declare one (the
 Python engine refuses more). Above 0, each record is sampled from its own
 seeded random stream: one pass per entry in `manifest.seeds` under the default
-`manifestSeeds` policy, or, with `samplesPerItem > 1` and
-`seedPolicy derivedSHA256`, a seed derived from the study hash, condition,
-prompt ID, and sample index. Records stamp their `seed`, `seedPolicy`, and
+`manifestSeeds` policy, with the same seeds for every item and arm, or, under
+a declared `seedPolicy derivedSHA256` (required when `samplesPerItem > 1`),
+`samplesPerItem` passes at any count including 1, each with a seed derived
+from the study hash, condition, prompt ID, and sample index. Derived seeds
+include the condition, so arms draw distinct streams for the same item: the
+design is paired at the prompt level, not by common random numbers. Builds
+released before this rule reused the fixed list for a declared
+`derivedSHA256` with `samplesPerItem` 1, and their records say so: they stamp
+`seedPolicy: manifestSeeds`. Records stamp their `seed`, `seedPolicy`, and
 `sampleIndex`, and a run that generates text writes `sampling-provenance.json`
 beside them. Top-p and top-k are not study settings: the MLX engine samples
 from the full temperature-scaled distribution (top-p 1, no top-k, recorded in

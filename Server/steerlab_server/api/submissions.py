@@ -1598,8 +1598,10 @@ def _planned_records(manifest: Manifest | None,
     # or both?
     wants_choice = instrument_family.reads_choice_instrument(manifest)
     wants_sampled = instrument_family.generates_sampled_text(manifest)
-    per_item = (manifest.samples_per_item if manifest.samples_per_item > 1
-                else max(1, len(manifest.seeds)))
+    # The run loop's own per-item count (`sampling.sample_count`), so sizing
+    # cannot price a different number of generations than the run emits.
+    from ..experiment import sampling
+    per_item = sampling.sample_count(manifest)
     per_prompt = (per_item if wants_sampled else 0) + (1 if wants_choice else 0)
     return condition_count * prompt_count * max(1, per_prompt)
 

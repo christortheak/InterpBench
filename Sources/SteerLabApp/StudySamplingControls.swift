@@ -34,8 +34,10 @@ struct StudySamplingControls: View {
                     + "unit the statistics treat as one observation, and the unit a "
                     + "sharded submission splits across GPUs. Needs a temperature "
                     + "above 0 — at 0 every play-through is identical."
-                : "stochastic samples per (condition, prompt); 1 = deterministic "
-                    + "greedy")
+                : "responses per (condition, prompt) under the derived seed "
+                    + "policy; the fixed list runs one per listed seed. "
+                    + "Temperature, not this count, decides whether decoding "
+                    + "is greedy")
         // Two real choices (2026-07-21, issue 1): absent and an explicit
         // 'manifestSeeds' behave identically on both engines (each
         // resolves absent to the fixed list), so the picker offers TWO
@@ -56,14 +58,15 @@ struct StudySamplingControls: View {
             }
             .disabled(!isDraft)
             .help(
-                "how stochastic server runs seed each generated record — "
-                    + "the local Mac engine is always greedy and ignores "
-                    + "this. The ⓘ explains both policies")
+                "how each generated record is seeded above temperature 0, "
+                    + "on this Mac and on a server alike. The ⓘ explains both "
+                    + "policies")
             InfoButton(text: StudyInfo.seedPolicy)
         }
         // The list the fixed-list policy indexes into (audit 2026-08-01:
         // the policy had a picker; the list had no editor). Hidden under
-        // the derived policy, which never reads it.
+        // the derived policy, which never reads it above temperature 0
+        // (`StudySampling.derivesSeeds`).
         if panel.draft.seedPolicyField != "derivedSHA256" {
             SeedsListControls(manifest: manifest, panel: panel)
         }
@@ -77,7 +80,8 @@ struct StudySamplingControls: View {
                 "this design is stochastic (temperature > 0 or several "
                     + "samples per item) — 'Derived per record' gives every "
                     + "(condition, prompt, sample) its own reproducible "
-                    + "seed; the fixed list suits single-sample runs",
+                    + "seed; the fixed list reuses the same seeds for every "
+                    + "item and arm",
                 systemImage: "info.circle"
             )
             .font(.caption)

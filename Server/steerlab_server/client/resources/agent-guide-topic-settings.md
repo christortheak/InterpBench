@@ -41,6 +41,12 @@ stochastic replication arm is `--set samplesPerItem=25 --set temperature=0.7
 run with scoped per-record seeds (`workspace guide engines`). The joint rules
 (`samplesPerItem > 1` needs `temperature > 0` and seedPolicy `derivedSHA256`)
 surface at `verify`, not here, so the fields can be declared one at a time.
+Above temperature 0, `derivedSHA256` runs each item `samplesPerItem` times,
+including once, with a seed per record; the fixed list (`manifestSeeds`, the
+default) runs each item once per listed seed. A `seedSettingNotUsed`
+advisory, here and at `verify`, says when a declared seed setting will not be
+read: `derivedSHA256` at temperature 0 (greedy, no seed), or beside a seed
+list of more than one entry.
 
 Record-exclusion rules are the `exclusionRules` field (`failedAttentionCheck`,
 `unparseableEndpoint`, `outOfRange`); a malformed value refuses and names the
