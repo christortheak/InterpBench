@@ -916,10 +916,15 @@ public enum ExperimentCLIParser {
         // install — the shipped binary talking about itself (step 12). These
         // three are the only verbs that answer questions a caller has BEFORE
         // it trusts the install: which build is this, is the tree intact, and
-        // will a GPU verb find its shaders.
+        // will a GPU verb find its shaders. `version` also says whether a
+        // newer release is out (public issue #5).
         .init(
             namespace: "install", verb: "version",
-            purpose: "Report this build's version and where it is installed."),
+            purpose: "Report this build's version, where it is installed, every SteerLab.app "
+                + "found on this Mac, and whether a newer release is out. Asks GitHub at most "
+                + "once a day, only while the app's automatic update checks are on; --check "
+                + "asks once now.",
+            booleanFlags: ["--check"]),
         .init(
             namespace: "install", verb: "stamp",
             purpose: "Hash the installed tree into its resource manifest.",
@@ -935,6 +940,25 @@ public enum ExperimentCLIParser {
             purpose: "Link ~/.local/bin/steerlab-cli to this app's command line, "
                 + "so a coding assistant finds it on PATH.",
             booleanFlags: ["--replace"], valueFlags: ["--directory"]),
+        // Updating this SteerLab.app from its own command line (public issue
+        // #5), in two steps like `setup plan` / `setup apply`: a plan that
+        // downloads nothing but the release lookup, and an install that takes
+        // the plan's digest and the researcher's approval.
+        .init(
+            namespace: "install", verb: "update-plan",
+            purpose: "Review an update of the SteerLab.app this command line belongs to: "
+                + "the release, the file and where its checksum comes from, what is checked, "
+                + "where the new copy goes, and what happens to the current one. Downloads "
+                + "nothing but the release lookup."),
+        .init(
+            namespace: "install", verb: "update",
+            purpose: "Install the reviewed update with the app's own installer: download, "
+                + "check the checksum, signature, notarization, and version, then put the new "
+                + "copy in place and keep the current one beside it. Refuses if the plan "
+                + "changed, while SteerLab is open, or while another steerlab-cli runs from "
+                + "this copy.",
+            booleanFlags: ["--yes"], valueFlags: ["--expect"],
+            requiredFlags: ["--expect", "--yes"]),
 
         // authoring — the generation-prompt emitter. A family of its own
         // rather than an `experiment` verb because it takes NO experiment: it

@@ -144,6 +144,8 @@ public enum CLIFlagVocabulary {
     /// Verb-qualified spellings, for the flags whose ARGUMENT differs.
     private static let verbMetavars: [String: String] = [
         "experiment attach --corpus": "<a,b,c>",
+        // The digest `install update-plan` reports as `planSHA256`.
+        "install update --expect": "<planSHA256>",
         // From the same closed vocabulary the 64-refusal prints, so help and
         // refusal cannot disagree (gate-5 dry run #2, P3).
         "experiment set-instruments --ordinal-aggregation":
@@ -421,6 +423,15 @@ public enum CLIFlagVocabulary {
             "The seed the held-out pairs are drawn with, 0 to "
             + "\(ChatConceptImport.maximumSeed); recorded in provenance.json.",
         "experiment attach --corpus": "Extra corpus members for emotionGrandMean.",
+        "install version --check":
+            "Ask GitHub once now, whatever the app's automatic-checks setting, the way "
+            + "Check for Updates… does in the app.",
+        "install update --expect":
+            "The planSHA256 install update-plan reported for the plan the researcher "
+            + "approved; a plan that changed since is refused.",
+        "install update --yes":
+            "Say that the researcher approved that plan. Without it nothing is "
+            + "downloaded or replaced.",
         // The J-lens readout. The lens pins are typed here because this
         // engine never reads a lens record; the Python client's --dry-run
         // prints all of them with this verb's spelling (result.macCommand).
@@ -725,8 +736,8 @@ public enum ExperimentCLIHelp {
                 + "STEERLAB_WORKSPACE env > app-persisted choice > the code checkout)."),
         .init(
             synopsis: "--version",
-            purpose: "Print this build's version and install layout, and run "
-                + "nothing (the same report as `install version`)."),
+            purpose: "Print this build's version and install layout, and whether a "
+                + "newer SteerLab release is out (the same report as `install version`)."),
         .init(
             synopsis: "--help",
             purpose: "Print this page. `<family> --help` lists a family's "
@@ -782,9 +793,10 @@ public enum ExperimentCLIHelp {
                 purpose: "Cluster client."),
             .init(synopsis: "cluster <verb> …", purpose: "Cluster lifecycle."),
             .init(
-                synopsis: "install version | link | stamp | verify",
-                purpose: "This build's identity, its link on your PATH, and "
-                    + "the integrity of its install."),
+                synopsis: "install version | update-plan | update | link | stamp | verify",
+                purpose: "This build's identity and whether a newer release is out, a "
+                    + "reviewed update of the app, its link on your PATH, and the "
+                    + "integrity of its install."),
             .init(
                 synopsis: "science list [--brief] | guide <method> | operation <operation>",
                 purpose: "Shared method guidance and supported execution interfaces."),
