@@ -14,9 +14,10 @@ migration that rewrites frozen bytes.
 
 - **A study can measure the baseline agent alone** (public issue #4). A study
   whose only subject is the unmodified base model, such as a replication of a
-  published study on that model, declares `studyType` `agentComparison` and
-  attaches no concept, injection condition, agent, or SAE latent arm. Such a
-  draft used to pass `pack apply` and `data check` and then refuse at
+  published study on that model, declares `studyType` `agentComparison`, pins
+  its task prompts, and attaches no injection condition, agent, or SAE latent
+  arm; concepts it carries are inert. Such a draft used to pass `pack apply`
+  and `data check` and then refuse at
   `verify` as `emptyStudy`, and so at freeze, which `--force` does not reach;
   the only workaround, an agent with no interventions, ran every item twice.
   It now verifies, freezes, and runs on both engines as exactly one arm,
@@ -33,6 +34,16 @@ migration that rewrites frozen bytes.
   declared concept study, with nothing attached is still refused as
   `emptyStudy`, and the concept study's refusal that recommends declaring
   `agentComparison` now leads to a study that runs.
+- **A baseline-only study's task prompts must be pinned.** They are the only
+  input it measures, and a draft without them froze cleanly and then refused
+  to run, when the repair was a duplicate. `verify`, and so freeze, now
+  refuse it under `studyDeclaration`, and the repair names the verb that pins
+  them: `experiment pin-prompts` on the Mac, `experiment import-prompts` on
+  the cross-platform client.
+- **An SAE latent arm counts as attached.** A declared study whose only arm
+  is an SAE latent arm was refused as `emptyStudy` ("nothing is attached").
+  The server executes latent arms, so both engines' `verify` now accept it;
+  the Mac engine's run still says such arms run on the server.
 - **A baseline-only study's paired rubric is refused at `verify`.** A study
   of the baseline alone that pins a paired comparison rubric used to freeze,
   run, and then refuse at `evaluate`, because paired judging compares a

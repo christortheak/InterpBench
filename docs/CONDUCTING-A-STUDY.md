@@ -830,22 +830,28 @@ steerlab-cli experiment declare-condition formality-pilot formality-rand \
 Under a designated-reference recipe, −α steers toward the reference class
 rather than a concept's opposite; phrase reversal claims accordingly, and use
 `--control randomDirectionAblation` as the ablation analogue of the random arm.
+Multi-slot conditions are legal and hash as one condition — several slots *are*
+the linear mix `h + Σ αᵢ·vᵢ` — so treat each mix as a first-class arm, keeping
+in mind that mixes multiply the matrix fast.
 
 #### A study of the baseline alone
 
 Some studies have no intervention to compare: a replication of a published
 study on the unmodified model, or a record of how that model answers a task
 before any steering is designed. Such a study declares `studyType`
-`agentComparison` and attaches no concept, injection condition, agent, or SAE
-latent arm. It verifies, freezes, and runs as one arm, `baseline`: the pinned
-model, with no vectors or adapters, at the study's sampling settings, with
-each item generated once for each sample. `verify`, `freeze`, and `analyze`
-say so in a `baselineOnlyStudy` advisory.
+`agentComparison`, pins its task prompts, and attaches no injection condition,
+agent, or SAE latent arm; concepts it carries are inert and never run. It
+verifies, freezes, and runs as one arm, `baseline`: the pinned model, with no
+vectors or adapters, at the study's sampling settings, with each item
+generated once for each sample. `verify`, `freeze`, and `analyze` say so in a
+`baselineOnlyStudy` advisory.
 
 What it can and cannot support follows from having one arm. There is no
 paired difference, so `analyze` reports no effects, and no interval or test
 applies; report the baseline's per-condition summaries, choice readouts, and
 codings as descriptions of this model on these items under these settings.
+Its task prompts are the only input it measures, so `verify` refuses it
+(`studyDeclaration`) until they are pinned, and the repair names the verb.
 Freeze asks for no validation evidence and no capability battery, because
 nothing is steered. If the study is judged, use a rubric that codes each
 response (`perResponseCoding`): paired judging compares a condition with the
@@ -854,9 +860,6 @@ than letting the study freeze, run, and refuse at `evaluate`. An undeclared
 draft with nothing attached is still refused as `emptyStudy`, so a study only
 measures the baseline alone when it says so; that refusal's repair names the
 declaration.
-Multi-slot conditions are legal and hash as one condition — several slots *are*
-the linear mix `h + Σ αᵢ·vᵢ` — so treat each mix as a first-class arm, keeping
-in mind that mixes multiply the matrix fast.
 
 ### 5.2 Capability is a gate, not a footnote
 

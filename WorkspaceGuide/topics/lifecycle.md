@@ -421,16 +421,20 @@ alone (below).
 ## A study of the baseline alone
 
 A study whose only subject is the unmodified base model, such as a replication
-of a published study on that model, declares `studyType` `agentComparison` and
-attaches nothing else: no concept, injection condition, agent, or SAE latent
-arm. It verifies, freezes, and runs as exactly one arm, `baseline`: the pinned
-model, with no vectors or adapters, at the study's sampling settings. Each item
-is generated once for each sample, with no second arm to repeat it.
+of a published study on that model, declares `studyType` `agentComparison`,
+pins its task prompts (step 5), and attaches no injection condition, agent, or
+SAE latent arm. Concepts it carries are inert and never run. It verifies,
+freezes, and runs as exactly one arm, `baseline`: the pinned model, with no
+vectors or adapters, at the study's sampling settings. Each item is generated
+once for each sample, with no second arm to repeat it.
 
 - `verify`, `freeze`, and `analyze` carry a `baselineOnlyStudy` advisory that
   says so. A draft with nothing attached that does not declare the type, or
   declares `conceptStudy`, is still refused as `emptyStudy`, because there the
   emptiness is a mistake; that refusal's repair names the declaration.
+- The task prompts are the only input such a study measures, so `verify`, and
+  so `freeze`, refuse it under `studyDeclaration` until they are pinned; the
+  repair names the verb that pins them.
 - Freeze asks for no validation evidence and no capability-battery evidence,
   because nothing is steered. Nothing is exempted or forced, and the settings
   summary says the study has one arm and no paired statistics.
