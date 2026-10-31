@@ -88,8 +88,9 @@ def estimate(plan):
 
     ``jlens-fit-assess`` is estimated: its work is a bounded number of
     readouts with no backward passes and a recorded calibration. So is
-    ``jlens-probe-batch``, whose review prices every prompt's projections; it
-    has no calibration, so its review states a conservative formula. Fitting keeps
+    ``jlens-probe-batch``, whose review prices every prompt's projections with
+    a stated formula, sized from the model's own config and checked against a
+    recorded A100 run (see ``jlens_probe_batch.ASSUMED_BANDWIDTH``). Fitting keeps
     the long default by the researcher's rule (its checkpoints resume across
     walltime kills); benchmarks are the throughput measurement itself, so no
     estimate precedes them; batteries and stability sweeps carry no workload
@@ -98,8 +99,8 @@ def estimate(plan):
     operation = (plan.get('request') or {}).get('operation')
     review = plan.get('operationReview') or {}
     if operation == 'jlens-probe-batch' and isinstance(review, dict):
-        # No recorded run calibrates this workload; its review states the
-        # formula it used, and only a complete one is returned.
+        # The review states its formula and the recorded run it was checked
+        # against; only a complete estimate is returned.
         workload = review.get('walltimeEstimate')
         if not isinstance(workload, dict) or type(workload.get('seconds')) is not int or workload['seconds'] < 0:
             return None

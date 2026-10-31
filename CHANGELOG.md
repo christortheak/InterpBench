@@ -132,10 +132,16 @@ migration that rewrites frozen bytes.
   probe's 200,000-projection ceiling, output one export cannot carry, and
   weights plus Jacobians that alone do not fit the GPU, naming a declared type
   that does; when only the worst-case activations push the estimate over, the
-  plan says so as an advisory with the levers. The run is one directory: a
-  `probe-batch.json` manifest and, per prompt, exactly what one probe of that
-  prompt writes, so it comes home with `science-export` and `science-fetch`
-  under custody. Author it with `science interview jlens-probe-batch` on
+  plan says so as an advisory with the levers, as it does when the host-side
+  capture may exceed the job's memory request. The run is one directory: a
+  `probe-batch.json` manifest and, per prompt, the files one probe of that
+  prompt writes, with the same numbers and CSV bytes; each `probe.json`
+  records `runDirectory` relative to the workspace, and its `runID` is the
+  prompt id. The manifest is written when the run starts and replaced after
+  every prompt, a prompt's directory appears only once it is complete, and a
+  scheduler warning or cancel leaves the run marked `interrupted` with the
+  prompts that finished named. It comes home with `science-export` and
+  `science-fetch` under custody. Author it with `science interview jlens-probe-batch` on
   either client; the Mac's Research methods sheet shows the review.
 - **The J-lens probe route takes the CLI's agent and rendering settings, and
   an explicit zero.** `POST /api/jlens/probe` accepts `variantPath`,

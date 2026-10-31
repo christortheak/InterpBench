@@ -58,7 +58,7 @@ public enum FittingReviewSummary {
             } else {
                 result.append("The review is unavailable here. Review the plan on the prepared engine before submitting.")
             }
-            result.append("Each prompt's outputs are what one probe of that prompt writes. They are readouts, not evidence of what caused a behavior.")
+            result.append("Each prompt's numbers are what one probe of that prompt computes. They are readouts, not evidence of what caused a behavior.")
         case "instrumentation-cost":
             var planned = "unavailable"
             if case .array(let configurations) = review["configurations"] {
