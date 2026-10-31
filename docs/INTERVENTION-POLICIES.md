@@ -89,6 +89,93 @@ for the `policy-v2` capability before submitting one. Ablation keeps its
 dimensionless fraction and token actions keep their own scales in every
 version.
 
+## Span policies: steering while the model reads
+
+A span policy acts while the model **reads** a declared part of the prompt, an
+instruction sentence for example, and at no other time. It sets
+`"positions": "span"`, declares the part in `"span"`, and declares its dose in
+`"spanDose"`. It needs schema version 2 and the stages `["prefill"]`, at a
+residual site (`residualPre` or `residualPost`):
+
+```json
+{"positions": "span", "stages": ["prefill"],
+ "span": {"kind": "substring", "text": "Ignore all prior rules."},
+ "spanDose": "perPosition"}
+```
+
+The declaration uses the prompt-span grammar (`experiment/prompt_span.py`):
+`substring` (with an optional 1-based `occurrence`), `anchors` (a `start` and
+an `end`, both included), `userMessage` (the user text, never the system
+prompt), or `allPrompt` (every prompt position, template markers included).
+Matching is exact. Review writes the canonical declaration and the default
+dose, so the policy's hash covers both. The span restricts whatever strengths
+the policy produces: fixed, threshold, and affine rules and an expert
+provider all work, and only the span's tokens receive them.
+
+**Dose.** With `perPosition` (the default), each span token gets the strength,
+so the summed dose grows with the span's length. With `fixedTotal`, the
+strength is a total: each of the span's n tokens gets strength / n, so the
+summed dose is the strength whatever the span's length. Strengths stay in
+residual-norm units, so a span token at strength s receives an offset of norm
+s × R. A `fixedTotal` dose applies to additions only, since a removal is a
+fraction at each position; put a removal in its own `perPosition` policy.
+
+**Resolution.** One declaration applies to the whole study. The run resolves
+it on every task prompt, against the prompt exactly as that agent renders it
+(prompt mode, system prompt, and reasoning settings included), once per
+distinct rendered prompt, not once per response. Every item is checked twice
+before anything is generated: before the model loads, on the user text alone,
+and after it loads, with its tokenizer. A missing or ambiguous anchor in any
+item refuses the whole run (`studyDeclaration`), naming every offending item
+with the resolver's own code (`spanAnchorMissing`, for example) and its
+repair. A run never fails halfway because a span did not match. Per-item
+declarations are later work.
+
+**Where span policies run.** Phase 1 runs them in single-prompt sampled
+studies on the Python engine. Scripted transcripts, panels, agent chat, and the
+cost instrument refuse them by name. The capability battery does not run them,
+as with every policy agent (see Evidence and current limits).
+
+**Evidence.** Decision rows exist only at span positions. Requested and
+applied strengths are the declared ones; for an addition, `appliedScales` is
+the multiplier applied at that position, which for `fixedTotal` is
+strength / n × R / ‖v‖. Each response's `interventionDecisions.spans` has one
+entry per span policy: `tokenRanges` and `tokenCount` (n), `doseMode`, the
+`renderedTextSHA256` and `promptTokensSHA256` of the prompt it was resolved
+on, and per action its `strengthUnits`, `appliedPositions`,
+`perPositionStrength` (null when it varied), and `summedDose` (the sum over
+the span, in the action's units). Both evidence validators check these against
+the retained prompt tokens and the declaration. The resolver's full evidence
+(the matched characters, boundary tokens, and how the user text was located)
+is stamped once per distinct resolution in the run's `span-resolutions.json`,
+keyed by `spanEvidenceSHA256`, which each response's entry names.
+`intervention-scope.json` adds a `policySpanAddition` row for the policy
+([INTERVENTION-SCOPE.md](INTERVENTION-SCOPE.md) §10).
+
+**Claim limit.** *A span policy changes how these prompt tokens are
+represented while the prompt is read. A behavioral change shows that reading
+this span differently moved the output, not that the concept lives there.*
+
+### Steering while reading versus while responding
+
+To compare the two, give each its own agent arm, with the same vector, layer,
+and strength:
+
+- **Reading:** the span policy alone. Attach it with
+  `"staticSteering": "remove"` in the attachment settings, so the new agent
+  version keeps the source agent's model, rendering, and system prompt but
+  none of its static vectors or adapters.
+- **Responding:** a policy with stages `["prefill", "decode"]` at
+  `lastPosition`, attached the same way. At the same strength it adds exactly
+  what a static agent adds, at the same positions, so it is the
+  static-equivalent arm. The static agent itself also serves.
+- **Both**, if the question needs it: one agent version with both policies.
+- The baseline, as always.
+
+Read each arm against the baseline, then compare them on the same items. A
+span arm needs its own controls; a random direction or another sentence of the
+prompt can change the output too.
+
 ## Authoring and attachment
 
 The app opens **Intervention policies…** from both Probes and Agents. The guided

@@ -3,6 +3,7 @@ from contextlib import contextmanager, ExitStack
 import base64
 import hashlib
 import json
+import math
 from pathlib import Path
 import random
 import uuid
@@ -16,7 +17,7 @@ from ..steering.policy_actions import Action, Decision, addition_scale, logits, 
 
 
 class Execution:
-    def __init__(self, attachments, *, rendering, context=None, run_directory=None):
+    def __init__(self, attachments, *, rendering, context=None, run_directory=None, spans=None):
         self.policies = policy_artifacts.load_attached(attachments)
         self.rendering = 'raw' if rendering == 'rawCompletion' else 'chatTemplate'
         self.context = context or {}; self.run_directory = run_directory
@@ -25,6 +26,11 @@ class Execution:
         self.closed = True
         self.decision_seconds = 0.0; self.decision_calls = 0
         self.probes = {}; self.parameters = {}
+        # Span policies resolve against the study prompt (policy_spans.ResponseSpans); paths without one refuse them up front.
+        self.spans = spans; self.span_positions = {}; self.span_records = {}; self.span_doses = {}
+        if spans is None and any(doc['positions'] == policy_artifacts.SPAN for _, doc in self.policies):
+            from .policy_spans import UNSUPPORTED_PATH
+            raise PolicyError(UNSUPPORTED_PATH)
 
     partial_ids = ()
 
@@ -70,6 +76,7 @@ class Execution:
                             readings.append(Reading(digest + '/' + p['id'], Site(**binding['site']), 'preAction', self.capture(digest, p['id'], probe)))
                     if doc['site']['kind'] != 'logitsPreSelection':
                         readings.append(DecisionProvider(digest, Site(**doc['site']), self.callback(digest, doc)))
+                    if doc['positions'] == policy_artifacts.SPAN: self.resolve_span(digest, doc, rendered)
                 subscription = sessions.enter_context(model.hooked.readings(readings, identity=self.context, prompt_token_count=len(self.prompt_ids)))
                 subscription.on_close = self.close
                 yield
@@ -90,6 +97,24 @@ class Execution:
 
     def close(self):
         self.closed = True; self.states.clear(); self.cache.clear(); self.providers.clear(); self.probes.clear(); self.parameters.clear()
+
+    def resolve_span(self, digest, doc, rendered):
+        """The span's prompt positions for this response, and the summary its evidence keeps."""
+        resolved, identifier = self.spans.resolve(doc['span'], rendered)
+        evidence = resolved.evidence
+        self.span_positions[digest] = frozenset(resolved.positions())
+        self.span_doses[digest] = {a['id']: [] for a in doc['actions']}
+        self.span_records[digest] = {'policySHA256': digest, 'spanEvidenceSHA256': identifier,
+            'renderedTextSHA256': evidence['renderedTextSHA256'], 'promptTokensSHA256': evidence['promptTokensSHA256'],
+            'tokenRanges': [list(r) for r in resolved.token_ranges], 'tokenCount': resolved.token_count, 'doseMode': doc['spanDose']}
+
+    def selects(self, digest, doc, position):
+        """Whether ``position`` is one of the policy's declared positions (its stage is checked separately)."""
+        if doc['positions'] == 'allPositions': return True
+        if doc['positions'] == policy_artifacts.SPAN:
+            if digest not in self.span_positions: raise PolicyError('A span policy has no resolved span for this response.')
+            return position in self.span_positions[digest]
+        return position >= len(self.prompt_ids) - 1
 
     def score(self, h, probe):
         import torch
@@ -128,9 +153,11 @@ class Execution:
         if self.closed: raise PolicyError('The policy response session is closed.')
         indices = [i for i, p in enumerate(context.positions)
                    if ('prefill' if p < len(self.prompt_ids) else 'decode') in doc['stages']
-                   and (doc['positions'] == 'allPositions' or p >= len(self.prompt_ids)-1)]
+                   and self.selects(digest, doc, p)]
         if not indices: return []
-        scores = {}; actions = []
+        scores = {}; actions = []; requested = {}
+        # A fixedTotal span dose is a total: each of the span's n positions applies strength / n.
+        share = self.span_records[digest]['tokenCount'] if doc.get('spanDose') == policy_artifacts.FIXED_TOTAL else None
         started = time.perf_counter(); self.decision_calls += 1
         try:
             for p in doc['probes']:
@@ -168,8 +195,12 @@ class Execution:
                 if not torch.isfinite(value).all() or (value < lo).any() or (value > hi).any(): raise PolicyError('Provider strength is non-finite or outside its declared bounds.')
                 if 'vector' in spec and len(spec['vector']) != tensor.shape[-1]: raise PolicyError('The action direction width differs from this residual stream.')
                 mask = torch.zeros_like(value); mask[indices] = 1
-                actions.append(Action(spec, value * mask))
-            rows = self.record(digest, doc, context, indices, scores, actions)
+                requested[spec['id']] = value * mask
+                actions.append(Action(spec, value * mask if share is None else value * mask / share))
+            rows = self.record(digest, doc, context, indices, scores, actions, requested)
+            # What each action applies at this call's span positions, for the span's dose summary.
+            doses = ({a.specification['id']: a.strength[indices].detach().cpu().tolist() for a in actions}
+                     if digest in self.span_doses else {})
             # The absolute multiplier of each addition's stored direction, from the conversion residual() applies.
             kept = [row['inputTokenPosition'] - context.offset for row in rows]
             scales = {a.specification['id']: addition_scale(a.strength, a.specification)[kept].detach().cpu().tolist()
@@ -183,6 +214,7 @@ class Execution:
                         if reason: row['actionOutcomes'][action_id]['reason'] = reason[:2048]
                         outcomes = list(row['actionOutcomes'].values())
                         row['status'] = 'failed' if any(x['status'] == 'failed' for x in outcomes) else 'applied' if len(outcomes) == len(row['strengths']) else 'requested'
+                    if applied and action_id in doses: self.span_doses[digest][action_id].extend(doses[action_id])
                 return completed
             return [replace(a, on_result=acknowledgement(a.specification['id'])) for a in actions]
         except Exception as exc:
@@ -193,12 +225,13 @@ class Execution:
         finally:
             self.decision_seconds += time.perf_counter() - started
 
-    def record(self, digest, doc, context, indices, scores, actions, error=None):
+    def record(self, digest, doc, context, indices, scores, actions, requested=None, error=None):
         available = max(0, doc['maxEvents'] - self.counts.get(digest, 0))
         self.omitted += max(0, len(indices)-available); kept = indices[:available]
         self.counts[digest] = self.counts.get(digest, 0) + len(kept)
         values = {k: v[kept].detach().cpu().tolist() for k, v in scores.items()}
-        strengths = {a.specification['id']: a.strength[kept].detach().cpu().tolist() for a in actions}
+        # Requested strengths are the declared ones; a fixedTotal span applies a share of each, which appliedScales states.
+        strengths = {a.specification['id']: (requested or {}).get(a.specification['id'], a.strength)[kept].detach().cpu().tolist() for a in actions}
         units = {a.specification['id']: policy_artifacts.strength_units(a.specification) for a in actions}
         rows = []
         for j, i in enumerate(kept):
@@ -225,6 +258,20 @@ class Execution:
                 actions.extend(self.decide(digest, doc, scores.detach().clone(), context))
         return apply_with_evidence(logits, scores, actions)
 
+    def span_summaries(self):
+        """One entry per span policy: the resolved span, its dose mode, and what each action applied over it."""
+        out = []
+        for digest, doc in self.policies:
+            if digest not in self.span_records: continue
+            actions = {}
+            for action in doc['actions']:
+                values = self.span_doses[digest][action['id']]
+                actions[action['id']] = {'strengthUnits': policy_artifacts.strength_units(action), 'appliedPositions': len(values),
+                                         'perPositionStrength': values[0] if len(set(values)) == 1 else None,
+                                         'summedDose': math.fsum(values) if action['kind'] == 'add' else None}
+            out.append({**self.span_records[digest], 'actions': actions})
+        return out
+
     def result(self, generated_ids):
         all_ids = self.prompt_ids + list(generated_ids)
         for row in self.events:
@@ -232,10 +279,12 @@ class Execution:
             row['inputTokenID'] = all_ids[position] if position < len(all_ids) else None
             row['predictedTokenID'] = all_ids[predicted] if predicted < len(all_ids) else None
             row['generatedTokenIndex'] = predicted - len(self.prompt_ids) if predicted >= len(self.prompt_ids) else None
+        spans = self.span_summaries()
         return {'schemaVersion': 2, 'runtime': 'policy-v1', **self.context,
                 'declarations': [{'sha256': h, 'binding': d['binding'], 'site': d['site'],
                     'probes': [{'id': p['id'], 'sha256': p['sha256']} for p in d['probes']],
                     'actions': [{**{k: v for k, v in a.items() if k != 'vector'}, **({'vectorSHA256': hashlib.sha256(json.dumps(a['vector'], separators=(',', ':')).encode()).hexdigest()} if 'vector' in a else {})} for a in d['actions']], 'rules': d['rules'], 'stages': d['stages'], 'positions': d['positions'],
+                    **{k: d[k] for k in ('span', 'spanDose') if k in d},
                     'providerSHA256': d.get('provider', {}).get('sourceSHA256'),
                     'assetSHA256': {k: v['sha256'] for k, v in d.get('provider', {}).get('assets', {}).items()},
                     'onError': d['onError'], 'maxEvents': d['maxEvents']} for h, d in self.policies],
@@ -246,14 +295,23 @@ class Execution:
                            'interpretation': 'Host elapsed time, including scoring and recording. Asynchronous GPU work is not synchronized; this is not GPU kernel latency.'},
                 'policies': [h for h, _ in self.policies], 'promptTokenIDs': self.prompt_ids,
                 'outputTokenIDs': list(generated_ids), 'decisions': self.events,
+                **({'spans': spans} if spans else {}),
                 'omittedDecisions': self.omitted, 'failures': self.failures, 'failureCount': self.failure_count,
                 'status': 'partial' if self.omitted or self.failures or any(r['status'] in ('requested', 'failed', 'skipped') for r in self.events) else 'complete',
                 'limitations': ['Requested strengths and acknowledged applied strengths are distinct. Applied means the site tensor operation succeeded; a failed response is not completed evidence.',
                                'Strengths are in each action’s declared units (strengthUnits); a residual-norm strength compares directly with a static agent’s α. For an addition, appliedScales is the multiplier applied to the stored direction: strength × residualNorm / vectorNorm in residual-norm units, or the strength itself for a raw multiplier.',
                                'Policy scores use float32 on the activation device; measurements retain their own scoring precision.',
-                               'Expert providers are trusted Python code. Their declared RNG is response-local random.Random; they must not use global randomness or mutate model state.']}
+                               'Expert providers are trusted Python code. Their declared RNG is response-local random.Random; they must not use global randomness or mutate model state.',
+                               *([SPAN_LIMITATION] if spans else [])]}
 
 
-def create(variant, *, rendering, context=None, run_directory=None):
+SPAN_LIMITATION = ('A span policy acts only at its resolved prompt tokens, in prefill. spans names each resolution by spanEvidenceSHA256; '
+                   'the full resolver evidence is in the run’s span-resolutions.json. A fixedTotal dose applies strength / tokenCount at '
+                   'each span position, and summedDose adds what each addition applied over the span, in its strengthUnits. A span policy '
+                   'changes how these prompt tokens are represented while the prompt is read; a behavioral change shows that reading the '
+                   'span differently moved the output, not that the concept lives there.')
+
+
+def create(variant, *, rendering, context=None, run_directory=None, spans=None):
     values = variant.intervention_policies if variant is not None else None
-    return Execution(values, rendering=rendering, context=context, run_directory=run_directory) if values else None
+    return Execution(values, rendering=rendering, context=context, run_directory=run_directory, spans=spans) if values else None

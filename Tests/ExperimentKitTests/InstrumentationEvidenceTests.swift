@@ -78,6 +78,48 @@ struct InstrumentationEvidenceTests {
         let outside = try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: document))
         #expect(throws: (any Error).self) { try InstrumentationEvidence.validate(outside) }
     }
+    @Test func spanPolicyEvidenceAdmitsAndTamperedSpansDoNot() throws {
+        let raw = try Data(contentsOf: repository.appending(path: "Tests/Fixtures/cross-engine/policy-evidence-span.json"))
+        try InstrumentationEvidence.validate(try JSONDecoder().decode(JSONValue.self, from: raw))
+        let document = try #require(JSONSerialization.jsonObject(with: raw) as? [String: Any])
+        let block = try #require(document["interventionDecisions"] as? [String: Any])
+        let span = try #require((block["spans"] as? [[String: Any]])?.first)
+        let rows = try #require(block["decisions"] as? [[String: Any]])
+        #expect(span["tokenRanges"] as? [[Int]] == [[1, 3]] && span["doseMode"] as? String == "fixedTotal")
+        // A fixedTotal dose of 0.1 over two tokens: each applies 0.05 residual norms, a scale of 0.05 × 7.5 / 0.5.
+        #expect(abs(((rows[0]["appliedScales"] as? [String: Double])?["change"] ?? 0) - 0.75) < 1e-6)
+        let prompt = try #require(block["promptTokenIDs"] as? [Int])
+        #expect(span["promptTokensSHA256"] as? String == InstrumentationEvidence.tokenIDsSHA256(prompt.map { .number(Double($0)) }))
+        func tampered(_ change: (inout [String: Any], inout [[String: Any]], inout [String: Any]) -> Void) throws -> JSONValue {
+            var copy = block; var entry = span; var events = rows
+            change(&entry, &events, &copy)
+            if copy["spans"] != nil { copy["spans"] = [entry] }
+            copy["decisions"] = events
+            var outer = document; outer["interventionDecisions"] = copy
+            return try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: outer))
+        }
+        let mutations: [(inout [String: Any], inout [[String: Any]], inout [String: Any]) -> Void] = [
+            { entry, _, _ in entry["promptTokensSHA256"] = String(repeating: "a", count: 64) },
+            { entry, _, _ in entry["tokenRanges"] = [[1, 9]] },
+            { entry, _, _ in entry["tokenCount"] = 3 },
+            { entry, _, _ in entry["doseMode"] = "perPosition" },
+            { entry, _, _ in
+                var actions = entry["actions"] as? [String: [String: Any]] ?? [:]
+                actions["change"]?["strengthUnits"] = "rawMultiplier"; entry["actions"] = actions },
+            { entry, _, _ in
+                var actions = entry["actions"] as? [String: [String: Any]] ?? [:]
+                actions["change"]?["summedDose"] = 0.2; entry["actions"] = actions },
+            { _, events, _ in events[0]["appliedScales"] = ["change": 1.5] },
+            { _, events, _ in
+                events[0]["inputTokenPosition"] = 0; events[0]["predictsTokenPosition"] = 1
+                events[0].removeValue(forKey: "inputTokenID"); events[0].removeValue(forKey: "predictedTokenID") },
+            { _, _, copy in copy.removeValue(forKey: "spans") },
+        ]
+        for mutation in mutations {
+            let corrupt = try tampered(mutation)
+            #expect(throws: (any Error).self) { try InstrumentationEvidence.validate(corrupt) }
+        }
+    }
     @Test func nestedPanelRequirementsAndOldServerAdmission() throws {
         let value: JSONValue = .object(["agents": .array([.object(["artifact": .object(["interventionPolicies": .array([.object([:])])])])]), "probeMeasurements": .object(["probes": .array([.object([:])])])])
         let required = InstrumentationSupport.requirements(value)

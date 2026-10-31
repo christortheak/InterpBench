@@ -30,6 +30,7 @@ human half. The two are meant to be edited together.
 | `ablation` | `steering/ablator.py` `SubspaceAblator` | every position, prefill and decode | λ, a dimensionless fraction of the projected component | `randomDirectionAblation` |
 | `trainableAdditive` | `steering/trainable_injector.py` `TrainableVectorInjector` / `AdditiveDeltaProbe` | each item's answer position, or every non-pad position, in one teacher-forced pass | α as an absolute L2 norm at the layer | S0 shuffled-target null + `randomMatchedNorm` (declared by the confirm study) |
 | `saeLatent` | `steering/sae_latent.py` `SAELatentIntervention` | same as `additive` — it reuses that gate | β in **latent** units | none synthesized; the baseline arm is the contrast |
+| `policySpanAddition` | `experiment/policy_execution.py` `Execution`, a span policy (§10) | the prompt tokens a declared span resolves to, prefill only | residual-norm units, `perPosition` or `fixedTotal` | none synthesized; matched control policies are their own arms |
 
 Every path's site is the same tensor: **the residual stream at the block output
 of the named layer(s)** — what a forward hook receives from decoder block *L*,
@@ -276,3 +277,34 @@ multi-agent runner gains this run-sidecar here. Native trainable/SAE-latent
 intervention execution remains unsupported; use the Python owner. Historical
 runs without the sidecar remain unmodified, and absence still makes no claim
 about their intervention scope.
+
+## 10. `policySpanAddition` — span policies
+
+A span policy ([INTERVENTION-POLICIES.md](INTERVENTION-POLICIES.md), "Span
+policies") is not a `LayerIntervention`: it runs in the policy action phase,
+after the legacy chain at its site. So its row is not in a condition's
+chain-order `scopes`; it is in that policy's own summary, at
+`conditions[].interventionPolicies[].scopes`, one row per residual action.
+Policies that do not act on a span keep the summary they had.
+
+| | |
+|---|---|
+| **Hook / site** | the policy's one residual site: the block input (`residualPre`) or the block output (`residualPost`) of its layer |
+| **Layers** | the policy's one layer, with no band and no neutral-basis projection |
+| **Positions** | the prompt tokens the declared span resolves to in each prompt, against the exact rendered prompt; no other position |
+| **Prefill** | applies at each span token while the prompt is read, in whichever prefill chunk holds it |
+| **Decode** | does not apply. A second policy at `lastPosition`, over prefill and decode, steers the response |
+| **Centering** | not applicable to an addition; a removal uses the direction as stored (`none`) |
+| **Dose units** | residual-norm units, as a static agent's α: `perPosition` gives each span token the strength, and `fixedTotal` spreads the strength as a total, strength / n per token. A removal (`policySpanAblation`) keeps λ, a fraction at each span token |
+| **Control** | none synthesized at run time. A matched control is its own policy and agent arm: a seeded random direction with the same span, strength, dose mode, and R, or the same direction over a different declared span of the same token length |
+| **Pinned by** | `tests/test_span_policies.py::test_span_positions_are_applied_exactly_in_a_real_generation`, `::test_a_fixed_total_dose_spreads_the_strength_over_the_span`, `::test_the_scope_stamp_describes_where_a_span_policy_lands` |
+
+`detail` names the policy and action, the site kind, the canonical `span`
+declaration, `spanDose`, the units, the action's bounds, and, in residual-norm
+units, R and its convention. What varies per prompt, the span's tokens, is not
+in this file: each resolution is in the run's `span-resolutions.json`, and
+each response's `interventionDecisions.spans` entry names its own.
+
+**Claim limit.** *Changes how these prompt tokens are represented while the
+prompt is read. A behavioural change shows that reading this span differently
+moved the output, not that the concept lives there.*

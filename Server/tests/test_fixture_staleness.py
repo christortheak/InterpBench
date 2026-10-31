@@ -439,6 +439,7 @@ def test_every_committed_fixture_has_a_staleness_test():
         "probe-artifacts.json",
         "policy-evidence.json",  # test_instrumentation_evidence: real forward, timing normalized
         "policy-evidence-norm-units.json",  # the same, from a version-2 residual-norm addition
+        "policy-evidence-span.json",  # test_span_policies: a fixedTotal span policy in a real generation
         "manifest-interop.json", "run-bundle-metadata.json",
         "swift-authored-manifest.json",
         # Hand-authored contract (2026-10-17): the intended reading of each

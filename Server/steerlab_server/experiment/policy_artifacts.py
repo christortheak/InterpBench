@@ -28,6 +28,27 @@ RESIDUAL_NORM, RAW_MULTIPLIER = 'residualNorm', 'rawMultiplier'
 NORM_FIELDS = ('residualNorm', 'residualNormConvention', 'vectorNorm')
 #: Units of the other action kinds, which no version changes; named for evidence.
 FIXED_UNITS = {'ablate': 'fraction', 'logitBias': 'logit', 'allowTokens': 'onOff', 'forceToken': 'onOff'}
+#: Version 2 adds ``span``: act while the model READS a declared part of the prompt,
+#: resolved per prompt by ``prompt_span`` against the exact rendered prompt.
+POSITIONS = ('lastPosition', 'allPositions')
+SPAN = 'span'
+#: How a span policy's strength is dosed over the span's n tokens: each position gets
+#: the strength, or the strength is a total and each position gets strength / n.
+PER_POSITION, FIXED_TOTAL = 'perPosition', 'fixedTotal'
+SPAN_DOSES = (PER_POSITION, FIXED_TOTAL)
+
+
+class SpanPolicyRefused(PolicyError):
+    """A span declaration or span schedule that cannot be honored. Carries the
+    resolver's own code and repair when the declaration itself is malformed."""
+    code = 'policySpanRefused'
+    repair_action = ('Declare the span with the prompt-span grammar, act in prefill only, '
+                     'and review the settings again.')
+
+    def __init__(self, reason, *, code=None, repair=None):
+        super().__init__(reason)
+        if code: self.code = code
+        if repair: self.repair_action = repair
 
 
 def keys(value, required, optional=()):
@@ -55,7 +76,7 @@ def inline(text, digest):
 def validate(doc):
     probes.finite_json(doc)
     if len(json.dumps(doc).encode()) > MAX_BYTES: raise PolicyError('Keep a self-contained policy under 16 MiB.')
-    keys(doc, ('schemaVersion', 'name', 'binding', 'site', 'stages', 'positions', 'probes', 'actions', 'rules', 'onError', 'maxEvents'), ('provider',))
+    keys(doc, ('schemaVersion', 'name', 'binding', 'site', 'stages', 'positions', 'probes', 'actions', 'rules', 'onError', 'maxEvents'), ('provider', 'span', 'spanDose'))
     if type(doc['schemaVersion']) is not int or doc['schemaVersion'] not in SCHEMA_VERSIONS: raise PolicyError('Use policy schemaVersion 2, or a published version-1 policy. A newer version needs a newer engine.')
     probes.text(doc['name'], 'policy name'); site(doc['site'])
     binding = doc['binding']
@@ -65,7 +86,7 @@ def validate(doc):
     probes.choice(binding['rendering'], ('raw', 'chatTemplate'), 'rendering')
     probes.text(binding['coordinateConvention'], 'coordinateConvention')
     if not isinstance(doc['stages'], list) or not doc['stages'] or any(type(x) is not str for x in doc['stages']) or len(set(doc['stages'])) != len(doc['stages']) or set(doc['stages']) - {'prefill', 'decode'}: raise PolicyError('Select prefill, decode, or both once.')
-    probes.choice(doc['positions'], ('lastPosition', 'allPositions'), 'positions')
+    probes.choice(doc['positions'], POSITIONS + ((SPAN,) if doc['schemaVersion'] >= 2 else ()), 'positions')
     probes.choice(doc['onError'], ('stop', 'skipPolicy'), 'onError')
     probes.integer(doc['maxEvents'], 'maxEvents', 1)
     if doc['maxEvents'] > 65536: raise PolicyError('Keep maxEvents at or below 65536 per response.')
@@ -138,8 +159,40 @@ def validate(doc):
             if hashlib.sha256(raw).hexdigest() != asset['sha256']: raise PolicyError('Provider asset hash differs.')
         if used: raise PolicyError('Choose built-in rules or an expert provider in one policy. Combine policies to use both.')
     elif used != action_ids: raise PolicyError('Every declared action needs a rule.')
+    span_schedule(doc)
     if len(json.dumps(doc).encode()) > MAX_BYTES: raise PolicyError('Keep a self-contained policy under 16 MiB.')
     return copy.deepcopy(doc)
+
+
+def span_declaration(value):
+    """The canonical wire form of a span declaration (``prompt_span`` grammar), or
+    the resolver's typed refusal as a policy refusal. Needs no tokenizer."""
+    from . import prompt_span
+    try: return prompt_span.parse_declaration(value).to_dict()
+    except prompt_span.SpanRefusal as exc: raise SpanPolicyRefused(exc.reason, code=exc.code, repair=exc.repair_action) from exc
+
+
+def span_schedule(doc):
+    """A span policy's own rules. It acts while the model READS the span, so it runs in
+    prefill only, at a residual site; a second policy steers the response."""
+    if doc['positions'] != SPAN:
+        if 'span' in doc or 'spanDose' in doc: raise SpanPolicyRefused('Only a policy whose positions are "span" declares a span or a span dose.')
+        return
+    if 'span' not in doc or 'spanDose' not in doc: raise SpanPolicyRefused('A span policy declares its span and its spanDose. Review the settings again; review writes the default dose, perPosition.')
+    if span_declaration(doc['span']) != doc['span']: raise SpanPolicyRefused('Write the span declaration in its canonical form: only the keys its kind takes, and no null occurrence. Review the settings again.')
+    probes.choice(doc['spanDose'], SPAN_DOSES, 'spanDose')
+    if doc['stages'] != ['prefill']:
+        raise SpanPolicyRefused('A span policy acts while the model reads the prompt, so its stages are ["prefill"]. To steer the response as well, attach a second policy '
+                                'with stages ["prefill", "decode"] at lastPosition, which adds what a static agent adds.')
+    if doc['site']['kind'] == 'logitsPreSelection': raise SpanPolicyRefused('A span policy changes residual activations at prompt positions. Choose a residualPre or residualPost site.')
+    if doc['spanDose'] == FIXED_TOTAL and any(a['kind'] != 'add' for a in doc['actions']):
+        raise SpanPolicyRefused('A fixedTotal dose spreads one total strength over the span, which only an addition has. Removal is a fraction at each position: '
+                                'use perPosition, or put the removal in its own policy.')
+
+
+def span_policies(values):
+    """``(digest, document)`` for each attached policy that acts on a declared prompt span."""
+    return [(digest, doc) for digest, doc in load_attached(values) if doc['positions'] == SPAN]
 
 
 def declared_units(action, version):
@@ -193,6 +246,7 @@ def load_attached(values):
 
 def summaries(values):
     return [{'sha256': digest, **{k: doc[k] for k in ('schemaVersion', 'name', 'binding', 'site', 'stages', 'positions', 'onError')},
+             **{k: doc[k] for k in ('span', 'spanDose') if k in doc},
              'actions': action_units(doc),
              'providerSHA256': doc.get('provider', {}).get('sourceSHA256')}
             for digest, doc in load_attached(values)]

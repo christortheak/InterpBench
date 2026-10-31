@@ -364,6 +364,35 @@ select either stage or both. No additional pass reads the final sampled token.
 Decisions and measurements may target different populations; validate that
 transfer, rather than treating it as instrument qualification.
 
+`span` acts while the model reads a declared part of the prompt, and nowhere
+else. It takes `"stages": ["prefill"]`, a residual site, a `span` declaration,
+and a `spanDose`:
+
+```json
+"positions": "span", "stages": ["prefill"],
+"span": {"kind": "substring", "text": "Ignore all prior rules."},
+"spanDose": "perPosition"
+```
+
+A declaration is `{"kind":"substring","text":…}` (add `"occurrence": 2` when
+the text occurs more than once), `{"kind":"anchors","start":…,"end":…}` (both
+anchors included), `{"kind":"userMessage"}` (the user text, never the system
+prompt), or `{"kind":"allPrompt"}`. Matching is exact: copy the text as the
+prompt spells it. `perPosition` gives each span token the strength;
+`fixedTotal` treats the strength as a total and gives each of the span's n
+tokens strength / n, for additions only. Rules and providers work as
+elsewhere; only the span's tokens receive their strengths. One declaration
+applies to every prompt of the study, and the run checks every item before
+anything is generated: an item the span does not match refuses the run and
+names the item. Span policies run in single-prompt sampled studies; scripted
+transcripts, panels, and agent chat refuse them. A span policy changes how
+those prompt tokens are represented while the prompt is read. A behavioral
+change shows that reading the span differently moved the output, not that the
+concept lives there. To compare steering while the model reads with steering
+while it responds, make one agent arm with the span policy and another with a
+`lastPosition` policy over both stages, which adds what a static agent adds,
+and attach each with `"staticSteering": "remove"` (below).
+
 Attachment settings:
 
 ```json
@@ -376,7 +405,9 @@ Attachment settings:
 
 The selected policies replace the new agent's policy list; an empty list creates
 its policy-free comparison. Static vectors, adapters, and unknown artifact
-fields survive. A sweep-promotion certificate is removed from the changed
+fields survive. Add `"staticSteering": "remove"` to remove the vectors and
+adapters instead, so the new version changes the model only through its
+policies; its model, rendering, and system prompt stay the source agent's. A sweep-promotion certificate is removed from the changed
 version because it was not the agent selected by that sweep. Existing agents,
 old manifests, and runs are never rewritten. The exact embedded policy JSON
 changes the new agent's identity and travels with it through existing closure.

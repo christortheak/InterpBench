@@ -99,6 +99,7 @@ def run(name: str, prompts_file: str | None = None, root: str | None = None,
         # never looked at the 4B that actually ran.
         run_preflight.scenario_preflight_or_warn(manifest, root, _log)
         run_preflight.artifact_preflight(manifest, root, _log)
+        run_preflight.span_policy_preflight(manifest, None, root, _log)
         if model_provider is not None:
             return panel_workflow.run_multi_agent_study(
                 name, manifest, None, root, model_provider=model_provider,
@@ -145,6 +146,7 @@ def run(name: str, prompts_file: str | None = None, root: str | None = None,
                 repair=_declare_an_arm(name))
         run_preflight.token_preflight_or_warn(manifest, prompts_file, root, _log)
         run_preflight.artifact_preflight(manifest, root, _log)
+        run_preflight.span_policy_preflight(manifest, prompts_file, root, _log)
         run_preflight.instrument_preflight(manifest, prompts_file, root, _log)
         run_preflight.response_format_preflight(manifest, prompts_file, root)
 
@@ -323,6 +325,15 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
     experiment_hash = manifest.content_hash()
     instruments = set(manifest.outcome_instruments)
     wants_choice = bool(instruments & condition_execution.CHOICE_INSTRUMENTS)
+    # Span policies resolve on every prompt of every span arm with the loaded
+    # tokenizer, BEFORE any generation of the run: a prompt the declared span
+    # does not match refuses the whole run here, never halfway through it.
+    # Resolved once per distinct rendered prompt, and stamped once into
+    # span-resolutions.json for the whole design (see `.policy_spans`).
+    from . import policy_spans
+    span_resolutions = policy_spans.run_preflight(
+        model, manifest, prompts, root, wants_choice=wants_choice,
+        run_directory=run_directory, log=_log)
     # Fail fast (before any model compute): an ordinalScale study must have
     # DECLARED a known aggregation — the instrument-design choice is never
     # silently defaulted. verify() reports the same violation; drafts only
@@ -430,6 +441,7 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
                        experiment_hash=experiment_hash,
                        wants_choice=wants_choice, wants_sampled=wants_sampled,
                        reader_scorers=reader_scorers,
+                       **({"span_resolutions": span_resolutions} if span_resolutions is not None else {}),
                        numeric_parser=numeric_parser,
                        should_cancel=should_cancel, log=_log,
                        jlens_trace=jlens_trace)

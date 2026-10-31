@@ -21,6 +21,74 @@ def single(value):
     except OverflowError: return value
 
 
+SPAN_DOSES = ('perPosition', 'fixedTotal')
+
+
+def is_digest(value):
+    return isinstance(value, str) and len(value) == 64 and all(c in '0123456789abcdef' for c in value)
+
+
+def declared_units(action):
+    """An evidence declaration's units for one action (``policy_artifacts.strength_units``)."""
+    if action.get('kind') == 'add': return action.get('strengthUnits', 'rawMultiplier')
+    return {'ablate': 'fraction', 'logitBias': 'logit', 'allowTokens': 'onOff', 'forceToken': 'onOff'}.get(action.get('kind'))
+
+
+def close(a, b):
+    # Execution computes in float32; recomputation here is float64.
+    return math.isclose(a, b, rel_tol=1e-5, abs_tol=1e-9)
+
+
+def validate_spans(block, declarations, prompt):
+    """The span entries of version-2 policy evidence: one per span policy, bound to the
+    retained prompt by its token hash, with each action's units, positions, and dose.
+    Returns ``{policySHA256: (positions, entry)}`` for checking that policy's rows."""
+    entries = block.get('spans', [])
+    if not isinstance(entries, list): raise ProbeError('Span evidence must be a list of resolved spans.')
+    spans = {}
+    for entry in entries:
+        if not isinstance(entry, dict): raise ProbeError('Each resolved span must be an object.')
+        declaration = declarations.get(entry.get('policySHA256'))
+        if declaration is None or declaration.get('positions') != 'span' or entry['policySHA256'] in spans: raise ProbeError('A resolved span names a policy that does not act on a span, or names it twice.')
+        if not all(is_digest(entry.get(k)) for k in ('spanEvidenceSHA256', 'renderedTextSHA256', 'promptTokensSHA256')): raise ProbeError('A resolved span must name its resolution, rendered text, and prompt tokens by SHA-256.')
+        if entry['promptTokensSHA256'] != hashlib.sha256(json.dumps(prompt).encode()).hexdigest(): raise ProbeError('A resolved span belongs to a different prompt than the retained prompt tokens.')
+        ranges = entry.get('tokenRanges'); positions = set(); end = 0
+        if not isinstance(ranges, list) or not ranges: raise ProbeError('A resolved span needs its token ranges.')
+        for item in ranges:
+            if not isinstance(item, list) or len(item) != 2 or any(type(x) is not int for x in item) or not end <= item[0] < item[1] <= len(prompt): raise ProbeError('Span token ranges must be ascending, disjoint, nonempty, and inside the prompt.')
+            positions.update(range(*item)); end = item[1]
+        if entry.get('tokenCount') != len(positions): raise ProbeError('A span token count must equal the positions its ranges cover.')
+        if entry.get('doseMode') not in SPAN_DOSES or entry['doseMode'] != declaration.get('spanDose'): raise ProbeError('A resolved span must state its policy’s declared dose mode.')
+        specs = {a.get('id'): a for a in declaration['actions'] if isinstance(a, dict)}
+        actions = entry.get('actions')
+        if not isinstance(actions, dict) or set(actions) != set(specs): raise ProbeError('A resolved span summarizes each of its policy’s actions once.')
+        for name, summary in actions.items():
+            if not isinstance(summary, dict) or summary.get('strengthUnits') != declared_units(specs[name]): raise ProbeError('Span dose units must equal the action’s declared units.')
+            count, strength, dose = summary.get('appliedPositions'), summary.get('perPositionStrength'), summary.get('summedDose')
+            if type(count) is not int or not 0 <= count <= len(positions): raise ProbeError('A span’s applied positions must count span tokens.')
+            if strength is not None and not finite(strength): raise ProbeError('A per-position span strength must be finite.')
+            if specs[name].get('kind') == 'add':
+                if not finite(dose) or (strength is not None and not close(dose, strength * count)) or (count == 0 and dose != 0): raise ProbeError('A summed span dose must add what each applied position received.')
+            elif dose is not None: raise ProbeError('Only an addition has a summed span dose.')
+        spans[entry['policySHA256']] = (positions, entry)
+    missing = [h for h, d in declarations.items() if d.get('positions') == 'span' and h not in spans]
+    if missing: raise ProbeError('A span policy’s evidence must name the span it resolved for this response.')
+    return spans
+
+
+def validate_span_row(row, declaration, span):
+    """A span policy's decision acts only at its resolved positions, and each scale is
+    the declared strength converted by the action's units and, for a fixedTotal dose, shared over the span."""
+    positions, entry = span
+    if row.get('inputTokenPosition') not in positions: raise ProbeError('A span policy decision lies outside its resolved span.')
+    share = entry['tokenCount'] if entry['doseMode'] == 'fixedTotal' else 1
+    specs = {a.get('id'): a for a in declaration['actions'] if isinstance(a, dict)}
+    for name, scale in row.get('appliedScales', {}).items():
+        spec = specs.get(name, {}); strength = row['strengths'][name] / share
+        expected = strength * spec['residualNorm'] / spec['vectorNorm'] if declared_units(spec) == 'residualNorm' and finite(spec.get('residualNorm')) and finite(spec.get('vectorNorm')) and spec['vectorNorm'] else strength
+        if not close(scale, expected): raise ProbeError('A span decision’s applied scale differs from its declared strength, units, and dose.')
+
+
 def validate_record(record):
     if not isinstance(record, dict): raise ProbeError('Each evidence row must be a JSON object.')
     required = record.get('instrumentationRequirements', [])
@@ -39,7 +107,7 @@ def validate_record(record):
         if any(type(x) is not int or x < 0 for x in tokens): raise ProbeError('Evidence token IDs must be nonnegative integers.')
         if 'outputTokenIDs' in record and record['outputTokenIDs'] != block.get('outputTokenIDs'): raise ProbeError('Instrumentation and response token IDs disagree.')
         if 'condition' in block and 'condition' in record and block['condition'] != record['condition']: raise ProbeError('Instrumentation belongs to a different condition.')
-        declarations = {}
+        declarations = {}; spans = {}
         if key == 'interventionDecisions' and block['schemaVersion'] == 2:
             docs = block.get('declarations'); policies = block.get('policies')
             if not isinstance(docs, list) or not isinstance(policies, list) or any(not isinstance(x, str) for x in policies): raise ProbeError('Policy evidence must bind its declarations and policy hashes.')
@@ -47,6 +115,7 @@ def validate_record(record):
                 if not isinstance(doc, dict) or not isinstance(doc.get('sha256'), str) or not isinstance(doc.get('actions'), list): raise ProbeError('Malformed policy evidence declaration.')
                 declarations[doc['sha256']] = doc
             if len(declarations) != len(docs) or sorted(declarations) != sorted(policies): raise ProbeError('Policy evidence declarations disagree with the executed policy hashes.')
+            spans = validate_spans(block, declarations, prompt)
         for row in block[rows_key]:
             if not isinstance(row, dict): raise ProbeError('Instrumentation readings must be objects.')
             position = row.get('inputTokenPosition'); predicted = row.get('predictsTokenPosition')
@@ -73,6 +142,7 @@ def validate_record(record):
                 units = row.get('strengthUnits', {}); scales = row.get('appliedScales', {})
                 if not isinstance(units, dict) or any(k not in requested or not isinstance(v, str) for k, v in units.items()): raise ProbeError('Strength units must name requested actions.')
                 if not isinstance(scales, dict) or any(k not in applied or not finite(v) for k, v in scales.items()): raise ProbeError('Applied scales must be finite and belong to applied actions.')
+                if row.get('policySHA256') in spans: validate_span_row(row, declaration, spans[row['policySHA256']])
     return record
 
 

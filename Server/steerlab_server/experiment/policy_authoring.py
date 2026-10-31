@@ -113,6 +113,11 @@ def materialize(settings, root, notes=None):
         for name, path in provider['assetPaths'].items():
             raw = read(path, root); assets[name] = {'base64': base64.b64encode(raw).decode(), 'sha256': hashlib.sha256(raw).hexdigest()}
         doc['provider'] = {'sourceText': source.decode(), 'sourceSHA256': hashlib.sha256(source).hexdigest(), 'assets': assets}
+    if doc.get('positions') == artifacts.SPAN:
+        # The hashed document holds the canonical declaration and an explicit dose, so two
+        # spellings of one span are one policy and a reader never infers a default.
+        if 'span' in doc: doc['span'] = artifacts.span_declaration(doc['span'])
+        doc.setdefault('spanDose', artifacts.PER_POSITION)
     return artifacts.validate(doc)
 
 
@@ -139,6 +144,23 @@ def unit_notes(doc):
     return notes
 
 
+def span_notes(doc):
+    """What a span policy does, and what a result from it can claim."""
+    if doc['positions'] != artifacts.SPAN: return []
+    dose = ('Each span position gets the full strength, so the summed dose grows with the span’s token count.'
+            if doc['spanDose'] == artifacts.PER_POSITION else
+            'The strength is a total: each of the span’s n tokens gets strength / n, so the summed dose is the strength whatever the span’s length.')
+    return ['This policy acts only while the model reads the declared span: at the span’s prompt tokens, during prefill, and never while it responds. '
+            'Its claim limit: it changes how these prompt tokens are represented while the prompt is read. A behavioral change shows that reading this span '
+            'differently moved the output, not that the concept lives there.',
+            dose,
+            'The span is resolved at run time against every study prompt, rendered exactly as the agent renders it. A prompt the span does not match refuses '
+            'the run before anything is generated. One declaration applies to the whole study; per-item declarations are not available yet.',
+            'Span policies run in single-prompt studies only. Scripted transcripts, panels, and agent chat refuse them.',
+            'To compare steering while the model reads with steering while it responds, add an arm whose policy uses stages ["prefill", "decode"] at '
+            'lastPosition; at the same strength it adds what a static agent adds.']
+
+
 def review(settings, root):
     root = probe_library.workspace(root)
     if isinstance(settings, dict) and settings.get('schemaVersion') == 1:
@@ -147,7 +169,7 @@ def review(settings, root):
     notes = []; doc = materialize(settings, root, notes)
     raw = encode(doc)
     notes = ['Validate the complete modified agent on held-out data. A useful probe does not by itself establish a useful intervention.',
-             *unit_notes(doc), *notes,
+             *unit_notes(doc), *span_notes(doc), *notes,
              'Execution uses the Python engine, with one unpadded sequence per response.']
     if doc.get('provider'): notes.append('Expert provider: publishing pins trusted Python source and assets. Execution runs this code with the engine’s permissions; it is not sandboxed. The strengths it returns are in each action’s declared units.')
     if any(a.get('source', {}).get('revision') is None for a in doc['actions'] if 'vector' in a): notes.append('At least one direction has no recorded source revision. Confirm its provenance before interpreting transfer.')
@@ -202,8 +224,10 @@ def inventory(root):
 def attachment_review(settings, root):
     from .model_variant import ModelVariant
     root = probe_library.workspace(root)
-    artifacts.keys(settings, ('agentPath', 'name', 'policyPaths'))
+    artifacts.keys(settings, ('agentPath', 'name', 'policyPaths'), ('staticSteering',))
     artifacts.probes.text(settings['name'], 'new agent name')
+    static = settings.get('staticSteering', 'keep')
+    artifacts.probes.choice(static, ('keep', 'remove'), 'staticSteering')
     if not isinstance(settings['policyPaths'], list) or len(settings['policyPaths']) > 16: raise PolicyError('Select at most 16 policies; an empty list creates an agent without policies.')
     agent_path = settings['agentPath']
     artifacts.probes.text(agent_path, 'agentPath')
@@ -226,11 +250,16 @@ def attachment_review(settings, root):
     document.pop('promotion', None)  # A modified agent is not the selected sweep winner.
     if attachments: document['interventionPolicies'] = attachments
     else: document.pop('interventionPolicies', None)
+    if static == 'remove':
+        # The policies alone: what a span policy needs to steer only while the prompt is read.
+        document.update(injections=[], adapters=[], neutralPCBasisPath=None)
     if len(encode(document)) > artifacts.MAX_BYTES: raise PolicyError('Keep the complete agent definition, including embedded policies, under 16 MiB. Use smaller probes or fewer policies.')
     plan = {'sourceSHA256': hashlib.sha256(source).hexdigest(), 'document': document}
     return {**plan, 'planSHA256': hashlib.sha256(encode(plan)).hexdigest(), 'changed': False,
             'limitations': ['This creates a new agent version. The source agent and existing frozen studies remain unchanged.',
-                            'Policies replace the selected agent’s policy list; static vectors and adapters are preserved.']}
+                            'Policies replace the selected agent’s policy list; static vectors and adapters are preserved.' if static == 'keep' else
+                            'Policies replace the selected agent’s policy list, and its static vectors and adapters are removed: the new version changes '
+                            'the model only through these policies. Its model, rendering, and system prompt are the source agent’s.']}
 
 
 def attach(settings, root, expected):

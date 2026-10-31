@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Structural evidence admission, mirrored by Python and exercised on its real output.
@@ -5,6 +6,90 @@ import Foundation
 public enum InstrumentationEvidence {
     private static func isText(_ value: JSONValue) -> Bool { if case .string = value { return true }; return false }
     private static func isFiniteNumber(_ value: JSONValue) -> Bool { if case .number(let x) = value { return x.isFinite }; return false }
+    private static func isDigest(_ value: JSONValue?) -> Bool {
+        guard case .string(let text) = value else { return false }
+        return text.count == 64 && text.allSatisfy { "0123456789abcdef".contains($0) }
+    }
+    private static func number(_ value: JSONValue?) -> Double? { if case .number(let x) = value, x.isFinite { return x }; return nil }
+    /// Execution computes in float32; recomputation here is float64.
+    private static func close(_ a: Double, _ b: Double) -> Bool { abs(a - b) <= max(1e-9, 1e-5 * max(abs(a), abs(b))) }
+
+    /// An evidence declaration's units for one action. Twin: `instrumentation_evidence.declared_units`.
+    static func declaredUnits(_ action: [String: JSONValue]) -> String? {
+        if action["kind"] == .string("add") { if case .string(let units) = action["strengthUnits"] { return units }; return "rawMultiplier" }
+        guard case .string(let kind) = action["kind"] else { return nil }
+        return ["ablate": "fraction", "logitBias": "logit", "allowTokens": "onOff", "forceToken": "onOff"][kind]
+    }
+
+    /// `promptTokensSHA256` of retained token IDs: Python's `json.dumps` of the integer list.
+    static func tokenIDsSHA256(_ ids: [JSONValue]) -> String {
+        let text = "[" + ids.map { value -> String in if case .number(let x) = value { String(Int(x)) } else { "" } }.joined(separator: ", ") + "]"
+        return SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The span entries of version-2 policy evidence, one per span policy, keyed by policy hash with the positions their
+    /// ranges cover. Twin: `instrumentation_evidence.validate_spans`.
+    private static func spans(_ block: [String: JSONValue], declarations: [String: [String: JSONValue]], prompt: [JSONValue],
+                              refuse: (String) throws -> Void) throws -> [String: (positions: Set<Int>, entry: [String: JSONValue])] {
+        var result: [String: (positions: Set<Int>, entry: [String: JSONValue])] = [:]
+        var entries: [JSONValue] = []
+        if let value = block["spans"] {
+            guard case .array(let values) = value else { try refuse("Span evidence must be a list of resolved spans."); return [:] }
+            entries = values
+        }
+        for value in entries {
+            guard case .object(let entry) = value, case .string(let policy) = entry["policySHA256"], let declaration = declarations[policy],
+                  declaration["positions"] == .string("span"), result[policy] == nil else { try refuse("A resolved span names a policy that does not act on a span, or names it twice."); return [:] }
+            guard isDigest(entry["spanEvidenceSHA256"]), isDigest(entry["renderedTextSHA256"]), isDigest(entry["promptTokensSHA256"]) else { try refuse("A resolved span must name its resolution, rendered text, and prompt tokens by SHA-256."); return [:] }
+            if entry["promptTokensSHA256"] != .string(tokenIDsSHA256(prompt)) { try refuse("A resolved span belongs to a different prompt than the retained prompt tokens.") }
+            guard case .array(let ranges) = entry["tokenRanges"], !ranges.isEmpty else { try refuse("A resolved span needs its token ranges."); return [:] }
+            var positions = Set<Int>(); var end = 0
+            for range in ranges {
+                guard case .array(let pair) = range, pair.count == 2, case .number(let low) = pair[0], case .number(let high) = pair[1],
+                      low.rounded() == low, high.rounded() == high, Double(end) <= low, low < high, high <= Double(prompt.count) else { try refuse("Span token ranges must be ascending, disjoint, nonempty, and inside the prompt."); return [:] }
+                positions.formUnion(Int(low)..<Int(high)); end = Int(high)
+            }
+            if entry["tokenCount"] != .number(Double(positions.count)) { try refuse("A span token count must equal the positions its ranges cover.") }
+            guard case .string(let dose) = entry["doseMode"], ["perPosition", "fixedTotal"].contains(dose), declaration["spanDose"] == .string(dose) else { try refuse("A resolved span must state its policy’s declared dose mode."); return [:] }
+            var specs: [String: [String: JSONValue]] = [:]
+            if case .array(let actions) = declaration["actions"] {
+                for action in actions { if case .object(let object) = action, case .string(let id) = object["id"] { specs[id] = object } }
+            }
+            guard case .object(let summaries) = entry["actions"], Set(summaries.keys) == Set(specs.keys) else { try refuse("A resolved span summarizes each of its policy’s actions once."); return [:] }
+            for (name, value) in summaries {
+                guard case .object(let summary) = value, let spec = specs[name], case .string(let units) = summary["strengthUnits"], units == declaredUnits(spec) else { try refuse("Span dose units must equal the action’s declared units."); return [:] }
+                guard case .number(let count) = summary["appliedPositions"], count.rounded() == count, count >= 0, count <= Double(positions.count) else { try refuse("A span’s applied positions must count span tokens."); return [:] }
+                let strength = number(summary["perPositionStrength"])
+                if summary["perPositionStrength"] != .null, strength == nil { try refuse("A per-position span strength must be finite.") }
+                if spec["kind"] == .string("add") {
+                    guard let summed = number(summary["summedDose"]), strength.map({ close(summed, $0 * count) }) ?? true, count > 0 || summed == 0 else { try refuse("A summed span dose must add what each applied position received."); return [:] }
+                } else if summary["summedDose"] != .null { try refuse("Only an addition has a summed span dose.") }
+            }
+            result[policy] = (positions, entry)
+        }
+        if declarations.contains(where: { $0.value["positions"] == .string("span") && result[$0.key] == nil }) { try refuse("A span policy’s evidence must name the span it resolved for this response.") }
+        return result
+    }
+
+    /// A span policy's decision acts only at its resolved positions, and each scale is the declared strength converted by the
+    /// action's units and, for a fixedTotal dose, shared over the span. Twin: `instrumentation_evidence.validate_span_row`.
+    private static func validateSpanRow(_ row: [String: JSONValue], declaration: [String: JSONValue],
+                                        span: (positions: Set<Int>, entry: [String: JSONValue]), refuse: (String) throws -> Void) throws {
+        guard case .number(let position) = row["inputTokenPosition"], span.positions.contains(Int(position)) else { try refuse("A span policy decision lies outside its resolved span."); return }
+        let share = span.entry["doseMode"] == .string("fixedTotal") ? number(span.entry["tokenCount"]) ?? 1 : 1
+        guard case .object(let scales) = row["appliedScales"] ?? .object([:]), case .object(let strengths) = row["strengths"] else { return }
+        for (name, value) in scales {
+            var spec: [String: JSONValue] = [:]
+            if case .array(let actions) = declaration["actions"] {
+                for action in actions { if case .object(let object) = action, object["id"] == .string(name) { spec = object } }
+            }
+            guard let scale = number(value), let requested = number(strengths[name]) else { try refuse("A span decision’s applied scale differs from its declared strength, units, and dose."); return }
+            let strength = requested / share
+            var expected = strength
+            if declaredUnits(spec) == "residualNorm", let norm = number(spec["residualNorm"]), let length = number(spec["vectorNorm"]), length != 0 { expected = strength * norm / length }
+            if !close(scale, expected) { try refuse("A span decision’s applied scale differs from its declared strength, units, and dose.") }
+        }
+    }
 
     public static func validate(_ value: JSONValue) throws {
         func refuse(_ reason: String) throws { throw ExperimentError(reason: reason + " Retain the source and recollect complete evidence.") }
@@ -28,6 +113,7 @@ public enum InstrumentationEvidence {
                 guard case .number(let x) = token, x.isFinite, x >= 0, x.rounded() == x else { try refuse("Invalid evidence token ID."); return }
             }
             var declarations: [String: [String: JSONValue]] = [:]
+            var spanEntries: [String: (positions: Set<Int>, entry: [String: JSONValue])] = [:]
             if field == "interventionDecisions", schema == .number(2) {
                 guard case .array(let docs) = block["declarations"], case .array(let policies) = block["policies"] else { try refuse("Policy evidence must bind its declarations and hashes."); return }
                 for doc in docs {
@@ -36,6 +122,7 @@ public enum InstrumentationEvidence {
                 }
                 let policyNames = policies.compactMap { value -> String? in if case .string(let name) = value { name } else { nil } }
                 if declarations.count != docs.count || policyNames.count != policies.count || declarations.keys.sorted() != policyNames.sorted() { try refuse("Policy declarations disagree with the executed hashes.") }
+                spanEntries = try spans(block, declarations: declarations, prompt: prompt, refuse: refuse)
             }
             for rowValue in rows {
                 guard case .object(let row) = rowValue, case .number(let position) = row["inputTokenPosition"], position.isFinite, position >= 0, position.rounded() == position,
@@ -79,6 +166,7 @@ public enum InstrumentationEvidence {
                     if let value = row["appliedScales"] {
                         guard case .object(let scales) = value, scales.allSatisfy({ applied[$0.key] != nil && isFiniteNumber($0.value) }) else { try refuse("Applied scales must be finite and belong to applied actions."); return }
                     }
+                    if let span = spanEntries[policy] { try validateSpanRow(row, declaration: declaration, span: span, refuse: refuse) }
                 }
             }
         }
