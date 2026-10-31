@@ -11,6 +11,7 @@ import { freezeLabel, freezeOf } from "../lib/freeze";
 import {
   EVALUATION_REPORT_FILES, JUDGED, PRIMARY_OUTCOME_KEY, headlineRows, intervalLine, outcomeTitle, pLine, selectHeadline,
 } from "../lib/headline";
+import { BASELINE_ONLY_EFFECTS } from "../lib/baselineOnly";
 import { readJSONArtifact } from "../lib/judged";
 import { conditionErrors } from "../lib/runReport";
 import { runKindLabel } from "../lib/runKind";
@@ -151,7 +152,12 @@ function HeadlineCard({ run, pooled, onNavigate }: { run: WorkspaceRun; pooled: 
   return (
     <div className="card local-primary-card">
       <span className="section-number">HEADLINE OUTCOME</span>
-      {headline.outcome === null ? <>
+      {headline.outcome === null && run.baselineOnly && findFile(run.files, "effect-sizes.csv") ? <>
+        {/* A study of the baseline alone, analyzed: nothing to compare is
+            the design, not a missing result (lib/baselineOnly.ts). */}
+        <h2>Baseline only</h2>
+        <p>{BASELINE_ONLY_EFFECTS} The conditions table describes the baseline&apos;s responses.</p>
+      </> : headline.outcome === null ? <>
         <h2>Not available</h2>
         <p>{headline.declaredAbsent ? `${headline.chosenBy}. ` : ""}Select Generations or Provenance to inspect the artifacts this run does contain.</p>
       </> : <>
@@ -255,7 +261,7 @@ export function LocalOverview({ run, onNavigate }: { run: WorkspaceRun; onNaviga
       <section className="section-grid main-evidence">
         <div className="card evidence-card">
           <header className="section-header">
-            <div><span className="section-number">{hasConceptEvidence ? "CONCEPT VALIDATION" : "PAIRED EFFECTS"}</span><h2>{hasConceptEvidence ? `${run.validationConcepts.length} validation rows · ${run.cosineMatrices.length} cosine matrices` : shownEffects.length ? "Reported estimates" : "No effect-size table found"}</h2></div>
+            <div><span className="section-number">{hasConceptEvidence ? "CONCEPT VALIDATION" : "PAIRED EFFECTS"}</span><h2>{hasConceptEvidence ? `${run.validationConcepts.length} validation rows · ${run.cosineMatrices.length} cosine matrices` : shownEffects.length ? "Reported estimates" : run.baselineOnly && findFile(run.files, "effect-sizes.csv") ? "Baseline only: nothing to compare" : "No effect-size table found"}</h2></div>
             {hasConceptEvidence && <button className="quiet-link" onClick={() => onNavigate("concepts")}>Open evidence →</button>}
             {shownEffects.length > 0 && <button className="quiet-link" onClick={() => onNavigate("effects")}>Full table →</button>}
           </header>
@@ -263,7 +269,7 @@ export function LocalOverview({ run, onNavigate }: { run: WorkspaceRun; onNaviga
             <div className="axis-hint"><span>Negative</span><span>No difference</span><span>Positive</span></div>
             <div className="forest">{shownEffects.map((effect) => <ForestRow key={effect.key} effect={effect} compact />)}</div>
             <div className="legend"><span><i className="legend-dot" /> Estimate</span><span><i className="legend-line" /> Reported 95% CI</span><span>● adjusted p &lt; .05</span>{shownEffects.some(hasTooFewIndependentPairs) && <span>No whisker: too few pairs (for paired responses, items) for an interval</span>}</div>
-          </> : <div className="artifact-empty"><span>∅</span><p>This run has no readable <code>effect-sizes.csv</code>. Generation and provenance views are still available.</p></div>}
+          </> : run.baselineOnly && findFile(run.files, "effect-sizes.csv") ? <div className="artifact-empty"><span>∅</span><p>{BASELINE_ONLY_EFFECTS} Generation and provenance views are still available.</p></div> : <div className="artifact-empty"><span>∅</span><p>This run has no readable <code>effect-sizes.csv</code>. Generation and provenance views are still available.</p></div>}
         </div>
         <aside className="card local-contents-card">
           <span className="section-number">RUN CONTENTS</span>

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { AnalysisStampsCard, IntervalNote, SourceSnapshotNotice } from "../components/stamps";
 import { Badge, ExportButton, ForestRow, NoRunSelected } from "../components/ui";
 import { analysisStampsOf } from "../lib/analysisStamps";
+import { BASELINE_ONLY_EFFECTS } from "../lib/baselineOnly";
 import { skippedLinesNote } from "../lib/csv";
 import { demoCopy, demoEffects, DemoBanner, DemoEffectsLower, demoPreviewEnabled } from "../demo";
 import { findFile } from "../lib/discovery";
@@ -173,7 +174,7 @@ export function EffectsView({ run, onOpenFile }: { run: WorkspaceRun | null; onO
             </div>
           );
         })}
-        {groups.length === 0 && <div className="artifact-empty"><span>∅</span><p>No readable effect rows were found for this run.</p></div>}
+        {groups.length === 0 && <div className="artifact-empty"><span>∅</span><p>{run?.baselineOnly ? BASELINE_ONLY_EFFECTS : "No readable effect rows were found for this run."}</p></div>}
         {/* A line with no readable estimate or interval is left out, never
             patched up — and the table says it is short. */}
         {run && (run.skippedEffectRows ?? 0) > 0 && <div className="preview-warning skipped-note" role="status">{skippedLinesNote(run.skippedEffectRows ?? 0, "effect-sizes.csv", "effect rows (a row needs an endpoint, an estimate, and both ends of its interval)")}</div>}
