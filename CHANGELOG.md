@@ -151,10 +151,12 @@ migration that rewrites frozen bytes.
   prompt writes, with the same numbers and CSV bytes; each `probe.json`
   records `runDirectory` relative to the workspace, and its `runID` is the
   prompt id. The manifest is written when the run starts and replaced after
-  every prompt, a prompt's directory appears only once it is complete, and a
-  scheduler warning or cancel leaves the run marked `interrupted` with the
-  prompts that finished named. It comes home with `science-export` and
-  `science-fetch` under custody. Author it with `science interview jlens-probe-batch` on
+  every prompt, and a prompt's directory appears only once it is complete. A
+  cancel or the walltime leaves the run marked `interrupted` with the prompts
+  that finished named, while the job keeps the scheduler's own outcome; an
+  interrupted batch is not exported, so resubmit it with a longer walltime or
+  split it into batches sized by the review's estimate. A completed run comes
+  home with `science-export` and `science-fetch` under custody. Author it with `science interview jlens-probe-batch` on
   either client; the Mac's Research methods sheet shows the review.
 - **The J-lens probe route takes the CLI's agent and rendering settings, and
   an explicit zero.** `POST /api/jlens/probe` accepts `variantPath`,

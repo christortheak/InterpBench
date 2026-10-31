@@ -114,6 +114,10 @@ def host_memory_fit(resources, estimate):
     if requested is None:
         return {**result, 'hostFit': 'notChecked',
                 'summary': held + '; the job declares no memory request this review can read, so the site default applies.'}
+    if requested == 0:
+        # Slurm reads --mem=0 as all of the node's memory, which this review cannot size.
+        return {**result, 'hostFit': 'notChecked',
+                'summary': held + "; the job requests all of the node's memory (--mem=0), so it is not compared."}
     asked = f'the job requests {getattr(resources, "memory")} ({requested / 1024**3:.1f} GiB)'
     levers = ('set maxTokens to shorten the longest prompt, arm fewer layers, or raise the site\'s Slurm memory '
               'request (STEERLAB_SLURM_MEMORY)')
