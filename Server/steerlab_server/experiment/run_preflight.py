@@ -413,7 +413,7 @@ def seed_rule_admission(run_directory, *, name, manifest,
     expected = (sampling.DERIVED_SHA256 if sampling.manifest_derives_seeds(manifest)
                 else sampling.MANIFEST_SEEDS)
     count = sampling.sample_count(manifest)
-    found, widest = set(), 0
+    found, sampled, widest_records, widest_plan = set(), 0, 0, 0
     path = os.path.join(run_directory, resume_mod.GENERATIONS_FILENAME)
     try:
         with open(path, encoding="utf-8") as handle:
@@ -428,29 +428,49 @@ def seed_rule_admission(run_directory, *, name, manifest,
         if (not isinstance(record, dict) or "instrument" in record
                 or "error" in record or "output" not in record):
             continue
+        sampled += 1
         if record.get("seedPolicy"):
             found.add(record["seedPolicy"])
         if isinstance(record.get("sampleIndex"), int):
-            widest = max(widest, record["sampleIndex"] + 1)
+            widest_records = max(widest_records, record["sampleIndex"] + 1)
     for key in (shard_stamp or {}).get("expectedKeys") or []:
         if (isinstance(key, list) and len(key) == 5
                 and key[4] == resume_mod.KIND_SAMPLED
                 and isinstance(key[3], int)):
-            widest = max(widest, key[3] + 1)
-    if found <= {expected} and widest <= count:
+            widest_plan = max(widest_plan, key[3] + 1)
+    if found <= {expected} and max(widest_records, widest_plan) <= count:
         return
-    recorded = ", ".join(sorted(found)) or "no stated policy"
+    # What the parked directory holds, said from what was actually read: its
+    # records, and (for a shard partial) the plan its shard.json fixed.
+    if not sampled:
+        held = "it has no sampled records yet"
+    elif found:
+        held = (f"its sampled records use seedPolicy "
+                f"{', '.join(sorted(found))} with up to {widest_records} "
+                "sample(s) per item")
+    else:
+        held = (f"its sampled records state no seed policy and reach up to "
+                f"{widest_records} sample(s) per item")
+    if widest_plan > count:
+        held += (f", and its shard plan (shard.json) expects up to "
+                 f"{widest_plan} sample(s) per item")
+    if shard_stamp is not None:
+        fresh = (f"steerlab-server study submit {name} --verb run --executor "
+                 f"slurm --parallel {shard_stamp.get('shardCount')}  (a fresh "
+                 "fan-out under the "
+                 "current rule; or finish these partials on the engine release "
+                 "that started them)")
+    else:
+        fresh = (f"steerlab-server experiment run {name}  (a fresh run under "
+                 "the current rule, without --resume; or finish this run on "
+                 "the engine release that started it)")
     raise resume_mod.ResumeRefusal(
         f"run directory {run_directory} was checkpointed under a different "
-        f"seed rule: its sampled records use seedPolicy {recorded} with up "
-        f"to {widest} sample(s) per item, but this engine runs '{name}' with "
-        f"seedPolicy {expected} and {count} sample(s) per item (a declared "
-        "derivedSHA256 is now honored at one sample per item) — refusing to "
-        "mix two seed rules in one run",
-        gate=lifecycle_gates.MANIFEST_EPOCH,
-        repair=(f"finish this run on the engine release that started it, or "
-                f"start a fresh run under the current rule: "
-                f"steerlab-server experiment run {name}  (without --resume)"))
+        f"seed rule: {held}, but this engine runs '{name}' with seedPolicy "
+        f"{expected} and {count} sample(s) per item (a declared derivedSHA256 "
+        "is now honored at one sample per item) — refusing to mix two seed "
+        "rules in one run",
+        gate=lifecycle_gates.MANIFEST_EPOCH, repair=fresh)
 
 
 def panel_resume_admission(run_directory, *, manifest, shard,

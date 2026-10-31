@@ -493,6 +493,52 @@ def test_merge_refuses_manifest_drift(tmp_path, monkeypatch):
         sharding.merge_shard_runs("sharddrift", shard_dirs, root=root)
 
 
+def test_merge_refuses_shards_that_straddle_the_seed_rule_change(
+        tmp_path, monkeypatch):
+    """A fan-out that straddles an engine update: shard 0 ran under the rule
+    from before issue #3 (samplesPerItem alone decided, so a declared
+    derivedSHA256 at one sample per item used the fixed list), shard 1 under
+    the current one. With one listed seed the keys agree and every
+    completeness check passes, so only the records' seedPolicy shows it."""
+    from steerlab_server.experiment import sampling
+    root = str(tmp_path)
+    prompts = _study_fixture(root, "shardrule")
+    raw = es.load_raw("shardrule", root)
+    raw["samplesPerItem"] = 1
+    es.save_raw(raw, root)
+
+    def old_rule(temperature, samples_per_item, seed_policy):
+        return bool(temperature) and temperature > 0 and (samples_per_item or 1) > 1
+
+    def shards(old_engine_for):
+        dirs = []
+        for index in range(2):
+            _patch_study_fakes(monkeypatch, _seed_sensitive_generate())
+            with monkeypatch.context() as engine:
+                if index in old_engine_for:
+                    engine.setattr(sampling, "derives_seeds", old_rule)
+                dirs.append(tasks.run("shardrule", prompts, root,
+                                      model_provider=_fake_model,
+                                      log=lambda *_: None,
+                                      shard=sharding.ShardSpec(index, 2)))
+        return dirs
+
+    straddling = shards({0})
+    with pytest.raises(sharding.ShardMergeRefusal) as refusal:
+        sharding.merge_shard_runs("shardrule", straddling, root=root)
+    assert isinstance(refusal.value, sharding.ShardMergeError)
+    assert ("the shards' sampled records state seedPolicy derivedSHA256 in "
+            "shard(s) 1; seedPolicy manifestSeeds in shard(s) 0") in str(refusal.value)
+    assert "the shard partials are untouched" in str(refusal.value)
+    assert refusal.value.gate == "manifestEpoch"
+    assert refusal.value.repair_action.startswith(
+        "steerlab-server study submit shardrule --verb run --executor slurm "
+        "--parallel 2  (a fresh fan-out")
+    # Shards that all ran under the current rule merge as before.
+    merged = sharding.merge_shard_runs("shardrule", shards(set()), root=root)
+    assert merged
+
+
 # --- 4. shard checkpoint → resume → merge ---------------------------------------
 
 def test_shard_checkpoint_resume_then_merge_is_byte_identical(

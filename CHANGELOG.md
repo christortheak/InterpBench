@@ -204,10 +204,16 @@ migration that rewrites frozen bytes.
   Resuming such a run on this release is refused (`manifestEpoch`), because
   its finished cells would keep the fixed list's records while the rest got
   derived seeds; finish it on the engine that started it, or start a fresh
-  run. Engines now advertise `remoteStudy.declaredSeedPolicy`, and both
-  clients refuse to submit a study of this shape to an engine without it,
-  with the repair to update that engine; every other study submits as
-  before.
+  run. Merging shards whose records state two seed rules, from a fan-out
+  that straddled an engine update, is refused in the same way. Engines now
+  advertise `remoteStudy.declaredSeedPolicy`, and a client refuses to
+  submit a study of this shape to an engine without it, with the repair to
+  update that engine; every other study submits as before. The composite
+  `run`, the app's submissions, and a server-resident submission always
+  check. `runner submit` and `remote submit-bundle` name only a staged
+  bundle, so they check only when this workspace holds the bundle's study
+  under the same name and content hash; without a workspace, or for a
+  bundle built elsewhere, they submit unchecked.
   Derived seeds include the condition, so arms draw distinct streams for the
   same item: the design is paired at the prompt level, not by common random
   numbers, whereas the fixed list reuses one set of seeds across every item

@@ -49,6 +49,7 @@ from dataclasses import dataclass
 from . import resume as resume_mod
 from . import run_status
 from . import voice_lint
+from .lifecycle_gates import MANIFEST_EPOCH, LifecycleRefusalMixin
 
 SHARD_FILENAME = "shard.json"
 SHARD_SCHEMA = 1
@@ -86,6 +87,11 @@ class ShardError(ValueError):
 
 class ShardMergeError(RuntimeError):
     """A merge refusal: the message is the actionable, plain-language text."""
+
+
+class ShardMergeRefusal(LifecycleRefusalMixin, ShardMergeError):
+    """A :class:`ShardMergeError` that carries its lifecycle gate and an
+    executable repair. Every ``except ShardMergeError`` still catches it."""
 
 
 @dataclass(frozen=True)
@@ -636,6 +642,50 @@ def find_merged_runs_for_job(name: str, root: str,
     return found
 
 
+def _prove_one_seed_rule(name: str, manifest, stamps: list[dict],
+                         shard_records: list[list[dict]]) -> None:
+    """Refuse a merge whose shards' sampled records state seed policies other
+    than the one this engine applies to the manifest.
+
+    The content hash cannot see it: a fan-out that straddles an engine
+    update runs one unchanged manifest under two readings. Before a declared
+    derivedSHA256 was honored at one sample per item (issue #3), such a study
+    ran under manifestSeeds; with one listed seed the shards' keys still
+    agree, so every completeness check above passes and the merge would mix
+    two rules in one run. A panel's turns take seeds by their own rule and
+    are not compared here."""
+    if manifest.study_kind == "multiAgent":
+        return
+    from . import sampling
+    expected = (sampling.DERIVED_SHA256 if sampling.manifest_derives_seeds(manifest)
+                else sampling.MANIFEST_SEEDS)
+    stated: dict[str, list[int]] = {}
+    for stamp, records in zip(stamps, shard_records):
+        for record in records:
+            if resume_mod.record_key(record)[-1] != resume_mod.KIND_SAMPLED:
+                continue
+            policy = record.get("seedPolicy")
+            if policy:
+                shards = stated.setdefault(str(policy), [])
+                if int(stamp["shardIndex"]) not in shards:
+                    shards.append(int(stamp["shardIndex"]))
+    if set(stated) <= {expected}:
+        return
+    found = "; ".join(f"seedPolicy {policy} in shard(s) "
+                      f"{', '.join(str(index) for index in shards)}"
+                      for policy, shards in sorted(stated.items()))
+    raise ShardMergeRefusal(
+        f"shard merge refused: the shards' sampled records state {found}, but "
+        f"this engine merges '{name}' under seedPolicy {expected} (a declared "
+        "derivedSHA256 is now honored at one sample per item) — the fan-out "
+        "straddled a change of seed rule, and merging would mix two rules in "
+        "one run; the shard partials are untouched",
+        gate=MANIFEST_EPOCH,
+        repair=(f"steerlab-server study submit {name} --verb run --executor "
+                f"slurm --parallel {len(stamps)}  (a fresh fan-out on one "
+                "engine release; do not merge these partials)"))
+
+
 def _prove_shards(name: str, shard_dirs: list[str], *, root: str) -> _ProvenShards:
     """Every refusal a merge can make, and none of its writes."""
     stamps: list[dict] = []
@@ -760,6 +810,7 @@ def _prove_shards(name: str, shard_dirs: list[str], *, root: str) -> _ProvenShar
             f"{manifest.content_hash()[:12]}… but the shards ran under "
             f"{experiment_hash[:12]}… — the experiment drifted since the "
             "fan-out (epoch guard); the shard partials are untouched")
+    _prove_one_seed_rule(name, manifest, stamps, shard_records)
 
     merged_records = [record for records in shard_records
                       for record in records]

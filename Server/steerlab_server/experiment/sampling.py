@@ -77,12 +77,15 @@ def declared_policy_changes_seeds(temperature, samples_per_item, seed_policy,
 def remote_honors_declared_seed_policy(capabilities) -> bool:
     """Whether a capability snapshot advertises
     :data:`DECLARED_SEED_POLICY_CAPABILITY`, in the nested or the dotted
-    feature form (Swift twin ``ClusterCapabilities.supportsDeclaredSeedPolicy``)."""
+    feature form. A nested value, when present, wins over the dotted one,
+    as in the Swift twin ``ClusterCapabilities.supportsDeclaredSeedPolicy``."""
     if not isinstance(capabilities, dict):
         return False
     remote = capabilities.get("remoteStudy")
-    if isinstance(remote, dict) and remote.get(DECLARED_SEED_POLICY_CAPABILITY) is True:
-        return True
+    nested = (remote.get(DECLARED_SEED_POLICY_CAPABILITY)
+              if isinstance(remote, dict) else None)
+    if nested is not None:
+        return nested is True
     features = capabilities.get("features")
     return (isinstance(features, dict) and features.get(
         "remoteStudy." + DECLARED_SEED_POLICY_CAPABILITY) is True)
@@ -144,10 +147,13 @@ def sample_count(manifest) -> int:
 
 def run_seed_policy(manifest) -> str:
     """The seed policy a generating run's ``config.json`` stamps: the
-    OPERATIVE one, which its sampled records stamp too, not the declaration.
-    A panel's turns derive their seeds whenever the temperature is above 0
-    (``multi_agent``); every other study follows :func:`derives_seeds`. Swift
-    twin: the ``seedPolicy`` argument ``ExperimentTasks`` passes to
+    OPERATIVE one, not the declaration. For an ordinary study it is the
+    policy its sampled records stamp too. A panel's turns derive their seeds
+    whenever the temperature is above 0 (``multi_agent``); at temperature 0
+    its turns stamp ``greedy``, a word the closed config vocabulary does not
+    have, so the config says ``manifestSeeds``: no seed is drawn either way
+    (the results export reads the two as agreeing). Swift twin: the
+    ``seedPolicy`` argument ``ExperimentTasks`` passes to
     ``RunMetadata.write`` (``StudySampling.policy``, and the panel rule)."""
     if manifest.study_kind == "multiAgent":
         derived = bool(manifest.temperature) and manifest.temperature > 0
