@@ -337,6 +337,16 @@ extension ExperimentStoreTests {
             var (manifest, _, _) = try plantSweepStudy(
                 name: "sweep-inert", root: root)
             manifest.studyType = "agentComparison"
+            // With no agent it measures the baseline alone, whose one
+            // measured input is its task prompts, so they are pinned
+            // (`ExperimentStore.isBaselineOnlyStudy`).
+            let items = Data((#"{"id": "p0", "prompt": "Decide."}"# + "\n").utf8)
+            let itemsURL = root.appending(components: "prompts", "tasks", "items.jsonl")
+            try FileManager.default.createDirectory(
+                at: itemsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try items.write(to: itemsURL)
+            manifest.taskPromptsFile = "prompts/tasks/items.jsonl"
+            manifest.taskPromptsHash = sweepSha256Hex(items)
             try ExperimentStore.save(manifest)
             try FileManager.default.removeItem(
                 at: root.appending(components: "prompts", "batteries", "b.jsonl"))

@@ -227,6 +227,11 @@ def test_carried_inert_sweep_neither_pins_nor_blocks_freeze(tmp_path):
     _sweep_study(root, "s")
     d = es.load_raw("s", root)
     d["studyType"] = "agentComparison"
+    # With no agent it measures the baseline alone, whose one measured input
+    # is its task prompts, so they are pinned (manifest.baseline_only_study).
+    d["taskPromptsFile"] = "prompts/tasks/items.jsonl"
+    d["taskPromptsHash"] = _write(os.path.join(root, d["taskPromptsFile"]),
+                                  '{"id": "p0", "prompt": "Decide."}\n')
     es.save_raw(d, root)
     os.remove(os.path.join(root, "prompts", "batteries", "b.jsonl"))
     frozen = es.freeze("s", force=True, root=root)
