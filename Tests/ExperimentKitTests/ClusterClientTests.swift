@@ -93,6 +93,136 @@ import Testing
     }
 
 
+    // MARK: - The declared seed policy (issue #3)
+
+    /// The submission answer the two seed-policy guards let through.
+    private static let submitted = Data(
+        #"{"jobId":"id","experiment":"seeds","verb":"run","executor":"local","dryRun":true,"runBundle":{},"command":[],"recordsDirectory":"/runs/seeds","submissionDirectory":"/runs/submission"}"#
+            .utf8)
+
+    /// A study the old seed rule would seed with the fixed list.
+    private static func affectedStudy() -> ExperimentManifest {
+        var manifest = ExperimentManifest(name: "seeds", description: "", modelID: "test/model")
+        manifest.temperature = 0.7
+        manifest.seedPolicy = "derivedSHA256"
+        return manifest
+    }
+
+    /// `remote submit-bundle` names a staged bundle only: the guard reads its
+    /// study from this workspace when the bundle's name and content hash
+    /// match, and refuses on an engine without `declaredSeedPolicy` before
+    /// anything is submitted.
+    @Test func aStagedBundleOfAnAffectedStudyRefusesOnAnEngineWithoutTheRule()
+        async throws
+    {
+        ExperimentRootOverrideLock.acquire()
+        let temp = FileManager.default.temporaryDirectory
+            .appending(component: "seedrule-\(UUID().uuidString)")
+        ExperimentStore.rootOverride = temp
+        defer {
+            ExperimentStore.rootOverride = nil
+            try? FileManager.default.removeItem(at: temp)
+            ExperimentRootOverrideLock.release()
+        }
+        var manifest = try ExperimentStore.create(
+            name: "seeds", description: "", modelID: "test/model")
+        manifest.temperature = 0.7
+        manifest.seedPolicy = "derivedSHA256"
+        try ExperimentStore.save(manifest)
+        let hash = ExperimentStore.manifestHash(try ExperimentStore.load(name: "seeds"))
+
+        func client(
+            engineHasRule: Bool, bundleHash: String, expectSubmit: Bool = true
+        ) -> ClusterClient {
+            ClusterClient(
+                profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+                session: Self.session { request in
+                    switch request.url?.path {
+                    case "/api/bundles/inspect":
+                        return (Data(#"{"experiment":"seeds","experimentContentHash":"\#(bundleHash)","runtimeRequirements":[]}"#.utf8), 200)
+                    case "/api/capabilities":
+                        return (Data((engineHasRule
+                            ? #"{"remoteStudy":{"declaredSeedPolicy":true}}"#
+                            : #"{"remoteStudy":{"submitBundle":true}}"#).utf8), 200)
+                    case "/api/studies/submit-bundle":
+                        if !expectSubmit {
+                            Issue.record("submitted to an engine without the rule")
+                        }
+                        return (Self.submitted, 200)
+                    default:
+                        Issue.record("unexpected request \(request.url?.path ?? "")")
+                        return (Data("{}".utf8), 404)
+                    }
+                })
+        }
+        do {
+            _ = try await client(engineHasRule: false, bundleHash: hash, expectSubmit: false)
+                .submitBundle(
+                    path: "/runs/staged/seeds.tar.gz", verb: "run", executor: "local",
+                    dryRun: true)
+            Issue.record("expected the declared-seed-policy refusal")
+        } catch {
+            let refusal = (error as? ExperimentError)?.lifecycleRefusal
+            #expect(refusal?.gate == .missingPrerequisite)
+            #expect(refusal?.reason.contains("remoteStudy.declaredSeedPolicy") == true)
+            #expect(refusal?.repairAction.contains("cluster push --site") == true)
+        }
+        // The engine has the rule: submitted.
+        _ = try await client(engineHasRule: true, bundleHash: hash).submitBundle(
+            path: "/runs/staged/seeds.tar.gz", verb: "run", executor: "local", dryRun: true)
+        // A bundle this workspace cannot vouch for is not checked.
+        _ = try await client(engineHasRule: false, bundleHash: String(repeating: "0", count: 64))
+            .submitBundle(path: "/runs/staged/seeds.tar.gz", verb: "run", executor: "local", dryRun: true)
+        // A step that samples no study text is not checked.
+        _ = try await client(engineHasRule: false, bundleHash: hash).submitBundle(
+            path: "/runs/staged/seeds.tar.gz", verb: "extract", executor: "local", dryRun: true)
+    }
+
+    /// A server-resident study is judged from the server's own manifest.
+    @Test func aServerResidentAffectedStudyRefusesOnAnEngineWithoutTheRule()
+        async throws
+    {
+        let manifest = try JSONEncoder().encode(Self.affectedStudy())
+        func client(engineHasRule: Bool) -> ClusterClient {
+            ClusterClient(
+                profile: ClusterConnectionProfile(baseURL: URL(string: "http://server.test")!),
+                session: Self.session { request in
+                    let path = request.url?.path ?? ""
+                    if path.hasSuffix("/manifest") { return (manifest, 200) }
+                    if path == "/api/capabilities" {
+                        return (Data((engineHasRule
+                            ? #"{"remoteStudy":{"declaredSeedPolicy":true}}"#
+                            : #"{"remoteStudy":{"submitBundle":true}}"#).utf8), 200)
+                    }
+                    #expect(path == "/api/studies/submit")
+                    if !engineHasRule { Issue.record("submitted to an engine without the rule") }
+                    return (Self.submitted, 200)
+                })
+        }
+        do {
+            _ = try await client(engineHasRule: false).submitStudy(
+                experiment: "seeds", verb: "run", executor: "local", dryRun: true)
+            Issue.record("expected the declared-seed-policy refusal")
+        } catch {
+            #expect(String(describing: error).contains("remoteStudy.declaredSeedPolicy"))
+        }
+        _ = try await client(engineHasRule: true).submitStudy(
+            experiment: "seeds", verb: "run", executor: "local", dryRun: true)
+    }
+
+    /// The nested value wins over the dotted feature whenever it is present
+    /// (Python twin: `sampling.remote_honors_declared_seed_policy`).
+    @Test func theNestedDeclaredSeedPolicyValueWins() throws {
+        func supports(_ json: String) throws -> Bool {
+            try JSONDecoder().decode(ClusterCapabilities.self, from: Data(json.utf8))
+                .supportsDeclaredSeedPolicy
+        }
+        #expect(try !supports(#"{"remoteStudy":{"declaredSeedPolicy":false},"features":{"remoteStudy.declaredSeedPolicy":true}}"#))
+        #expect(try supports(#"{"remoteStudy":{"declaredSeedPolicy":true},"features":{"remoteStudy.declaredSeedPolicy":false}}"#))
+        #expect(try supports(#"{"remoteStudy":{"declaredSeedPolicy":null},"features":{"remoteStudy.declaredSeedPolicy":true}}"#))
+        #expect(try !supports(#"{"remoteStudy":{"submitBundle":true}}"#))
+    }
+
     @Test func clientErrorsExposeTheirActionableMessageThroughLocalizedDescription() {
         let error = ClusterClient.ClientError.badResponse(
             401, #"{"detail":"missing or invalid bearer token"}"#)
