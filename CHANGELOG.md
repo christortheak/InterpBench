@@ -12,6 +12,39 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **An intervention policy's added vector now takes its strength in
+  residual-norm units, like a static agent's α.** Before, a policy multiplied
+  the stored vector by its strength directly, so a strength meant a different
+  dose for every vector and layer, and could not be compared with the α of a
+  static agent. A new policy (schema version 2) adds strength × R / ‖v‖ × v,
+  where R is the vector's stamped mean residual norm at the policy layer, the
+  same number a static agent uses. A fixed policy at α over both stages, at the
+  last position, now adds exactly what a static agent at α adds. Rule values,
+  bounds, and the strengths an expert provider returns are all in these units.
+  Review records R, its convention, and the vector's norm in the policy, so its
+  hash covers them. A vector with no stamped norm at that layer, or a direction
+  given as numbers, is refused with `policyResidualNormMissing`; the repair is
+  `vectors backfill-norms`, or an explicit `"strengthUnits": "rawMultiplier"` on
+  that action, which keeps the old meaning and is recorded as a choice. The
+  app's guided authoring starts an added vector at 0.1 within bounds of 0 and
+  0.2, the default of a promoted agent; a full residual norm (1.0) usually
+  makes generation incoherent. Every published version-1
+  policy keeps its meaning, a raw multiplier, and still attaches and runs.
+  Review no longer writes version 1 (`policyVersionOneSettings` says how to
+  convert a settings file). An engine from an earlier release refuses a
+  version-2 policy, and clients check for the new `policy-v2` capability
+  before submitting one. Ablation and token actions are unchanged.
+- **Policy evidence states its units.** Each decision row now records the
+  units of its strengths (`strengthUnits`) and, for an added vector, the
+  multiplier applied to the stored direction (`appliedScales`), which compares
+  directly with the multiplier a static agent applies to the same vector.
+  `intervention-scope.json`, `science
+  policy-review`, `policy-publish`, and `policy-inspect` state each action's
+  units, and `science evidence-analyze` summarizes the applied multipliers.
+  Evidence recorded before this change stays admissible. A strength at a
+  fractional bound, such as 0.2, is no longer refused when evidence is
+  collected: execution bounds strengths in float32, and the check now does too.
+
 ## [0.9.18] — 2026-10-25
 
 - **An analysis of an unfinished run is no longer presented as the finished

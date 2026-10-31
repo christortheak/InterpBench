@@ -54,6 +54,15 @@ keep their sequential rounding. Existing SAE latent edits, training deltas, and
 legacy recorders stay in their original chain positions. There is no new SAE
 policy or reinterpretation of a legacy reader as a behavior-changing policy.
 
+A policy addition is a separate action after that chain, in the same units. It
+uses the direction as stored at the policy's one layer. From policy schema
+version 2, its strength is in residual-norm units, like a static agent's α:
+strength α adds α × R / ‖v‖ × v, with the R a static agent reads for that vector
+and layer, recorded in the policy at review. A version-1 policy's strength
+multiplies the stored direction directly, as it always did. The conversion is
+one function, `policy_actions.addition_scale`, which takes one strength per
+position. See [intervention policies](INTERVENTION-POLICIES.md#strength-units).
+
 ## State, positions, and tensor behavior
 
 Each Python subscription carries response identity (including condition, agent

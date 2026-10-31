@@ -28,8 +28,10 @@ additions; post-action study readings. The new policy action phase is explicitly
 separate from the legacy chain. Conditional removal can therefore remove an
 existing legacy offset. Multiple policy ablations at a site share one subspace
 and must request the same per-position removal fraction, or execution explains
-the conflict. Addition uses the stored vector and a bounded multiplier; removal
-uses a dimensionless fraction of the normalized subspace projection.
+the conflict. Addition uses the direction as stored at the policy's one layer,
+with no layer band or neutral-basis projection, and a bounded strength in
+residual-norm units (below). Removal uses a dimensionless fraction of the
+normalized subspace projection.
 
 At token selection, policies run after the existing Hugging Face processors and
 finite-logit guard, before temperature and sampling filters. Biases add first;
@@ -52,12 +54,49 @@ custom providers, immutable authoring, exact-byte attachment, cross-client
 round-trips, and ordinary/panel generation. No app install, cluster deploy, live
 research job, or model download is authorized by implementation alone.
 
+## Strength units
+
+From policy schema version 2, an addition's strength is in residual-norm units,
+the units of a static agent's α. A strength α adds α × R / ‖v‖ × v at each
+selected position, where v is the stored direction and R is the vector
+sidecar's stamped mean residual norm at the policy layer. R and its averaging
+convention are the ones static steering reads for that vector and layer, so the
+added vector's norm is α × R, and a fixed policy at α over both stages at
+`lastPosition` adds what a static agent at α adds, at the same positions. A
+promoted agent's default is 0.1; a full residual norm (1.0) usually makes
+generation incoherent. Fixed, threshold, and affine values, action bounds, and
+the strengths an expert provider returns are all in these units.
+
+Review records what execution needs on the action: `strengthUnits`,
+`residualNorm`, `residualNormConvention` (`null` for a sidecar measured before
+the convention was stamped), and `vectorNorm`. The policy's hash covers them, so
+execution and evidence never reread the vector library. A vector with no stamped
+residual norm at the policy layer, or a direction given as numbers, is refused
+(`policyResidualNormMissing`). The repair is to measure the norms with
+`vectors backfill-norms`, which writes a new vector artifact, or to choose
+`"strengthUnits": "rawMultiplier"` on that action. A raw multiplier multiplies the
+stored direction directly and is not comparable with a static agent's α; it is
+an explicit, recorded choice for one action, never a default.
+
+Every published version-1 policy keeps its meaning forever: its additions
+multiply the stored direction directly, and frozen studies pin those bytes by
+hash. Version 1 has no unit fields, and one written into it is refused rather
+than reinterpreted. Review no longer authors version 1
+(`policyVersionOneSettings`): set `"schemaVersion": 2`, and add
+`"strengthUnits": "rawMultiplier"` to an action to keep the old meaning. An
+engine that knows only version 1 refuses a version-2 policy, and clients check
+for the `policy-v2` capability before submitting one. Ablation keeps its
+dimensionless fraction and token actions keep their own scales in every
+version.
+
 ## Authoring and attachment
 
 The app opens **Intervention policies…** from both Probes and Agents. The guided
 starter asks for a portable probe, a fixed/threshold/adaptive rule, an action,
 and strength bounds. It uses the probe's pinned model, rendering, and site;
-expert settings can define more complex policies. It presents a review before
+expert settings can define more complex policies. An added vector starts at
+strength 0.1 within bounds of 0 and 0.2 residual-norm units; removal and token
+actions start at 1 within bounds of 0 and 1. It presents a review before
 saving and separately reviews a new agent version. The current Playground
 control editor cannot express policies; it explains the Python study/API route
 instead of silently dropping them.
@@ -80,8 +119,12 @@ learn the advanced schema.
 ## Evidence and current limits
 
 Ordinary sampled studies and panel turns retain `interventionDecisions` beside
-responses. Panel flattening preserves it. Scope reports summarize policy hashes,
-bindings, timing, and action bounds. The app's Results view exposes those
+responses. Panel flattening preserves it. Each decision row records requested
+and applied strengths in the action's declared units, those units
+(`strengthUnits`), and, for an addition, `appliedScales`: the multiplier applied
+to the stored direction, which for residual-norm units is the raw scalar a
+static agent at the same α applies. Scope reports summarize policy hashes,
+bindings, timing, and each action's bounds and units. The app's Results view exposes those
 records. A synchronous Python agent-chat response includes decision records;
 streaming chat executes policies but is an exploratory text stream, not durable
 study evidence. Policy-failure sidecars preserve partial observations and never
