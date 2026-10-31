@@ -176,6 +176,10 @@ class Page:
         # instead of reporting a missing analysis or an empty table.
         self.baseline_only_analyzed = bool(context.get('baselineOnly') and context.get('effectsSource') is not None
                                            and not self.rows)
+        # A study of the baseline alone compares nothing, so its design section
+        # says what was measured instead.
+        self.design_title = ('What was asked and measured' if context.get('baselineOnly')
+                             else 'What was asked and compared')
 
     # -- shared pieces
 
@@ -423,7 +427,8 @@ class Page:
                                                            if observed['taskPromptsHash'] else None)
         pairs = [('Description, as the researcher wrote it', snapshot.get('experimentDescription') or None),
                  ('Task, as the researcher wrote it', snapshot.get('taskDescription') or None),
-                 ('Kind of study', _name(snapshot.get('studyType') or snapshot.get('studyKind'))
+                 ('Kind of study', join(_name(snapshot.get('studyType') or snapshot.get('studyKind')),
+                                        ' (baseline only)' if self.context.get('baselineOnly') else '')
                   if snapshot.get('studyType') or snapshot.get('studyKind') else None),
                  ('Model', join(*[code(model) for model in models], sep=', ') if models else None),
                  ('Model revision', join(*[code(revision) for revision in revisions], sep=', ') if revisions else None),
@@ -499,7 +504,7 @@ class Page:
                                          'intervention.')))
         else:
             parts.append(paragraph('The run holds no responses, so no condition can be described.'))
-        return block('What was asked and compared', *parts, key='design')
+        return block(self.design_title, *parts, key='design')
 
     def effects_table(self, rows, *, key, caption):
         modality = any(row['modality'] for row in rows)
@@ -970,7 +975,7 @@ class Page:
         exclusions, freeze = self.exclusions(), self.freeze()
         limits = self.limit_section()   # last: the sections above record what they could not show
         first = self.first()
-        entries = [('headline', 'Headline outcome'), ('design', 'What was asked and compared'), ('effects', 'Effects'),
+        entries = [('headline', 'Headline outcome'), ('design', self.design_title), ('effects', 'Effects'),
                    ('conditions', 'Each condition'), ('controls', 'Controls'), ('judges', 'Judges'),
                    ('exclusions', 'Exclusions'), ('freeze', 'Freeze and identity'), ('limits', 'Limits')]
         models = self.loaded['observed']['modelID'] or (

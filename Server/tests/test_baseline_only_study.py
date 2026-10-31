@@ -469,6 +469,7 @@ def test_it_runs_one_arm_analyzes_and_exports(workspace, capsys, monkeypatch):
     assert "- **baseline**: no intervention (the only arm: this study measures " \
         "the baseline agent alone)." in methods
     assert "Outcomes compared between conditions: none. Baseline only" in methods
+    assert "- Kind of study: `agentComparison` (baseline only)" in methods
     assert "no estimate, interval, or test applies" in methods
     assert "The engine compared each condition with the baseline" not in methods
     assert "no analysis of this run was found" not in methods
@@ -492,3 +493,6 @@ def test_it_runs_one_arm_analyzes_and_exports(workspace, capsys, monkeypatch):
     assert "The analysis stored no effect over all items" not in page
     assert "Every condition is compared with the baseline" not in page
     assert "What the run stored for each condition" in page
+    assert "(baseline only)" in page
+    assert "What was asked and measured" in page
+    assert "What was asked and compared" not in page

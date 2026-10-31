@@ -46,11 +46,11 @@ const RUN = "20261031T120000000-exp-replication-analyze";
 const header = "condition,endpoint,n,deltaMean,ciLower,ciUpper,wilcoxonW,wilcoxonP,adjustedP,correction,modality,stratifyBy,stratum,unit,estimand,inference\n";
 const manifestOf = (label: string) => fixture.cases.find((entry) => entry.label === label)!.manifest;
 
-const load = async (manifest: Record<string, unknown>) => {
+const load = async (manifest: Record<string, unknown>, analyzed = true) => {
   enterEmbedded();
   serveRuns({
     [`${RUN}/report.json`]: JSON.stringify({ experiment: "replication", conditions: { baseline: { generations: 6 } } }),
-    [`${RUN}/effect-sizes.csv`]: header,
+    ...(analyzed ? { [`${RUN}/effect-sizes.csv`]: header } : {}),
     [`${RUN}/experiment.json`]: JSON.stringify(manifest),
   });
   const [run] = await discoverRuns(embeddedRunsDirectory() as unknown as LocalDirectoryHandle);
@@ -69,6 +69,15 @@ describe("an analysis of a baseline-only study", () => {
     const effects = render(<EffectsView run={run} onOpenFile={() => {}} />);
     expect(effects.text).toContain(BASELINE_ONLY_EFFECTS);
     expect(effects.text).not.toContain("No readable effect rows were found");
+  });
+
+  it("claims no analysis for a run that was never analyzed", async () => {
+    const run = await load(manifestOf("declared-nothing-attached"), false);
+    expect(run.baselineOnly).toBe(true);
+    const effects = render(<EffectsView run={run} onOpenFile={() => {}} />);
+    expect(effects.text).not.toContain(BASELINE_ONLY_EFFECTS);
+    expect(effects.text).toContain("No readable effect rows were found");
+    expect(render(<LocalOverview run={run} onNavigate={() => {}} />).text).not.toContain(BASELINE_ONLY_EFFECTS);
   });
 
   it("leaves an empty analysis of any other study as it was", async () => {

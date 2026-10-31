@@ -1787,7 +1787,8 @@ def _methods(context):
     say()
     kind = snapshot.get("studyType") or snapshot.get("studyKind")
     if kind:
-        say(f"- Kind of study: {_code(kind)}")
+        say(f"- Kind of study: {_code(kind)}"
+            + (" (baseline only)" if context.get("baselineOnly") else ""))
     if snapshot.get("experimentDescription"):
         say(f"- Description, as the researcher wrote it: {_one_line(str(snapshot['experimentDescription']))}")
     if snapshot.get("taskDescription"):
