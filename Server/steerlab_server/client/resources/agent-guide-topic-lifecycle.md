@@ -292,7 +292,7 @@ is generated once for each sample, with no second arm to repeat it.
 - `verify`, `freeze`, and `analyze` carry a `baselineOnlyStudy` advisory that
   says so. A draft with nothing attached that does not declare the type, or
   declares `conceptStudy`, is still refused as `emptyStudy`, because there the
-  emptiness is a mistake.
+  emptiness is a mistake; that refusal's repair names the declaration.
 - Freeze asks for no validation evidence and no capability-battery evidence,
   because nothing is steered. Nothing is exempted or forced, and the settings
   summary says the study has one arm and no paired statistics.

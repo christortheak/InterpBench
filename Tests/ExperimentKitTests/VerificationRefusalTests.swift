@@ -307,10 +307,12 @@ import Testing
             #expect(reason.contains("nothing is attached yet"))
             let repair = refusals[0].repairAction
             // Plain words, and THIS client's commands: a concept, an agent, a
-            // template, or the interview.
+            // study of the baseline alone, a template, or the interview.
             for command in [
                 "steerlab-cli experiment attach demo <concept>",
                 "steerlab-cli experiment attach-agent demo",
+                "declare studyType agentComparison",
+                "steerlab-cli pack apply",
                 "steerlab-cli design list",
                 "steerlab-cli authoring study conceptStudy --json",
             ] {

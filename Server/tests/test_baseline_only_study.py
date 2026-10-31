@@ -20,7 +20,8 @@ What is pinned here:
    capability-battery stamp. A paired rubric, which has nothing to pair with
    one arm, is refused at verify under ``studyDeclaration`` with the
    per-response route as the repair; a rubric that codes each response
-   verifies.
+   verifies. The empty study's repair names the declaration, and following
+   it verifies.
 4. End to end on a fake model: the run executes one arm, a sharded run plans
    and merges the same records, submission sizing prices them, the analysis
    has no rows and says ``baselineOnlyStudy`` instead of ``emptyAnalysis``,
@@ -285,6 +286,16 @@ def test_an_undeclared_empty_draft_is_still_refused(workspace, capsys):
     code, document = _client(["experiment", "verify", STUDY], capsys)
     assert code == 65
     assert document["error"]["code"] == "emptyStudy"
+    # The repair names the declaration a study of the baseline alone needs,
+    # and following it, exactly as written, verifies.
+    route = (f"steerlab experiment set-protocol {STUDY} --set "
+             "studyType=agentComparison")
+    assert route in document["error"]["repairAction"]
+    code, _ = _client(route.split()[1:], capsys)
+    assert code == 0
+    code, verified = _client(["experiment", "verify", STUDY], capsys)
+    assert code == 0, verified
+    assert _codes(verified) == ["baselineOnlyStudy"]
 
 
 def _pin_rubric(root, relative, text):

@@ -27,6 +27,7 @@ phrase a refusal and must not pull an engine dependency to do so.
 from __future__ import annotations
 
 from . import lifecycle_gates
+from .command_vocabulary import MAC_PROGRAM
 from .manifest_errors import ExperimentStoreError
 
 #: ``verify()``'s sentence for a model-output study with no concept and no
@@ -137,7 +138,22 @@ def empty_repair(name: str, violations, program: str) -> str:
             f"A concept: {program} experiment attach {name} <concept>. "
             f"An agent: {program} agent list, then {program} experiment "
             f"attach-agent {name} (its --help names the reviewed-file flags). "
+            "To measure the unmodified model alone, declare studyType "
+            f"agentComparison: {baseline_only_route(name, program)}. "
             f"{template} {interview}conceptStudy --json.")
+
+
+def baseline_only_route(name: str, program: str) -> str:
+    """How the answering client declares a study of the baseline alone. The
+    Mac command line has no verb for the study type: a study pack declares
+    it, or the app's study type. Swift twin: the same clause in
+    ``VerificationRefusal.emptyRepair``."""
+    if program == MAC_PROGRAM:
+        return (f"in a study pack ({program} pack apply), or with the app's "
+                "study type, Compare agents")
+    return (f"{program} experiment set-protocol {name} --set "
+            f"studyType=agentComparison, or in a study pack ({program} pack "
+            "apply)")
 
 
 def paired_rubric_repair(name: str, program: str) -> str:

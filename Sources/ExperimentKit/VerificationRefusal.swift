@@ -140,6 +140,13 @@ enum VerificationRefusal {
             + "A concept: \(program) experiment attach \(name) <concept>. "
             + "An agent: \(program) agent list, then \(program) experiment "
             + "attach-agent \(name) (its --help names the reviewed-file flags). "
+            // A study of the baseline alone is not empty when it says so.
+            // This command line has no verb for the study type: a study pack
+            // declares it, or the app's study type (server twin:
+            // `verification_refusal.baseline_only_route`).
+            + "To measure the unmodified model alone, declare studyType "
+            + "agentComparison: in a study pack (\(program) pack apply), or "
+            + "with the app's study type, Compare agents. "
             + "\(template) \(interview)conceptStudy --json."
     }
 

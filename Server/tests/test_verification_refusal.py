@@ -194,10 +194,14 @@ def test_freezing_and_verifying_an_empty_draft_give_one_usable_refusal(
     assert frozen["error"]["code"] == "emptyStudy"
     assert frozen["error"]["gate"] == "emptyStudy"
     repair = frozen["error"]["repairAction"]
-    # Plain words, and THIS client's commands: a concept, an agent, a
-    # template, or the interview.
+    # Plain words, and THIS client's commands: a concept, an agent, a study
+    # of the baseline alone, a template, or the interview.
     for command in ("steerlab experiment attach demo <concept>",
                     "steerlab experiment attach-agent demo",
+                    "declare studyType agentComparison",
+                    "steerlab experiment set-protocol demo --set "
+                    "studyType=agentComparison",
+                    "steerlab pack apply",
                     "steerlab design list",
                     "steerlab authoring study conceptStudy --json"):
         assert command in repair, command

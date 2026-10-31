@@ -40,6 +40,11 @@ migration that rewrites frozen bytes.
   at freeze, under `studyDeclaration`, and the repair names
   `experiment pin-rubric` with a rubric that codes each response
   (`perResponseCoding`).
+- **The empty-study refusal names the baseline-only declaration.** The
+  `emptyStudy` repair now says that, to measure the unmodified model alone, a
+  study declares `studyType` `agentComparison`, and how: a study pack, or the
+  app's study type on the Mac; `experiment set-protocol <name> --set
+  studyType=agentComparison` or a study pack on the cross-platform client.
 - **An intervention policy's added vector now takes its strength in
   residual-norm units, like a static agent's α.** Before, a policy multiplied
   the stored vector by its strength directly, so a strength meant a different

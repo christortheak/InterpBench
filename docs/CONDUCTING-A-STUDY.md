@@ -852,7 +852,8 @@ response (`perResponseCoding`): paired judging compares a condition with the
 baseline, so `verify` refuses a paired rubric here (`studyDeclaration`) rather
 than letting the study freeze, run, and refuse at `evaluate`. An undeclared
 draft with nothing attached is still refused as `emptyStudy`, so a study only
-measures the baseline alone when it says so.
+measures the baseline alone when it says so; that refusal's repair names the
+declaration.
 Multi-slot conditions are legal and hash as one condition — several slots *are*
 the linear mix `h + Σ αᵢ·vᵢ` — so treat each mix as a first-class arm, keeping
 in mind that mixes multiply the matrix fast.

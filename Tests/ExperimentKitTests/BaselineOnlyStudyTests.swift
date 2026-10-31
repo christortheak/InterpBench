@@ -28,7 +28,8 @@ import Testing
 ///    of `emptyAnalysis`.
 /// 4. A paired rubric, which has nothing to pair with one arm, is refused at
 ///    verify under `studyDeclaration` with the per-response route as the
-///    repair; a rubric that codes each response verifies.
+///    repair; a rubric that codes each response verifies. The empty study's
+///    repair names the declaration a study of the baseline alone needs.
 ///
 /// Server twin: `Server/tests/test_baseline_only_study.py`.
 ///
@@ -245,6 +246,16 @@ import Testing
                 try ExperimentStore.save(manifest)
                 let outcome = await invoke("experiment", ["verify", "replication", "--json"])
                 #expect(outcome.envelope.error?.code == LifecycleGate.emptyStudy.rawValue)
+                // The repair names the declaration a study of the baseline
+                // alone needs, in this client's terms: this command line has
+                // no verb for the study type.
+                let repair = outcome.envelope.error?.repairAction ?? ""
+                for phrase in [
+                    "declare studyType agentComparison",
+                    "steerlab-cli pack apply", "Compare agents",
+                ] {
+                    #expect(repair.contains(phrase), "repair omits '\(phrase)'")
+                }
             }
         }
     }
