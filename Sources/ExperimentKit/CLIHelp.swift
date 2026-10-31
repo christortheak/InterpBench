@@ -163,6 +163,21 @@ public enum CLIFlagVocabulary {
         "concept import-chat --negative": "<chat.jsonl>",
         "concept import-chat --validation-pairs": "<n>",
         "concept import-chat --seed": "<n>",
+        // The J-lens readout's layer lists accept ranges (20-24) beside
+        // single indices, and every pin is a digest or an id.
+        "experiment set-jlens-readout --layers": "<l,l-l,…>",
+        "experiment set-jlens-readout --top-k-layers": "<l,l-l,…>",
+        "experiment set-jlens-readout --fitted-layers": "<l,l-l,…>",
+        "experiment set-jlens-readout --lens-sha256": "<sha256>",
+        "experiment set-jlens-readout --lens-model": "<model-id>[@<revision>]",
+        "experiment set-jlens-readout --top-k": "<k>",
+        "experiment set-jlens-readout --watchlist": "<token-id,…>",
+        "experiment set-jlens-readout --qualification": "<qualification-id>",
+        "experiment set-jlens-readout --tokenizer-hash": "<sha256>",
+        "experiment set-jlens-readout --max-armed-layers": "<n>",
+        "experiment set-jlens-readout --max-observations": "<n>",
+        "experiment set-jlens-readout --max-trace-bytes": "<bytes>",
+        "experiment set-jlens-readout --max-full-vocab-projections": "<n>",
     ]
 
     /// One line per flag. Imperative, and about the effect rather than the
@@ -402,6 +417,56 @@ public enum CLIFlagVocabulary {
             "The seed the held-out pairs are drawn with, 0 to "
             + "\(ChatConceptImport.maximumSeed); recorded in provenance.json.",
         "experiment attach --corpus": "Extra corpus members for emotionGrandMean.",
+        // The J-lens readout. The lens pins are typed here because this
+        // engine never reads a lens record; the Python client's --dry-run
+        // prints all of them with this verb's spelling (result.macCommand).
+        "experiment set-jlens-readout --layers":
+            "The source layers the readout reads (required), as indices or "
+            + "ranges such as 20-24.",
+        "experiment set-jlens-readout --top-k":
+            "Record the k highest-scoring tokens at each armed layer, 0 to 50 "
+            + "(default 0, none). Each top-k layer costs a full-vocabulary "
+            + "projection per generated token.",
+        "experiment set-jlens-readout --top-k-layers":
+            "Read the top-k at these armed layers only (default: every armed "
+            + "layer).",
+        "experiment set-jlens-readout --watchlist":
+            "Token ids whose scores are recorded at every armed layer, at most "
+            + "64. Needs no full-vocabulary projection.",
+        "experiment set-jlens-readout --no-companion":
+            "Leave out the logit-lens companion, the same readout without the "
+            + "lens, which halves the cost and removes the control.",
+        "experiment set-jlens-readout --qualification":
+            "Pin this passing qualification of the lens for the study's "
+            + "runtime. Freeze needs one.",
+        "experiment set-jlens-readout --tokenizer-hash":
+            "The study model's tokenizer hash, as the Python client prints it. "
+            + "Without it, tokenizerHash and configHash are not pinned.",
+        "experiment set-jlens-readout --lens-sha256":
+            "The lens tensor's SHA-256 (source.tensorSHA256 in its lens.json; "
+            + "required to declare).",
+        "experiment set-jlens-readout --lens-model":
+            "The model the lens was fitted on, with @<revision> when the lens "
+            + "records one (required to declare).",
+        "experiment set-jlens-readout --fitted-layers":
+            "The lens's fitted source layers (sourceLayers in its lens.json; "
+            + "required to declare).",
+        "experiment set-jlens-readout --max-armed-layers":
+            "Raise or lower the armed-layer ceiling (engine default 8).",
+        "experiment set-jlens-readout --max-observations":
+            "Raise or lower the whole-study observation ceiling (engine "
+            + "default 2,000,000).",
+        "experiment set-jlens-readout --max-trace-bytes":
+            "Raise or lower the whole-study trace-size ceiling in bytes "
+            + "(engine default 2 GiB).",
+        "experiment set-jlens-readout --max-full-vocab-projections":
+            "Raise or lower the whole-study compute ceiling (engine default "
+            + "200,000 full-vocabulary projections).",
+        "experiment set-jlens-readout --record-token-ids":
+            "Also set recordTokenIDs, so the exact sampled tokens are kept and "
+            + "the run can be replayed exactly.",
+        "experiment set-jlens-readout --dry-run":
+            "Check, pin, and price the readout, and write nothing.",
         // A compiled panel binds the STUDY's model and sampling settings, so
         // these three default from the target manifest and, when given,
         // overwrite it — the manifest stays the one place they are decided.

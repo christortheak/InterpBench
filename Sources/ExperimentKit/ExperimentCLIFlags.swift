@@ -772,6 +772,27 @@ public enum ExperimentCLIParser {
                 + ExperimentStore.knownResponseFormats.joined(separator: ", ")
                 + "), pinning the row set they select; \"\" clears the "
                 + "declaration."),
+        // The J-lens RUN READOUT. This engine never resolves or loads a lens
+        // (server-only by rule), so the lens pins are flags — the Python
+        // client's `set-jlens-readout --dry-run` prints them, with this exact
+        // spelling — and the block, its configuration hash, and its budget
+        // price are computed here exactly as that client computes them.
+        // None of the pin flags is `requiredFlags`: `""` clears with none.
+        .init(
+            namespace: "experiment", verb: "set-jlens-readout",
+            positional: "<name> <lens-id>",
+            purpose: "Declare the study's J-lens run readout: top-k and "
+                + "watched-token readings at the chosen layers, pinned to the "
+                + "lens named by --lens-sha256, --lens-model, and "
+                + "--fitted-layers, and priced against the readout budget at "
+                + "the study's token cap. \"\" as the lens id clears it.",
+            booleanFlags: ["--no-companion", "--record-token-ids", "--dry-run"],
+            valueFlags: [
+                "--lens-sha256", "--lens-model", "--fitted-layers", "--layers",
+                "--top-k", "--top-k-layers", "--watchlist", "--qualification",
+                "--tokenizer-hash", "--max-armed-layers", "--max-observations",
+                "--max-trace-bytes", "--max-full-vocab-projections",
+            ]),
         // The EVALUATION SAMPLING DESIGN (review round 12, finding 4). A verb
         // for the same reason as the two above: not a field assignment. It
         // takes the design a power computation produced — a per-condition

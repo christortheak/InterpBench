@@ -5229,6 +5229,14 @@ public struct ExperimentCLIRunner: Sendable {
                         HeadlineOutcome.producible(declaredStudy).payload,
                 ])
 
+        case "set-jlens-readout":
+            // The J-lens run readout. The engine reads, prices, and enforces
+            // the block; until now nothing wrote it. The lens pins are flags
+            // here because this engine never reads a lens record — see
+            // `JLensReadoutAuthoring` for the ruling — and everything derived
+            // from them is computed exactly as the Python client computes it.
+            return try JLensReadoutAuthoring.run(args, sink: sink)
+
         case "set-instrument-scope":
             // WHICH ROWS the option-consuming instruments read. The run-start
             // responseFormat gate refuses a mixed json+label prompt file the

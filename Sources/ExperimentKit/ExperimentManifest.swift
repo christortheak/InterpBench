@@ -1302,12 +1302,13 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
     /// it verbatim so an app re-save never destroys a server-authored
     /// chain (the JudgeRef.provider lesson, same day).
     public var pipeline: JSONValue?
-    /// Server-authored J-lens readout declaration, carried VERBATIM.
+    /// J-lens readout declaration, carried VERBATIM.
     ///
-    /// Same reason `pipeline` is opaque here: this engine cannot produce the
-    /// block — imported lens artifacts are PyTorch/HF-native, so J-lens work is
-    /// server-only by rule — but it can load, duplicate, and re-save a manifest
-    /// that has one. Without a passthrough the field is absent from
+    /// Same reason `pipeline` is opaque here: this engine never resolves the
+    /// lens the block names — imported lens artifacts are PyTorch/HF-native, so
+    /// J-lens work is server-only by rule — but it can load, duplicate, and
+    /// re-save a manifest that has one, and `experiment set-jlens-readout`
+    /// writes one from pins it is given (`JLensReadoutAuthoring`). Without a passthrough the field is absent from
     /// `CodingKeys`, so `duplicate`'s round-trip would silently drop a
     /// scientific pin: the copy would declare no readout, freeze cleanly, and
     /// measure nothing, with no warning anywhere. Decoded as `JSONValue` rather

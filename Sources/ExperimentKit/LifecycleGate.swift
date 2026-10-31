@@ -321,6 +321,7 @@ public enum RefusalSiteRegistry {
                 "experiment set-sampling", "experiment set-exclusions",
                 "experiment set-system-prompt",
                 "experiment set-parser", "experiment set-instrument-scope",
+                "experiment set-jlens-readout",
                 "experiment set-evaluation-sampling",
                 "experiment set-primary-outcome",
                 "experiment set-style-taxonomy", "experiment confirm",
@@ -373,9 +374,9 @@ public enum RefusalSiteRegistry {
                 + "&& steerlab-cli experiment promote <name> <concept>"),
         .init(
             gate: .artifactPin,
-            verbs: ["experiment promote", "agent inspect", "experiment attach-agent", "design instantiate", "design batch", "design save", "design update"],
-            origin: "AgentPromotion.promote — vector-artifact byte pins; AgentArtifactSnapshot / StudyAgentAuthoring / ExperimentStore.agentCondition — reviewed agent bytes and model compatibility; StudyDesignInstantiation — casting pins; StudyDesignSourceReview — source-panel pins",
-            repairAction: "For promotion: steerlab-cli experiment extract <name> && steerlab-cli experiment promote <name> <concept>. For design casting: steerlab-cli design inspect <name> --json and steerlab-cli agent inspect <path> --json; review both before reconstructing the casting. For agent inspection/attachment: steerlab-cli agent inspect <path> --json; then steerlab-cli experiment manifest <name> --json; review both and reconstruct the attachment request."),
+            verbs: ["experiment promote", "agent inspect", "experiment attach-agent", "design instantiate", "design batch", "design save", "design update", "experiment set-jlens-readout"],
+            origin: "AgentPromotion.promote — vector-artifact byte pins; AgentArtifactSnapshot / StudyAgentAuthoring / ExperimentStore.agentCondition — reviewed agent bytes and model compatibility; StudyDesignInstantiation — casting pins; StudyDesignSourceReview — source-panel pins; JLensReadoutAuthoring.checkPins — a lens fitted on another model or revision",
+            repairAction: "For promotion: steerlab-cli experiment extract <name> && steerlab-cli experiment promote <name> <concept>. For design casting: steerlab-cli design inspect <name> --json and steerlab-cli agent inspect <path> --json; review both before reconstructing the casting. For agent inspection/attachment: steerlab-cli agent inspect <path> --json; then steerlab-cli experiment manifest <name> --json; review both and reconstruct the attachment request. For a J-lens readout: steerlab-server jlens list, then steerlab-cli experiment set-jlens-readout <name> <a lens fitted on the study's model> …"),
         .init(
             gate: .sweepInputDrift,
             verbs: ["experiment sweep"],
