@@ -3509,13 +3509,26 @@ public enum ExperimentStore {
                 violations.append("multi-agent study needs a pinned scenario")
             }
         } else if manifest.concepts.isEmpty && manifest.variantConditions.isEmpty,
+            saeLatentConditionCount(manifest) == 0,
             !isBaselineOnlyStudy(manifest)
         {
-            // A study DECLARED baseline-only has one arm, the unmodified base
-            // model (public issue #4; `isBaselineOnlyStudy`). An undeclared or
-            // concept-study draft with nothing attached is still the empty
-            // study. Server twin: `Manifest.verify`.
+            // An SAE latent arm is attached: the server executes it, and a
+            // latent-only study is legal (`latentArmsNotExecutableProblem`
+            // refuses only this engine's run). A study DECLARED baseline-only
+            // has one arm, the unmodified base model (public issue #4;
+            // `isBaselineOnlyStudy`). An undeclared or concept-study draft
+            // with nothing attached is still the empty study. Server twin:
+            // `Manifest.verify`.
             violations.append("no concepts or variants attached")
+        }
+        // A study of the baseline alone measures its task prompts and nothing
+        // else, so they must be pinned: without them it froze cleanly and its
+        // run refused, by which time the repair was a duplicate. Server twin:
+        // `Manifest.verify`.
+        if isBaselineOnlyStudy(manifest),
+            (manifest.taskPromptsFile ?? "").isEmpty || (manifest.taskPromptsHash ?? "").isEmpty
+        {
+            violations.append(VerificationRefusal.baselineOnlyUnpinnedPromptsViolation)
         }
         violations += studyTypeContractViolations(manifest)
         // F2 (2026-07-19): pins are checked for the study kind that

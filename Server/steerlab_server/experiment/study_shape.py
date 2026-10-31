@@ -63,7 +63,8 @@ def baseline_only_study(d: dict) -> bool:
         return False
     if d.get("studyType") != "agentComparison":
         return False
-    if d.get("variantConditions") or d.get("saeLatentConditions"):
+    latent = d.get("saeLatentConditions")
+    if d.get("variantConditions") or (isinstance(latent, list) and latent):
         return False
     for condition in d.get("conditions") or []:
         condition = condition if isinstance(condition, dict) else {}

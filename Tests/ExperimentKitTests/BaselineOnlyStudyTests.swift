@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 
@@ -20,9 +21,10 @@ import Testing
 ///    Python engine: this engine gives the same answer for every shape
 ///    (baseline-only or not, the empty study or not, the arms a run executes),
 ///    the same sentences, and the same settings-summary Statistics section.
-/// 2. Through the CLI: `verify` and `freeze` are clean, carry a
-///    `baselineOnlyStudy` advisory, ask for no validation or battery evidence,
-///    are not forced, and stamp no capability-battery exemption; the run's
+/// 2. Through the CLI: with its task prompts pinned, `verify` and `freeze`
+///    are clean, carry a `baselineOnlyStudy` advisory, ask for no validation
+///    or battery evidence, are not forced, and stamp no capability-battery
+///    exemption; without them, both refuse and name `pin-prompts`. The run's
 ///    start-time refusals all let the shape through to one arm.
 /// 3. `analyze` of such a run has no rows and says `baselineOnlyStudy` instead
 ///    of `emptyAnalysis`.
@@ -67,13 +69,32 @@ import Testing
         (outcome.envelope.advisories ?? []).map(\.code)
     }
 
-    /// A draft of the shape, saved in the temp workspace.
+    static let items =
+        #"{"id": "p0", "prompt": "Decide the case."}"# + "\n"
+        + #"{"id": "p1", "prompt": "Explain the ruling."}"# + "\n"
+
+    /// A draft of the shape, saved in the temp workspace, with its task
+    /// prompts (the only input it measures) written and pinned unless asked
+    /// not to.
     @discardableResult
-    func makeBaselineOnlyDraft(_ name: String) throws -> ExperimentManifest {
+    func makeBaselineOnlyDraft(
+        _ name: String, pinningPrompts: Bool = true
+    ) throws -> ExperimentManifest {
         var manifest = try ExperimentStore.create(
             name: name, description: "", modelID: Self.model,
             modelRevision: Self.revision)
         manifest.studyType = "agentComparison"
+        if pinningPrompts {
+            let relative = "prompts/tasks/items.jsonl"
+            let url = ExperimentStore.workspaceRoot.appending(path: relative)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let bytes = Data(Self.items.utf8)
+            try bytes.write(to: url)
+            manifest.taskPromptsFile = relative
+            manifest.taskPromptsHash = SHA256.hash(data: bytes)
+                .map { String(format: "%02x", $0) }.joined()
+        }
         try ExperimentStore.save(manifest)
         return try ExperimentStore.load(name: name)
     }
@@ -87,10 +108,10 @@ import Testing
                 as? [String: Any])
     }
 
-    /// Writes the fixture's rubrics into the workspace at their paths.
-    func writeRubrics(_ fixture: [String: Any], into root: URL) throws {
-        let rubrics = try #require(fixture["rubrics"] as? [String: String])
-        for (relative, text) in rubrics {
+    /// Writes the fixture's files into the workspace at their paths.
+    func writeFiles(_ fixture: [String: Any], into root: URL) throws {
+        let files = try #require(fixture["files"] as? [String: String])
+        for (relative, text) in files {
             let url = root.appending(path: relative)
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -109,11 +130,7 @@ import Testing
     @Test func theFixtureIsThisEnginesAnswerForEveryShape() async throws {
         try await withTempRoot { root in
             let fixture = try fixture()
-            try writeRubrics(fixture, into: root)
-            #expect(
-                VerificationRefusal.baselineOnlyPairedRubricViolation(
-                    rubricFile: "prompts/rubrics/paired.md")
-                    == fixture["pairedRubricViolation"] as? String)
+            try writeFiles(fixture, into: root)
             #expect(ExperimentStore.baselineOnlyStudyAdvisory == fixture["advisory"] as? String)
             #expect(ExperimentStore.baselineOnlySummary == fixture["summary"] as? String)
             let effects = try #require(fixture["effectsSentence"] as? String)
@@ -129,12 +146,12 @@ import Testing
                         == (entry["baselineOnly"] as? Bool), "\(label)")
                 let violations = ExperimentStore.verify(manifest)
                 #expect(
-                    violations.contains(VerificationRefusal.emptyModelOutputViolation)
-                        == (entry["emptyStudy"] as? Bool), "\(label)")
+                    VerificationRefusal.emptyViolation(violations)
+                        == entry["emptyStudySentence"] as? String, "\(label)")
                 #expect(
-                    violations.contains {
-                        $0.hasPrefix(VerificationRefusal.baselineOnlyPairedRubricPrefix)
-                    } == (entry["pairedRubricRefused"] as? Bool), "\(label)")
+                    violations.filter {
+                        $0.hasPrefix("this study measures the baseline agent alone")
+                    } == (entry["baselineOnlySentences"] as? [String]), "\(label)")
                 if let executed = entry["executedConditions"] as? [String] {
                     #expect(
                         ExperimentTasks.effectiveConditionNames(for: manifest)
@@ -213,6 +230,55 @@ import Testing
         }
     }
 
+    /// The task prompts are the only input such a study measures. Without
+    /// them it froze cleanly and its run refused, by which time the repair
+    /// was a duplicate.
+    @Test func withoutTaskPromptsVerifyAndFreezeRefuseAndNameTheVerb() async throws {
+        try await withTempRoot { _ in
+            try makeBaselineOnlyDraft("replication", pinningPrompts: false)
+            for verb in ["verify", "freeze"] {
+                let outcome = await invoke("experiment", [verb, "replication", "--json"])
+                #expect(outcome.envelope.exitCode == 65, "\(verb)")
+                #expect(
+                    outcome.envelope.error?.code == LifecycleGate.studyDeclaration.rawValue,
+                    "\(verb)")
+                #expect(
+                    (outcome.envelope.error?.repairAction ?? "").hasPrefix(
+                        "Pin the task prompts this study measures: steerlab-cli "
+                            + "experiment pin-prompts replication prompts/tasks/"),
+                    "\(verb)")
+            }
+            let refused = await invoke("experiment", ["verify", "replication", "--json"])
+            #expect(
+                refused.envelope.result?["violations"]
+                    == .array([.string(VerificationRefusal.baselineOnlyUnpinnedPromptsViolation)]))
+            #expect(try ExperimentStore.load(name: "replication").status == .draft)
+        }
+    }
+
+    /// The server executes SAE latent arms, so a declared agentComparison
+    /// whose only arm is a latent arm is not empty; it is not baseline-only
+    /// either.
+    @Test func anSAELatentArmIsAttached() async throws {
+        try await withTempRoot { _ in
+            var manifest = try makeBaselineOnlyDraft("replication")
+            manifest.saeLatentConditions = .array([
+                .object([
+                    "name": .string("clamp-42"), "interventionType": .string("saeLatent"),
+                    "serverOnly": .bool(true),
+                ])
+            ])
+            #expect(!ExperimentStore.isBaselineOnlyStudy(manifest))
+            #expect(
+                !ExperimentStore.verify(manifest).contains(
+                    VerificationRefusal.emptyModelOutputViolation))
+            manifest.studyType = nil
+            #expect(
+                !ExperimentStore.verify(manifest).contains(
+                    VerificationRefusal.emptyModelOutputViolation))
+        }
+    }
+
     @Test func theRunsStartTimeRefusalsLetTheShapeThroughToOneArm() async throws {
         try await withTempRoot { _ in
             let manifest = try makeBaselineOnlyDraft("replication")
@@ -265,7 +331,7 @@ import Testing
     @Test func aPairedRubricIsRefusedAtVerifyWithThePerResponseRoute() async throws {
         try await withTempRoot { root in
             let fixture = try fixture()
-            try writeRubrics(fixture, into: root)
+            try writeFiles(fixture, into: root)
             try makeBaselineOnlyDraft("replication")
 
             let paired = await invoke(

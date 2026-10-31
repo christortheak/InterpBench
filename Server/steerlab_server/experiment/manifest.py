@@ -903,11 +903,13 @@ class Manifest:
             try: probe_measurements.load(self.raw['probeMeasurements'], base)
             except (ValueError, OSError) as exc: violations.append(str(exc))
 
-        # Multi-agent studies pin a scenario; model-output studies pin concepts
-        # or variants (must have at least one of them) — unless the study is
+        # Multi-agent studies pin a scenario; model-output studies attach a
+        # concept, an agent, or an SAE latent arm (the server executes latent
+        # arms, and a latent-only study is legal) — unless the study is
         # DECLARED baseline-only, whose one arm is the unmodified base model
         # (public issue #4; :func:`baseline_only_study`). An undeclared or
         # concept-study draft with nothing attached is still the empty study.
+        latent = self.raw.get("saeLatentConditions")
         if self.study_kind == "multiAgent":
             if self.multi_agent_scenario_path and self.multi_agent_scenario_hash:
                 violations += _verify_file_hash(
@@ -916,8 +918,18 @@ class Manifest:
             else:
                 violations.append("multi-agent study needs a pinned scenario")
         elif (not self.concepts and not self.variant_conditions
+              and not (isinstance(latent, list) and latent)
               and not baseline_only_study(self.raw)):
             violations.append("no concepts or variants attached")
+        # A study of the baseline alone measures its task prompts and nothing
+        # else, so they must be pinned: without them it froze cleanly and its
+        # run refused, by which time the repair was a duplicate. Swift twin:
+        # ExperimentStore.verify.
+        if baseline_only_study(self.raw) and not (
+                self.task_prompts_file and self.task_prompts_hash):
+            from . import verification_refusal as _verification_refusal
+            violations.append(
+                _verification_refusal.BASELINE_ONLY_UNPINNED_PROMPTS_VIOLATION)
 
         # Executable condition names must be UNIQUE. `resume.record_key`
         # leads with the condition NAME, so two executed conditions sharing

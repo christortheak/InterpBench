@@ -30,7 +30,8 @@ const nonEmpty = (value: unknown): boolean =>
 export const isBaselineOnlyStudy = (manifest: Record<string, unknown>): boolean => {
   if ((manifest.studyKind || "modelOutput") !== "modelOutput") return false;
   if (manifest.studyType !== "agentComparison") return false;
-  if (nonEmpty(manifest.variantConditions) || nonEmpty(manifest.saeLatentConditions)) return false;
+  const latent = manifest.saeLatentConditions;
+  if (nonEmpty(manifest.variantConditions) || (Array.isArray(latent) && latent.length > 0)) return false;
   const conditions = Array.isArray(manifest.conditions) ? manifest.conditions : [];
   return conditions.every((condition) => isRecord(condition) && condition.name === "baseline" && !nonEmpty(condition.slots));
 };

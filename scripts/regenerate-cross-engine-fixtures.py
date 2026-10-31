@@ -2904,9 +2904,12 @@ def preregistration_arms() -> None:
     _write(os.path.join(FIXTURES, "preregistration-arms.json"), cases)
 
 
-#: The judge rubrics the baseline-only cases pin, by workspace path: one
-#: paired (no frontmatter) and one that codes each response.
-BASELINE_ONLY_RUBRICS = {
+#: The files the baseline-only cases pin, by workspace path: the task items a
+#: study of the baseline alone measures, a paired judge rubric (no
+#: frontmatter), and one that codes each response.
+BASELINE_ONLY_FILES = {
+    "prompts/tasks/items.jsonl": ('{"id": "p0", "prompt": "Decide the case."}\n'
+                                  '{"id": "p1", "prompt": "Explain the ruling."}\n'),
     "prompts/rubrics/paired.md": "Which response answers the question better?\n",
     "prompts/rubrics/coded.md": ("---\nmode: perResponseCoding\n"
                                  "field: statesAReason boolean\n---\n"
@@ -2917,23 +2920,31 @@ BASELINE_ONLY_RUBRICS = {
 def _baseline_only_cases() -> list[tuple[str, dict, bool]]:
     """One draft per study shape the baseline-only rule tells apart, with
     whether it is a baseline-only study. Drafts, so ``verify`` reads the
-    study's shape; the only files any of them pins are the two rubrics in
-    :data:`BASELINE_ONLY_RUBRICS`, which a reader writes into its workspace
+    study's shape; every one pins the task items, all but one case the
+    items alone, and the only other files any of them pins are the rubrics
+    in :data:`BASELINE_ONLY_FILES`, which a reader writes into its workspace
     before verifying."""
     import hashlib
 
+    def pin(relative: str) -> str:
+        return hashlib.sha256(
+            BASELINE_ONLY_FILES[relative].encode("utf-8")).hexdigest()
+
     def draft(name: str, **fields) -> dict:
-        manifest = _prereg_manifest(name, status="draft", **fields)
+        manifest = _prereg_manifest(
+            name, status="draft", taskPromptsFile="prompts/tasks/items.jsonl",
+            taskPromptsHash=pin("prompts/tasks/items.jsonl"), **fields)
         for key in ("frozenAt", "freezeHash", "gitCommit"):
             manifest.pop(key)
         return manifest
 
     def judged(rubric: str) -> dict:
         return {"judges": [{"name": "coder", "kind": "claude"}],
-                "judgeRubricFile": rubric,
-                "judgeRubricHash": hashlib.sha256(
-                    BASELINE_ONLY_RUBRICS[rubric].encode("utf-8")).hexdigest()}
+                "judgeRubricFile": rubric, "judgeRubricHash": pin(rubric)}
 
+    unpinned = draft("declared-without-task-prompts", studyType="agentComparison")
+    for key in ("taskPromptsFile", "taskPromptsHash"):
+        unpinned.pop(key)
     fear = {"name": "fear", "stimulusSetHash": "a" * 64, "validationHash": None,
             "options": {"method": "meanDifference",
                         "readingPosition": {"lastToken": {}}}}
@@ -2941,6 +2952,9 @@ def _baseline_only_cases() -> list[tuple[str, dict, bool]]:
         # The sanctioned spelling: a declared agentComparison, nothing else.
         ("declared-nothing-attached", draft(
             "declared-nothing-attached", studyType="agentComparison"), True),
+        # Its task prompts are the only input it measures, so verify refuses
+        # the shape without them.
+        ("declared-without-task-prompts", unpinned, True),
         # The canonical baseline is not an injection condition.
         ("declared-with-canonical-baseline", draft(
             "declared-with-canonical-baseline", studyType="agentComparison",
@@ -2964,7 +2978,8 @@ def _baseline_only_cases() -> list[tuple[str, dict, bool]]:
             studyType="agentComparison", concepts=[fear],
             conditions=[_prereg_condition("fear-mid", [("fear", 14, 0.8)])]),
          False),
-        # Any arm makes it a comparison.
+        # Any arm makes it a comparison, and is attached: an SAE latent arm
+        # too, which the server executes.
         ("declared-with-an-agent", draft(
             "declared-with-an-agent", studyType="agentComparison",
             variantConditions=[_prereg_agent(
@@ -2973,10 +2988,12 @@ def _baseline_only_cases() -> list[tuple[str, dict, bool]]:
         ("declared-with-an-sae-latent-arm", draft(
             "declared-with-an-sae-latent-arm", studyType="agentComparison",
             saeLatentConditions=[{
-                "name": "clamp-42", "release": "gemma-scope-2b-pt-res",
+                "name": "clamp-42", "interventionType": "saeLatent",
+                "serverOnly": True, "release": "gemma-scope-2b-pt-res",
                 "saeID": "layer_12/width_16k/average_l0_82", "feature": 42,
                 "layer": 12, "mode": "clamp", "beta": 0.5}]), False),
-        # A panel is never a model-output study.
+        # A panel is never a model-output study; with no scenario it is the
+        # multi-agent empty study.
         ("multi-agent-panel", draft(
             "multi-agent-panel", studyKind="multiAgent",
             studyType="multiAgent"), False),
@@ -3004,11 +3021,18 @@ def preregistration_section(text: str, heading: str) -> str:
     return text[start:text.index("\n\n", start)]
 
 
+#: How every sentence ``verify`` says about a study of the baseline alone
+#: opens; the fixture records each case's sentences that open so.
+BASELINE_ONLY_SENTENCE_OPENING = "this study measures the baseline agent alone"
+
+
 def baseline_only_study() -> None:
     """A study that measures the baseline agent alone (public issue #4), as
-    this engine reads it: for each shape, whether it is one, whether verify
-    calls it the empty study, and which arms a run executes; the advisory and
-    summary sentences, and the sentence every results reader shows in place of
+    this engine reads it: for each shape, whether it is one, the empty-study
+    sentence verify reports (model-output or multi-agent, or none), verify's
+    sentences about a study of the baseline alone (task prompts not pinned, a
+    paired rubric), and which arms a run executes; the advisory and summary
+    sentences, and the sentence every results reader shows in place of
     effects; and the settings summary's Statistics section for a
     baseline-only study and for a comparison. The Swift suite reads the same
     manifests and must give the same answers (BaselineOnlyStudyTests.swift),
@@ -3020,7 +3044,7 @@ def baseline_only_study() -> None:
 
     cases = []
     with tempfile.TemporaryDirectory() as root:
-        for relative, text in BASELINE_ONLY_RUBRICS.items():
+        for relative, text in BASELINE_ONLY_FILES.items():
             os.makedirs(os.path.dirname(os.path.join(root, relative)),
                         exist_ok=True)
             with open(os.path.join(root, relative), "w",
@@ -3038,10 +3062,10 @@ def baseline_only_study() -> None:
                         else m.effective_condition_names(parsed))
             cases.append({
                 "label": label, "manifest": manifest, "baselineOnly": expected,
-                "emptyStudy": refusal.EMPTY_MODEL_OUTPUT_VIOLATION in violations,
-                "pairedRubricRefused": any(
-                    v.startswith(refusal.BASELINE_ONLY_PAIRED_RUBRIC_PREFIX)
-                    for v in violations),
+                "emptyStudySentence": refusal.empty_violation(violations),
+                "baselineOnlySentences": [
+                    v for v in violations
+                    if v.startswith(BASELINE_ONLY_SENTENCE_OPENING)],
                 "executedConditions": executed})
         statistics = {}
         for key, label in (("baselineOnly", "declared-nothing-attached"),
@@ -3063,19 +3087,20 @@ def baseline_only_study() -> None:
     _write(os.path.join(FIXTURES, "baseline-only-study.json"), {
         "about": ("A study that measures the baseline agent alone: a declared "
                   "agentComparison with no agent, injection, or SAE latent "
-                  "arm. Produced by the Python engine "
-                  "(scripts/regenerate-cross-engine-fixtures.py, "
+                  "arm; concepts it carries are inert. Produced by the Python "
+                  "engine (scripts/regenerate-cross-engine-fixtures.py, "
                   "baseline_only_study) and read by the Swift suite and the "
-                  "results explorer. executedConditions is null where the "
-                  "engines' arm vocabularies differ by design. A reader "
-                  "writes each rubric under rubrics into its workspace, at "
-                  "its path, before verifying the cases."),
+                  "results explorer. emptyStudySentence is the empty-study "
+                  "sentence verify reports, or null. baselineOnlySentences "
+                  "are verify's sentences that open with "
+                  f"'{BASELINE_ONLY_SENTENCE_OPENING}'. executedConditions is "
+                  "null where the engines' arm vocabularies differ by design. "
+                  "A reader writes each of files into its workspace, at its "
+                  "path, before verifying the cases."),
         "advisory": m.BASELINE_ONLY_STUDY_ADVISORY,
         "summary": m.BASELINE_ONLY_SUMMARY,
         "effectsSentence": results_export.BASELINE_ONLY_EFFECTS,
-        "rubrics": BASELINE_ONLY_RUBRICS,
-        "pairedRubricViolation": refusal.baseline_only_paired_rubric_violation(
-            "prompts/rubrics/paired.md"),
+        "files": BASELINE_ONLY_FILES,
         "cases": cases,
         "preregistrationStatistics": statistics,
     })

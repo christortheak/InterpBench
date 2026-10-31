@@ -1,10 +1,11 @@
 {
-  "about": "A study that measures the baseline agent alone: a declared agentComparison with no agent, injection, or SAE latent arm. Produced by the Python engine (scripts/regenerate-cross-engine-fixtures.py, baseline_only_study) and read by the Swift suite and the results explorer. executedConditions is null where the engines' arm vocabularies differ by design. A reader writes each rubric under rubrics into its workspace, at its path, before verifying the cases.",
+  "about": "A study that measures the baseline agent alone: a declared agentComparison with no agent, injection, or SAE latent arm; concepts it carries are inert. Produced by the Python engine (scripts/regenerate-cross-engine-fixtures.py, baseline_only_study) and read by the Swift suite and the results explorer. emptyStudySentence is the empty-study sentence verify reports, or null. baselineOnlySentences are verify's sentences that open with 'this study measures the baseline agent alone'. executedConditions is null where the engines' arm vocabularies differ by design. A reader writes each of files into its workspace, at its path, before verifying the cases.",
   "advisory": "This study measures the baseline agent alone: the pinned base model, with no vectors or adapters, at the study's sampling settings. With no comparison arm, analyze computes no effects; the run's summaries describe the baseline's responses. If the study is judged, use a rubric that codes each response (perResponseCoding), because paired judging compares a condition with the baseline and has nothing to pair here.",
   "cases": [
     {
       "baselineOnly": true,
-      "emptyStudy": false,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": null,
       "executedConditions": [
         "baseline"
       ],
@@ -24,14 +25,45 @@
         "status": "draft",
         "studyKind": "modelOutput",
         "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
         "temperature": 0,
         "variantConditions": []
-      },
-      "pairedRubricRefused": false
+      }
     },
     {
       "baselineOnly": true,
-      "emptyStudy": false,
+      "baselineOnlySentences": [
+        "this study measures the baseline agent alone, but its task prompts are not pinned: they are the only input it measures, and its run reads its items from them. Pin a task prompts file (taskPromptsFile and taskPromptsHash)"
+      ],
+      "emptyStudySentence": null,
+      "executedConditions": [
+        "baseline"
+      ],
+      "label": "declared-without-task-prompts",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-without-task-prompts",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": true,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": null,
       "executedConditions": [
         "baseline"
       ],
@@ -58,14 +90,16 @@
         "status": "draft",
         "studyKind": "modelOutput",
         "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
         "temperature": 0,
         "variantConditions": []
-      },
-      "pairedRubricRefused": false
+      }
     },
     {
       "baselineOnly": true,
-      "emptyStudy": false,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": null,
       "executedConditions": [
         "baseline"
       ],
@@ -97,14 +131,16 @@
         "status": "draft",
         "studyKind": "modelOutput",
         "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
         "temperature": 0,
         "variantConditions": []
-      },
-      "pairedRubricRefused": false
+      }
     },
     {
       "baselineOnly": false,
-      "emptyStudy": true,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": "no concepts or variants attached",
       "executedConditions": [
         "baseline"
       ],
@@ -123,14 +159,16 @@
         ],
         "status": "draft",
         "studyKind": "modelOutput",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
         "temperature": 0,
         "variantConditions": []
-      },
-      "pairedRubricRefused": false
+      }
     },
     {
       "baselineOnly": false,
-      "emptyStudy": true,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": "no concepts or variants attached",
       "executedConditions": [
         "baseline"
       ],
@@ -150,14 +188,16 @@
         "status": "draft",
         "studyKind": "modelOutput",
         "studyType": "conceptStudy",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
         "temperature": 0,
         "variantConditions": []
-      },
-      "pairedRubricRefused": false
+      }
     },
     {
       "baselineOnly": false,
-      "emptyStudy": false,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": null,
       "executedConditions": [
         "baseline"
       ],
@@ -202,14 +242,16 @@
         "status": "draft",
         "studyKind": "modelOutput",
         "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
         "temperature": 0,
         "variantConditions": []
-      },
-      "pairedRubricRefused": false
+      }
     },
     {
       "baselineOnly": false,
-      "emptyStudy": false,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": null,
       "executedConditions": [
         "baseline",
         "french-l28-a15"
@@ -230,6 +272,8 @@
         "status": "draft",
         "studyKind": "modelOutput",
         "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
         "temperature": 0,
         "variantConditions": [
           {
@@ -259,12 +303,12 @@
             "name": "french-l28-a15"
           }
         ]
-      },
-      "pairedRubricRefused": false
+      }
     },
     {
       "baselineOnly": false,
-      "emptyStudy": true,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": null,
       "executedConditions": null,
       "label": "declared-with-an-sae-latent-arm",
       "manifest": {
@@ -280,11 +324,13 @@
           {
             "beta": 0.5,
             "feature": 42,
+            "interventionType": "saeLatent",
             "layer": 12,
             "mode": "clamp",
             "name": "clamp-42",
             "release": "gemma-scope-2b-pt-res",
-            "saeID": "layer_12/width_16k/average_l0_82"
+            "saeID": "layer_12/width_16k/average_l0_82",
+            "serverOnly": true
           }
         ],
         "seeds": [
@@ -293,14 +339,16 @@
         "status": "draft",
         "studyKind": "modelOutput",
         "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
         "temperature": 0,
         "variantConditions": []
-      },
-      "pairedRubricRefused": false
+      }
     },
     {
       "baselineOnly": false,
-      "emptyStudy": false,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": "multi-agent study needs a pinned scenario",
       "executedConditions": null,
       "label": "multi-agent-panel",
       "manifest": {
@@ -318,14 +366,18 @@
         "status": "draft",
         "studyKind": "multiAgent",
         "studyType": "multiAgent",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
         "temperature": 0,
         "variantConditions": []
-      },
-      "pairedRubricRefused": false
+      }
     },
     {
       "baselineOnly": true,
-      "emptyStudy": false,
+      "baselineOnlySentences": [
+        "this study measures the baseline agent alone, but its judge rubric ('prompts/rubrics/paired.md') is a PAIRED comparison rubric: paired judging compares each condition's response with the baseline's, and a study with one arm has nothing to pair, so evaluate would refuse it after the run. Pin a perResponseCoding rubric, which codes each response on its own, or remove the study's judges"
+      ],
+      "emptyStudySentence": null,
       "executedConditions": [
         "baseline"
       ],
@@ -353,14 +405,16 @@
         "status": "draft",
         "studyKind": "modelOutput",
         "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
         "temperature": 0,
         "variantConditions": []
-      },
-      "pairedRubricRefused": true
+      }
     },
     {
       "baselineOnly": true,
-      "emptyStudy": false,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": null,
       "executedConditions": [
         "baseline"
       ],
@@ -388,14 +442,16 @@
         "status": "draft",
         "studyKind": "modelOutput",
         "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
         "temperature": 0,
         "variantConditions": []
-      },
-      "pairedRubricRefused": false
+      }
     },
     {
       "baselineOnly": false,
-      "emptyStudy": false,
+      "baselineOnlySentences": [],
+      "emptyStudySentence": null,
       "executedConditions": [
         "baseline",
         "french-l28-a15"
@@ -424,6 +480,8 @@
         "status": "draft",
         "studyKind": "modelOutput",
         "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
         "temperature": 0,
         "variantConditions": [
           {
@@ -453,12 +511,15 @@
             "name": "french-l28-a15"
           }
         ]
-      },
-      "pairedRubricRefused": false
+      }
     }
   ],
   "effectsSentence": "Baseline only: this study measures the baseline agent alone, so it has no comparison arm and its analysis has no effects.",
-  "pairedRubricViolation": "this study measures the baseline agent alone, but its judge rubric ('prompts/rubrics/paired.md') is a PAIRED comparison rubric: paired judging compares each condition's response with the baseline's, and a study with one arm has nothing to pair, so evaluate would refuse it after the run. Pin a perResponseCoding rubric, which codes each response on its own, or remove the study's judges",
+  "files": {
+    "prompts/rubrics/coded.md": "---\nmode: perResponseCoding\nfield: statesAReason boolean\n---\nDoes the response state a reason?\n",
+    "prompts/rubrics/paired.md": "Which response answers the question better?\n",
+    "prompts/tasks/items.jsonl": "{\"id\": \"p0\", \"prompt\": \"Decide the case.\"}\n{\"id\": \"p1\", \"prompt\": \"Explain the ruling.\"}\n"
+  },
   "preregistrationStatistics": {
     "baselineOnly": {
       "manifest": {
@@ -479,6 +540,8 @@
         "status": "frozen",
         "studyKind": "modelOutput",
         "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
         "temperature": 0,
         "variantConditions": []
       },
@@ -503,6 +566,8 @@
         "status": "frozen",
         "studyKind": "modelOutput",
         "studyType": "agentComparison",
+        "taskPromptsFile": "prompts/tasks/items.jsonl",
+        "taskPromptsHash": "6297df59e36636c10ec1f1bb9c092f0956ce91166fb0e0e2bd0e0a29370b260c",
         "temperature": 0,
         "variantConditions": [
           {
@@ -535,10 +600,6 @@
       },
       "statisticsSection": "- Paired to each item's same-case baseline; percentile bootstrap CIs on the mean paired difference; Wilcoxon signed-rank as the nonparametric companion.\n- Multiple comparisons: BH-FDR across concepts at screen; Holm within the pre-registered family at confirm."
     }
-  },
-  "rubrics": {
-    "prompts/rubrics/coded.md": "---\nmode: perResponseCoding\nfield: statesAReason boolean\n---\nDoes the response state a reason?\n",
-    "prompts/rubrics/paired.md": "Which response answers the question better?\n"
   },
   "summary": "Baseline only: this study measures the baseline agent alone (the pinned base model, with no vectors or adapters). It has no comparison arm, so its analysis reports no effects."
 }

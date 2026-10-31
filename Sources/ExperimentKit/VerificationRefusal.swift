@@ -43,6 +43,17 @@ enum VerificationRefusal {
         "this study measures the baseline agent alone, but its judge rubric"
 
     /// `verify`'s sentence for a study that measures the baseline agent
+    /// alone and does not pin its task prompts, the only input it measures.
+    /// A declaration problem, refused under `studyDeclaration` with a repair
+    /// that names the verb that pins them. Server twin:
+    /// `verification_refusal.BASELINE_ONLY_UNPINNED_PROMPTS_VIOLATION`.
+    static let baselineOnlyUnpinnedPromptsViolation =
+        "this study measures the baseline agent alone, but its task prompts are "
+        + "not pinned: they are the only input it measures, and its run reads its "
+        + "items from them. Pin a task prompts file (taskPromptsFile and "
+        + "taskPromptsHash)"
+
+    /// `verify`'s sentence for a study that measures the baseline agent
     /// alone and pins a paired comparison rubric. Paired judging compares
     /// each condition's response with the baseline's, so such a study froze
     /// and then refused at evaluate, after the run. No program name appears:
@@ -150,6 +161,16 @@ enum VerificationRefusal {
             + "\(template) \(interview)conceptStudy --json."
     }
 
+    /// How this client pins the task prompts a study of the baseline alone
+    /// measures. Said before the declaration repair. Server twin:
+    /// `verification_refusal.unpinned_prompts_repair`.
+    static func unpinnedPromptsRepair(
+        name: String, program: String = ExperimentCLIHelp.program
+    ) -> String {
+        "Pin the task prompts this study measures: \(program) experiment "
+            + "pin-prompts \(name) prompts/tasks/<file>.jsonl. "
+    }
+
     /// The route a study of the baseline alone takes when it pins a paired
     /// rubric: a rubric that codes each response. Said before the
     /// declaration repair, which still covers anything else the list names.
@@ -182,10 +203,15 @@ enum VerificationRefusal {
     static func repair(name: String, violations: [String]) -> String {
         switch gate(violations) {
         case .emptyStudy: emptyRepair(name: name, violations: violations)
-        case .studyDeclaration
-        where violations.contains(where: { $0.hasPrefix(baselineOnlyPairedRubricPrefix) }):
-            pairedRubricRepair(name: name) + declarationRepair(name: name)
-        case .studyDeclaration: declarationRepair(name: name)
+        // A study of the baseline alone gets its specific routes first, then
+        // the declaration repair, which covers anything else the list names.
+        case .studyDeclaration:
+            (violations.contains(baselineOnlyUnpinnedPromptsViolation)
+                ? unpinnedPromptsRepair(name: name) : "")
+                + (violations.contains(where: {
+                    $0.hasPrefix(baselineOnlyPairedRubricPrefix)
+                }) ? pairedRubricRepair(name: name) : "")
+                + declarationRepair(name: name)
         default: ExperimentTasks.pinDriftRepair(name: name, violations: violations)
         }
     }

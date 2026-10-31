@@ -12,7 +12,9 @@ study, and the only workaround ran every item twice under two identical arms.
 What is pinned here:
 
 1. The rule (``manifest.baseline_only_study``), and that ``verify`` keeps the
-   empty-study refusal for undeclared and concept-study drafts.
+   empty-study refusal for undeclared and concept-study drafts. The shape's
+   task prompts are its only measured input, so verify refuses it without
+   them. An SAE latent arm counts as attached.
 2. The cross-engine fixture ``baseline-only-study.json`` is this engine's
    answer for every shape, and the settings summary's Statistics section.
 3. The client's verify and freeze: clean, a ``baselineOnlyStudy`` advisory,
@@ -120,6 +122,46 @@ def test_verify_accepts_it_and_keeps_the_empty_study_where_it_is_a_mistake(tmp_p
     assert empty(_raw(studyType="conceptStudy"))
 
 
+def test_its_task_prompts_must_be_pinned(tmp_path):
+    """They are the only input a study of the baseline alone measures.
+    Without them it froze cleanly and its run refused, by which time the
+    repair was a duplicate."""
+    unpinned = m.Manifest.from_dict(_raw()).verify(str(tmp_path))
+    assert unpinned == [refusal.BASELINE_ONLY_UNPINNED_PROMPTS_VIOLATION]
+    assert refusal.gate(unpinned) == "studyDeclaration"
+    half = m.Manifest.from_dict(
+        _raw(taskPromptsFile="prompts/tasks/items.jsonl")).verify(str(tmp_path))
+    assert refusal.BASELINE_ONLY_UNPINNED_PROMPTS_VIOLATION in half
+    items = tmp_path / "prompts" / "tasks" / "items.jsonl"
+    items.parent.mkdir(parents=True)
+    items.write_text(ITEMS, encoding="utf-8")
+    pinned = m.Manifest.from_dict(_raw(
+        taskPromptsFile="prompts/tasks/items.jsonl",
+        taskPromptsHash=hashlib.sha256(items.read_bytes()).hexdigest()))
+    assert pinned.verify(str(tmp_path)) == []
+    # Each client's repair names its own verb for pinning them.
+    assert "steerlab experiment import-prompts s --file" in refusal.repair(
+        "s", unpinned, program="steerlab")
+    assert "steerlab-cli experiment pin-prompts s prompts/tasks/" in refusal.repair(
+        "s", unpinned, program="steerlab-cli")
+
+
+def test_an_sae_latent_arm_is_attached(tmp_path):
+    """The server executes SAE latent arms, so a declared agentComparison
+    whose only arm is a latent arm is not empty; it is not baseline-only
+    either."""
+    latent = {"name": "clamp-42", "interventionType": "saeLatent",
+              "serverOnly": True, "release": "gemma-scope-2b-pt-res",
+              "saeID": "layer_12/width_16k/average_l0_82", "feature": 42,
+              "layer": 12, "mode": "clamp", "beta": 0.5}
+    d = _raw(saeLatentConditions=[latent])
+    assert not m.baseline_only_study(d)
+    assert refusal.EMPTY_MODEL_OUTPUT_VIOLATION not in \
+        m.Manifest.from_dict(d).verify(str(tmp_path))
+    assert refusal.EMPTY_MODEL_OUTPUT_VIOLATION not in \
+        m.Manifest.from_dict({**d, "studyType": None}).verify(str(tmp_path))
+
+
 def test_the_dead_end_advice_now_leads_somewhere():
     """The refusal of a concept study with no arms names the sanctioned
     spelling of a deliberate baseline-only study, and that spelling now
@@ -156,14 +198,21 @@ def test_freeze_asks_for_no_validation_and_no_battery_evidence():
 
 def test_the_fixture_is_this_engines_answer_for_every_shape(tmp_path):
     fixture = _fixture()
-    for relative, text in fixture["rubrics"].items():
+    for relative, text in fixture["files"].items():
         (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / relative).write_text(text, encoding="utf-8")
-    assert fixture["pairedRubricViolation"] == \
-        refusal.baseline_only_paired_rubric_violation(
-            "prompts/rubrics/paired.md"), REGENERATE
-    assert {case["label"] for case in fixture["cases"]
-            if case["pairedRubricRefused"]} == {"declared-with-a-paired-rubric"}
+    sentences = {case["label"]: case["baselineOnlySentences"]
+                 for case in fixture["cases"]}
+    assert sentences["declared-with-a-paired-rubric"] == [
+        refusal.baseline_only_paired_rubric_violation("prompts/rubrics/paired.md")]
+    assert sentences["declared-without-task-prompts"] == [
+        refusal.BASELINE_ONLY_UNPINNED_PROMPTS_VIOLATION]
+    assert {label for label, found in sentences.items() if found} == {
+        "declared-with-a-paired-rubric", "declared-without-task-prompts"}
+    empties = {case["label"]: case["emptyStudySentence"]
+               for case in fixture["cases"]}
+    assert empties["multi-agent-panel"] == refusal.EMPTY_MULTI_AGENT_VIOLATION
+    assert empties["declared-with-an-sae-latent-arm"] is None
     assert fixture["advisory"] == m.BASELINE_ONLY_STUDY_ADVISORY, REGENERATE
     assert fixture["summary"] == m.BASELINE_ONLY_SUMMARY, REGENERATE
     assert fixture["effectsSentence"] == results_export.BASELINE_ONLY_EFFECTS, \
@@ -178,11 +227,11 @@ def test_the_fixture_is_this_engines_answer_for_every_shape(tmp_path):
         assert m.baseline_only_study(manifest) is case["baselineOnly"], \
             f"{case['label']}: {REGENERATE}"
         violations = parsed.verify(str(tmp_path))
-        assert (refusal.EMPTY_MODEL_OUTPUT_VIOLATION in violations) \
-            is case["emptyStudy"], f"{case['label']}: {REGENERATE}"
-        assert any(v.startswith(refusal.BASELINE_ONLY_PAIRED_RUBRIC_PREFIX)
-                   for v in violations) is case["pairedRubricRefused"], \
+        assert refusal.empty_violation(violations) == case["emptyStudySentence"], \
             f"{case['label']}: {REGENERATE}"
+        assert [v for v in violations
+                if v.startswith("this study measures the baseline agent alone")] \
+            == case["baselineOnlySentences"], f"{case['label']}: {REGENERATE}"
         if case["executedConditions"] is not None:
             assert m.effective_condition_names(parsed) == \
                 case["executedConditions"], f"{case['label']}: {REGENERATE}"
@@ -279,6 +328,21 @@ def test_the_client_verifies_and_freezes_it_cleanly(workspace, capsys):
     assert "same-case baseline" not in summary
 
 
+def test_without_task_prompts_verify_and_freeze_refuse_with_the_verb(
+        workspace, capsys):
+    raw = es.load_raw(STUDY, str(workspace))
+    raw.pop("taskPromptsFile")
+    raw.pop("taskPromptsHash")
+    es.save_raw(raw, str(workspace))
+    for verb in ("verify", "freeze"):
+        code, document = _client(["experiment", verb, STUDY], capsys)
+        assert code == 65, (verb, document)
+        assert document["error"]["code"] == "studyDeclaration", verb
+        assert (f"steerlab experiment import-prompts {STUDY} --file "
+                "prompts/tasks/") in document["error"]["repairAction"], verb
+    assert es.load_raw(STUDY, str(workspace))["status"] == "draft"
+
+
 def test_an_undeclared_empty_draft_is_still_refused(workspace, capsys):
     raw = es.load_raw(STUDY, str(workspace))
     raw.pop("studyType")
@@ -314,7 +378,7 @@ def test_a_paired_rubric_is_refused_at_verify_with_the_per_response_route(
     """Paired judging compares a condition with the baseline. With one arm
     there is nothing to pair, so such a study used to freeze, run, and then
     refuse at evaluate. verify refuses it now, before any of that."""
-    rubrics = _fixture()["rubrics"]
+    rubrics = _fixture()["files"]
     _pin_rubric(workspace, "prompts/rubrics/paired.md",
                 rubrics["prompts/rubrics/paired.md"])
     for verb in ("verify", "freeze"):

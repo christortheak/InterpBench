@@ -44,6 +44,18 @@ BASELINE_ONLY_PAIRED_RUBRIC_PREFIX = (
     "this study measures the baseline agent alone, but its judge rubric")
 
 
+#: ``verify()``'s sentence for a study that measures the baseline agent
+#: alone and does not pin its task prompts, the only input it measures. A
+#: declaration problem, refused under ``studyDeclaration`` with a repair that
+#: names the verb that pins them. Swift twin:
+#: ``VerificationRefusal.baselineOnlyUnpinnedPromptsViolation``.
+BASELINE_ONLY_UNPINNED_PROMPTS_VIOLATION = (
+    "this study measures the baseline agent alone, but its task prompts are "
+    "not pinned: they are the only input it measures, and its run reads its "
+    "items from them. Pin a task prompts file (taskPromptsFile and "
+    "taskPromptsHash)")
+
+
 def baseline_only_paired_rubric_violation(rubric_file: str | None) -> str:
     """``verify()``'s sentence for a study that measures the baseline agent
     alone and pins a paired comparison rubric. Paired judging compares each
@@ -156,6 +168,19 @@ def baseline_only_route(name: str, program: str) -> str:
             "apply)")
 
 
+def unpinned_prompts_repair(name: str, program: str) -> str:
+    """How the answering client pins the task prompts a study of the
+    baseline alone measures. Said before the declaration repair. Swift twin:
+    ``VerificationRefusal.unpinnedPromptsRepair``."""
+    if program == MAC_PROGRAM:
+        pin = f"{program} experiment pin-prompts {name} prompts/tasks/<file>.jsonl"
+    else:
+        pin = (f"{program} experiment import-prompts {name} --file "
+               "prompts/tasks/<file>.jsonl (its --help names the reviewed-file "
+               "flags)")
+    return f"Pin the task prompts this study measures: {pin}. "
+
+
 def paired_rubric_repair(name: str, program: str) -> str:
     """The route a study of the baseline alone takes when it pins a paired
     rubric: a rubric that codes each response. Said before the declaration
@@ -192,10 +217,14 @@ def repair(name: str, violations, *, program: str = "steerlab") -> str:
         return drift_repair(name, program)
     if which == lifecycle_gates.EMPTY_STUDY:
         return empty_repair(name, violations, program)
+    # A study of the baseline alone gets its specific routes first, then the
+    # declaration repair, which covers anything else the list names.
+    specific = ""
+    if BASELINE_ONLY_UNPINNED_PROMPTS_VIOLATION in violations:
+        specific += unpinned_prompts_repair(name, program)
     if any(v.startswith(BASELINE_ONLY_PAIRED_RUBRIC_PREFIX) for v in violations):
-        return (paired_rubric_repair(name, program)
-                + declaration_repair(name, program))
-    return declaration_repair(name, program)
+        specific += paired_rubric_repair(name, program)
+    return specific + declaration_repair(name, program)
 
 
 def error(name: str, violations, reason: str, *,

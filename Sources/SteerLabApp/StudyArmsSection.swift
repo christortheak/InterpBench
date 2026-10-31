@@ -155,9 +155,9 @@ struct StudyArmsSection: View {
                     Text(
                         ExperimentStore.isBaselineOnlyStudy(manifest)
                             ? "Baseline only: this study measures the baseline "
-                                + "agent alone, and can be frozen and run as it "
-                                + "is. Add agents to compare conditions (adding "
-                                + "saves immediately)."
+                                + "agent alone; pin its task prompts before "
+                                + "freezing. Add agents to compare conditions "
+                                + "(adding saves immediately)."
                             : "Baseline only. Add agents to compare conditions "
                                 + "(adding saves immediately)."
                     )

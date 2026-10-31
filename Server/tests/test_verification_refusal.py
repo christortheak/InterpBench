@@ -164,6 +164,20 @@ def test_the_empty_reason_drops_nothing_verify_said():
     assert refusal.EMPTY_MODEL_OUTPUT_VIOLATION not in reason
 
 
+def test_a_baseline_only_study_gets_its_specific_routes_first():
+    """Pinning its task prompts, and a rubric that codes each response, are
+    said before the declaration repair, which still covers anything else."""
+    paired = refusal.baseline_only_paired_rubric_violation("prompts/rubrics/p.md")
+    both = [refusal.BASELINE_ONLY_UNPINNED_PROMPTS_VIOLATION, paired,
+            DECLARATION_SENTENCES[0]]
+    assert refusal.gate(both) == lifecycle_gates.STUDY_DECLARATION
+    repair = refusal.repair("demo", both, program="steerlab")
+    assert repair == (refusal.unpinned_prompts_repair("demo", "steerlab")
+                      + refusal.paired_rubric_repair("demo", "steerlab")
+                      + refusal.declaration_repair("demo", "steerlab"))
+    assert not any(refusal.is_drift(v) for v in both[:2])
+
+
 def test_the_typed_error_keeps_site_prose_except_for_the_empty_study():
     drifted = refusal.error("demo", [DRIFT_SENTENCES[0]], "cannot freeze: x")
     assert str(drifted) == "cannot freeze: x"
