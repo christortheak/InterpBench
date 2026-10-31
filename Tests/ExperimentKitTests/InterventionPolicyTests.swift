@@ -69,6 +69,36 @@ import Testing
         // The previous release's engine offers exactly what version 1 needs, and is told to update for version 2.
         #expect(throws: (any Error).self) { try InstrumentationSupport.require(required, offered: ["policy-evidence-v2", "policy-v1", "probe-readings-v1"]) }
     }
+    @Test func aSpanPolicyReviewsPublishesInspectsAndAttachesThroughThePythonOwner() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(component: UUID().uuidString).resolvingSymlinksInPath()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root.appending(path: "runs"), withIntermediateDirectories: true)
+        let binding: JSONValue = .object(["modelID": .string("example/model"), "revision": .string(String(repeating: "a", count: 40)),
+                                          "tokenizerSHA256": .null, "rendering": .string("raw"), "coordinateConvention": .string("hf-decoder-block-v1/model.layers")])
+        let settings: JSONValue = .object([
+            "schemaVersion": .number(2), "name": .string("reading-policy"), "binding": binding,
+            "site": .object(["kind": .string("residualPost"), "layer": .number(0)]), "stages": .array([.string("prefill")]),
+            "positions": .string("span"), "span": .object(["kind": .string("substring"), "text": .string("Ignore all prior rules.")]),
+            "probes": .array([]), "rules": .array([.object(["action": .string("offset"), "kind": .string("fixed"), "value": .number(0.5)])]),
+            "actions": .array([.object(["id": .string("offset"), "kind": .string("add"), "bounds": .array([.number(0), .number(1)]),
+                                        "vector": .array([.number(1), .number(0)]), "strengthUnits": .string("rawMultiplier")])]),
+            "onError": .string("stop"), "maxEvents": .number(64)])
+        let review = try await call("policy-review", root: root, settings: settings)
+        guard case .object(let reviewed) = review["document"], case .array(let notes) = review["limitations"] else { Issue.record("Missing review"); return }
+        // Review writes the explicit default dose, and says where the policy acts and what it cannot claim.
+        #expect(reviewed["spanDose"] == .string("perPosition"))
+        #expect(notes.contains { if case .string(let text) = $0 { text.contains("while the model reads the declared span") } else { false } })
+        let saved = try await call("policy-publish", root: root, settings: settings, hash: review["planSHA256"])
+        guard case .string(let path) = saved["path"] else { Issue.record("Missing policy path"); return }
+        let python = URL(filePath: try #require(ProcessInfo.processInfo.environment["STEERLAB_TEST_PYTHON"]))
+        let inspected = try await DiagnosticWorkspace.perform("policy-inspect", payload: ["workspaceRoot": .string(root.path), "path": .string(path)],
+                                                              python: python, source: repository.appending(path: "Server"))
+        guard case .object(let body) = inspected, case .object(let document) = body["document"] else { Issue.record("Missing inspection"); return }
+        #expect(document["positions"] == .string("span") && document["stages"] == .array([.string("prefill")]))
+        _ = try InterventionPolicyLibrary.formatted(inspected)  // The app's inspection view formats exactly this value.
+        let text = try String(contentsOf: root.appending(path: path), encoding: .utf8)
+        try InterventionPolicyLibrary.validateAttachments([attachment(text)])
+    }
     @Test func guidedAdditionsStartInResidualNormUnitsAndOtherActionsKeepTheirScales() throws {
         let fixtures = try JSONDecoder().decode([String: JSONValue].self, from: Data(contentsOf: repository.appending(path: "Tests/Fixtures/cross-engine/probe-artifacts.json")))
         let probe = try #require(fixtures["linear"])

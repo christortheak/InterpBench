@@ -50,6 +50,41 @@ migration that rewrites frozen bytes.
   recorded before this change stays admissible. A strength at a
   fractional bound, such as 0.2, is no longer refused when evidence is
   collected: execution bounds strengths in float32, and the check now does too.
+- **A policy can steer while the model reads a declared part of the prompt.**
+  A version-2 policy with `"positions": "span"` acts only at the tokens of a
+  declared span, such as an instruction sentence, while the prompt is read,
+  and never while the model responds. The span is declared once for the study
+  (`substring`, `anchors`, `userMessage`, or `allPrompt`, matched exactly) and
+  resolved on every prompt as the agent renders it, once per distinct prompt.
+  Every item is checked before anything is generated: an item the span does
+  not match refuses the whole run and names the item, with a repair. The dose
+  is `perPosition` (each span token gets the strength) or `fixedTotal` (the
+  strength is a total, spread as strength / n), in residual-norm units. Each
+  response records the span's tokens, its dose, and what each action applied
+  over it, and the run stamps each resolution once in
+  `span-resolutions.json`. `intervention-scope.json` describes where the
+  policy acts and what a result can claim: it changes how those prompt tokens
+  are represented while the prompt is read, not where a concept lives. To
+  compare steering while reading with steering while responding, pair the
+  span policy with a `lastPosition` policy over both stages, which at a
+  `residualPost` site adds what a static agent adds. Span policies run in single-prompt sampled studies on the
+  Python engine; scripted transcripts, panels, and agent chat refuse them, and
+  per-item declarations are later work.
+- **A span policy has matched controls.** `science policy-review` derives
+  one from a published span policy when the settings name it in
+  `controlOf`, and `policy-publish` publishes it with the review's hash. A
+  random-direction control replaces each direction with a seeded random unit
+  direction at the same layer, with the same span, strength, dose, and R, so
+  it adds the same norm. A location control moves the same dose to another
+  declared span, typically a neutral sentence; its token count must equal the
+  controlled span's on every prompt, and the run refuses before generating
+  anything, naming each item and both counts, when it does not. Each control
+  records its kind, seed or controlled span, and the policy it controls, and
+  that record travels into every response's evidence and the scope stamp.
+- **A new agent version can drop its static steering.** `science
+  policy-attach-review` and `policy-attach` take `"staticSteering": "remove"`,
+  which makes a version that changes the model only through its policies, so a
+  span policy can be studied on its own.
 
 - **A study can now declare a J-lens run readout.** The Python engine has long
   read, priced, and enforced a study's `jlensReadout` block, but no command

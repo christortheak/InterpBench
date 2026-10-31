@@ -744,7 +744,7 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
                        name, manifest, experiment_hash, wants_choice,
                        wants_sampled, reader_scorers, should_cancel, log,
                        numeric_parser=None, adapter_active: bool = False,
-                       jlens_trace=None, root=None) -> bool:
+                       jlens_trace=None, root=None, span_resolutions=None) -> bool:
     """The shared per-item executor — ONE measurement pipeline for every
     condition: prompt-metadata copy, the declared deterministic instruments,
     sampled generation, categorical parsing, reader scores, and consistent
@@ -774,13 +774,23 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
             "transcripts but the condition's promptMode is rawCompletion — "
             "transcript items render through the chat template by "
             "definition; use chatAssistant")
-    from . import probe_measurements, probe_observation, policy_execution
+    from . import probe_measurements, probe_observation, policy_artifacts, policy_execution
     measurement_config = probe_measurements.validate(manifest.raw.get('probeMeasurements'))
     measurement_probes = probe_measurements.load(measurement_config, root)
     if measurement_config and measurement_config['probes'] and not wants_sampled:
         raise probe_measurements.ProbeError('Study probes observe generated responses. Select sampledText as an outcome instrument, or remove measurements from this direct-scoring-only study.')
     if eff.variant is not None and eff.variant.intervention_policies and (not wants_sampled or wants_choice):
         raise ValueError('Intervention policies currently execute on sampled responses. Use sampledText without direct choice scoring for this agent study; direct scoring does not yet execute policies.')
+    # Span policies resolve on every prompt of this arm before any of it is generated. The run's
+    # preflight has already resolved them all (policy_spans.run_preflight), so these are cache hits;
+    # a direct caller gets the same refusal, at this condition's start.
+    span_render = None
+    if eff.variant is not None and policy_artifacts.span_policies(eff.variant.intervention_policies):
+        from . import policy_spans
+        if span_resolutions is None:
+            span_resolutions = policy_spans.SpanResolutions(model.tokenizer, manifest.model_id)
+        policy_spans.require_condition(span_resolutions, eff, prompts)
+        span_render = policy_spans.render_inputs(eff)
     sampling = execution_reporting.sampling_metadata(model, eff.temperature)
     rubrics = marker_rubrics(manifest, root) if wants_sampled else {}
     # Stop-reason machinery, resolved ONCE per condition. `stop_ids` is what
@@ -972,7 +982,8 @@ def execute_condition(model, eff: EffectiveCondition, prompts, writer, *,
             if measurement is not None:
                 readout_kwargs.setdefault('observers', []).append(measurement)
             policy = policy_execution.create(eff.variant, rendering=eff.prompt_mode,
-                run_directory=writer.run_directory, context={'condition': eff.name, 'promptID': prompt['id'], 'sampleIndex': sample_index, 'seed': str(seed), 'experimentHash': experiment_hash})
+                run_directory=writer.run_directory, context={'condition': eff.name, 'promptID': prompt['id'], 'sampleIndex': sample_index, 'seed': str(seed), 'experimentHash': experiment_hash},
+                spans=None if span_render is None else policy_spans.ResponseSpans(span_resolutions, prompt['prompt'], span_render))
             if policy is not None: readout_kwargs.setdefault('observers', []).append(policy)
             with sampling_module.seeded_generation(eff.temperature, seed):
                 text = generate.generate(

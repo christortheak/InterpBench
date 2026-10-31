@@ -366,6 +366,58 @@ select either stage or both. No additional pass reads the final sampled token.
 Decisions and measurements may target different populations; validate that
 transfer, rather than treating it as instrument qualification.
 
+`span` acts while the model reads a declared part of the prompt, and nowhere
+else. It takes `"stages": ["prefill"]`, a residual site, a `span` declaration,
+and a `spanDose`:
+
+```json
+"positions": "span", "stages": ["prefill"],
+"span": {"kind": "substring", "text": "Ignore all prior rules."},
+"spanDose": "perPosition"
+```
+
+A declaration is `{"kind":"substring","text":…}` (add `"occurrence": 2` when
+the text occurs more than once), `{"kind":"anchors","start":…,"end":…}` (both
+anchors included), `{"kind":"userMessage"}` (the user text, never the system
+prompt), or `{"kind":"allPrompt"}`. Matching is exact: copy the text as the
+prompt spells it. `perPosition` gives each span token the strength;
+`fixedTotal` treats the strength as a total and gives each of the span's n
+tokens strength / n, for additions only. Rules and providers work as
+elsewhere; only the span's tokens receive their strengths. One declaration
+applies to every prompt of the study, and the run checks every item before
+anything is generated: an item the span does not match refuses the run and
+names the item. Span policies run in single-prompt sampled studies; scripted
+transcripts, panels, and agent chat refuse them. A span policy changes how
+those prompt tokens are represented while the prompt is read. A behavioral
+change shows that reading the span differently moved the output, not that the
+concept lives there. To compare steering while the model reads with steering
+while it responds, make one agent arm with the span policy and another with a
+`lastPosition` policy over both stages, which at a `residualPost` site adds
+what a static agent adds, and attach each with `"staticSteering": "remove"` (below).
+
+A span policy's matched controls are policies too. Review settings that name a
+published span policy derive one, and `policy-publish` publishes it with that
+review's hash:
+
+```json
+{"controlOf": "runs/<run>/intervention.policy.json", "control": "randomDirection",
+ "name": "reading-random-direction", "seed": "1"}
+{"controlOf": "runs/<run>/intervention.policy.json", "control": "location",
+ "name": "reading-location", "span": {"kind": "substring", "text": "The room was quiet."}}
+```
+
+A random-direction control replaces each direction with a seeded random unit
+direction and keeps the layer, site, span, rules, bounds, dose mode, and R, so
+it adds the same norm and only the direction differs. A location control keeps
+the directions, strengths, and dose and moves them to another span, typically
+a neutral sentence of the same prompt. Its span must have as many tokens as
+the controlled span on every item; the run checks this before generating
+anything and names each item where the counts differ, so edit the sentence
+until they agree. Each control records its kind, the policy it controls, and
+its seed or the controlled span. Attach each control to its own agent version
+with `"staticSteering": "remove"`, exactly as the span policy was attached,
+and compare the arms on the same items.
+
 Attachment settings:
 
 ```json
@@ -378,7 +430,9 @@ Attachment settings:
 
 The selected policies replace the new agent's policy list; an empty list creates
 its policy-free comparison. Static vectors, adapters, and unknown artifact
-fields survive. A sweep-promotion certificate is removed from the changed
+fields survive. Add `"staticSteering": "remove"` to remove the vectors and
+adapters instead, so the new version changes the model only through its
+policies; its model, rendering, and system prompt stay the source agent's. A sweep-promotion certificate is removed from the changed
 version because it was not the agent selected by that sweep. Existing agents,
 old manifests, and runs are never rewritten. The exact embedded policy JSON
 changes the new agent's identity and travels with it through existing closure.

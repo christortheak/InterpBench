@@ -194,6 +194,51 @@ CLAIM_LIMITS_SAE_LATENT = (
     "induced delta at this site. It shows what THIS dictionary's feature does "
     "here; β is in latent units, comparable neither across features nor to α.")
 
+# --- span policies (experiment.policy_execution, positions "span") ----------
+#
+# A policy is not a LayerIntervention: it runs in the policy action phase
+# after the legacy chain, and the run stamp lists it under its policy summary
+# (``interventionPolicies[].scopes``), not in a condition's chain-order
+# ``scopes``. A span policy's rows say where its edit lands, because that is
+# the whole point of declaring a span.
+
+#: A span policy's addition, at the prompt tokens its span resolves to.
+POLICY_SPAN_ADDITION = "policySpanAddition"
+#: A span policy's removal, at the same tokens.
+POLICY_SPAN_ABLATION = "policySpanAblation"
+SITE_BLOCK_INPUT = (
+    "residual stream at the block input of the named layer — the tensor "
+    "decoder block L reads, before its attention and MLP")
+POSITIONS_SPAN = (
+    "the prompt tokens the declared span resolves to in each prompt, against "
+    "the exact rendered prompt (each resolution is recorded in "
+    "span-resolutions.json); no other position")
+PREFILL_SPAN = (
+    "applies at each span token while the prompt is read, in whichever "
+    "prefill chunk holds it")
+DECODE_SPAN = (
+    "does not apply: a span policy acts in prefill only; a second policy at "
+    "lastPosition, over prefill and decode, steers the response")
+DOSE_UNITS_SPAN_PER_POSITION = (
+    "perPosition: each span token gets the strength, in the action's units "
+    "(in residual-norm units, strength × R / ‖v‖ × v, an offset of norm "
+    "strength × R); the summed dose grows with the span's token count")
+DOSE_UNITS_SPAN_FIXED_TOTAL = (
+    "fixedTotal: the strength is a total, spread evenly, so each of the span's "
+    "n tokens gets strength / n in the action's units; the summed dose is the "
+    "strength whatever the span's length")
+CONTROL_POLICY_SPAN = (
+    "none synthesized at run time: a matched control is its own policy and "
+    "agent arm, derived by science policy-review from the span policy it "
+    "controls (controlOf) — a seeded random direction with the same span, "
+    "strength, dose mode, and R, or the same direction over a different "
+    "declared span of the same token length, which the run checks on every "
+    "prompt")
+CLAIM_LIMITS_POLICY_SPAN = (
+    "Changes how these prompt tokens are represented while the prompt is "
+    "read. A behavioural change shows that reading this span differently "
+    "moved the output, not that the concept lives there.")
+
 
 def centering_summary(declarations) -> str:
     """One printable centering string for a set of per-edit declarations.

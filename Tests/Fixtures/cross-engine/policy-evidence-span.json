@@ -1,0 +1,202 @@
+{
+  "condition": "modified",
+  "instrumentationRequirements": [
+    "policy-v1",
+    "policy-evidence-v2"
+  ],
+  "interventionDecisions": {
+    "decisions": [
+      {
+        "actionOutcomes": {
+          "change": {
+            "hostSeconds": 0,
+            "status": "applied"
+          }
+        },
+        "appliedScales": {
+          "change": 0.75
+        },
+        "appliedStrengths": {
+          "change": 0.10000000149011612
+        },
+        "generatedTokenIndex": null,
+        "inputTokenID": 4,
+        "inputTokenPosition": 1,
+        "policyName": "span-policy",
+        "policySHA256": "a4f913b49fc4991fb29f552fd14bdc3514e24af54b871da53dfcf0e5025355c5",
+        "predictedTokenID": 3,
+        "predictsTokenPosition": 2,
+        "scores": {},
+        "site": {
+          "kind": "residualPost",
+          "layer": 0
+        },
+        "status": "applied",
+        "strengthUnits": {
+          "change": "residualNorm"
+        },
+        "strengths": {
+          "change": 0.10000000149011612
+        }
+      },
+      {
+        "actionOutcomes": {
+          "change": {
+            "hostSeconds": 0,
+            "status": "applied"
+          }
+        },
+        "appliedScales": {
+          "change": 0.75
+        },
+        "appliedStrengths": {
+          "change": 0.10000000149011612
+        },
+        "generatedTokenIndex": null,
+        "inputTokenID": 3,
+        "inputTokenPosition": 2,
+        "policyName": "span-policy",
+        "policySHA256": "a4f913b49fc4991fb29f552fd14bdc3514e24af54b871da53dfcf0e5025355c5",
+        "predictedTokenID": 4,
+        "predictsTokenPosition": 3,
+        "scores": {},
+        "site": {
+          "kind": "residualPost",
+          "layer": 0
+        },
+        "status": "applied",
+        "strengthUnits": {
+          "change": "residualNorm"
+        },
+        "strengths": {
+          "change": 0.10000000149011612
+        }
+      }
+    ],
+    "declarations": [
+      {
+        "actions": [
+          {
+            "bounds": [
+              0,
+              0.2
+            ],
+            "id": "change",
+            "kind": "add",
+            "residualNorm": 7.5,
+            "residualNormConvention": "perTextMean-v1",
+            "source": {
+              "metadataSHA256": "80e893d7d51b106a84b43a2933ee9816ebc5ff07b62013231f118ea73fadf36a",
+              "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "tensorSHA256": "d3de3fffe1ae058f03c2468e37b61a8686f1eb1ad9d8d9f899e220355862f8e0",
+              "vectorArtifactID": "runs/fit/example"
+            },
+            "strengthUnits": "residualNorm",
+            "vectorNorm": 0.5,
+            "vectorSHA256": "d34898af542bebd7dbe56fa43c373da74d1484d7848bb2fe0d5e21c34fcf3d69"
+          }
+        ],
+        "assetSHA256": {},
+        "binding": {
+          "coordinateConvention": "hf-decoder-block-v1/model.layers",
+          "modelID": "example/model",
+          "rendering": "raw",
+          "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "tokenizerSHA256": "dc1e6e222137c4141d5936ca5910649efd94bba972d986d2aba844f3e948757e"
+        },
+        "maxEvents": 100,
+        "onError": "stop",
+        "positions": "span",
+        "probes": [],
+        "providerSHA256": null,
+        "rules": [
+          {
+            "action": "change",
+            "kind": "fixed",
+            "value": 0.1
+          }
+        ],
+        "schemaVersion": 2,
+        "sha256": "a4f913b49fc4991fb29f552fd14bdc3514e24af54b871da53dfcf0e5025355c5",
+        "site": {
+          "kind": "residualPost",
+          "layer": 0
+        },
+        "span": {
+          "kind": "substring",
+          "occurrence": 1,
+          "text": "selected example"
+        },
+        "spanDose": "fixedTotal",
+        "stages": [
+          "prefill"
+        ]
+      }
+    ],
+    "failureCount": 0,
+    "failures": [],
+    "limitations": [
+      "Requested strengths and acknowledged applied strengths are distinct. Applied means the site tensor operation succeeded; a failed response is not completed evidence.",
+      "Strengths are in each action\u2019s declared units (strengthUnits); a residual-norm strength compares directly with a static agent\u2019s \u03b1. For an addition, appliedScales is the multiplier applied to the stored direction: strength \u00d7 residualNorm / vectorNorm in residual-norm units, or the strength itself for a raw multiplier.",
+      "Policy scores use float32 on the activation device; measurements retain their own scoring precision.",
+      "Expert providers are trusted Python code. Their declared RNG is response-local random.Random; they must not use global randomness or mutate model state.",
+      "A span policy acts only at its resolved prompt tokens, in prefill. spans names each resolution by spanEvidenceSHA256; the full resolver evidence is in the run\u2019s span-resolutions.json. A fixedTotal dose applies strength / tokenCount at each span position, and summedDose adds what each addition applied over the span, in its strengthUnits. A span policy changes how these prompt tokens are represented while the prompt is read; a behavioral change shows that reading the span differently moved the output, not that the concept lives there."
+    ],
+    "omittedDecisions": 0,
+    "ordering": "preAction; decisions; legacy chain; joint ablation; ordered additions; postAction; logits before sampling warpers",
+    "outputTokenIDs": [
+      4,
+      1,
+      0
+    ],
+    "policies": [
+      "a4f913b49fc4991fb29f552fd14bdc3514e24af54b871da53dfcf0e5025355c5"
+    ],
+    "promptTokenIDs": [
+      3,
+      4,
+      3,
+      4,
+      3
+    ],
+    "rngConvention": "random.Random seeded by SHA256(policy digest + sorted response context JSON)",
+    "runtime": "policy-v1",
+    "schemaVersion": 2,
+    "spans": [
+      {
+        "actions": {
+          "change": {
+            "appliedPositions": 2,
+            "perPositionStrength": 0.05000000074505806,
+            "strengthUnits": "residualNorm",
+            "summedDose": 0.10000000149011612
+          }
+        },
+        "doseMode": "fixedTotal",
+        "policySHA256": "a4f913b49fc4991fb29f552fd14bdc3514e24af54b871da53dfcf0e5025355c5",
+        "promptTokensSHA256": "232fccd9d4bb42c32aae9a22ffd2b0738b2eda8b64c947820d2cc7cef44359ca",
+        "renderedTextSHA256": "870e8d173f633185058d5bb8d611700d400845eb45dacc4660da3e7bc201abf3",
+        "spanEvidenceSHA256": "ea43d4fc7793e272bf9c59ca7b02daf13a9f70cf68d14e5e2f4f8757620df5e1",
+        "tokenCount": 2,
+        "tokenRanges": [
+          [
+            1,
+            3
+          ]
+        ]
+      }
+    ],
+    "stateConvention": "empty dictionary per policy per response; skipPolicy retains prior state",
+    "status": "complete",
+    "timing": {
+      "decisionCalls": 1,
+      "decisionHostSeconds": 0,
+      "interpretation": "Host elapsed time, including scoring and recording. Asynchronous GPU work is not synchronized; this is not GPU kernel latency."
+    }
+  },
+  "outputTokenIDs": [
+    4,
+    1,
+    0
+  ]
+}

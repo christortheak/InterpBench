@@ -168,6 +168,55 @@ def _variant_centering(variant) -> dict:
     return declarations
 
 
+def span_policy_scopes(doc: dict) -> list[dict]:
+    """Scope descriptors for one span policy's residual actions, in action
+    order: where its edit lands (the resolved span, prefill only), its dose
+    units and mode, and its claim limit. What varies per prompt (the span's
+    tokens) is in ``span-resolutions.json`` and on every response."""
+    from ..steering import intervention as vocabulary
+    from . import policy_artifacts
+    site = doc["site"]
+    rows = []
+    for action in doc["actions"]:
+        addition = action["kind"] == "add"
+        units = policy_artifacts.strength_units(action)
+        detail = {"policyName": doc["name"], "actionID": action["id"], "siteKind": site["kind"],
+                  "span": doc["span"], "spanDose": doc["spanDose"], "strengthUnits": units,
+                  "lowerBound": action["bounds"][0], "upperBound": action["bounds"][1],
+                  "spanResolutions": "span-resolutions.json"}
+        if units == policy_artifacts.RESIDUAL_NORM:
+            detail.update(residualNorm=action["residualNorm"],
+                          residualNormConvention=action["residualNormConvention"])
+        if "control" in doc:
+            # A matched control names what it controls, so its row cannot be read as a treatment.
+            detail.update(controlKind=doc["control"]["kind"], controlOf=doc["control"]["of"])
+        rows.append(vocabulary.InterventionScope(
+            path=vocabulary.POLICY_SPAN_ADDITION if addition else vocabulary.POLICY_SPAN_ABLATION,
+            site=(vocabulary.SITE_BLOCK_INPUT if site["kind"] == "residualPre"
+                  else vocabulary.SITE_BLOCK_OUTPUT),
+            layers=(site["layer"],), positions=vocabulary.POSITIONS_SPAN,
+            prefill=vocabulary.PREFILL_SPAN, decode=vocabulary.DECODE_SPAN,
+            centering=(vocabulary.CENTERING_NOT_APPLICABLE if addition
+                       else vocabulary.CENTERING_NONE),
+            dose_units=(vocabulary.DOSE_UNITS_LAMBDA if not addition
+                        else vocabulary.DOSE_UNITS_SPAN_FIXED_TOTAL
+                        if doc["spanDose"] == policy_artifacts.FIXED_TOTAL
+                        else vocabulary.DOSE_UNITS_SPAN_PER_POSITION),
+            control=vocabulary.CONTROL_POLICY_SPAN,
+            claim_limits=vocabulary.CLAIM_LIMITS_POLICY_SPAN,
+            detail=detail).to_dict())
+    return rows
+
+
+def policy_summaries(values) -> list[dict]:
+    """The run stamp's policy summaries; a span policy's carries its ``scopes``."""
+    from .policy_artifacts import SPAN, load_attached, summaries
+    documents = dict(load_attached(values))
+    return [{**summary, "scopes": span_policy_scopes(documents[summary["sha256"]])}
+            if summary["positions"] == SPAN else summary
+            for summary in summaries(values)]
+
+
 def stamp_run(run_directory: str, *, experiment: str, conditions=(),
               resolve_ordinary=None, variant_conditions=(),
               resolve_variant=None, latent_conditions=(),
@@ -215,8 +264,7 @@ def stamp_run(run_directory: str, *, experiment: str, conditions=(),
             continue
         extra = {}
         if getattr(eff.variant, 'intervention_policies', None):
-            from .policy_artifacts import summaries
-            extra['interventionPolicies'] = summaries(eff.variant.intervention_policies)
+            extra['interventionPolicies'] = policy_summaries(eff.variant.intervention_policies)
         basis_path = getattr(eff.variant, "neutral_pc_basis_path", None)
         if basis_path:
             # A SECOND direction transform, declared on the artifact rather

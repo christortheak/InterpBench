@@ -219,6 +219,49 @@ def artifact_preflight(manifest, root, _log) -> None:
             "resubmit.")
 
 
+def span_policy_preflight(manifest, prompts_file, root, _log) -> None:
+    """Refuse a span policy the study cannot run, BEFORE the model loads.
+
+    A span policy (``positions: "span"``) is declared once for the whole study
+    and resolved on every task prompt. The declared characters are checked
+    here with ``prompt_span.declared_user_range``, which needs no tokenizer:
+    a missing or ambiguous anchor in any item refuses the run with the
+    resolver's own code and repair, naming every offending item. Scripted
+    transcripts and panel seats are refused too, since phase 1 resolves
+    single-prompt renders only. The token-level resolution runs again, with
+    the loaded tokenizer, before the first generation
+    (``policy_spans.run_preflight``). An agent that cannot be read is left
+    to ``artifact_preflight`` and the run loop."""
+    from . import model_variant, multi_agent, policy_spans
+
+    def agent(reference, inline=None):
+        try:
+            return (model_variant.ModelVariant.from_dict(inline) if inline else
+                    model_variant.ModelVariant.from_file(paths.resolve_artifact(reference, root)))
+        except (OSError, KeyError, ValueError, TypeError):
+            return None
+
+    if manifest.study_kind == "multiAgent":
+        spath = manifest.multi_agent_scenario_path
+        if not spath:
+            return
+        try:
+            if not os.path.isabs(spath):
+                spath = os.path.join(paths.project_root() if root is None else root, spath)
+            scenario, _ = multi_agent.load_scenario(spath)
+        except (OSError, ValueError, KeyError):
+            return  # the runner's own load reports this properly
+        seats = [(a.name, agent(a.variant_artifact_path)) for a in scenario.agents if a.variant_artifact_path]
+        policy_spans.refuse(policy_spans.panel_problems([(n, v) for n, v in seats if v is not None]),
+                            when="in this panel")
+        return
+    arms = [(vc.name, agent(vc.artifact_path, vc.artifact)) for vc in manifest.variant_conditions]
+    arms = [(name, variant) for name, variant in arms if variant is not None]
+    if not any(policy_spans.policy_artifacts.span_policies(v.intervention_policies) for _, v in arms):
+        return
+    policy_spans.declared_preflight(arms, task_inputs.load_prompts(manifest, prompts_file, root))
+
+
 def scenario_preflight_or_warn(manifest, root, _log) -> None:
     """Panel twin of ``token_preflight_or_warn`` (plan A4).
 

@@ -192,6 +192,8 @@ def inputs(config, root):
         try: text = raw.decode('utf-8')
         except UnicodeDecodeError as exc: raise CostError(f'{name} must be a published policy file in UTF-8 JSON.') from exc
         document = policy_artifacts.validate(probe_artifacts.read_json(text))
+        if document['positions'] == policy_artifacts.SPAN:
+            raise CostError(f'{name} acts on a declared prompt span. This instrument does not resolve spans yet; measure a policy at lastPosition or allPositions.')
         require_binding('Policy ' + ref['path'], document['binding'], document['binding']['rendering'], config)
         result['policies'][name] = {'document': document, 'attachments': [{'json': text, 'sha256': ref['sha256']}]}
     return result
