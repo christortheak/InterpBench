@@ -1095,7 +1095,7 @@ promotion under this gate as "monotone in the observed direction".
 record-local seeded streams. Above temperature 0, a study that declares
 `seedPolicy` `derivedSHA256` (required when `samplesPerItem > 1`) runs each item
 `samplesPerItem` times, at any count including 1, and derives each record's
-seed from study hash, condition, prompt ID and sample index; otherwise ordinary
+seed from study hash, condition, prompt ID, and sample index; otherwise ordinary
 runs enumerate the declared seeds, one record per listed seed, with the same
 seeds for every item and arm. Derived seeds include the condition, so arms draw
 distinct streams for the same item: the design is paired at the prompt level,
@@ -1109,8 +1109,8 @@ runtime configuration. Preserve the sampling provenance and consult
 For categorical outcomes, answer-token/logprob instruments remain temperature-free.
 
 **Choose the seed policy for the design.** Under the fixed seed list, two items
-with the same text in the same arm draw the same random stream and give the
-same answer. A design that draws items with replacement, where each item is one
+with the same text in the same arm draw the same random stream and typically
+give the same answer on the same engine and configuration. A design that draws items with replacement, where each item is one
 simulated respondent and a text can recur under a different prompt ID, should
 declare `derivedSHA256`: the prompt ID is part of each seed, so the repeats are
 independent draws. Earlier releases reused the fixed list for a declared

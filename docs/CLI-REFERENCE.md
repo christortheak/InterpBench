@@ -1677,7 +1677,11 @@ include the condition, so arms draw distinct streams for the same item: the
 design is paired at the prompt level, not by common random numbers. Builds
 released before this rule reused the fixed list for a declared
 `derivedSHA256` with `samplesPerItem` 1, and their records say so: they stamp
-`seedPolicy: manifestSeeds`. Records stamp their `seed`, `seedPolicy`, and
+`seedPolicy: manifestSeeds`. Resuming such a parked run on a release with the
+rule is refused (`manifestEpoch`) rather than mixing the two rules in one run,
+and both clients refuse to submit such a study to an engine whose
+capabilities lack `remoteStudy.declaredSeedPolicy`. Records stamp their
+`seed`, `seedPolicy`, and
 `sampleIndex`, and a run that generates text writes `sampling-provenance.json`
 beside them. Top-p and top-k are not study settings: the MLX engine samples
 from the full temperature-scaled distribution (top-p 1, no top-k, recorded in

@@ -4,7 +4,7 @@
 record-local seeded streams. Above temperature 0, a study that declares
 `seedPolicy` `derivedSHA256` (required when `samplesPerItem > 1`) runs each item
 `samplesPerItem` times, at any count including 1, and derives each record's
-seed from study hash, condition, prompt ID and sample index; otherwise ordinary
+seed from study hash, condition, prompt ID, and sample index; otherwise ordinary
 runs enumerate the declared seeds, one record per listed seed, with the same
 seeds for every item and arm. Derived seeds include the condition, so arms draw
 distinct streams for the same item: the design is paired at the prompt level,
