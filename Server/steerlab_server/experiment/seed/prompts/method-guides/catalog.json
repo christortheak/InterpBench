@@ -1966,6 +1966,59 @@
           }
         }
       }
+    },
+    {
+      "id": "jlens-probe-batch",
+      "method": "jlens",
+      "title": "Probe a prompt set through a J-lens",
+      "engineCLI": null,
+      "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+      "http": "POST /api/science/plan; POST /api/science/submit",
+      "compute": "gpu",
+      "outputs": [
+        "One run directory: a probe-batch.json manifest (prompt ids, labels, input hashes, per-prompt projection counts, and timings) and, for each prompt, the jlens probe's probe.json, probe-topk.csv, probe-trajectory.csv, and config.json under prompts/<id>/."
+      ],
+      "restriction": "One condition (the base model or one agent) per request. The plan states projection counts, a memory estimate, output size, and a walltime allowance before submission, and refuses a prompt over the probe's projection ceiling or an estimate that does not fit the selected GPU. Readouts only: no causal claim and no lens qualification.",
+      "actions": [
+        {
+          "id": "post-science-plan",
+          "method": "POST",
+          "path": "/api/science/plan",
+          "serviceRole": "both",
+          "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+        },
+        {
+          "id": "post-science-submit",
+          "method": "POST",
+          "path": "/api/science/submit",
+          "serviceRole": "both",
+          "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+        }
+      ],
+      "access": {
+        "status": "http",
+        "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+        "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+        "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+      },
+      "executionProfile": {
+        "profile": "python-model",
+        "runs": "Python engine only",
+        "backends": {
+          "cuda": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mps": {
+            "status": "implementedUnqualified",
+            "label": "implemented; comparison unqualified"
+          },
+          "mlx": {
+            "status": "unsupported",
+            "label": "no native implementation"
+          }
+        }
+      }
     }
   ],
   "whereItRuns": {

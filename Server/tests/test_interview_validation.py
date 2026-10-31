@@ -11,7 +11,7 @@ OPERATIONS = (
     'optvec-campaign', 'jlens-fit',
     'probe-capture', 'probe-train', 'probe-evaluate',
     'jlens-fit-benchmark', 'jlens-fit-round', 'jlens-fit-merge', 'jlens-fit-assess',
-    'instrumentation-cost',
+    'instrumentation-cost', 'jlens-probe-batch',
 )
 
 
@@ -57,6 +57,12 @@ def interview_answers(operation, root):
         from test_optvec_jspace import _write_lens, LENS_ID
         _write_lens(root, root=str(root))
         fields.update(vectorArtifacts='\n'.join(artifacts), lensID=LENS_ID, probeItems='items.jsonl')
+    if operation == 'jlens-probe-batch':
+        from test_optvec_jspace import _write_lens, LENS_ID
+        _write_lens(root, root=str(root), model_id='example/model')
+        items.write_text('{"id":"case-1","text":"Read this prompt","labels":{"condition":"baseline"}}\n')
+        fields.update(modelID='example/model', revision='a' * 40, lensID=LENS_ID, prompts='items.jsonl',
+                      layers='0, 2', pin='ruling', promptMode='rawCompletion')
     if operation == 'rescore-style':
         from test_reasoning_style import _analyze_fixture
         _analyze_fixture(root)

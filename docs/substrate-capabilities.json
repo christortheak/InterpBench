@@ -186,6 +186,7 @@
     "jlens-fit-assess": "python-model",
     "jlens-fit-round": "python-cpu",
     "jlens-fit-merge": "python-cpu",
+    "jlens-probe-batch": "python-model",
     "probe-library": "probe-library",
     "probe-capture": "python-model",
     "probe-train": "python-cpu",

@@ -485,6 +485,10 @@ def test_a_controller_refuses_the_probe_and_names_the_batch_operation(
     assert "science-plan" in detail["repairAction"]
     assert "jobId" not in resp.json()
 
+    # The repair names an operation that exists.
+    from steerlab_server.experiment import managed_methods
+    assert detail["operation"] in managed_methods.OPERATIONS
+
 
 def test_the_resident_model_escape_hatch_still_admits_the_probe(
         client, tmp_path, monkeypatch):

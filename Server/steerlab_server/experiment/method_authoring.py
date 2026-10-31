@@ -102,7 +102,7 @@ def draft(operation, answers, root):
     if operation == 'jlens-fit':
         from .jlens_fit_review import review
         result['fittingReview'] = review(config, root)
-    if operation in ('jlens-fit-benchmark','jlens-fit-round','jlens-fit-merge','jlens-fit-assess'):
+    if operation in ('jlens-fit-benchmark','jlens-fit-round','jlens-fit-merge','jlens-fit-assess','jlens-probe-batch'):
         from .jlens_fit_review import operation_review
         result['operationReview'] = operation_review(operation, config, root)
     return {**result, 'planSHA256': archives.digest(result), 'changed': False}

@@ -86,8 +86,10 @@ def validate(value, resources):
 def estimate(plan):
     """A calibrated runtime estimate for the reviewed plan, or None when the operation has none.
 
-    Only ``jlens-fit-assess`` is estimated: its work is a bounded number of
-    readouts with no backward passes and a recorded calibration. Fitting keeps
+    ``jlens-fit-assess`` is estimated: its work is a bounded number of
+    readouts with no backward passes and a recorded calibration. So is
+    ``jlens-probe-batch``, whose review prices every prompt's projections; it
+    has no calibration, so its review states a conservative formula. Fitting keeps
     the long default by the researcher's rule (its checkpoints resume across
     walltime kills); benchmarks are the throughput measurement itself, so no
     estimate precedes them; batteries and stability sweeps carry no workload
@@ -95,6 +97,13 @@ def estimate(plan):
     """
     operation = (plan.get('request') or {}).get('operation')
     review = plan.get('operationReview') or {}
+    if operation == 'jlens-probe-batch' and isinstance(review, dict):
+        # No recorded run calibrates this workload; its review states the
+        # formula it used, and only a complete one is returned.
+        workload = review.get('walltimeEstimate')
+        if not isinstance(workload, dict) or type(workload.get('seconds')) is not int or workload['seconds'] < 0:
+            return None
+        return {'operation': operation, **workload}
     if operation != 'jlens-fit-assess' or not isinstance(review, dict):
         return None
     layers = review.get('sourceLayers')

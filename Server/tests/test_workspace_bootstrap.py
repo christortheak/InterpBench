@@ -68,7 +68,9 @@ def test_handoff_leads_with_the_interview_then_the_brief_catalog(tmp_path, capsy
     assert 'conceptStudy' in json.loads(capsys.readouterr().out)['error']['reason']
     assert client_cli.main(['science', 'list', '--brief', *where]) == 0
     brief = capsys.readouterr().out
-    assert json.loads(brief)['result']['brief'] is True and len(brief.encode()) < 12_000
+    # Still a short index beside the full catalog's 75 KB. This envelope also
+    # carries the temporary workspace path, so it sits above the bare listing.
+    assert json.loads(brief)['result']['brief'] is True and len(brief.encode()) < 12_500
 
     # `setup start` carries the same block.
     assert client_cli.main(['setup', 'start', str(root), '--json']) == 0

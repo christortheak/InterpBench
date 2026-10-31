@@ -616,3 +616,62 @@ a new request and the queued worker verify afresh. It does not eliminate every
 plan, submit, and worker read. No general fitting-run or checkpoint cleanup has
 been added. Keep original remote evidence until verified local custody, and
 follow the site's storage policy through an explicitly reviewed cleanup.
+
+## Probe a prompt set on a cluster GPU
+
+The interactive probe (`steerlab-server jlens probe`, `POST /api/jlens/probe`)
+reads one prompt and loads the model in the serving process. A cluster
+controller never holds a model, so there the route refuses and names this
+operation instead. `jlens-probe-batch` reads a whole prompt set as one managed
+GPU job under one condition: the base model, or one agent. The model loads
+once, and the converted lens is verified and its armed Jacobians are placed on
+the GPU once, however many prompts there are.
+
+Author it with `science interview jlens-probe-batch`, then `science draft` and
+`science publish`, and run it through the same staging, `science-plan`,
+`science-submit`, `science-export`, and `science-fetch` path as every managed
+operation (`remote science-*` on the Mac command line, `runner science-*` on
+the Python client). The prompt set is a pinned JSONL file, one object per line:
+
+```json
+{"id": "case-1", "text": "The full prompt text.", "labels": {"condition": "baseline"}}
+```
+
+Ids are letters, digits, `.`, `_`, or `-`, unique even ignoring case, because
+each names its result directory. `labels` is optional and is copied into the
+manifest; it does not change the reading. The other settings are the probe's
+own: `lensID`, `layers` (or `allLayers` for every fitted source layer), `topK`
+(0 reads no vocabulary, for a directions-only probe), `pin`, `pinIDs`,
+`directions`, `positionStride`, and `maxTokens`, plus `variantPath`,
+`promptMode`, and `systemPrompt` with the CLI's precedence: an explicit value
+wins, then the agent's own, then the default. The agent's vectors, adapter, and
+neutral basis travel with the request and are hash-checked again on the node.
+
+Review states, before anything is submitted:
+
+- each prompt's rendered token count, scored positions, and full-vocabulary
+  projections (scored positions × armed layers × 2, for the logit-lens
+  companion), from the pinned revision's cached tokenizer;
+- an itemized device-memory estimate: weights at the run precision, the armed
+  Jacobians in float32 (d² × 4 bytes per layer), and forward activations for the
+  longest prompt, with headroom;
+- the expected output size and file count; and
+- a walltime allowance from a stated formula, because no recorded run
+  calibrates this workload yet. Request a walltime explicitly to override it.
+
+It refuses, with the repair, a prompt over the probe's ceiling of 200,000
+projections (raise `positionStride`, arm fewer layers, or set `maxTokens`;
+lowering `topK` does not help), output larger than one export can carry, and an
+exact memory estimate that does not fit one GPU of the selected type, naming a
+declared type that does. When the tokenizer or model configuration is not
+cached where the plan runs, review says so, and execution re-checks every prompt
+before the first forward pass.
+
+The run is one directory. `probe-batch.json` lists the prompts in order with
+their ids, labels, token counts, projection counts, timings, and the input
+hashes; `prompts/<id>/` holds exactly what one probe of that prompt writes
+(`probe.json`, `probe-topk.csv`, `probe-trajectory.csv`, and `config.json`),
+with `runDirectory` recorded relative to the workspace. Read it as you would one
+probe per prompt: counts, ranks, and cosines beside their logit-lens
+companions. A study's conditions crossed with its prompts are not yet a request
+shape; probe each agent as its own request.

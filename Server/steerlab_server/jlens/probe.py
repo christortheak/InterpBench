@@ -53,6 +53,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+from dataclasses import dataclass
 
 from ..experiment import model_variant as _model_variant
 from ..steering.intervention import LayerIntervention
@@ -317,45 +318,95 @@ def _cosine(a, b) -> float:
     return float(torch.dot(a, b)) / denom if denom > 0 else 0.0
 
 
-def probe(model_id: str, *, prompt: str, lens_id: str | None = None,
-          layers: list[int] | None = None, top_k: int = 10,
-          pin_words=(), pin_ids=(), directions=(),
-          variant_path: str | None = None,
-          prompt_mode: str | None = None, system_prompt: str | None = None,
-          position_stride: int = DEFAULT_POSITION_STRIDE,
-          max_tokens: int | None = None, revision: str | None = None,
-          root: str | None = None, model=None, device: str | None = None,
-          dtype: str | None = None, log=None) -> dict:
-    """Read one CONDITION's prompt at every (armed layer × position).
+@dataclass
+class ProbeSession:
+    """The half of a probe that does not depend on the prompt.
 
-    The condition is an effective one, not a bare model: ``variant_path``
-    supplies the agent (its adapter, its stored injections, its prompt mode
-    and system prompt), and the prompt goes through the SHARED renderer.
+    One session holds the condition being read (the model, the agent and the
+    rendering it declares), the lens record, the armed layers, the pinned
+    tokens, and the directions — and, once the first prompt is read, the
+    readout itself. Building the readout is the fixed cost: it re-hashes the
+    whole converted lens file and moves every armed Jacobian to the device in
+    float32 (about 7.3 GB for 63 layers at d=5376). A session pays it once,
+    however many prompts it reads; :func:`probe` is a session of one.
 
-    That is not decoration. Rendering is what a study run does, and a raw
-    ``tokenizer(prompt)`` produces a different token sequence than the chat
-    template — different length, different positions, a different BOS story —
-    so a trajectory read off raw text is not about any run's positions
-    (external review, 2026-08-16). Absent a variant this reads the BASE model
-    under the declared rendering, which is a legitimate condition and is
-    stamped as such rather than left to look like an agent.
+    Nothing here changes what a prompt's numbers are. Every per-prompt step —
+    rendering, the injection gate, the adapter, the capture, the readouts —
+    runs in :func:`read_prompt` exactly as it does inside :func:`probe`.
     """
-    import torch
 
-    from ..experiment import paths, prompt_render
-    from ..experiment.run_config import write_run_config
-    from ..experiment.optvec_jspace import evidence_tier_for, qualification_state
+    model_id: str
+    lens: str
+    record: object
+    model: object
+    revision: str | None
+    armed: list[int]
+    tokenizer: object
+    pinned: dict[int, str]
+    top_k: int
+    loaded_directions: list[dict]
+    variant: object
+    variant_path: str | None
+    variant_identity: dict
+    injections: list | None
+    prompt_mode: str | None
+    system_prompt: str | None
+    root: str | None
+    log: object = None
+    config: object = None
+    readout: object = None
+    #: How many times this session built (verified and placed) a readout.
+    #: One for any number of prompts; recorded by the batch manifest.
+    readout_builds: int = 0
+
+    def emit(self, message: str) -> None:
+        if self.log is not None:
+            self.log(message)
+
+    @property
+    def wants_vocabulary(self) -> bool:
+        # A vocabulary readout is wanted only when something reads the
+        # vocabulary. A direction-only probe needs J_l and never touches the
+        # output head, so it costs ZERO full-vocabulary projections — the
+        # previous arithmetic charged it two per cell for a readout nobody
+        # asked for.
+        return bool(self.pinned) or self.top_k > 0
+
+    def ensure_readout(self):
+        """Verify the converted lens and place the armed Jacobians, once."""
+        if self.readout is None:
+            from .readout import LensReadout
+
+            self.readout = LensReadout.build(record=self.record,
+                                             config=self.config,
+                                             model=self.model, root=self.root)
+            self.readout_builds += 1
+        return self.readout
+
+
+def open_session(model_id: str, *, lens_id: str | None = None,
+                 layers: list[int] | None = None, top_k: int = 10,
+                 pin_words=(), pin_ids=(), directions=(),
+                 variant_path: str | None = None,
+                 prompt_mode: str | None = None,
+                 system_prompt: str | None = None,
+                 revision: str | None = None, root: str | None = None,
+                 model=None, device: str | None = None,
+                 dtype: str | None = None, log=None) -> ProbeSession:
+    """Resolve the lens, load the model if none is given, and fix the condition.
+
+    The agent's precedence is the CLI's: an explicit ``prompt_mode`` or
+    ``system_prompt`` wins, then the agent's own, then the default.
+    """
+    from ..experiment import paths
     from ..steering import model_loader
     from . import lens_store
     from .qualification import _default_layers
-    from .readout import LensReadout, ReadoutConfig
+    from .readout import ReadoutConfig
 
     def emit(message: str) -> None:
         if log is not None:
             log(message)
-
-    if not (prompt or "").strip():
-        raise ProbeError("a probe needs a prompt to read")
 
     lens = lens_id or lens_store.for_model(model_id, root)
     record = lens_store.resolve(lens, root)
@@ -378,7 +429,7 @@ def probe(model_id: str, *, prompt: str, lens_id: str | None = None,
     _require_direction_model(loaded_directions, model_id, revision)
 
     # The effective condition: agent first, then the rendering it declares.
-    variant = injections = adapter = None
+    variant = injections = None
     variant_identity: dict = {}
     if variant_path:
         from ..experiment import model_variant
@@ -402,28 +453,51 @@ def probe(model_id: str, *, prompt: str, lens_id: str | None = None,
         prompt_mode = prompt_mode or variant.prompt_mode
         if system_prompt is None:
             system_prompt = variant.system_prompt
+
+    session = ProbeSession(
+        model_id=model_id, lens=lens, record=record, model=model,
+        revision=revision, armed=armed, tokenizer=tokenizer, pinned=pinned,
+        top_k=top_k, loaded_directions=loaded_directions,
+        variant=variant, variant_path=variant_path,
+        variant_identity=variant_identity, injections=injections,
+        prompt_mode=prompt_mode, system_prompt=system_prompt,
+        root=root, log=log)
+    session.config = ReadoutConfig(
+        layers=armed, watchlist=sorted(pinned) or [], topK=max(0, top_k),
+        topKLayers=armed, logitLensCompanion=True,
+        transportOnly=not session.wants_vocabulary)
+    return session
+
+
+def plan_prompt(session: ProbeSession, prompt: str, *,
+                position_stride: int = DEFAULT_POSITION_STRIDE,
+                max_tokens: int | None = None) -> dict:
+    """Render one prompt and price it, refusing before any forward pass.
+
+    Returns the rendered prompt, the token ids read, the scored positions,
+    and the projection count — everything the ceiling and a batch plan need,
+    and nothing that touches the model's weights.
+    """
+    from ..experiment import prompt_render
+
     rendered = prompt_render.render(
-        tokenizer, prompt, model_id=model_id,
-        prompt_mode=prompt_mode or prompt_render.CHAT_ASSISTANT,
-        system_prompt=system_prompt,
+        session.tokenizer, prompt, model_id=session.model_id,
+        prompt_mode=session.prompt_mode or prompt_render.CHAT_ASSISTANT,
+        system_prompt=session.system_prompt,
         qwen_thinking_enabled=bool(
-            getattr(variant, "qwen_thinking_enabled", False)))
+            getattr(session.variant, "qwen_thinking_enabled", False)))
     ids = list(rendered.input_ids)
     if max_tokens and len(ids) > max_tokens:
         ids = ids[:max_tokens]
-    encoded = {"input_ids": torch.tensor([ids])}
     scored = list(range(0, len(ids), max(1, position_stride)))
-    # A vocabulary readout is wanted only when something reads the vocabulary.
-    # A direction-only probe needs J_l and never touches the output head, so
-    # it costs ZERO full-vocabulary projections — the previous arithmetic
-    # charged it two per cell for a readout nobody asked for.
-    wants_vocabulary = bool(pinned) or top_k > 0
-    if not (wants_vocabulary or loaded_directions):
+    wants_vocabulary = session.wants_vocabulary
+    if not (wants_vocabulary or session.loaded_directions):
         raise ProbeError(
             "nothing to read: pass --pin/--pin-id, --top-k, or --directions")
     # ONE projection per (cell, lens) and one per (cell, companion); top-k and
     # pinned ranks are both derived from it. Counting two while computing four
     # is what this ceiling exists to prevent (external review, 2026-08-16).
+    armed = session.armed
     projections = (len(scored) * len(armed) * 2) if wants_vocabulary else 0
     if projections > MAX_PROJECTIONS:
         raise ProbeError(
@@ -433,16 +507,45 @@ def probe(model_id: str, *, prompt: str, lens_id: str | None = None,
             f"fewer layers, or truncate with --max-tokens. Lowering --top-k "
             f"does NOT reduce this: k selects from the result, it does not "
             f"avoid the matmul. A --directions-only probe costs none of it")
+    return {"rendered": rendered, "ids": ids, "scored": scored,
+            "projections": projections}
 
-    config = ReadoutConfig(layers=armed, watchlist=sorted(pinned) or [],
-                           topK=max(0, top_k), topKLayers=armed,
-                           logitLensCompanion=True,
-                           transportOnly=not wants_vocabulary)
-    readout = LensReadout.build(record=record, config=config, model=model,
-                                root=root)
 
-    emit(f"reading {len(scored)} position(s) × {len(armed)} layer(s) "
-         f"({projections} projections)")
+def read_prompt(session: ProbeSession, prompt: str, planned: dict, *,
+                position_stride: int = DEFAULT_POSITION_STRIDE,
+                max_tokens: int | None = None,
+                run_directory: str | None = None,
+                recorded_run_directory: str | None = None) -> dict:
+    """Read one planned prompt at every (armed layer × scored position).
+
+    ``run_directory`` names an existing directory to write into (a batch's
+    per-prompt subdirectory); absent, a fresh ``runs/`` directory is made, as
+    :func:`probe` always has. ``recorded_run_directory`` is what the report's
+    ``runDirectory`` says, when that should not be the absolute path — a
+    batch records its workspace-relative path, so evidence that travels home
+    names no machine.
+    """
+    import torch
+
+    from ..experiment import paths, prompt_render
+    from ..experiment.run_config import write_run_config
+    from ..experiment.optvec_jspace import evidence_tier_for, qualification_state
+
+    model, tokenizer = session.model, session.tokenizer
+    model_id, armed, pinned = session.model_id, session.armed, session.pinned
+    loaded_directions, variant = session.loaded_directions, session.variant
+    injections, record = session.injections, session.record
+    prompt_mode, system_prompt = session.prompt_mode, session.system_prompt
+    rendered, ids = planned["rendered"], planned["ids"]
+    scored, projections = planned["scored"], planned["projections"]
+    wants_vocabulary = session.wants_vocabulary
+    encoded = {"input_ids": torch.tensor([ids])}
+    config = session.config
+    readout = session.ensure_readout()
+    adapter = None
+
+    session.emit(f"reading {len(scored)} position(s) × {len(armed)} layer(s) "
+                 f"({projections} projections)")
     capture = _AllPositionCapture(armed)
     device_obj = next(model.model.parameters()).device
     # Injectors FIRST, the read-only capture last — the standing order, so at
@@ -466,7 +569,7 @@ def probe(model_id: str, *, prompt: str, lens_id: str | None = None,
     if variant is not None:
         from ..experiment import model_variant
 
-        adapter = model_variant.apply_adapter(model, variant, root=root)
+        adapter = model_variant.apply_adapter(model, variant, root=session.root)
     try:
         with torch.no_grad():
             model.hooked.reset_offsets()
@@ -547,12 +650,15 @@ def probe(model_id: str, *, prompt: str, lens_id: str | None = None,
     rendered_mode = prompt_mode or prompt_render.CHAT_ASSISTANT
     tier = evidence_tier_for(record)
     stamp, claim = qualification_state(record, model)
-    stamp, claim = downgrade_for_unpinned_agent(stamp, claim, variant_identity)
-    run_directory = paths.make_unique_run_directory(
-        f"{RUN_TYPE}-{model_id.replace('/', '--')}", root)
+    stamp, claim = downgrade_for_unpinned_agent(stamp, claim,
+                                                session.variant_identity)
+    if run_directory is None:
+        run_directory = paths.make_unique_run_directory(
+            f"{RUN_TYPE}-{model_id.replace('/', '--')}", session.root)
     write_run_config(run_directory, RUN_TYPE, model_id=model_id,
-                     revision=revision, dtype=getattr(model, "dtype", None),
-                     notes={"lensID": lens, "evidenceTier": tier,
+                     revision=session.revision,
+                     dtype=getattr(model, "dtype", None),
+                     notes={"lensID": session.lens, "evidenceTier": tier,
                             "qualification": stamp, "claim": claim,
                             "armedLayers": armed, "positions": len(scored),
                             "variant": getattr(variant, "name", None),
@@ -565,9 +671,10 @@ def probe(model_id: str, *, prompt: str, lens_id: str | None = None,
         "evidenceTier": tier,
         "qualification": stamp,
         "claim": claim,
-        "model": {"modelID": model_id, "revision": revision,
+        "model": {"modelID": model_id, "revision": session.revision,
                   "dtype": getattr(model, "dtype", None)},
-        "lens": {"lensID": lens, "sourceSHA256": record.source.tensorSHA256,
+        "lens": {"lensID": session.lens,
+                 "sourceSHA256": record.source.tensorSHA256,
                  "targetLayer": record.targetLayer},
         "configuration": {
             "armedLayers": armed, "topK": config.topK,
@@ -596,9 +703,9 @@ def probe(model_id: str, *, prompt: str, lens_id: str | None = None,
         # is the base model under the declared rendering — a real condition,
         # named as one, so an artifact can never be mistaken for an agent's.
         "condition": {
-            "variantPath": variant_path,
+            "variantPath": session.variant_path,
             "variantName": getattr(variant, "name", None),
-            **variant_identity,
+            **session.variant_identity,
             "isBaseModel": variant is None,
             "promptMode": rendered_mode,
             "systemPromptPresent": bool(system_prompt),
@@ -629,7 +736,7 @@ def probe(model_id: str, *, prompt: str, lens_id: str | None = None,
             "rank": "full-vocabulary, 1-based, ties take the best rank",
             "statistics": "counts, ranks and cosines only; no null, no CI",
         },
-        "runDirectory": run_directory,
+        "runDirectory": recorded_run_directory or run_directory,
     }
     path = os.path.join(run_directory, PROBE_JSON)
     with open(path, "w", encoding="utf-8") as handle:
@@ -640,8 +747,50 @@ def probe(model_id: str, *, prompt: str, lens_id: str | None = None,
                        "topKCSV": os.path.join(run_directory, TOPK_CSV),
                        "trajectoryCSV": os.path.join(run_directory,
                                                      TRAJECTORY_CSV)}
-    emit(f"{claim} [{tier}] → {run_directory}")
+    session.emit(f"{claim} [{tier}] → {run_directory}")
     return report
+
+
+def probe(model_id: str, *, prompt: str, lens_id: str | None = None,
+          layers: list[int] | None = None, top_k: int = 10,
+          pin_words=(), pin_ids=(), directions=(),
+          variant_path: str | None = None,
+          prompt_mode: str | None = None, system_prompt: str | None = None,
+          position_stride: int = DEFAULT_POSITION_STRIDE,
+          max_tokens: int | None = None, revision: str | None = None,
+          root: str | None = None, model=None, device: str | None = None,
+          dtype: str | None = None, log=None) -> dict:
+    """Read one CONDITION's prompt at every (armed layer × position).
+
+    The condition is an effective one, not a bare model: ``variant_path``
+    supplies the agent (its adapter, its stored injections, its prompt mode
+    and system prompt), and the prompt goes through the SHARED renderer.
+
+    That is not decoration. Rendering is what a study run does, and a raw
+    ``tokenizer(prompt)`` produces a different token sequence than the chat
+    template — different length, different positions, a different BOS story —
+    so a trajectory read off raw text is not about any run's positions
+    (external review, 2026-08-16). Absent a variant this reads the BASE model
+    under the declared rendering, which is a legitimate condition and is
+    stamped as such rather than left to look like an agent.
+
+    A session of one prompt: :func:`open_session`, :func:`plan_prompt`, then
+    :func:`read_prompt`, in the order this function always ran them, so the
+    projection ceiling still refuses before the readout is built.
+    """
+    if not (prompt or "").strip():
+        raise ProbeError("a probe needs a prompt to read")
+
+    session = open_session(
+        model_id, lens_id=lens_id, layers=layers, top_k=top_k,
+        pin_words=pin_words, pin_ids=pin_ids, directions=directions,
+        variant_path=variant_path, prompt_mode=prompt_mode,
+        system_prompt=system_prompt, revision=revision, root=root,
+        model=model, device=device, dtype=dtype, log=log)
+    planned = plan_prompt(session, prompt, position_stride=position_stride,
+                          max_tokens=max_tokens)
+    return read_prompt(session, prompt, planned,
+                       position_stride=position_stride, max_tokens=max_tokens)
 
 
 def _write_csvs(report: dict, run_directory: str, tokenizer) -> None:

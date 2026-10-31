@@ -1,0 +1,188 @@
+{
+  "schemaVersion": 1,
+  "order": 34,
+  "catalog": {
+    "id": "jlens-probe-batch",
+    "method": "jlens",
+    "title": "Probe a prompt set through a J-lens",
+    "engineCLI": null,
+    "mac": "Research methods: Author request, review inputs, then open execution and evidence. Both CLIs use science interview/draft/publish and the same managed engine.",
+    "http": "POST /api/science/plan; POST /api/science/submit",
+    "compute": "gpu",
+    "outputs": [
+      "One run directory: a probe-batch.json manifest (prompt ids, labels, input hashes, per-prompt projection counts, and timings) and, for each prompt, the jlens probe's probe.json, probe-topk.csv, probe-trajectory.csv, and config.json under prompts/<id>/."
+    ],
+    "restriction": "One condition (the base model or one agent) per request. The plan states projection counts, a memory estimate, output size, and a walltime allowance before submission, and refuses a prompt over the probe's projection ceiling or an estimate that does not fit the selected GPU. Readouts only: no causal claim and no lens qualification.",
+    "actions": [
+      {
+        "id": "post-science-plan",
+        "method": "POST",
+        "path": "/api/science/plan",
+        "serviceRole": "both",
+        "authorityReason": "Inspect staged scientific inputs and execution resources without execution or authorship."
+      },
+      {
+        "id": "post-science-submit",
+        "method": "POST",
+        "path": "/api/science/submit",
+        "serviceRole": "both",
+        "authorityReason": "Execute a reviewed scientific operation and retain its scientific output type."
+      }
+    ],
+    "access": {
+      "status": "http",
+      "client": "runner science-call <operation> --action <action-id> --request <request.json> --runner <url> --json",
+      "macCLI": "remote science-call <operation> --action <action-id> --request <request.json> --site <id> --json",
+      "restriction": "Calls the existing route with its existing service role and scientific gates. Request path parameters, query and body remain explicit; this adapter does not change execution topology or retry mutations."
+    }
+  },
+  "interview": {
+    "id": "jlens-probe-batch",
+    "title": "Probe a prompt set through a J-lens",
+    "method": "jlens",
+    "purpose": "Read a lens at every position of many prompts in one GPU job. The model loads once, and the lens is verified and placed on the GPU once. Each prompt's outputs are the ones the single-prompt probe writes, so the readouts compare prompt by prompt.",
+    "fields": [
+      {
+        "id": "modelID",
+        "label": "Model to read",
+        "kind": "text",
+        "required": true,
+        "help": "Choose the prepared model the lens was fitted on. This does not download weights."
+      },
+      {
+        "id": "revision",
+        "label": "Exact model version",
+        "kind": "text",
+        "required": true,
+        "help": "Inspect the model to pin its 40-character commit. Never type a guessed pin."
+      },
+      {
+        "id": "lensID",
+        "label": "Imported J-lens ID",
+        "kind": "text",
+        "required": true,
+        "help": "A lens from this workspace's lens library. The lens travels with the request."
+      },
+      {
+        "id": "prompts",
+        "label": "Prompt set",
+        "kind": "fileRef",
+        "required": true,
+        "help": "Workspace-relative JSONL: one object per line with a unique id (letters, digits, \".\", \"_\" or \"-\"), the prompt text, and optional labels such as {\"condition\": \"baseline\"}. Its SHA-256 is read during review."
+      },
+      {
+        "id": "layers",
+        "label": "Armed layers (comma-separated)",
+        "kind": "integers",
+        "required": false,
+        "help": "Fitted source layers to read. Leave blank for three interior layers of the lens, or set every fitted layer below."
+      },
+      {
+        "id": "allLayers",
+        "label": "Read every fitted layer",
+        "kind": "boolean",
+        "required": false,
+        "help": "true arms every fitted source layer of the lens; leave layers blank when you choose it.",
+        "default": "false"
+      },
+      {
+        "id": "topK",
+        "label": "Top tokens per position",
+        "kind": "integer",
+        "required": false,
+        "help": "0 reads no vocabulary, for a directions-only probe. A larger k does not cost more projections: k selects from each one.",
+        "default": "10"
+      },
+      {
+        "id": "pin",
+        "label": "Pinned words",
+        "kind": "texts",
+        "required": false,
+        "help": "Words whose full-vocabulary rank is tracked at every position, one per line. Each must be a single token in its leading-space form; otherwise pin its token id."
+      },
+      {
+        "id": "pinIDs",
+        "label": "Pinned token ids",
+        "kind": "integers",
+        "required": false,
+        "help": "Exact token ids to track, comma-separated."
+      },
+      {
+        "id": "directions",
+        "label": "Concept vectors to project onto, one per line",
+        "kind": "artifacts",
+        "required": false,
+        "help": "Vector artifacts extracted on this model; each position reports a cosine and a transported cosine."
+      },
+      {
+        "id": "positionStride",
+        "label": "Read every Nth position",
+        "kind": "integer",
+        "required": false,
+        "help": "1 reads every position. A larger stride lowers the projection count when the shape matters more than the resolution.",
+        "default": "1"
+      },
+      {
+        "id": "maxTokens",
+        "label": "Maximum tokens per prompt",
+        "kind": "integer",
+        "required": false,
+        "help": "Truncates each rendered prompt. Leave blank to read the whole prompt."
+      },
+      {
+        "id": "variantPath",
+        "label": "Agent to read (optional)",
+        "kind": "file",
+        "required": false,
+        "help": "An agent JSON in this workspace. Its vectors, adapter, and neutral basis travel with the request, hash-checked. Leave blank to read the base model."
+      },
+      {
+        "id": "promptMode",
+        "label": "Prompt rendering",
+        "kind": "text",
+        "required": false,
+        "help": "chatAssistant or rawCompletion. Leave blank for the agent's own mode, or chat when there is no agent."
+      },
+      {
+        "id": "systemPrompt",
+        "label": "System prompt",
+        "kind": "text",
+        "required": false,
+        "help": "Leave blank for the agent's own system prompt, or none when there is no agent."
+      },
+      {
+        "id": "dtype",
+        "label": "Model precision",
+        "kind": "text",
+        "required": false,
+        "help": "bfloat16, float16, float32, or auto. A lens qualification applies only to the precision it was measured at.",
+        "default": "bfloat16"
+      },
+      {
+        "id": "device",
+        "label": "Execution device",
+        "kind": "text",
+        "required": false,
+        "help": "cuda, mps, or cpu. Leave blank for the engine's choice."
+      }
+    ],
+    "claimBoundary": "Counts, ranks, and cosines per prompt and position, each beside its logit-lens companion. A readout is not evidence that a concept caused behavior, and probing does not qualify the lens.",
+    "questions": [
+      "Which prompts, layers, and readouts answer the question, chosen before looking at the results?",
+      "Which agent, if any, is the condition being read, and under which rendering?",
+      "What separate intervention study would test any causal reading?"
+    ]
+  },
+  "interviewOrder": 38,
+  "inputRoleProfile": "managed-v1",
+  "inputRoles": {
+    "directions": "artifacts",
+    "variantPath": "file"
+  },
+  "binding": {
+    "module": "jlens_probe_batch",
+    "config_class": "ProbeBatchConfig",
+    "function": "probe_batch",
+    "compute": "gpu"
+  }
+}
