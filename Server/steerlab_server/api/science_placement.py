@@ -85,6 +85,49 @@ def memory_fit(resources, estimate):
     return {**result, 'memoryFit': 'fits', 'summary': f'The job needs {needed} on one GPU; {capacity}.'}
 
 
+def slurm_memory_bytes(value):
+    """Bytes for a Slurm ``--mem`` value (a number with an optional K, M, G, or T
+    suffix, megabytes when bare), or None when there is none or it cannot be read."""
+    import re
+    match = re.fullmatch(r'\s*(\d+(?:\.\d+)?)\s*([KMGT]?)B?\s*', str(value or ''), re.IGNORECASE)
+    if not match:
+        return None
+    scale = {'': 1024**2, 'K': 1024, 'M': 1024**2, 'G': 1024**3, 'T': 1024**4}[match[2].upper()]
+    return int(float(match[1]) * scale)
+
+
+def host_memory_fit(resources, estimate):
+    """Compare the host memory an operation's review itemizes with the job's Slurm memory request.
+
+    Advisory only: the request is the site's declaration and the rest of the
+    process (the model load among it) also uses host memory, so ``exceeds``
+    (the itemized part alone is more than the request) and ``mayExceed``
+    (more than half of it) inform the plan and never refuse it.
+    """
+    capture = (estimate or {}).get('hostCaptureBytes')
+    if type(capture) is not int:
+        return None
+    requested = slurm_memory_bytes(getattr(resources, 'memory', None))
+    result = {'hostCaptureBytes': capture, 'requestedMemory': getattr(resources, 'memory', None),
+              'requestedBytes': requested}
+    held = f'The capture holds about {capture / 1024**3:.1f} GiB on the host'
+    if requested is None:
+        return {**result, 'hostFit': 'notChecked',
+                'summary': held + '; the job declares no memory request this review can read, so the site default applies.'}
+    asked = f'the job requests {getattr(resources, "memory")} ({requested / 1024**3:.1f} GiB)'
+    levers = ('set maxTokens to shorten the longest prompt, arm fewer layers, or raise the site\'s Slurm memory '
+              'request (STEERLAB_SLURM_MEMORY)')
+    if capture > requested:
+        return {**result, 'hostFit': 'exceeds', 'summary': held + ', more than ' + asked + '.',
+                'advisory': 'The capture alone exceeds the memory request, so the job may be killed for memory. '
+                            'To be safe, ' + levers + '.'}
+    if capture > requested / 2:
+        return {**result, 'hostFit': 'mayExceed', 'summary': held + ', more than half of what ' + asked + '.',
+                'advisory': 'With the rest of the process, the job may exceed its memory request. To be safe, '
+                            + levers + '.'}
+    return {**result, 'hostFit': 'fits', 'summary': held + '; ' + asked + '.'}
+
+
 def review(resources, operation_review):
     selected = gpu_type(resources)
     result = {'gpuType': selected, 'declaredVRAMGB': resources.gpu_vram_gb.get(selected),

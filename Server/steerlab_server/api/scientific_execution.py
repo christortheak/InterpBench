@@ -208,6 +208,9 @@ def plan(request, profile, *, execution_capsule=None, round_submission=None, gpu
             from . import science_placement
             if selected_executor == 'slurm':
                 fit = science_placement.memory_fit(resources, estimate)
+                host = science_placement.host_memory_fit(resources, estimate)
+                if host is not None:
+                    fit['host'] = host
             else:
                 fit = {'memoryFit': 'notChecked', 'summary': estimate.get('summary', '') + ' Local execution: '
                        'compare the estimate with this machine; no declared capacity applies.'}

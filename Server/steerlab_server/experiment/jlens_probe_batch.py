@@ -398,20 +398,64 @@ def _rendering(config, agent):
     return mode, system, bool((agent or {}).get('qwenThinkingEnabled', False))
 
 
-def token_counts(config, rows, agent):
-    """Exact rendered token counts from the pinned revision's cached tokenizer, or why not.
-
-    The same renderer and precedence the probe uses, so a count here is the
-    count the node will read. Nothing is downloaded.
-    """
+def cached_tokenizer(config):
+    """The pinned revision's tokenizer from the local cache, or why it is unavailable. Nothing is downloaded."""
     try:
         from transformers import AutoTokenizer
     except ImportError:
         return None, 'The tokenizer library is not installed here; the engine plan counts tokens.'
     try:
-        tokenizer = AutoTokenizer.from_pretrained(config.modelID, revision=config.revision, local_files_only=True)
+        return AutoTokenizer.from_pretrained(config.modelID, revision=config.revision, local_files_only=True), None
     except Exception as exc:  # noqa: BLE001 - reported, never fatal to review
         return None, f'The tokenizer for this revision is not in the local cache ({type(exc).__name__}).'
+
+
+def pin_review(config, tokenizer, geometry):
+    """Resolve pinned words and bound pinned ids where review can, exactly as the node will.
+
+    Words go through the probe's own rule (a single token in its leading-space
+    form, or a refusal that names the pieces) when the tokenizer is cached;
+    ids are compared with the output head's rows when the model config is.
+    Whatever cannot be checked here is checked on the node before the readout
+    is built, and the review says so.
+    """
+    result, notes = {}, []
+    if config.pin:
+        if tokenizer is None:
+            result['words'] = 'checkedOnTheNode'
+            notes.append('Pinned words are resolved on the node, where the tokenizer is loaded.')
+        else:
+            from ..jlens import probe
+            try:
+                pinned = probe.resolve_pins(tokenizer, list(config.pin), ())
+            except probe.ProbeError as exc:
+                raise _refuse(str(exc), 'Pin the exact token id with pinIDs, or choose a word that is one token '
+                                        '(the engine command jlens token-options lists the candidates).') from exc
+            result['words'] = {piece: token for token, piece in pinned.items()}
+            notes.append('Pinned words resolve to ' + ', '.join(f'{piece!r} = {token}' for token, piece
+                                                              in sorted(pinned.items())) + '.')
+    if config.pinIDs:
+        rows = (geometry or {}).get('vocabSize')
+        if not rows:
+            result['ids'] = 'checkedOnTheNode'
+            notes.append("Pinned ids are checked against the output head on the node.")
+        else:
+            beyond = sorted(token for token in config.pinIDs if token >= rows)
+            if beyond:
+                raise _refuse(f'Pinned token id(s) {beyond} are outside the output head of {rows} rows.',
+                              'Pin token ids the model has, or pin words through the tokenizer.')
+            result['ids'] = 'withinOutputHead'
+    return result, notes
+
+
+def token_counts(config, rows, agent, tokenizer):
+    """Exact rendered token counts from the pinned revision's cached tokenizer, or None.
+
+    The same renderer and precedence the probe uses, so a count here is the
+    count the node will read.
+    """
+    if tokenizer is None:
+        return None
     from . import prompt_render
     mode, system, thinking = _rendering(config, agent)
     counts = []
@@ -423,7 +467,7 @@ def token_counts(config, rows, agent):
         except Exception as exc:  # noqa: BLE001 - a prompt that cannot render is refused by name
             raise _refuse(f"Prompt {row['id']} cannot be rendered as requested: {exc}") from exc
         counts.append(len(rendered.input_ids))
-    return counts, None
+    return counts
 
 
 def cached_geometry(model_id, revision):
@@ -612,7 +656,8 @@ def preflight(config, root):
     if record.fit.modelID != config.modelID:
         advisories.append(f"The lens was fitted on {record.fit.modelID}, not {config.modelID}. "
                           'The readout runs; whether the transport carries over is a question for the reading.')
-    counts, unavailable = token_counts(config, rows, agent)
+    tokenizer, unavailable = cached_tokenizer(config)
+    counts = token_counts(config, rows, agent, tokenizer)
     stride = config.positionStride
     prompts, over = [], []
     for index, row in enumerate(rows):
@@ -642,6 +687,7 @@ def preflight(config, root):
         raise _refuse(f'The lens has width {record.dModel} but {config.modelID} has hidden size '
                       f"{geometry['hiddenSize']}: the readout cannot be computed.",
                       'Choose a lens fitted on a model of this width.')
+    pins, pin_notes = pin_review(config, tokenizer, geometry)
     longest = max((p['tokenCount'] for p in prompts if p['tokenCount'] is not None), default=None)
     memory = memory_estimate(config, geometry, record.dModel, layers, longest, basis)
     converted = artifact_paths.converted_file(record.lensID, record.converted.path, str(root)) \
@@ -669,6 +715,7 @@ def preflight(config, root):
     if unavailable:
         summary.append(unavailable + ' Execution re-checks every prompt against the ceiling before any forward pass.')
     summary.append(memory['summary'])
+    summary += pin_notes
     if 'bytes' in output:
         summary.append(f"About {output['bytes'] / 1024**3:.2f} GiB of output in {output['files']} files, in one run directory.")
     summary += advisories
@@ -686,14 +733,65 @@ def preflight(config, root):
             'lens': {'lensID': record.lensID, 'fittedModelID': record.fit.modelID, 'dModel': record.dModel,
                      'targetLayer': record.targetLayer, 'convertedBytes': lens_bytes},
             'geometry': geometry or {'status': 'unavailable'}, 'memoryEstimate': memory, 'output': output,
+            **({'pins': pins} if pins else {}),
             **({'walltimeEstimate': workload} if workload else {}),
             'advisories': advisories, 'qualification': 'notPerformed', 'summary': summary}
 
 
 # --- execution -----------------------------------------------------------------
 
-def probe_batch(config, *, root, log=print, on_run_created=None, model=None):
+#: In-flight prompt outputs are written here and renamed into ``prompts/<id>``
+#: only once complete, so a prompt directory under ``prompts/`` is always whole.
+PARTIAL_DIRECTORY = '.partial'
+
+INTERRUPTION_REPAIR = ('The prompts marked completed in probe-batch.json are whole. Submit the prompts marked '
+                       'interrupted or notRead as a new request (a fresh prompt set), with a longer walltime if '
+                       'the scheduler stopped this one.')
+
+
+class ProbeBatchInterrupted(RuntimeError):
+    """A scheduler signal stopped the batch; its manifest records where."""
+
+
+def _scheduler_signals():
+    """The engine's checkpoint convention, ``resume.CheckpointFlag``.
+
+    The rendered Slurm script forwards USR1 (the walltime warning) and TERM
+    (a cancel) to the child; the flag records either, and the batch polls it
+    before each prompt and between layers, so it stops well inside the
+    script's grace period. Bound only on the main thread, where Python can
+    bind signals, and the previous handlers are restored afterwards.
+    """
+    import signal
+    import threading
+    from .resume import CheckpointFlag
+    flag = CheckpointFlag()
+    if threading.current_thread() is not threading.main_thread():
+        return flag, None
+    previous = {number: signal.getsignal(number) for number in (signal.SIGUSR1, signal.SIGTERM)}
+    flag.install()
+    return flag, previous
+
+
+def _restore_signals(previous):
+    import signal
+    for number, handler in (previous or {}).items():
+        signal.signal(number, handler if handler is not None else signal.SIG_DFL)
+
+
+def probe_batch(config, *, root, log=print, on_run_created=None, model=None, checkpoint=None):
     """Read every prompt under one condition; write one run directory.
+
+    ``probe-batch.json`` exists from the start (status ``running``) and is
+    replaced atomically before and after every prompt, so it always says
+    which prompts are whole, which one is being read, and what each cost.
+    Each prompt is written under ``prompts/.partial/<id>`` and renamed to
+    ``prompts/<id>`` only when complete. A scheduler signal (``checkpoint``,
+    the engine's flag; tests pass their own) stops at the next layer and
+    leaves status ``interrupted``; an exception leaves ``failed``; a kill
+    that allows no handler leaves the last rewrite, ``running``, with the
+    in-flight prompt marked ``running`` and nothing of it under
+    ``prompts/<id>``. Only a completed run gets ``COMPLETED``.
 
     Returns a small record for the job: the run, its manifest, and the
     counts. The per-prompt reports stay on disk, never in the job record.
@@ -718,6 +816,7 @@ def probe_batch(config, *, root, log=print, on_run_created=None, model=None):
         directions=list(config.directions or []), variant_path=config.variantPath,
         prompt_mode=config.promptMode, system_prompt=config.systemPrompt,
         revision=config.revision, root=root, model=model, log=log)
+    _require_pins_in_head(session)
     # Every prompt is rendered and priced before any forward pass, so a set
     # with prompts over the ceiling fails here with all of them named, and
     # leaves no run behind.
@@ -731,108 +830,180 @@ def probe_batch(config, *, root, log=print, on_run_created=None, model=None):
     if over:
         raise _refuse('Prompt(s) the probe cannot read as asked: ' + ' | '.join(over[:20]) + '.',
                       'Raise positionStride, arm fewer layers, or set maxTokens, then review and submit again.')
-    run = paths.make_unique_run_directory(f"{RUN_TYPE}-{config.modelID.replace('/', '--')}", root)
+    run = Path(paths.make_unique_run_directory(f"{RUN_TYPE}-{config.modelID.replace('/', '--')}", root))
     if on_run_created:
-        on_run_created(run)
-    timings = {'modelLoadSeconds': round(load_seconds, 3)}
-    entries = []
+        on_run_created(str(run))
+    ledger = _Ledger(run, config, session, record, layers, rows, planned,
+                     {'modelLoadSeconds': round(load_seconds, 3)}, started)
+    if checkpoint is None:
+        checkpoint, previous = _scheduler_signals()
+    else:
+        previous = None
+    partial = run / PROMPTS_DIRECTORY / PARTIAL_DIRECTORY
+    current = None
     try:
         build_started = time.monotonic()
         session.ensure_readout()
-        timings['readoutBuildSeconds'] = round(time.monotonic() - build_started, 3)
-        directory = Path(run) / PROMPTS_DIRECTORY
-        directory.mkdir()
-        for index, (row, plan) in enumerate(zip(rows, planned), start=1):
-            target = directory / row['id']
-            target.mkdir()
-            log(f"[jlens-probe-batch] prompt {index}/{len(rows)}: {row['id']}")
+        ledger.timings['readoutBuildSeconds'] = round(time.monotonic() - build_started, 3)
+        partial.mkdir(parents=True)
+        for index, (row, plan) in enumerate(zip(rows, planned)):
+            if checkpoint.requested:
+                raise probe.ProbeInterrupted('a scheduler signal arrived before this prompt')
+            current = index
+            ledger.start(index)
+            log(f"[jlens-probe-batch] prompt {index + 1}/{len(rows)}: {row['id']}")
             prompt_started = time.monotonic()
+            staging = partial / row['id']
+            staging.mkdir()
+            final = run / PROMPTS_DIRECTORY / row['id']
             report = probe.read_prompt(
                 session, row['text'], plan, position_stride=config.positionStride,
-                max_tokens=config.maxTokens, run_directory=str(target),
-                recorded_run_directory=target.relative_to(root).as_posix())
-            entries.append({'id': row['id'], 'labels': row['labels'],
-                            'directory': PROMPTS_DIRECTORY + '/' + row['id'],
-                            'tokenCount': len(plan['ids']), 'scoredPositions': len(plan['scored']),
-                            'projections': plan['projections'], 'cells': len(report['cells']),
-                            'trajectoryRows': len(report['trajectory']),
-                            'seconds': round(time.monotonic() - prompt_started, 3),
-                            'bytes': sum(p.stat().st_size for p in target.iterdir() if p.is_file())})
+                max_tokens=config.maxTokens, run_directory=str(staging),
+                recorded_run_directory=final.relative_to(root).as_posix(),
+                should_stop=lambda: checkpoint.requested)
+            os.rename(staging, final)
+            ledger.finish(index, report, final, time.monotonic() - prompt_started)
+            current = None
             del report
+        partial.rmdir()
+    except probe.ProbeInterrupted as exc:
+        _discard(partial)
+        ledger.stop(current, 'interrupted', f'{exc}')
+        raise ProbeBatchInterrupted(
+            f"Interrupted by a scheduler signal after {ledger.completed} of {len(rows)} prompt(s); "
+            f"probe-batch.json in {run.name} records which are whole. {INTERRUPTION_REPAIR}") from exc
     except Exception as exc:
-        # The prompts already read stay readable: the manifest says which,
-        # and the run carries no COMPLETED marker.
-        timings['totalSeconds'] = round(time.monotonic() - started, 3)
-        _write_manifest(run, config, session, record, layers, rows, entries, timings,
-                        status='incomplete', error=f'{type(exc).__name__}: {exc}')
+        _discard(partial)
+        ledger.stop(current, 'failed', f'{type(exc).__name__}: {exc}')
         raise
-    timings['promptSeconds'] = round(sum(e['seconds'] for e in entries), 3)
-    timings['totalSeconds'] = round(time.monotonic() - started, 3)
-    manifest = _write_manifest(run, config, session, record, layers, rows, entries, timings,
-                               status='completed')
-    (Path(run) / 'COMPLETED').write_text(OPERATION + '\n')
-    log(f"[jlens-probe-batch] {len(entries)} prompt(s), {manifest['claim']} "
+    finally:
+        _restore_signals(previous)
+    manifest = ledger.write('completed')
+    (run / 'COMPLETED').write_text(OPERATION + '\n')
+    log(f"[jlens-probe-batch] {len(rows)} prompt(s), {manifest['claim']} "
         f"[{manifest['evidenceTier']}] → {run}")
-    return {'runDirectory': run, 'reportPath': str(Path(run) / MANIFEST), 'prompts': len(entries),
+    return {'runDirectory': str(run), 'reportPath': str(run / MANIFEST), 'prompts': len(rows),
             'projections': manifest['totals']['projections'], 'claim': manifest['claim'],
             'evidenceTier': manifest['evidenceTier']}
 
 
-def _write_manifest(run, config, session, record, layers, rows, entries, timings, *, status, error=None):
-    """The run's own config.json and probe-batch.json: what was read, from which bytes, at what cost."""
-    from ..jlens import probe
-    from .optvec_jspace import evidence_tier_for, qualification_state
-    from .run_config import write_run_config
+def _require_pins_in_head(session):
+    """A pinned id beyond the output head has no rank; refuse before the readout is built."""
+    from ..jlens import norm_convention
+    head = norm_convention.output_head(session.model.model)
+    rows = getattr(getattr(head, 'weight', None), 'shape', [None])[0]
+    beyond = sorted(token for token in session.pinned if rows is not None and token >= rows)
+    if beyond:
+        raise _refuse(f'Pinned token id(s) {beyond} are outside the output head of {rows} rows.',
+                      'Pin token ids the model has, or pin words through the tokenizer.')
 
-    tier = evidence_tier_for(record)
-    stamp, claim = qualification_state(record, session.model)
-    stamp, claim = probe.downgrade_for_unpinned_agent(stamp, claim, session.variant_identity)
-    dtype = getattr(session.model, 'dtype', None)
-    write_run_config(run, RUN_TYPE, model_id=config.modelID, revision=session.revision, dtype=dtype,
-                     notes={'lensID': config.lensID, 'evidenceTier': tier, 'qualification': stamp,
-                            'claim': claim, 'armedLayers': layers, 'prompts': len(entries),
-                            'variant': getattr(session.variant, 'name', None),
-                            'isBaseModel': session.variant is None})
-    identity = session.variant_identity
-    builds = session.readout_builds
-    manifest = {
-        'schemaVersion': SCHEMA_VERSION, 'operation': OPERATION, 'runType': RUN_TYPE,
-        'runID': os.path.basename(run), 'status': status, 'config': config.to_dict(),
-        'evidenceTier': tier, 'qualification': stamp, 'claim': claim,
-        'model': {'modelID': config.modelID, 'revision': session.revision, 'dtype': dtype},
-        'lens': {'lensID': config.lensID, 'sourceSHA256': record.source.tensorSHA256,
-                 'convertedSHA256': record.converted.sha256 if record.converted else None,
-                 'targetLayer': record.targetLayer, 'armedLayers': layers},
-        'condition': {'variantPath': config.variantPath,
-                      'variantName': getattr(session.variant, 'name', None),
-                      'isBaseModel': session.variant is None,
-                      'promptMode': session.prompt_mode or 'chatAssistant',
-                      'systemPromptPresent': bool(session.system_prompt)},
-        'inputs': {'prompts': {**config.prompts, 'rows': len(rows)},
-                   'variantSHA256': identity.get('variantSHA256'),
-                   'adapters': [{key: adapter.get(key) for key in ('adapterDirectory', 'adapterHashLive', 'configHashLive')}
-                                for adapter in identity.get('adapters') or []],
-                   'injectionVectors': identity.get('injectionVectors', []),
-                   'neutralPCBasisSHA256': identity.get('neutralPCBasisSHA256'),
-                   'directions': [{'reference': d['reference'], 'tensorSHA256': d['tensorSHA256'],
-                                   'sidecarSHA256': d['sidecarSHA256']} for d in session.loaded_directions]},
-        'prompts': entries,
-        'totals': {'prompts': len(entries), 'projections': sum(e['projections'] for e in entries),
-                   'scoredPositions': sum(e['scoredPositions'] for e in entries),
-                   'bytes': sum(e['bytes'] for e in entries)},
-        'fixedCosts': {'modelLoads': 1, 'readoutBuilds': builds, 'lensVerifications': builds,
-                       'jacobianPlacements': len(layers) * builds},
-        'timings': timings,
-        'conventions': {
-            'perPrompt': 'Each prompts/<id>/ holds the jlens probe outputs for that prompt: probe.json (the probe '
-                         'schema), probe-topk.csv, probe-trajectory.csv, and config.json. Their numbers are what '
-                         'one probe of that prompt computes under this condition.',
-            'runDirectory': 'Each probe.json records runDirectory relative to the workspace, so the run names no machine.',
-            'sharedCosts': 'The model loaded once; the converted lens was re-hashed and its armed Jacobians placed '
-                           'on the device once for the whole set.'},
-        'limitations': 'Counts, ranks, and cosines per prompt; no null and no interval. A readout is not evidence '
-                       'that a concept caused behavior; that needs a separately designed intervention study.',
-        **({'error': error, 'promptsNotRead': [row['id'] for row in rows[len(entries):]]} if error else {}),
-    }
-    (Path(run) / MANIFEST).write_bytes(json.dumps(manifest, indent=2, sort_keys=True).encode() + b'\n')
-    return manifest
+
+def _discard(partial):
+    """Remove what an unfinished prompt wrote; it never became a prompt directory."""
+    import shutil
+    if partial.exists():
+        shutil.rmtree(partial)
+
+
+class _Ledger:
+    """The run's config.json, written once, and probe-batch.json, replaced atomically on every change."""
+
+    def __init__(self, run, config, session, record, layers, rows, planned, timings, started):
+        from ..jlens import probe
+        from .optvec_jspace import evidence_tier_for, qualification_state
+        from .run_config import write_run_config
+
+        self.run, self.config, self.session, self.started = run, config, session, started
+        self.timings = timings
+        self.tier = evidence_tier_for(record)
+        stamp, claim = qualification_state(record, session.model)
+        self.stamp, self.claim = probe.downgrade_for_unpinned_agent(stamp, claim, session.variant_identity)
+        self.dtype = getattr(session.model, 'dtype', None)
+        write_run_config(str(run), RUN_TYPE, model_id=config.modelID, revision=session.revision, dtype=self.dtype,
+                         notes={'lensID': config.lensID, 'evidenceTier': self.tier, 'qualification': self.stamp,
+                                'claim': self.claim, 'armedLayers': layers, 'prompts': len(rows),
+                                'variant': getattr(session.variant, 'name', None),
+                                'isBaseModel': session.variant is None})
+        self.entries = [{'id': row['id'], 'labels': row['labels'], 'status': 'pending',
+                         'directory': PROMPTS_DIRECTORY + '/' + row['id'],
+                         'tokenCount': len(plan['ids']), 'scoredPositions': len(plan['scored']),
+                         'projections': plan['projections']}
+                        for row, plan in zip(rows, planned)]
+        identity = session.variant_identity
+        self.fixed = {
+            'schemaVersion': SCHEMA_VERSION, 'operation': OPERATION, 'runType': RUN_TYPE,
+            'runID': run.name, 'config': config.to_dict(),
+            'evidenceTier': self.tier, 'qualification': self.stamp, 'claim': self.claim,
+            'model': {'modelID': config.modelID, 'revision': session.revision, 'dtype': self.dtype},
+            'lens': {'lensID': config.lensID, 'sourceSHA256': record.source.tensorSHA256,
+                     'convertedSHA256': record.converted.sha256 if record.converted else None,
+                     'targetLayer': record.targetLayer, 'armedLayers': layers},
+            'condition': {'variantPath': config.variantPath,
+                          'variantName': getattr(session.variant, 'name', None),
+                          'isBaseModel': session.variant is None,
+                          'promptMode': session.prompt_mode or 'chatAssistant',
+                          'systemPromptPresent': bool(session.system_prompt)},
+            'inputs': {'prompts': {**config.prompts, 'rows': len(rows)},
+                       'variantSHA256': identity.get('variantSHA256'),
+                       'adapters': [{key: adapter.get(key) for key in ('adapterDirectory', 'adapterHashLive', 'configHashLive')}
+                                    for adapter in identity.get('adapters') or []],
+                       'injectionVectors': identity.get('injectionVectors', []),
+                       'neutralPCBasisSHA256': identity.get('neutralPCBasisSHA256'),
+                       'directions': [{'reference': d['reference'], 'tensorSHA256': d['tensorSHA256'],
+                                       'sidecarSHA256': d['sidecarSHA256']} for d in session.loaded_directions]},
+            'conventions': {
+                'perPrompt': 'Each prompts/<id>/ holds the jlens probe outputs for that prompt: probe.json (the probe '
+                             'schema), probe-topk.csv, probe-trajectory.csv, and config.json. Their numbers and CSV '
+                             'bytes are what one probe of that prompt computes under this condition; probe.json '
+                             'records runDirectory relative to the workspace, and runID is the prompt id.',
+                'progress': 'This file is replaced atomically before and after every prompt. A prompt directory '
+                            'appears under prompts/ only when complete; an unfinished one is written under '
+                            'prompts/.partial/. A run that stopped without a final status still says running.',
+                'sharedCosts': 'The model loaded once; the converted lens was re-hashed and its armed Jacobians '
+                               'placed on the device once for the whole set.'},
+            'limitations': 'Counts, ranks, and cosines per prompt; no null and no interval. A readout is not '
+                           'evidence that a concept caused behavior; that needs a separately designed '
+                           'intervention study.',
+        }
+        self.write('running')
+
+    @property
+    def completed(self):
+        return sum(1 for e in self.entries if e['status'] == 'completed')
+
+    def start(self, index):
+        self.entries[index]['status'] = 'running'
+        self.write('running')
+
+    def finish(self, index, report, directory, seconds):
+        self.entries[index].update(
+            status='completed', cells=len(report['cells']), trajectoryRows=len(report['trajectory']),
+            seconds=round(seconds, 3), bytes=sum(p.stat().st_size for p in directory.iterdir() if p.is_file()))
+        self.write('running')
+
+    def stop(self, index, status, error):
+        if index is not None:
+            self.entries[index]['status'] = status
+        for entry in self.entries:
+            if entry['status'] == 'pending':
+                entry['status'] = 'notRead'
+        self.write(status, error=error)
+
+    def write(self, status, error=None):
+        done = [e for e in self.entries if e['status'] == 'completed']
+        self.timings['promptSeconds'] = round(sum(e['seconds'] for e in done), 3)
+        self.timings['totalSeconds'] = round(time.monotonic() - self.started, 3)
+        builds = self.session.readout_builds
+        manifest = {**self.fixed, 'status': status, 'prompts': self.entries,
+                    'totals': {'prompts': len(done), 'planned': len(self.entries),
+                               'projections': sum(e['projections'] for e in done),
+                               'scoredPositions': sum(e['scoredPositions'] for e in done),
+                               'bytes': sum(e['bytes'] for e in done)},
+                    'fixedCosts': {'modelLoads': 1, 'readoutBuilds': builds, 'lensVerifications': builds,
+                                   'jacobianPlacements': len(self.fixed['lens']['armedLayers']) * builds},
+                    'timings': dict(self.timings),
+                    **({'error': error} if error else {})}
+        temporary = self.run / ('.' + MANIFEST + '.tmp')
+        temporary.write_bytes(json.dumps(manifest, indent=2, sort_keys=True).encode() + b'\n')
+        os.replace(temporary, self.run / MANIFEST)
+        return manifest

@@ -93,6 +93,10 @@ class ProbeError(JLensError):
     """A probe that cannot be run honestly is not run."""
 
 
+class ProbeInterrupted(ProbeError):
+    """The caller asked a read in progress to stop; nothing of it was written."""
+
+
 class _AllPositionCapture(LayerIntervention):
     """Read-only capture of every position at the armed layers.
 
@@ -515,7 +519,8 @@ def read_prompt(session: ProbeSession, prompt: str, planned: dict, *,
                 position_stride: int = DEFAULT_POSITION_STRIDE,
                 max_tokens: int | None = None,
                 run_directory: str | None = None,
-                recorded_run_directory: str | None = None) -> dict:
+                recorded_run_directory: str | None = None,
+                should_stop=None) -> dict:
     """Read one planned prompt at every (armed layer × scored position).
 
     ``run_directory`` names an existing directory to write into (a batch's
@@ -523,7 +528,10 @@ def read_prompt(session: ProbeSession, prompt: str, planned: dict, *,
     :func:`probe` always has. ``recorded_run_directory`` is what the report's
     ``runDirectory`` says, when that should not be the absolute path — a
     batch records its workspace-relative path, so evidence that travels home
-    names no machine.
+    names no machine. ``should_stop``, when given, is asked before the
+    forward pass and before each layer's readouts; a true answer raises
+    :class:`ProbeInterrupted` before anything is written. It changes no
+    number: a read that is not stopped is the same read.
     """
     import torch
 
@@ -566,6 +574,8 @@ def read_prompt(session: ProbeSession, prompt: str, planned: dict, *,
                   mode=Mode(cell.mode), concept=cell.concept)
              for cell in injections],
             prompt_token_count=len(ids))
+    if should_stop is not None and should_stop():
+        raise ProbeInterrupted("stopped before the forward pass")
     if variant is not None:
         from ..experiment import model_variant
 
@@ -596,6 +606,8 @@ def read_prompt(session: ProbeSession, prompt: str, planned: dict, *,
     # wasted memory per cell, at 27B across every position.
     with torch.no_grad():
       for layer in armed:
+          if should_stop is not None and should_stop():
+              raise ProbeInterrupted(f"stopped before reading layer {layer}")
           states = capture.rows[layer]
           for position in scored:
               # The capture holds CPU rows on purpose (device tensors for every

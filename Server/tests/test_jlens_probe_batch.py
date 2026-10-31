@@ -272,7 +272,17 @@ def test_execution_rechecks_every_prompt_before_any_forward_pass(workspace, monk
     assert not list((workspace / "runs").glob("*jlens-probe-batch*"))  # nothing left behind
 
 
-def test_a_failure_mid_batch_leaves_an_incomplete_manifest(workspace, monkeypatch):
+def _statuses(manifest):
+    return {p["id"]: p["status"] for p in manifest["prompts"]}
+
+
+def _whole_prompt_directories(run):
+    """Prompt directories as a reader of the run sees them: under prompts/,
+    not the hidden staging area."""
+    return sorted(p.name for p in (run / "prompts").iterdir() if p.is_dir() and not p.name.startswith("."))
+
+
+def test_a_failure_mid_batch_leaves_a_failed_manifest(workspace, monkeypatch):
     read = probe.read_prompt
     calls = []
 
@@ -289,10 +299,147 @@ def test_a_failure_mid_batch_leaves_an_incomplete_manifest(workspace, monkeypatc
                           model=tiny_model(), on_run_created=created.append)
     run = Path(created[0])
     manifest = json.loads((run / batch.MANIFEST).read_text())
-    assert manifest["status"] == "incomplete" and "out of memory" in manifest["error"]
-    assert [p["id"] for p in manifest["prompts"]] == ["case-1"]
-    assert manifest["promptsNotRead"] == ["case-2", "case-3"]
+    assert manifest["status"] == "failed" and "out of memory" in manifest["error"]
+    assert _statuses(manifest) == {"case-1": "completed", "case-2": "failed", "case-3": "notRead"}
+    assert manifest["totals"]["prompts"] == 1 and manifest["totals"]["planned"] == 3
+    assert _whole_prompt_directories(run) == ["case-1"]
+    assert not (run / "prompts" / batch.PARTIAL_DIRECTORY).exists()
     assert not (run / "COMPLETED").exists()
+
+
+def test_the_manifest_is_accurate_while_a_prompt_is_being_read(workspace, monkeypatch):
+    """What a kill that runs no handler (SIGKILL after the grace period)
+    leaves: the last atomic rewrite says running, names the whole prompts and
+    the one in flight, and the in-flight prompt's files are only in staging,
+    even once they are all written."""
+    read = probe.read_prompt
+    seen = {}
+
+    def observed(session, prompt, planned, **k):
+        run = Path(k["run_directory"]).parents[2]
+        manifest = json.loads((run / batch.MANIFEST).read_text())
+        if prompt == PROMPTS[1]["text"]:
+            seen["before"] = (manifest["status"], _statuses(manifest), _whole_prompt_directories(run))
+        report = read(session, prompt, planned, **k)
+        if prompt == PROMPTS[1]["text"]:
+            assert (Path(k["run_directory"]) / probe.PROBE_JSON).is_file()
+            seen["written"] = _whole_prompt_directories(run)
+        return report
+
+    monkeypatch.setattr(probe, "read_prompt", observed)
+    result = batch.probe_batch(config_for(workspace), root=str(workspace), log=lambda *_: None,
+                               model=tiny_model())
+    assert seen["before"] == ("running", {"case-1": "completed", "case-2": "running", "case-3": "pending"},
+                              ["case-1"])
+    assert seen["written"] == ["case-1"]
+    manifest = json.loads(Path(result["reportPath"]).read_text())
+    assert manifest["status"] == "completed" and set(_statuses(manifest).values()) == {"completed"}
+    assert all(p["seconds"] >= 0 for p in manifest["prompts"])
+    assert not (Path(result["runDirectory"]) / "prompts" / batch.PARTIAL_DIRECTORY).exists()
+
+
+@pytest.mark.parametrize("during", [False, True])
+def test_a_scheduler_signal_after_k_prompts_records_an_interrupted_run(workspace, monkeypatch, during):
+    """The engine's checkpoint flag (set by USR1 or TERM) stops the batch at
+    the next prompt, or mid-prompt at the next layer; the manifest says
+    which prompts are whole and nothing partial looks complete."""
+    from steerlab_server.experiment.resume import CheckpointFlag
+    flag = CheckpointFlag()
+    read = probe.read_prompt
+    count = []
+
+    def signalled(session, prompt, planned, **k):
+        count.append(1)
+        if during and len(count) == 2:
+            flag.request()             # arrives while prompt 2 is being read
+        report = read(session, prompt, planned, **k)
+        if not during and len(count) == 2:
+            flag.request()             # arrives just after prompt 2 is whole
+        return report
+
+    monkeypatch.setattr(probe, "read_prompt", signalled)
+    created = []
+    with pytest.raises(batch.ProbeBatchInterrupted, match="after [12] of 3") as stopped:
+        batch.probe_batch(config_for(workspace), root=str(workspace), log=lambda *_: None,
+                          model=tiny_model(), checkpoint=flag, on_run_created=created.append)
+    assert "notRead" in str(stopped.value) or "interrupted" in str(stopped.value)
+    run = Path(created[0])
+    manifest = json.loads((run / batch.MANIFEST).read_text())
+    assert manifest["status"] == "interrupted"
+    if during:
+        assert _statuses(manifest) == {"case-1": "completed", "case-2": "interrupted", "case-3": "notRead"}
+        assert _whole_prompt_directories(run) == ["case-1"]
+    else:
+        assert _statuses(manifest) == {"case-1": "completed", "case-2": "completed", "case-3": "notRead"}
+        assert _whole_prompt_directories(run) == ["case-1", "case-2"]
+    assert manifest["totals"]["prompts"] == len(_whole_prompt_directories(run))
+    assert not (run / "prompts" / batch.PARTIAL_DIRECTORY).exists()
+    assert not (run / "COMPLETED").exists()
+
+
+def test_a_signal_during_the_forward_pass_stops_at_the_next_layer(workspace, monkeypatch):
+    """A cancel gives the child seconds, so the batch does not wait for the
+    prompt to finish: the check before each layer's readouts stops it."""
+    from steerlab_server.experiment.resume import CheckpointFlag
+    flag = CheckpointFlag()
+    apply = probe._AllPositionCapture.apply
+    reads = []
+
+    def capturing(self, h, layer, offset):
+        if len(reads) == 2:
+            flag.request()             # prompt 2's forward pass is under way
+        return apply(self, h, layer, offset)
+
+    read = probe.read_prompt
+
+    def counted(*a, **k):
+        reads.append(1)
+        return read(*a, **k)
+
+    monkeypatch.setattr(probe._AllPositionCapture, "apply", capturing)
+    monkeypatch.setattr(probe, "read_prompt", counted)
+    created = []
+    with pytest.raises(batch.ProbeBatchInterrupted) as stopped:
+        batch.probe_batch(config_for(workspace), root=str(workspace), log=lambda *_: None,
+                          model=tiny_model(), checkpoint=flag, on_run_created=created.append)
+    assert "before reading layer 0" in str(stopped.value.__cause__)
+    run = Path(created[0])
+    manifest = json.loads((run / batch.MANIFEST).read_text())
+    assert _statuses(manifest) == {"case-1": "completed", "case-2": "interrupted", "case-3": "notRead"}
+    assert _whole_prompt_directories(run) == ["case-1"]
+
+
+def test_a_real_signal_uses_the_engine_flag_and_the_handlers_are_restored(workspace, monkeypatch):
+    """SIGUSR1, the walltime warning the scheduler script forwards, reaches
+    the batch through resume.CheckpointFlag; afterwards the process's own
+    handlers are back."""
+    import signal
+    before = (signal.getsignal(signal.SIGUSR1), signal.getsignal(signal.SIGTERM))
+    read = probe.read_prompt
+    count = []
+
+    def signalled(*a, **k):
+        count.append(1)
+        if len(count) == 2:
+            os.kill(os.getpid(), signal.SIGUSR1)
+        return read(*a, **k)
+
+    monkeypatch.setattr(probe, "read_prompt", signalled)
+    created = []
+    with pytest.raises(batch.ProbeBatchInterrupted):
+        batch.probe_batch(config_for(workspace), root=str(workspace), log=lambda *_: None,
+                          model=tiny_model(), on_run_created=created.append)
+    manifest = json.loads((Path(created[0]) / batch.MANIFEST).read_text())
+    assert manifest["status"] == "interrupted" and _statuses(manifest)["case-1"] == "completed"
+    assert (signal.getsignal(signal.SIGUSR1), signal.getsignal(signal.SIGTERM)) == before
+
+
+def test_a_pinned_id_beyond_the_output_head_refuses_before_any_run(workspace):
+    created = []
+    with pytest.raises(batch.ProbeBatchError, match="outside the output head of 256 rows"):
+        batch.probe_batch(config_for(workspace, pinIDs=[300]), root=str(workspace),
+                          log=lambda *_: None, model=tiny_model(), on_run_created=created.append)
+    assert created == []
 
 
 # --- the config and the prompt set ----------------------------------------------
@@ -447,6 +594,28 @@ def test_review_lists_a_bounded_number_of_prompts_and_names_the_largest(workspac
         len(_Tokenizer()(row["text"]).input_ids) * 4 for row in PROMPTS)
     assert review["totalProjections"] == sum(len(_Tokenizer()(row["text"]).input_ids) * 4 for row in PROMPTS)
     assert all("labels" not in entry for entry in review["prompts"])
+
+
+def test_review_resolves_pins_where_it_can_and_says_where_it_cannot(workspace, tokenizer_cached, monkeypatch):
+    """With the cached tokenizer and config, pins are checked exactly as the
+    node checks them; a word that is two tokens, or an id beyond the head,
+    refuses before submission."""
+    monkeypatch.setattr(batch, "cached_geometry", lambda *a: geometry())
+    review = batch.preflight(config_for(workspace, pinIDs=[7]), workspace)
+    assert review["pins"] == {"words": {" law": _Tokenizer._id("law")}, "ids": "withinOutputHead"}
+    assert any("Pinned words resolve to" in line for line in review["summary"])
+    with pytest.raises(batch.ProbeBatchError, match="2 tokens") as split:
+        batch.preflight(config_for(workspace, pin=["two words"]), workspace)
+    assert "pinIDs" in split.value.repair_action
+    with pytest.raises(batch.ProbeBatchError, match="outside the output head of 256 rows"):
+        batch.preflight(config_for(workspace, pinIDs=[256]), workspace)
+
+
+def test_without_a_tokenizer_or_config_pins_are_checked_on_the_node(workspace):
+    review = batch.preflight(config_for(workspace, pinIDs=[999]), workspace)
+    assert review["pins"] == {"words": "checkedOnTheNode", "ids": "checkedOnTheNode"}
+    assert any("resolved on the node" in line for line in review["summary"])
+    assert any("checked against the output head on the node" in line for line in review["summary"])
 
 
 def test_review_without_a_cached_tokenizer_says_so_and_bounds_by_max_tokens(workspace):
@@ -677,6 +846,36 @@ def test_an_unknown_capacity_is_said(managed, monkeypatch):
     assert plan["memoryFit"] == "capacityUnknown" and "no VRAM is declared for L4" in plan["memoryReview"]["summary"]
     assert plan["memoryReview"]["tokenBasis"] == "maxTokens bound"
     assert plan["memoryReview"]["fittingGPUTypes"] == ["A100", "H100"]
+
+
+@pytest.mark.parametrize("request_text, fit", [("64G", "fits"), ("4K", "mayExceed"), ("1K", "exceeds"),
+                                                ("plenty", "notChecked")])
+def test_host_capture_is_compared_with_the_memory_request_as_an_advisory(
+        managed, tokenizer_cached, monkeypatch, request_text, fit):
+    """The capture holds every armed layer × position in float32 on the host.
+    Against the Slurm memory request it informs the plan; it never refuses."""
+    from steerlab_server.api import scientific_execution
+    root, profile = managed
+    profile = slurm(profile, monkeypatch)
+    monkeypatch.setenv("STEERLAB_SLURM_MEMORY", request_text)
+    monkeypatch.setattr(batch, "cached_geometry", lambda *a: geometry())
+    plan = scientific_execution.plan(_request(root), profile)
+    host = plan["memoryReview"]["host"]
+    assert host["hostFit"] == fit
+    assert host["hostCaptureBytes"] == plan["operationReview"]["memoryEstimate"]["hostCaptureBytes"]
+    if fit in ("mayExceed", "exceeds"):
+        assert "maxTokens" in host["advisory"] and "STEERLAB_SLURM_MEMORY" in host["advisory"]
+    else:
+        assert "advisory" not in host
+
+
+def test_slurm_memory_values_are_read_in_its_own_units():
+    from steerlab_server.api.science_placement import slurm_memory_bytes
+    assert slurm_memory_bytes("64G") == 64 * 1024**3
+    assert slurm_memory_bytes("64000") == 64000 * 1024**2   # bare values are megabytes
+    assert slurm_memory_bytes("512mb") == 512 * 1024**2
+    assert slurm_memory_bytes("2T") == 2 * 1024**4
+    assert slurm_memory_bytes(None) is None and slurm_memory_bytes("lots") is None
 
 
 def test_other_operations_keep_their_plans(managed):

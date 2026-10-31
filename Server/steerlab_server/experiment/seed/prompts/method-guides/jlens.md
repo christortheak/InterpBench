@@ -668,15 +668,31 @@ weights plus Jacobians that alone do not fit one GPU of the selected type,
 naming a declared type that does. When only the full estimate exceeds the GPU,
 the plan records an advisory with the declared types that hold it and the
 levers (`maxTokens`, fewer layers), because activations and eager attention are
-estimated at their worst case. When the tokenizer or model configuration is not
+estimated at their worst case. The host-side capture (every armed layer and
+position in float32) is compared with the job's Slurm memory request the same
+way, as an advisory. Pinned words are resolved, and pinned ids checked against
+the output head, with the probe's own rule; a word that is several tokens or an
+id the head lacks is refused. When the tokenizer or model configuration is not
 cached where the plan runs, review says so, and execution re-checks every prompt
 before the first forward pass.
 
 The run is one directory. `probe-batch.json` lists the prompts in order with
 their ids, labels, token counts, projection counts, timings, and the input
-hashes; `prompts/<id>/` holds exactly what one probe of that prompt writes
-(`probe.json`, `probe-topk.csv`, `probe-trajectory.csv`, and `config.json`),
-with `runDirectory` recorded relative to the workspace. Read it as you would one
+hashes; `prompts/<id>/` holds the files one probe of that prompt writes
+(`probe.json`, `probe-topk.csv`, `probe-trajectory.csv`, and `config.json`), with
+the same numbers and CSV bytes. Each `probe.json` records `runDirectory`
+relative to the workspace, and its `runID` is the prompt id.
+
+The manifest is written when the run starts and replaced after every prompt,
+with each prompt's status (`completed`, `running`, `pending`, `interrupted`,
+`failed`, or `notRead`) and timing. A prompt is written under
+`prompts/.partial/` and appears as `prompts/<id>/` only when complete. The
+scheduler's walltime warning or a cancel stops the batch at the next layer and
+marks the run `interrupted`; an error marks it `failed`; only a finished run gets
+`COMPLETED`. To finish an interrupted set, submit the prompts not marked
+`completed` as a new request.
+
+Read it as you would one
 probe per prompt: counts, ranks, and cosines beside their logit-lens
 companions. A study's conditions crossed with its prompts are not yet a request
 shape; probe each agent as its own request.

@@ -1650,7 +1650,7 @@
       "id": "jlens-probe-batch",
       "title": "Probe a prompt set through a J-lens",
       "method": "jlens",
-      "purpose": "Read a lens at every position of many prompts in one GPU job. The model loads once, and the lens is verified and placed on the GPU once. Each prompt's outputs are the ones the single-prompt probe writes, so the readouts compare prompt by prompt.",
+      "purpose": "Read a lens at every position of many prompts in one GPU job. The model loads once, and the lens is verified and placed on the GPU once. Each prompt's numbers are the ones the single-prompt probe computes, so the readouts compare prompt by prompt.",
       "fields": [
         {
           "id": "modelID",
