@@ -11,7 +11,9 @@ import Foundation
 // itself never downloads an app, and nothing is ever installed unasked.
 //
 //   * The check: at most once a day (and whenever the person chooses Check
-//     for Updates…), one unauthenticated
+//     for Updates…, or asks the app's command line with `install version
+//     --check`; the two share one setting and one daily limit,
+//     `CommandLineUpdate.swift`), one unauthenticated
 //     `GET /repos/<owner>/<name>/releases/latest` to GitHub's public API,
 //     and, when a code checkout sits beside the app, `git ls-remote` run IN
 //     that checkout through the person's OWN git credential helpers. The
@@ -550,16 +552,58 @@ public struct PublishedRelease: Sendable, Equatable {
     }
 }
 
+/// The newest release a check saw, whether or not it is newer than the copy
+/// that asked. Recorded (`UpdateCheckPreferences.latestRelease`) so that
+/// another SteerLab process on this Mac, such as the app's command line, can
+/// compare its OWN version against it without asking GitHub again.
+public struct UpdateLatestRelease: Sendable, Equatable {
+    public let version: SemanticVersion
+    public let tag: String
+    public let page: URL?
+    /// When the check that saw it ran; nil on a result that was not recorded.
+    public let observedAt: Date?
+
+    public init(version: SemanticVersion, tag: String, page: URL?, observedAt: Date? = nil) {
+        self.version = version
+        self.tag = tag
+        self.page = page
+        self.observedAt = observedAt
+    }
+
+    /// The latest release by the decision table's own precedence: the
+    /// published release the feed named, else the newest version tag on the
+    /// remote (the signal while the feed cannot answer), else nil.
+    static func newest(
+        release: ReleaseFeedOutcome, remoteTags: [SemanticVersion]?,
+        repository: UpdateRepository
+    ) -> UpdateLatestRelease? {
+        if case .release(let tag, let page, _) = release, let version = SemanticVersion(tag) {
+            return UpdateLatestRelease(
+                version: version, tag: tag, page: page ?? repository.releasePage(tag: tag))
+        }
+        guard let tagged = remoteTags?.last else { return nil }
+        let tag = "v\(tagged.releaseDescription)"
+        return UpdateLatestRelease(version: tagged, tag: tag, page: repository.releasePage(tag: tag))
+    }
+}
+
 /// A completed check, and the release the updater may install from.
 public struct UpdateCheckResult: Sendable, Equatable {
     public let availability: UpdateAvailability
     /// Non-nil only when the published release feed itself named the newer
     /// release (see `UpdateCheckService.checkDetailed`).
     public let release: PublishedRelease?
+    /// The newest release the check saw at all, newer than this copy or not.
+    /// Nil when nothing answered with a version.
+    public let latest: UpdateLatestRelease?
 
-    public init(availability: UpdateAvailability, release: PublishedRelease?) {
+    public init(
+        availability: UpdateAvailability, release: PublishedRelease?,
+        latest: UpdateLatestRelease? = nil
+    ) {
         self.availability = availability
         self.release = release
+        self.latest = latest
     }
 }
 
@@ -692,7 +736,9 @@ public struct UpdateCheckService: Sendable {
             repository: repository)
         return UpdateCheckResult(
             availability: availability,
-            release: PublishedRelease.matching(availability, feed: release))
+            release: PublishedRelease.matching(availability, feed: release),
+            latest: UpdateLatestRelease.newest(
+                release: release, remoteTags: remoteTags, repository: repository))
     }
 
     /// The repository the check asks about: the sibling checkout's `origin`
@@ -762,8 +808,16 @@ public enum UpdateCheckPolicy {
 }
 
 /// The small amount of per-machine state the check remembers: the preference,
-/// the last-run stamp, and the release whose banner was dismissed. Injectable
-/// defaults domain and clock so tests never touch the real ones.
+/// the last-run stamp, the newest release the last check saw, and the
+/// release whose banner was dismissed. Injectable defaults domain and clock
+/// so tests never touch the real ones.
+///
+/// ONE domain for the app and its command line: the app's own (its bundle
+/// identifier). In the app that is `UserDefaults.standard`; the command line
+/// bundled in it is a different process with a different standard domain, so
+/// it opens the app's by name (`forApp(bundleIdentifier:)`). That is what
+/// makes the researcher's opt-out and the once-a-day limit one setting rather
+/// than two.
 ///
 /// `@unchecked Sendable`: the only stored reference is a `UserDefaults`,
 /// which Apple documents as thread-safe; nothing else here is mutable.
@@ -772,6 +826,8 @@ public struct UpdateCheckPreferences: @unchecked Sendable {
     public static let automaticEnabledKey = "UpdateCheckAutomaticEnabled"
     public static let lastCheckKey = "UpdateCheckLastRun"
     public static let dismissedVersionKey = "UpdateCheckDismissedVersion"
+    /// The newest release the last answered check saw (`UpdateLatestRelease`).
+    public static let latestReleaseKey = "UpdateCheckLatestRelease"
 
     private let defaults: UserDefaults
     private let now: @Sendable () -> Date
@@ -782,6 +838,25 @@ public struct UpdateCheckPreferences: @unchecked Sendable {
     ) {
         self.defaults = defaults
         self.now = now
+    }
+
+    /// The app's own preferences, opened from another process (its bundled
+    /// command line). Nil for a name that is not a plausible bundle
+    /// identifier. A process whose own identifier IS that name already has
+    /// it as its standard domain, which is the one Foundation hands back.
+    public static func forApp(
+        bundleIdentifier: String,
+        processBundleIdentifier: String? = Bundle.main.bundleIdentifier,
+        now: @escaping @Sendable () -> Date = Date.init
+    ) -> UpdateCheckPreferences? {
+        guard UpdateSignatureRequirement.isPlausibleBundleIdentifier(bundleIdentifier) else {
+            return nil
+        }
+        if processBundleIdentifier == bundleIdentifier {
+            return UpdateCheckPreferences(defaults: .standard, now: now)
+        }
+        guard let defaults = UserDefaults(suiteName: bundleIdentifier) else { return nil }
+        return UpdateCheckPreferences(defaults: defaults, now: now)
     }
 
     public var automaticChecksEnabled: Bool {
@@ -817,6 +892,57 @@ public struct UpdateCheckPreferences: @unchecked Sendable {
     }
 
     public func recordCheck() { lastCheck = now() }
+
+    /// The newest release the last answered check saw, with when it saw it.
+    /// Garbage in the slot reads as nothing recorded.
+    public var latestRelease: UpdateLatestRelease? {
+        get {
+            guard let record = defaults.dictionary(forKey: Self.latestReleaseKey),
+                let raw = record["version"] as? String, let version = SemanticVersion(raw),
+                let tag = record["tag"] as? String, !tag.isEmpty
+            else { return nil }
+            return UpdateLatestRelease(
+                version: version, tag: tag,
+                page: (record["page"] as? String).flatMap(URL.init(string:)),
+                observedAt: record["observedAt"] as? Date)
+        }
+        nonmutating set {
+            guard let newValue else {
+                defaults.removeObject(forKey: Self.latestReleaseKey)
+                return
+            }
+            var record: [String: Any] = [
+                "version": newValue.version.releaseDescription, "tag": newValue.tag,
+            ]
+            if let page = newValue.page { record["page"] = page.absoluteString }
+            if let observedAt = newValue.observedAt { record["observedAt"] = observedAt }
+            defaults.set(record, forKey: Self.latestReleaseKey)
+        }
+    }
+
+    /// Remember what a completed check learned, so another SteerLab process
+    /// can compare against it without asking again. Only an answer is
+    /// recorded: a check that reached nothing leaves the last answer in
+    /// place, and a check pinned to one tag (`UpdateCheckOverrides`) is not
+    /// an answer about the latest release, so it records nothing.
+    public func recordAnswer(
+        _ result: UpdateCheckResult,
+        releaseTagOverride: String? = UpdateCheckOverrides.releaseTag()
+    ) {
+        guard releaseTagOverride == nil else { return }
+        var newest = result.latest
+        // A newer version the decision announced from a tag, beyond the
+        // feed's release, is the newest release known.
+        if case .releaseAvailable(let version, let page) = result.availability,
+            newest.map({ version > $0.version }) ?? true
+        {
+            newest = UpdateLatestRelease(
+                version: version, tag: "v\(version.releaseDescription)", page: page)
+        }
+        guard let latest = newest else { return }
+        latestRelease = UpdateLatestRelease(
+            version: latest.version, tag: latest.tag, page: latest.page, observedAt: now())
+    }
 
     /// Remember a release as dismissed, so the same version never banners
     /// again on this machine.

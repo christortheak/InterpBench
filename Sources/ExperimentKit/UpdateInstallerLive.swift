@@ -265,6 +265,37 @@ public enum UpdateInstallContextReader {
                 atPath: bundle.deletingLastPathComponent().path))
     }
 
+    /// The context for an app on disk that this process is NOT the main
+    /// executable of: the command line bundled in it (`install update`). The
+    /// same facts, read the same way, only from the app's path rather than
+    /// from `Bundle.main`, which for a bundled helper is the helper's own
+    /// folder: the identifier from the app's Info.plist, and the signature
+    /// of the app bundle itself, read offline exactly as the app reads its
+    /// own (`SecurityFrameworkCodeSigning.signature(ofBundleAt:)`).
+    public static func context(
+        forApp app: URL,
+        signature: (URL) -> RunningAppSignature = {
+            SecurityFrameworkCodeSigning().signature(ofBundleAt: $0)
+        },
+        fileSystem: any UpdateFileSystem = LiveUpdateFileSystem(),
+        sourceCheckout: URL? = sourceCheckout()
+    ) -> UpdateInstallContext {
+        let bundle = app.standardizedFileURL
+        let isApp = bundle.pathExtension == "app"
+        let readOnly =
+            (try? bundle.resourceValues(forKeys: [.volumeIsReadOnlyKey]))?.volumeIsReadOnly
+            ?? false
+        return UpdateInstallContext(
+            appBundle: isApp ? bundle : nil,
+            bundleIdentifier: fileSystem.bundleInfo(at: bundle).identifier,
+            signature: isApp ? signature(bundle) : .unsigned,
+            sourceCheckout: sourceCheckout,
+            isTranslocated: isTranslocated(bundle),
+            isOnReadOnlyVolume: readOnly,
+            canWriteParentFolder: FileManager.default.isWritableFile(
+                atPath: bundle.deletingLastPathComponent().path))
+    }
+
     /// The code checkout the local engine runs from, when there is one: the
     /// same resolver the engine uses (beside the app, else the default
     /// home). Read only; nothing in the tree is read or written.
@@ -286,23 +317,32 @@ public enum UpdateBundleProcesses {
     /// command line a coding assistant started, most often. Replacing the app
     /// under them would hand them the new version's files mid-command.
     public static func count(insideApp app: URL, excluding own: Int32 = getpid()) -> Int {
+        executablePaths(insideApp: app, excluding: own).count
+    }
+
+    /// The executable path of every OTHER process running out of `app`, one
+    /// entry per process. The command line's updater tells the app itself
+    /// (`Contents/MacOS/…`) apart from everything else with these.
+    public static func executablePaths(
+        insideApp app: URL, excluding own: Int32 = getpid()
+    ) -> [String] {
         let prefix = app.resolvingSymlinksInPath().standardizedFileURL.path + "/"
         let capacity = proc_listallpids(nil, 0)
-        guard capacity > 0 else { return 0 }
+        guard capacity > 0 else { return [] }
         var pids = [pid_t](repeating: 0, count: Int(capacity) + 64)
         let listed = pids.withUnsafeMutableBufferPointer {
             proc_listallpids($0.baseAddress, Int32($0.count * MemoryLayout<pid_t>.size))
         }
-        guard listed > 0 else { return 0 }
+        guard listed > 0 else { return [] }
         var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
-        var found = 0
+        var found: [String] = []
         for pid in pids.prefix(Int(listed)) where pid > 0 && pid != own {
             let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
             guard length > 0 else { continue }
             let path = String(
                 decoding: buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) },
                 as: UTF8.self)
-            if path.hasPrefix(prefix) { found += 1 }
+            if path.hasPrefix(prefix) { found.append(path) }
         }
         return found
     }

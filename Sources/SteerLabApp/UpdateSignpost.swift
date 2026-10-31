@@ -150,6 +150,9 @@ final class UpdateSignpostModel {
         guard preferences.shouldRunAutomaticCheck else { return }
         preferences.recordCheck()
         let result = await service.checkDetailed()
+        // Shared with this app's command line, which reads it instead of
+        // asking GitHub again (`CommandLineUpdate`).
+        preferences.recordAnswer(result)
         apply(result)
     }
 
@@ -161,6 +164,7 @@ final class UpdateSignpostModel {
         defer { isChecking = false }
         preferences.recordCheck()
         let result = await service.checkDetailed()
+        preferences.recordAnswer(result)
         apply(result)
         var report = UpdateCheckPolicy.manualReport(for: result.availability)
         if case .releaseAvailable = result.availability, let installRefusal {
