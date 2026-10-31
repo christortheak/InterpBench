@@ -16,8 +16,10 @@ shows it, and it is seated as its own agent arm.
   residual-norm units strength × R, and as a raw multiplier strength × ‖v‖.
   Only the direction differs. R stays the controlled direction's, so the
   action's ``source`` keeps naming that vector's sidecar, and records the
-  seed, the matched norm, and the direction it replaced; validation redraws
-  the direction from them.
+  seed, the matched norm, and the direction it replaced. Validation redraws
+  the direction from them to within libm rounding (``same_draw``), and
+  :func:`check_matched_norms` ties the matched norm to the controlled
+  direction wherever that policy is at hand.
 - **location**: the same directions, strengths, and dose over a different
   declared span, typically a neutral sentence of the same prompt. Its token
   length must equal the controlled span's on every prompt. That needs the
@@ -69,6 +71,21 @@ def is_control_settings(settings) -> bool:
     return isinstance(settings, dict) and 'controlOf' in settings
 
 
+def check_matched_norms(doc, source):
+    """A random-direction control's recorded norms against the policy it controls: each direction was drawn at the
+    controlled direction's own L2 norm. Checked wherever that policy is at hand (review, and attachment when it is in
+    the workspace); a control reviewed elsewhere carries its own record."""
+    if (doc.get('control') or {}).get('kind') != RANDOM_DIRECTION: return
+    controlled = {a['id']: a for a in source['actions'] if 'vector' in a}
+    for action in doc['actions']:
+        if 'vector' not in action: continue
+        original = controlled.get(action['id'])
+        norm = math.sqrt(math.fsum(x * x for x in original['vector'])) if original is not None else None
+        if norm is None or len(original['vector']) != len(action['vector']) or action['source']['randomDirection']['matchedNorm'] != norm:
+            raise ControlRefused(f'Action {action["id"]} of control {doc["name"]} was not drawn at the norm of the direction it controls, '
+                                 f'so it would add a different dose. Derive the control again from {source["name"]} with science policy-review.')
+
+
 def materialize(settings, root, read):
     """``(control document, review notes)``. ``read(path, root)`` reads one
     workspace file's bytes, through the authoring owner's own reader."""
@@ -112,6 +129,7 @@ def materialize(settings, root, read):
         notes = [f'A location control of policy {source["name"]} ({digest[:12]}…): the same directions, strengths, and {source["spanDose"]} dose over '
                  'a different declared span. Each run checks that this span has as many tokens as the controlled span on every prompt, and refuses '
                  'before generating anything when it does not, naming each item and both counts.']
+    check_matched_norms(doc, source)
     notes.append('Seat this control as its own agent arm: attach it with science policy-attach-review and policy-attach, with "staticSteering": '
                  '"remove", as the span policy it controls was attached, then compare the arms on the same items.')
     return artifacts.validate(doc), notes

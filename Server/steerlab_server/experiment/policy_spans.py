@@ -48,7 +48,6 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
-import tempfile
 
 from . import lifecycle_gates, paths, policy_artifacts, prompt_render, prompt_span
 
@@ -364,16 +363,18 @@ def run_preflight(model, manifest, prompts, root, *, wants_choice: bool, run_dir
                 repair=("start a new run of the study; keep this run as it is, since "
                         "its existing responses match its own span-resolutions.json"))
     else:
-        # Whole or absent: written beside the run's files, then moved into place.
-        handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=run_directory,
-                                             prefix=".span-resolutions-", suffix=".json", delete=False)
+        # Whole or absent (temp + fsync + rename, resume.write_state's discipline), created
+        # with the process's ordinary file mode like the run's other files.
+        temporary = path + ".tmp"
         try:
-            with handle:
+            with open(temporary, "w", encoding="utf-8") as handle:
                 json.dump(document, handle, indent=2, sort_keys=True, ensure_ascii=False)
                 handle.write("\n")
-            os.replace(handle.name, path)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
         except BaseException:
-            try: os.unlink(handle.name)
+            try: os.unlink(temporary)
             except OSError: pass
             raise
     if log is not None:

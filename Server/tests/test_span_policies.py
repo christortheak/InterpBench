@@ -305,7 +305,10 @@ def test_a_run_resolves_spans_once_up_front_and_stamps_them_once(tmp_path):
     [policy] = next(e for e in scope['conditions'] if e['condition'] == 'reader')['interventionPolicies']
     assert policy['scopes'][0]['path'] == 'policySpanAddition'
     # Moved into place whole: no temporary file is left beside it.
-    assert not list(run.glob('.span-resolutions-*'))
+    assert not list(run.glob('span-resolutions.json.tmp'))
+    # With the mode of the run's other files, not a private temporary file's.
+    sidecar_mode = (run / policy_spans.SIDECAR_FILENAME).stat().st_mode & 0o777
+    assert sidecar_mode == (run / 'intervention-scope.json').stat().st_mode & 0o777 and sidecar_mode & 0o044
 
 
 def test_a_resumed_run_checks_its_sidecar_and_refuses_one_it_cannot_read(tmp_path):
@@ -525,6 +528,46 @@ def test_a_random_direction_control_must_be_the_direction_its_seed_gives(tmp_pat
         if change == 'matchedNorm': action['source']['randomDirection']['matchedNorm'] = 1.
         if change == 'seed': tampered['control']['seed'] = '8'
         with pytest.raises(ValueError, match='recorded seed'): artifacts.validate(tampered)
+
+
+def test_a_redraw_within_libm_rounding_validates_and_a_material_change_does_not(tmp_path):
+    """Python's Gaussian draw uses the platform's log, cos, and sin, so a control reviewed on one platform redraws to
+    within last-place rounding on another. That must still validate; a real change must not."""
+    model = tiny_llama(); source = published_source(tmp_path, model)
+    document = owner.review({'controlOf': source['path'], 'control': 'randomDirection', 'name': 'span-random', 'seed': '7'}, tmp_path)['document']
+    def nudged(value, steps):
+        for _ in range(steps): value = math.nextafter(value, math.inf)
+        return value
+    rounded = copy.deepcopy(document); vector = rounded['actions'][0]['vector']
+    rounded['actions'][0]['vector'] = [nudged(x, 3) for x in vector]
+    assert rounded['actions'][0]['vector'] != vector
+    artifacts.validate(rounded)
+    changed = copy.deepcopy(document); norm = changed['actions'][0]['source']['randomDirection']['matchedNorm']
+    changed['actions'][0]['vector'][0] += 1e-6 * norm
+    with pytest.raises(ValueError, match='recorded seed'): artifacts.validate(changed)
+
+
+def test_a_matched_norm_that_is_not_the_controlled_directions_refuses_where_that_policy_is_at_hand(tmp_path):
+    """A raw-multiplier control redrawn at another norm is self-consistent, so validation alone admits it; review and
+    attachment, which can read the controlled policy, refuse it."""
+    from steerlab_server.experiment import policy_controls
+    model = tiny_llama(); settings = span_settings(tmp_path, model)
+    settings['actions'] = [{'id': 'change', 'kind': 'add', 'bounds': [0, .2], 'vector': [3., 4.], 'strengthUnits': 'rawMultiplier'}]
+    source = owner.publish(settings, tmp_path, owner.review(settings, tmp_path)['planSHA256'])
+    document = owner.review({'controlOf': source['path'], 'control': 'randomDirection', 'name': 'span-random', 'seed': '7'}, tmp_path)['document']
+    weaker = copy.deepcopy(document); drawn = weaker['actions'][0]['source']['randomDirection']
+    drawn['matchedNorm'] = 1.; weaker['actions'][0]['vector'] = artifacts.matched_direction(drawn['seedText'], 2, 1.)
+    artifacts.validate(weaker)
+    with pytest.raises(policy_controls.ControlRefused, match='norm of the direction it controls'):
+        policy_controls.check_matched_norms(weaker, source['document'])
+    saved = owner.publish_document(tmp_path, weaker, policy=True)
+    (tmp_path / 'runs/agent').mkdir(parents=True)
+    (tmp_path / 'runs/agent/agent.json').write_text(json.dumps(ModelVariant(name='base', base_model_id='example/model', base_revision='a' * 40,
+                                                                            prompt_mode='rawCompletion').to_dict()))
+    request = {'agentPath': 'runs/agent/agent.json', 'name': 'random-arm', 'staticSteering': 'remove'}
+    with pytest.raises(policy_controls.ControlRefused): owner.attachment_review({**request, 'policyPaths': [saved['path']]}, tmp_path)
+    honest = owner.publish_document(tmp_path, document, policy=True)
+    owner.attachment_review({**request, 'policyPaths': [honest['path']]}, tmp_path)
 
 
 def test_a_location_control_moves_the_same_dose_to_another_span(tmp_path):
