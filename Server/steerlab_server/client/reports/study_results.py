@@ -171,6 +171,11 @@ class Page:
             name = str(record.get('condition', ''))
             self.per_condition[name] = self.per_condition.get(name, 0) + 1
         self.conditions = sorted(self.per_condition, key=lambda name: name != 'baseline')
+        # A study that measures the baseline agent alone, analyzed: its
+        # analysis exists and has no rows by design, and the page says so
+        # instead of reporting a missing analysis or an empty table.
+        self.baseline_only_analyzed = bool(context.get('baselineOnly') and context.get('effectsSource') is not None
+                                           and not self.rows)
 
     # -- shared pieces
 
@@ -288,6 +293,15 @@ class Page:
     def headline_section(self):
         selection = self.headline
         parts = []
+        if selection.outcome is None and self.baseline_only_analyzed:
+            # No effects is what this design produces: said as what it is,
+            # with the per-arm description it does have.
+            parts.append(paragraph(source.BASELINE_ONLY_EFFECTS.replace("'", '’'), ' What the run recorded for the '
+                                   'baseline is under ', link('conditions', 'Each condition'), '.'))
+            if selection.declared_outcome:
+                parts.append(paragraph('The study declared ', code(selection.declared_outcome),
+                                       ' as its primary outcome.'))
+            return block('Headline outcome', *parts, key='headline')
         if selection.outcome is None:
             parts.append(paragraph('This run has no outcome to lead with: no analysis and no completed evaluation '
                                    'of it were found. Analyze the run, or evaluate it with the study’s judges, then '
@@ -479,7 +493,10 @@ class Page:
             parts.append(table('What each condition applied', [Column('Condition'), Column('What it applied'),
                                                                Column('Responses', numeric=True)],
                                rows, key='design-conditions',
-                               footnote='Every condition is compared with the baseline, the arm with no intervention.'))
+                               footnote=('This study measures the baseline agent alone, so no condition is compared '
+                                         'with it.' if self.context.get('baselineOnly') else
+                                         'Every condition is compared with the baseline, the arm with no '
+                                         'intervention.')))
         else:
             parts.append(paragraph('The run holds no responses, so no condition can be described.'))
         return block('What was asked and compared', *parts, key='design')
@@ -533,6 +550,11 @@ class Page:
             return block('Effects', paragraph(
                 'No analysis of this run was found, so there are no effect estimates. Analyze the run, then make '
                 'this page again.'), key='effects')
+        if self.baseline_only_analyzed:
+            return block('Effects', paragraph(
+                source.BASELINE_ONLY_EFFECTS.replace("'", '’'), ' The analysis, from ', code(context['analysisLabel']),
+                ', had nothing to compare, so no estimate, interval, or test applies. What the run recorded for the '
+                'baseline is under ', link('conditions', 'Each condition'), '.'), key='effects')
         corrections = context.get('corrections') or []
         explained = [
             join(el('strong', 'Estimate'), ': the mean of the paired differences, condition minus baseline. A pair is '
@@ -673,6 +695,8 @@ class Page:
                                        _CONTROLS.get(arm['controlType'], 'a control this version cannot describe'),
                                        ' (recorded as ', code(arm['controlType']), '). Its effects are under ',
                                        link('effects', 'Effects'), '.') for arm in arms]))
+        elif self.context.get('baselineOnly'):
+            parts.append(paragraph('This study steers nothing, so a control arm for steering does not apply.'))
         else:
             parts.append(paragraph('This study declares no control arm, such as a random direction of the same size, '
                                    'to compare its steering with.'))
@@ -694,6 +718,8 @@ class Page:
             parts.append(paragraph(line))
         if not shown:
             parts.append(paragraph('No capability battery was run for this study.'))
+            if self.context.get('baselineOnly'):
+                parts.append(paragraph(source.BASELINE_ONLY_BATTERY.replace("'", '’')))
         return block('Controls', *parts, key='controls')
 
     def judges(self):
@@ -928,6 +954,10 @@ class Page:
             el('h3', 'What this page leaves out'),
             bullets(always),
             el('h3', 'What these results show'),
+            paragraph('This study measures the baseline agent alone. Its results describe this model on these items, '
+                      'under these settings, and compare it with nothing. Report the study’s freeze state, its '
+                      'exclusions, and its judges’ agreement with any result taken from this page.')
+            if self.context.get('baselineOnly') else
             paragraph('An effect here is a difference between conditions, in this model, on these items, under these '
                       'settings. An interval that does not include zero is a reason to look further, not proof that '
                       'the difference holds elsewhere. Report the study’s freeze state, its exclusions, and its '

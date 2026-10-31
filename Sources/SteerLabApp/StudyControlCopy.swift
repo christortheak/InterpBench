@@ -161,8 +161,15 @@ enum StudyControlCopy {
         "lowercase letters, digits and hyphens; anything else is dropped. This "
         + "IS the experiments/<name>/ directory and the name the CLI takes."
 
-    static func validateCaption(variantsPresent: Bool) -> String {
-        "derives vectors from the pinned recipe and writes scope-hashed "
+    static func validateCaption(variantsPresent: Bool, baselineOnly: Bool = false) -> String {
+        // A study of the baseline alone derives no vectors and steers
+        // nothing, so freeze asks it for no validation evidence.
+        if baselineOnly {
+            return "not needed for this study: it measures the baseline agent "
+                + "alone, derives no vectors, and freezes without validation "
+                + "evidence."
+        }
+        return "derives vectors from the pinned recipe and writes scope-hashed "
             + "validation evidence (held-out probe accuracy, cross-concept geometry"
             + (variantsPresent ? ", capability battery per agent" : "")
             + "). Optional while drafting — freeze REQUIRES matching evidence."

@@ -1466,7 +1466,7 @@ def _describe_condition(name, snapshot):
             continue
         slots = [s for s in condition.get("slots") or [] if isinstance(s, dict)]
         if not slots:
-            return "no intervention (the comparison arm)."
+            return _baseline_arm(snapshot)
         parts = [_injection(slot, condition.get("alphaInNormUnits")) for slot in slots]
         text = _and(parts)
         width = condition.get("bandWidth")
@@ -1516,9 +1516,45 @@ def _describe_condition(name, snapshot):
             return ("a latent arm, which edits one feature of a sparse autoencoder. "
                     "Declared settings: " + (settings or "none recorded") + ".")
     if name == "baseline":
-        return "no intervention (the comparison arm)."
+        return _baseline_arm(snapshot)
     return ("not described in the run's settings snapshot, so what it applied is "
             "not available here.")
+
+
+def _baseline_arm(snapshot):
+    """What the baseline applied: nothing. It is the comparison arm, except
+    in a study that measures the baseline agent alone, where it is the only
+    arm."""
+    if is_baseline_only(snapshot):
+        return BASELINE_ONLY_ARM
+    return "no intervention (the comparison arm)."
+
+
+def is_baseline_only(snapshot):
+    """Whether the run's settings snapshot is a study that measures the
+    baseline agent alone (``manifest.baseline_only_study``). Its analysis has
+    no effects by design, and every reader says so in those words."""
+    from ..experiment.study_shape import baseline_only_study
+    return baseline_only_study(snapshot)
+
+
+#: How the methods summary, the results page, and effects.csv describe the
+#: analysis of a study that measures the baseline agent alone: no effects is
+#: what the design produces, not a missing analysis or an empty result.
+BASELINE_ONLY_EFFECTS = (
+    "Baseline only: this study measures the baseline agent alone, so it has "
+    "no comparison arm and its analysis has no effects.")
+
+#: The baseline's description in such a study.
+BASELINE_ONLY_ARM = ("no intervention (the only arm: this study measures the "
+                     "baseline agent alone).")
+
+#: Why such a study has no capability control: the battery checks steering,
+#: and freeze asks for none when nothing is steered.
+BASELINE_ONLY_BATTERY = (
+    "The capability battery checks whether steering changed the model's other "
+    "abilities. This study steers nothing, so freeze asked for no battery "
+    "evidence.")
 
 
 #: How the methods summary and the results page describe a row whose unit
@@ -1874,7 +1910,8 @@ def _methods(context):
     else:
         # The same fact the results page states for such a run.
         say()
-        say("No capability battery was run for this study.")
+        say("No capability battery was run for this study."
+            + (" " + BASELINE_ONLY_BATTERY if context.get("baselineOnly") else ""))
     say()
 
     # -- outcomes
@@ -1903,6 +1940,9 @@ def _methods(context):
         say("- Outcomes in effects.csv:")
         for name in outcomes:
             say(f"  - {_code(name)}: {_describe_outcome(name)}.")
+    elif context.get("baselineOnly") and context["effectsSource"] is not None:
+        say("- Outcomes compared between conditions: none. " + BASELINE_ONLY_EFFECTS
+            + " responses.csv holds the outcomes the run recorded for each response.")
     else:
         say("- Outcomes compared between conditions: " + NOT_AVAILABLE_NO_ANALYSIS)
     if context["pairedName"]:
@@ -2057,6 +2097,9 @@ def _methods(context):
     if context["effectsSource"] is None:
         say("No analysis of this run was found, so this export has no effect "
             "estimates. Analyze the run, then export again.")
+    elif context.get("baselineOnly") and not context["effectRows"]:
+        say(BASELINE_ONLY_EFFECTS + " Nothing was compared, so no estimate, "
+            "interval, or test applies. effects.csv has its columns and no rows.")
     else:
         source = context["effectsSource"]
         say("The engine compared each condition with the baseline on each outcome. "
@@ -2436,6 +2479,10 @@ def _collect(root, study, run_name, steps, now):
             effects_source, stamped_unit)
         if analysis_flags.get("sourceSnapshot"):
             pooled.notes.append(snapshot_line)
+        if is_baseline_only(snapshot) and not rows:
+            pooled.notes.append(BASELINE_ONLY_EFFECTS + " This table has no rows; "
+                                "responses.csv holds what the run recorded for the "
+                                "baseline.")
         tables.append(pooled)
         if strata.rows:
             tables.append(strata)
@@ -2513,7 +2560,8 @@ def _collect(root, study, run_name, steps, now):
         "analysisSourceSnapshot": snapshot_verdict,
         "choiceReread": choice_reread_stamp,
         "experimentHash": experiment_hash, "effectRows": effect_rows,
-        "stampedUnit": stamped_unit, **context_rows,
+        "stampedUnit": stamped_unit,
+        "baselineOnly": is_baseline_only(snapshot), **context_rows,
     }
     # Writing the summary also completes ``missing``: every fact it looks
     # for and does not find is added there, so any reader that shows

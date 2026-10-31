@@ -3584,6 +3584,12 @@ public enum ExperimentTasks {
         if let inertNote = ExperimentStore.inertMachineryNote(manifest) {
             print("WARNING: \(inertNote)")
         }
+        // A study that measures the baseline agent alone runs one arm by
+        // design; said at start so its log reads as what it is (server twin:
+        // `_run_impl`).
+        if ExperimentStore.isBaselineOnlyStudy(manifest) {
+            print("note: \(ExperimentStore.baselineOnlyStudyAdvisory)")
+        }
         let conditions = ordinaryRunConditions(for: manifest)
         guard !conditions.isEmpty else {
             throw ExperimentError.refusing(
@@ -5261,6 +5267,37 @@ public enum ExperimentTasks {
         at runDirectory: URL
     ) -> (recordCount: Int?, conditions: Set<String>) {
         StudyAnalysisRepository.analysisSourceRecords(at: runDirectory)
+    }
+
+    /// Whether an analysis with zero effect-size entries is that of a study
+    /// measuring the baseline agent alone (`ExperimentStore.isBaselineOnlyStudy`),
+    /// whose source run holds baseline records and nothing else. Read from
+    /// the manifest the analysis stamped beside itself, which the epoch guard
+    /// tied to the run. Then no effects is the design, and the analysis says
+    /// `baselineOnlyStudy` rather than `emptyAnalysis`. Tolerant: anything
+    /// unreadable is not this case. Server twin:
+    /// `cli_payloads.is_baseline_only_analysis`.
+    static func isBaselineOnlyAnalysis(
+        analysisDirectory: URL, recordCount: Int?, conditions: Set<String>
+    ) -> Bool {
+        guard let recordCount, recordCount > 0, conditions == ["baseline"],
+            let data = try? Data(
+                contentsOf: analysisDirectory.appending(component: "experiment.json")),
+            let manifest = try? JSONDecoder().decode(ExperimentManifest.self, from: data)
+        else { return false }
+        return ExperimentStore.isBaselineOnlyStudy(manifest)
+    }
+
+    /// The same question for a named source run under the workspace's
+    /// `runs/`.
+    public static func isBaselineOnlyAnalysis(
+        at analysisDirectory: URL, sourceRunNamed runName: String
+    ) -> Bool {
+        let (count, conditions) = analysisSourceRecords(
+            at: ExperimentStore.runsDirectory.appending(path: runName))
+        return isBaselineOnlyAnalysis(
+            analysisDirectory: analysisDirectory, recordCount: count,
+            conditions: conditions)
     }
 
     /// The detail for a named source run under the workspace's `runs/`.

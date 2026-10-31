@@ -31,6 +31,11 @@ from ..steering.reading_position import (LAST_TOKEN, ReadingPosition, from_label
 from ..steering.stimulus_set import StimulusSet, load_texts
 from ..steering.vector_store import SUBSTRATE as _THIS_SUBSTRATE
 from . import paths, prompt_render, truncation_gate
+# A study that measures the baseline agent alone (public issue #4): the rule
+# and its sentences live in the standard-library module `study_shape`, so the
+# results export and page can ask it too. Re-exported here.
+from .study_shape import (BASELINE_ONLY_STUDY_ADVISORY,  # noqa: F401
+                          BASELINE_ONLY_SUMMARY, baseline_only_study)
 
 # The closed ``ordinalAggregation`` vocabulary for the ``ordinalScale``
 # outcome instrument (kept torch-free here; ``logprob.ORDINAL_AGGREGATIONS``
@@ -883,7 +888,10 @@ class Manifest:
             except (ValueError, OSError) as exc: violations.append(str(exc))
 
         # Multi-agent studies pin a scenario; model-output studies pin concepts
-        # or variants (must have at least one of them).
+        # or variants (must have at least one of them) — unless the study is
+        # DECLARED baseline-only, whose one arm is the unmodified base model
+        # (public issue #4; :func:`baseline_only_study`). An undeclared or
+        # concept-study draft with nothing attached is still the empty study.
         if self.study_kind == "multiAgent":
             if self.multi_agent_scenario_path and self.multi_agent_scenario_hash:
                 violations += _verify_file_hash(
@@ -891,7 +899,8 @@ class Manifest:
                     f"multi-agent scenario '{self.multi_agent_scenario_path}'")
             else:
                 violations.append("multi-agent study needs a pinned scenario")
-        elif not self.concepts and not self.variant_conditions:
+        elif (not self.concepts and not self.variant_conditions
+              and not baseline_only_study(self.raw)):
             violations.append("no concepts or variants attached")
 
         # Executable condition names must be UNIQUE. `resume.record_key`
@@ -2486,9 +2495,10 @@ def no_measured_conditions_problem(d: dict) -> str | None:
         "analyze would then report zero effect sizes. Add an arm: sweep "
         f"layer×alpha and 'experiment promote {d.get('name')} <concept>' "
         "mints one from the winning cell, or declare a condition naming a "
-        "concept, layer and alpha. For a DELIBERATE baseline-only run, "
-        "declare studyType 'agentComparison' — the manifest then says "
-        "baseline-only instead of implying it")
+        "concept, layer and alpha. For a DELIBERATE baseline-only study, "
+        "declare studyType 'agentComparison' and detach the concepts it "
+        "does not use — the study then measures the baseline agent alone, "
+        "and verify, analyze, and its results say so")
 
 
 def inert_machinery_note(d: dict) -> dict | None:

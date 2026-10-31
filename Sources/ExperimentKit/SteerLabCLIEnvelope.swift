@@ -304,6 +304,16 @@ public enum CLIAdvisory: String, CaseIterable, Sendable, Codable {
     /// `sampling.unused_seed_settings`), byte for byte.
     case seedSettingNotUsed
 
+    /// The study measures the baseline agent alone: a declared
+    /// agentComparison with no agent, injection, or SAE latent arm, whose run
+    /// executes the one arm `baseline` (`ExperimentStore.isBaselineOnlyStudy`).
+    /// Legal, and said at verify, at freeze, and by its analysis, where it
+    /// takes the place of `emptyAnalysis`: no effects is what this design
+    /// produces, not a sign that something went wrong. The detail is
+    /// `ExperimentStore.baselineOnlyStudyAdvisory` (server twin
+    /// `study_shape.BASELINE_ONLY_STUDY_ADVISORY`), byte for byte.
+    case baselineOnlyStudy
+
     public static let vocabulary: [String] = allCases.map(\.rawValue)
 }
 

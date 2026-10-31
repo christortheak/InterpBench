@@ -1,5 +1,30 @@
 [
   {
+    "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n\nBaseline only: this study measures the baseline agent alone (the pinned base model, with no vectors or adapters). It has no comparison arm, so its analysis reports no effects.",
+    "label": "baseline-only-study",
+    "manifest": {
+      "concepts": [],
+      "conditions": [],
+      "createdAt": "2026-10-19T00:00:00Z",
+      "experimentDescription": "",
+      "freezeHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "frozenAt": "2026-10-19T00:00:00Z",
+      "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+      "modelID": "test/model",
+      "modelRevision": "abc123",
+      "multiAgentIncludeBaseline": true,
+      "name": "baseline-only-study",
+      "seeds": [
+        20260610
+      ],
+      "status": "frozen",
+      "studyKind": "modelOutput",
+      "studyType": "agentComparison",
+      "temperature": 0,
+      "variantConditions": []
+    }
+  },
+  {
     "conditionsSection": "- **baseline**: none (baseline, run implicitly)\n- **french-l28-a15** (agent): french@L28 \u03b1=0.15; \u03b1 in residual-norm units; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-french-l28-a15.json` (SHA-256 `6f49d6249159723336b97584fb5dd2fff8d9bce97ef95c0ce4e2fc5e1dba9606`)\n- **hungry-l17-a10** (agent): hungry@L17 \u03b1=0.1; \u03b1 in residual-norm units; base model test/model @ `abc123`; pinned artifact `experiments/prereg/pinned/variant-hungry-l17-a10.json` (SHA-256 `a63b944cc2603affd4faa955de1d446b9a97d2353f4daefc00bce75fcb9bea0b`)",
     "label": "compare-agents",
     "manifest": {

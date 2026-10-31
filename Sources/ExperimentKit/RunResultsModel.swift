@@ -68,6 +68,11 @@ extension RunResults {
         /// snapshot ("fear L14 α0.8", "matched-norm random control", variant
         /// artifact names) — P3's "conditions and intervention summaries".
         public var conditionInterventions: [String: String] = [:]
+        /// The run's snapshot is a study that measures the baseline agent
+        /// alone (`ExperimentStore.isBaselineOnlyStudy`): its analysis has no
+        /// effects by design, and the page says so rather than leaving the
+        /// effects area blank.
+        public var isBaselineOnlyStudy = false
         public var choiceMatrix = ChoiceMatrix(conditions: [], items: [])
         public var armSummaries: [ArmSummary] = []
         public var parseFailures: [ParseFailure] = []
@@ -95,6 +100,19 @@ extension RunResults {
         public var hasAnalysisArtifacts: Bool {
             effectSizes != nil || alienResiduals != nil || promotedMovers != nil
         }
+        /// An analysis of a baseline-only study: present, and without rows
+        /// because there is nothing to compare.
+        public var isBaselineOnlyAnalysis: Bool {
+            isBaselineOnlyStudy && effectSizes?.isEmpty == true
+        }
+
+        /// What the page says in place of effects for such an analysis. The
+        /// first sentence is the results page's and the export's, byte for
+        /// byte (server twin: `results_export.BASELINE_ONLY_EFFECTS`).
+        public static let baselineOnlyEffects =
+            "Baseline only: this study measures the baseline agent alone, so it "
+            + "has no comparison arm and its analysis has no effects. The "
+            + "summary for each condition describes the baseline's responses."
 
         public init(runDirectory: URL) {
             self.runDirectory = runDirectory
@@ -393,6 +411,7 @@ extension RunResults {
         model.hasManifestSnapshot = artifacts.snapshotData != nil
         if let manifest = reading?.strict {
             model.conditionInterventions = interventionSummaries(manifest: manifest)
+            model.isBaselineOnlyStudy = ExperimentStore.isBaselineOnlyStudy(manifest)
         }
         model.classification = withSnapshotFacts(
             classify(reading, model.records), reading: reading)

@@ -2215,6 +2215,13 @@ def _experiment(invocation: Invocation) -> CLIResult:
             for note in _sampling.manifest_unused_seed_settings(manifest):
                 sys.stderr.write(f"ADVISORY: {note}\n")
                 advisories.append(_advisory("seedSettingNotUsed", note))
+            # A study that measures the baseline agent alone verifies, and
+            # says what it is. Swift twin: the Mac `experiment verify`.
+            from .experiment import manifest as _manifest_module
+            if _manifest_module.baseline_only_study(manifest.raw):
+                note = _manifest_module.BASELINE_ONLY_STUDY_ADVISORY
+                sys.stderr.write(f"ADVISORY: {note}\n")
+                advisories.append(_advisory("baselineOnlyStudy", note))
             return CLIResult(
                 message="OK — all pinned inputs verified",
                 state="okWithAdvisories" if advisories else "ready",
@@ -2298,6 +2305,15 @@ def _experiment(invocation: Invocation) -> CLIResult:
                     "capabilityControlNotApplied",
                     freeze_policy.battery_not_applied_sentence(
                         str(entry.get("condition")), str(entry.get("reason")))))
+        # A study that measures the baseline agent alone froze with no
+        # validation or battery evidence asked of it, because it steers
+        # nothing; the envelope says what the frozen design measures. Swift
+        # twin: the Mac `experiment freeze`.
+        from .experiment import manifest as _manifest_module
+        if _manifest_module.baseline_only_study(frozen):
+            note = _manifest_module.BASELINE_ONLY_STUDY_ADVISORY
+            sys.stderr.write(f"ADVISORY: {note}\n")
+            advisories.append(advisory("baselineOnlyStudy", note))
         # The store's non-blocking freeze advisories (cross-substrate validate
         # evidence, legacy attaches, the forced-freeze line). Loud on stderr
         # AND in the payload; they never move the state or the exit code.

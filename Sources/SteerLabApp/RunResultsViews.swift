@@ -184,6 +184,15 @@ struct RunSemanticSectionsContent<AnalyzeRow: View>: View {
             if model.isCategorical {
                 CategoricalStudySectionView(model: model, selectFile: selectFile)
             }
+            // A study of the baseline alone was analyzed and has nothing to
+            // compare: said plainly, never left as a blank effects area.
+            if model.isBaselineOnlyAnalysis {
+                Label(RunResults.Model.baselineOnlyEffects, systemImage: "info.circle")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let effectSizes = model.effectSizes, !effectSizes.isEmpty {
                 // Phase 2: sentences and pictures first, dense tables second —
                 // the charts render ABOVE the numeric table, never instead.

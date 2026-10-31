@@ -33,7 +33,7 @@ import Testing
 extension ExperimentStoreTests {
 
     private static let armShapes: Set<String> = [
-        "compare-agents", "compare-agents-carrying-conditions",
+        "baseline-only-study", "compare-agents", "compare-agents-carrying-conditions",
         "agent-interventions", "agent-band-and-units", "agent-ablation-layer-subset",
         "concept-study-implicit-baseline",
         "concept-study-declared-baseline", "concept-study-ablation",

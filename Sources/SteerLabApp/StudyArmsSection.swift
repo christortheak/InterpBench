@@ -153,8 +153,13 @@ struct StudyArmsSection: View {
                 }
                 if manifest.variantConditions.isEmpty {
                     Text(
-                        "Baseline only. Add agents to compare conditions "
-                            + "(adding saves immediately)."
+                        ExperimentStore.isBaselineOnlyStudy(manifest)
+                            ? "Baseline only: this study measures the baseline "
+                                + "agent alone, and can be frozen and run as it "
+                                + "is. Add agents to compare conditions (adding "
+                                + "saves immediately)."
+                            : "Baseline only. Add agents to compare conditions "
+                                + "(adding saves immediately)."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)

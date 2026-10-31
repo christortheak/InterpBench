@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from . import command_vocabulary as vocabulary
 from . import manifest_declaration_policy as declarations
 from .manifest_errors import ExperimentStoreError
+from .study_shape import baseline_only_study
 
 FORCED_GATE_IDS = ("revision", "validateEvidence", "batteryEvidence",
                    "judgeValidity", "variantValidity", "gitClean",
@@ -201,9 +202,14 @@ class FreezeEvidence:
 
 
 def needs_validation(d: dict) -> bool:
+    """Whether the validateEvidence gate asks this study for validation. Not
+    of a study that measures the baseline agent alone: it derives no vector
+    and steers nothing, and any concept or canonical baseline it carries is
+    inert. Swift twin: ``FreezePolicy.validation``."""
     return bool(declarations.model_output_surfaces_operative(d)
                 and (d.get("concepts") or d.get("conditions") or d.get("variantConditions"))
-                and not declarations.optvec_exempt_from_validate_gate(d))
+                and not declarations.optvec_exempt_from_validate_gate(d)
+                and not baseline_only_study(d))
 
 
 def evaluate(name: str, d: dict, evidence: FreezeEvidence) -> list[tuple[str, str]]:

@@ -1,0 +1,397 @@
+{
+  "about": "A study that measures the baseline agent alone: a declared agentComparison with no agent, injection, or SAE latent arm. Produced by the Python engine (scripts/regenerate-cross-engine-fixtures.py, baseline_only_study) and read by the Swift suite and the results explorer. executedConditions is null where the engines' arm vocabularies differ by design.",
+  "advisory": "This study measures the baseline agent alone: the pinned base model, with no vectors or adapters, at the study's sampling settings. With no comparison arm, analyze computes no effects; the run's summaries describe the baseline's responses. If the study is judged, use a rubric that codes each response (perResponseCoding), because paired judging compares a condition with the baseline and has nothing to pair here.",
+  "cases": [
+    {
+      "baselineOnly": true,
+      "emptyStudy": false,
+      "executedConditions": [
+        "baseline"
+      ],
+      "label": "declared-nothing-attached",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-nothing-attached",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": true,
+      "emptyStudy": false,
+      "executedConditions": [
+        "baseline"
+      ],
+      "label": "declared-with-canonical-baseline",
+      "manifest": {
+        "concepts": [],
+        "conditions": [
+          {
+            "alphaInNormUnits": true,
+            "bandWidth": 1,
+            "name": "baseline",
+            "slots": []
+          }
+        ],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-with-canonical-baseline",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": true,
+      "emptyStudy": false,
+      "executedConditions": [
+        "baseline"
+      ],
+      "label": "declared-carrying-concepts",
+      "manifest": {
+        "concepts": [
+          {
+            "name": "fear",
+            "options": {
+              "method": "meanDifference",
+              "readingPosition": {
+                "lastToken": {}
+              }
+            },
+            "stimulusSetHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "validationHash": null
+          }
+        ],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-carrying-concepts",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": false,
+      "emptyStudy": true,
+      "executedConditions": [
+        "baseline"
+      ],
+      "label": "undeclared-nothing-attached",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "undeclared-nothing-attached",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": false,
+      "emptyStudy": true,
+      "executedConditions": [
+        "baseline"
+      ],
+      "label": "declared-concept-study-nothing-attached",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-concept-study-nothing-attached",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "conceptStudy",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": false,
+      "emptyStudy": false,
+      "executedConditions": [
+        "baseline"
+      ],
+      "label": "declared-carrying-injection-conditions",
+      "manifest": {
+        "concepts": [
+          {
+            "name": "fear",
+            "options": {
+              "method": "meanDifference",
+              "readingPosition": {
+                "lastToken": {}
+              }
+            },
+            "stimulusSetHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "validationHash": null
+          }
+        ],
+        "conditions": [
+          {
+            "alphaInNormUnits": true,
+            "bandWidth": 1,
+            "name": "fear-mid",
+            "slots": [
+              {
+                "alpha": 0.8,
+                "concept": "fear",
+                "layer": 14
+              }
+            ]
+          }
+        ],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-carrying-injection-conditions",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": false,
+      "emptyStudy": false,
+      "executedConditions": [
+        "baseline",
+        "french-l28-a15"
+      ],
+      "label": "declared-with-an-agent",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-with-an-agent",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "temperature": 0,
+        "variantConditions": [
+          {
+            "artifact": {
+              "adapters": [],
+              "alphaInNormUnits": true,
+              "bandWidth": 1,
+              "baseModelID": "test/model",
+              "baseRevision": "abc123",
+              "createdAt": "2026-10-19T00:00:00Z",
+              "injections": [
+                {
+                  "alpha": 0.15,
+                  "concept": "french",
+                  "layer": 28,
+                  "vectorArtifactID": "runs/fixture-sweep/french"
+                }
+              ],
+              "name": "french-l28-a15",
+              "promptMode": "chatAssistant",
+              "qwenThinkingEnabled": false,
+              "schemaVersion": 1,
+              "temperature": 0
+            },
+            "artifactHash": "6f49d6249159723336b97584fb5dd2fff8d9bce97ef95c0ce4e2fc5e1dba9606",
+            "artifactPath": "experiments/prereg/pinned/variant-french-l28-a15.json",
+            "name": "french-l28-a15"
+          }
+        ]
+      }
+    },
+    {
+      "baselineOnly": false,
+      "emptyStudy": true,
+      "executedConditions": null,
+      "label": "declared-with-an-sae-latent-arm",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-with-an-sae-latent-arm",
+        "saeLatentConditions": [
+          {
+            "beta": 0.5,
+            "feature": 42,
+            "layer": 12,
+            "mode": "clamp",
+            "name": "clamp-42",
+            "release": "gemma-scope-2b-pt-res",
+            "saeID": "layer_12/width_16k/average_l0_82"
+          }
+        ],
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    },
+    {
+      "baselineOnly": false,
+      "emptyStudy": false,
+      "executedConditions": null,
+      "label": "multi-agent-panel",
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "multi-agent-panel",
+        "seeds": [
+          20260610
+        ],
+        "status": "draft",
+        "studyKind": "multiAgent",
+        "studyType": "multiAgent",
+        "temperature": 0,
+        "variantConditions": []
+      }
+    }
+  ],
+  "effectsSentence": "Baseline only: this study measures the baseline agent alone, so it has no comparison arm and its analysis has no effects.",
+  "preregistrationStatistics": {
+    "baselineOnly": {
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "freezeHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "frozenAt": "2026-10-19T00:00:00Z",
+        "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-nothing-attached",
+        "seeds": [
+          20260610
+        ],
+        "status": "frozen",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "temperature": 0,
+        "variantConditions": []
+      },
+      "statisticsSection": "- None: the study has one arm, the baseline, so there is no paired difference to estimate or test."
+    },
+    "comparison": {
+      "manifest": {
+        "concepts": [],
+        "conditions": [],
+        "createdAt": "2026-10-19T00:00:00Z",
+        "experimentDescription": "",
+        "freezeHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "frozenAt": "2026-10-19T00:00:00Z",
+        "gitCommit": "cccccccccccccccccccccccccccccccccccccccc",
+        "modelID": "test/model",
+        "modelRevision": "abc123",
+        "multiAgentIncludeBaseline": true,
+        "name": "declared-with-an-agent",
+        "seeds": [
+          20260610
+        ],
+        "status": "frozen",
+        "studyKind": "modelOutput",
+        "studyType": "agentComparison",
+        "temperature": 0,
+        "variantConditions": [
+          {
+            "artifact": {
+              "adapters": [],
+              "alphaInNormUnits": true,
+              "bandWidth": 1,
+              "baseModelID": "test/model",
+              "baseRevision": "abc123",
+              "createdAt": "2026-10-19T00:00:00Z",
+              "injections": [
+                {
+                  "alpha": 0.15,
+                  "concept": "french",
+                  "layer": 28,
+                  "vectorArtifactID": "runs/fixture-sweep/french"
+                }
+              ],
+              "name": "french-l28-a15",
+              "promptMode": "chatAssistant",
+              "qwenThinkingEnabled": false,
+              "schemaVersion": 1,
+              "temperature": 0
+            },
+            "artifactHash": "6f49d6249159723336b97584fb5dd2fff8d9bce97ef95c0ce4e2fc5e1dba9606",
+            "artifactPath": "experiments/prereg/pinned/variant-french-l28-a15.json",
+            "name": "french-l28-a15"
+          }
+        ]
+      },
+      "statisticsSection": "- Paired to each item's same-case baseline; percentile bootstrap CIs on the mean paired difference; Wilcoxon signed-rank as the nonparametric companion.\n- Multiple comparisons: BH-FDR across concepts at screen; Holm within the pre-registered family at confirm."
+    }
+  },
+  "summary": "Baseline only: this study measures the baseline agent alone (the pinned base model, with no vectors or adapters). It has no comparison arm, so its analysis reports no effects."
+}
