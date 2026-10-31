@@ -668,7 +668,9 @@ server engine also writes `alien-residuals.csv` against a pinned human-effect
 table and `promoted-movers.json` under the pinned promotion rule. Report
 **effect sizes with confidence intervals, paired per item** — not bare win
 counts, not p-values alone. Zero entries is an `emptyAnalysis` advisory rather
-than a failure: the source run had no non-baseline condition.
+than a failure: the source run had no non-baseline condition. A study of the
+baseline alone (§5.1) reports `baselineOnlyStudy` instead, because no
+effects is its design.
 
 **The epoch guard** covers `analyze`, `evaluate` and `rescore-style`: the
 source run's stamped experiment hash must equal the live manifest's content
@@ -818,7 +820,7 @@ steerlab-cli experiment declare-condition formality-pilot formality-rand \
 
 | Arm | What it rules out |
 |---|---|
-| **baseline** | the zero every paired statistic is computed against; added implicitly if undefined, so define it when you want it named |
+| **baseline** | the zero every paired statistic is computed against; added implicitly if undefined, so define it when you want it named. A study can also measure the baseline alone (below, "A study of the baseline alone") |
 | **two or more positive doses** | a monotone dose-response is evidence; a single dose is an anecdote at one α |
 | **negative α** | the *sign* control — if pushing the concept out moves the endpoint the other way, the effect is signed and real rather than noise |
 | **matched-norm random** | the *magnitude* control, most often skipped: if a random direction of equal norm at the same layer moves or degrades output as much, you measured the size of your nudge and nothing else |
@@ -828,6 +830,27 @@ steerlab-cli experiment declare-condition formality-pilot formality-rand \
 Under a designated-reference recipe, −α steers toward the reference class
 rather than a concept's opposite; phrase reversal claims accordingly, and use
 `--control randomDirectionAblation` as the ablation analogue of the random arm.
+
+#### A study of the baseline alone
+
+Some studies have no intervention to compare: a replication of a published
+study on the unmodified model, or a record of how that model answers a task
+before any steering is designed. Such a study declares `studyType`
+`agentComparison` and attaches no concept, injection condition, agent, or SAE
+latent arm. It verifies, freezes, and runs as one arm, `baseline`: the pinned
+model, with no vectors or adapters, at the study's sampling settings, with
+each item generated once for each sample. `verify`, `freeze`, and `analyze`
+say so in a `baselineOnlyStudy` advisory.
+
+What it can and cannot support follows from having one arm. There is no
+paired difference, so `analyze` reports no effects, and no interval or test
+applies; report the baseline's per-condition summaries, choice readouts, and
+codings as descriptions of this model on these items under these settings.
+Freeze asks for no validation evidence and no capability battery, because
+nothing is steered. If the study is judged, use a rubric that codes each
+response (`perResponseCoding`): paired judging compares a condition with the
+baseline. An undeclared draft with nothing attached is still refused as
+`emptyStudy`, so a study only measures the baseline alone when it says so.
 Multi-slot conditions are legal and hash as one condition — several slots *are*
 the linear mix `h + Σ αᵢ·vᵢ` — so treat each mix as a first-class arm, keeping
 in mind that mixes multiply the matrix fast.

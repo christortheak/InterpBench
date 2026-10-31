@@ -129,9 +129,11 @@ carries `error.code == error.gate` from a second closed vocabulary
 
 Three of these describe a study that does not verify. `pinDrift` means a
 pinned file changed, is missing, or appeared. `emptyStudy` means nothing is
-attached yet: attach a concept, attach an agent, or start from a template.
-`studyDeclaration` means the study's own settings are incomplete or
-inconsistent.
+attached yet: attach a concept, attach an agent, or start from a template. A
+study of the unmodified model alone is not empty when it says so: it declares
+`studyType` `agentComparison` (`workspace guide lifecycle`, "A study of the
+baseline alone"). `studyDeclaration` means the study's own settings are
+incomplete or inconsistent.
 
 <!-- client: python -->
 

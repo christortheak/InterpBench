@@ -12,6 +12,27 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+- **A study can measure the baseline agent alone** (public issue #4). A study
+  whose only subject is the unmodified base model, such as a replication of a
+  published study on that model, declares `studyType` `agentComparison` and
+  attaches no concept, injection condition, agent, or SAE latent arm. Such a
+  draft used to pass `pack apply` and `data check` and then refuse at
+  `verify` as `emptyStudy`, and so at freeze, which `--force` does not reach;
+  the only workaround, an agent with no interventions, ran every item twice.
+  It now verifies, freezes, and runs on both engines as exactly one arm,
+  `baseline`, with each item generated once for each sample. A new
+  `baselineOnlyStudy` advisory says so at `verify`, at `freeze`, and from
+  `analyze`, where it replaces `emptyAnalysis` because no effects is what the
+  design produces. Freeze asks for no validation or capability-battery
+  evidence, because nothing is steered: nothing is exempted or stamped, and
+  the study is not marked forced. The settings summary says the study has one
+  arm and promises no paired statistics. `results export`, the results page,
+  the app's Results, and the results explorer describe the baseline as the
+  only arm and say there is no comparison arm and so no effects, instead of
+  reporting a missing analysis or an empty table. An undeclared draft, or a
+  declared concept study, with nothing attached is still refused as
+  `emptyStudy`, and the concept study's refusal that recommends declaring
+  `agentComparison` now leads to a study that runs.
 - **An intervention policy's added vector now takes its strength in
   residual-norm units, like a static agent's α.** Before, a policy multiplied
   the stored vector by its strength directly, so a strength meant a different
