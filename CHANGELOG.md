@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.19] — 2026-10-31
+
 - **The app's command line now says when SteerLab is out of date, and can
   install the update once the researcher approves it** (public issue #5).
   Some researchers use SteerLab only through a coding assistant running
