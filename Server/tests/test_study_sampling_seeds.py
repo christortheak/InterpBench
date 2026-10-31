@@ -26,6 +26,7 @@ import steerlab_server.experiment.vector_materialization as _owner_vector_materi
 from steerlab_server import cli_envelope, client_cli
 from steerlab_server.api import submissions
 from steerlab_server.experiment import condition_execution, sampling, tasks
+from steerlab_server.experiment import resume as resume_mod
 from steerlab_server.experiment import experiment_store as es
 from steerlab_server.experiment.manifest import Manifest
 from steerlab_server.steering.vector_store import ConceptVectors
@@ -288,6 +289,120 @@ def test_the_run_loop_keeps_the_fixed_list_when_nothing_is_declared(
         assert record["seedPolicy"] == "manifestSeeds"
         assert record["seed"] == [11, 22, 33][record["sampleIndex"]]
     assert _config_seed_policy(run_dir) == "manifestSeeds"
+
+
+# --- a resume never mixes two seed rules ----------------------------------------
+
+def _old_rule(temperature, samples_per_item, seed_policy):
+    """The seed rule before issue #3: samplesPerItem alone decided."""
+    return bool(temperature) and temperature > 0 and (samples_per_item or 1) > 1
+
+
+def _checkpointed(root, name, monkeypatch, *, after, **sampling_fields):
+    """A run of ``name`` parked after ``after`` sampled generations, made
+    under the old seed rule (an engine released before the fix)."""
+    prompts = _study(root, name, **sampling_fields)
+    _patch(monkeypatch)
+    flag = resume_mod.CheckpointFlag()
+    counter = [0]
+
+    def generate(model, prompt, *, temperature=0.0, token_ids_out=None, **_):
+        counter[0] += 1
+        if counter[0] == after:
+            flag.request()
+        return f"an answer to {prompt} (T={temperature})"
+    monkeypatch.setattr(_owner_generate, "generate", generate)
+    seen = {}
+    with monkeypatch.context() as old_engine:
+        old_engine.setattr(sampling, "derives_seeds", _old_rule)
+        with pytest.raises(resume_mod.CheckpointRequested):
+            tasks.run(name, prompts, root, model_provider=_fake_model,
+                      log=lambda *_: None, checkpoint=flag,
+                      on_run_directory=lambda d: seen.setdefault("dir", d))
+    return prompts, seen["dir"]
+
+
+def test_a_resume_across_the_seed_rule_change_refuses(tmp_path, monkeypatch):
+    """The issue's shape, parked by the old engine after its first item's
+    three manifestSeeds records: resuming under the new rule would add one
+    derivedSHA256 record per remaining cell to the same run."""
+    root = str(tmp_path)
+    prompts, run_dir = _checkpointed(
+        root, "seeds-resume", monkeypatch, after=3, temperature=0.7,
+        samplesPerItem=1, seedPolicy="derivedSHA256", seeds=[11, 22, 33])
+    parked = _sampled_records(run_dir)
+    assert {r["seedPolicy"] for r in parked} == {"manifestSeeds"}
+    before = open(os.path.join(run_dir, "generations.jsonl"), "rb").read()
+    _patch(monkeypatch)
+    with pytest.raises(resume_mod.ResumeRefusal) as refusal:
+        tasks.run("seeds-resume", prompts, root, model_provider=_fake_model,
+                  log=lambda *_: None, run_directory=run_dir)
+    assert "refusing to mix two seed rules in one run" in str(refusal.value)
+    assert "seedPolicy manifestSeeds with up to 3 sample(s)" in str(refusal.value)
+    assert refusal.value.gate == "manifestEpoch"
+    assert "steerlab-server experiment run seeds-resume" in refusal.value.repair_action
+    assert isinstance(refusal.value, resume_mod.ResumeError)
+    # Nothing was written: the parked run is still the old engine's.
+    assert open(os.path.join(run_dir, "generations.jsonl"), "rb").read() == before
+    assert resume_mod.is_resumable(run_dir)
+
+
+def test_the_refusal_comes_before_the_model_loads(tmp_path, monkeypatch):
+    root = str(tmp_path)
+    prompts, run_dir = _checkpointed(
+        root, "seeds-early", monkeypatch, after=1, temperature=0.7,
+        samplesPerItem=1, seedPolicy="derivedSHA256", seeds=[11])
+    loads = []
+
+    @contextmanager
+    def counting_model(model_id, revision=None):
+        loads.append(model_id)
+        yield SimpleNamespace(model_id=model_id, revision=revision or "abc")
+    # One listed seed: the per-item count agrees, the policy does not.
+    with pytest.raises(resume_mod.ResumeRefusal):
+        tasks.run("seeds-early", prompts, root, model_provider=counting_model,
+                  log=lambda *_: None, run_directory=run_dir)
+    assert loads == []
+
+
+def test_a_resume_under_an_unchanged_rule_continues(tmp_path, monkeypatch):
+    """A fixed-list study's rule did not change, so its parked run resumes
+    as it always has and completes with every listed seed."""
+    root = str(tmp_path)
+    prompts, run_dir = _checkpointed(
+        root, "seeds-fixed-resume", monkeypatch, after=4, temperature=0.7,
+        seeds=[11, 22, 33])
+    _patch(monkeypatch)
+    resumed = tasks.run("seeds-fixed-resume", prompts, root,
+                        model_provider=_fake_model, log=lambda *_: None,
+                        run_directory=run_dir)
+    assert resumed == run_dir
+    records = _sampled_records(run_dir)
+    assert len(records) == 2 * 2 * 3
+    assert {r["seedPolicy"] for r in records} == {"manifestSeeds"}
+
+
+def test_a_shard_stamp_from_the_old_rule_refuses(tmp_path):
+    """A shard partial with no sampled record yet still names, in its
+    expectedKeys, sample indices the new rule no longer generates."""
+    from steerlab_server.experiment import run_preflight
+    run_dir = tmp_path / "partial"
+    run_dir.mkdir()
+    (run_dir / "shard.json").write_text(json.dumps({
+        "shardIndex": 0, "shardCount": 2,
+        "expectedKeys": [["baseline", 0, "respondent-001", index, "sampled"]
+                         for index in range(3)]}), encoding="utf-8")
+    manifest = _manifest({"temperature": 0.7, "seedPolicy": "derivedSHA256",
+                          "seeds": [11, 22, 33]})
+    with pytest.raises(resume_mod.ResumeRefusal):
+        run_preflight.seed_rule_admission(
+            str(run_dir), name="seeds", manifest=manifest,
+            shard_stamp=json.loads((run_dir / "shard.json").read_text()))
+    # The same stamp under a fixed-list study is that study's own plan.
+    run_preflight.seed_rule_admission(
+        str(run_dir), name="seeds",
+        manifest=_manifest({"temperature": 0.7, "seeds": [11, 22, 33]}),
+        shard_stamp=json.loads((run_dir / "shard.json").read_text()))
 
 
 # --- the advisories reach the client's envelopes -------------------------------

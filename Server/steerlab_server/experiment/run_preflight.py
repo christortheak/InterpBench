@@ -3,9 +3,10 @@
 This owner never imports the task compatibility facade.
 """
 from __future__ import annotations
+import json
 import os
 from ..steering import model_loader
-from . import paths
+from . import lifecycle_gates, paths, sampling
 from . import resume as resume_mod
 from . import sharding as sharding_mod
 from . import study_admission
@@ -392,6 +393,64 @@ def resume_admission(run_directory, *, name, manifest, shard,
                 f"{shard_stamp.get('shardIndex')}/"
                 f"{shard_stamp.get('shardCount')}, not {shard.label} — "
                 "refusing to mix shard ranges")
+    seed_rule_admission(run_directory, name=name, manifest=manifest,
+                        shard_stamp=shard_stamp)
+
+
+def seed_rule_admission(run_directory, *, name, manifest,
+                        shard_stamp=None) -> None:
+    """Refuse to resume a run whose sampled records follow a different seed
+    rule than this engine applies to the same manifest.
+
+    The content hash cannot catch it: the manifest is unchanged, and only the
+    engine's reading of it moved. Before a declared derivedSHA256 was honored
+    at one sample per item (issue #3), such a study ran each item once per
+    listed seed under manifestSeeds. Resumed now, its finished cells would
+    keep those records while the remaining cells got one derivedSHA256 record
+    each, and a shard partial's ``expectedKeys`` would name sample indices
+    the run no longer generates. Pure file I/O, so ``run`` refuses before
+    acquiring the model, like the other resume gates."""
+    expected = (sampling.DERIVED_SHA256 if sampling.manifest_derives_seeds(manifest)
+                else sampling.MANIFEST_SEEDS)
+    count = sampling.sample_count(manifest)
+    found, widest = set(), 0
+    path = os.path.join(run_directory, resume_mod.GENERATIONS_FILENAME)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = list(handle)
+    except OSError:
+        lines = []
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue  # a torn final line; the writer's own resume handles it
+        if (not isinstance(record, dict) or "instrument" in record
+                or "error" in record or "output" not in record):
+            continue
+        if record.get("seedPolicy"):
+            found.add(record["seedPolicy"])
+        if isinstance(record.get("sampleIndex"), int):
+            widest = max(widest, record["sampleIndex"] + 1)
+    for key in (shard_stamp or {}).get("expectedKeys") or []:
+        if (isinstance(key, list) and len(key) == 5
+                and key[4] == resume_mod.KIND_SAMPLED
+                and isinstance(key[3], int)):
+            widest = max(widest, key[3] + 1)
+    if found <= {expected} and widest <= count:
+        return
+    recorded = ", ".join(sorted(found)) or "no stated policy"
+    raise resume_mod.ResumeRefusal(
+        f"run directory {run_directory} was checkpointed under a different "
+        f"seed rule: its sampled records use seedPolicy {recorded} with up "
+        f"to {widest} sample(s) per item, but this engine runs '{name}' with "
+        f"seedPolicy {expected} and {count} sample(s) per item (a declared "
+        "derivedSHA256 is now honored at one sample per item) — refusing to "
+        "mix two seed rules in one run",
+        gate=lifecycle_gates.MANIFEST_EPOCH,
+        repair=(f"finish this run on the engine release that started it, or "
+                f"start a fresh run under the current rule: "
+                f"steerlab-server experiment run {name}  (without --resume)"))
 
 
 def panel_resume_admission(run_directory, *, manifest, shard,
