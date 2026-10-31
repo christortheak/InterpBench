@@ -386,7 +386,8 @@ def test_review_counts_projections_memory_output_and_walltime(workspace, tokeniz
     assert review["output"]["files"] == batch.RUN_FILES + batch.FILES_PER_PROMPT * len(PROMPTS)
     workload = review["walltimeEstimate"]
     assert workload["units"] == review["totalProjections"] and workload["seconds"] >= 0
-    assert "500 GB/s" in workload["formula"] and "not a measurement" in workload["limitation"]
+    assert "450 GB/s" in workload["formula"] and "not a measurement" in workload["limitation"]
+    assert "A100-SXM4-80GB" in workload["calibration"]
     # The estimate bounds what the run actually writes.
     result = batch.probe_batch(config, root=str(workspace), log=lambda *_: None, model=tiny_model())
     manifest = json.loads(Path(result["reportPath"]).read_text())
@@ -394,6 +395,30 @@ def test_review_counts_projections_memory_output_and_walltime(workspace, tokeniz
         assert planned["tokenCount"] == written["tokenCount"]
         assert planned["projections"] == written["projections"]
         assert planned["outputBytes"] >= written["bytes"]
+
+
+def test_the_walltime_formula_covers_its_recorded_calibration_run():
+    """One recorded A100-SXM4-80GB run: a 27B model (hidden 5120, a 1.56 GB
+    bfloat16 output head), 63 layers, topK 20, 12 prompts. The model load took
+    306 s and the probing 2,347.5 s. The estimate must not fall below the
+    measurement, and the default walltime must stay within about four times
+    the measured job."""
+    from steerlab_server.api import science_walltime
+    tokens = [324, 373, 344, 393, 437, 488, 457, 508, 409, 458, 429, 478]
+    config = batch.ProbeBatchConfig.from_dict({
+        "modelID": "example/model", "revision": REVISION, "lensID": LENS_ID,
+        "prompts": {"path": "prompts.jsonl", "sha256": "0" * 64}, "allLayers": True,
+        "topK": 20, "dtype": "bfloat16"})
+    prompts = [{"tokenCount": t, "scoredPositions": t, "projections": t * 63 * 2} for t in tokens]
+    geometry = {"vocabSize": 151_936, "checkpointBytes": 54 * 10**9, "storedDtype": "bfloat16"}
+    workload = batch.walltime_estimate(config, prompts, list(range(63)), 5120, geometry,
+                                       63 * 5120 * 5120 * 4)
+    assert workload["units"] == 642_348
+    measured_probing, measured_job = 2347.5, 306 + 2347.5
+    assert workload["seconds"] >= measured_probing
+    walltime = science_walltime.default_seconds(workload["seconds"], science_walltime.parse("24:00:00"))
+    assert walltime <= 4 * measured_job
+    assert science_walltime.render(walltime) == "02:30:00"
 
 
 def test_review_lists_a_bounded_number_of_prompts_and_names_the_largest(workspace, tokenizer_cached, monkeypatch):
@@ -579,27 +604,62 @@ def test_plan_compares_memory_with_the_selected_gpu_and_sizes_the_walltime(manag
     assert science_walltime.parse(plan["resources"]["walltime"]) >= 3600
 
 
-def test_plan_refuses_an_estimate_that_does_not_fit_and_names_a_gpu_that_does(managed, tokenizer_cached, monkeypatch):
+def test_plan_refuses_when_the_weights_and_jacobians_alone_do_not_fit(managed, tokenizer_cached, monkeypatch):
+    """The certain part: a bfloat16 checkpoint of 30 GiB read in float32 is
+    60 GiB of weights, more than one L4 holds whatever the prompts are."""
     from steerlab_server.api import scientific_execution
     root, profile = managed
     profile = slurm(profile, monkeypatch)
     monkeypatch.setattr(batch, "cached_geometry", lambda *a: geometry(checkpointBytes=30 * 1024**3))
-    with pytest.raises(scientific_execution.ScientificRefusal, match="one L4 declares 24 GB") as refusal:
+    with pytest.raises(scientific_execution.ScientificRefusal, match="one L4 declares 24 GB, less than the weights") as refusal:
         scientific_execution.plan(_request(root), profile)
     assert "gpuType A100" in refusal.value.repair_action
     placed = scientific_execution.plan(_request(root), profile, gpu_type="H100")
     assert placed["memoryFit"] == "fits" and placed["gpuReview"]["memoryFit"] == "fits"
 
 
-def test_an_upper_bound_never_refuses_and_an_unknown_capacity_is_said(managed, monkeypatch):
+def test_a_full_estimate_over_capacity_is_an_advisory_not_a_refusal(managed, tokenizer_cached, monkeypatch):
+    """21 GiB of weights fit one L4 (24 GB); with worst-case activations and
+    headroom the estimate does not. The assumption informs; it does not refuse."""
+    from steerlab_server.api import scientific_execution
+    root, profile = managed
+    profile = slurm(profile, monkeypatch)
+    monkeypatch.setattr(batch, "cached_geometry", lambda *a: geometry(checkpointBytes=int(10.5 * 1024**3)))
+    plan = scientific_execution.plan(_request(root), profile)
+    review = plan["memoryReview"]
+    assert plan["memoryFit"] == review["memoryFit"] == "mayNotFit"
+    assert review["certainBytes"] < 24 * 1024**3 < review["estimatedBytes"]
+    assert review["fittingGPUTypes"] == ["A100", "H100"]
+    assert "gpuType A100 or H100" in review["advisory"] and "maxTokens" in review["advisory"]
+    assert "fewer layers" in review["advisory"] and "may run out of memory" in review["summary"]
+    assert plan["planSHA256"]
+
+
+def test_the_certain_part_is_compared_without_token_counts(managed, monkeypatch):
+    """Weights and Jacobians do not depend on the prompts, so a plan without a
+    cached tokenizer still refuses when they cannot fit, and otherwise says
+    that activations were not estimated."""
+    from steerlab_server.api import scientific_execution
+    root, profile = managed
+    profile = slurm(profile, monkeypatch)
+    monkeypatch.setattr(batch, "cached_geometry", lambda *a: geometry(checkpointBytes=30 * 1024**3))
+    with pytest.raises(scientific_execution.ScientificRefusal, match="less than the weights"):
+        scientific_execution.plan(_request(root), profile)
+    monkeypatch.setattr(batch, "cached_geometry", lambda *a: geometry())
+    plan = scientific_execution.plan(_request(root), profile)
+    assert plan["operationReview"]["memoryEstimate"]["status"] == "certainOnly"
+    assert plan["memoryFit"] == "certainPartFits" and "not estimated" in plan["memoryReview"]["summary"]
+
+
+def test_an_unknown_capacity_is_said(managed, monkeypatch):
     from steerlab_server.api import scientific_execution
     root, profile = managed
     profile = slurm(profile, monkeypatch, vram="A100:80,H100:80")
     monkeypatch.setattr(batch, "cached_geometry", lambda *a: geometry(checkpointBytes=30 * 1024**3))
-    # Without a tokenizer the maxTokens bound prices the plan; it informs, never refuses.
     plan = scientific_execution.plan(_request(root, maxTokens=8), profile)
     assert plan["memoryFit"] == "capacityUnknown" and "no VRAM is declared for L4" in plan["memoryReview"]["summary"]
     assert plan["memoryReview"]["tokenBasis"] == "maxTokens bound"
+    assert plan["memoryReview"]["fittingGPUTypes"] == ["A100", "H100"]
 
 
 def test_other_operations_keep_their_plans(managed):

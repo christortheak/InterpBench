@@ -197,8 +197,11 @@ def plan(request, profile, *, execution_capsule=None, round_submission=None, gpu
             result['requestedGPUType'] = gpu_type
             result['gpuReview'] = science_placement.review(resources, result.get('fittingReview', result.get('operationReview')))
         # An operation whose review itemizes device memory is compared with one
-        # GPU of the selected type here, where placement is known. An exact
-        # estimate that does not fit refuses now rather than after the queue.
+        # GPU of the selected type here, where placement is known. Only the
+        # certain part (weights and Jacobians) can refuse: if it does not fit,
+        # the job cannot run, and saying so now beats failing after the queue.
+        # A full estimate over capacity rests on worst-case assumptions, so it
+        # is an advisory in the plan, never a refusal.
         review = result.get('operationReview')
         estimate = review.get('memoryEstimate') if isinstance(review, dict) else None
         if isinstance(estimate, dict):
@@ -209,12 +212,13 @@ def plan(request, profile, *, execution_capsule=None, round_submission=None, gpu
                 fit = {'memoryFit': 'notChecked', 'summary': estimate.get('summary', '') + ' Local execution: '
                        'compare the estimate with this machine; no declared capacity applies.'}
             result['memoryFit'], result['memoryReview'] = fit['memoryFit'], fit
-            if fit['memoryFit'] == 'exceeds' and fit.get('tokenBasis') == 'exact':
+            if fit['memoryFit'] == 'exceeds':
+                holds = fit['certainFittingGPUTypes']
                 error = ScientificRefusal(fit['summary'] + ' It would fail on the node after the queue wait; nothing was submitted.')
-                error.repair_action = (('Plan and submit with gpuType ' + fit['fittingGPUTypes'][0]
-                                        + ' (declared types that hold it: ' + ', '.join(fit['fittingGPUTypes']) + '), or ')
-                                       if fit['fittingGPUTypes'] else 'No declared GPU type holds it on one card: ') \
-                    + 'arm fewer layers, set maxTokens, or choose a smaller model, then review a fresh plan.'
+                error.repair_action = (('Plan and submit with gpuType ' + (fit['fittingGPUTypes'] or holds)[0]
+                                        + ' (declared types that hold the weights and Jacobians: ' + ', '.join(holds) + '), or ')
+                                       if holds else 'No declared GPU type holds the weights and Jacobians on one card: ') \
+                    + 'arm fewer layers, use a lower precision, or choose a smaller model, then review a fresh plan.'
                 raise error
         # A walltime is execution shape like the GPU type: reviewed here, bound
         # into planSHA256 through the resources block, never in the request.

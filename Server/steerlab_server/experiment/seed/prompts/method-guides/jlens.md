@@ -656,14 +656,19 @@ Review states, before anything is submitted:
   Jacobians in float32 (d² × 4 bytes per layer), and forward activations for the
   longest prompt, with headroom;
 - the expected output size and file count; and
-- a walltime allowance from a stated formula, because no recorded run
-  calibrates this workload yet. Request a walltime explicitly to override it.
+- a walltime allowance from a stated formula, checked against one recorded run
+  on an 80 GB A100 (12 prompts through 63 layers of a 27B model: 2,347.5 s of
+  probing, estimated at about 2,370 s). Request a walltime explicitly to
+  override it.
 
 It refuses, with the repair, a prompt over the probe's ceiling of 200,000
 projections (raise `positionStride`, arm fewer layers, or set `maxTokens`;
-lowering `topK` does not help), output larger than one export can carry, and an
-exact memory estimate that does not fit one GPU of the selected type, naming a
-declared type that does. When the tokenizer or model configuration is not
+lowering `topK` does not help), output larger than one export can carry, and
+weights plus Jacobians that alone do not fit one GPU of the selected type,
+naming a declared type that does. When only the full estimate exceeds the GPU,
+the plan records an advisory with the declared types that hold it and the
+levers (`maxTokens`, fewer layers), because activations and eager attention are
+estimated at their worst case. When the tokenizer or model configuration is not
 cached where the plan runs, review says so, and execution re-checks every prompt
 before the first forward pass.
 

@@ -26,9 +26,11 @@ migration that rewrites frozen bytes.
   basis travel with it, hash-checked. Before submission the plan states each
   prompt's token and projection counts, an itemized memory estimate compared
   with one GPU of the selected type, the output size, and a walltime from a
-  stated formula. It refuses a prompt over the probe's 200,000-projection
-  ceiling, output one export cannot carry, and an estimate that does not fit,
-  naming a declared GPU type that does. The run is one directory: a
+  formula checked against one recorded A100 run. It refuses a prompt over the
+  probe's 200,000-projection ceiling, output one export cannot carry, and
+  weights plus Jacobians that alone do not fit the GPU, naming a declared type
+  that does; when only the worst-case activations push the estimate over, the
+  plan says so as an advisory with the levers. The run is one directory: a
   `probe-batch.json` manifest and, per prompt, exactly what one probe of that
   prompt writes, so it comes home with `science-export` and `science-fetch`
   under custody. Author it with `science interview jlens-probe-batch` on

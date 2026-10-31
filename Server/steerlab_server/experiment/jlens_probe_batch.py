@@ -60,14 +60,27 @@ PROMPT_MODES = ('chatAssistant', 'rawCompletion')
 DTYPES = {'bfloat16': 2, 'float16': 2, 'float32': 4, 'auto': None}
 _STORED_DTYPE_BYTES = {'bfloat16': 2, 'float16': 2, 'float32': 4}
 
-#: The stated walltime allowance. No recorded run measured this workload's
-#: rate, so the estimate is a formula: each full-vocabulary projection reads
-#: the output head once and each transport reads one float32 Jacobian, both at
-#: ``ASSUMED_BANDWIDTH``; the forward pass runs at ``ASSUMED_FLOPS``; the
-#: converted lens is read twice (its hash, then its layers) at
+#: The stated walltime allowance, a formula: each full-vocabulary projection
+#: reads the output head once and each transport reads one float32 Jacobian,
+#: both at ``ASSUMED_BANDWIDTH``; the forward pass runs at ``ASSUMED_FLOPS``;
+#: the converted lens is read twice (its hash, then its layers) at
 #: ``ASSUMED_DISK_RATE``. The walltime rule's threefold margin then covers an
 #: effective bandwidth down to about a third of the assumed one.
-ASSUMED_BANDWIDTH = 500e9
+#:
+#: Calibration point, one recorded run on an A100-SXM4-80GB: a 27B hybrid
+#: model in bfloat16 (hidden 5120, an output head of about 1.56 GB), all 63
+#: source layers, topK 20 with the companion, chat rendering, no agent, 12
+#: prompts of 324 to 508 tokens (5,098 in all, 642,348 projections), read by
+#: calling the single-prompt probe once per prompt. The model load took 306 s
+#: and the prompts 2,347.5 s, about 20 s of each call being the lens re-hash
+#: and Jacobian transfer a batch pays once, and about 2.5 ms per projection
+#: (roughly 650 GB/s of effective head reads). At 500 GB/s this formula gave
+#: 2,138 s, below the measured 2,347.5 s, so the allowance is 450 GB/s: it
+#: gives about 2,368 s, and the default walltime of 2:30:00 is 3.4 times the
+#: measured job (3.7 times what a batch, paying the fixed cost once, needs).
+#: The forward pass and per-cell top-k work are not modeled separately; on
+#: that run they sit inside the per-projection allowance.
+ASSUMED_BANDWIDTH = 450e9
 ASSUMED_FLOPS = 50e12
 ASSUMED_DISK_RATE = 200e6
 
@@ -453,24 +466,34 @@ def _run_bytes(config, geometry):
 def memory_estimate(config, geometry, d_model, layers, longest, basis='exact'):
     """Peak device memory, itemized: weights, Jacobians, activations, readout, headroom.
 
-    ``longest`` is the longest prompt's token count, ``basis`` says whether it
-    is exact or the maxTokens bound. Any missing component makes the estimate
-    partial; a partial estimate states what is known and is never compared
-    with a GPU. Only an exact estimate can refuse a plan.
+    Two figures with different standing. ``certainBytes`` is what will be
+    resident whatever the prompts are: the weights at the run dtype and the
+    armed Jacobians in float32. ``totalBytes`` adds forward activations for
+    the longest prompt (``longest``; ``basis`` says whether that count is exact
+    or the maxTokens bound), worst-case eager attention, the readout, and
+    headroom, which are assumptions. Only the certain part can refuse a plan;
+    the total informs it. A missing component leaves the corresponding figure
+    out, and the summary says what is known.
     """
     jacobians = len(layers) * d_model * d_model * 4
     result = {'jacobianBytes': jacobians, 'armedLayers': len(layers), 'hiddenSize': d_model,
               'tokenBasis': basis}
     geometry = geometry or {}
     run_bytes, stored_bytes = _run_bytes(config, geometry)
-    needed = ('checkpointBytes', 'vocabSize', 'layers', 'keyValueHeads', 'headDim', 'attentionHeads', 'intermediateSize')
+    if not geometry.get('checkpointBytes'):
+        return {**result, 'status': 'partial', 'missing': ['checkpointBytes'],
+                'summary': f'Partial estimate: the armed Jacobians alone need {jacobians / 1024**3:.2f} GiB in '
+                           'float32. The checkpoint size is not in the local cache here, so memory is not '
+                           'compared with a GPU.'}
+    weights = int(geometry['checkpointBytes'] * run_bytes / stored_bytes)
+    result.update(weightBytes=weights, runDtypeBytes=run_bytes, certainBytes=weights + jacobians)
+    needed = ('vocabSize', 'layers', 'keyValueHeads', 'headDim', 'attentionHeads', 'intermediateSize')
     missing = [key for key in needed if not geometry.get(key)] + ([] if longest else ['tokenCount'])
     if missing:
-        return {**result, 'status': 'partial', 'missing': missing,
-                'summary': f'Partial estimate: the armed Jacobians alone need {jacobians / 1024**3:.2f} GiB in '
-                           f'float32. Model geometry or token counts are unavailable here ({", ".join(missing)}), '
-                           'so memory is not compared with a GPU.'}
-    weights = int(geometry['checkpointBytes'] * run_bytes / stored_bytes)
+        return {**result, 'status': 'certainOnly', 'missing': missing,
+                'summary': f'At least {(weights + jacobians) / 1024**3:.1f} GiB of device memory: '
+                           f'{weights / 1024**3:.1f} GiB of weights and {jacobians / 1024**3:.2f} GiB of float32 '
+                           f'Jacobians. Activations are not estimated here ({", ".join(missing)} unavailable).'}
     t, v, d = longest, geometry['vocabSize'], d_model
     activations = {
         # The forward pass's own logits, at the run dtype and upcast to float32.
@@ -485,7 +508,7 @@ def memory_estimate(config, geometry, d_model, layers, longest, basis='exact'):
     readout = 4 * v * 4 + d * 4 + len(config.pinIDs or []) * d * 4 + len(config.pin or []) * d * 4
     subtotal = weights + jacobians + sum(activations.values()) + readout
     total = int(subtotal * (1 + MEMORY_HEADROOM) + MEMORY_CONTEXT_BYTES)
-    return {**result, 'status': 'estimated', 'weightBytes': weights, 'runDtypeBytes': run_bytes,
+    return {**result, 'status': 'estimated',
             'longestPromptTokens': t, 'activationBytes': activations, 'readoutBytes': readout,
             'headroom': f'{int(MEMORY_HEADROOM * 100)}% plus {MEMORY_CONTEXT_BYTES // 1024**3} GiB',
             'totalBytes': total,
@@ -494,10 +517,11 @@ def memory_estimate(config, geometry, d_model, layers, longest, basis='exact'):
             'formula': 'weights at the run dtype + armed Jacobians (layers × d² × 4) + forward activations for '
                        'the longest prompt (logits, key/value cache, eager attention scores, layer transients) '
                        '+ per-position readout vectors, then 10% and 1 GiB of headroom',
-            'summary': f'About {total / 1024**3:.1f} GiB of device memory: {weights / 1024**3:.1f} GiB of weights, '
-                       f'{jacobians / 1024**3:.2f} GiB of float32 Jacobians, and '
+            'summary': f'About {total / 1024**3:.1f} GiB of device memory: {weights / 1024**3:.1f} GiB of weights and '
+                       f'{jacobians / 1024**3:.2f} GiB of float32 Jacobians, which are certain, plus a worst-case '
                        f'{sum(activations.values()) / 1024**3:.2f} GiB of activations for the longest prompt '
-                       f'({t} tokens). The capture holds {len(layers) * t * d * 4 / 1024**3:.2f} GiB on the host.',
+                       f'({t} tokens) and headroom. The capture holds '
+                       f'{len(layers) * t * d * 4 / 1024**3:.2f} GiB on the host.',
             'limitation': 'An itemized estimate from the cached configuration, not a measurement. The model loads '
                           'onto one GPU; another architecture, attention kernel, or library version moves it.'}
 
@@ -541,11 +565,12 @@ def walltime_estimate(config, prompts, layers, d_model, geometry, lens_bytes):
     seconds = (projections * head + transports * jacobian) / ASSUMED_BANDWIDTH + forward + 2 * lens_bytes / ASSUMED_DISK_RATE
     return {'seconds': int(math.ceil(seconds)), 'units': projections, 'unit': 'one full-vocabulary projection',
             'prompts': len(prompts), 'transports': transports, 'outputHeadBytes': head,
-            'formula': 'projections × output-head bytes and transports × Jacobian bytes at 500 GB/s, the forward '
+            'formula': 'projections × output-head bytes and transports × Jacobian bytes at 450 GB/s, the forward '
                        'pass at 50 TFLOP/s, and the converted lens read twice at 200 MB/s',
-            'calibration': 'None recorded: a stated allowance rather than a calibration. The walltime rule adds a '
-                           'threefold margin and the model load, which covers an effective memory bandwidth down '
-                           'to about 170 GB/s.',
+            'calibration': 'One recorded run on an A100-SXM4-80GB (a 27B model, 63 layers, 12 prompts, 642,348 '
+                           'projections) took 2,347.5 s of probing, about 2.5 ms per projection; this formula gives '
+                           'about 2,368 s for it. The walltime rule adds a threefold margin and the model load, '
+                           'which covers an effective memory bandwidth down to about 150 GB/s.',
             'limitation': 'An allowance, not a measurement of this workload: slower storage, contention, or a '
                           'different attention kernel change the rate. The scheduler kills a job at its walltime; '
                           'request a longer one explicitly when in doubt, or a shorter one for a fast GPU.'}

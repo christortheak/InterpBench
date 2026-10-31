@@ -1978,7 +1978,7 @@
       "outputs": [
         "One run directory: a probe-batch.json manifest (prompt ids, labels, input hashes, per-prompt projection counts, and timings) and, for each prompt, the jlens probe's probe.json, probe-topk.csv, probe-trajectory.csv, and config.json under prompts/<id>/."
       ],
-      "restriction": "One condition (the base model or one agent) per request. The plan states projection counts, a memory estimate, output size, and a walltime allowance before submission, and refuses a prompt over the probe's projection ceiling or an estimate that does not fit the selected GPU. Readouts only: no causal claim and no lens qualification.",
+      "restriction": "One condition (the base model or one agent) per request. The plan states projection counts, a memory estimate, output size, and a walltime allowance before submission, and refuses a prompt over the probe's projection ceiling or weights and Jacobians that alone do not fit the selected GPU; a fuller estimate over capacity is an advisory. Readouts only: no causal claim and no lens qualification.",
       "actions": [
         {
           "id": "post-science-plan",
