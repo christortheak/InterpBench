@@ -166,8 +166,9 @@ exact spelling in `result.macCommand`; the lens's own `lens.json` holds the
 first three as `source.tensorSHA256`, `fit.modelID`, and `sourceLayers`.
 Without `--tokenizer-hash` the tokenizer and
 configuration hashes are not pinned, and freeze refuses. Without
-`--qualification` a run is exploratory, and a run whose lens has a passing
-qualification would refuse, because the configuration hash would name none.
+`--qualification` a run is exploratory and freeze refuses; the block stays
+valid if the lens is qualified later, and running this verb again with
+`--qualification` pins it.
 
 <!-- client: python -->
 
@@ -175,7 +176,9 @@ This client reads the pins itself: the lens's bytes and fitted layers from
 `runs/jlens-lenses/<lens-id>/lens.json`, the tokenizer hash from the study
 model's files in this machine's model cache (or `--tokenizer-hash` when the
 model is not installed here), and the newest passing qualification for the
-study's runtime when `--qualification` is not given. `--dry-run` writes
+study's declared revision and dtype when `--qualification` is not given (a
+named one is checked against its own revision and dtype when the study
+declares none). `--dry-run` writes
 nothing and reports the pins in `result.pins`, with the Mac command line's
 spelling of the same declaration in `result.macCommand`.
 

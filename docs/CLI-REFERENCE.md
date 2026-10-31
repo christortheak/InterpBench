@@ -1439,12 +1439,16 @@ the lens pins as flags — `--lens-sha256`, `--lens-model <id>[@<revision>]`,
 `--fitted-layers` — and the optional `--tokenizer-hash`. The client's
 `--dry-run` prints every pin with this command's exact spelling
 (`result.macCommand`). Without a tokenizer hash, `tokenizerHash` and
-`configHash` are not written (run start hashes the tokenizer it finds, so a
-hash without one could never match): the study runs as exploratory and freeze
-refuses. The client pins the newest passing qualification for the study's
-runtime when none is named; this command line pins only what `--qualification`
-names, and a run of a qualified lens with none pinned refuses on the
-configuration hash.
+`configHash` are not written (run start hashes the tokenizer of the study's
+pinned revision, so a hash without one could never match): the study runs as
+exploratory and freeze refuses. The client pins the newest passing
+qualification for the study's declared revision and dtype when none is named,
+and a named one is checked against the record's own revision and dtype when
+the study declares none; this command line pins only what `--qualification`
+names. Run start compares `configHash` with the block's own qualification pin,
+so a block that pins none stays valid when the lens is qualified later; a
+qualification it resolves for the runtime is stamped on the trace rows and
+logged, and is pinned only by running the verb again.
 
 *Budget.* The verb prices one response at the study's token cap with the
 engine's own arithmetic and reports `result.estimate`: the per-response
@@ -1459,7 +1463,8 @@ which are pinned in the block and covered by `configHash`. A readout that
 cannot fit even one response is refused (`64`) and names the flags.
 
 *Refusals.* A frozen study answers `statusImmutable` (`65`) with the duplicate
-repair, before anything else is checked. A lens that is not imported, or has no
+repair before the lens is checked (the flags' shapes are checked first). A lens
+that is not imported, or has no
 converted artifact, is `missingPrerequisite` (`65`, client); a lens fitted on
 another model or revision is `artifactPin` (`65`). An unfitted layer, an
 out-of-range `--top-k` or watchlist, a qualification that does not pass for

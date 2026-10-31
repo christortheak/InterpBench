@@ -218,14 +218,35 @@ def open_jlens_trace(manifest, model, root, *, run_directory, checkpoint,
             f"jlensReadout is declared but cannot be armed: {exc}") from exc
 
     pinned = block.get("configHash")
-    if pinned and pinned != session.configHash:
+    if pinned:
         # The pin is the researcher's declared choices; a mismatch means the
         # block was edited after freeze, which is a firewall violation and not
         # a thing to run through.
-        raise RuntimeError(
-            f"jlensReadout configuration drifted from its pinned hash "
-            f"(have {session.configHash[:12]}…, pinned {pinned[:12]}…) — "
-            f"re-freeze, or run the manifest it was frozen from")
+        #
+        # Compared against the block's OWN qualification pin (None when it
+        # pins none), never against whichever qualification this runtime
+        # happens to resolve. `set-jlens-readout` hashes what the block
+        # declares; when the block pins no qualification and the lens has (or
+        # later gains) a passing one for this runtime, the resolved id used to
+        # enter the hash here and a valid block refused as "drifted". For a
+        # block that pins its qualification the two hashes are the same one.
+        # A pin that equals the resolved-qualification hash is still accepted,
+        # so a block that ran before this rule runs unchanged.
+        declared = session.config_hash_for(claimed_qualification or None)
+        if pinned == declared:
+            session.configHash = declared
+        elif pinned != session.configHash:
+            raise RuntimeError(
+                f"jlensReadout configuration drifted from its pinned hash "
+                f"(have {declared[:12]}…, pinned {pinned[:12]}…) — "
+                f"re-freeze, or run the manifest it was frozen from")
+    if qualification is not None and not claimed_qualification:
+        # Information, not a pin: every row is stamped with the qualification
+        # that resolved, and the study's declaration is left as it is.
+        log(f"J-lens readout: qualification {resolved_id} passes for this "
+            f"runtime and the study pins none, so each trace row is stamped "
+            f"with it; to rest the study on it, pin it with experiment "
+            f"set-jlens-readout --qualification {resolved_id} before freezing")
 
     log(f"J-lens readout armed: lens {lens_id}, layers {config.layers}, "
         f"{len(config.watchlist)} watched token(s), topK {config.topK} on "
