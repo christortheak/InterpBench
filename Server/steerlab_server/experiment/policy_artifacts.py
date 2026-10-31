@@ -212,13 +212,13 @@ def control_record(doc):
     if kind == 'randomDirection':
         probes.text(control['seed'], 'control seed')
         if control['algorithm'] != RANDOM_DIRECTION_ALGORITHM: raise PolicyError('A random-direction control records its algorithm, ' + RANDOM_DIRECTION_ALGORITHM + '.')
-        # Each direction is the one its recorded seed gives, at the controlled direction's norm: nothing else passes as this control.
+        # Each direction is the one its recorded seed gives, at its recorded norm: nothing else passes as this control.
         for action in doc['actions']:
             if 'vector' not in action: continue
             drawn = action.get('source', {}).get('randomDirection') if isinstance(action.get('source'), dict) else None
             if not isinstance(drawn, dict) or drawn.get('seedText') != f"{control['seed']}:{action['id']}" or drawn.get('algorithm') != RANDOM_DIRECTION_ALGORITHM \
                     or type(drawn.get('matchedNorm')) not in (int, float) or not drawn['matchedNorm'] > 0 \
-                    or matched_direction(drawn['seedText'], len(action['vector']), drawn['matchedNorm']) != action['vector']:
+                    or not same_draw(matched_direction(drawn['seedText'], len(action['vector']), drawn['matchedNorm']), action['vector'], drawn['matchedNorm']):
                 raise PolicyError(f'Action {action["id"]} of a random-direction control is not the direction its recorded seed and norm give. '
                                   'Derive the control again with science policy-review.')
     elif span_declaration(control['sourceSpan']) != control['sourceSpan'] or control['sourceSpan'] == doc['span']:
@@ -227,12 +227,22 @@ def control_record(doc):
 
 def matched_direction(seed_text, dimension, norm):
     """A seeded isotropic-Gaussian direction rescaled to L2 ``norm`` (:data:`RANDOM_DIRECTION_ALGORITHM`, the
-    construction of static steering's ``randomMatchedNorm``). Seeded by string, so it is the same on every process
-    and platform."""
+    construction of static steering's ``randomMatchedNorm``). Seeded by string, so the draw repeats on any process,
+    but only to within libm rounding across platforms: ``random.gauss`` calls the platform's ``log``, ``cos``, and
+    ``sin``, which macOS and glibc do not round identically. Compare redraws with :func:`same_draw`; the policy
+    embeds and runs the drawn values themselves."""
     rng = random.Random(seed_text)
     direction = [rng.gauss(0.0, 1.0) for _ in range(dimension)]
     scale = norm / math.sqrt(math.fsum(x * x for x in direction))
     return [x * scale for x in direction]
+
+
+def same_draw(redrawn, recorded, norm):
+    """Whether a recorded direction is this redraw up to last-place libm differences: elementwise within
+    1e-9 of a typical element's magnitude (norm / √d), far below any change that could alter what a control does."""
+    if len(redrawn) != len(recorded): return False
+    tolerance = 1e-9 * norm / math.sqrt(len(redrawn))
+    return all(type(b) in (int, float) and abs(a - b) <= tolerance for a, b in zip(redrawn, recorded))
 
 
 def span_policies(values):

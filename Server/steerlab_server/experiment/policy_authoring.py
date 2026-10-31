@@ -247,6 +247,19 @@ def recheck_norms(doc, root):
                                f'at layer {layer} for {path}, but its sidecar now gives {current} ({convention or "unstamped"}).')
 
 
+def controlled_policy(doc, root):
+    """The published policy a control names in ``control.of``, when this workspace holds it; else None."""
+    digest = (doc.get('control') or {}).get('of')
+    runs = ordinary(root, 'runs')
+    if not digest or not runs.exists(): return None
+    for path in sorted(runs.glob('*/*.policy.json')):
+        if any(p.startswith('.') for p in path.relative_to(runs).parts): continue
+        try: raw = read(path.relative_to(root).as_posix(), root)
+        except (PolicyError, OSError): continue
+        if hashlib.sha256(raw).hexdigest() == digest: return artifacts.validate(artifacts.probes.read_json(raw))
+    return None
+
+
 def attachment_review(settings, root):
     from .model_variant import ModelVariant
     root = probe_library.workspace(root)
@@ -266,6 +279,8 @@ def attachment_review(settings, root):
     attachments = []
     for path in settings['policyPaths']:
         raw = read(path, root); doc = artifacts.validate(artifacts.probes.read_json(raw))
+        controlled = controlled_policy(doc, root)
+        if controlled is not None: policy_controls.check_matched_norms(doc, controlled)
         if doc['binding']['modelID'] != variant.base_model_id or doc['binding']['revision'] != variant.base_revision:
             raise PolicyError('The policy and agent must name the same model and exact revision.')
         rendering = 'raw' if variant.prompt_mode == 'rawCompletion' else 'chatTemplate'

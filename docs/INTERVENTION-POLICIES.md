@@ -210,8 +210,13 @@ so each control is reviewed, immutable, and inspectable like any policy:
   Each span token therefore receives an offset of the same norm as in the
   treatment, strength × R in residual-norm units and strength × ‖v‖ as a raw
   multiplier, so only the direction differs. The seed and the matched norm
-  are recorded, the same seed always gives the same control, and validation
-  redraws the direction from them and refuses one that differs.
+  are recorded, and the policy embeds the drawn values, which are what runs.
+  Validation redraws the direction from the seed and refuses one that
+  differs; the redraw repeats exactly on one platform and to within
+  last-place rounding on another, since Python's Gaussian draw uses the
+  platform's `log`, `cos`, and `sin`, so it is compared within that rounding.
+  Review, and attachment when the controlled policy is in the workspace,
+  check that the matched norm is the controlled direction's own.
 - **Location.** The same directions, strengths, and dose over a different
   declared span, typically a neutral sentence of the same prompt. On every
   prompt its token count must equal the controlled span's, and it must share
