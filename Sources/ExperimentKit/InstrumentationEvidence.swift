@@ -3,8 +3,53 @@ import Foundation
 /// Structural evidence admission, mirrored by Python and exercised on its real output.
 /// Hash verification precedes this check; scientific qualification remains separate.
 public enum InstrumentationEvidence {
-    private static func isText(_ value: JSONValue) -> Bool { if case .string = value { return true }; return false }
-    private static func isFiniteNumber(_ value: JSONValue) -> Bool { if case .number(let x) = value { return x.isFinite }; return false }
+    /// Units of the action kinds no policy version changes. Twin: `policy_artifacts.FIXED_UNITS`.
+    private static let fixedUnits = ["ablate": "fraction", "logitBias": "logit", "allowTokens": "onOff", "forceToken": "onOff"]
+
+    /// An evidence declaration's units for one action, or nil when the declaration contradicts
+    /// its version. Twin: `instrumentation_evidence.declared_units`.
+    static func declaredUnits(_ action: [String: JSONValue], version: JSONValue?) -> String? {
+        guard case .string(let kind) = action["kind"] else { return nil }
+        guard kind == "add" else { return fixedUnits[kind] }
+        let declared = action["strengthUnits"]
+        let units: String? = if case .string(let text) = declared { text } else { nil }
+        if version == .number(1) { return declared == nil ? "rawMultiplier" : nil }
+        if version == .number(2) { return units == "residualNorm" || units == "rawMultiplier" ? units : nil }
+        return declared == nil ? "rawMultiplier" : units  // recorded before declarations stated a version
+    }
+
+    /// What an applied addition's `appliedScales` entry must be, recomputed from its declaration.
+    /// Residual-norm units use `vector_math.norm_unit_scale`'s float32 order, (strength·R)/‖v‖; Python
+    /// forms the same correctly rounded float32 values. Twin: `instrumentation_evidence.expected_scale`.
+    static func expectedScale(_ strength: Double, _ action: [String: JSONValue], version: JSONValue?) -> Double? {
+        switch declaredUnits(action, version: version) {
+        case "rawMultiplier": return strength
+        case "residualNorm":
+            guard case .number(let norm) = action["residualNorm"], case .number(let length) = action["vectorNorm"],
+                  norm.isFinite, length.isFinite, norm > 0, length > 0 else { return nil }
+            let product = Float(strength) * Float(norm)
+            return Double(product / Float(length))
+        default: return nil
+        }
+    }
+
+    private static func unitsAgree(_ value: JSONValue, requested: [String: JSONValue], specs: [String: [String: JSONValue]], version: JSONValue?) -> Bool {
+        guard case .object(let units) = value, Set(units.keys) == Set(requested.keys) else { return false }
+        return units.allSatisfy { entry in
+            guard let spec = specs[entry.key], let declared = declaredUnits(spec, version: version) else { return false }
+            return entry.value == .string(declared)
+        }
+    }
+
+    private static func scalesAgree(_ value: JSONValue, applied: [String: JSONValue], specs: [String: [String: JSONValue]], version: JSONValue?) -> Bool {
+        let additions = Set(applied.keys.filter { specs[$0]?["kind"] == .string("add") })
+        guard case .object(let scales) = value, Set(scales.keys) == additions else { return false }
+        return scales.allSatisfy { entry in
+            guard case .number(let recorded) = entry.value, recorded.isFinite, case .number(let strength)? = applied[entry.key],
+                  let spec = specs[entry.key] else { return false }
+            return expectedScale(strength, spec, version: version) == recorded
+        }
+    }
 
     public static func validate(_ value: JSONValue) throws {
         func refuse(_ reason: String) throws { throw ExperimentError(reason: reason + " Retain the source and recollect complete evidence.") }
@@ -31,7 +76,15 @@ public enum InstrumentationEvidence {
             if field == "interventionDecisions", schema == .number(2) {
                 guard case .array(let docs) = block["declarations"], case .array(let policies) = block["policies"] else { try refuse("Policy evidence must bind its declarations and hashes."); return }
                 for doc in docs {
-                    guard case .object(let object) = doc, case .string(let sha) = object["sha256"], case .array = object["actions"] else { try refuse("Malformed policy evidence declaration."); return }
+                    guard case .object(let object) = doc, case .string(let sha) = object["sha256"], case .array(let actions) = object["actions"] else { try refuse("Malformed policy evidence declaration."); return }
+                    // Additive: declarations recorded before it existed state no schemaVersion.
+                    if let version = object["schemaVersion"] {
+                        let additionsAgree = actions.allSatisfy { value in
+                            guard case .object(let action) = value, action["kind"] == .string("add") else { return true }
+                            return declaredUnits(action, version: version) != nil
+                        }
+                        guard InterventionPolicyLibrary.schemaVersions.contains(version), additionsAgree else { try refuse("A policy declaration’s schema version and its additions’ units disagree."); return }
+                    }
                     declarations[sha] = object
                 }
                 let policyNames = policies.compactMap { value -> String? in if case .string(let name) = value { name } else { nil } }
@@ -73,11 +126,17 @@ public enum InstrumentationEvidence {
                     }
                     if row["status"] == .string("applied"), requested != applied { try refuse("An applied decision has unacknowledged actions.") }
                     // Units and absolute scales are additive: rows written before they existed have neither.
-                    if let value = row["strengthUnits"] {
-                        guard case .object(let units) = value, units.allSatisfy({ requested[$0.key] != nil && isText($0.value) }) else { try refuse("Strength units must name requested actions."); return }
+                    // Present, they must be the declaration's own: a row cannot restate what its policy meant.
+                    var specs: [String: [String: JSONValue]] = [:]
+                    if case .array(let actions) = declaration["actions"] {
+                        for case .object(let action) in actions { if case .string(let id) = action["id"] { specs[id] = action } }
                     }
-                    if let value = row["appliedScales"] {
-                        guard case .object(let scales) = value, scales.allSatisfy({ applied[$0.key] != nil && isFiniteNumber($0.value) }) else { try refuse("Applied scales must be finite and belong to applied actions."); return }
+                    let version = declaration["schemaVersion"]
+                    if let value = row["strengthUnits"], !unitsAgree(value, requested: requested, specs: specs, version: version) {
+                        try refuse("Strength units must be the declared units of each requested action.")
+                    }
+                    if let value = row["appliedScales"], !scalesAgree(value, applied: applied, specs: specs, version: version) {
+                        try refuse("Applied scales must be each applied addition’s declared multiplier of its stored direction.")
                     }
                 }
             }

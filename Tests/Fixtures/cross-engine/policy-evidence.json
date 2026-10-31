@@ -82,6 +82,7 @@
             "value": 2
           }
         ],
+        "schemaVersion": 1,
         "sha256": "d4dcae2af44dcbdea22d1e7b51bb7a3cc60c4e7c2b7f30634893b01376917ba0",
         "site": {
           "kind": "residualPost",

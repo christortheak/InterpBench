@@ -64,6 +64,32 @@ def test_semantic_corruption_is_not_successful_evidence(tmp_path, mutation):
     with pytest.raises(ValueError): evidence.validate_record(row)
 
 
+@pytest.mark.parametrize('mutation', ['restatedUnits', 'restatedRaw', 'oneUlp', 'missingScale', 'versionOneUnits', 'unknownVersion', 'missingNorm'])
+def test_units_and_scales_must_be_the_declarations_own(tmp_path, mutation):
+    import struct
+    row = response(tmp_path, norm_units=.1); block = row['interventionDecisions']; [event] = block['decisions']; [declaration] = block['declarations']
+    evidence.validate_record(row)
+    if mutation == 'restatedUnits': event['strengthUnits']['change'] = 'rawMultiplier'; event['appliedScales']['change'] = 999.
+    if mutation == 'restatedRaw': event['strengthUnits']['change'] = 'rawMultiplier'; event['appliedScales']['change'] = event['strengths']['change']
+    if mutation == 'oneUlp':
+        bits = struct.unpack('<I', struct.pack('<f', event['appliedScales']['change']))[0]
+        event['appliedScales']['change'] = struct.unpack('<f', struct.pack('<I', bits + 1))[0]
+    if mutation == 'missingScale': event['appliedScales'] = {}
+    if mutation == 'versionOneUnits': declaration['schemaVersion'] = 1
+    if mutation == 'unknownVersion': declaration['schemaVersion'] = 3
+    if mutation == 'missingNorm': del declaration['actions'][0]['residualNorm']
+    with pytest.raises(ValueError): evidence.validate_record(row)
+
+
+def test_declarations_state_their_schema_version_and_older_ones_need_not(tmp_path):
+    for norm_units, version in ((None, 1), (.1, 2)):
+        row = response(tmp_path / str(version), norm_units); [declaration] = row['interventionDecisions']['declarations']
+        assert declaration['schemaVersion'] == version
+        assert evidence.summarize([row])['groups'][0]['policySchemaVersion'] == version
+        del declaration['schemaVersion']; evidence.validate_record(row)
+        assert 'policySchemaVersion' not in evidence.summarize([row])['groups'][0]
+
+
 def test_failed_site_acknowledges_no_applied_actions():
     import torch
     outcomes = []
@@ -201,8 +227,9 @@ def test_norm_unit_evidence_states_units_and_the_absolute_scale(tmp_path):
     row = response(tmp_path, norm_units=.1); evidence.validate_record(row)
     block = row['interventionDecisions']; [event] = block['decisions']; [declaration] = block['declarations']
     assert event['strengths'] == event['appliedStrengths'] == {'change': pytest.approx(.1)} and event['strengthUnits'] == {'change': 'residualNorm'}
-    # strength × residualNorm / vectorNorm = 0.1 × 10 / 5, the static agent's raw scalar for α = 0.1.
-    assert event['appliedScales'] == {'change': pytest.approx(.2)}
+    # strength × residualNorm / vectorNorm = 0.1 × 10 / 5, bit for bit the static agent's raw scalar for α = 0.1.
+    from steerlab_server.steering import vector_math
+    assert event['appliedScales'] == {'change': vector_math.norm_unit_scale(.1, 10., 5.)} and event['appliedScales']['change'] == pytest.approx(.2)
     action = declaration['actions'][0]
     assert (action['strengthUnits'], action['residualNorm'], action['residualNormConvention'], action['vectorNorm']) == ('residualNorm', 10., 'perTextMean-v1', 5.)
     assert any('appliedScales' in note for note in block['limitations'])

@@ -128,8 +128,9 @@ def unit_notes(doc):
     notes = []
     if artifacts.RESIDUAL_NORM in kinds:
         notes.append('Addition strength is in residual-norm units, like a static agent’s α: strength s adds s × R / ‖v‖ × v, where R is the '
-                     'vector’s stamped mean residual norm at the policy layer and ‖v‖ is the direction’s norm. A promoted agent’s default is 0.1; '
-                     'a full residual norm (1.0) usually makes generation incoherent.')
+                     'vector’s stamped mean residual norm at the policy layer and ‖v‖ is the direction’s norm. 0.1, a tenth of the layer’s '
+                     'typical residual norm, is the usual starting strength (the Playground’s default when no promoted agent exists); a full '
+                     'norm (1.0) usually makes generation incoherent.')
     if artifacts.RAW_MULTIPLIER in kinds:
         notes.append('A raw-multiplier addition multiplies the stored direction directly. Its strength is not in residual-norm units and is '
                      'not comparable with a static agent’s α.')
@@ -199,6 +200,30 @@ def inventory(root):
     return {'policies': records, 'issues': issues, 'count': len(records), 'changed': False}
 
 
+class NormsChanged(PolicyError):
+    code = 'policyResidualNormChanged'
+    repair_action = ('Review and publish the policy again from the vector artifact as it stands, then attach the new policy; '
+                     'or restore the sidecar the policy was reviewed from.')
+
+
+def recheck_norms(doc, root):
+    """A residual-norm addition's recorded R and convention, against its sidecar when that sidecar is in this workspace."""
+    for action in doc['actions']:
+        if artifacts.strength_units(action) != artifacts.RESIDUAL_NORM: continue
+        path = action['source']['vectorArtifactID']
+        try: present = not Path(path).is_absolute() and ordinary(root, path + '.json').is_file()
+        except PolicyError: present = False
+        if not present: continue  # A policy reviewed elsewhere carries its own record.
+        meta = artifacts.probes.read_json(read(path + '.json', root))
+        norms = meta.get('residualNormPerLayer') if isinstance(meta, dict) else None
+        layer = doc['site']['layer']
+        current = norms[layer] if isinstance(norms, list) and 0 <= layer < len(norms) else None
+        convention = meta.get('residualNormConvention') if isinstance(meta, dict) else None
+        if current != action['residualNorm'] or convention != action['residualNormConvention']:
+            raise NormsChanged(f'Policy {doc["name"]} recorded residual norm {action["residualNorm"]} ({action["residualNormConvention"] or "unstamped"}) '
+                               f'at layer {layer} for {path}, but its sidecar now gives {current} ({convention or "unstamped"}).')
+
+
 def attachment_review(settings, root):
     from .model_variant import ModelVariant
     root = probe_library.workspace(root)
@@ -220,6 +245,7 @@ def attachment_review(settings, root):
             raise PolicyError('The policy and agent must name the same model and exact revision.')
         rendering = 'raw' if variant.prompt_mode == 'rawCompletion' else 'chatTemplate'
         if doc['binding']['rendering'] != rendering: raise PolicyError('The policy and agent use different prompt rendering.')
+        recheck_norms(doc, root)
         attachments.append({'json': raw.decode(), 'sha256': hashlib.sha256(raw).hexdigest()})
     artifacts.load_attached(attachments)
     document = copy.deepcopy(document); document['name'] = settings['name']

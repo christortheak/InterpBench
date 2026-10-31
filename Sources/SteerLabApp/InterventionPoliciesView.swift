@@ -74,7 +74,7 @@ struct InterventionPoliciesView: View {
                                 Text("Strength = score × multiplier + added strength, clipped to your bounds.").font(.caption)
                             } else { TextField("Action strength", value: $strength, format: .number) }
                             if action == "add" {
-                                Text("Strengths for an added vector are in residual-norm units, like a static agent’s α: 0.1 adds a tenth of the layer’s typical residual norm, the default for a promoted agent. A full norm (1.0) usually makes generation incoherent.").font(.caption)
+                                Text("Strengths for an added vector are in residual-norm units, like a static agent’s α. 0.1, a tenth of the layer’s typical residual norm, is the usual starting strength (the Playground’s default when no promoted agent exists); a full norm (1.0) usually makes generation incoherent.").font(.caption)
                             }
                         }.padding(8)
                     }
