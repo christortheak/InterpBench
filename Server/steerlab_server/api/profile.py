@@ -399,6 +399,13 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
             # flag — those would run the agents greedy while the baseline
             # samples (an unbalanced design).
             "variantStudySampling": True,
+            # A declared seedPolicy decides the seed rule at any samplesPerItem
+            # (issue #3): derivedSHA256 at one sample per item above
+            # temperature 0 derives a seed per record, where earlier engines
+            # reused the fixed seed list. Clients refuse to submit that study
+            # shape to servers WITHOUT this flag, which would run it the old
+            # way (`sampling.declared_policy_changes_seeds`).
+            "declaredSeedPolicy": True,
             "httpTransfer": profile.transfer_method in (None, "", "http"),
             "externalTransferRequired": (
                 profile.transfer_method not in (None, "", "http")

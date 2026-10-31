@@ -108,6 +108,9 @@ class Script:
         #: The capability snapshot's ``analysisOptions``; ``None`` = an engine
         #: older than the key, which lists nothing.
         self.analysis_options: list | None = None
+        #: ``remoteStudy.declaredSeedPolicy``; False = an engine from before
+        #: a declared derivedSHA256 was honored at one sample per item.
+        self.declared_seed_policy = False
 
         #: What the runner will claim the upload hashed to. ``None`` = agree.
         self.reported_upload_sha: str | None = None
@@ -177,6 +180,8 @@ class FakeRunner:
                 "availableJobTypes": list(self.script.available_job_types),
                 **({"analysisOptions": list(self.script.analysis_options)}
                    if self.script.analysis_options is not None else {}),
+                **({"remoteStudy": {"declaredSeedPolicy": True}}
+                   if self.script.declared_seed_policy else {}),
             },
         }
 
@@ -276,6 +281,12 @@ def _quiet_client(argv) -> None:
 def workspace(tmp_path, monkeypatch):
     """A client workspace holding ONE frozen study, authored by the light
     verbs the way a person would."""
+    return _frozen_workspace(tmp_path, monkeypatch)
+
+
+def _frozen_workspace(tmp_path, monkeypatch, protocol=()):
+    """The ``workspace`` fixture's study, with ``protocol`` (``--set``
+    assignments) declared before it freezes."""
     root = str(tmp_path / "workspace")
     directory = os.path.join(root, "prompts", "concepts", CONCEPT)
     os.makedirs(directory, exist_ok=True)
@@ -297,7 +308,10 @@ def workspace(tmp_path, monkeypatch):
              "--revision", "0" * 40],
             ["experiment", "attach", STUDY_NAME, CONCEPT],
             ["experiment", "declare-condition", STUDY_NAME, "baseline",
-             "--baseline", "--alpha-units", "norm"]):
+             "--baseline", "--alpha-units", "norm"],
+            *([["experiment", "set-protocol", STUDY_NAME,
+                *[part for item in protocol for part in ("--set", item)]]]
+              if protocol else [])):
         _quiet_client(["--root", root, *argv])
     # The measured run reads its items from pinned task prompts, and `run`
     # refuses a study without them before anything is uploaded — so the
@@ -615,6 +629,45 @@ def test_a_choice_reread_on_an_older_runner_is_refused_before_any_upload(
     assert "cluster push --site" in document["error"]["repairAction"]
     assert document["result"]["failedStage"] == "capabilities"
     assert script.uploads == [] and script.submits == []
+
+
+SEED_RULE_PROTOCOL = ("temperature=0.7", "seedPolicy=derivedSHA256")
+
+
+def test_a_declared_seed_policy_is_refused_by_an_engine_without_it(
+        tmp_path, monkeypatch, script, capsys):
+    """A declared derivedSHA256 at one sample per item above temperature 0
+    would run with the fixed seed list on an engine that predates the rule
+    (issue #3). Refused at the capabilities stage, before any upload."""
+    root = _frozen_workspace(tmp_path, monkeypatch, SEED_RULE_PROTOCOL)
+    code, document, _ = _run([STUDY_NAME, "--runner", RUNNER_URL, "--dry-run"],
+                             capsys, root=root)
+    assert code == 65, document
+    assert document["error"]["code"] == "declaredSeedPolicyUnsupported"
+    assert "remoteStudy.declaredSeedPolicy" in document["error"]["reason"]
+    assert "cluster push --site" in document["error"]["repairAction"]
+    assert document["result"]["failedStage"] == "capabilities"
+    assert script.uploads == [] and script.submits == []
+
+    # An engine that has the rule takes it.
+    script.declared_seed_policy = True
+    script.job_status = "prepared"
+    code, document, _ = _run([STUDY_NAME, "--runner", RUNNER_URL, "--dry-run"],
+                             capsys, root=root)
+    assert code == 0, document
+    assert len(script.submits) == 1
+
+
+def test_every_other_study_submits_to_an_engine_without_it(
+        tmp_path, monkeypatch, script, capsys):
+    """Only the affected shape refuses: a fixed-list study at the same
+    temperature runs on an older engine exactly as before."""
+    script.job_status = "prepared"
+    root = _frozen_workspace(tmp_path, monkeypatch, ("temperature=0.7",))
+    code, document, _ = _run([STUDY_NAME, "--runner", RUNNER_URL, "--dry-run"],
+                             capsys, root=root)
+    assert code == 0, document
+    assert len(script.submits) == 1
 
 
 def test_a_verb_that_loads_no_model_runs_where_the_runner_runs(

@@ -291,6 +291,68 @@ def test_the_run_loop_keeps_the_fixed_list_when_nothing_is_declared(
     assert _config_seed_policy(run_dir) == "manifestSeeds"
 
 
+# --- a client can tell whether an engine has the rule -------------------------
+
+def test_the_engine_advertises_the_rule_and_a_client_can_read_it():
+    from steerlab_server.api.profile import capability_snapshot
+    snapshot = capability_snapshot()
+    assert snapshot["remoteStudy"]["declaredSeedPolicy"] is True
+    assert sampling.remote_honors_declared_seed_policy(snapshot)
+    assert sampling.remote_honors_declared_seed_policy(
+        {"features": {"remoteStudy.declaredSeedPolicy": True}})
+    assert not sampling.remote_honors_declared_seed_policy(
+        {"remoteStudy": {"variantStudySampling": True}})
+    assert not sampling.remote_honors_declared_seed_policy(None)
+
+
+def test_the_refusal_is_the_mac_clients_sentence():
+    """Copied from ``SubstrateRoutingTests.aDeclaredSeedPolicyRefusesOnAServerWithoutTheCapability``."""
+    assert sampling.outdated_engine_reason("http://runner.invalid") == (
+        "The engine at http://runner.invalid predates the declared seed policy "
+        "at one sample per item: its capabilities do not list "
+        "remoteStudy.declaredSeedPolicy, so it would run this study's "
+        "derivedSHA256 at samplesPerItem 1 with the fixed seed list, the same "
+        "seeds for every item. Nothing was submitted.")
+    assert "cluster push --site" in sampling.outdated_engine_repair()
+
+
+def test_only_the_changed_shape_needs_the_rule():
+    changed = sampling.declared_policy_changes_seeds
+    assert changed(0.7, 1, "derivedSHA256")
+    assert not changed(0.0, 1, "derivedSHA256")  # greedy either way
+    assert not changed(0.7, 3, "derivedSHA256")  # derived either way
+    assert not changed(0.7, 1, "manifestSeeds")
+    assert not changed(0.7, 1, None)
+    assert not changed(0.7, 1, "derivedSHA256", "multiAgent")
+
+
+def test_runner_submit_refuses_a_staged_study_an_older_engine_would_misseed(
+        tmp_path):
+    """`runner submit` names only a staged bundle: its study is read from the
+    local workspace when the bundle's name and content hash match it."""
+    from steerlab_server.client import runner as runner_api
+    root = str(tmp_path)
+    es.create("staged", model_id="org/m", revision="abc", root=root)
+    raw = es.load_raw("staged", root)
+    raw.update({"temperature": 0.7, "seedPolicy": "derivedSHA256"})
+    es.save_raw(raw, root)
+    staged = {"experiment": "staged", "experimentContentHash":
+              Manifest.load("staged", root).content_hash()}
+
+    def check(capabilities, *, verb="run", bundle=staged, workspace=root):
+        runner_api.require_declared_seed_policy(
+            bundle, verb, capabilities, "http://runner.invalid", workspace)
+
+    with pytest.raises(runner_api.RunnerRefusal) as refusal:
+        check({"remoteStudy": {"variantStudySampling": True}})
+    assert refusal.value.code == "declaredSeedPolicyUnsupported"
+    assert "cluster push --site" in refusal.value.repair_action
+    check({"remoteStudy": {"declaredSeedPolicy": True}})  # the engine has it
+    check({}, verb="extract")  # a step that samples no study text
+    check({}, bundle={**staged, "experimentContentHash": "0" * 64})  # not ours
+    check({}, workspace=None)  # no workspace named: nothing to vouch for
+
+
 # --- a resume never mixes two seed rules ----------------------------------------
 
 def _old_rule(temperature, samples_per_item, seed_policy):

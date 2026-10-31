@@ -56,6 +56,75 @@ def derives_seeds(temperature, samples_per_item, seed_policy) -> bool:
     return (samples_per_item or 1) > 1 or seed_policy == DERIVED_SHA256
 
 
+#: The engine capability that says a declared derivedSHA256 decides the seed
+#: rule at one sample per item (``remoteStudy.declaredSeedPolicy`` in the
+#: capability snapshot, ``api/profile.py``). Both clients refuse to submit a
+#: study whose seeds an engine without it would choose differently.
+DECLARED_SEED_POLICY_CAPABILITY = "declaredSeedPolicy"
+
+
+def declared_policy_changes_seeds(temperature, samples_per_item, seed_policy,
+                                  study_kind=None) -> bool:
+    """Whether an engine from before issue #3 would seed this study's
+    sampled records differently: a declared derivedSHA256 at one sample per
+    item above temperature 0. Panels never read the policy. Swift twin
+    ``StudySampling.declaredPolicyChangesSeeds``."""
+    return (study_kind != "multiAgent" and seed_policy == DERIVED_SHA256
+            and (samples_per_item or 1) <= 1
+            and bool(temperature) and temperature > 0)
+
+
+def remote_honors_declared_seed_policy(capabilities) -> bool:
+    """Whether a capability snapshot advertises
+    :data:`DECLARED_SEED_POLICY_CAPABILITY`, in the nested or the dotted
+    feature form (Swift twin ``ClusterCapabilities.supportsDeclaredSeedPolicy``)."""
+    if not isinstance(capabilities, dict):
+        return False
+    remote = capabilities.get("remoteStudy")
+    if isinstance(remote, dict) and remote.get(DECLARED_SEED_POLICY_CAPABILITY) is True:
+        return True
+    features = capabilities.get("features")
+    return (isinstance(features, dict) and features.get(
+        "remoteStudy." + DECLARED_SEED_POLICY_CAPABILITY) is True)
+
+
+#: The verbs that generate a study's sampled records from its seed rule.
+SEED_RULE_VERBS = ("run", "pipeline")
+#: The client refusal's code when the engine predates the capability.
+SEED_POLICY_UNSUPPORTED_CODE = "declaredSeedPolicyUnsupported"
+
+
+def submission_needs_declared_seed_policy(manifest, verb) -> bool:
+    """Whether submitting ``verb`` for this study needs an engine with
+    :data:`DECLARED_SEED_POLICY_CAPABILITY`: a step that generates the
+    study's sampled text, from a shape an older engine seeds differently.
+    Swift twin: the guard in
+    ``SubstrateRouting.declaredSeedPolicySubmissionRefusal``."""
+    from . import execution_plan
+    return (verb in SEED_RULE_VERBS
+            and execution_plan.resolve(manifest.outcome_instruments)
+            .generates_sampled_text
+            and declared_policy_changes_seeds(
+                manifest.temperature, manifest.samples_per_item,
+                manifest.seed_policy, manifest.study_kind))
+
+
+def outdated_engine_reason(where: str) -> str:
+    """Why a client refuses to submit, in the same words on both clients
+    (Swift twin ``SubstrateRouting.declaredSeedPolicySubmissionRefusal``)."""
+    return (f"The engine at {where} predates the declared seed policy at one "
+            "sample per item: its capabilities do not list "
+            f"remoteStudy.{DECLARED_SEED_POLICY_CAPABILITY}, so it would run "
+            "this study's derivedSHA256 at samplesPerItem 1 with the fixed "
+            "seed list, the same seeds for every item. Nothing was submitted.")
+
+
+def outdated_engine_repair() -> str:
+    return ("Bring that engine up to date (for a cluster site, steerlab-cli "
+            "cluster push --site <id>; for a local runner, restart it from "
+            "this release), then submit again.")
+
+
 def manifest_derives_seeds(manifest, temperature=None) -> bool:
     """:func:`derives_seeds` for a loaded manifest, at ``temperature`` when
     given (a condition's effective temperature) and the study's otherwise."""

@@ -227,6 +227,34 @@ def require_reread_support(capabilities, where: str) -> None:
             repair_action=choice_reread.remote_repair())
 
 
+def require_declared_seed_policy(staged, verb, capabilities, where: str,
+                                 workspace_root) -> None:
+    """Refuse BEFORE submitting a staged bundle whose study an engine without
+    the declared seed policy would seed with the fixed list (issue #3).
+
+    The staged bundle names its study and that study's content hash; the
+    study is read from the local workspace only when both match, because a
+    bundle this client did not build says nothing a local manifest can vouch
+    for. Swift twin: ``ClusterClient.requireDeclaredSeedPolicy``."""
+    from ..experiment import sampling
+    from ..experiment.manifest import Manifest
+    name = staged.get("experiment") if isinstance(staged, dict) else None
+    if not workspace_root or not isinstance(name, str) or not name:
+        return
+    try:
+        manifest = Manifest.load(name, workspace_root)
+    except (OSError, ValueError, KeyError, TypeError):
+        return
+    if (manifest.content_hash() != staged.get("experimentContentHash")
+            or not sampling.submission_needs_declared_seed_policy(manifest, verb)
+            or sampling.remote_honors_declared_seed_policy(capabilities)):
+        return
+    raise RunnerRefusal(
+        sampling.outdated_engine_reason(where),
+        code=sampling.SEED_POLICY_UNSUPPORTED_CODE,
+        repair_action=sampling.outdated_engine_repair())
+
+
 def confirm_reread(submission, where: str) -> None:
     """Refuse AFTER a submission whose rendered command does not carry the
     re-read: that job analyzes the stored choices, and must not be reported
@@ -818,8 +846,13 @@ class RunnerClient:
                                force: bool = False,
                                resources: dict | None = None,
                                env: dict | None = None,
-                               reread_choices: bool = False) -> dict:
+                               reread_choices: bool = False,
+                               workspace_root: str | None = None) -> dict:
         """``POST /api/studies/submit-bundle`` — execute a staged bundle.
+
+        ``workspace_root``, when given, is the workspace the bundle's study
+        is read from for the declared-seed-policy check
+        (:func:`require_declared_seed_policy`).
 
         ``reread_choices`` (verb ``analyze`` only) asks the analysis to read
         every stored choice again with the runner's current choice parser;
@@ -864,6 +897,9 @@ class RunnerClient:
             try: instrumentation_contract.require(required, self.capabilities())
             except ValueError as exc:
                 raise RunnerRefusal(str(exc), code="unsupportedInstrumentation", repair_action="Update and restart the engine, then reconnect and review this unchanged bundle.") from exc
+        if workspace_root:
+            require_declared_seed_policy(staged, verb, self.capabilities(),
+                                         self.base_url, workspace_root)
         if expected is not None:
             actual = str(staged.get("bundleSha256") or "")
             if actual != expected:

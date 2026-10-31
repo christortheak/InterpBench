@@ -63,13 +63,41 @@ extension ClusterClient {
         if !required.isEmpty { try InstrumentationSupport.require(required, offered: await capabilities().instrumentation) }
     }
 
-    func requireBundleInstrumentation(path: String) async throws {
+    /// Returns the server's inspection of the staged bundle, which names the
+    /// study it carries (`requireDeclaredSeedPolicy` reads it).
+    @discardableResult
+    func requireBundleInstrumentation(path: String) async throws -> JSONValue {
         let inspected: JSONValue = try await post("/api/bundles/inspect", body: ["bundlePath": path])
         if case .object(let metadata) = inspected, metadata["runtimeRequirements"] != nil {
             try await requireInstrumentation(inspected)
         } else {
             // An unmarked archive can contain an additive field an older engine ignores.
             try InstrumentationSupport.require(["policy-v1", "policy-evidence-v2", "probe-readings-v1"], offered: await capabilities().instrumentation)
+        }
+        return inspected
+    }
+
+    /// Refuse to submit a staged bundle whose study an engine without the
+    /// declared seed policy would seed with the fixed list (issue #3). The
+    /// bundle names its study and that study's content hash; the study is
+    /// read from this workspace only when both match, because a bundle this
+    /// client did not build says nothing a local manifest can vouch for.
+    /// Python twin: `runner.require_declared_seed_policy`.
+    func requireDeclaredSeedPolicy(inspectedBundle inspected: JSONValue, verb: String) async throws {
+        guard SubstrateRouting.matrixExecutingVerbs.contains(verb),
+            case .object(let metadata) = inspected,
+            case .string(let name)? = metadata["experiment"], !name.isEmpty,
+            case .string(let hash)? = metadata["experimentContentHash"],
+            let manifest = try? ExperimentStore.load(name: name),
+            ExperimentStore.manifestHash(manifest) == hash,
+            StudySampling.declaredPolicyChangesSeeds(manifest)
+        else { return }
+        if let refusal = SubstrateRouting.declaredSeedPolicySubmissionRefusal(
+            manifest: manifest, verb: verb, capabilities: try await capabilities(),
+            server: profile.baseURL.absoluteString)
+        {
+            throw ExperimentError.refusing(
+                .missingPrerequisite, refusal, repair: SubstrateRouting.declaredSeedPolicyRepair)
         }
     }
 

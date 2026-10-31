@@ -188,6 +188,37 @@ public enum SubstrateRouting {
             + "baseline samples"
     }
 
+    /// Old-server guard for the declared seed policy (issue #3): a study
+    /// declaring derivedSHA256 at one sample per item above temperature 0,
+    /// whose sampled text an engine without `remoteStudy.declaredSeedPolicy`
+    /// would generate with the fixed seed list, the same seeds for every
+    /// item. Returns the refusal, or nil for every other study, verb, or
+    /// server. Same sentence as the Python client's
+    /// (`sampling.outdated_engine_reason`).
+    public static func declaredSeedPolicySubmissionRefusal(
+        manifest: ExperimentManifest, verb: String,
+        capabilities: ClusterCapabilities?, server: String
+    ) -> String? {
+        guard matrixExecutingVerbs.contains(verb),
+            ExecutionPlan.resolve(instruments: manifest.outcomeInstruments)
+                .generatesSampledText,
+            StudySampling.declaredPolicyChangesSeeds(manifest),
+            capabilities?.supportsDeclaredSeedPolicy != true
+        else { return nil }
+        return "The engine at \(server) predates the declared seed policy at one "
+            + "sample per item: its capabilities do not list "
+            + "remoteStudy.declaredSeedPolicy, so it would run this study's "
+            + "derivedSHA256 at samplesPerItem 1 with the fixed seed list, the "
+            + "same seeds for every item. Nothing was submitted."
+    }
+
+    /// The repair for `declaredSeedPolicySubmissionRefusal`. Python twin:
+    /// `sampling.outdated_engine_repair`.
+    public static let declaredSeedPolicyRepair =
+        "Bring that engine up to date (for a cluster site, steerlab-cli "
+        + "cluster push --site <id>; for a local runner, restart it from "
+        + "this release), then submit again."
+
     /// What the ONE primary button says it will do.
     public static func runButtonLabel(
         decision: Decision, verb: String, dryRun: Bool, isBusy: Bool
