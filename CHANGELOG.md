@@ -189,13 +189,25 @@ migration that rewrites frozen bytes.
   Studies that declare `manifestSeeds`, or no policy, are unchanged: each item
   runs once per listed seed. Earlier runs of such a study stamped
   `seedPolicy: manifestSeeds` on every sampled record, so their records stay
-  accurate about what they did. The
-  per-item count now follows the same rule everywhere it is computed:
-  sharding, the J-lens readout budget, submission sizing, and the throughput
-  family's description. The Python engine's run `config.json` now stamps the
-  seed policy the records use rather than the declared one, as the Mac
-  engine's already did, so a declared `derivedSHA256` at temperature 0 stamps
-  `manifestSeeds` there too.
+  accurate about what they did. The count of responses a run generates for
+  each item follows the same rule wherever the engine computes it: the run
+  loop, sharding, the J-lens readout budget, submission sizing, and the
+  throughput family's description. Labels that describe the declaration
+  (the Mac's `set-sampling` echo, the design summary, and the results
+  export's samples-per-item line) still show the declared `samplesPerItem`.
+  The Python engine's run `config.json` now stamps the seed policy the
+  records use rather than the declared one, as the Mac engine's already did,
+  so a declared `derivedSHA256` at temperature 0 stamps `manifestSeeds` there
+  too. The results export and the results page state the policy every
+  response's record states, and say so plainly when a run's settings
+  disagree, as they do for a run of such a study made before this release.
+  Resuming such a run on this release is refused (`manifestEpoch`), because
+  its finished cells would keep the fixed list's records while the rest got
+  derived seeds; finish it on the engine that started it, or start a fresh
+  run. Engines now advertise `remoteStudy.declaredSeedPolicy`, and both
+  clients refuse to submit a study of this shape to an engine without it,
+  with the repair to update that engine; every other study submits as
+  before.
   Derived seeds include the condition, so arms draw distinct streams for the
   same item: the design is paired at the prompt level, not by common random
   numbers, whereas the fixed list reuses one set of seeds across every item

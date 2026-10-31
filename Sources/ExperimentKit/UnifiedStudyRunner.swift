@@ -104,6 +104,17 @@ public final class UnifiedStudyRunner {
             note(refusal, .error)
             return
         }
+        // Old-server guard (issue #3): a declared derivedSHA256 at one sample
+        // per item would run with the fixed seed list on a server without
+        // the declared seed policy — refuse BEFORE packaging/uploading.
+        if let refusal = SubstrateRouting.declaredSeedPolicySubmissionRefusal(
+            manifest: manifest, verb: verb, capabilities: capabilities,
+            server: client.profile.baseURL.absoluteString)
+        {
+            statusLine = refusal
+            note(refusal, .error)
+            return
+        }
         // Scope-drift guard (2026-08-06 field incident): a stale
         // outcomeInstrumentScope pin after Duplicate & Adjust + task-file
         // swap refuses HERE, before packaging/upload — the server would

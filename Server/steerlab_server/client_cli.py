@@ -3613,7 +3613,8 @@ def _runner_verb(client, invocation: Invocation, common: dict) -> CLIResult:
             device=invocation.one("--device"),
             package_evidence=not invocation.has("--no-evidence"),
             parallel_jobs=_runner_int(invocation, "--parallel", 1) or 1,
-            reread_choices=reread_choices)
+            reread_choices=reread_choices,
+            workspace_root=invocation.workspace_root)
         run_bundle = submission.get("runBundle") or {}
         job_id = submission.get("jobId")
         # Where the job went, recorded in the named workspace so the Mac app
@@ -4455,6 +4456,12 @@ def _run(invocation: Invocation) -> CLIResult:
           f"{name!r} is a draft and every pin verifies; {study_verb} is a "
           "step that comes before freeze, so a draft is accepted")
 
+    # A study whose seeds an engine from before issue #3 would choose
+    # differently: refused at the capability stage when the runner does not
+    # advertise the fix.
+    from .experiment import sampling
+    seed_rule_changed = sampling.submission_needs_declared_seed_policy(
+        manifest, study_verb)
     try:
         return _run_machine(
             invocation, stages=stages, common=common, name=name,
@@ -4463,7 +4470,8 @@ def _run(invocation: Invocation) -> CLIResult:
             package_evidence=package_evidence, waiting=waiting,
             wait_deadline=wait_deadline, request_timeout=request_timeout,
             max_bytes=max_bytes, evidence_out=evidence_out,
-            started_at=started_at, runner_api=runner_api, bundles=bundles)
+            started_at=started_at, runner_api=runner_api, bundles=bundles,
+            seed_rule_changed=seed_rule_changed)
     except ClientRefusal:
         raise
     except Exception as exc:   # noqa: BLE001 — every throw keeps its TYPE and
@@ -4490,7 +4498,8 @@ def _run_machine(invocation: Invocation, *, stages: dict, common: dict,
                  package_evidence: bool, waiting: bool, wait_deadline: float,
                  request_timeout: float, max_bytes: int | None,
                  evidence_out: str | None, started_at: float,
-                 runner_api, bundles) -> CLIResult:
+                 runner_api, bundles,
+                 seed_rule_changed: bool = False) -> CLIResult:
     """Stages 2–9. Split from :func:`_run` only so the stage-table decoration
     above has one place to sit."""
     import time
@@ -4530,7 +4539,7 @@ def _run_machine(invocation: Invocation, *, stages: dict, common: dict,
             wait_deadline=wait_deadline, max_bytes=max_bytes,
             evidence_out=evidence_out, started_at=started_at,
             workspace=workspace, runner_api=runner_api, bundles=bundles,
-            time=time)
+            time=time, seed_rule_changed=seed_rule_changed)
     except runner_api.RunnerError as exc:
         # Same translation `_runner` makes, plus the stage table: the authoring
         # paths still never import this module to build a refusal document.
@@ -4548,7 +4557,8 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
               executor: str | None, dry_run: bool, package_evidence: bool,
               waiting: bool, wait_deadline: float, max_bytes: int | None,
               evidence_out: str | None, started_at: float, workspace: str,
-              runner_api, bundles, time) -> CLIResult:
+              runner_api, bundles, time,
+              seed_rule_changed: bool = False) -> CLIResult:
     """Stages 3–9: everything that touches the wire or the workspace."""
 
     # ---- stage 3: what is this runner, and can it do this? -----------------
@@ -4569,6 +4579,18 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
         # An older engine ignores the request and analyzes the stored
         # choices; refused here, before anything is uploaded.
         runner_api.require_reread_support(capabilities, client.base_url)
+    from .experiment import sampling
+    if seed_rule_changed and not sampling.remote_honors_declared_seed_policy(
+            capabilities):
+        # An older engine would run a declared derivedSHA256 at one sample
+        # per item with the fixed seed list. Swift twin:
+        # `SubstrateRouting.declaredSeedPolicySubmissionRefusal`.
+        raise _die(
+            stages, "capabilities", code=sampling.SEED_POLICY_UNSUPPORTED_CODE,
+            reason=sampling.outdated_engine_reason(client.base_url),
+            repair=sampling.outdated_engine_repair(), common=common,
+            facts={"runnerOffers": {
+                "engineVersion": identity.get("engineVersion")}})
     runner_facts = {"url": client.base_url,
                     "service": identity.get("service"),
                     "engineVersion": identity.get("engineVersion"),

@@ -23,6 +23,7 @@ What these tests hold:
 
 import csv
 import hashlib
+import html
 import io
 import json
 import os
@@ -1121,6 +1122,50 @@ def test_an_ordinary_study_has_no_transcripts_folder(root):
 
 
 # --- the methods summary -------------------------------------------------------
+
+
+def test_the_seed_policy_is_the_one_the_records_state(root):
+    """A Python-engine run made before a declared derivedSHA256 was honored at
+    one sample per item (issue #3): config.json stamped the DECLARED policy,
+    while every record says manifestSeeds and carries the fixed list's
+    seeds. The summary states the records' policy and says the settings
+    disagree; it never picks the settings."""
+    manifest = _manifest(samplesPerItem=1, seedPolicy="derivedSHA256",
+                         seeds=[11, 22, 33])
+    _write_study(root, manifest)
+    manifest_hash = Manifest.from_dict(manifest).content_hash()
+    records = _python_records(manifest_hash)
+    for record in records:
+        record["seedPolicy"] = "manifestSeeds"
+        record["seed"] = [11, 22, 33][record["sampleIndex"]]
+    directory = _write_run(root, manifest, records)
+    with open(os.path.join(directory, "config.json"), encoding="utf-8") as handle:
+        assert json.load(handle)["seedPolicy"] == "derivedSHA256"  # the old stamp
+    result = _export(root)
+    methods = _read(result, "methods.md")
+    assert ("seed policy `manifestSeeds`, as every response's record states it "
+            "(the run's settings say `derivedSHA256`, which is not the policy "
+            "the responses were generated with)") in methods
+    assert "seed policy `derivedSHA256`" not in methods
+    page = html.unescape(
+        study_results.render(results_export.read_results(str(root), STUDY)))
+    assert ("seed policy manifestSeeds, as every response's record states it "
+            "(the run's settings say derivedSHA256") in page
+    assert "seed policy manifestSeeds, as every response" in _read(result, "report.html")
+
+
+def test_a_run_whose_records_mix_seed_policies_says_so(root):
+    """A run resumed across a change of seed rule could hold both; the
+    summary names both rather than one."""
+    manifest = _manifest(samplesPerItem=1, seedPolicy="derivedSHA256")
+    _write_study(root, manifest)
+    records = _python_records(Manifest.from_dict(manifest).content_hash())
+    for record in records[: len(records) // 2]:
+        record["seedPolicy"] = "manifestSeeds"
+    _write_run(root, manifest, records)
+    methods = _read(_export(root), "methods.md")
+    assert ("seed policies `manifestSeeds` and `derivedSHA256`: the responses' "
+            "records do not all state the same one") in methods
 
 
 def test_methods_states_the_stored_facts(root):

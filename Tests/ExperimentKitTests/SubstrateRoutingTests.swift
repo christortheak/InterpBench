@@ -305,4 +305,77 @@ struct SubstrateRoutingTests {
                     capabilities: old) == nil)
         }
     }
+
+    // MARK: - The declared seed policy (issue #3)
+
+    private func seedStudy(
+        temperature: Double = 0.7, samplesPerItem: Int? = nil,
+        seedPolicy: String? = "derivedSHA256"
+    ) -> ExperimentManifest {
+        var manifest = ExperimentManifest(name: "seeds", description: "", modelID: "test/model")
+        manifest.temperature = temperature
+        manifest.samplesPerItem = samplesPerItem
+        manifest.seedPolicy = seedPolicy
+        return manifest
+    }
+
+    /// A declared derivedSHA256 at one sample per item would run with the
+    /// fixed seed list on a server that predates the rule: refused, in the
+    /// Python client's words, with unknown capabilities refusing too.
+    @Test func aDeclaredSeedPolicyRefusesOnAServerWithoutTheCapability() throws {
+        let old = try capabilities(
+            #"{"remoteStudy": {"submitBundle": true, "variantStudySampling": true}}"#)
+        for server in [old, nil] {
+            for verb in ["run", "pipeline"] {
+                let refusal = SubstrateRouting.declaredSeedPolicySubmissionRefusal(
+                    manifest: seedStudy(), verb: verb, capabilities: server,
+                    server: "http://runner.invalid")
+                #expect(
+                    refusal == "The engine at http://runner.invalid predates the "
+                        + "declared seed policy at one sample per item: its "
+                        + "capabilities do not list remoteStudy.declaredSeedPolicy, "
+                        + "so it would run this study's derivedSHA256 at "
+                        + "samplesPerItem 1 with the fixed seed list, the same "
+                        + "seeds for every item. Nothing was submitted.")
+            }
+        }
+        #expect(SubstrateRouting.declaredSeedPolicyRepair.contains("cluster push --site"))
+    }
+
+    @Test func aDeclaredSeedPolicyProceedsWhenTheServerHasTheCapability() throws {
+        for json in [
+            #"{"remoteStudy": {"declaredSeedPolicy": true}}"#,
+            #"{"features": {"remoteStudy.declaredSeedPolicy": true}}"#,
+        ] {
+            let new = try capabilities(json)
+            #expect(new.supportsDeclaredSeedPolicy)
+            #expect(
+                SubstrateRouting.declaredSeedPolicySubmissionRefusal(
+                    manifest: seedStudy(), verb: "run", capabilities: new,
+                    server: "s") == nil)
+        }
+    }
+
+    /// Only the shape whose seeds changed refuses; every other study, and
+    /// every step that samples no study text, submits as before.
+    @Test func everyOtherStudySubmitsToAnOlderServer() throws {
+        let old = try capabilities(#"{"serverVersion": "1.0"}"#)
+        func refused(_ manifest: ExperimentManifest, verb: String = "run") -> Bool {
+            SubstrateRouting.declaredSeedPolicySubmissionRefusal(
+                manifest: manifest, verb: verb, capabilities: old, server: "s") != nil
+        }
+        #expect(!refused(seedStudy(temperature: 0)))
+        #expect(!refused(seedStudy(samplesPerItem: 3)))
+        #expect(!refused(seedStudy(seedPolicy: "manifestSeeds")))
+        #expect(!refused(seedStudy(seedPolicy: nil)))
+        var panel = seedStudy()
+        panel.studyKind = .multiAgent
+        #expect(!refused(panel))
+        var readouts = seedStudy()
+        readouts.outcomeInstruments = ["choiceProbability"]
+        #expect(!refused(readouts))
+        for verb in ["verify", "extract", "validate", "sweep", "evaluate", "analyze"] {
+            #expect(!refused(seedStudy(), verb: verb))
+        }
+    }
 }

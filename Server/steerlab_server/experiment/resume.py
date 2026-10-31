@@ -75,6 +75,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from . import run_status
+from .lifecycle_gates import LifecycleRefusalMixin
 
 CHECKPOINT_EXIT_CODE = 85
 RESUME_STATE_FILENAME = "resume-state.json"
@@ -110,6 +111,12 @@ class ResumeError(RuntimeError):
     """A run directory that must not be resumed: already complete, with
     neither a saved place nor records to continue from, or checkpointed by a
     different verb/experiment."""
+
+
+class ResumeRefusal(LifecycleRefusalMixin, ResumeError):
+    """A :class:`ResumeError` that carries its lifecycle gate and an
+    executable repair, so the envelope can say which rule declined and what
+    to run instead. Every ``except ResumeError`` still catches it."""
 
 
 class CheckpointRequested(Exception):

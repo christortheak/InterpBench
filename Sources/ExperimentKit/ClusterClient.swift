@@ -43,6 +43,12 @@ public struct ClusterCapabilities: Codable, Sendable {
         /// greedy while the baseline samples, so stochastic saved-agent
         /// submissions must refuse there.
         public var variantStudySampling: Bool?
+        /// A declared seedPolicy decides the seed rule at any samplesPerItem
+        /// (issue #3): derivedSHA256 at one sample per item above
+        /// temperature 0 derives a seed per record. Absent on older servers,
+        /// which reuse the fixed seed list for that study shape, so its
+        /// submission must refuse there.
+        public var declaredSeedPolicy: Bool?
         public var httpTransfer: Bool?
         public var externalTransferRequired: Bool?
         public var stagingRoot: String?
@@ -213,6 +219,17 @@ public struct ClusterCapabilities: Codable, Sendable {
     public var supportsVariantStudySampling: Bool {
         if let value = remoteStudy?.variantStudySampling { return value }
         if case .bool(let value)? = features?["remoteStudy.variantStudySampling"] {
+            return value
+        }
+        return false
+    }
+
+    /// A declared seed policy decides the seed rule at one sample per item
+    /// (`"remoteStudy.declaredSeedPolicy"`, issue #3), in either spelling.
+    /// Python twin: `sampling.remote_honors_declared_seed_policy`.
+    public var supportsDeclaredSeedPolicy: Bool {
+        if let value = remoteStudy?.declaredSeedPolicy { return value }
+        if case .bool(let value)? = features?["remoteStudy.declaredSeedPolicy"] {
             return value
         }
         return false
@@ -3067,6 +3084,19 @@ public struct ClusterClient: Sendable {
         resumeFrom: String? = nil
     ) async throws -> RemoteStudySubmission {
         try await requireStudyInstrumentation(experiment: experiment)
+        // A server-resident study an older engine would seed with the fixed
+        // list (issue #3) is refused here, from the server's own manifest.
+        if SubstrateRouting.matrixExecutingVerbs.contains(verb),
+            let body = try? await experimentManifestBody(name: experiment),
+            let manifest = try? JSONDecoder().decode(ExperimentManifest.self, from: body),
+            StudySampling.declaredPolicyChangesSeeds(manifest),
+            let refusal = SubstrateRouting.declaredSeedPolicySubmissionRefusal(
+                manifest: manifest, verb: verb, capabilities: try await capabilities(),
+                server: profile.baseURL.absoluteString)
+        {
+            throw ExperimentError.refusing(
+                .missingPrerequisite, refusal, repair: SubstrateRouting.declaredSeedPolicyRepair)
+        }
         struct Body: Encodable {
             var experiment: String
             var verb: String
@@ -3095,7 +3125,10 @@ public struct ClusterClient: Sendable {
         sampleSeed: String? = nil,
         rereadChoices: Bool = false
     ) async throws -> RemoteStudySubmission {
-        try await requireBundleInstrumentation(path: path)
+        let inspected = try await requireBundleInstrumentation(path: path)
+        // An older engine would seed a declared derivedSHA256 at one sample
+        // per item with the fixed list: refused before submitting.
+        try await requireDeclaredSeedPolicy(inspectedBundle: inspected, verb: verb)
         // An older engine ignores `rereadChoices`: refused before submitting
         // when its capabilities do not list it.
         if rereadChoices {

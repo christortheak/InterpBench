@@ -39,6 +39,15 @@ public enum StudySampling {
             && ((manifest.samplesPerItem ?? 1) > 1 || manifest.seedPolicy == "derivedSHA256")
     }
 
+    /// Whether an engine from before issue #3 would seed this study's sampled
+    /// records differently: a declared derivedSHA256 at one sample per item
+    /// above temperature 0. Panels never read the policy. Python twin:
+    /// `sampling.declared_policy_changes_seeds`.
+    public static func declaredPolicyChangesSeeds(_ manifest: ExperimentManifest) -> Bool {
+        manifest.studyKind != .multiAgent && manifest.seedPolicy == "derivedSHA256"
+            && (manifest.samplesPerItem ?? 1) <= 1 && manifest.temperature > 0
+    }
+
     /// Generations per (condition, prompt) under that rule.
     public static func count(_ manifest: ExperimentManifest) -> Int {
         derivesSeeds(manifest) ? max(1, manifest.samplesPerItem ?? 1) : manifest.seeds.count
