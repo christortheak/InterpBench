@@ -161,7 +161,7 @@ def test_the_written_block_verifies_and_passes_the_freeze_gate(workspace,
                                                                capsys):
     _qualify(lens_store.resolve("lens-a", workspace), workspace)
     code, _ = _declare(workspace, capsys, "lens-a", "--layers", "20,26",
-                       "--top-k", "10", "--record-token-ids")
+                       "--top-k", "10", "--keep-tokens")
     assert code == 0
     document = store.load_raw("demo", workspace)
     assert document["recordTokenIDs"] is True
@@ -376,7 +376,7 @@ def test_a_frozen_study_refuses_with_the_duplicate_repair(workspace, capsys):
 
 def test_the_empty_lens_id_clears_and_keeps_token_retention(workspace, capsys):
     _declare(workspace, capsys, "lens-a", "--layers", "20", "--top-k", "3",
-             "--record-token-ids")
+             "--keep-tokens")
     code, document = _declare(workspace, capsys, "")
     assert code == 0 and document["changed"] is True
     assert document["result"]["jlensReadout"] is None

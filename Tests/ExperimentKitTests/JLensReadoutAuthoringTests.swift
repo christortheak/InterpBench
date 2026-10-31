@@ -144,7 +144,7 @@ import Testing
                     code = client_cli.main(["--root", root, "experiment", "set-jlens-readout", "py",
                         "lens-a", "--layers", "20-22,26", "--top-k", "7", "--top-k-layers", "21,26",
                         "--watchlist", "11,3", "--no-companion", "--max-full-vocab-projections",
-                        "500000", "--record-token-ids", "--json"])
+                        "500000", "--keep-tokens", "--json"])
                 envelope = json.loads(out.getvalue())
                 block = store.load_raw("py", root)["jlensReadout"]
                 print(json.dumps({"code": code, "envelope": envelope,
@@ -214,7 +214,7 @@ import Testing
             let outcome = await invoke(declare([
                 "--layers", "20,26", "--top-k", "10", "--watchlist", "5,9",
                 "--tokenizer-hash", Self.tokenizer, "--qualification", "q1",
-                "--record-token-ids",
+                "--keep-tokens",
             ]))
             #expect(outcome.envelope.state == .ready)
             #expect(outcome.envelope.exitCode == 0)
@@ -361,7 +361,7 @@ import Testing
     @Test func theEmptyLensIDClearsAndKeepsTokenRetention() async throws {
         try await withTempRoot { _ in
             try draft()
-            _ = await invoke(declare(["--layers", "20", "--top-k", "3", "--record-token-ids"]))
+            _ = await invoke(declare(["--layers", "20", "--top-k", "3", "--keep-tokens"]))
             let cleared = await invoke(["set-jlens-readout", "demo", ""])
             #expect(cleared.envelope.state == .ready)
             #expect(cleared.envelope.changed)

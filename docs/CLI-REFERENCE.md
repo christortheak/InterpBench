@@ -1061,7 +1061,7 @@ steerlab-cli experiment set-exclusions <name> <rule>[,…] [--endpoint <key>] [-
 steerlab-cli experiment set-system-prompt <name> <text>
 steerlab-cli experiment set-parser <name> <parser>
 steerlab-cli experiment set-instrument-scope <name> <responseFormat>[,…]
-steerlab-cli experiment set-jlens-readout <name> <lens-id> [--dry-run] [--fitted-layers <l,l-l,…>] [--layers <l,l-l,…>] [--lens-model <model-id>[@<revision>]] [--lens-sha256 <sha256>] [--max-armed-layers <n>] [--max-full-vocab-projections <n>] [--max-observations <n>] [--max-trace-bytes <bytes>] [--no-companion] [--qualification <qualification-id>] [--record-token-ids] [--tokenizer-hash <sha256>] [--top-k <k>] [--top-k-layers <l,l-l,…>] [--watchlist <token-id,…>]
+steerlab-cli experiment set-jlens-readout <name> <lens-id> [--dry-run] [--fitted-layers <l,l-l,…>] [--keep-tokens] [--layers <l,l-l,…>] [--lens-model <model-id>[@<revision>]] [--lens-sha256 <sha256>] [--max-armed-layers <n>] [--max-full-vocab-projections <n>] [--max-observations <n>] [--max-trace-bytes <bytes>] [--no-companion] [--qualification <qualification-id>] [--tokenizer-hash <sha256>] [--top-k <k>] [--top-k-layers <l,l-l,…>] [--watchlist <token-id,…>]
 steerlab-cli experiment set-evaluation-sampling <name> <n> <seed>
 steerlab-cli experiment set-primary-outcome <name> <outcome>
 steerlab-cli experiment set-style-taxonomy <name> <prompts/taxonomies/file.json>
@@ -1423,7 +1423,7 @@ every generated token, recorded during the study's own generations on the
 Python engine. `--top-k` is 0 to 50, `--top-k-layers` narrows it to some of
 the armed layers, `--watchlist` holds at most 64 token ids, the logit-lens
 companion rides along unless `--no-companion`, `--qualification` pins a
-passing qualification, and `--record-token-ids` also sets `recordTokenIDs`.
+passing qualification, and `--keep-tokens` also sets `recordTokenIDs`.
 `""` as the lens id clears the readout and leaves `recordTokenIDs` alone. The
 block written is the one both clients write byte for byte (a cross-client test
 holds them together); absent settings are absent keys, never `null`.
@@ -2191,7 +2191,7 @@ The pin list is duplicated across the engines (they cannot import each other);
 a test on each side asserts it, so a drifting copy cannot let the Mac call a
 study ready for a freeze the server refuses. `experiment set-jlens-readout`
 (§3.3) writes the block; on a study that pins its revision and dtype, with the
-tokenizer hash, a qualification, and `--record-token-ids`, it reaches
+tokenizer hash, a qualification, and `--keep-tokens`, it reaches
 `present`.
 
 **`panel check`** — hard validation first (an invalid panel is unrunnable),
@@ -4689,7 +4689,7 @@ that stopped on EOS from one that hit `maxTokens`. Costs ~7 bytes per token per
 record; zero for choice-only studies, which generate nothing. **Retention is
 not retroactive**, so freeze raises a non-blocking advisory when a study
 declares a `jlensReadout` without it. `experiment set-jlens-readout …
---record-token-ids` (§3.3) sets it with the readout.
+--keep-tokens` (§3.3) sets it with the readout.
 
 `probe` reads ONE **condition's** prompt at every (armed layer × position) in a
 single forward pass. `--variant <runDir>/<agent>.json` supplies the agent (its

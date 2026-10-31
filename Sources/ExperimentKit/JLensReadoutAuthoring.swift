@@ -464,7 +464,7 @@ public enum JLensReadoutAuthoring {
                 if case .number(let n)? = declared[field] { parts += [flag, "\(Int(n))"] }
             }
         }
-        if recordTokenIDs { parts.append("--record-token-ids") }
+        if recordTokenIDs { parts.append("--keep-tokens") }
         return parts.joined(separator: " ")
     }
 
@@ -542,7 +542,7 @@ public enum JLensReadoutAuthoring {
         if !manifest.recordTokenIDs {
             notes.append(
                 "recordTokenIDs is off, so the exact sampled tokens are not kept and the "
-                    + "run cannot be replayed exactly later. Add --record-token-ids to keep "
+                    + "run cannot be replayed exactly later. Add --keep-tokens to keep "
                     + "them.")
         }
         return notes
@@ -587,7 +587,7 @@ public enum JLensReadoutAuthoring {
         "--lens-sha256", "--lens-model", "--fitted-layers", "--layers", "--top-k",
         "--top-k-layers", "--watchlist", "--qualification", "--tokenizer-hash",
         "--max-armed-layers", "--max-observations", "--max-trace-bytes",
-        "--max-full-vocab-projections", "--no-companion", "--record-token-ids",
+        "--max-full-vocab-projections", "--no-companion", "--keep-tokens",
     ]
 
     /// `experiment set-jlens-readout`, from the strict parser's `args` (the
@@ -673,7 +673,7 @@ public enum JLensReadoutAuthoring {
         if let text = values["--tokenizer-hash"] {
             settings.tokenizerHash = try parseSHA256(text, flag: "--tokenizer-hash", name: name)
         }
-        settings.recordTokenIDs = switches.contains("--record-token-ids")
+        settings.recordTokenIDs = switches.contains("--keep-tokens")
         try checkSettings(settings, name: name)
 
         // The lens pins: typed here, read from the lens record on the client.

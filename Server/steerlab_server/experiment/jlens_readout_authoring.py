@@ -349,7 +349,7 @@ def mac_command(name: str, block: dict, *, lens_model: str,
         if field in (block.get("budget") or {}):
             parts += [flag, str(block["budget"][field])]
     if record_token_ids:
-        parts.append("--record-token-ids")
+        parts.append("--keep-tokens")
     return " ".join(parts)
 
 
@@ -552,7 +552,7 @@ def notes_for(document: dict, block: dict, *, tier: str | None = None,
         notes.append(
             "recordTokenIDs is off, so the exact sampled tokens are not kept "
             "and the run cannot be replayed exactly later. Add "
-            "--record-token-ids to keep them.")
+            "--keep-tokens to keep them.")
     return notes
 
 

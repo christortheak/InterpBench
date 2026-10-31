@@ -409,7 +409,7 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
                                     "--tokenizer-hash", "--max-armed-layers",
                                     "--max-observations", "--max-trace-bytes",
                                     "--max-full-vocab-projections"}),
-             boolean_flags=frozenset({"--no-companion", "--record-token-ids",
+             boolean_flags=frozenset({"--no-companion", "--keep-tokens",
                                       "--dry-run"})),
     # The EVALUATION SAMPLING DESIGN (review round 12, finding 4). A verb for
     # the same reason as the two above: not a field assignment. It takes the
@@ -1348,7 +1348,7 @@ _JLENS_READOUT_SETTINGS = ("--layers", "--top-k", "--top-k-layers",
                            "--watchlist", "--qualification", "--tokenizer-hash",
                            "--max-armed-layers", "--max-observations",
                            "--max-trace-bytes", "--max-full-vocab-projections",
-                           "--no-companion", "--record-token-ids")
+                           "--no-companion", "--keep-tokens")
 
 #: How a binding readout ceiling reads in a sentence.
 _JLENS_CEILING_WORDS = {"maxFullVocabProjections": "full-vocabulary projections",
@@ -1389,7 +1389,7 @@ def _jlens_readout_settings(invocation: Invocation, name: str):
         tokenizer_hash=(readout.parse_sha256(invocation.one("--tokenizer-hash"),
                                              "--tokenizer-hash", name=name)
                         if given("--tokenizer-hash") else None),
-        record_token_ids=invocation.has("--record-token-ids"))
+        record_token_ids=invocation.has("--keep-tokens"))
     readout.check_settings(settings, name=name)
     return settings
 

@@ -20,7 +20,7 @@ migration that rewrites frozen bytes.
   scores (`--watchlist`, up to 64 token ids) at the chosen source layers, at
   the final prompt position and every generated token. The logit-lens
   companion rides along unless `--no-companion`, `--qualification` pins a
-  passing qualification, `--record-token-ids` keeps the exact sampled tokens,
+  passing qualification, `--keep-tokens` keeps the exact sampled tokens,
   and `""` as the lens id clears the readout. The verb prices one response at
   the study's token cap the way run start does and says how many responses
   the budget covers: at a 2,048-token cap, top-50 at 8 layers with the

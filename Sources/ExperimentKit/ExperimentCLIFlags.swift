@@ -786,7 +786,7 @@ public enum ExperimentCLIParser {
                 + "lens named by --lens-sha256, --lens-model, and "
                 + "--fitted-layers, and priced against the readout budget at "
                 + "the study's token cap. \"\" as the lens id clears it.",
-            booleanFlags: ["--no-companion", "--record-token-ids", "--dry-run"],
+            booleanFlags: ["--no-companion", "--keep-tokens", "--dry-run"],
             valueFlags: [
                 "--lens-sha256", "--lens-model", "--fitted-layers", "--layers",
                 "--top-k", "--top-k-layers", "--watchlist", "--qualification",

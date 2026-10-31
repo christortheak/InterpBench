@@ -130,14 +130,14 @@ refused — a scope selecting zero rows would produce zero records.
 [--top-k-layers <l,…>] [--watchlist <token-id,…>] [--no-companion]
 [--qualification <id>] [--tokenizer-hash <sha256>] [--max-armed-layers <n>]
 [--max-observations <n>] [--max-trace-bytes <bytes>]
-[--max-full-vocab-projections <n>] [--record-token-ids] [--dry-run]`** —
+[--max-full-vocab-projections <n>] [--keep-tokens] [--dry-run]`** —
 declares the study's J-lens run readout on a draft (`jlensReadout`): the
 top-k tokens and the watched tokens' scores at the chosen source layers, at
 the final prompt position and every generated token, read during the study's
 own generations. `""` as the lens id clears it. Layers take ranges (`20-24`);
 `--top-k` is 0 to 50 and the watchlist holds at most 64 token ids. The
 logit-lens companion (the same readout without the lens) rides along unless
-`--no-companion`. `--record-token-ids` also keeps the exact sampled tokens, so
+`--no-companion`. `--keep-tokens` also keeps the exact sampled tokens, so
 the run can be replayed exactly. Only the Python engine records a readout.
 
 The verb prices one response at the study's token cap, as the engine does at

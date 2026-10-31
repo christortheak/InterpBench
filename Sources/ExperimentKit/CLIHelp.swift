@@ -462,7 +462,7 @@ public enum CLIFlagVocabulary {
         "experiment set-jlens-readout --max-full-vocab-projections":
             "Raise or lower the whole-study compute ceiling (engine default "
             + "200,000 full-vocabulary projections).",
-        "experiment set-jlens-readout --record-token-ids":
+        "experiment set-jlens-readout --keep-tokens":
             "Also set recordTokenIDs, so the exact sampled tokens are kept and "
             + "the run can be replayed exactly.",
         "experiment set-jlens-readout --dry-run":
