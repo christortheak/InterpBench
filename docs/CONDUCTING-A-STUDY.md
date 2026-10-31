@@ -1092,16 +1092,31 @@ promotion under this gate as "monotone in the observed direction".
 ## 6. Measured-run policy: which substrate supports which claim
 
 **Sampling on either engine.** Local Swift/MLX and Python measured runs use
-record-local seeded streams. Positive-temperature runs with `samplesPerItem > 1`
-derive seeds from study hash, condition, prompt ID and sample index; otherwise
-ordinary runs enumerate the declared seeds. Multi-agent turns deliberately use
-an empty condition in that derivation, sharing streams across conditions.
+record-local seeded streams. Above temperature 0, a study that declares
+`seedPolicy` `derivedSHA256` (required when `samplesPerItem > 1`) runs each item
+`samplesPerItem` times, at any count including 1, and derives each record's
+seed from study hash, condition, prompt ID and sample index; otherwise ordinary
+runs enumerate the declared seeds, one record per listed seed, with the same
+seeds for every item and arm. Derived seeds include the condition, so arms draw
+distinct streams for the same item: the design is paired at the prompt level,
+not by common random numbers. Multi-agent turns deliberately use an empty
+condition in that derivation, sharing streams across conditions.
 Greedy generation makes no RNG draws and stamps its seed inert; repeated greedy
 seeds are not independent observations. Equal seeds across backends do not
 promise equal tokens, and GPU repeatability depends on the exact model and
 runtime configuration. Preserve the sampling provenance and consult
 [the qualification record](TECHNIQUE-PARITY-QUALIFICATION.md) for measured scope.
 For categorical outcomes, answer-token/logprob instruments remain temperature-free.
+
+**Choose the seed policy for the design.** Under the fixed seed list, two items
+with the same text in the same arm draw the same random stream and give the
+same answer. A design that draws items with replacement, where each item is one
+simulated respondent and a text can recur under a different prompt ID, should
+declare `derivedSHA256`: the prompt ID is part of each seed, so the repeats are
+independent draws. Earlier releases reused the fixed list for a declared
+`derivedSHA256` at `samplesPerItem` 1 (see the changelog). Their records stamp
+`seedPolicy: manifestSeeds`, so check that stamp before treating an older
+run's repeats as independent.
 
 **Vectors do not transfer between engines.** CUDA/HF activations do not
 byte-match MLX/Metal, so a study's vectors must be **re-extracted and

@@ -355,10 +355,14 @@ public enum CLIFlagVocabulary {
             + "--sample-per-condition, and is stamped into the coding report "
             + "and the run config beside the derivation rule.",
         "--samples-per-item":
-            "Stochastic samples per (condition, prompt) — 1 clears to the "
-            + "deterministic default.",
+            "Responses per (condition, prompt) under the derivedSHA256 seed "
+            + "policy (the fixed list runs one per listed seed) — 1 clears to "
+            + "the default.",
         "--seed-policy":
-            "How per-record sampling seeds are derived (\"\" clears the "
+            "How per-record sampling seeds are chosen above temperature 0: "
+            + "derivedSHA256 derives one per (condition, prompt, sample) for "
+            + "samples-per-item samples, at any count; manifestSeeds (the "
+            + "default) runs each item once per listed seed (\"\" clears the "
             + "declaration).",
         "--seat":
             "Seat one agent artifact; repeat per seat. Unnamed seats stay baseline.",

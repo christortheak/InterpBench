@@ -103,18 +103,20 @@ enum StudyInfo {
         How many responses the run generates per (condition, prompt) pair, \
         and how randomness is seeded.
 
-        1 sample means deterministic 'greedy' decoding — the model always \
-        takes its most likely token, so the same prompt gives the same \
-        answer. More than 1 sample is a stochastic design: it needs \
-        temperature > 0. Both engines seed every record individually, so \
+        At temperature 0 decoding is deterministic ('greedy'): the model \
+        always takes its most likely token, so the same prompt gives the \
+        same answer. Above 0 every response is a random draw, even at 1 \
+        sample per item. More than 1 sample is a stochastic design: it \
+        needs temperature > 0. Both engines seed every record individually, so \
         any single response can be reproduced on the engine that produced \
         it; equal seeds on the Mac and on the server do not give equal \
         token draws, and repeatability is a per-backend measurement.
 
         Seed policy: the fixed seed list (engine term 'manifestSeeds', the \
-        default) reuses the study's declared seeds for every record; \
-        derived per record ('derivedSHA256') derives each record's seed \
-        from (condition, prompt, sample index), so samples differ but each \
+        default) runs every item once per listed seed, with the same seeds \
+        for every item and arm; derived per record ('derivedSHA256') runs \
+        every item samples-per-item times and derives each record's seed \
+        from (condition, prompt, sample index), so records differ but each \
         one is individually reproducible — required for samples per \
         item > 1.
 
@@ -127,20 +129,25 @@ enum StudyInfo {
         How each generated response gets its random seed when the \
         temperature is above 0. Both engines read this — this Mac and a \
         server alike. At temperature 0 decoding is greedy and no seed is \
-        used.
+        used, so the policy changes nothing there.
 
-        Derived per record (engine term 'derivedSHA256'): every \
+        Derived per record (engine term 'derivedSHA256'): each item runs \
+        samples-per-item times, at any count including 1, and every \
         (condition, prompt, sample) derives its own seed from those \
-        coordinates, so samples differ from each other but any single \
-        response can be reproduced exactly. The right choice whenever \
-        samples per item > 1 or temperature > 0 — and required for \
-        samples per item > 1.
+        coordinates. Responses differ from each other, two items with the \
+        same text but different IDs get different seeds, and any single \
+        response can be reproduced exactly. The seed list is not used. \
+        The condition is part of the derivation, so arms draw different \
+        random streams for the same item: they are paired by item, not by \
+        seed. The right choice whenever the temperature is above 0, and \
+        required for samples per item > 1.
 
         Fixed seed list ('manifestSeeds' — the default when nothing is \
-        declared): every record reuses the study's fixed seed list. \
-        Leaving the policy undeclared and declaring 'manifestSeeds' \
-        explicitly behave identically on both engines — the default IS \
-        the fixed list.
+        declared): each item runs once per listed seed, and every item and \
+        every arm reuses the same seeds. Two items with the same text \
+        therefore draw the same random stream. Leaving the policy \
+        undeclared and declaring 'manifestSeeds' explicitly behave \
+        identically on both engines — the default IS the fixed list.
         """
 
     static let promptMode = """

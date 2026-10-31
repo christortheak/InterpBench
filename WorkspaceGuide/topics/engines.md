@@ -3,10 +3,15 @@
 <!-- client: all -->
 
 **Sampling on either engine.** Local Swift/MLX and Python measured runs use
-record-local seeded streams. Positive-temperature runs with `samplesPerItem > 1`
-derive seeds from study hash, condition, prompt ID and sample index; otherwise
-ordinary runs enumerate the declared seeds. Multi-agent turns deliberately use
-an empty condition in that derivation, sharing streams across conditions.
+record-local seeded streams. Above temperature 0, a study that declares
+`seedPolicy` `derivedSHA256` (required when `samplesPerItem > 1`) runs each item
+`samplesPerItem` times, at any count including 1, and derives each record's
+seed from study hash, condition, prompt ID and sample index; otherwise ordinary
+runs enumerate the declared seeds, one record per listed seed, with the same
+seeds for every item and arm. Derived seeds include the condition, so arms draw
+distinct streams for the same item: the design is paired at the prompt level,
+not by common random numbers. Multi-agent turns deliberately use an empty
+condition in that derivation, sharing streams across conditions.
 Greedy generation makes no RNG draws and stamps its seed inert; repeated greedy
 seeds are not independent observations. Equal seeds across backends do not
 promise equal tokens, and GPU repeatability depends on the exact model and

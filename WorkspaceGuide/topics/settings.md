@@ -21,7 +21,7 @@ verbs run for you, available alone, safe at any status.
 [--reasoning-effort off|on|low|medium|high|xhigh] [--reasoning-max-tokens <n>]`** —
 declares the generation protocol on a draft, merge-style: only the flags given
 move, `""` clears `--prompt-mode`/`--seed-policy`, and `--samples-per-item 1`
-clears to the deterministic default. The reasoning protocol replaced the
+clears to the default of one. The reasoning protocol replaced the
 Qwen-specific `qwenThinkingEnabled` boolean: a non-off effort renders the chat
 template in thinking mode and REQUIRES `--reasoning-max-tokens` (the reasoning
 block's own cap, counted up to `</think>`; `--max-tokens` is then the answer
@@ -35,7 +35,12 @@ never rewritten. A stochastic replication arm is `--samples-per-item 25
 --temperature 0.7 --max-tokens 1024 --seed-policy derivedSHA256` — legal to
 declare and run on either engine with scoped per-record seeds (`workspace guide engines`). The joint rules (`samplesPerItem > 1` needs `temperature > 0` and
 seedPolicy `derivedSHA256`) surface at `verify`, not here, so the fields can
-be declared one flag at a time.
+be declared one flag at a time. Above temperature 0, `derivedSHA256` runs each
+item `samplesPerItem` times, including once, with a seed per record; the fixed
+list (`manifestSeeds`, the default) runs each item once per listed seed. A
+`seedSettingNotUsed` advisory, here and at `verify`, says when a declared seed
+setting will not be read: `derivedSHA256` at temperature 0 (greedy, no seed),
+or beside a seed list of more than one entry.
 
 **`set-exclusions <name> <rule>[,…] [--endpoint <key>] [--min <x>]
 [--max <x>]`** — declares the record-exclusion rules analysis applies
@@ -77,6 +82,12 @@ stochastic replication arm is `--set samplesPerItem=25 --set temperature=0.7
 run with scoped per-record seeds (`workspace guide engines`). The joint rules
 (`samplesPerItem > 1` needs `temperature > 0` and seedPolicy `derivedSHA256`)
 surface at `verify`, not here, so the fields can be declared one at a time.
+Above temperature 0, `derivedSHA256` runs each item `samplesPerItem` times,
+including once, with a seed per record; the fixed list (`manifestSeeds`, the
+default) runs each item once per listed seed. A `seedSettingNotUsed`
+advisory, here and at `verify`, says when a declared seed setting will not be
+read: `derivedSHA256` at temperature 0 (greedy, no seed), or beside a seed
+list of more than one entry.
 
 Record-exclusion rules are the `exclusionRules` field (`failedAttentionCheck`,
 `unparseableEndpoint`, `outOfRange`); a malformed value refuses and names the
