@@ -1679,9 +1679,13 @@ released before this rule reused the fixed list for a declared
 `derivedSHA256` with `samplesPerItem` 1, and their records say so: they stamp
 `seedPolicy: manifestSeeds`. Resuming such a parked run on a release with the
 rule is refused (`manifestEpoch`) rather than mixing the two rules in one run,
-and both clients refuse to submit such a study to an engine whose
-capabilities lack `remoteStudy.declaredSeedPolicy`. Records stamp their
-`seed`, `seedPolicy`, and
+and so is merging shards whose records state two rules. A client refuses to
+submit such a study to an engine whose capabilities lack
+`remoteStudy.declaredSeedPolicy`: the composite `steerlab run`, the app, and a
+server-resident submission always check, while `runner submit` and
+`remote submit-bundle`, which name only a staged bundle, check only when this
+workspace holds the bundle's study under the same name and content hash, and
+otherwise submit unchecked. Records stamp their `seed`, `seedPolicy`, and
 `sampleIndex`, and a run that generates text writes `sampling-provenance.json`
 beside them. Top-p and top-k are not study settings: the MLX engine samples
 from the full temperature-scaled distribution (top-p 1, no top-k, recorded in
