@@ -88,6 +88,43 @@ instruments apply to on a draft, pinning the row set they select
 instrument for `sampledText`. Declaring formats no pinned item carries is
 refused — a scope selecting zero rows would produce zero records.
 
+**`set-jlens-readout <name> <lens-id> --layers <l,…> [--top-k <k>]
+[--top-k-layers <l,…>] [--watchlist <token-id,…>] [--no-companion]
+[--qualification <id>] [--tokenizer-hash <sha256>] [--max-armed-layers <n>]
+[--max-observations <n>] [--max-trace-bytes <bytes>]
+[--max-full-vocab-projections <n>] [--record-token-ids] [--dry-run]`** —
+declares the study's J-lens run readout on a draft (`jlensReadout`): the
+top-k tokens and the watched tokens' scores at the chosen source layers, at
+the final prompt position and every generated token, read during the study's
+own generations. `""` as the lens id clears it. Layers take ranges (`20-24`);
+`--top-k` is 0 to 50 and the watchlist holds at most 64 token ids. The
+logit-lens companion (the same readout without the lens) rides along unless
+`--no-companion`. `--record-token-ids` also keeps the exact sampled tokens, so
+the run can be replayed exactly. Only the Python engine records a readout.
+
+The verb prices one response at the study's token cap, as the engine does at
+run start, and says how many responses the declared budget covers. At a
+2,048-token cap, top-50 at 8 layers with the companion costs 32,768
+full-vocabulary projections and about 41 MB of trace per response, so the
+default budget covers 6 responses. Run start refuses a study with more
+responses than that (conditions × items × samples), and the verb refuses a
+readout that cannot fit even one. The `--max-…` flags declare a different
+ceiling; each declared ceiling is pinned with the readout.
+
+Every pin is checked: the lens must be imported and fitted on the study's
+model, every layer must be one the lens fitted, and the pins include the
+tokenizer and configuration hashes run start recomputes. Freeze also needs a
+pinned passing qualification, a pinned model revision and dtype, and an
+evidence-tier lens.
+
+This client reads the pins itself: the lens's bytes and fitted layers from
+`runs/jlens-lenses/<lens-id>/lens.json`, the tokenizer hash from the study
+model's files in this machine's model cache (or `--tokenizer-hash` when the
+model is not installed here), and the newest passing qualification for the
+study's runtime when `--qualification` is not given. `--dry-run` writes
+nothing and reports the pins in `result.pins`, with the Mac command line's
+spelling of the same declaration in `result.macCommand`.
+
 **`set-evaluation-sampling <name> <n> <seed>`** — declares the study's
 EVALUATION SAMPLING DESIGN on a draft: how many records per condition the
 judged coding preregistered, and the seed that draws them

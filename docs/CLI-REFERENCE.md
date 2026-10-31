@@ -157,7 +157,7 @@ engines share (§7.7's vocabulary, §4 of the contracts document) — same state
 same exit codes, same `error.code` / `error.repairAction`. Verb families:
 `experiment` (create, attach, detach, declare-condition, remove-condition,
 set-sweep-grid, set-protocol, set-system-prompt, set-parser,
-set-instrument-scope, set-evaluation-sampling, pin-revision,
+set-instrument-scope, set-jlens-readout, set-evaluation-sampling, pin-revision,
 set-style-taxonomy, pin-sae-candidates, duplicate, rename, delete,
 verify, freeze, list, inspect, import-prompts, inspect-artifact, attach-artifact,
 pin-rubric, acknowledge-custom-code — show a study's intervention-policy custom code and,
@@ -1061,6 +1061,7 @@ steerlab-cli experiment set-exclusions <name> <rule>[,…] [--endpoint <key>] [-
 steerlab-cli experiment set-system-prompt <name> <text>
 steerlab-cli experiment set-parser <name> <parser>
 steerlab-cli experiment set-instrument-scope <name> <responseFormat>[,…]
+steerlab-cli experiment set-jlens-readout <name> <lens-id> [--dry-run] [--fitted-layers <l,l-l,…>] [--layers <l,l-l,…>] [--lens-model <model-id>[@<revision>]] [--lens-sha256 <sha256>] [--max-armed-layers <n>] [--max-full-vocab-projections <n>] [--max-observations <n>] [--max-trace-bytes <bytes>] [--no-companion] [--qualification <qualification-id>] [--record-token-ids] [--tokenizer-hash <sha256>] [--top-k <k>] [--top-k-layers <l,l-l,…>] [--watchlist <token-id,…>]
 steerlab-cli experiment set-evaluation-sampling <name> <n> <seed>
 steerlab-cli experiment set-primary-outcome <name> <outcome>
 steerlab-cli experiment set-style-taxonomy <name> <prompts/taxonomies/file.json>
@@ -1095,6 +1096,7 @@ steerlab-cli experiment delete <name> [--manifest-sha256 <sha256>] [--yes]
 | `experiment set-system-prompt` | Declare the study's system prompt — the deployment frame every arm is read under. Inserted as a genuine system turn where the model's chat template has a system role; prepended to the first user turn where it does not (e.g. Gemma-family); prepended to the prompt text under rawCompletion. An agent arm reads under its persona then this frame. "" clears the declaration. |
 | `experiment set-parser` | Declare the numeric-endpoint parser from prompts/parsers/parser-registry.json and pin that registry's hash ("" clears both). |
 | `experiment set-instrument-scope` | Declare which response formats the option-consuming outcome instruments apply to (label, json, freeText), pinning the row set they select; "" clears the declaration. |
+| `experiment set-jlens-readout` | Declare the study's J-lens run readout: top-k and watched-token readings at the chosen layers, pinned to the lens named by --lens-sha256, --lens-model, and --fitted-layers, and priced against the readout budget at the study's token cap. "" as the lens id clears it. |
 | `experiment set-evaluation-sampling` | Declare the evaluate subsample this study preregistered — n records per condition and the seed that draws them — so the design travels in the manifest and lands in every run's snapshot. evaluate then needs no flags, and a flag that disagrees with the declaration refuses. "" clears the declaration. |
 | `experiment set-primary-outcome` | Declare the outcome this study is about, so every results summary leads with it and says it was declared by the researcher. An outcome the study's settings cannot produce is refused, with the list of the ones they can. "" clears the declaration; summaries then lead by the default order. |
 | `experiment set-style-taxonomy` | Pin the reasoning-style taxonomy and its hash. |
@@ -1413,6 +1415,57 @@ label rows, where the other named repair (`set-instruments … sampledText`)
 drops the instrument entirely. A scope selecting **zero** rows is refused at
 the declaration rather than producing zero records at the run, and an
 out-of-vocabulary format exits `64`.
+
+**`set-jlens-readout <name> <lens-id>`** — the study's **J-lens run readout**
+(`jlensReadout`): top-k and watched-token readings at the chosen source layers
+(`--layers`, ranges such as `20-24` accepted), at the final prompt position and
+every generated token, recorded during the study's own generations on the
+Python engine. `--top-k` is 0 to 50, `--top-k-layers` narrows it to some of
+the armed layers, `--watchlist` holds at most 64 token ids, the logit-lens
+companion rides along unless `--no-companion`, `--qualification` pins a
+passing qualification, and `--record-token-ids` also sets `recordTokenIDs`.
+`""` as the lens id clears the readout and leaves `recordTokenIDs` alone. The
+block written is the one both clients write byte for byte (a cross-client test
+holds them together); absent settings are absent keys, never `null`.
+
+*Pins.* `lensSHA256` and the fitted layers come from the lens record,
+`tokenizerHash` from the study model's tokenizer files, and `configHash` is
+the hash run start recomputes over the declared choices, the conventions, the
+lens bytes, the tokenizer, the qualification, and the full budget. This
+command line never reads a lens record (server-only by rule: the record is the
+Python engine's schema, it usually lives in the engine's root, and the
+tokenizer and qualification pins are properties of the runtime), so it takes
+the lens pins as flags — `--lens-sha256`, `--lens-model <id>[@<revision>]`,
+`--fitted-layers` — and the optional `--tokenizer-hash`. The client's
+`--dry-run` prints every pin with this command's exact spelling
+(`result.macCommand`). Without a tokenizer hash, `tokenizerHash` and
+`configHash` are not written (run start hashes the tokenizer it finds, so a
+hash without one could never match): the study runs as exploratory and freeze
+refuses. The client pins the newest passing qualification for the study's
+runtime when none is named; this command line pins only what `--qualification`
+names, and a run of a qualified lens with none pinned refuses on the
+configuration hash.
+
+*Budget.* The verb prices one response at the study's token cap with the
+engine's own arithmetic and reports `result.estimate`: the per-response
+observations, full-vocabulary projections, and trace bytes, the effective
+ceilings, and `responsesAllowed` with the ceiling that binds (`limitedBy`).
+At a 2,048-token cap, top-50 at 8 layers with the companion costs 32,768
+projections and about 41 MB of trace per response, so the defaults (200,000
+projections, 2 GiB) cover 6 responses; run start refuses a study with more
+(conditions × items × samples). `--max-armed-layers`, `--max-observations`,
+`--max-trace-bytes`, and `--max-full-vocab-projections` declare other ceilings,
+which are pinned in the block and covered by `configHash`. A readout that
+cannot fit even one response is refused (`64`) and names the flags.
+
+*Refusals.* A frozen study answers `statusImmutable` (`65`) with the duplicate
+repair, before anything else is checked. A lens that is not imported, or has no
+converted artifact, is `missingPrerequisite` (`65`, client); a lens fitted on
+another model or revision is `artifactPin` (`65`). An unfitted layer, an
+out-of-range `--top-k` or watchlist, a qualification that does not pass for
+the study's runtime, a tokenizer hash that disagrees with the local cache, a
+missing lens pin (this command line), and a clear with settings are malformed
+(`64`). `result.notes` says what freeze will still need.
 
 **`set-evaluation-sampling <name> <n> <seed>`** — the study's **evaluation
 sampling design**: how many records per condition the judged coding
@@ -2136,7 +2189,10 @@ otherwise discover at the end of authoring, or after the run:
 
 The pin list is duplicated across the engines (they cannot import each other);
 a test on each side asserts it, so a drifting copy cannot let the Mac call a
-study ready for a freeze the server refuses.
+study ready for a freeze the server refuses. `experiment set-jlens-readout`
+(§3.3) writes the block; on a study that pins its revision and dtype, with the
+tokenizer hash, a qualification, and `--record-token-ids`, it reaches
+`present`.
 
 **`panel check`** — hard validation first (an invalid panel is unrunnable),
 then advisories. Advisories do *not* block a run — they are the things that
@@ -4632,7 +4688,8 @@ needs the same sequence, and the id count is the only way to tell a generation
 that stopped on EOS from one that hit `maxTokens`. Costs ~7 bytes per token per
 record; zero for choice-only studies, which generate nothing. **Retention is
 not retroactive**, so freeze raises a non-blocking advisory when a study
-declares a `jlensReadout` without it.
+declares a `jlensReadout` without it. `experiment set-jlens-readout …
+--record-token-ids` (§3.3) sets it with the readout.
 
 `probe` reads ONE **condition's** prompt at every (armed layer × position) in a
 single forward pass. `--variant <runDir>/<agent>.json` supplies the agent (its
