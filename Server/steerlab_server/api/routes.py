@@ -2805,29 +2805,6 @@ def build_router(state: ServiceState) -> APIRouter:
         name = os.path.basename(vector_ref)
         _safe_name(name)
 
-        # HOW the scaffold reaches the model. Absent = raw, byte-identically
-        # to every reader fitted before the option existed; a declaration is
-        # parsed HERE so a malformed one is a 400, never a failed job.
-        try:
-            fit_rendering = extraction_rendering.parse_declaration(
-                body.get("extractionRendering"))
-        except extraction_rendering.ExtractionRenderingError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-
-        # The unsupervised T+/T− orientation draw's seed. Stamped into every
-        # artifact, so a fit is reproducible from the artifact alone.
-        orientation_seed = body.get("orientationSeed")
-        if orientation_seed is None:
-            orientation_seed = repe_reader.DEFAULT_ORIENTATION_SEED
-        elif (not isinstance(orientation_seed, int)
-                or isinstance(orientation_seed, bool)
-                or orientation_seed < 0):
-            raise HTTPException(
-                status_code=400,
-                detail="orientationSeed must be a non-negative integer — it is "
-                       "stamped into the artifact so the unsupervised "
-                       "template-pair orientation draw can be reproduced")
-
         layers = body.get("layers")
         if layers is not None:
             if not isinstance(layers, list) or not all(isinstance(x, int) for x in layers):

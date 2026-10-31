@@ -572,6 +572,42 @@ def test_derivation_reads_the_checkpoint_and_stays_open_on_a_controller(client, 
     assert _wait_for_job(client, resp.json()["jobId"])["status"] == "succeeded"
 
 
+def test_support_submits_a_durable_job_and_reads_the_named_vector(client, tmp_path, monkeypatch):
+    """The route reached a name it never imported on every request, so it
+    answered 500 before any job. Driven end to end here, with the owner
+    stubbed, it submits the job and hands the owner exactly what was named."""
+    from steerlab_server.jlens import decompose
+
+    seen = {}
+    rec = _import_a_lens(tmp_path)
+    monkeypatch.setattr(decompose, "decompose", lambda **k: seen.update(k) or {"layers": []})
+    monkeypatch.setattr(decompose, "write_readout", lambda readout: "runs/support-test")
+    (tmp_path / "ws" / "runs" / "v").mkdir(parents=True)
+    resp = client.post("/api/jlens/support", json={
+        "lensID": rec.lensID, "vectorID": "runs/v/concept", "layers": [1, 2], "budget": 4})
+    assert resp.status_code == 200, resp.json()
+    job = _wait_for_job(client, resp.json()["jobId"])
+    assert job["status"] == "succeeded", job
+    assert job["result"]["runDirectory"] == "runs/support-test"
+    assert (seen["lens_id"], seen["vector_name"], seen["layers"], seen["budget"]) == (
+        rec.lensID, "concept", [1, 2], 4)
+    assert os.path.realpath(seen["vector_directory"]) == os.path.realpath(tmp_path / "ws" / "runs" / "v")
+
+
+@pytest.mark.parametrize("body, status", [
+    ({}, 400),
+    ({"vectorID": "runs/v/concept"}, 400),
+    ({"lensID": "x", "vectorID": "runs/v/concept", "budget": 0}, 400),
+    ({"lensID": "x", "vectorID": "runs/v/concept", "layers": "1"}, 400),
+    ({"lensID": "not-imported", "vectorID": "runs/v/concept"}, 404),
+])
+def test_support_refuses_bad_requests_before_any_job(client, tmp_path, body, status):
+    (tmp_path / "ws" / "runs" / "v").mkdir(parents=True)
+    resp = client.post("/api/jlens/support", json=body)
+    assert resp.status_code == status, resp.json()
+    assert "jobId" not in resp.json()
+
+
 def test_qualify_contains_caller_named_file_inputs(client, tmp_path):
     """`prompts` and `battery` are opened by the qualification path. A
     bearer-token holder must not be able to make the server read arbitrary

@@ -48,6 +48,11 @@ migration that rewrites frozen bytes.
   operation does their work on a GPU node yet, so their repair says so and
   names the engine command (`steerlab-server jlens qualify` or `jlens g0`) to
   run inside a GPU allocation.
+- **Reading a concept vector back through a J-lens works over HTTP again.**
+  `POST /api/jlens/support` answered every request with a server error before
+  starting a job: a reader-fit validation block had been copied into it by
+  mistake and named code the route never imports. The block is removed; the
+  route's own settings (`layers`, `budget`) are unchanged.
 
 ## [0.9.18] — 2026-10-25
 
