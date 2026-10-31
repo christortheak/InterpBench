@@ -327,7 +327,7 @@ class ProbeSession:
     tokens, and the directions — and, once the first prompt is read, the
     readout itself. Building the readout is the fixed cost: it re-hashes the
     whole converted lens file and moves every armed Jacobian to the device in
-    float32 (about 7.3 GB for 63 layers at d=5376). A session pays it once,
+    float32 (about 6.6 GB for 63 layers at hidden width 5120). A session pays it once,
     however many prompts it reads; :func:`probe` is a session of one.
 
     Nothing here changes what a prompt's numbers are. Every per-prompt step —

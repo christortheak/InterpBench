@@ -18,8 +18,8 @@ migration that rewrites frozen bytes.
   its armed Jacobians are placed on the GPU once, however many prompts there
   are. Before, the only route was the one-prompt probe, which loads the model
   in the serving process, so a cluster run meant an ad hoc job that paid the
-  lens hash and the Jacobian transfer (about 7 GB for 63 layers of a 27B
-  model) on every prompt, with the results copied home by hand. The prompt
+  lens hash and the Jacobian transfer (about 6.6 GB for 63 layers at hidden
+  width 5120) on every prompt, with the results copied home by hand. The prompt
   set is a pinned JSONL file (an id, the text, and optional labels such as a
   condition), and the request takes the probe's settings plus an agent,
   prompt mode, and system prompt; the agent's vectors, adapter, and neutral

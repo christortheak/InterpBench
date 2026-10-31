@@ -65,22 +65,28 @@ _STORED_DTYPE_BYTES = {'bfloat16': 2, 'float16': 2, 'float32': 4}
 #: both at ``ASSUMED_BANDWIDTH``; the forward pass runs at ``ASSUMED_FLOPS``;
 #: the converted lens is read twice (its hash, then its layers) at
 #: ``ASSUMED_DISK_RATE``. The walltime rule's threefold margin then covers an
-#: effective bandwidth down to about a third of the assumed one.
+#: effective bandwidth down to about a third of the assumed one. The plan
+#: takes the hidden size and vocabulary from the model's own cached config,
+#: never from these notes; without them it states no walltime estimate.
 #:
 #: Calibration point, one recorded run on an A100-SXM4-80GB: a 27B hybrid
-#: model in bfloat16 (hidden 5120, an output head of about 1.56 GB), all 63
-#: source layers, topK 20 with the companion, chat rendering, no agent, 12
+#: model in bfloat16, hidden 5120, all 63 source layers (float32 Jacobians of
+#: about 6.6 GB), topK 20 with the companion, chat rendering, no agent, 12
 #: prompts of 324 to 508 tokens (5,098 in all, 642,348 projections), read by
-#: calling the single-prompt probe once per prompt. The model load took 306 s
-#: and the prompts 2,347.5 s, about 20 s of each call being the lens re-hash
-#: and Jacobian transfer a batch pays once, and about 2.5 ms per projection
-#: (roughly 650 GB/s of effective head reads). At 500 GB/s this formula gave
-#: 2,138 s, below the measured 2,347.5 s, so the allowance is 450 GB/s: it
-#: gives about 2,368 s, and the default walltime of 2:30:00 is 3.4 times the
-#: measured job (3.7 times what a batch, paying the fixed cost once, needs).
+#: calling the single-prompt probe once per prompt. Its tokenizer's highest id
+#: is 248,076, so the output head has at least 248,077 rows, about 2.54 GB in
+#: bfloat16; the exact padded vocabulary is not recorded here, and 248,077 is
+#: the lower bound used. The model load took 306 s and the prompts 2,347.5 s:
+#: about 20 s of each call was the lens re-hash and Jacobian transfer a batch
+#: pays once, and about 2.5 ms each projection (roughly 1,000 GB/s of head
+#: reads per projection, about 700 GB/s over all the probing). With the true
+#: head this formula gave 3,403 s at 500 GB/s and 3,773 s at 450 GB/s, whose
+#: default walltimes (3:30:00 and 3:45:00) are 4.7 and 5.1 times the measured
+#: 2,653.5 s job. At 650 GB/s it gives about 2,634 s, 1.12 times the measured
+#: probing, and a default walltime of 2:45:00, 3.7 times the measured job.
 #: The forward pass and per-cell top-k work are not modeled separately; on
 #: that run they sit inside the per-projection allowance.
-ASSUMED_BANDWIDTH = 450e9
+ASSUMED_BANDWIDTH = 650e9
 ASSUMED_FLOPS = 50e12
 ASSUMED_DISK_RATE = 200e6
 
@@ -487,14 +493,15 @@ def memory_estimate(config, geometry, d_model, layers, longest, basis='exact'):
                            'compared with a GPU.'}
     weights = int(geometry['checkpointBytes'] * run_bytes / stored_bytes)
     result.update(weightBytes=weights, runDtypeBytes=run_bytes, certainBytes=weights + jacobians)
-    needed = ('vocabSize', 'layers', 'keyValueHeads', 'headDim', 'attentionHeads', 'intermediateSize')
+    needed = ('vocabSize', 'hiddenSize', 'layers', 'keyValueHeads', 'headDim', 'attentionHeads', 'intermediateSize')
     missing = [key for key in needed if not geometry.get(key)] + ([] if longest else ['tokenCount'])
     if missing:
         return {**result, 'status': 'certainOnly', 'missing': missing,
                 'summary': f'At least {(weights + jacobians) / 1024**3:.1f} GiB of device memory: '
                            f'{weights / 1024**3:.1f} GiB of weights and {jacobians / 1024**3:.2f} GiB of float32 '
                            f'Jacobians. Activations are not estimated here ({", ".join(missing)} unavailable).'}
-    t, v, d = longest, geometry['vocabSize'], d_model
+    # Activations and the readout are the model's: its own config sizes them.
+    t, v, d = longest, geometry['vocabSize'], geometry['hiddenSize']
     activations = {
         # The forward pass's own logits, at the run dtype and upcast to float32.
         'logitsBytes': t * v * (run_bytes + 4),
@@ -550,13 +557,18 @@ def output_estimate(config, prompts, layers):
 
 
 def walltime_estimate(config, prompts, layers, d_model, geometry, lens_bytes):
-    """The stated formula, or None when the output head's size is unknown."""
+    """The stated formula, or None when the output head's size is unknown.
+
+    The head is sized from the model's own config (its vocabulary and hidden
+    size), never from an assumed constant; ``d_model`` is the lens's width,
+    which sizes the Jacobians it holds.
+    """
     geometry = geometry or {}
-    vocab = geometry.get('vocabSize')
-    if not vocab or any(p['tokenCount'] is None for p in prompts):
+    vocab, hidden = geometry.get('vocabSize'), geometry.get('hiddenSize')
+    if not vocab or not hidden or any(p['tokenCount'] is None for p in prompts):
         return None
     run_bytes, stored_bytes = _run_bytes(config, geometry)
-    head = vocab * d_model * run_bytes
+    head = vocab * hidden * run_bytes
     jacobian = d_model * d_model * 4
     projections = sum(p['projections'] for p in prompts)
     transports = projections // 2 + sum(p['scoredPositions'] for p in prompts) * len(layers) * 2 * len(config.directions or [])
@@ -565,12 +577,14 @@ def walltime_estimate(config, prompts, layers, d_model, geometry, lens_bytes):
     seconds = (projections * head + transports * jacobian) / ASSUMED_BANDWIDTH + forward + 2 * lens_bytes / ASSUMED_DISK_RATE
     return {'seconds': int(math.ceil(seconds)), 'units': projections, 'unit': 'one full-vocabulary projection',
             'prompts': len(prompts), 'transports': transports, 'outputHeadBytes': head,
-            'formula': 'projections × output-head bytes and transports × Jacobian bytes at 450 GB/s, the forward '
-                       'pass at 50 TFLOP/s, and the converted lens read twice at 200 MB/s',
-            'calibration': 'One recorded run on an A100-SXM4-80GB (a 27B model, 63 layers, 12 prompts, 642,348 '
-                           'projections) took 2,347.5 s of probing, about 2.5 ms per projection; this formula gives '
-                           'about 2,368 s for it. The walltime rule adds a threefold margin and the model load, '
-                           'which covers an effective memory bandwidth down to about 150 GB/s.',
+            'formula': 'projections × output-head bytes (vocabulary × hidden size × bytes per value, from the '
+                       "model's config) and transports × Jacobian bytes at 650 GB/s, the forward pass at "
+                       '50 TFLOP/s, and the converted lens read twice at 200 MB/s',
+            'calibration': 'One recorded run on an A100-SXM4-80GB (a 27B model with hidden 5120 and an output head '
+                           'of at least 248,077 rows, 63 layers, 12 prompts, 642,348 projections) took 2,347.5 s of '
+                           'probing, about 2.5 ms per projection; this formula gives about 2,634 s for it. The '
+                           'walltime rule adds a threefold margin and the model load, which covers an effective '
+                           'memory bandwidth down to about 220 GB/s.',
             'limitation': 'An allowance, not a measurement of this workload: slower storage, contention, or a '
                           'different attention kernel change the rate. The scheduler kills a job at its walltime; '
                           'request a longer one explicitly when in doubt, or a shorter one for a fast GPU.'}

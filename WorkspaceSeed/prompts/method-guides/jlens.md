@@ -658,7 +658,7 @@ Review states, before anything is submitted:
 - the expected output size and file count; and
 - a walltime allowance from a stated formula, checked against one recorded run
   on an 80 GB A100 (12 prompts through 63 layers of a 27B model: 2,347.5 s of
-  probing, estimated at about 2,370 s). Request a walltime explicitly to
+  probing, estimated at about 2,630 s). Request a walltime explicitly to
   override it.
 
 It refuses, with the repair, a prompt over the probe's ceiling of 200,000

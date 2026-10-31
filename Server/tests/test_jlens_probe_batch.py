@@ -386,7 +386,9 @@ def test_review_counts_projections_memory_output_and_walltime(workspace, tokeniz
     assert review["output"]["files"] == batch.RUN_FILES + batch.FILES_PER_PROMPT * len(PROMPTS)
     workload = review["walltimeEstimate"]
     assert workload["units"] == review["totalProjections"] and workload["seconds"] >= 0
-    assert "450 GB/s" in workload["formula"] and "not a measurement" in workload["limitation"]
+    assert "650 GB/s" in workload["formula"] and "not a measurement" in workload["limitation"]
+    # The head is sized from the model's config: vocabulary × hidden size, read in float32 here.
+    assert workload["outputHeadBytes"] == 256 * HIDDEN * 4
     assert "A100-SXM4-80GB" in workload["calibration"]
     # The estimate bounds what the run actually writes.
     result = batch.probe_batch(config, root=str(workspace), log=lambda *_: None, model=tiny_model())
@@ -397,12 +399,14 @@ def test_review_counts_projections_memory_output_and_walltime(workspace, tokeniz
         assert planned["outputBytes"] >= written["bytes"]
 
 
-def test_the_walltime_formula_covers_its_recorded_calibration_run():
-    """One recorded A100-SXM4-80GB run: a 27B model (hidden 5120, a 1.56 GB
-    bfloat16 output head), 63 layers, topK 20, 12 prompts. The model load took
-    306 s and the probing 2,347.5 s. The estimate must not fall below the
-    measurement, and the default walltime must stay within about four times
-    the measured job."""
+@pytest.mark.parametrize("vocabulary", [248_077, 248_320])
+def test_the_walltime_formula_covers_its_recorded_calibration_run(vocabulary):
+    """One recorded A100-SXM4-80GB run: a 27B model with hidden 5120 and an
+    output head of at least 248,077 rows (its tokenizer's highest id is
+    248,076; 248,320 is the likely padded config value), 63 layers, topK 20,
+    12 prompts. The model load took 306 s and the probing 2,347.5 s. The
+    estimate must not fall below the measurement, and the default walltime
+    must stay within about four times the measured job, at either size."""
     from steerlab_server.api import science_walltime
     tokens = [324, 373, 344, 393, 437, 488, 457, 508, 409, 458, 429, 478]
     config = batch.ProbeBatchConfig.from_dict({
@@ -410,15 +414,28 @@ def test_the_walltime_formula_covers_its_recorded_calibration_run():
         "prompts": {"path": "prompts.jsonl", "sha256": "0" * 64}, "allLayers": True,
         "topK": 20, "dtype": "bfloat16"})
     prompts = [{"tokenCount": t, "scoredPositions": t, "projections": t * 63 * 2} for t in tokens]
-    geometry = {"vocabSize": 151_936, "checkpointBytes": 54 * 10**9, "storedDtype": "bfloat16"}
+    geometry = {"vocabSize": vocabulary, "hiddenSize": 5120, "checkpointBytes": 54 * 10**9,
+                "storedDtype": "bfloat16"}
     workload = batch.walltime_estimate(config, prompts, list(range(63)), 5120, geometry,
                                        63 * 5120 * 5120 * 4)
     assert workload["units"] == 642_348
+    assert workload["outputHeadBytes"] == vocabulary * 5120 * 2  # about 2.54 GB
     measured_probing, measured_job = 2347.5, 306 + 2347.5
     assert workload["seconds"] >= measured_probing
     walltime = science_walltime.default_seconds(workload["seconds"], science_walltime.parse("24:00:00"))
     assert walltime <= 4 * measured_job
-    assert science_walltime.render(walltime) == "02:30:00"
+    assert science_walltime.render(walltime) == "02:45:00"
+
+
+def test_no_walltime_estimate_without_the_model_config_dimensions():
+    """The head is sized from the model's own config; without its vocabulary
+    or hidden size the plan states no estimate rather than assuming one."""
+    config = batch.ProbeBatchConfig.from_dict({
+        "modelID": "example/model", "revision": REVISION, "lensID": LENS_ID,
+        "prompts": {"path": "prompts.jsonl", "sha256": "0" * 64}, "topK": 20})
+    prompts = [{"tokenCount": 10, "scoredPositions": 10, "projections": 60}]
+    for geometry in ({"hiddenSize": 5120}, {"vocabSize": 248_077}, None):
+        assert batch.walltime_estimate(config, prompts, [0, 1, 2], 5120, geometry, 0) is None
 
 
 def test_review_lists_a_bounded_number_of_prompts_and_names_the_largest(workspace, tokenizer_cached, monkeypatch):
