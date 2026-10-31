@@ -1154,6 +1154,32 @@ def test_the_seed_policy_is_the_one_the_records_state(root):
     assert "seed policy manifestSeeds, as every response" in _read(result, "report.html")
 
 
+def test_a_mac_panel_at_temperature_zero_agrees_with_its_settings(root):
+    """The Mac engine stamps a panel's turns "greedy" at temperature 0 and
+    its config.json manifestSeeds (the Python engine's run_seed_policy says
+    the same). No seed is drawn either way, so the summary reads exactly as
+    it did before records took precedence over settings."""
+    manifest = _manifest(studyKind="multiAgent", temperature=0, samplesPerItem=2,
+                         multiAgentScenarioPath="prompts/panels/committee.json",
+                         multiAgentScenarioHash="e" * 64)
+    records = _panel_records()
+    for record in records:
+        record["seedPolicy"] = "greedy"
+    _write_run(root, manifest, records, engine="mac")
+    result = _export(root)
+    methods = _read(result, "methods.md")
+    assert "2 samples for each item; seed policy `manifestSeeds`" in methods
+    assert "greedy" not in methods.split("- Sampling settings:")[1].split("\n")[0]
+    assert "which is not the policy" not in methods
+    page = html.unescape(
+        study_results.render(results_export.read_results(str(root), STUDY)))
+    assert "seed policy manifestSeeds" in page and "which is not the policy" not in page
+    # The helper itself, on the shapes the review named.
+    assert results_export._seed_policy_text(
+        {"seedPolicy": "manifestSeeds"}, {}, {"seedPolicy": ["greedy"]}) \
+        == "seed policy `manifestSeeds`"
+
+
 def test_a_run_whose_records_mix_seed_policies_says_so(root):
     """A run resumed across a change of seed rule could hold both; the
     summary names both rather than one."""

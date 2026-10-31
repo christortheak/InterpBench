@@ -1447,6 +1447,11 @@ def _seed_policy_text(config, snapshot, observed, code=_code):
     stated = config.get("seedPolicy") or snapshot.get("seedPolicy")
     if not recorded:
         return f"seed policy {code(stated)}" if stated else None
+    if stated == "manifestSeeds" and set(recorded) == {"greedy"}:
+        # A Mac panel at temperature 0 stamps its turns "greedy" and its
+        # settings manifestSeeds, as the Python engine's run_seed_policy
+        # does: no seed is drawn either way, so the two agree.
+        return f"seed policy {code(stated)}"
     names = _and(code(policy) for policy in recorded)
     if len(recorded) > 1:
         text = (f"seed policies {names}: the responses' records do not all "
