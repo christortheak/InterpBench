@@ -1182,10 +1182,12 @@ public enum StudyDataReadiness {
             return DataRequirement(
                 id: id, title: title, kind: .jlensReadout, status: .optional,
                 path: path,
-                detail: "no J-lens readout declared — without one a run records "
-                    + "no readout at all. Authored on the SERVER (any published lens, "
-                    + "server-only); this engine renders and carries the block, "
-                    + "it never produces one.")
+                detail: "no J-lens readout declared, so a run records none. Arm one "
+                    + "with experiment set-jlens-readout \(manifest.name) <lens-id>: "
+                    + "its pins come from the Python engine's lens record, and the "
+                    + "Python client's --dry-run prints them with the matching "
+                    + "steerlab-cli command. Only the Python engine runs a readout "
+                    + "(any model with a published lens); this engine never does.")
         }
 
         func text(_ key: String) -> String? {

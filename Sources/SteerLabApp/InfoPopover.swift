@@ -599,9 +599,10 @@ enum StudyInfo {
             """
             What a run reads out of the residual stream WHILE it generates \
             — the J-lens readout block: which lens, which layers, which \
-            tokens are watched or ranked. Authored on the SERVER \
-            (server-only by rule; any model with a published lens); this app renders and \
-            carries it, and never produces one. Every field is pinned, \
+            tokens are watched or ranked. Declared with experiment \
+            set-jlens-readout, from pins in the Python engine's lens record. \
+            Only the Python engine runs a readout (server-only by rule; any \
+            model with a published lens); this app never does. Every field is pinned, \
             because a readout that cannot be reproduced cannot be cited — \
             and freeze additionally requires a PASSING qualification for \
             the study's exact model, revision, dtype and quantization, \
