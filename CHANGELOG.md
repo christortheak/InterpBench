@@ -43,7 +43,11 @@ migration that rewrites frozen bytes.
   text value gets a 400 before any job). On a cluster controller the route
   refuses before starting a job, with a typed refusal whose repair names
   `jlens-probe-batch`; it used to start a job that loaded the model on the
-  controller's CPU.
+  controller's CPU. `/api/jlens/qualify` and `/api/jlens/g0`, which also load
+  the model in the serving process, now refuse the same way. No managed
+  operation does their work on a GPU node yet, so their repair says so and
+  names the engine command (`steerlab-server jlens qualify` or `jlens g0`) to
+  run inside a GPU allocation.
 
 ## [0.9.18] — 2026-10-25
 

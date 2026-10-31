@@ -647,38 +647,58 @@ def _refuse_batch_only_verb(verb: str) -> None:
 JLENS_PROBE_BATCH_OPERATION = "jlens-probe-batch"
 
 
-def _refuse_controller_jlens_probe() -> None:
-    """Typed 409 for ``/api/jlens/probe`` on a controller, before any job.
+#: The J-lens routes that load the model in the serving process, what each
+#: one is called in a refusal, and the managed operation that does the same
+#: work on a GPU node (None where there is none yet), with the engine command
+#: to run inside a GPU allocation instead.
+_JLENS_MODEL_ROUTES = {
+    "probe": ("The J-lens probe", JLENS_PROBE_BATCH_OPERATION, "steerlab-server jlens probe"),
+    "qualify": ("J-lens qualification", None, "steerlab-server jlens qualify"),
+    "g0": ("The J-lens G0 gate", None, "steerlab-server jlens g0"),
+}
 
-    The same role gate the model-loading routes use. The probe is a durable
-    job that loads the model in THIS process, and it is deliberately not
-    forwarded to a GPU session: a session worker has no job subsystem. The
-    repair is the managed batch operation, which plans the GPU job, re-checks
-    its inputs on the node, and brings the run home under custody."""
+
+def _refuse_controller_jlens(route: str) -> None:
+    """Typed 409 for a model-loading J-lens route on a controller, before any job.
+
+    The same role gate the model-loading routes use. These routes run a
+    durable job that loads the model in THIS process, and they are
+    deliberately not forwarded to a GPU session: a session worker has no job
+    subsystem. Where a managed operation does the work on a GPU node, the
+    repair names it; where none exists, the repair says so and names the
+    engine command to run inside a GPU allocation."""
     if not _controller_blocks_resident_models():
         return
+    label, operation, command = _JLENS_MODEL_ROUTES[route]
     session_state = _registered_session_state()
     session_clause = (
         f" A GPU session is registered (state: {session_state}), but this "
         "route is not delegated to it: session workers have no job queue."
         if session_state is not None else "")
+    escape = ("STEERLAB_ALLOW_RESIDENT_MODELS=1 remains the manual escape "
+              "hatch for a server running inside an interactive GPU "
+              "allocation.")
+    if operation is not None:
+        repair = (
+            f"Submit the work as the managed operation {operation}: author "
+            f"it with science interview, draft, and publish, review "
+            f"science-plan on this controller, then science-submit, and bring "
+            f"the run home with science-export and science-fetch (remote "
+            f"science-* on the Mac command line, runner science-* on the "
+            f"Python client). {escape}")
+    else:
+        repair = (
+            f"No managed operation runs this on a GPU node yet. Run "
+            f"`{command}` inside a GPU allocation, with the workspace on "
+            f"storage that allocation can reach, or call this route on a "
+            f"server started there. {escape}")
     raise HTTPException(status_code=409, detail={
-        "code": "jlensProbeNeedsGPUJob",
-        "reason": "The J-lens probe loads the model in the server's own "
-                  "process, and this server is a cluster controller "
-                  "(role: controller), which never holds a model."
-                  + session_clause,
-        "repairAction": (
-            f"Submit the prompts as the managed operation "
-            f"{JLENS_PROBE_BATCH_OPERATION}: author it with science "
-            f"interview, draft, and publish, review science-plan on this "
-            f"controller, then science-submit, and bring the run home with "
-            f"science-export and science-fetch (remote science-* on the Mac "
-            f"command line, runner science-* on the Python client). "
-            f"STEERLAB_ALLOW_RESIDENT_MODELS=1 remains the manual escape "
-            f"hatch for a server running inside an interactive GPU "
-            f"allocation."),
-        "operation": JLENS_PROBE_BATCH_OPERATION,
+        "code": "jlensNeedsGPUProcess",
+        "reason": f"{label} loads the model in the server's own process, and "
+                  "this server is a cluster controller (role: controller), "
+                  "which never holds a model." + session_clause,
+        "repairAction": repair,
+        "operation": operation,
     })
 
 
@@ -2521,6 +2541,7 @@ def build_router(state: ServiceState) -> APIRouter:
         from ..jlens import qualification
         from ..jlens.schemas import JLensError
 
+        _refuse_controller_jlens("qualify")
         lens_id = str(body.get("lensID", "")).strip()
         model_id = str(body.get("modelID", "")).strip()
         if not lens_id or not model_id:
@@ -2589,6 +2610,7 @@ def build_router(state: ServiceState) -> APIRouter:
         from ..jlens import g0
         from ..jlens.schemas import JLensError
 
+        _refuse_controller_jlens("g0")
         model_id = str(body.get("modelID", "")).strip()
         if not model_id:
             raise HTTPException(status_code=400, detail="modelID is required")
@@ -2642,7 +2664,7 @@ def build_router(state: ServiceState) -> APIRouter:
         from ..jlens import importer, lens_store, probe as probe_mod
         from ..jlens.schemas import JLensError
 
-        _refuse_controller_jlens_probe()
+        _refuse_controller_jlens("probe")
         model_id = str(body.get("modelID", "")).strip()
         prompt = str(body.get("prompt", "")).strip()
         if not model_id or not prompt:

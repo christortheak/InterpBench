@@ -479,7 +479,7 @@ def test_a_controller_refuses_the_probe_and_names_the_batch_operation(
     resp = client.post("/api/jlens/probe", json=_probe_body())
     assert resp.status_code == 409
     detail = resp.json()["detail"]
-    assert detail["code"] == "jlensProbeNeedsGPUJob"
+    assert detail["code"] == "jlensNeedsGPUProcess"
     assert detail["operation"] == "jlens-probe-batch"
     assert "jlens-probe-batch" in detail["repairAction"]
     assert "science-plan" in detail["repairAction"]
@@ -499,6 +499,75 @@ def test_the_resident_model_escape_hatch_still_admits_the_probe(
     monkeypatch.setenv("STEERLAB_SERVER_ROLE", "controller")
     monkeypatch.setenv("STEERLAB_ALLOW_RESIDENT_MODELS", "1")
     resp = client.post("/api/jlens/probe", json=_probe_body())
+    assert resp.status_code == 200, resp.json()
+    assert _wait_for_job(client, resp.json()["jobId"])["status"] == "succeeded"
+
+
+def _stub_model_routes(monkeypatch):
+    """The owners of the other model-loading J-lens routes, stubbed so a
+    submitted job finishes at once."""
+    from steerlab_server.jlens import g0, qualification
+
+    monkeypatch.setattr(qualification, "qualify", lambda *a, **k: {
+        "qualificationID": "q-test", "passed": True, "blockingFailures": [],
+        "tier": "testing"})
+    monkeypatch.setattr(g0, "run", lambda *a, **k: {
+        "mechanical": {"verdict": "pass"},
+        "arms": {"steering": {"verdict": "pass"}, "readout": {"verdict": "pass"}}})
+
+
+def _model_route_bodies(tmp_path):
+    rec = _import_a_lens(tmp_path)
+    model = "google/gemma-3-4b-it"
+    return {"/api/jlens/qualify": {"lensID": rec.lensID, "modelID": model},
+            "/api/jlens/g0": {"modelID": model}}
+
+
+@pytest.mark.parametrize("route", ["/api/jlens/qualify", "/api/jlens/g0"])
+def test_a_controller_refuses_the_other_model_loading_routes(client, tmp_path, monkeypatch, route):
+    """Qualification and the G0 gate also load the model in the serving
+    process. A controller refuses them before any job, and since no managed
+    operation does this work on a GPU node yet, the repair says so and names
+    the engine command to run inside a GPU allocation."""
+    _stub_model_routes(monkeypatch)
+    body = _model_route_bodies(tmp_path)[route]
+    monkeypatch.setenv("STEERLAB_SERVER_ROLE", "controller")
+    monkeypatch.delenv("STEERLAB_ALLOW_RESIDENT_MODELS", raising=False)
+    resp = client.post(route, json=body)
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail["code"] == "jlensNeedsGPUProcess" and detail["operation"] is None
+    assert "No managed operation" in detail["repairAction"]
+    assert "steerlab-server jlens " + route.rsplit("/", 1)[1] in detail["repairAction"]
+    assert "STEERLAB_ALLOW_RESIDENT_MODELS=1" in detail["repairAction"]
+    assert "jobId" not in resp.json()
+
+
+@pytest.mark.parametrize("route", ["/api/jlens/qualify", "/api/jlens/g0"])
+def test_the_escape_hatch_and_a_workstation_still_admit_them(client, tmp_path, monkeypatch, route):
+    _stub_model_routes(monkeypatch)
+    body = _model_route_bodies(tmp_path)[route]
+    for role, hatch in (("workstation", None), ("controller", "1")):
+        monkeypatch.setenv("STEERLAB_SERVER_ROLE", role)
+        if hatch:
+            monkeypatch.setenv("STEERLAB_ALLOW_RESIDENT_MODELS", hatch)
+        resp = client.post(route, json=body)
+        assert resp.status_code == 200, resp.json()
+        assert _wait_for_job(client, resp.json()["jobId"])["status"] == "succeeded"
+
+
+def test_derivation_reads_the_checkpoint_and_stays_open_on_a_controller(client, tmp_path, monkeypatch):
+    """Derivation reads about 10 KB of the snapshot and never loads the model,
+    so it is not a resident-model route and a controller does not refuse it."""
+    from steerlab_server.jlens import derive
+
+    rec = _import_a_lens(tmp_path)
+    monkeypatch.setattr(derive, "derive_direction", lambda *a, **k: {
+        "name": "d", "definedLayers": [0], "runDirectory": "runs/derive-test"})
+    monkeypatch.setenv("STEERLAB_SERVER_ROLE", "controller")
+    monkeypatch.delenv("STEERLAB_ALLOW_RESIDENT_MODELS", raising=False)
+    resp = client.post("/api/jlens/directions/derive", json={
+        "lensID": rec.lensID, "modelID": "google/gemma-3-4b-it", "tokenID": 5})
     assert resp.status_code == 200, resp.json()
     assert _wait_for_job(client, resp.json()["jobId"])["status"] == "succeeded"
 
