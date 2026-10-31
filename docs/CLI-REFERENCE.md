@@ -3159,9 +3159,9 @@ steerlab-cli science report <run-folder-or-report.json> [--out <file>]
 | `science evidence-analyze` | Compare retained probe readings and requested/applied policy actions in a run. |
 | `science policy-list` | List saved intervention policies. |
 | `science policy-inspect` | Inspect a policy and its exact input bindings. |
-| `science policy-review` | Review policy settings and embed their exact input bytes. Addition strengths are in residual-norm units unless an action chooses a raw multiplier. |
+| `science policy-review` | Review policy settings and embed their exact input bytes. Addition strengths are in residual-norm units unless an action chooses a raw multiplier. A span policy acts only while the model reads a declared part of the prompt. |
 | `science policy-publish` | Publish the reviewed policy, with the strength units its review recorded, as an immutable artifact. |
-| `science policy-attach-review` | Review a new agent version with the selected policies. |
+| `science policy-attach-review` | Review a new agent version with the selected policies. Its static vectors and adapters are kept unless the settings set staticSteering to remove. |
 | `science policy-attach` | Create the reviewed agent version without editing its source. |
 | `science measurements-review` | Review probe measurement settings and pinned inputs for a draft study. |
 | `science measurements-save` | Save reviewed probe measurement settings to the unchanged draft. |
