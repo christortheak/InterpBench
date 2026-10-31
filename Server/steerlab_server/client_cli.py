@@ -390,6 +390,27 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
              positional="<name> <responseFormat>[,…]",
              purpose="Declare which response formats the option-consuming "
                      "instruments apply to, pinning the rows they select."),
+    # The J-lens RUN READOUT. A verb for the same reason as the two above: the
+    # researcher declares the lens, layers, top-k width, watchlist, companion,
+    # and budget ceilings, and every pin is DERIVED — the lens bytes and its
+    # fitted layers from the workspace's imported lens record, the tokenizer
+    # hash from the model cache, the configuration hash from the engine's own
+    # payload. The Mac's twin takes those pins as flags (it never reads a
+    # lens), so `--dry-run` reports them and the exact steerlab-cli spelling.
+    VerbSpec("experiment", "set-jlens-readout",
+             positional="<name> <lens-id>",
+             purpose="Declare the study's J-lens run readout: top-k and "
+                     "watched-token readings at the chosen layers, pinned to "
+                     "the imported lens and priced against the readout "
+                     "budget at the study's token cap. \"\" as the lens id "
+                     "clears it.",
+             value_flags=frozenset({"--layers", "--top-k", "--top-k-layers",
+                                    "--watchlist", "--qualification",
+                                    "--tokenizer-hash", "--max-armed-layers",
+                                    "--max-observations", "--max-trace-bytes",
+                                    "--max-full-vocab-projections"}),
+             boolean_flags=frozenset({"--no-companion", "--record-token-ids",
+                                      "--dry-run"})),
     # The EVALUATION SAMPLING DESIGN (review round 12, finding 4). A verb for
     # the same reason as the two above: not a field assignment. It takes the
     # design a power computation produced — a per-condition size and the seed
@@ -750,6 +771,18 @@ VERB_METAVARS: dict = {
     "concept import-chat --negative": "<chat.jsonl>",
     "concept import-chat --validation-pairs": "<n>",
     "concept import-chat --seed": "<n>",
+    # The J-lens readout's layers are THIS model's source layers, and a range
+    # (20-24) is accepted beside single indices.
+    "experiment set-jlens-readout --layers": "<l,l-l,…>",
+    "experiment set-jlens-readout --top-k-layers": "<l,l-l,…>",
+    "experiment set-jlens-readout --top-k": "<k>",
+    "experiment set-jlens-readout --watchlist": "<token-id,…>",
+    "experiment set-jlens-readout --qualification": "<qualification-id>",
+    "experiment set-jlens-readout --tokenizer-hash": "<sha256>",
+    "experiment set-jlens-readout --max-armed-layers": "<n>",
+    "experiment set-jlens-readout --max-observations": "<n>",
+    "experiment set-jlens-readout --max-trace-bytes": "<bytes>",
+    "experiment set-jlens-readout --max-full-vocab-projections": "<n>",
 }
 
 
@@ -1310,6 +1343,146 @@ def _parse_slots(spec_text: str) -> list:
     return slots
 
 
+#: Every setting flag of ``experiment set-jlens-readout``. A clear takes none.
+_JLENS_READOUT_SETTINGS = ("--layers", "--top-k", "--top-k-layers",
+                           "--watchlist", "--qualification", "--tokenizer-hash",
+                           "--max-armed-layers", "--max-observations",
+                           "--max-trace-bytes", "--max-full-vocab-projections",
+                           "--no-companion", "--record-token-ids")
+
+#: How a binding readout ceiling reads in a sentence.
+_JLENS_CEILING_WORDS = {"maxFullVocabProjections": "full-vocabulary projections",
+                        "maxTraceBytes": "trace bytes",
+                        "maxObservations": "observations"}
+
+
+def _jlens_readout_settings(invocation: Invocation, name: str):
+    """The verb's flags → ``Settings``, shape-checked by the owner's parsers."""
+    from .experiment import jlens_readout_authoring as readout
+
+    def given(flag):
+        return invocation.one(flag) is not None
+
+    layers = invocation.one("--layers")
+    if layers is None:
+        raise readout.store.MeasurementDeclarationError(
+            "a J-lens readout needs --layers: the source layers it reads",
+            repair=readout.usage(name))
+    budget = {field: readout.parse_whole(
+                  invocation.one(flag), flag, low=1,
+                  high=readout.MAX_BUDGET_VALUE, name=name)
+              for flag, field in readout.BUDGET_FLAGS if given(flag)}
+    settings = readout.Settings(
+        layers=readout.parse_layers(layers, "--layers", name=name),
+        top_k=(readout.parse_whole(invocation.one("--top-k"), "--top-k",
+                                   low=0, high=readout.MAX_TOP_K, name=name)
+               if given("--top-k") else 0),
+        top_k_layers=(readout.parse_layers(invocation.one("--top-k-layers"),
+                                           "--top-k-layers", name=name)
+                      if given("--top-k-layers") else None),
+        watchlist=readout.parse_watchlist(invocation.one("--watchlist") or "",
+                                          name=name),
+        companion=not invocation.has("--no-companion"),
+        budget=budget,
+        qualification_id=(invocation.one("--qualification") or "").strip()
+        or None,
+        tokenizer_hash=(readout.parse_sha256(invocation.one("--tokenizer-hash"),
+                                             "--tokenizer-hash", name=name)
+                        if given("--tokenizer-hash") else None),
+        record_token_ids=invocation.has("--record-token-ids"))
+    readout.check_settings(settings, name=name)
+    return settings
+
+
+def _set_jlens_readout(invocation: Invocation, name: str,
+                       lens_id: str) -> CLIResult:
+    """``experiment set-jlens-readout``. The owner is
+    ``experiment.jlens_readout_authoring``; this is the flag translation and
+    the echo. Swift twin: the ``set-jlens-readout`` case of
+    ``ExperimentCLIRunner``, with the same flat result keys."""
+    from .experiment import experiment_store as store
+    from .experiment import jlens_readout_authoring as readout
+
+    lens_id = lens_id.strip()
+    dry_run = invocation.has("--dry-run")
+    try:
+        if not lens_id:
+            typed = [f for f in _JLENS_READOUT_SETTINGS if invocation.has(f)]
+            if typed:
+                raise store.MeasurementDeclarationError(
+                    f"\"\" clears the J-lens readout, and {', '.join(typed)} "
+                    "declares one — a clear takes no settings",
+                    repair=(f"{PROGRAM} experiment {readout.VERB} {name} \"\"  "
+                            f"(clears it), or {readout.usage(name)}"))
+            document, existed = readout.clear(name, dry_run=dry_run)
+            line = ((f"(dry run, nothing written) would clear the J-lens "
+                     f"readout on {name!r}" if dry_run else
+                     f"cleared the J-lens readout on {name!r}")
+                    if existed else
+                    f"{name!r} declares no J-lens readout — nothing to clear")
+            print(line)
+            return CLIResult(
+                message=line, changed=existed and not dry_run,
+                payload={"experiment": name, "lensID": None,
+                         "jlensReadout": None,
+                         "written": existed and not dry_run,
+                         "pinsComplete": False, "estimate": None,
+                         "pins": None, "macCommand": None, "notes": []})
+        settings = _jlens_readout_settings(invocation, name)
+        report = readout.declare(name, lens_id, settings, dry_run=dry_run)
+    except store.MeasurementDeclarationError as exc:
+        # An out-of-range value, an unfitted layer, or a budget that cannot
+        # cover one response: MALFORMED (64), the Swift twin's classification.
+        raise ClientRefusal(
+            code=USAGE_CODE, state="blocked", reason=str(exc),
+            repair_action=exc.repair_action) from exc
+    block, priced = report["block"], report["estimate"]
+    per = priced["perResponse"]
+    pieces = [f"lens {lens_id}",
+              f"layers {readout.compact_layers(block['layers'])}"]
+    if block["topK"]:
+        pieces.append(f"top-{block['topK']} at {priced['topKLayers']} layer(s)")
+    if block["watchlist"]:
+        pieces.append(f"{len(block['watchlist'])} watched token(s)")
+    pieces.append("logit-lens companion "
+                  + ("on" if block["logitLensCompanion"] else "off"))
+    line = (("(dry run, nothing written) would declare" if dry_run
+             else "declared")
+            + f" a J-lens readout on {name!r}: " + ", ".join(pieces))
+    allowed = priced["responsesAllowed"]
+    cost = (f"priced at the {priced['maxTokens']}-token cap, one response "
+            f"costs {per['observations']:,} observations, "
+            f"{per['fullVocabProjections']:,} full-vocabulary projections, "
+            f"and about {per['projectedTraceBytes'] / 1e6:.1f} MB of trace; "
+            + (f"the declared budget covers {allowed:,} response(s), limited "
+               f"by {_JLENS_CEILING_WORDS[priced['limitedBy']]}. Run start "
+               "refuses a study with more responses than that (conditions × "
+               "items × samples)" if allowed is not None else
+               "the declared budget does not bound the number of responses"))
+    print(line)
+    print(cost)
+    for note in report["notes"]:
+        sys.stderr.write(f"note: {note}\n")
+    if dry_run:
+        print(f"steerlab-cli spelling: {report['macCommand']}")
+    return CLIResult(
+        message=line, changed=not dry_run,
+        payload={
+            "experiment": name,
+            "lensID": lens_id,
+            # The block AS WRITTEN (or as it would be, on a dry run), every
+            # pin in full, so a caller reads the declaration rather than the
+            # flags it typed.
+            "jlensReadout": block,
+            "written": not dry_run,
+            "pinsComplete": "configHash" in block,
+            "estimate": priced,
+            "pins": report["pins"],
+            "macCommand": report["macCommand"],
+            "notes": report["notes"],
+        })
+
+
 def _experiment(invocation: Invocation) -> CLIResult:
     """The study-authoring verbs. Every call is the one the matching route in
     ``api/routes.py`` makes; every payload key twins the Mac verb's."""
@@ -1805,6 +1978,10 @@ def _experiment(invocation: Invocation) -> CLIResult:
                 "delivery": delivery,
                 "itemsWithOwnSystemTurn": replaced,
             })
+
+    if verb == "set-jlens-readout":
+        _require(args, 2, spec)
+        return _set_jlens_readout(invocation, name, args[1])
 
     if verb in ("set-parser", "set-instrument-scope"):
         # Both take exactly one value positional, and both accept `""` as the
