@@ -35,8 +35,10 @@ public enum InterventionPolicyLibrary {
     public static let schemaVersions: [JSONValue] = [.number(1), .number(2)]
 
     /// Guided defaults for one action kind, matching static steering for additions:
-    /// a promoted agent's default α is 0.1 residual-norm units, and a full norm
-    /// usually makes generation incoherent. Removal is a fraction, and token
+    /// 0.1 residual-norm units, a tenth of the layer's typical residual norm, is the
+    /// usual starting strength (`SlotAlphaDefault.normUnitsDefault`, the Playground's
+    /// default when no promoted agent exists), and a full norm usually makes
+    /// generation incoherent. Removal is a fraction, and token
     /// constraints are on or off, so both keep bounds of 0 and 1.
     public static func strengthDefaults(action: String) -> (strength: Double, lower: Double, upper: Double, slope: Double) {
         action == "add" ? (0.1, 0, 0.2, 0.05) : (1, 0, 1, 1)

@@ -25,8 +25,9 @@ def addition_scale(strength, specification):
     units the result is strength·R/‖v‖ with the review-recorded R and ‖v‖, the
     same float32 arithmetic as static steering's ``vector_math.norm_unit_scale``,
     so the added perturbation has norm strength × R. A raw multiplier, which is
-    every version-1 addition, is the multiplier itself. Evidence records what
-    this returns, and :func:`residual` applies it.
+    every version-1 addition, is the multiplier itself. :func:`residual` applies
+    it; evidence records its host twin, ``policy_artifacts.absolute_scale``, from
+    the strengths already transferred, which gives the same float32 value.
     """
     if specification.get('strengthUnits', 'rawMultiplier') == 'rawMultiplier': return strength
     def scalar(key): return torch.tensor(specification[key], dtype=torch.float32, device=strength.device)

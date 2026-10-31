@@ -113,8 +113,8 @@ import Testing
         let addition = try target("add")
         #expect(addition["strengthUnits"] == .string("residualNorm"))
         #expect(addition["bounds"] == .array([.number(0), .number(0.2)]))
-        // Static steering's promoted default is 0.1 norm units; a full norm is incoherent, so it is not the default ceiling.
-        #expect(InterventionPolicyLibrary.strengthDefaults(action: "add").strength == 0.1)
+        // Static steering's starting strength when no promoted agent exists; a full norm is incoherent, so it is not the default ceiling.
+        #expect(InterventionPolicyLibrary.strengthDefaults(action: "add").strength == SlotAlphaDefault.normUnitsDefault)
         for action in ["ablate", "logitBias", "forceToken"] {
             let other = try target(action)
             #expect(other["strengthUnits"] == nil)

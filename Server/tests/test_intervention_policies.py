@@ -363,6 +363,18 @@ def test_version_two_validation_checks_the_recorded_units(tmp_path):
     # Hand-entered norms are not stamped norms; review alone records them.
     settings=norm_unit_settings(tmp_path);settings['actions'][0]['residualNorm']=7.5
     with pytest.raises(ValueError,match='Review records residualNorm'):owner.review(settings,tmp_path)
+    # R is only a stamped norm beside the artifact it came from, under a convention a sidecar can carry.
+    for change in ({'residualNormConvention':'anything'},{'source':None},{'source':{'vectorArtifactID':'runs/fit/example'}},
+                   {'source':{'metadataSHA256':'a'*64}}):
+        broken=copy.deepcopy(published);broken['actions'][0].update(change)
+        if broken['actions'][0]['source'] is None:del broken['actions'][0]['source']
+        with pytest.raises(ValueError):artifacts.validate(broken)
+    # The reviewer's reproduction: numbers, no source, an arbitrary R and convention.
+    forged=copy.deepcopy(published);forged['actions'][0]=dict(id='change',kind='add',bounds=[0,.2],vector=[.5,1.],strengthUnits='residualNorm',
+        residualNorm=12345.,residualNormConvention='anything',vectorNorm=published['actions'][0]['vectorNorm'])
+    with pytest.raises(ValueError):artifacts.validate(forged)
+    forged['actions'][0]['residualNormConvention']=None
+    with pytest.raises(ValueError,match='vectorArtifactID'):artifacts.validate(forged)
     # Only additions declare units: ablation keeps its fraction, and token actions their own scales.
     ablation=norm_unit_settings(tmp_path);ablation['actions'][0].update(kind='ablate',strengthUnits='residualNorm');ablation['rules'][0]['value']=.1
     with pytest.raises(ValueError,match='Only additions'):owner.review(ablation,tmp_path)
@@ -614,14 +626,30 @@ def test_a_norm_unit_policy_adds_what_a_static_agent_adds_at_the_same_positions(
         assert torch.allclose(actual,expected,rtol=1e-6,atol=1e-7)
         # Its norm is α times the residual norm: what "in residual-norm units" means.
         assert actual[-1].norm().item()==pytest.approx(alpha*7.5,rel=1e-5)
-    # Evidence states the units, and the absolute scale is the static agent's raw scalar.
+    # Evidence states the units, and the absolute scale is, bit for bit, the static agent's raw scalar.
     rows=policy.result(policy_ids)['decisions']
     assert [r['inputTokenPosition'] for r in rows]==[2,3,4]
     for row in rows:
         assert row['strengths']==row['appliedStrengths']=={'change':pytest.approx(alpha)} and row['strengthUnits']=={'change':'residualNorm'}
-        assert row['appliedScales']['change']==pytest.approx(cells[0].alpha,rel=1e-6)
+        assert row['appliedScales']['change']==cells[0].alpha
     [summary]=artifacts.summaries(attachment)
     assert summary['schemaVersion']==2 and summary['actions'][0]['strengthUnits']=='residualNorm' and summary['actions'][0]['residualNorm']==7.5
+
+
+def test_attachment_review_refuses_a_policy_whose_sidecar_now_gives_another_norm(tmp_path):
+    _,meta=vector_artifact(tmp_path,[.5,1.],residualNormPerLayer=[7.5],residualNormConvention='perTextMean-v1')
+    doc=norm_unit_settings(tmp_path);saved=owner.publish(doc,tmp_path,owner.review(doc,tmp_path)['planSHA256'])
+    (tmp_path/'runs/fit/agent.json').write_text(json.dumps(ModelVariant(name='example',base_model_id='example/model',base_revision='a'*40,prompt_mode='rawCompletion').to_dict()))
+    settings={'agentPath':'runs/fit/agent.json','name':'modified','policyPaths':[saved['path']]}
+    owner.attachment_review(settings,tmp_path)
+    sidecar=tmp_path/'runs/fit/example.json'
+    for change in ({'residualNormPerLayer':[8.]},{'residualNormConvention':'wholeCorpusMean-v1'},{'residualNormPerLayer':None}):
+        sidecar.write_text(json.dumps({**meta,**change}))
+        with pytest.raises(owner.NormsChanged) as raised:owner.attachment_review(settings,tmp_path)
+        assert raised.value.code=='policyResidualNormChanged' and 'Review and publish the policy again' in raised.value.repair_action
+    # A policy reviewed in another workspace carries its own record; an absent sidecar is not a disagreement.
+    sidecar.unlink();plan=owner.attachment_review(settings,tmp_path)
+    assert owner.attach(settings,tmp_path,plan['planSHA256'])['changed']
 
 
 def test_the_scope_sidecar_states_policy_units(tmp_path):

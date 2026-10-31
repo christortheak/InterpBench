@@ -403,7 +403,9 @@ def test_a_template_that_normalizes_whitespace_is_aligned():
     assert "\r" not in text and "\t" not in text
     assert ev["userTextLocation"]["normalization"] == "whitespace"
     assert text[slice(*ev["renderedCharRange"])] == "\nbe kind."
-    assert ev["unrenderedCharacters"] == 2  # the "\r", and the tab rendered as a space
+    # The "\r\n" became one newline, so one character was not rendered; the
+    # tab rendered as a space is rewritten, not dropped.
+    assert ev["unrenderedCharacters"] == 1
 
 
 # --- evidence ------------------------------------------------------------------

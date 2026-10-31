@@ -18,17 +18,21 @@ migration that rewrites frozen bytes.
   dose for every vector and layer, and could not be compared with the α of a
   static agent. A new policy (schema version 2) adds strength × R / ‖v‖ × v,
   where R is the vector's stamped mean residual norm at the policy layer, the
-  same number a static agent uses. A fixed policy at α over both stages, at the
-  last position, now adds exactly what a static agent at α adds. Rule values,
-  bounds, and the strengths an expert provider returns are all in these units.
-  Review records R, its convention, and the vector's norm in the policy, so its
-  hash covers them. A vector with no stamped norm at that layer, or a direction
+  same number a static agent uses. At a block-output (`residualPost`) site, a
+  fixed policy at α over both stages, at the last position, now adds what a
+  static agent at α with no band or neutral basis adds, to activation
+  precision. Rule values, bounds, and the strengths an expert provider returns
+  are all in these units. Review records R, its convention, and the vector's
+  norm in the policy, beside the vector artifact and its sidecar hash, so the
+  policy's hash covers them; attaching the policy to an agent refuses if the
+  sidecar in the workspace now says otherwise. A vector with no stamped norm at that layer, or a direction
   given as numbers, is refused with `policyResidualNormMissing`; the repair is
   `vectors backfill-norms`, or an explicit `"strengthUnits": "rawMultiplier"` on
   that action, which keeps the old meaning and is recorded as a choice. The
   app's guided authoring starts an added vector at 0.1 within bounds of 0 and
-  0.2, the default of a promoted agent; a full residual norm (1.0) usually
-  makes generation incoherent. Every published version-1
+  0.2: 0.1, a tenth of the layer's typical residual norm, is the usual
+  starting strength (the Playground's default when no promoted agent exists),
+  and a full norm (1.0) usually makes generation incoherent. Every published version-1
   policy keeps its meaning, a raw multiplier, and still attaches and runs.
   Review no longer writes version 1 (`policyVersionOneSettings` says how to
   convert a settings file). An engine from an earlier release refuses a
@@ -38,10 +42,12 @@ migration that rewrites frozen bytes.
   units of its strengths (`strengthUnits`) and, for an added vector, the
   multiplier applied to the stored direction (`appliedScales`), which compares
   directly with the multiplier a static agent applies to the same vector.
-  `intervention-scope.json`, `science
-  policy-review`, `policy-publish`, and `policy-inspect` state each action's
-  units, and `science evidence-analyze` summarizes the applied multipliers.
-  Evidence recorded before this change stays admissible. A strength at a
+  Collection refuses a row whose units or multiplier contradict the policy it
+  names, and each policy declaration in the evidence states its
+  `schemaVersion`. `intervention-scope.json`, `science policy-review`,
+  `policy-publish`, and `policy-inspect` state each action's units, and
+  `science evidence-analyze` summarizes the applied multipliers. Evidence
+  recorded before this change stays admissible. A strength at a
   fractional bound, such as 0.2, is no longer refused when evidence is
   collected: execution bounds strengths in float32, and the check now does too.
 - **A policy can steer while the model reads a declared part of the prompt.**
@@ -60,8 +66,8 @@ migration that rewrites frozen bytes.
   policy acts and what a result can claim: it changes how those prompt tokens
   are represented while the prompt is read, not where a concept lives. To
   compare steering while reading with steering while responding, pair the
-  span policy with a `lastPosition` policy over both stages, which adds what a
-  static agent adds. Span policies run in single-prompt sampled studies on the
+  span policy with a `lastPosition` policy over both stages, which at a
+  `residualPost` site adds what a static agent adds. Span policies run in single-prompt sampled studies on the
   Python engine; scripted transcripts, panels, and agent chat refuse them, and
   per-item declarations are later work.
 - **A new agent version can drop its static steering.** `science

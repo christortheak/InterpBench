@@ -29,10 +29,14 @@ struct InstrumentationEvidenceView: View {
         let scores: [String: Moments]
         let requested: [String: Moments]
         let applied: [String: Moments]
-        // Absent from summaries made before policies recorded their units.
+        // Absent from summaries made before policies recorded their units and schema version.
         let strengthUnits: [String: String]?
         let appliedScales: [String: Moments]?
-        var heading: String { "\(condition) · \(agent.isEmpty ? "agent" : agent) · \(label) · \(artifactSHA256.prefix(12)) · \(recordingStage)" }
+        let policySchemaVersion: Int?
+        var heading: String {
+            let version = policySchemaVersion.map { " · policy version \($0)" } ?? ""
+            return "\(condition) · \(agent.isEmpty ? "agent" : agent) · \(label) · \(artifactSHA256.prefix(12)) · \(recordingStage)\(version)"
+        }
     }
     private struct Report: Decodable {
         let responses: Int

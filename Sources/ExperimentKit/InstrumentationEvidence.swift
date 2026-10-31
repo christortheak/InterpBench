@@ -4,28 +4,21 @@ import Foundation
 /// Structural evidence admission, mirrored by Python and exercised on its real output.
 /// Hash verification precedes this check; scientific qualification remains separate.
 public enum InstrumentationEvidence {
-    private static func isText(_ value: JSONValue) -> Bool { if case .string = value { return true }; return false }
-    private static func isFiniteNumber(_ value: JSONValue) -> Bool { if case .number(let x) = value { return x.isFinite }; return false }
     private static func isDigest(_ value: JSONValue?) -> Bool {
         guard case .string(let text) = value else { return false }
         return text.count == 64 && text.allSatisfy { "0123456789abcdef".contains($0) }
     }
     private static func number(_ value: JSONValue?) -> Double? { if case .number(let x) = value, x.isFinite { return x }; return nil }
-    /// Execution computes in float32; recomputation here is float64.
-    private static func close(_ a: Double, _ b: Double) -> Bool { abs(a - b) <= max(1e-9, 1e-5 * max(abs(a), abs(b))) }
-
-    /// An evidence declaration's units for one action. Twin: `instrumentation_evidence.declared_units`.
-    static func declaredUnits(_ action: [String: JSONValue]) -> String? {
-        if action["kind"] == .string("add") { if case .string(let units) = action["strengthUnits"] { return units }; return "rawMultiplier" }
-        guard case .string(let kind) = action["kind"] else { return nil }
-        return ["ablate": "fraction", "logitBias": "logit", "allowTokens": "onOff", "forceToken": "onOff"][kind]
-    }
 
     /// `promptTokensSHA256` of retained token IDs: Python's `json.dumps` of the integer list.
     static func tokenIDsSHA256(_ ids: [JSONValue]) -> String {
         let text = "[" + ids.map { value -> String in if case .number(let x) = value { String(Int(x)) } else { "" } }.joined(separator: ", ") + "]"
         return SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
     }
+
+    /// A fixedTotal span's strength at each of its n tokens: float32 strength / n, as execution
+    /// applies it. Twin: `policy_artifacts.span_share`.
+    static func spanShare(_ strength: Double, _ count: Double) -> Double { Double(Float(strength) / Float(count)) }
 
     /// The span entries of version-2 policy evidence, one per span policy, keyed by policy hash with the positions their
     /// ranges cover. Twin: `instrumentation_evidence.validate_spans`.
@@ -53,16 +46,18 @@ public enum InstrumentationEvidence {
             guard case .string(let dose) = entry["doseMode"], ["perPosition", "fixedTotal"].contains(dose), declaration["spanDose"] == .string(dose) else { try refuse("A resolved span must state its policy’s declared dose mode."); return [:] }
             var specs: [String: [String: JSONValue]] = [:]
             if case .array(let actions) = declaration["actions"] {
-                for action in actions { if case .object(let object) = action, case .string(let id) = object["id"] { specs[id] = object } }
+                for case .object(let action) in actions { if case .string(let id) = action["id"] { specs[id] = action } }
             }
             guard case .object(let summaries) = entry["actions"], Set(summaries.keys) == Set(specs.keys) else { try refuse("A resolved span summarizes each of its policy’s actions once."); return [:] }
             for (name, value) in summaries {
-                guard case .object(let summary) = value, let spec = specs[name], case .string(let units) = summary["strengthUnits"], units == declaredUnits(spec) else { try refuse("Span dose units must equal the action’s declared units."); return [:] }
+                guard case .object(let summary) = value, let spec = specs[name], case .string(let units) = summary["strengthUnits"],
+                      units == declaredUnits(spec, version: declaration["schemaVersion"]) else { try refuse("Span dose units must be the declared units of each action."); return [:] }
                 guard case .number(let count) = summary["appliedPositions"], count.rounded() == count, count >= 0, count <= Double(positions.count) else { try refuse("A span’s applied positions must count span tokens."); return [:] }
                 let strength = number(summary["perPositionStrength"])
                 if summary["perPositionStrength"] != .null, strength == nil { try refuse("A per-position span strength must be finite.") }
                 if spec["kind"] == .string("add") {
-                    guard let summed = number(summary["summedDose"]), strength.map({ close(summed, $0 * count) }) ?? true, count > 0 || summed == 0 else { try refuse("A summed span dose must add what each applied position received."); return [:] }
+                    // Recomputable whenever every position received one strength: the sum of what each applied.
+                    guard let summed = number(summary["summedDose"]), strength.map({ summed == $0 * count }) ?? true, count > 0 || summed == 0 else { try refuse("A summed span dose must add what each applied position received."); return [:] }
                 } else if summary["summedDose"] != .null { try refuse("Only an addition has a summed span dose.") }
             }
             result[policy] = (positions, entry)
@@ -71,23 +66,53 @@ public enum InstrumentationEvidence {
         return result
     }
 
-    /// A span policy's decision acts only at its resolved positions, and each scale is the declared strength converted by the
-    /// action's units and, for a fixedTotal dose, shared over the span. Twin: `instrumentation_evidence.validate_span_row`.
-    private static func validateSpanRow(_ row: [String: JSONValue], declaration: [String: JSONValue],
-                                        span: (positions: Set<Int>, entry: [String: JSONValue]), refuse: (String) throws -> Void) throws {
-        guard case .number(let position) = row["inputTokenPosition"], span.positions.contains(Int(position)) else { try refuse("A span policy decision lies outside its resolved span."); return }
-        let share = span.entry["doseMode"] == .string("fixedTotal") ? number(span.entry["tokenCount"]) ?? 1 : 1
-        guard case .object(let scales) = row["appliedScales"] ?? .object([:]), case .object(let strengths) = row["strengths"] else { return }
-        for (name, value) in scales {
-            var spec: [String: JSONValue] = [:]
-            if case .array(let actions) = declaration["actions"] {
-                for action in actions { if case .object(let object) = action, object["id"] == .string(name) { spec = object } }
-            }
-            guard let scale = number(value), let requested = number(strengths[name]) else { try refuse("A span decision’s applied scale differs from its declared strength, units, and dose."); return }
-            let strength = requested / share
-            var expected = strength
-            if declaredUnits(spec) == "residualNorm", let norm = number(spec["residualNorm"]), let length = number(spec["vectorNorm"]), length != 0 { expected = strength * norm / length }
-            if !close(scale, expected) { try refuse("A span decision’s applied scale differs from its declared strength, units, and dose.") }
+    /// Units of the action kinds no policy version changes. Twin: `policy_artifacts.FIXED_UNITS`.
+    private static let fixedUnits = ["ablate": "fraction", "logitBias": "logit", "allowTokens": "onOff", "forceToken": "onOff"]
+
+    /// An evidence declaration's units for one action, or nil when the declaration contradicts
+    /// its version. Twin: `instrumentation_evidence.declared_units`.
+    static func declaredUnits(_ action: [String: JSONValue], version: JSONValue?) -> String? {
+        guard case .string(let kind) = action["kind"] else { return nil }
+        guard kind == "add" else { return fixedUnits[kind] }
+        let declared = action["strengthUnits"]
+        let units: String? = if case .string(let text) = declared { text } else { nil }
+        if version == .number(1) { return declared == nil ? "rawMultiplier" : nil }
+        if version == .number(2) { return units == "residualNorm" || units == "rawMultiplier" ? units : nil }
+        return declared == nil ? "rawMultiplier" : units  // recorded before declarations stated a version
+    }
+
+    /// What an applied addition's `appliedScales` entry must be, recomputed from its declaration.
+    /// Residual-norm units use `vector_math.norm_unit_scale`'s float32 order, (strength·R)/‖v‖; Python
+    /// forms the same correctly rounded float32 values. Twin: `instrumentation_evidence.expected_scale`.
+    static func expectedScale(_ strength: Double, _ action: [String: JSONValue], version: JSONValue?) -> Double? {
+        switch declaredUnits(action, version: version) {
+        case "rawMultiplier": return strength
+        case "residualNorm":
+            guard case .number(let norm) = action["residualNorm"], case .number(let length) = action["vectorNorm"],
+                  norm.isFinite, length.isFinite, norm > 0, length > 0 else { return nil }
+            let product = Float(strength) * Float(norm)
+            return Double(product / Float(length))
+        default: return nil
+        }
+    }
+
+    private static func unitsAgree(_ value: JSONValue, requested: [String: JSONValue], specs: [String: [String: JSONValue]], version: JSONValue?) -> Bool {
+        guard case .object(let units) = value, Set(units.keys) == Set(requested.keys) else { return false }
+        return units.allSatisfy { entry in
+            guard let spec = specs[entry.key], let declared = declaredUnits(spec, version: version) else { return false }
+            return entry.value == .string(declared)
+        }
+    }
+
+    /// `share` is what a recorded strength applies at each token: itself, or a fixedTotal span's share.
+    private static func scalesAgree(_ value: JSONValue, applied: [String: JSONValue], specs: [String: [String: JSONValue]], version: JSONValue?,
+                                    share: (Double) -> Double = { $0 }) -> Bool {
+        let additions = Set(applied.keys.filter { specs[$0]?["kind"] == .string("add") })
+        guard case .object(let scales) = value, Set(scales.keys) == additions else { return false }
+        return scales.allSatisfy { entry in
+            guard case .number(let recorded) = entry.value, recorded.isFinite, case .number(let strength)? = applied[entry.key],
+                  let spec = specs[entry.key] else { return false }
+            return expectedScale(share(strength), spec, version: version) == recorded
         }
     }
 
@@ -117,7 +142,15 @@ public enum InstrumentationEvidence {
             if field == "interventionDecisions", schema == .number(2) {
                 guard case .array(let docs) = block["declarations"], case .array(let policies) = block["policies"] else { try refuse("Policy evidence must bind its declarations and hashes."); return }
                 for doc in docs {
-                    guard case .object(let object) = doc, case .string(let sha) = object["sha256"], case .array = object["actions"] else { try refuse("Malformed policy evidence declaration."); return }
+                    guard case .object(let object) = doc, case .string(let sha) = object["sha256"], case .array(let actions) = object["actions"] else { try refuse("Malformed policy evidence declaration."); return }
+                    // Additive: declarations recorded before it existed state no schemaVersion.
+                    if let version = object["schemaVersion"] {
+                        let additionsAgree = actions.allSatisfy { value in
+                            guard case .object(let action) = value, action["kind"] == .string("add") else { return true }
+                            return declaredUnits(action, version: version) != nil
+                        }
+                        guard InterventionPolicyLibrary.schemaVersions.contains(version), additionsAgree else { try refuse("A policy declaration’s schema version and its additions’ units disagree."); return }
+                    }
                     declarations[sha] = object
                 }
                 let policyNames = policies.compactMap { value -> String? in if case .string(let name) = value { name } else { nil } }
@@ -160,13 +193,23 @@ public enum InstrumentationEvidence {
                     }
                     if row["status"] == .string("applied"), requested != applied { try refuse("An applied decision has unacknowledged actions.") }
                     // Units and absolute scales are additive: rows written before they existed have neither.
-                    if let value = row["strengthUnits"] {
-                        guard case .object(let units) = value, units.allSatisfy({ requested[$0.key] != nil && isText($0.value) }) else { try refuse("Strength units must name requested actions."); return }
+                    // Present, they must be the declaration's own: a row cannot restate what its policy meant.
+                    var specs: [String: [String: JSONValue]] = [:]
+                    if case .array(let actions) = declaration["actions"] {
+                        for case .object(let action) in actions { if case .string(let id) = action["id"] { specs[id] = action } }
                     }
-                    if let value = row["appliedScales"] {
-                        guard case .object(let scales) = value, scales.allSatisfy({ applied[$0.key] != nil && isFiniteNumber($0.value) }) else { try refuse("Applied scales must be finite and belong to applied actions."); return }
+                    let version = declaration["schemaVersion"]
+                    if let value = row["strengthUnits"], !unitsAgree(value, requested: requested, specs: specs, version: version) {
+                        try refuse("Strength units must be the declared units of each requested action.")
                     }
-                    if let span = spanEntries[policy] { try validateSpanRow(row, declaration: declaration, span: span, refuse: refuse) }
+                    // A span policy acts only at its resolved tokens, and a fixedTotal scale converts strength / n.
+                    let span = spanEntries[policy]
+                    if let span, !span.positions.contains(Int(position)) { try refuse("A span policy decision lies outside its resolved span.") }
+                    let count = span.flatMap { $0.entry["doseMode"] == .string("fixedTotal") ? number($0.entry["tokenCount"]) : nil }
+                    if let value = row["appliedScales"], !scalesAgree(value, applied: applied, specs: specs, version: version,
+                                                                       share: { strength in count.map { spanShare(strength, $0) } ?? strength }) {
+                        try refuse("Applied scales must be each applied addition’s declared multiplier of its stored direction.")
+                    }
                 }
             }
         }

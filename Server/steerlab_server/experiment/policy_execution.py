@@ -13,7 +13,7 @@ from dataclasses import replace
 from . import policy_artifacts, probe_artifacts, probe_capture
 from .policy_artifacts import PolicyError
 from ..steering.runtime import Reading, DecisionProvider, Site, Context, SelectionSite
-from ..steering.policy_actions import Action, Decision, addition_scale, logits, apply_with_evidence
+from ..steering.policy_actions import Action, Decision, logits, apply_with_evidence
 
 
 class Execution:
@@ -198,19 +198,20 @@ class Execution:
                 requested[spec['id']] = value * mask
                 actions.append(Action(spec, value * mask if share is None else value * mask / share))
             rows = self.record(digest, doc, context, indices, scores, actions, requested)
+            additions = {a.specification['id']: a.specification for a in actions if a.specification['kind'] == 'add'}
             # What each action applies at this call's span positions, for the span's dose summary.
             doses = ({a.specification['id']: a.strength[indices].detach().cpu().tolist() for a in actions}
                      if digest in self.span_doses else {})
-            # The absolute multiplier of each addition's stored direction, from the conversion residual() applies.
-            kept = [row['inputTokenPosition'] - context.offset for row in rows]
-            scales = {a.specification['id']: addition_scale(a.strength, a.specification)[kept].detach().cpu().tolist()
-                      for a in actions if a.specification['kind'] == 'add'}
+            # A fixedTotal span applies strength / n at each token, so that is what its scale converts.
+            def applied_strength(value): return value if share is None else policy_artifacts.span_share(value, share)
             def acknowledgement(action_id):
                 def completed(applied, reason, elapsed):
-                    for j, row in enumerate(rows):
+                    for row in rows:
                         row['actionOutcomes'][action_id] = {'status': 'applied' if applied else 'failed', 'hostSeconds': elapsed}
                         if applied: row['appliedStrengths'][action_id] = row['strengths'][action_id]
-                        if applied and action_id in scales: row['appliedScales'][action_id] = scales[action_id][j]
+                        # On the host, from the strength already recorded: no second device transfer.
+                        if applied and action_id in additions:
+                            row['appliedScales'][action_id] = policy_artifacts.absolute_scale(applied_strength(row['strengths'][action_id]), additions[action_id])
                         if reason: row['actionOutcomes'][action_id]['reason'] = reason[:2048]
                         outcomes = list(row['actionOutcomes'].values())
                         row['status'] = 'failed' if any(x['status'] == 'failed' for x in outcomes) else 'applied' if len(outcomes) == len(row['strengths']) else 'requested'
@@ -281,7 +282,7 @@ class Execution:
             row['generatedTokenIndex'] = predicted - len(self.prompt_ids) if predicted >= len(self.prompt_ids) else None
         spans = self.span_summaries()
         return {'schemaVersion': 2, 'runtime': 'policy-v1', **self.context,
-                'declarations': [{'sha256': h, 'binding': d['binding'], 'site': d['site'],
+                'declarations': [{'sha256': h, 'schemaVersion': d['schemaVersion'], 'binding': d['binding'], 'site': d['site'],
                     'probes': [{'id': p['id'], 'sha256': p['sha256']} for p in d['probes']],
                     'actions': [{**{k: v for k, v in a.items() if k != 'vector'}, **({'vectorSHA256': hashlib.sha256(json.dumps(a['vector'], separators=(',', ':')).encode()).hexdigest()} if 'vector' in a else {})} for a in d['actions']], 'rules': d['rules'], 'stages': d['stages'], 'positions': d['positions'],
                     **{k: d[k] for k in ('span', 'spanDose') if k in d},

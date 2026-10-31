@@ -63,6 +63,45 @@ struct InstrumentationEvidenceTests {
         var outer = document; outer["interventionDecisions"] = copy
         try InstrumentationEvidence.validate(try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: outer)))
     }
+    /// The norm-unit fixture with one change made to its only decision row and declaration.
+    private func normUnitEvidence(_ change: (inout [String: Any], inout [String: Any]) -> Void) throws -> JSONValue {
+        let raw = try Data(contentsOf: repository.appending(path: "Tests/Fixtures/cross-engine/policy-evidence-norm-units.json"))
+        var document = try #require(JSONSerialization.jsonObject(with: raw) as? [String: Any])
+        var block = try #require(document["interventionDecisions"] as? [String: Any])
+        var row = try #require((block["decisions"] as? [[String: Any]])?.first)
+        var declaration = try #require((block["declarations"] as? [[String: Any]])?.first)
+        change(&row, &declaration)
+        block["decisions"] = [row]; block["declarations"] = [declaration]; document["interventionDecisions"] = block
+        return try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: document))
+    }
+    @Test func unitsAndScalesMustBeTheDeclarationsOwnAndAgreeWithPythonBitForBit() throws {
+        try InstrumentationEvidence.validate(try normUnitEvidence { _, _ in })
+        // The scale Python recorded is Swift's Float arithmetic in vector_math.norm_unit_scale's order.
+        let recorded = try normUnitEvidence { row, _ in
+            let strength = (row["strengths"] as? [String: Double])?["change"] ?? .nan
+            #expect((row["appliedScales"] as? [String: Double])?["change"] == Double(Float(strength) * Float(10) / Float(5)))
+        }
+        try InstrumentationEvidence.validate(recorded)
+        let mutations: [(inout [String: Any], inout [String: Any]) -> Void] = [
+            { row, _ in row["strengthUnits"] = ["change": "rawMultiplier"]; row["appliedScales"] = ["change": 999.0] },
+            { row, _ in row["strengthUnits"] = ["change": "rawMultiplier"]; row["appliedScales"] = row["strengths"] },
+            { row, _ in
+                let scale = Float((row["appliedScales"] as? [String: Double])?["change"] ?? 0)
+                row["appliedScales"] = ["change": Double(scale.nextUp)] },
+            { row, _ in row["appliedScales"] = [String: Double]() },
+            { _, declaration in declaration["schemaVersion"] = 1 },
+            { _, declaration in declaration["schemaVersion"] = 3 },
+            { _, declaration in
+                var actions = declaration["actions"] as? [[String: Any]] ?? []
+                actions[0].removeValue(forKey: "residualNorm"); declaration["actions"] = actions },
+        ]
+        for mutation in mutations {
+            let corrupt = try normUnitEvidence(mutation)
+            #expect(throws: (any Error).self) { try InstrumentationEvidence.validate(corrupt) }
+        }
+        // Declarations recorded before they stated a schema version remain admissible.
+        try InstrumentationEvidence.validate(try normUnitEvidence { _, declaration in declaration.removeValue(forKey: "schemaVersion") })
+    }
     @Test func aStrengthAtAFractionalBoundIsAdmittedAtFloat32Precision() throws {
         let raw = try Data(contentsOf: repository.appending(path: "Tests/Fixtures/cross-engine/policy-evidence-norm-units.json"))
         var document = try #require(JSONSerialization.jsonObject(with: raw) as? [String: Any])
@@ -71,6 +110,7 @@ struct InstrumentationEvidenceTests {
         // Execution clamps to float32(0.2), a little above the declared double 0.2.
         let bound = Double(Float(0.2))
         rows[0]["strengths"] = ["change": bound]; rows[0]["appliedStrengths"] = ["change": bound]
+        rows[0]["appliedScales"] = ["change": Double(Float(bound) * Float(10) / Float(5))]
         block["decisions"] = rows; document["interventionDecisions"] = block
         try InstrumentationEvidence.validate(try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: document)))
         rows[0]["strengths"] = ["change": 0.21]; rows[0]["appliedStrengths"] = ["change": 0.21]
