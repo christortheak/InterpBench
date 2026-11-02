@@ -54,10 +54,12 @@ def test_chunking_is_a_per_device_table(monkeypatch):
     # Below the threshold, MPS takes the exact path every measurement this
     # week characterized.
     assert generate_mod.prefill_chunk_size("mps", short) is None
-    # CUDA/CPU NEVER chunk — flash is already linear-memory and chunking
-    # there is pure overhead. The science arm never sees this branch.
-    assert generate_mod.prefill_chunk_size("cuda", long) is None
-    assert generate_mod.prefill_chunk_size("cuda:1", long) is None
+    # CUDA chunks only past its own, higher threshold; below it, the exact
+    # single-pass path. CPU never chunks.
+    assert generate_mod.prefill_chunk_size("cuda", long) == 4096
+    assert generate_mod.prefill_chunk_size("cuda:1", long) == 4096
+    assert generate_mod.prefill_chunk_size("cuda", 8_192) is None
+    assert generate_mod.prefill_chunk_size("cuda", short) is None
     assert generate_mod.prefill_chunk_size("cpu", long) is None
 
     monkeypatch.setenv(generate_mod.PREFILL_CHUNK_ENV, "512")
@@ -158,3 +160,58 @@ def test_intermediate_chunks_are_bit_identical_and_prompt_end_steers():
 
     # …and the true prompt end DOES steer: same cache, different logits.
     assert not torch.equal(steered.logits[0, -1], clean.logits[0, -1])
+
+
+# ------------------------------------------------------------ hybrid model
+
+
+def _tiny_hybrid_model():
+    """A tiny random Qwen3.5-architecture causal LM: the layer pattern of
+    a 27B hybrid (three gated-delta-rule linear-attention layers, then one
+    full-attention layer with an output gate and partial rotary), small
+    enough for CPU. Chunking must carry each linear layer's recurrent state
+    and the last conv-kernel positions across chunk boundaries exactly."""
+    from transformers import AutoModelForCausalLM
+    from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig
+    torch.manual_seed(7)
+    config = Qwen3_5TextConfig(
+        vocab_size=128, hidden_size=64, intermediate_size=128,
+        num_hidden_layers=8, num_attention_heads=4, num_key_value_heads=2,
+        head_dim=32, linear_num_key_heads=2, linear_num_value_heads=4,
+        linear_key_head_dim=16, linear_value_head_dim=16,
+        linear_conv_kernel_dim=4, full_attention_interval=4,
+        max_position_embeddings=1024)
+    model = AutoModelForCausalLM.from_config(config).eval()
+    return SimpleNamespace(model=model, hooked=HookedModel(model),
+                           device=torch.device("cpu"))
+
+
+@pytest.mark.parametrize("n,chunk", [(37, 8), (150, 40), (150, 64), (200, 97)])
+def test_hybrid_chunked_prefill_matches_single_pass(n, chunk):
+    wrapper = _tiny_hybrid_model()
+    assert "linear_attention" in wrapper.model.config.layer_types
+    assert "full_attention" in wrapper.model.config.layer_types
+    ids = _prompt(n)
+
+    with torch.no_grad():
+        reference = wrapper.model(input_ids=ids,
+                                  attention_mask=torch.ones_like(ids))
+    ref_logits = reference.logits[0, -1]
+
+    past = generate_mod._chunked_prefill(wrapper, ids, chunk_size=chunk)
+    with torch.no_grad():
+        out = wrapper.model(input_ids=ids[:, -1:],
+                            attention_mask=torch.ones_like(ids),
+                            past_key_values=past)
+    torch.testing.assert_close(out.logits[0, -1], ref_logits,
+                               rtol=1e-4, atol=1e-5)
+
+    common = dict(attention_mask=torch.ones_like(ids), max_new_tokens=12,
+                  do_sample=False, pad_token_id=0)
+    with torch.no_grad():
+        full = wrapper.model.generate(input_ids=ids, **common)
+        chunked = wrapper.model.generate(
+            input_ids=ids,
+            past_key_values=generate_mod._chunked_prefill(wrapper, ids, chunk),
+            **common)
+    assert full.tolist() == chunked.tolist()

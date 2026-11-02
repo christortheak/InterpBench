@@ -29,13 +29,22 @@ CONTEXT_BUDGET_RESERVE = 16  # matches Swift contextBudgetReserve
 #: MPS the eager attention transient is quadratic in the pass length
 #: (measured — Server/scripts/memory_growth_repro.py), so a single-pass 30K
 #: prefill is a ~150 GiB transient while 1024-token chunks against the
-#: growing KV cache stay linear (~heads x chunk x N). CUDA never chunks:
-#: flash kernels are already linear-memory and chunking there is pure
-#: overhead. The Swift/MLX engine has chunked prefill natively
-#: (prefillStepSize); this is the server growing the same organ.
+#: growing KV cache stay linear (~heads x chunk x N). The Swift/MLX engine
+#: has chunked prefill natively (prefillStepSize); this is the server
+#: growing the same organ.
 PREFILL_CHUNK_SIZE = 1024
 PREFILL_CHUNK_THRESHOLD = 4096
 PREFILL_CHUNK_ENV = "STEERLAB_PREFILL_CHUNK"
+
+#: CUDA chunks only long prompts. Flash attention is linear-memory, but the
+#: rest of a single pass is not: every layer's MLP, and a hybrid model's
+#: linear-attention layers on the float32 torch fallback, hold whole-prompt
+#: transients. A 27B hybrid model ran out of an 80 GB card on an
+#: 82,000-token single pass whose finished cache needed under 6 GiB. Prompts
+#: at or below the threshold take the exact single-pass path they always
+#: took.
+CUDA_PREFILL_CHUNK_SIZE = 4096
+CUDA_PREFILL_CHUNK_THRESHOLD = 8192
 
 
 @dataclass
@@ -207,23 +216,28 @@ def prefill_chunk_size(device: str, prompt_tokens: int) -> int | None:
     """Chunk size when chunked prefill applies, else None.
 
     Pure per-device policy, same shape as ``model_loader.attention_
-    implementation``: MPS chunks long prompts; CUDA and CPU return None and
-    take the exact single-pass path they always took — the science arm never
-    sees this branch. ``STEERLAB_PREFILL_CHUNK`` overrides the chunk size
-    (0 disables chunking entirely).
+    implementation``: MPS chunks prompts over 4,096 tokens and CUDA prompts
+    over 8,192, each at its own chunk size; CPU returns None and takes the
+    exact single-pass path it always took. ``STEERLAB_PREFILL_CHUNK``
+    overrides the chunk size (0 disables chunking entirely).
     """
-    if not (device or "").startswith("mps"):
+    device = device or ""
+    if device.startswith("mps"):
+        default, threshold = PREFILL_CHUNK_SIZE, PREFILL_CHUNK_THRESHOLD
+    elif device.startswith("cuda"):
+        default, threshold = CUDA_PREFILL_CHUNK_SIZE, CUDA_PREFILL_CHUNK_THRESHOLD
+    else:
         return None
-    size = PREFILL_CHUNK_SIZE
+    size = default
     raw = os.environ.get(PREFILL_CHUNK_ENV, "").strip()
     if raw:
         try:
             size = int(raw)
         except ValueError:
-            size = PREFILL_CHUNK_SIZE
+            size = default
     if size <= 0:
         return None
-    if prompt_tokens <= max(PREFILL_CHUNK_THRESHOLD, size):
+    if prompt_tokens <= max(threshold, size):
         return None
     return size
 
@@ -247,8 +261,8 @@ def _chunked_prefill(model: SteeredModel, input_ids: torch.Tensor,
 
     The per-chunk ``empty_cache`` keeps the allocator's cached transients
     from accumulating across chunks of strictly growing KV length (distinct
-    block sizes never reused); it is MPS-only like every trim in this
-    codebase, and this whole path only runs on MPS anyway.
+    block sizes never reused); on CUDA the same trim returns the cached
+    blocks of each chunk's transients before the next, larger one.
     """
     device = input_ids.device
     end = input_ids.shape[1] - 1
@@ -266,6 +280,8 @@ def _chunked_prefill(model: SteeredModel, input_ids: torch.Tensor,
         past = out.past_key_values
         if str(device).startswith("mps"):
             torch.mps.empty_cache()
+        elif str(device).startswith("cuda"):
+            torch.cuda.empty_cache()
     return past
 
 
