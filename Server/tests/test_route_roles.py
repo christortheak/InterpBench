@@ -286,9 +286,13 @@ def test_the_runner_reads_that_carry_no_token_gate_are_explicitly_censused():
         and entry.method == "GET"
         and entry.path.startswith("/api/")
         and not request_is_privileged(entry.method, _sample_path(entry.path)))
+    # The status and log-tail reads (issue #7) are the same observation
+    # surface as the log stream, answered once instead of followed.
     assert open_reads == [
         "GET /api/jobs",
         "GET /api/jobs/{job_id}",
+        "GET /api/jobs/{job_id}/log-tail",
+        "GET /api/jobs/{job_id}/status",
         "GET /api/jobs/{job_id}/stream",
         "GET /api/models/plan",
     ]

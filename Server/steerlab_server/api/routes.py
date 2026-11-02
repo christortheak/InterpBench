@@ -3568,6 +3568,31 @@ def build_router(state: ServiceState) -> APIRouter:
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
+    @router.get("/api/jobs/{job_id}/status")
+    def job_status_route(job_id: str):
+        # One read that returns (issue #7): the scheduler's view, records
+        # written so far, and how a finished job ended. Only for a job in
+        # this server's store; the scheduler id comes from its record.
+        from . import job_status
+        job = state.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="no such job")
+        return job_status.job_status(state.jobs, job)
+
+    @router.get("/api/jobs/{job_id}/log-tail")
+    def job_log_tail_route(job_id: str, lines: str | None = None):
+        # The last lines of the controller log and of the job's own
+        # scheduler output files, then return: a check, not a follow.
+        from . import job_status
+        job = state.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="no such job")
+        try:
+            count = job_status.tail_line_count(lines)
+        except job_status.LogTailRequestError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return job_status.log_tail(state.jobs, job, count)
+
     @router.post("/api/jobs/{job_id}/cancel")
     def cancel_job(job_id: str):
         job = state.jobs.get(job_id)

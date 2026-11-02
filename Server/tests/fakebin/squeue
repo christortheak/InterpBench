@@ -5,7 +5,11 @@ Two query shapes:
 
 - ``-j <id>``  prints the ``queue`` field of that job's entry in
   FAKE_SLURM_STATE_FILE (the %T state of a queued/running job), and nothing
-  for jobs squeue would no longer show.
+  for jobs squeue would no longer show. A ``-o`` format other than ``%T``
+  has each code replaced from the entry: ``%T`` (queue), ``%r`` (reason,
+  default ``None``), ``%S`` (queue_start, else start, default ``N/A``),
+  ``%N`` (node), ``%M`` (elapsed, default ``0:00``), ``%l`` (timelimit),
+  ``%i`` (the id).
 - ``-n <name>`` (name lookup, used by the controller job's successor-chain
   guard) prints the newline-separated contents of FAKE_SQUEUE_NAMED — the job
   ids currently queued or running under that name — and nothing when unset.
@@ -19,9 +23,12 @@ def main() -> int:
     args = sys.argv[1:]
     job_id = None
     job_name = None
+    fmt = None
     for index, arg in enumerate(args):
         if arg == "-j" and index + 1 < len(args):
             job_id = args[index + 1]
+        if arg == "-o" and index + 1 < len(args):
+            fmt = args[index + 1]
         if arg in ("-n", "--name") and index + 1 < len(args):
             job_name = args[index + 1]
     log_dir = os.environ.get("FAKE_SLURM_LOG")
@@ -43,9 +50,24 @@ def main() -> int:
         return 0
     with open(state_file, encoding="utf-8") as fh:
         table = json.load(fh)
-    queue_state = (table.get(job_id) or {}).get("queue")
+    entry = table.get(job_id) or {}
+    queue_state = entry.get("queue")
     if queue_state:
-        print(queue_state)
+        if fmt in (None, "%T"):
+            print(queue_state)
+        else:
+            codes = {"%T": queue_state,
+                     "%r": entry.get("reason") or "None",
+                     "%S": entry.get("queue_start") or entry.get("start")
+                     or "N/A",
+                     "%N": entry.get("node") or "",
+                     "%M": entry.get("elapsed") or "0:00",
+                     "%l": entry.get("timelimit") or "",
+                     "%i": job_id}
+            line = fmt
+            for code, value in codes.items():
+                line = line.replace(code, str(value))
+            print(line)
     return 0
 
 

@@ -904,10 +904,16 @@ class SlurmExecutor:
 
         ``sacct -j`` needs no explicit ``--starttime``: the manual widens the
         default window to epoch 0 whenever ``-j`` is given, so a job that
-        ended months ago still answers."""
+        ended months ago still answers.
+
+        ``Start`` rides last (issue #7), so the three columns before it keep
+        their positions: it is the scheduler's own record of when the job
+        began running, which the reconciler stamps as the record's
+        ``startedAt`` (the submission time stays in ``createdAt``)."""
         sacct, squeue = scheduler_poll_commands()
         proc = scheduler_run(
-            [sacct, "-j", slurm_job_id, "-n", "-o", "State,ExitCode,End", "-P"],
+            [sacct, "-j", slurm_job_id, "-n", "-o", "State,ExitCode,End,Start",
+             "-P"],
             text=True, capture_output=True, check=False)
         sacct_ok = proc.returncode == 0
         if sacct_ok:
@@ -918,10 +924,12 @@ class SlurmExecutor:
                 exit_code = fields[1].strip() if len(fields) > 1 else None
                 ended_at = (_parse_sacct_time(fields[2])
                             if len(fields) > 2 else None)
+                started_at = (_parse_sacct_time(fields[3])
+                              if len(fields) > 3 else None)
                 return SchedulerObservation(
                     state=map_slurm_state(raw_state, exit_code=exit_code),
                     query_ok=True, raw_state=raw_state, exit_code=exit_code,
-                    ended_at=ended_at)
+                    ended_at=ended_at, started_at=started_at)
         q = scheduler_run(
             [squeue, "-j", slurm_job_id, "-h", "-o", "%T"],
             text=True, capture_output=True, check=False)
@@ -1021,20 +1029,244 @@ class SlurmExecutor:
             detail += f" — scheduler reason: {reason}"
         return detail
 
+    def status_observation(self, slurm_job_id: str) -> "SchedulerStatus":
+        """The scheduler's view of ONE job, as a fixed set of fields
+        (issue #7: "is it pending, and why? running, and how far along?
+        ended, and how?"). Never a pass-through: only the named columns are
+        asked for, and only those are returned.
+
+        - ``sacct -X`` (the allocation row) answers for a job that runs or
+          ran: its state, start, end, node list, elapsed time, time limit,
+          exit code, and reason.
+        - ``squeue`` answers for a job that is still waiting: the pending
+          reason (``%r``) and the scheduler's expected start (``%S``). It is
+          also the fallback when accounting does not answer at all, for a
+          job the queue still shows.
+
+        The binary NAMES are site data (``scheduler_poll_commands``), so a
+        site that publishes wrapper commands is asked through them. The id
+        must look like a scheduler job id; it is only ever an argv element,
+        never part of a shell string."""
+        if not is_scheduler_job_id(slurm_job_id):
+            raise ValueError(
+                f"{slurm_job_id!r} is not a scheduler job id")
+        sacct, squeue = scheduler_poll_commands()
+        fields: dict[str, str | None] = {}
+        sources: list[str] = []
+        failures: list[str] = []
+        proc = scheduler_run(
+            [sacct, "-j", slurm_job_id, "-n", "-X", "-P",
+             "-o", ",".join(_STATUS_SACCT_COLUMNS)],
+            text=True, capture_output=True, check=False)
+        if proc.returncode == 0:
+            lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+            if lines:
+                values = (lines[0].split("|")
+                          + [""] * len(_STATUS_SACCT_COLUMNS))
+                fields = {column: _scheduler_text(values[index])
+                          for index, column in enumerate(_STATUS_SACCT_COLUMNS)}
+                sources.append("sacct")
+        else:
+            failures.append(_query_failure("accounting", proc))
+        token = _slurm_state_token(fields.get("State"))
+        queue: dict[str, str | None] = {}
+        if not fields or token in _SLURM_WAITING_STATES:
+            q = scheduler_run(
+                [squeue, "-j", slurm_job_id, "-h",
+                 "-o", "|".join(code for code, _key in _STATUS_SQUEUE_CODES)],
+                text=True, capture_output=True, check=False)
+            if q.returncode == 0 and q.stdout.strip():
+                values = (q.stdout.strip().splitlines()[0].split("|")
+                          + [""] * len(_STATUS_SQUEUE_CODES))
+                queue = {key: _scheduler_text(values[index])
+                         for index, (_code, key) in
+                         enumerate(_STATUS_SQUEUE_CODES)}
+                sources.append("squeue")
+            elif q.returncode != 0 and "invalid job id" not in (
+                    (q.stderr or "") + (q.stdout or "")).lower():
+                failures.append(_query_failure("queue", q))
+        if not sources:
+            return SchedulerStatus(
+                query_ok=not failures, source=None,
+                detail=("; ".join(failures) if failures else
+                        "the scheduler has no record of this job (it may "
+                        "have been purged from accounting)"))
+        raw_state = queue.get("state") or fields.get("State")
+        exit_code = fields.get("ExitCode")
+        elapsed = fields.get("Elapsed") or queue.get("elapsed")
+        time_limit = fields.get("Timelimit") or queue.get("timeLimit")
+        waiting = _slurm_state_token(raw_state) in _SLURM_WAITING_STATES
+        return SchedulerStatus(
+            query_ok=True, source="+".join(sources), raw_state=raw_state,
+            state=(map_slurm_state(raw_state, exit_code=exit_code)
+                   if raw_state else None),
+            reason=queue.get("reason") or fields.get("Reason"),
+            expected_start_at=(_parse_sacct_time(queue.get("start"))
+                               if waiting else None),
+            started_at=(None if waiting else
+                        _parse_sacct_time(fields.get("Start")
+                                          or queue.get("start"))),
+            ended_at=_parse_sacct_time(fields.get("End")),
+            node_list=None if waiting else (fields.get("NodeList")
+                                            or queue.get("nodeList")),
+            elapsed=elapsed, elapsed_seconds=_parse_slurm_duration(elapsed),
+            time_limit=time_limit,
+            time_limit_seconds=_parse_slurm_duration(time_limit),
+            exit_code=exit_code, outcome=scheduler_outcome(raw_state),
+            detail=("; ".join(failures) if failures else None))
+
+
+#: The ``sacct`` columns ``status_observation`` asks for, in order. Fixed.
+_STATUS_SACCT_COLUMNS = ("State", "Start", "End", "NodeList", "Elapsed",
+                         "Timelimit", "ExitCode", "Reason")
+
+#: The ``squeue`` format codes it asks for, and the key each answer fills:
+#: state, pending reason, start (EXPECTED while pending), nodes, time used,
+#: and time limit. Fixed.
+_STATUS_SQUEUE_CODES = (("%T", "state"), ("%r", "reason"), ("%S", "start"),
+                        ("%N", "nodeList"), ("%M", "elapsed"),
+                        ("%l", "timeLimit"))
+
+#: Scheduler states in which a job is still waiting to (re)start: the queue
+#: holds its pending reason and expected start.
+_SLURM_WAITING_STATES = frozenset({"PENDING", "REQUEUED", "CONFIGURING",
+                                   "REQUEUE_HOLD", "REQUEUE_FED"})
+
+#: Scheduler states that mean the SCHEDULER, not the job, decided how it
+#: ended or was interrupted (issue #7). Reported as ``schedulerOutcome``
+#: beside the job's own status: SteerLab's job vocabulary has no "timed
+#: out", and a new field cannot surprise a client that decodes the status.
+SCHEDULER_OUTCOMES = frozenset({"TIMEOUT", "OUT_OF_MEMORY", "PREEMPTED",
+                                "NODE_FAIL", "CANCELLED", "BOOT_FAIL",
+                                "DEADLINE"})
+
+_SCHEDULER_JOB_ID_RE = re.compile(r"^[0-9]{1,20}(?:_[0-9]{1,10})?$")
+
+
+def is_scheduler_job_id(value) -> bool:
+    """Whether ``value`` has the shape of a Slurm job id (``12345``, or an
+    array task ``12345_7``). Checked before a stored id reaches a scheduler
+    command or names a file."""
+    return isinstance(value, str) and bool(_SCHEDULER_JOB_ID_RE.match(value))
+
+
+def scheduler_outcome(raw_state: str | None) -> str | None:
+    """The scheduler-decided ending in ``raw_state`` (first token, so
+    ``CANCELLED by 1234`` reads ``CANCELLED``), or None."""
+    token = _slurm_state_token(raw_state)
+    return token if token in SCHEDULER_OUTCOMES else None
+
+
+def _scheduler_text(raw: str | None) -> str | None:
+    """A scheduler column with its placeholder spellings read as absent."""
+    text = (raw or "").strip()
+    if text.lower() in ("", "unknown", "none", "none assigned", "n/a",
+                        "(null)", "invalid"):
+        return None
+    return text
+
+
+def _query_failure(what: str, proc: subprocess.CompletedProcess) -> str:
+    said = ((proc.stderr or proc.stdout or "").strip()[:200]
+            or f"exit {proc.returncode}")
+    return f"the scheduler's {what} did not answer ({said})"
+
+
+def _parse_slurm_duration(raw: str | None) -> int | None:
+    """A Slurm duration (``[D-]HH:MM:SS``, ``MM:SS``, ``D-HH[:MM]``, or plain
+    minutes) to seconds; None for ``UNLIMITED``, ``Partition_Limit``, or
+    anything else that carries no length."""
+    text = (raw or "").strip()
+    if not text:
+        return None
+    days = 0
+    if "-" in text:
+        head, _sep, text = text.partition("-")
+        if not head.isdigit():
+            return None
+        days = int(head)
+        parts = text.split(":")
+        if not all(p.isdigit() for p in parts) or not 1 <= len(parts) <= 3:
+            return None
+        hours, minutes, seconds = (
+            [int(p) for p in parts] + [0, 0])[:3]
+    else:
+        parts = text.split(":")
+        if not all(p.isdigit() for p in parts) or not 1 <= len(parts) <= 3:
+            return None
+        values = [int(p) for p in parts]
+        if len(values) == 1:
+            hours, minutes, seconds = 0, values[0], 0
+        elif len(values) == 2:
+            hours, (minutes, seconds) = 0, values
+        else:
+            hours, minutes, seconds = values
+    return ((days * 24 + hours) * 60 + minutes) * 60 + seconds
+
+
+@dataclass(frozen=True)
+class SchedulerStatus:
+    """One ``status_observation`` answer: the scheduler's view of a job, in
+    fixed fields. Every time is an epoch second; every field the scheduler
+    did not give is None. ``detail`` says, in words, why a query failed."""
+    query_ok: bool
+    source: str | None = None
+    raw_state: str | None = None
+    state: str | None = None
+    reason: str | None = None
+    expected_start_at: float | None = None
+    started_at: float | None = None
+    ended_at: float | None = None
+    node_list: str | None = None
+    elapsed: str | None = None
+    elapsed_seconds: int | None = None
+    time_limit: str | None = None
+    time_limit_seconds: int | None = None
+    exit_code: str | None = None
+    outcome: str | None = None
+    detail: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        remaining = None
+        if (self.state == "running" and self.elapsed_seconds is not None
+                and self.time_limit_seconds is not None):
+            remaining = max(0, self.time_limit_seconds - self.elapsed_seconds)
+        return {
+            "queryOk": self.query_ok,
+            "source": self.source,
+            "rawState": self.raw_state,
+            "state": self.state,
+            "reason": self.reason,
+            "expectedStartAt": self.expected_start_at,
+            "startedAt": self.started_at,
+            "endedAt": self.ended_at,
+            "nodeList": self.node_list,
+            "elapsed": self.elapsed,
+            "elapsedSeconds": self.elapsed_seconds,
+            "timeLimit": self.time_limit,
+            "timeLimitSeconds": self.time_limit_seconds,
+            "walltimeRemainingSeconds": remaining,
+            "exitCode": self.exit_code,
+            "schedulerOutcome": self.outcome,
+            "detail": self.detail,
+        }
+
 
 @dataclass(frozen=True)
 class SchedulerObservation:
     """One ``poll_observation`` answer. ``state`` is the mapped SteerLab
     status (None when undetermined), ``query_ok`` says whether any scheduler
-    query answered, ``raw_state``/``exit_code`` are sacct's own words, and
+    query answered, ``raw_state``/``exit_code`` are sacct's own words,
     ``ended_at`` is the epoch second sacct recorded the job ending (None
     while it runs, when sacct printed ``Unknown``, or when only squeue
-    answered)."""
+    answered), and ``started_at`` the epoch second it recorded the job
+    starting (None while it waits)."""
     state: str | None
     query_ok: bool
     raw_state: str | None = None
     exit_code: str | None = None
     ended_at: float | None = None
+    started_at: float | None = None
 
 
 @dataclass(frozen=True)

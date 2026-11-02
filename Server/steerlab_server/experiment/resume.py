@@ -462,6 +462,46 @@ def completed_turn_count(turns_path: str) -> int:
     return len(seen)
 
 
+def written_records(run_directory: str) -> dict:
+    """How many complete records a run directory holds RIGHT NOW, for a
+    progress report on a job that may still be writing (issue #7).
+
+    Counted the way a resume counts them (``records_basis``): a panel's
+    complete transcript turns, otherwise the complete lines of
+    ``generations.jsonl``, stopping at a line cut off in mid-write. Unlike
+    ``records_basis`` it asks nothing about whether the folder could be
+    continued (a running, finished, or failed run all count), and unlike
+    ``load_completed`` it never cuts a torn tail: another process may be
+    writing that line.
+
+    Returns ``{"unit", "completedRecords", "tornTail", "lastWrittenAt"}``.
+    ``lastWrittenAt`` is the record file's modification time (the newest
+    transcript's, for a panel), None when no record file exists yet.
+    """
+    turn_files = panel_turn_files(run_directory)
+    if turn_files:
+        times = []
+        for path in turn_files:
+            try:
+                times.append(os.path.getmtime(path))
+            except OSError:
+                continue
+        return {"unit": "turn",
+                "completedRecords": sum(completed_turn_count(path)
+                                        for path in turn_files),
+                "tornTail": False,
+                "lastWrittenAt": max(times) if times else None}
+    path = os.path.join(run_directory, GENERATIONS_FILENAME)
+    try:
+        last = os.path.getmtime(path)
+    except OSError:
+        last = None
+    scan = _CompleteLines(path)
+    count = sum(1 for _record in scan)
+    return {"unit": "response", "completedRecords": count,
+            "tornTail": scan.torn, "lastWrittenAt": last}
+
+
 def _recorded_task(run_directory: str) -> str | None:
     try:
         with open(os.path.join(run_directory, "task.txt"),

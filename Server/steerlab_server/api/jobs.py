@@ -1338,7 +1338,13 @@ class JobManager:
             kind=kind,
             status=status,
             created_at=now,
-            started_at=(now if status in {"submitted", "running"} else None),
+            # A job handed to the scheduler has not started: it may wait in
+            # the queue for an hour. Its start is the scheduler's own, stamped
+            # when the controller first sees it running (``poll_slurm``,
+            # issue #7); the submission time is ``created_at``.
+            started_at=(now if status == "running"
+                        or (status == "submitted" and executor != "slurm")
+                        else None),
             # A job recorded terminal-at-birth (e.g. "prepared" dry runs) is
             # already finished; stamping finished_at keeps clients that key on
             # it (fallback polls, snapshots) from treating it as in-flight.
@@ -1580,6 +1586,16 @@ class JobManager:
             state = observation.get("state")
             status_before = job.status
             already_seen = ((job.result or {}).get("lastSchedulerState") or {})
+            # The real start (issue #7): the scheduler's own record of when
+            # the job began running, stamped the first time the controller
+            # sees it running (and again only if a requeue starts it anew).
+            # Before, ``startedAt`` was the submission time, and a job that
+            # waited 65 minutes in the queue read as running all along.
+            scheduler_start = observation.get("startedAt")
+            start_stamped = (state == "running" and scheduler_start is not None
+                             and job.started_at != scheduler_start)
+            if start_stamped:
+                job.started_at = scheduler_start
             if (state is not None and state != job.status
                     and job.status == "checkpointed"
                     and already_seen.get("state") == state):
@@ -1667,8 +1683,27 @@ class JobManager:
                 job.result = {**(job.result or {}),
                               "lastSchedulerState": self._scheduler_stamp(
                                   observation)}
+                # Whether the SCHEDULER decided this ending (a walltime
+                # kill, an out-of-memory kill, a preemption, a node failure,
+                # a cancel). A field beside the status, never a new status
+                # value: the job vocabulary has no "timed out", and clients
+                # that decode the status must not meet a value they do not
+                # know (issue #7). Cleared when a later state is not one.
+                from .executors import scheduler_outcome
+                outcome = scheduler_outcome(observation.get("rawState"))
+                if outcome:
+                    job.result = {**(job.result or {}),
+                                  "schedulerOutcome": outcome}
+                elif "schedulerOutcome" in (job.result or {}):
+                    job.result = {key: value for key, value
+                                  in (job.result or {}).items()
+                                  if key != "schedulerOutcome"}
                 self.store.update(job)
                 changed += 1
+            elif start_stamped:
+                # No transition this tick, but the start became known (a job
+                # that was already running when this controller took it on).
+                self.store.update(job)
             if job.status == "checkpointed" and status_before != "checkpointed":
                 # THIS instance saw the record become checkpointed (a sacct
                 # 85 exit, or a fold correcting a masked one): provenance the
@@ -3152,9 +3187,10 @@ class JobManager:
             found = observe(slurm_job_id)
             return {"state": getattr(found, "state", None),
                     "endedAt": getattr(found, "ended_at", None),
+                    "startedAt": getattr(found, "started_at", None),
                     "rawState": getattr(found, "raw_state", None)}
         return {"state": executor.poll_state(slurm_job_id),
-                "endedAt": None, "rawState": None}
+                "endedAt": None, "startedAt": None, "rawState": None}
 
     @staticmethod
     def _scheduler_stamp(observation: dict) -> dict:
@@ -4434,7 +4470,8 @@ class JobManager:
             # honest across folds.
             preserved = {key: (job.result or {}).get(key)
                          for key in ("resubmittedAs", "parentJob", "shard",
-                                     "lastSchedulerState", "checkpointedAt")}
+                                     "lastSchedulerState", "checkpointedAt",
+                                     "schedulerOutcome")}
             job.status = data.get("status", job.status)
             job.executor = data.get("executor", job.executor)
             job.executor_job_id = data.get("executorJobID", job.executor_job_id)

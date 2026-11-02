@@ -158,6 +158,14 @@ CENSUS: tuple[RouteRole, ...] = (
     _r("GET", "/api/jobs/{job_id}/stream", R,
        "SSE log follow to a terminal status; the adapter's "
        "`job_logs(follow=True)`."),
+    _r("GET", "/api/jobs/{job_id}/status", R,
+       "One job's scheduler view (fixed fields from the site's sacct and "
+       "squeue), records written so far, and how it ended; the adapter's "
+       "`job_status()`. Reads the runner's own job store and run folders."),
+    _r("GET", "/api/jobs/{job_id}/log-tail", R,
+       "The last lines of a job's controller log and of its own scheduler "
+       "output files, bounded, then returns; the adapter's "
+       "`job_log_tail()`."),
     _r("POST", "/api/jobs/{job_id}/cancel", R,
        "Cancels a running job (scancel on Slurm); the adapter's "
        "`cancel_job()`."),
