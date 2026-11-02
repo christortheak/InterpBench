@@ -448,3 +448,38 @@ def test_undeclared_scratch_gres_leaves_the_header_byte_identical(tmp_path, monk
     assert "#SBATCH --gres=gpu:A100:1" in directives
     # No comma, no scratch token: a site that declared nothing asks for nothing.
     assert not [line for line in directives if "," in line or "lscratch" in line]
+
+
+# --- the CUDA allocator setting every rendered job starts with ----------------------
+
+def _rendered(tmp_path, env=None):
+    bundle = SlurmExecutor().create_bundle(
+        str(tmp_path / "bundle"), ["python", "-c", "pass"], env=env,
+        resources=SlurmResources())
+    with open(bundle.script_path, encoding="utf-8") as handle:
+        return bundle, handle.read()
+
+
+def test_a_rendered_job_defaults_the_cuda_allocator_to_expandable_segments(
+        tmp_path, monkeypatch):
+    """Jobs run under --export=NONE, so a job saw no allocator setting at all:
+    a 217,000-token chunked prompt reading on one 80 GB card failed with
+    8.7 GiB reserved but unallocated. Every rendered job now starts with
+    expandable segments."""
+    _clear_site_env(monkeypatch)
+    monkeypatch.delenv("PYTORCH_CUDA_ALLOC_CONF", raising=False)
+    bundle, script = _rendered(tmp_path)
+    assert bundle.env["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+    assert "export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" in script
+
+
+def test_the_sites_own_cuda_allocator_setting_still_wins(tmp_path, monkeypatch):
+    _clear_site_env(monkeypatch)
+    monkeypatch.setenv("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:256")
+    bundle, script = _rendered(tmp_path)
+    assert bundle.env["PYTORCH_CUDA_ALLOC_CONF"] == "max_split_size_mb:256"
+    assert "expandable_segments" not in script
+    # A caller's explicit value outranks both.
+    bundle, _ = _rendered(tmp_path, env={
+        "PYTORCH_CUDA_ALLOC_CONF": "garbage_collection_threshold:0.6"})
+    assert bundle.env["PYTORCH_CUDA_ALLOC_CONF"] == "garbage_collection_threshold:0.6"

@@ -757,10 +757,18 @@ class SlurmExecutor:
         # runs the provider preflight, whose "why was the catalogue
         # unreachable" wording is this site's declared posture. A value, not a
         # secret, and read-only — it changes no refusal.
+        # PYTORCH_CUDA_ALLOC_CONF joins the inheritance, defaulting to
+        # expandable_segments (2026-11-02): a 217,000-token chunked prompt
+        # reading on one 80 GB card failed with 69.4 GiB allocated and 8.7 GiB
+        # reserved but unallocated, while a 1.66 GiB attention request found
+        # no block large enough. The allocator setting changes where tensors
+        # live, not what is computed. A site's own value still wins.
         for key in ("HF_HOME", "HF_HUB_OFFLINE", "STEERLAB_NODE_STAGE_DIR",
-                    "STEERLAB_JUDGE_KEY_FILE", "STEERLAB_EXTERNAL_SERVICE_EGRESS"):
+                    "STEERLAB_JUDGE_KEY_FILE", "STEERLAB_EXTERNAL_SERVICE_EGRESS",
+                    "PYTORCH_CUDA_ALLOC_CONF"):
             if os.environ.get(key):
                 env.setdefault(key, os.environ[key])
+        env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
         stdout = os.path.join(bundle_dir, "slurm-%j.out")
         stderr = os.path.join(bundle_dir, "slurm-%j.err")
