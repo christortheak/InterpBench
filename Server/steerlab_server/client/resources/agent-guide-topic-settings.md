@@ -153,7 +153,13 @@ chunks of 4,096 tokens for prompts over 8,192 tokens. When the memory check
 estimates the default will not fit the requested card, the submission uses a
 smaller chunk and says so, because those texts will not match runs that used
 the default token for token. Declare a reading when a study must match runs
-made another way, or when twin studies must read their prompts alike. A
+made another way, or when twin studies must read their prompts alike. The
+default is the same on every card, however much memory it has, so one study
+reads alike on every job. A card with memory to spare gains nothing that
+matters from a single pass: the arithmetic is the same and chunks cost well
+under a second for a 200,000-token prompt. So declare `--single-pass` (or
+larger chunks) when the researcher wants that reading, not to speed a run
+up; the memory check then confirms it fits the requested card. A
 server too old to honour the declaration is refused at submit, and the Mac's
 own engine runs the study with a note that the declaration applies to the
 Python engine.

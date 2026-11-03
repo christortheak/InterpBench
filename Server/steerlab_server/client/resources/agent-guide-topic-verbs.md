@@ -46,6 +46,7 @@ its heading (`steerlab workspace guide <topic>`) or ask the verb itself
   <key>=<json>`. The keys are in the `settings` topic.
 - Primary outcome: `steerlab experiment set-primary-outcome <name>
   <outcome>`. Every summary then leads with it.
+- Long prompts: `experiment set-prompt-reading` (`settings`).
 - Chat-format data (two row-aligned `{"messages": […]}` files): `steerlab
   concept import-chat <concept> --positive <file> --negative <file>
   --validation-pairs <n> --seed <n>` makes a new concept and its validation set.
