@@ -115,32 +115,59 @@ import Testing
             ["status", "a1b2c3d4e5f6"],
             routes: ["/api/jobs/a1b2c3d4e5f6/status": (200, started)])
         #expect(outcome.envelope.message == "job a1b2c3d4e5f6 is submitted (the scheduler "
-            + "already reports RUNNING: SteerLab's record catches up on the controller's "
-            + "next check); 3 of 50 records written (the total is the submission's "
-            + "planning estimate)")
+            + "already reports RUNNING; SteerLab's record has not caught up yet); 3 of 50 "
+            + "records written (the total is the submission's planning estimate)")
         #expect(outcome.stdout.contains(
-            "  SteerLab's record still says submitted: it catches up on the controller's "
-                + "next check."))
+            "  SteerLab's record still says submitted; the controller updates it when its "
+                + "own check of the scheduler sees the change."))
 
-        var finished = started
-        finished["status"] = "running"
-        finished["scheduler"] = [
-            "queryOk": true, "rawState": "COMPLETED", "state": "succeeded",
-            "endedAt": 1_700_001_100.0, "exitCode": "0:0",
+        // The scheduler's state names an outcome it decided once, not twice.
+        var timedOut = started
+        timedOut["status"] = "running"
+        timedOut["schedulerOutcome"] = "TIMEOUT"
+        timedOut["scheduler"] = [
+            "queryOk": true, "rawState": "TIMEOUT", "state": "failed",
         ] as [String: Any]
         let ended = try await run(
             ["status", "a1b2c3d4e5f6"],
-            routes: ["/api/jobs/a1b2c3d4e5f6/status": (200, finished)])
-        #expect(ended.envelope.message.hasPrefix(
-            "job a1b2c3d4e5f6 is running (the scheduler already reports COMPLETED:"))
+            routes: ["/api/jobs/a1b2c3d4e5f6/status": (200, timedOut)])
+        #expect(ended.envelope.message.hasPrefix("job a1b2c3d4e5f6 is running (the scheduler "
+            + "already reports TIMEOUT; SteerLab's record has not caught up yet); "))
+        #expect(!ended.envelope.message.contains("(the scheduler recorded"))
 
-        // Agreement, an ended record, and a scheduler that did not answer
-        // add nothing.
+        func ahead(_ status: String, _ view: [String: Any]) -> String? {
+            var document = Self.pendingStatus
+            document["status"] = status
+            document["scheduler"] = view
+            let data = try? JSONSerialization.data(withJSONObject: document)
+            let value = data.flatMap { try? JSONDecoder().decode(JSONValue.self, from: $0) }
+            return value.flatMap(RemoteJobStatusReport.from).flatMap {
+                RemoteJobStatusText.schedulerAhead(of: $0)
+            }
+        }
+        #expect(ahead("running", ["rawState": "COMPLETED", "state": "succeeded"]) == "COMPLETED")
+        // Queued again: the controller's next check turns `running` back
+        // into `submitted`, so the record is behind here too.
+        #expect(ahead("running", ["rawState": "PREEMPTED", "state": "submitted"]) == "PREEMPTED")
+        // A checkpoint exit is FAILED to the scheduler but parks a run to resume.
+        #expect(ahead("running", ["rawState": "FAILED", "state": "checkpointed"])
+            == "FAILED with the checkpoint exit, which parks the run to resume")
+        // An answer from the queue alone, after accounting timed out, is live.
+        #expect(ahead("submitted", [
+            "queryOk": true, "timedOut": true, "rawState": "RUNNING", "state": "running",
+        ]) == "RUNNING")
+
+        // Agreement, an ended record, a scheduler that did not answer, and a
+        // field of an unexpected type add nothing.
         for (status, view) in [
             ("running", ["queryOk": true, "rawState": "RUNNING", "state": "running"]),
             ("failed", ["queryOk": true, "rawState": "COMPLETED", "state": "succeeded"]),
+            ("checkpointed", ["queryOk": true, "rawState": "FAILED", "state": "checkpointed"]),
             ("submitted", ["queryOk": false, "rawState": "RUNNING", "state": "running"]),
+            ("submitted", ["queryOk": true, "rawState": "", "state": "running"]),
+            ("submitted", ["queryOk": true, "rawState": "RUNNING", "state": ["running"]]),
         ] as [(String, [String: Any])] {
+            #expect(ahead(status, view) == nil, "\(status) \(view)")
             var document = Self.pendingStatus
             document["status"] = status
             document["scheduler"] = view

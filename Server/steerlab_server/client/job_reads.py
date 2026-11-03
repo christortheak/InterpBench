@@ -110,42 +110,50 @@ def log_tail(client, invocation, common: dict) -> CLIResult:
 
 # --- plain text ------------------------------------------------------------------
 
-#: The record's statuses the scheduler's live view can be ahead of.
-_WAITING_STATUSES = frozenset({"queued", "submitted"})
 _ENDED_SCHEDULER_STATES = frozenset({"succeeded", "failed", "cancelled",
                                      "checkpointed"})
 
 
 def scheduler_ahead(entry: dict) -> str | None:
-    """The scheduler's raw state when it is ahead of SteerLab's record.
+    """What the scheduler reports, when it is ahead of SteerLab's record.
 
-    The record moves only when the controller checks the scheduler, while a
-    status read asks the scheduler directly, so for up to one check the
-    record can still say ``submitted`` of a job the scheduler runs, or
-    ``running`` of one it has ended (seen live 2026-11-03). None when they
-    agree, when the record has already ended (its word is final), or when
-    the scheduler did not answer. Twin of the Mac client's
-    ``RemoteJobStatusText.schedulerAhead``."""
+    The record moves only when the controller's own check of the scheduler
+    sees a change, and that check reads accounting, while a status read also
+    asks the live queue. So the record can still say ``submitted`` of a job
+    the scheduler runs, or ``running`` of one it has ended or queued again:
+    usually for one check, and longer when accounting is slow (seen live
+    2026-11-03). None when they agree, when the record has already ended
+    (its word is final), or when the scheduler did not answer. Twin of the
+    Mac client's ``RemoteJobStatusText.schedulerAhead``."""
     status = entry.get("status")
     view = entry.get("scheduler")
     if not isinstance(view, dict) or view.get("queryOk") is False:
         return None
     raw, state = view.get("rawState"), view.get("state")
-    if not raw or not state:
+    if not (isinstance(status, str) and isinstance(raw, str) and raw
+            and isinstance(state, str)):
         return None
-    started = status in _WAITING_STATUSES and state == "running"
-    ended = ((status in _WAITING_STATUSES or status == "running")
+    started = status == "submitted" and state == "running"
+    ended = (status in ("submitted", "running")
              and state in _ENDED_SCHEDULER_STATES)
-    return str(raw) if started or ended else None
+    queued_again = status == "running" and state == "submitted"
+    if not (started or ended or queued_again):
+        return None
+    # A checkpoint exit reads FAILED to the scheduler, but it parks a run to
+    # resume; the record will say "checkpointed", not "failed".
+    if state == "checkpointed":
+        return f"{raw} with the checkpoint exit, which parks the run to resume"
+    return raw
 
 
 def status_message(document: dict) -> str:
     text = f"job {document.get('jobId')} is {document.get('status') or 'unknown'}"
     ahead = scheduler_ahead(document)
     if ahead:
-        text += (f" (the scheduler already reports {ahead}: SteerLab's record "
-                 f"catches up on the controller's next check)")
-    if document.get("schedulerOutcome"):
+        # The scheduler's own state already names an outcome it decided.
+        text += (f" (the scheduler already reports {ahead}; SteerLab's record "
+                 f"has not caught up yet)")
+    elif document.get("schedulerOutcome"):
         text += f" (the scheduler recorded {document['schedulerOutcome']})"
     records = _records_phrase(document.get("progress"))
     return text + (f"; {records}" if records else "")
@@ -210,8 +218,9 @@ def _body(entry: dict, indent: str) -> list[str]:
     if isinstance(view, dict):
         lines.append(f"{indent}scheduler: {_scheduler_phrase(view)}")
     if scheduler_ahead(entry) and entry.get("status"):
-        lines.append(f"{indent}SteerLab's record still says {entry['status']}: "
-                     f"it catches up on the controller's next check.")
+        lines.append(f"{indent}SteerLab's record still says {entry['status']}; "
+                     f"the controller updates it when its own check of the "
+                     f"scheduler sees the change.")
     if entry.get("schedulerOutcome"):
         # The runner's sentence names a cancel SteerLab asked for and never
         # says "ended" of a job that waits to run again.

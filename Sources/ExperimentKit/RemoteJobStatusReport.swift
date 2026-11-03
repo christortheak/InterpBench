@@ -322,38 +322,44 @@ public enum RemoteJobStatusText {
         }
     }
 
-    /// The record's statuses the scheduler's live view can be ahead of.
-    private static let waitingStatuses: Set<String> = ["queued", "submitted"]
     private static let endedSchedulerStates: Set<String> = [
         "succeeded", "failed", "cancelled", "checkpointed",
     ]
 
-    /// The scheduler's raw state when it is ahead of SteerLab's record. The
-    /// record moves only when the controller checks the scheduler, while a
-    /// status read asks the scheduler directly, so for up to one check the
-    /// record can still say `submitted` of a job the scheduler runs, or
-    /// `running` of one it has ended (seen live 2026-11-03). Nil when they
-    /// agree, when the record has already ended (its word is final), or when
-    /// the scheduler did not answer.
+    /// What the scheduler reports, when it is ahead of SteerLab's record.
+    /// The record moves only when the controller's own check of the
+    /// scheduler sees a change, and that check reads accounting, while a
+    /// status read also asks the live queue. So the record can still say
+    /// `submitted` of a job the scheduler runs, or `running` of one it has
+    /// ended or queued again: usually for one check, and longer when
+    /// accounting is slow (seen live 2026-11-03). Nil when they agree, when
+    /// the record has already ended (its word is final), or when the
+    /// scheduler did not answer.
     public static func schedulerAhead(of report: RemoteJobStatusReport) -> String? {
         guard let status = report.status, let view = report.scheduler,
-            view.queryOk != false, let raw = view.rawState, let state = view.state
+            view.queryOk != false, let raw = view.rawState, !raw.isEmpty,
+            let state = view.state
         else { return nil }
-        let started = waitingStatuses.contains(status) && state == "running"
-        let ended = (waitingStatuses.contains(status) || status == "running")
+        let started = status == "submitted" && state == "running"
+        let ended = (status == "submitted" || status == "running")
             && endedSchedulerStates.contains(state)
-        return started || ended ? raw : nil
+        let queuedAgain = status == "running" && state == "submitted"
+        guard started || ended || queuedAgain else { return nil }
+        // A checkpoint exit reads FAILED to the scheduler, but it parks a
+        // run to resume; the record will say `checkpointed`, not `failed`.
+        return state == "checkpointed"
+            ? "\(raw) with the checkpoint exit, which parks the run to resume" : raw
     }
 
     /// The one-sentence envelope message for a status report.
     public static func message(for report: RemoteJobStatusReport) -> String {
         let id = report.jobId ?? "?"
         var text = "job \(id) is \(report.status ?? "unknown")"
-        if let raw = schedulerAhead(of: report) {
-            text += " (the scheduler already reports \(raw): SteerLab's record "
-                + "catches up on the controller's next check)"
-        }
-        if let outcome = report.schedulerOutcome {
+        if let reported = schedulerAhead(of: report) {
+            // The scheduler's own state already names an outcome it decided.
+            text += " (the scheduler already reports \(reported); SteerLab's "
+                + "record has not caught up yet)"
+        } else if let outcome = report.schedulerOutcome {
             text += " (the scheduler recorded \(outcome))"
         }
         if let records = recordsPhrase(report.progress) {
@@ -429,8 +435,9 @@ public enum RemoteJobStatusText {
             lines.append(indent + "scheduler: " + schedulerPhrase(view, timeZone: timeZone))
         }
         if schedulerAhead(of: report) != nil, let status = report.status {
-            lines.append(indent + "SteerLab's record still says \(status): it "
-                + "catches up on the controller's next check.")
+            lines.append(indent + "SteerLab's record still says \(status); the "
+                + "controller updates it when its own check of the scheduler sees "
+                + "the change.")
         }
         if let outcome = report.schedulerOutcome {
             // The server's sentence names a cancel SteerLab asked for and

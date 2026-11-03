@@ -144,6 +144,7 @@ def test_the_summary_says_what_the_scheduler_recorded():
                    for line in job_reads.status_lines(document))
 
 
+
 def test_a_record_behind_the_scheduler_says_what_the_scheduler_reports():
     # Seen live 2026-11-03: the scheduler said RUNNING one controller check
     # before SteerLab's record did, and the message said only "submitted".
@@ -155,27 +156,54 @@ def test_a_record_behind_the_scheduler_says_what_the_scheduler_reports():
         "progress": {"recordsWritten": None}, "notes": [],
     }
     assert job_reads.status_message(document) == (
-        "job j2 is submitted (the scheduler already reports RUNNING: "
-        "SteerLab's record catches up on the controller's next check)")
-    assert ("  SteerLab's record still says submitted: it catches up on the "
-            "controller's next check.") in job_reads.status_lines(document)
+        "job j2 is submitted (the scheduler already reports RUNNING; "
+        "SteerLab's record has not caught up yet)")
+    assert ("  SteerLab's record still says submitted; the controller "
+            "updates it when its own check of the scheduler sees the "
+            "change.") in job_reads.status_lines(document)
 
-    document["status"] = "running"
-    document["scheduler"] = {"queryOk": True, "rawState": "COMPLETED",
-                             "state": "succeeded"}
-    assert job_reads.scheduler_ahead(document) == "COMPLETED"
+    def ahead(status, raw, state, **view):
+        return job_reads.scheduler_ahead({
+            **document, "status": status,
+            "scheduler": {"queryOk": True, "rawState": raw, "state": state,
+                          **view}})
 
-    # Agreement, an ended record, and a scheduler that did not answer add
-    # nothing.
+    assert ahead("running", "COMPLETED", "succeeded") == "COMPLETED"
+    # Queued again: the controller's next check turns "running" back into
+    # "submitted", so the record is behind here too.
+    assert ahead("running", "PREEMPTED", "submitted") == "PREEMPTED"
+    # A checkpoint exit is FAILED to the scheduler but parks a run to resume.
+    assert ahead("running", "FAILED", "checkpointed") == (
+        "FAILED with the checkpoint exit, which parks the run to resume")
+    # An answer from the queue alone, after accounting timed out, is live.
+    assert ahead("submitted", "RUNNING", "running", timedOut=True) == "RUNNING"
+
+    # The scheduler's state names an outcome it decided once, not twice.
+    timeout = {**document, "status": "running", "schedulerOutcome": "TIMEOUT",
+               "scheduler": {"queryOk": True, "rawState": "TIMEOUT",
+                             "state": "failed"}}
+    assert job_reads.status_message(timeout) == (
+        "job j2 is running (the scheduler already reports TIMEOUT; "
+        "SteerLab's record has not caught up yet)")
+
+    # Agreement, an ended record, a scheduler that did not answer, and a
+    # field of an unexpected type add nothing.
     for status, view in (
             ("running", {"queryOk": True, "rawState": "RUNNING",
                          "state": "running"}),
             ("failed", {"queryOk": True, "rawState": "COMPLETED",
                         "state": "succeeded"}),
+            ("checkpointed", {"queryOk": True, "rawState": "FAILED",
+                              "state": "checkpointed"}),
             ("submitted", {"queryOk": False, "rawState": "RUNNING",
-                           "state": "running"})):
+                           "state": "running"}),
+            (["submitted"], {"queryOk": True, "rawState": "RUNNING",
+                             "state": "running"}),
+            ("submitted", {"queryOk": True, "rawState": "RUNNING",
+                           "state": ["running"]})):
         quiet = {**document, "status": status, "scheduler": view}
         assert job_reads.scheduler_ahead(quiet) is None, status
-        assert "already reports" not in job_reads.status_message(quiet)
         assert not any("record still says" in line
                        for line in job_reads.status_lines(quiet))
+        if isinstance(status, str):
+            assert "already reports" not in job_reads.status_message(quiet)

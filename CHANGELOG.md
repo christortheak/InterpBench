@@ -13,14 +13,14 @@ migration that rewrites frozen bytes.
 ## [Unreleased]
 
 - **`remote status` says when the scheduler is ahead of SteerLab's record.**
-  The record moves only when the controller checks the scheduler, but a
-  status read asks the scheduler directly. On a live job, the scheduler said
-  RUNNING one check before the record did, and the message said only
-  `submitted`. Both clients' messages (`remote status`, `runner status`) now
-  name the scheduler's state whenever it is ahead of a record that has not
-  ended, and say that the record catches up on the controller's next check.
-  The `remote` guide topic says to go by `scheduler` for what a job is doing
-  now.
+  The record moves only when the controller's own check of the scheduler
+  sees a change, but a status read also asks the live queue. On a live job,
+  the scheduler said RUNNING one check before the record did, and the message
+  said only `submitted`. Both clients (`remote status`, `runner status`) now
+  name the scheduler's state when a record that has not ended is behind it:
+  a job that started, ended, or was queued again. A checkpoint exit is named
+  as one, not as a bare `FAILED`. The `remote` guide topic says to go by
+  `scheduler` for what a job is doing now.
 
 ## [0.9.20] — 2026-11-02
 

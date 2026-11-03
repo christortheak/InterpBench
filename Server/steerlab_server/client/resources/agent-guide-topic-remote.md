@@ -189,10 +189,11 @@ of its first part. A job the scheduler requeued keeps its previous start
 while it waits, and takes the new one when it runs again.
 
 `status` and `startedAt` are SteerLab's record, which the controller updates
-each time it checks the scheduler; `scheduler` is read live. For up to one
-check the record can still say `submitted` of a job the scheduler runs, or
-`running` of one it has ended, and the message says so. Go by `scheduler` for
-what the job is doing now.
+when its own check of the scheduler sees a change; `scheduler` is read live.
+So the record can lag: it can still say `submitted` of a job the scheduler
+runs, or `running` of one it has ended or queued again. That usually lasts one
+check, and longer when the scheduler's accounting is slow. The summary says so,
+for each part of a split run. Go by `scheduler` for what the job is doing now.
 
 **`logs --tail N`** prints the last N lines (at most 1000) of the controller's
 log and of the job's own scheduler output (`slurm-<id>.out` and `.err`), then
