@@ -3113,9 +3113,9 @@ public struct ClusterClient: Sendable {
                 .missingPrerequisite, refusal, repair: SubstrateRouting.declaredSeedPolicyRepair)
         }
         // A server-resident study that declares a prompt reading an older
-        // engine would ignore (issue #6), refused the same way. An engine
-        // that honours it needs no second look at the manifest.
-        if verb != "analyze", try await !capabilities().supportsPromptReading,
+        // engine would ignore (issue #6), refused the same way. The
+        // capabilities are asked for only when the study declares one.
+        if verb != "analyze",
             let body = try? await experimentManifestBody(name: experiment),
             let manifest = try? JSONDecoder().decode(ExperimentManifest.self, from: body),
             manifest.promptReading != nil,
