@@ -243,11 +243,10 @@ def sweep_judge_panel(manifest, model, model_provider, root, _log, *,
                 def _gen(prompt: str) -> str:
                     # JUDGE_MAX_TOKENS, never a smaller ad-hoc cap: the
                     # 2026-07-22 incident cap (512) truncated a legible
-                    # verdict mid-reasoning and the run refused it.
-                    return generate.generate(model, prompt, model_id=manifest.model_id,
-                                    max_tokens=paired_judge.JUDGE_MAX_TOKENS,
-                                    temperature=0.0,
-                                    prompt_mode=prompt_render.CHAT_ASSISTANT)
+                    # verdict mid-reasoning and the run refused it. Read by
+                    # the judge's own rule, not the sweep's.
+                    return judge_resources.generate_as_judge(
+                        model, prompt, model_id=manifest.model_id)
                 panel.append((ref.name, paired_judge.make_local_judge(_gen),
                               resolved))
                 continue

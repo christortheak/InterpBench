@@ -210,6 +210,8 @@ def _evaluate_response_coding(name: str, manifest: manifest_module.Manifest, sch
                         detail["revision"] = holder["revision"]
                     if holder.get("actualDtype"):
                         detail["actualDtype"] = holder["actualDtype"]
+                    if holder.get("promptReading"):
+                        detail["promptReading"] = holder["promptReading"]
                     if judge_noncompliant:
                         detail["noncompliantCodings"] = judge_noncompliant
                     judge_details.append(detail)
@@ -814,6 +816,11 @@ def evaluate(name: str, root: str | None = None, source_run: str | None = None,
                         # sessions on different devices comparable after
                         # the fact (external review round 4, finding 2).
                         block["dtype"] = holder["actualDtype"]
+                    if ref.kind == "local" and holder.get("promptReading"):
+                        # How the judge read its prompts: its own rule, the
+                        # device default, never the study's reading
+                        # (judge_resources.judge_prompt_reading).
+                        block["promptReading"] = holder["promptReading"]
                     if ref.kind == "openrouter":
                         block["provider"] = \
                             paired_judge.canonical_openrouter_provider(ref.provider)

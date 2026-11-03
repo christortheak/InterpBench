@@ -248,6 +248,42 @@ def release_models_for_judge(model_release, roster, index: int, *,
         _log(f"released the private model copy of {where} — {need_text}")
 
 
+def judge_prompt_reading(device) -> "prompt_reading.PromptReading":
+    """The ONE rule a local judge reads its prompts by: this engine's default
+    for the judge model's device (on CUDA, prompts over 8,192 tokens in
+    4,096-token chunks; on MPS over 4,096 in 1,024-token chunks; on CPU a
+    single pass).
+
+    A judge is its own instrument, not the study's task-prompt reading, so
+    neither the study's promptReading declaration, nor a submission's plan,
+    nor the STEERLAB_PREFILL_CHUNK setting moves it: the same judge reads the
+    same prompts the same way whether it judges inside a run, a pipeline, or
+    a standalone evaluate."""
+    from . import prompt_reading
+    return prompt_reading.device_default(device)
+
+
+def judge_reading_record(device) -> dict:
+    """The judge's reading as judge provenance records it, beside its dtype."""
+    from . import prompt_reading
+    return {**judge_prompt_reading(device).rule(),
+            "source": prompt_reading.ENGINE_DEFAULT,
+            "device": prompt_reading.device_kind(device)}
+
+
+def generate_as_judge(slot, prompt: str, *, model_id: str) -> str:
+    """One local judgment's generation, at the one judge cap
+    (JUDGE_MAX_TOKENS: the 2026-07-22 incident's 512 truncated a legible
+    verdict), under the judge's own reading."""
+    from . import paired_judge, prompt_reading
+    with prompt_reading.reading_scope(
+            judge_prompt_reading(generate._model_device(slot))):
+        return generate.generate(slot, prompt, model_id=model_id,
+                                 max_tokens=paired_judge.JUDGE_MAX_TOKENS,
+                                 temperature=0.0,
+                                 prompt_mode=prompt_render.CHAT_ASSISTANT)
+
+
 def judge_callable(ref: manifest.JudgeRef, model_provider, *, study_model: str,
                     study_revision: str | None = None, stack=None):
     """(judge_fn, requested_model, actual_model_holder) for one judge. Claude
@@ -398,12 +434,13 @@ def _local_judge_generation(ref: manifest.JudgeRef, model_provider, *,
                 actual_dtype = getattr(slot, "dtype", None)
                 if actual_dtype:
                     holder["actualDtype"] = str(actual_dtype)
+                # How the judge read its prompts, beside its dtype: its own
+                # rule, never the study's (judge_prompt_reading).
+                holder["promptReading"] = judge_reading_record(
+                    generate._model_device(slot))
                 # JUDGE_MAX_TOKENS — the one cross-engine judge cap (the
                 # 2026-07-22 incident: 512 truncated a legible verdict).
-                return generate.generate(slot, prompt, model_id=slot.model_id,
-                                max_tokens=paired_judge.JUDGE_MAX_TOKENS,
-                                temperature=0.0,
-                                prompt_mode=prompt_render.CHAT_ASSISTANT)
+                return generate_as_judge(slot, prompt, model_id=slot.model_id)
         except model_loader.ModelLoadError as exc:
             if judge_model == study_model:
                 raise
