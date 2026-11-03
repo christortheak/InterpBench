@@ -676,6 +676,47 @@ def run_arm_system_prompts(manifest, conditions, latent_conditions,
     return arms
 
 
+def run_arm_render_settings(manifest, root) -> list[dict]:
+    """The :func:`prompt_render.render` keywords each arm of the run matrix
+    renders its task prompts with, distinct, in emission order: the study's
+    own (baseline, concept, and SAE latent arms), then each agent arm's.
+
+    Spelled as ``execute_condition`` hands them to ``generate`` (the effort
+    only when the arm declares a reasoning budget), so the prompt lengths the
+    run's prompt-reading record states are the lengths generation reads.
+    Like :func:`run_arm_system_prompts` it reads only each agent artifact's
+    prompt settings, never its vectors; an agent that will not load is
+    skipped, since the condition loop owns that failure."""
+    from . import model_variant
+
+    def render(prompt_mode, system_prompt, thinking, effort, budget) -> dict:
+        return {"prompt_mode": prompt_mode, "system_prompt": system_prompt,
+                "qwen_thinking_enabled": thinking,
+                "reasoning_effort": effort if budget else None}
+
+    frame = manifest.system_prompt
+    settings = [render(manifest.prompt_mode, system_prompt_mod.compose(None, frame),
+                       manifest.qwen_thinking_enabled, manifest.reasoning_effort,
+                       manifest.reasoning_max_tokens)]
+    for vc in manifest.variant_conditions:
+        try:
+            variant = (model_variant.ModelVariant.from_dict(vc.artifact)
+                       if vc.artifact
+                       else model_variant.ModelVariant.from_file(
+                           paths.resolve_artifact(vc.artifact_path, root)))
+        except (OSError, KeyError, ValueError, RuntimeError):
+            continue  # surfaces as the loop's per-condition error record
+        setting = render(
+            variant.prompt_mode,
+            system_prompt_mod.compose(variant.system_prompt, frame),
+            variant.qwen_thinking_enabled,
+            prompt_render.resolve_reasoning_effort(None, variant.qwen_thinking_enabled),
+            manifest.reasoning_max_tokens if variant.qwen_thinking_enabled else None)
+        if setting not in settings:
+            settings.append(setting)
+    return settings
+
+
 def require_manifest_sampling_policy(manifest, model, root, *,
                                       wants_choice: bool) -> None:
     """Defense in depth for study-owned sampling (2026-07-21): every

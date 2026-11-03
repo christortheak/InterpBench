@@ -15,6 +15,7 @@ from . import forward_resolution
 from . import manifest as manifest_module
 from . import model_resources
 from . import panel_workflow
+from . import prompt_reading
 from . import run_artifacts
 from . import run_preflight
 from . import run_readouts
@@ -172,7 +173,9 @@ def run(name: str, prompts_file: str | None = None, root: str | None = None,
         else:
             run_preflight.resume_admission(run_directory, name=name, manifest=manifest,
                               shard=shard,
-                              check_experiment_hash=_epoch_stable)
+                              check_experiment_hash=_epoch_stable,
+                              reading=(_pre_model_prompt_reading(manifest, device)
+                                       if model_provider is None else None))
 
     with model_resources.acquire_model(manifest, dtype, device, model_provider) as model:
         manifest = model_resources.pin_model_revision(name, manifest, model, root, _log)
@@ -189,6 +192,18 @@ def run(name: str, prompts_file: str | None = None, root: str | None = None,
                          forward_resolutions=forward_resolutions, shard=shard)
 
 
+def _pre_model_prompt_reading(manifest, device):
+    """The prompt reading a run on ``device`` will resolve, before the model
+    loads, for the resume gate's early refusal; None when the declaration
+    cannot be read (the run refuses on it after the load, in full words)."""
+    from ..steering import model_loader
+    try:
+        return prompt_reading.for_manifest(manifest, model_loader.resolve_device(device))
+    except prompt_reading.PromptReadingError:
+        return None
+
+
+@prompt_reading.scoped
 def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
               checkpoint=None, run_directory=None, on_run_directory=None,
               forward_resolutions=None, shard=None) -> str:
@@ -270,6 +285,20 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
     # stamped so the pinned SAE repository commit can ride config.json.
     condition_execution.sae_latent_preflight(manifest, _log)
     latent_conditions = condition_execution.materialize_sae_latent_conditions(manifest, _log)
+    # How this run reads its prompts (a single pass, or chunks that fill the
+    # cache): ONE rule, resolved once from the study's declaration, the
+    # submission's plan, the environment, or the device default; compared
+    # with a parked run's reading before anything is appended to it; stamped
+    # into config.json; and in force for every generation below. Chunked and
+    # single-pass readings do not give token-identical texts, so a run never
+    # mixes them.
+    reading, reading_counts, reading_record = run_preflight.study_prompt_reading(
+        model, manifest, prompts, root, _log)
+    if resuming:
+        run_preflight.prompt_reading_admission(
+            run_directory, name=name, reading=reading, counts=reading_counts,
+            shard_stamp=sharding_mod.read_shard_stamp(run_directory), log=_log)
+    prompt_reading.active_reading.set(reading)
     if run_directory is None:
         # Shard partials are visibly partial by name; the merge assembles the
         # plain exp-<name>-run directory from them.
@@ -297,6 +326,8 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
         run_notes: dict = {}
         if inert_note is not None:
             run_notes["inertConceptMachinery"] = inert_note
+        # The prompt reading rides the same open dict, by the same rule.
+        run_notes[prompt_reading.RECORD_KEY] = reading_record
         if latent_conditions:
             run_notes["saeLatentConditions"] = [
                 provenance for _spec, _edit, provenance in latent_conditions]

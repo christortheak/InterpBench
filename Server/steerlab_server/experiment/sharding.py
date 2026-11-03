@@ -686,6 +686,80 @@ def _prove_one_seed_rule(name: str, manifest, stamps: list[dict],
                 "engine release; do not merge these partials)"))
 
 
+def _prove_one_prompt_reading(name: str, stamps: list[dict]) -> None:
+    """Refuse a merge whose shards read the study's prompts differently.
+
+    Chunked and single-pass readings do not give token-identical texts, so a
+    fan-out that straddled a change of reading (an engine update, a changed
+    submission plan, a different STEERLAB_PREFILL_CHUNK) would merge two
+    readings into one run with nothing in the records to tell them apart.
+    The comparison is of effective behaviour, as on resume: shards whose
+    rules differ in text or source but read every prompt the same way
+    merge. Every shard of one fan-out renders the same prompts (the
+    experiment hash matched), so any shard's longest prompt settles it
+    where the longest prompt can (``prompt_reading.agree_on_longest``).
+
+    A shard made before 0.9.20 is read by that release's rule for its
+    device; one that names no device could have read on MPS or CPU, and
+    must agree with the others either way. Shards that all predate the
+    record and name no device were made by one engine and are not compared.
+    Panels are compared by their rules alone, since their turn prompts
+    grow while they run."""
+    from . import prompt_reading
+    found = [(int(stamp["shardIndex"]),
+              *prompt_reading.run_directory_reading(stamp["_dir"]))
+             for stamp in stamps]
+    longest = next((entry.get("longestPromptTokens") for _, _, entry, _ in found
+                    if isinstance(entry, dict)
+                    and isinstance(entry.get("longestPromptTokens"), int)), None)
+
+    def refuse(first, other, cause):
+        def said(index, reading, note):
+            text = (f"shard {index} reads them as {reading.describe()}"
+                    if reading is not None else
+                    f"shard {index} does not show how it read them")
+            return text + (f" ({note})" if note else "")
+        raise ShardMergeRefusal(
+            "shard merge refused: the shards read the study's prompts "
+            f"differently: {said(*first)}, but {said(*other)}, {cause}. "
+            "Chunked and single-pass readings do not give token-identical "
+            "texts, and merging would mix two prompt readings in one run; the "
+            "shard partials are untouched",
+            gate=MANIFEST_EPOCH,
+            repair=(f"steerlab-server study submit {name} --verb run --executor "
+                    f"slurm --parallel {len(stamps)}  (a fresh fan-out that "
+                    "reads every prompt one way; do not merge these partials)"))
+
+    unreadable = [(i, r, note) for i, r, entry, note in found
+                  if r is None and entry is not None]
+    stated = [(i, r, note) for i, r, entry, note in found if r is not None]
+    unknown = [(i, None, note) for i, r, entry, note in found
+               if r is None and entry is None]
+    if unreadable:
+        first = stated[0] if stated else unknown[0] if unknown else unreadable[0]
+        if first is unreadable[0] and len(unreadable) > 1:
+            first = unreadable[1]
+        refuse(first, unreadable[0], "and its record cannot be read")
+    if not stated:
+        return
+    first = stated[0]
+    for other in stated[1:]:
+        agree = prompt_reading.agree_on_longest(first[1], other[1], longest)
+        if not agree:
+            refuse(first, other,
+                   "so its longest prompt would be read differently"
+                   if agree is False else
+                   "and nothing the shards record shows that every prompt was "
+                   "read the same way")
+    for other in unknown:
+        for candidate in (prompt_reading.historic_reading("mps"),
+                          prompt_reading.historic_reading("cpu")):
+            if not prompt_reading.agree_on_longest(first[1], candidate, longest):
+                refuse(first, other,
+                       "and a shard that does not show its reading cannot be "
+                       "shown to have read every prompt the same way")
+
+
 def _prove_shards(name: str, shard_dirs: list[str], *, root: str) -> _ProvenShards:
     """Every refusal a merge can make, and none of its writes."""
     stamps: list[dict] = []
@@ -811,6 +885,7 @@ def _prove_shards(name: str, shard_dirs: list[str], *, root: str) -> _ProvenShar
             f"{experiment_hash[:12]}… — the experiment drifted since the "
             "fan-out (epoch guard); the shard partials are untouched")
     _prove_one_seed_rule(name, manifest, stamps, shard_records)
+    _prove_one_prompt_reading(name, stamps)
 
     merged_records = [record for records in shard_records
                       for record in records]
@@ -863,11 +938,21 @@ def _assemble(name: str, proven: _ProvenShards, into: str, *, root: str,
     # otherwise be stamped — one stale allocation id repeated across every
     # run the same controller incarnation merged (observed 2026-08-06). The
     # per-shard Slurm ids live in report.json's `sharded` block.
+    from . import prompt_reading
     from .manifest import inert_machinery_note
     inert_note = inert_machinery_note(proven.manifest.raw)
+    notes: dict = {}
+    if inert_note is not None:
+        notes["inertConceptMachinery"] = inert_note
+    # The prompt reading every shard read by (``_prove_one_prompt_reading``
+    # proved they agree), as shard 0 recorded it; nothing when the shards
+    # were made before runs recorded it.
+    _reading, reading_entry, _note = prompt_reading.run_directory_reading(
+        proven.stamps[0]["_dir"])
+    if reading_entry is not None:
+        notes[prompt_reading.RECORD_KEY] = reading_entry
     run_artifacts.write_config_snapshot(proven.manifest, into, "run", job_id=job_id,
-                                 notes=({"inertConceptMachinery": inert_note}
-                                        if inert_note is not None else None))
+                                 notes=notes or None)
 
     # Deterministic shared artifacts (vectors, substrate.json, …): identical
     # across shards by the determinism claim — verified byte-for-byte, then

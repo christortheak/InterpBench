@@ -10,6 +10,7 @@ from . import resume as resume_mod
 from . import sharding as sharding_mod
 from . import truncation_gate
 from . import execution_reporting
+from . import prompt_reading
 from . import run_artifacts
 from . import run_preflight
 from . import run_reporting
@@ -219,6 +220,27 @@ def _park_panel_run(run_directory: str, records: list[dict], log,
         f"resume-state written → exit {resume_mod.CHECKPOINT_EXIT_CODE}")
 
 
+def _panel_prompt_reading(manifest, model, log):
+    """``(reading, device)`` for a panel: the device of the loaded model, or
+    the one the server's models load on when seats are served from its
+    registry."""
+    from . import generate
+    from ..steering import model_loader
+    device = (generate._model_device(model) if model is not None
+              else model_loader.resolve_device(None))
+    try:
+        reading = prompt_reading.for_manifest(manifest, device, log=log)
+    except prompt_reading.PromptReadingError as exc:
+        from . import lifecycle_gates
+        raise lifecycle_gates.refusing(
+            lifecycle_gates.STUDY_DECLARATION,
+            f"the study's promptReading declaration cannot be read: {exc}",
+            repair=exc.repair_action) from exc
+    log(f"prompt reading: {reading.describe()} (source {reading.source})")
+    return reading, device
+
+
+@prompt_reading.scoped
 def run_multi_agent_study(name, manifest, model, root, model_provider=None,
                            log=print, shard=None, run_directory=None,
                            on_run_directory=None, should_cancel=None,
@@ -254,11 +276,19 @@ def run_multi_agent_study(name, manifest, model, root, model_provider=None,
     # scores each flattened turn (drift fails up front).
     from . import reasoning_style
     style = reasoning_style.load_pinned(manifest, root)
+    # How the panel reads its turn prompts: the same rule a study run
+    # resolves, recorded and in force for every turn. A panel's prompts grow
+    # as it deliberates, so their lengths are not known at the start: the
+    # record leaves the counts empty, and a resume compares the two rules
+    # themselves (``run_preflight.prompt_reading_admission``).
+    reading, device = _panel_prompt_reading(manifest, model, log)
     resuming = run_directory is not None
     if not resuming:
         run_directory = paths.make_unique_run_directory(f"exp-{name}-run", root)
-        run_artifacts.write_config_snapshot(manifest, run_directory, "run", model=model,
-                               root=root, log=log)
+        run_artifacts.write_config_snapshot(
+            manifest, run_directory, "run", model=model, root=root, log=log,
+            notes={prompt_reading.RECORD_KEY: prompt_reading.record(
+                reading, device=device, counts=None)})
     else:
         # Same admission guards the ordinary resume path enforces. Accepting
         # any supplied directory would permit mutating a COMPLETE run, or
@@ -267,7 +297,11 @@ def run_multi_agent_study(name, manifest, model, root, model_provider=None,
         # same gate before acquiring the model (§16 repair 2); the call here
         # is what admits a direct caller identically.
         run_preflight.panel_resume_admission(run_directory, manifest=manifest, shard=shard)
+        run_preflight.prompt_reading_admission(
+            run_directory, name=name, reading=reading,
+            shard_stamp=sharding_mod.read_shard_stamp(run_directory), log=log)
         log(f"resuming panel run in {os.path.basename(run_directory)}")
+    prompt_reading.active_reading.set(reading)
     # Snapshot the scenario VERBATIM beside experiment.json, before a single
     # turn is generated. experiment.json only POINTS at the scenario, but the
     # seat→variant attribution (agents[].variantArtifactPath/Hash) lives in

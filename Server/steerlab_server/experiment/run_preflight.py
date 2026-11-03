@@ -346,7 +346,8 @@ def _memory_preflight_or_stay_silent(scenario_report, manifest, _log) -> None:
 
 
 def resume_admission(run_directory, *, name, manifest, shard,
-                      check_experiment_hash: bool = True) -> None:
+                      check_experiment_hash: bool = True,
+                      reading=None) -> None:
     """Admit (or refuse) a supplied run directory for a standard study run.
 
     Pure file I/O on the run directory — ``require_resumable`` reads the
@@ -395,6 +396,12 @@ def resume_admission(run_directory, *, name, manifest, shard,
                 "refusing to mix shard ranges")
     seed_rule_admission(run_directory, name=name, manifest=manifest,
                         shard_stamp=shard_stamp)
+    if reading is not None:
+        # Before the model loads, only what the parked run's own record can
+        # settle; the exact comparison over the rendered prompts runs again
+        # once the tokenizer is in hand (``_run_impl``).
+        prompt_reading_admission(run_directory, name=name, reading=reading,
+                                 shard_stamp=shard_stamp, definite_only=True)
 
 
 def seed_rule_admission(run_directory, *, name, manifest,
@@ -471,6 +478,149 @@ def seed_rule_admission(run_directory, *, name, manifest,
         "is now honored at one sample per item) — refusing to mix two seed "
         "rules in one run",
         gate=lifecycle_gates.MANIFEST_EPOCH, repair=fresh)
+
+
+def study_prompt_reading(model, manifest, prompts, root, _log):
+    """``(reading, counts, record)`` for a study run on the loaded model.
+
+    ``reading`` is the rule the run reads its prompts by, resolved from the
+    study's declaration, the submission's plan, the environment override,
+    or the device default (``prompt_reading.resolve_prompt_reading``). A
+    declaration the engine cannot read refuses the run before any
+    generation. ``counts`` are the token counts of every task prompt under
+    every arm's rendering (``prompt_reading.rendered_token_counts``), or None
+    when they cannot be measured, which is said in the log. ``record`` is the
+    run's ``notes.promptReading`` object."""
+    from . import condition_execution, prompt_reading
+    from . import generate as generate_mod
+    device = generate_mod._model_device(model)
+    try:
+        reading = prompt_reading.for_manifest(manifest, device, log=_log)
+    except prompt_reading.PromptReadingError as exc:
+        raise lifecycle_gates.refusing(
+            lifecycle_gates.STUDY_DECLARATION,
+            f"the study's promptReading declaration cannot be read: {exc}",
+            repair=exc.repair_action) from exc
+    counts = None
+    tokenizer = getattr(model, "tokenizer", None)
+    if tokenizer is not None:
+        try:
+            settings = condition_execution.run_arm_render_settings(manifest, root)
+            counts = prompt_reading.rendered_token_counts(
+                tokenizer, manifest.model_id, prompts, settings)
+        except Exception as exc:  # noqa: BLE001 - the record says what it lacks
+            _log(f"prompt reading: the task prompts' token counts could not be "
+                 f"measured ({type(exc).__name__}: {exc}); the run records its "
+                 "rule without them")
+    if counts is not None:
+        longest = max((n for row in counts for n in row), default=0)
+        chunked = sum(1 for row in counts if any(reading.chunk_size(n) for n in row))
+        _log(f"prompt reading: {reading.describe()} (source {reading.source}); "
+             f"{chunked} of {len(counts)} task prompt(s) read in chunks, the "
+             f"longest {longest:,} tokens")
+    else:
+        _log(f"prompt reading: {reading.describe()} (source {reading.source})")
+    return reading, counts, prompt_reading.record(reading, device=device,
+                                                  counts=counts)
+
+
+def _has_records(run_directory) -> bool:
+    try:
+        return os.path.getsize(
+            os.path.join(run_directory, resume_mod.GENERATIONS_FILENAME)) > 0
+    except OSError:
+        return False
+
+
+def _prompt_reading_repair(name, shard_stamp) -> str:
+    if shard_stamp is not None:
+        return (f"steerlab-server study submit {name} --verb run --executor "
+                f"slurm --parallel {shard_stamp.get('shardCount')}  (a fresh "
+                "fan-out that reads every prompt one way; or finish these "
+                "partials on the engine release that started them)")
+    return (f"steerlab-server experiment run {name}  (a fresh run, without "
+            "--resume; or finish this run on the engine release that started "
+            "it)")
+
+
+def prompt_reading_admission(run_directory, *, name, reading, counts=None,
+                             shard_stamp=None, log=None,
+                             definite_only: bool = False) -> None:
+    """Refuse to resume a run whose prompts were read differently from how
+    this engine reads them now.
+
+    Chunked and single-pass readings do not give token-identical texts, so a
+    run that continued under a different reading would mix two readings
+    whose records cannot be told apart. The comparison is of EFFECTIVE
+    behaviour, not of the rule's text or its source: two rules agree when
+    every prompt the study renders is read the same way under both, so a
+    declared chunked 4096 above 8192 equals the CUDA default, and a study
+    whose prompts are all at or below both thresholds reads identically
+    under either. ``counts`` (this run's rendered prompt lengths, the same
+    prompts the parked run read, since the experiment hash matched) make the
+    comparison exact. Without them the parked run's own record decides from
+    its longest prompt, where it can (``prompt_reading.agree_on_longest``).
+
+    A run made before 0.9.20 records no reading and is taken as read by that
+    release's rule for its device (``prompt_reading.run_directory_reading``).
+
+    ``definite_only`` (the pre-model call in ``run``) refuses only what is
+    certain without the prompts' lengths, and leaves the rest to the call
+    after the model loads, which has them. Pure file I/O otherwise."""
+    from . import prompt_reading
+    then, entry, note = prompt_reading.run_directory_reading(run_directory)
+    if then is None and entry is None and not _has_records(run_directory):
+        # Made before runs recorded their reading, naming no device, and
+        # nothing generated yet: no prompt has been read, so nothing can mix.
+        return
+    candidates = ([then] if then is not None else
+                  [prompt_reading.historic_reading("mps"),
+                   prompt_reading.historic_reading("cpu")])
+    longest = (entry.get("longestPromptTokens")
+               if isinstance(entry, dict)
+               and isinstance(entry.get("longestPromptTokens"), int) else None)
+    differing: list[int] = []
+    verdict: bool | None = True
+    for candidate in candidates:
+        if counts is not None:
+            found = prompt_reading.differing_counts(candidate, reading, counts)
+            differing = differing or found
+            agree = not found
+        else:
+            agree = prompt_reading.agree_on_longest(candidate, reading, longest)
+        if agree is False:
+            verdict = False
+            break
+        if agree is None:
+            verdict = None
+    if verdict is True:
+        if note and log is not None and then is not None and then.historic \
+                and counts is not None and any(
+                    then.chunk_size(n) for row in counts for n in row):
+            log(f"note: {os.path.basename(run_directory)}: {note}")
+        return
+    if verdict is None and definite_only:
+        return
+    held = (f"read its prompts as {then.describe()}" if then is not None
+            else "cannot show how it read its prompts")
+    if note:
+        held += f" ({note})"
+    now = f"{reading.describe()} ({prompt_reading.describe_source(reading)})"
+    if differing:
+        why = (prompt_reading.describe_difference(differing)
+               + ", and chunked and single-pass readings do not give "
+                 "token-identical texts")
+    elif verdict is False:
+        why = ("its longest prompt would be read differently, and chunked "
+               "and single-pass readings do not give token-identical texts")
+    else:
+        why = ("neither its record nor this engine can show that every prompt "
+               "would be read the same way under both")
+    raise resume_mod.ResumeRefusal(
+        f"run directory {run_directory} {held}, but this engine reads them as "
+        f"{now}: {why} — refusing to mix two prompt readings in one run",
+        gate=lifecycle_gates.MANIFEST_EPOCH,
+        repair=_prompt_reading_repair(name, shard_stamp))
 
 
 def panel_resume_admission(run_directory, *, manifest, shard,
