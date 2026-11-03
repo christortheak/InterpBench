@@ -743,27 +743,6 @@ def parked_reading(run_directory: str | None) -> PromptReading | None:
     return PromptReading.from_rule(then.rule(), source=RESUMED_RUN, basis=basis)
 
 
-def stamp_missing_record(run_directory: str, entry: dict) -> bool:
-    """Add ``notes.promptReading`` to a resumed run's config.json when the
-    run has none (one made before 0.9.20): its continuation was read by the
-    rule the resume guard has just confirmed the parked part was, so the run
-    now says so. Additive only: a run that already records its reading is
-    never rewritten. Returns whether it wrote."""
-    path = os.path.join(run_directory, "config.json")
-    config = _read_json(path)
-    if config is None:
-        return False
-    notes = config.get("notes") if isinstance(config.get("notes"), dict) else {}
-    if notes.get(RECORD_KEY) is not None:
-        return False
-    config["notes"] = {**notes, RECORD_KEY: entry}
-    temporary = path + ".tmp"
-    with open(temporary, "w", encoding="utf-8") as handle:
-        json.dump(config, handle, indent=2, sort_keys=True)
-    os.replace(temporary, path)
-    return True
-
-
 # ------------------------------------------------------------- comparison
 
 def differing_counts(a: PromptReading, b: PromptReading,

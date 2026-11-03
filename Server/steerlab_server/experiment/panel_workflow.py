@@ -303,10 +303,10 @@ def run_multi_agent_study(name, manifest, model, root, model_provider=None,
         run_preflight.prompt_reading_admission(
             run_directory, name=name, reading=reading,
             shard_stamp=sharding_mod.read_shard_stamp(run_directory), log=log)
-        # A panel made before readings were recorded now says how it was read.
-        prompt_reading.stamp_missing_record(
-            run_directory, prompt_reading.record(reading, device=device,
-                                                 counts=None))
+        # A resumed panel keeps its original stamps: its config.json is never
+        # rewritten, so one made before readings were recorded still records
+        # none (the rule of the release that started it, which the guard has
+        # just confirmed this continuation keeps).
         log(f"resuming panel run in {os.path.basename(run_directory)}")
     prompt_reading.active_reading.set(reading)
     # Snapshot the scenario VERBATIM beside experiment.json, before a single

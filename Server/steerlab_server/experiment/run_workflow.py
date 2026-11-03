@@ -302,11 +302,11 @@ def _run_impl(name, manifest, model, root, prompts_file, should_cancel, _log,
         run_preflight.prompt_reading_admission(
             run_directory, name=name, reading=reading, counts=reading_counts,
             shard_stamp=sharding_mod.read_shard_stamp(run_directory), log=_log)
-        # A run made before readings were recorded now says how it was read
-        # (the guard has just confirmed the parked part agrees).
-        if prompt_reading.stamp_missing_record(run_directory, reading_record):
-            _log(f"prompt reading: recorded in the config.json of "
-                 f"{run_directory}, which recorded none")
+        # A resumed run keeps its original stamps: its config.json is never
+        # rewritten. A run made before readings were recorded therefore still
+        # records none, which means the rule of the release that started it,
+        # the reading the guard has just confirmed this continuation keeps
+        # (the log line above names it, with source resumedRun).
     prompt_reading.active_reading.set(reading)
     if run_directory is None:
         # Shard partials are visibly partial by name; the merge assembles the

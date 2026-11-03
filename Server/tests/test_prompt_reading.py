@@ -605,8 +605,9 @@ def test_a_0919_cuda_run_with_a_long_prompt_resumes_through_the_bundle_path_in_o
     """A run 0.9.19 parked on CUDA (no record, a 217,230-token prompt) read
     every prompt in one pass. Resumed through ``bundle execute`` with no plan
     — what ``remote resubmit`` replays byte for byte — it continues in one
-    pass rather than being refused under the new CUDA default, and its
-    config.json now says how it was read."""
+    pass rather than being refused under the new CUDA default. A resumed run
+    keeps its original stamps, so its config.json is not rewritten: no record
+    still means the rule of the release that started it."""
     import hashlib
     root = str(tmp_path)
     prompts = _study(root, "reading-old-long")
@@ -631,6 +632,8 @@ def test_a_0919_cuda_run_with_a_long_prompt_resumes_through_the_bundle_path_in_o
                   on_run_directory=lambda d: parked.setdefault("dir", d))
     run_dir = parked["dir"]
     _as_historic(run_dir)
+    with open(os.path.join(run_dir, "config.json"), "rb") as handle:
+        parked_config = handle.read()
     seen = []
     _patch(monkeypatch, seen=seen)
     real_run = tasks.run
@@ -643,12 +646,9 @@ def test_a_0919_cuda_run_with_a_long_prompt_resumes_through_the_bundle_path_in_o
     assert "promptReadingPlan" not in result
     assert seen and all(entry == ({"mode": "singlePass"}, "resumedRun")
                         for entry in seen)
-    entry = _config(run_dir)["notes"]["promptReading"]
-    assert (entry["mode"], entry["source"], entry["device"]) == (
-        "singlePass", "resumedRun", "cuda")
-    assert entry["longestPromptTokens"] == 217_230
-    assert "before runs recorded their prompt reading" in \
-        entry["basis"]["recordedReading"]
+    with open(os.path.join(run_dir, "config.json"), "rb") as handle:
+        assert handle.read() == parked_config
+    assert "promptReading" not in _config(run_dir)["notes"]
 
 
 def test_a_0919_run_whose_study_declares_chunks_is_refused(tmp_path, monkeypatch):
