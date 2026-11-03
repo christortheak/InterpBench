@@ -12,6 +12,8 @@ migration that rewrites frozen bytes.
 
 ## [Unreleased]
 
+## [0.9.20] — 2026-11-02
+
 - **A very long prompt now fits on one CUDA GPU, and a study that cannot fit
   is refused before the queue** (public issue #6). A 27-billion-parameter
   hybrid model ran out of an 80 GB card on an 82,000-token prompt, although
