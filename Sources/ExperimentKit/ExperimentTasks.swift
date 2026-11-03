@@ -234,6 +234,15 @@ public enum ExperimentTasks {
         {
             emitRunAdvisory(advisory, to: url)
         }
+        // A declared prompt reading (issue #6) says how the PYTHON engine
+        // reads this study's prompts; this engine reads in its own native
+        // steps. One advisory, never a refusal, on every run type that
+        // generates from prompts.
+        if task == "run" || task == "multi-agent-run" || task == "sweep",
+            let advisory = PromptReading.macEngineAdvisory(experiment)
+        {
+            emitRunAdvisory(advisory, to: url)
+        }
         return url
     }
 
@@ -1978,7 +1987,7 @@ public enum ExperimentTasks {
         let parameters = GenerateParameters(
             maxTokens: outerBound,
             temperature: Float(temperature),
-            prefillStepSize: 512)
+            prefillStepSize: PromptReading.mlxPrefillStepSize)
         if let budget {
             return try await generateWithReasoningBudget(
                 container, input: input, parameters: parameters,
@@ -2751,7 +2760,7 @@ public enum ExperimentTasks {
             parameters: GenerateParameters(
                 maxTokens: maxTokens,
                 temperature: Float(temperature),
-                prefillStepSize: 512))
+                prefillStepSize: PromptReading.mlxPrefillStepSize))
         var text = ""
         var lastProgressCount = 0
         for await event in stream {

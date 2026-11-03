@@ -36,14 +36,20 @@ class PreflightError(RuntimeError):
     pass
 
 
-def _tokenizer(model_id: str, revision: str | None):
-    """The pinned revision's tokenizer — weights are never touched."""
+def _tokenizer(model_id: str, revision: str | None, *,
+               local_files_only: bool = False):
+    """The pinned revision's tokenizer — weights are never touched.
+    ``local_files_only`` reads the model cache and never the network (the
+    submission's memory check, which must not start a download)."""
     from transformers import AutoTokenizer
     kwargs = {"revision": revision} if revision else {}
+    if local_files_only:
+        kwargs["local_files_only"] = True
     return AutoTokenizer.from_pretrained(model_id, **kwargs)
 
 
-def context_window(model_id: str, revision: str | None) -> int | None:
+def context_window(model_id: str, revision: str | None, *,
+                   local_files_only: bool = False) -> int | None:
     """``max_position_embeddings`` (or its aliases) from the HF CONFIG alone.
 
     ``SteeredModel.context_window`` reads the same fields off a loaded
@@ -53,6 +59,8 @@ def context_window(model_id: str, revision: str | None) -> int | None:
     """
     from transformers import AutoConfig
     kwargs = {"revision": revision} if revision else {}
+    if local_files_only:
+        kwargs["local_files_only"] = True
     try:
         config = AutoConfig.from_pretrained(model_id, **kwargs)
     except Exception as exc:  # noqa: BLE001 — surfaced as a readable refusal
@@ -78,7 +86,8 @@ def preflight(prompts: list[dict], *, model_id: str, revision: str | None,
               qwen_thinking_enabled: bool = False,
               max_tokens: int = 0,
               reasoning_effort: str | None = None,
-              reasoning_max_tokens: int | None = None) -> dict:
+              reasoning_max_tokens: int | None = None,
+              local_files_only: bool = False) -> dict:
     """Exact per-item token counts and the context verdict.
 
     Returns a report dict; it never raises for oversized items (that is the
@@ -88,9 +97,18 @@ def preflight(prompts: list[dict], *, model_id: str, revision: str | None,
     protocol the decode may emit ``reasoning_max_tokens`` reasoning tokens
     before its ``max_tokens`` answer, and every one of them sits in the
     context window (matches ``generate._stream_rendered``'s outer bound).
+
+    ``local_files_only`` reads the tokenizer and config from the model cache
+    alone. The submission's memory check counts prompts with this same
+    function, so its count and the run's cannot disagree, and it must never
+    start a download on the controller.
     """
-    tokenizer = _tokenizer(model_id, revision)
-    window = context_window(model_id, revision)
+    if local_files_only:
+        tokenizer = _tokenizer(model_id, revision, local_files_only=True)
+        window = context_window(model_id, revision, local_files_only=True)
+    else:
+        tokenizer = _tokenizer(model_id, revision)
+        window = context_window(model_id, revision)
     reasoning_reserve = int(reasoning_max_tokens or 0)
     budget = (window - max_tokens - reasoning_reserve - CONTEXT_BUDGET_RESERVE
               if window else None)

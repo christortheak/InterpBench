@@ -115,6 +115,16 @@ public final class UnifiedStudyRunner {
             note(refusal, .error)
             return
         }
+        // Old-server guard (issue #6): a declared prompt reading would be
+        // ignored by a server without it — refuse BEFORE packaging/uploading.
+        if let refusal = SubstrateRouting.promptReadingSubmissionRefusal(
+            manifest: manifest, verb: verb, capabilities: capabilities,
+            server: client.profile.baseURL.absoluteString)
+        {
+            statusLine = refusal
+            note(refusal, .error)
+            return
+        }
         // Scope-drift guard (2026-08-06 field incident): a stale
         // outcomeInstrumentScope pin after Duplicate & Adjust + task-file
         // swap refuses HERE, before packaging/upload — the server would

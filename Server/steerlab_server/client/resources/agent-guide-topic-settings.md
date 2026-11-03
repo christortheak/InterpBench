@@ -135,6 +135,35 @@ declares none). `--dry-run` writes
 nothing and reports the pins in `result.pins`, with the Mac command line's
 spelling of the same declaration in `result.macCommand`.
 
+**`set-prompt-reading <name> (--single-pass | --chunk-tokens <n>
+--above-tokens <m> | --clear) [--dry-run]`** — declares how the Python engine
+reads this study's prompts (`promptReading`). `--single-pass` reads every
+prompt in one pass. `--chunk-tokens N --above-tokens M` reads a prompt longer
+than the larger of the two numbers in chunks of N tokens, and a shorter one in
+one pass. Reading in chunks lets a long prompt fit on one GPU, because the
+pass no longer holds working memory for the whole prompt at once. Every token
+still attends to every earlier token, and only the order of the arithmetic
+changes. Seeded texts can therefore differ, at near ties, from a run that read
+the same prompt another way. The declaration is frozen with the study, so
+every run of it reads its prompts the same way. `--clear` removes it.
+
+Without a declaration, each submission chooses a reading and sends it to
+every job it starts, shards included. On CUDA that is the engine's default:
+chunks of 4,096 tokens for prompts over 8,192 tokens. When the memory check
+estimates the default will not fit the requested card, the submission uses a
+smaller chunk and says so, because those texts will not match runs that used
+the default token for token. Declare a reading when a study must match runs
+made another way, or when twin studies must read their prompts alike. A
+server too old to honour the declaration is refused at submit, and the Mac's
+own engine runs the study with a note that the declaration applies to the
+Python engine.
+
+The memory check sizes the job by the longest prompt, measured with the
+run's own token count, plus `maxTokens` and `reasoningMaxTokens`. It refuses
+only when the weights and that cache cannot fit the card. The prompt pass's
+working memory is an estimate: when it exceeds the card, the check advises
+and does not refuse. A model always loads onto one GPU.
+
 **`set-evaluation-sampling <name> <n> <seed>`** — declares the study's
 EVALUATION SAMPLING DESIGN on a draft: how many records per condition the
 judged coding preregistered, and the seed that draws them

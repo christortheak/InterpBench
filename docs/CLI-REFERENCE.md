@@ -157,7 +157,8 @@ engines share (§7.7's vocabulary, §4 of the contracts document) — same state
 same exit codes, same `error.code` / `error.repairAction`. Verb families:
 `experiment` (create, attach, detach, declare-condition, remove-condition,
 set-sweep-grid, set-protocol, set-system-prompt, set-parser,
-set-instrument-scope, set-jlens-readout, set-evaluation-sampling, pin-revision,
+set-instrument-scope, set-jlens-readout, set-prompt-reading,
+set-evaluation-sampling, pin-revision,
 set-style-taxonomy, pin-sae-candidates, duplicate, rename, delete,
 verify, freeze, list, inspect, import-prompts, inspect-artifact, attach-artifact,
 pin-rubric, acknowledge-custom-code — show a study's intervention-policy custom code and,
@@ -1062,6 +1063,7 @@ steerlab-cli experiment set-system-prompt <name> <text>
 steerlab-cli experiment set-parser <name> <parser>
 steerlab-cli experiment set-instrument-scope <name> <responseFormat>[,…]
 steerlab-cli experiment set-jlens-readout <name> <lens-id> [--dry-run] [--fitted-layers <l,l-l,…>] [--keep-tokens] [--layers <l,l-l,…>] [--lens-model <model-id>[@<revision>]] [--lens-sha256 <sha256>] [--max-armed-layers <n>] [--max-full-vocab-projections <n>] [--max-observations <n>] [--max-trace-bytes <bytes>] [--no-companion] [--qualification <qualification-id>] [--tokenizer-hash <sha256>] [--top-k <k>] [--top-k-layers <l,l-l,…>] [--watchlist <token-id,…>]
+steerlab-cli experiment set-prompt-reading <name> [--above-tokens <m>] [--chunk-tokens <n>] [--clear] [--dry-run] [--single-pass]
 steerlab-cli experiment set-evaluation-sampling <name> <n> <seed>
 steerlab-cli experiment set-primary-outcome <name> <outcome>
 steerlab-cli experiment set-style-taxonomy <name> <prompts/taxonomies/file.json>
@@ -1097,6 +1099,7 @@ steerlab-cli experiment delete <name> [--manifest-sha256 <sha256>] [--yes]
 | `experiment set-parser` | Declare the numeric-endpoint parser from prompts/parsers/parser-registry.json and pin that registry's hash ("" clears both). |
 | `experiment set-instrument-scope` | Declare which response formats the option-consuming outcome instruments apply to (label, json, freeText), pinning the row set they select; "" clears the declaration. |
 | `experiment set-jlens-readout` | Declare the study's J-lens run readout: top-k and watched-token readings at the chosen layers, pinned to the lens named by --lens-sha256, --lens-model, and --fitted-layers, and priced against the readout budget at the study's token cap. "" as the lens id clears it. |
+| `experiment set-prompt-reading` | Declare how the Python engine reads this study's prompts: --single-pass reads every prompt in one pass; --chunk-tokens N --above-tokens M reads a prompt longer than the larger of the two in chunks of N tokens. The declaration is frozen with the study, and every job a submission starts reads its prompts this way. --clear removes it, and the engine's device default applies again. |
 | `experiment set-evaluation-sampling` | Declare the evaluate subsample this study preregistered — n records per condition and the seed that draws them — so the design travels in the manifest and lands in every run's snapshot. evaluate then needs no flags, and a flag that disagrees with the declaration refuses. "" clears the declaration. |
 | `experiment set-primary-outcome` | Declare the outcome this study is about, so every results summary leads with it and says it was declared by the researcher. An outcome the study's settings cannot produce is refused, with the list of the ones they can. "" clears the declaration; summaries then lead by the default order. |
 | `experiment set-style-taxonomy` | Pin the reasoning-style taxonomy and its hash. |
@@ -1477,6 +1480,32 @@ out-of-range `--top-k` or watchlist, a qualification that does not pass for
 the study's runtime, a tokenizer hash that disagrees with the local cache, a
 missing lens pin (this command line), and a clear with settings are malformed
 (`64`). `result.notes` says what freeze will still need.
+
+**`set-prompt-reading <name> (--single-pass | --chunk-tokens <n>
+--above-tokens <m> | --clear) [--dry-run]`** — how the **Python engine reads
+the study's prompts** (`promptReading`): `{"mode": "singlePass"}`, or
+`{"mode": "chunked", "chunkTokens": N, "aboveTokens": M}`, which reads a
+prompt of more than `max(M, N)` tokens in chunks of N and every other prompt
+in one pass. Both clients write the same block (the hand-authored contract
+`Tests/Fixtures/cross-engine/prompt-reading.json` holds them together), and it
+is part of the frozen study's content hash. `result` carries `promptReading`,
+`previousPromptReading`, `reading` (the rule in words), and `written`.
+Choosing none of the readings, more than one, half a chunked reading, or a
+number outside 0 (1 for `--chunk-tokens`) to 100,000,000 exits `64`; a frozen
+study answers `statusImmutable` (`65`) with the duplicate repair, on a dry run
+too.
+
+Without a declaration, a submission to a CUDA engine chooses the reading and
+sends it to every job it starts (`bundle execute --prompt-reading-plan`): the
+engine default, chunks of 4,096 above 8,192 tokens, or the largest of 2,048,
+1,024, and 512 that the memory check estimates will fit, with a warning that
+those texts will not match default runs token for token. A resumed run keeps
+the reading it was started with. A study that declares a reading is refused
+(`promptReadingUnsupported`) by a runner whose capabilities lack
+`remoteStudy.promptReading`; the capability snapshot's `longPromptReading`
+says how that engine reads long prompts on each device, and that it never
+splits a model across GPUs. The Mac's own engine reads prompts in steps of 512
+tokens and advises that the declaration applies to the Python engine.
 
 **`set-evaluation-sampling <name> <n> <seed>`** — the study's **evaluation
 sampling design**: how many records per condition the judged coding

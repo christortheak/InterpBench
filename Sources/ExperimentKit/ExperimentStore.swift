@@ -3719,6 +3719,13 @@ public enum ExperimentStore {
                         + "(per-record seeds derived from condition/prompt/sampleIndex)")
             }
         }
+        // The declared prompt reading (issue #6): a block outside the
+        // contract is a violation, never a silent fallback to a device
+        // default. Server twin: Manifest.verify's promptReading block, same
+        // sentences (`Tests/Fixtures/cross-engine/prompt-reading.json`).
+        if let declared = manifest.promptReading {
+            violations += PromptReading.violations(declared)
+        }
         // A PRESERVED researcher-authored preregistration is a frozen
         // artifact: freeze stamps its sha256 and verify re-hashes it like any
         // other pinned input (server twin: Manifest.verify's preregistration

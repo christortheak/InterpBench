@@ -1,0 +1,59 @@
+{
+  "chunking": [
+    {"promptTokens": 8192, "rule": {"aboveTokens": 8192, "chunkTokens": 4096, "mode": "chunked"}, "chunkTokens": null},
+    {"promptTokens": 8193, "rule": {"aboveTokens": 8192, "chunkTokens": 4096, "mode": "chunked"}, "chunkTokens": 4096},
+    {"promptTokens": 4096, "rule": {"aboveTokens": 4096, "chunkTokens": 1024, "mode": "chunked"}, "chunkTokens": null},
+    {"promptTokens": 4097, "rule": {"aboveTokens": 4096, "chunkTokens": 1024, "mode": "chunked"}, "chunkTokens": 1024},
+    {"promptTokens": 8999, "rule": {"aboveTokens": 0, "chunkTokens": 9000, "mode": "chunked"}, "chunkTokens": null},
+    {"promptTokens": 9001, "rule": {"aboveTokens": 0, "chunkTokens": 9000, "mode": "chunked"}, "chunkTokens": 9000},
+    {"promptTokens": 1000000, "rule": {"mode": "singlePass"}, "chunkTokens": null}
+  ],
+  "declarations": [
+    {
+      "canonical": "{\"mode\":\"singlePass\"}",
+      "flags": ["--single-pass"],
+      "line": "declared the prompt reading of 'demo': every prompt is read in a single pass",
+      "reading": "every prompt is read in a single pass"
+    },
+    {
+      "canonical": "{\"aboveTokens\":8192,\"chunkTokens\":4096,\"mode\":\"chunked\"}",
+      "flags": ["--chunk-tokens", "4096", "--above-tokens", "8192"],
+      "line": "declared the prompt reading of 'demo': prompts longer than 8,192 tokens are read in chunks of 4,096 tokens; shorter prompts are read in a single pass",
+      "reading": "prompts longer than 8,192 tokens are read in chunks of 4,096 tokens; shorter prompts are read in a single pass"
+    },
+    {
+      "canonical": "{\"aboveTokens\":0,\"chunkTokens\":1024,\"mode\":\"chunked\"}",
+      "flags": ["--chunk-tokens", "1024", "--above-tokens", "0"],
+      "line": "declared the prompt reading of 'demo': prompts longer than 1,024 tokens are read in chunks of 1,024 tokens; shorter prompts are read in a single pass",
+      "reading": "prompts longer than 1,024 tokens are read in chunks of 1,024 tokens; shorter prompts are read in a single pass"
+    }
+  ],
+  "malformedFlags": [
+    {"flags": [], "reason": "choose one reading: --single-pass, or --chunk-tokens with --above-tokens, or --clear"},
+    {"flags": ["--single-pass", "--clear"], "reason": "choose one reading: --single-pass, or --chunk-tokens with --above-tokens, or --clear"},
+    {"flags": ["--single-pass", "--chunk-tokens", "4096", "--above-tokens", "8192"], "reason": "choose one reading: --single-pass, or --chunk-tokens with --above-tokens, or --clear"},
+    {"flags": ["--chunk-tokens", "4096"], "reason": "a chunked reading needs both --chunk-tokens and --above-tokens"},
+    {"flags": ["--chunk-tokens", "0", "--above-tokens", "8192"], "reason": "--chunk-tokens must be a whole number from 1 to 100,000,000"},
+    {"flags": ["--chunk-tokens", "4096.5", "--above-tokens", "8192"], "reason": "--chunk-tokens must be a whole number from 1 to 100,000,000"},
+    {"flags": ["--chunk-tokens", "4096", "--above-tokens", "eight"], "reason": "--above-tokens must be a whole number from 0 to 100,000,000"},
+    {"flags": ["--chunk-tokens", "200000000", "--above-tokens", "8192"], "reason": "--chunk-tokens must be a whole number from 1 to 100,000,000"}
+  ],
+  "note": "Hand-authored contract (issue #6): the promptReading block both clients' `experiment set-prompt-reading` write (compared as canonical JSON, sorted keys, no spaces), the line they print, the sentences both refuse malformed flags and malformed hand-edited blocks with, and the rule's chunking decisions (a prompt of n tokens is chunked when mode is chunked and n > max(aboveTokens, chunkTokens)). Never regenerated; checked inline in Server/tests/test_prompt_reading_authoring.py and Tests/ExperimentKitTests/PromptReadingTests.swift.",
+  "outdatedEngine": {
+    "reason": "The engine at http://runner.invalid predates declared prompt reading: its capabilities do not list remoteStudy.promptReading, so it would ignore this study's promptReading declaration and read its prompts its own way, and the texts would not be the ones the study declared. Nothing was submitted.",
+    "repair": "Bring that engine up to date (for a cluster site, steerlab-cli cluster push --site <id>; for a local runner, restart it from this release), then submit again.",
+    "where": "http://runner.invalid"
+  },
+  "violations": [
+    {"block": "singlePass", "violations": ["promptReading must be an object: {\"mode\": \"singlePass\"} or {\"mode\": \"chunked\", \"chunkTokens\": <n>, \"aboveTokens\": <m>}"]},
+    {"block": {"mode": "fast"}, "violations": ["promptReading mode must be singlePass or chunked"]},
+    {"block": {"aboveTokens": 8192, "chunkTokens": 4096}, "violations": ["promptReading mode must be singlePass or chunked"]},
+    {"block": {"chunkTokens": 4096, "mode": "singlePass"}, "violations": ["promptReading mode singlePass takes no chunkTokens or aboveTokens"]},
+    {"block": {"chunkTokens": 4096, "mode": "chunked"}, "violations": ["promptReading mode chunked needs aboveTokens"]},
+    {"block": {"aboveTokens": 8192, "chunkTokens": 0, "mode": "chunked"}, "violations": ["promptReading chunkTokens must be a whole number from 1 to 100,000,000"]},
+    {"block": {"aboveTokens": 8192, "chunkTokens": true, "mode": "chunked"}, "violations": ["promptReading chunkTokens must be a whole number from 1 to 100,000,000"]},
+    {"block": {"aboveTokens": 8192, "chunkTokens": 4096.5, "mode": "chunked"}, "violations": ["promptReading chunkTokens must be a whole number from 1 to 100,000,000"]},
+    {"block": {"aboveTokens": 8192, "chunkSize": 512, "chunkTokens": 4096, "mode": "chunked"}, "violations": ["promptReading has unknown key(s) chunkSize — it takes only mode, chunkTokens, and aboveTokens"]},
+    {"block": {"aboveTokens": 8192, "chunkTokens": 4096, "mode": "chunked"}, "violations": []}
+  ]
+}

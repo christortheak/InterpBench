@@ -801,6 +801,10 @@ import Testing
             // Python engine, and writable by no verb until this one, so no
             // study could arm a readout at all.
             "experiment set-jlens-readout",
+            // The prompt reading (issue #6): how the Python engine reads the
+            // study's prompts, frozen with it; two shapes with different
+            // numbers, so a verb and not a field assignment.
+            "experiment set-prompt-reading",
             // The third declaration of that shape: the evaluate subsample's
             // DESIGN (`evaluationSampling`), whose draw rule is derived from
             // the engine and can no more be typed than a registry hash can.
@@ -900,9 +904,10 @@ import Testing
         // summary leads with it — `acknowledge-custom-code`, which
         // records that the researcher trusts a shared study's custom code —
         // `set-jlens-readout`, the J-lens run readout no verb wrote before —
+        // `set-prompt-reading`, how the Python engine reads the prompts —
         // and `rename` and `delete`, for drafts.
         #expect(
-            declared.filter { $0.hasPrefix("experiment ") }.count == 41,
+            declared.filter { $0.hasPrefix("experiment ") }.count == 42,
             "the experiment lifecycle includes reviewed agent/vector attachment and prompt import")
     }
 

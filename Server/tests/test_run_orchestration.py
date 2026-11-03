@@ -111,6 +111,9 @@ class Script:
         #: ``remoteStudy.declaredSeedPolicy``; False = an engine from before
         #: a declared derivedSHA256 was honored at one sample per item.
         self.declared_seed_policy = False
+        #: ``remoteStudy.promptReading``; False = an engine from before a
+        #: study could declare how its prompts are read (issue #6).
+        self.prompt_reading = False
 
         #: What the runner will claim the upload hashed to. ``None`` = agree.
         self.reported_upload_sha: str | None = None
@@ -180,8 +183,13 @@ class FakeRunner:
                 "availableJobTypes": list(self.script.available_job_types),
                 **({"analysisOptions": list(self.script.analysis_options)}
                    if self.script.analysis_options is not None else {}),
-                **({"remoteStudy": {"declaredSeedPolicy": True}}
-                   if self.script.declared_seed_policy else {}),
+                **({"remoteStudy": {
+                    **({"declaredSeedPolicy": True}
+                       if self.script.declared_seed_policy else {}),
+                    **({"promptReading": True}
+                       if self.script.prompt_reading else {})}}
+                   if (self.script.declared_seed_policy
+                       or self.script.prompt_reading) else {}),
             },
         }
 
@@ -284,9 +292,10 @@ def workspace(tmp_path, monkeypatch):
     return _frozen_workspace(tmp_path, monkeypatch)
 
 
-def _frozen_workspace(tmp_path, monkeypatch, protocol=()):
+def _frozen_workspace(tmp_path, monkeypatch, protocol=(), extra=()):
     """The ``workspace`` fixture's study, with ``protocol`` (``--set``
-    assignments) declared before it freezes."""
+    assignments) and ``extra`` (further client verbs, as argv lists)
+    declared before it freezes."""
     root = str(tmp_path / "workspace")
     directory = os.path.join(root, "prompts", "concepts", CONCEPT)
     os.makedirs(directory, exist_ok=True)
@@ -311,7 +320,8 @@ def _frozen_workspace(tmp_path, monkeypatch, protocol=()):
              "--baseline", "--alpha-units", "norm"],
             *([["experiment", "set-protocol", STUDY_NAME,
                 *[part for item in protocol for part in ("--set", item)]]]
-              if protocol else [])):
+              if protocol else []),
+            *extra):
         _quiet_client(["--root", root, *argv])
     # The measured run reads its items from pinned task prompts, and `run`
     # refuses a study without them before anything is uploaded — so the
@@ -651,6 +661,31 @@ def test_a_declared_seed_policy_is_refused_by_an_engine_without_it(
 
     # An engine that has the rule takes it.
     script.declared_seed_policy = True
+    script.job_status = "prepared"
+    code, document, _ = _run([STUDY_NAME, "--runner", RUNNER_URL, "--dry-run"],
+                             capsys, root=root)
+    assert code == 0, document
+    assert len(script.submits) == 1
+
+
+def test_a_declared_prompt_reading_is_refused_by_an_engine_without_it(
+        tmp_path, monkeypatch, script, capsys):
+    """An engine without ``remoteStudy.promptReading`` would ignore the
+    study's promptReading and read its prompts its own way (issue #6).
+    Refused at the capabilities stage, before any upload; an engine that
+    has it takes the study."""
+    root = _frozen_workspace(tmp_path, monkeypatch, extra=[
+        ["experiment", "set-prompt-reading", STUDY_NAME, "--single-pass"]])
+    code, document, _ = _run([STUDY_NAME, "--runner", RUNNER_URL, "--dry-run"],
+                             capsys, root=root)
+    assert code == 65, document
+    assert document["error"]["code"] == "promptReadingUnsupported"
+    assert "remoteStudy.promptReading" in document["error"]["reason"]
+    assert "cluster push --site" in document["error"]["repairAction"]
+    assert document["result"]["failedStage"] == "capabilities"
+    assert script.uploads == [] and script.submits == []
+
+    script.prompt_reading = True
     script.job_status = "prepared"
     code, document, _ = _run([STUDY_NAME, "--runner", RUNNER_URL, "--dry-run"],
                              capsys, root=root)

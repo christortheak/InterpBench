@@ -411,6 +411,23 @@ CLIENT_VERB_SPECS: tuple[VerbSpec, ...] = (
                                     "--max-full-vocab-projections"}),
              boolean_flags=frozenset({"--no-companion", "--keep-tokens",
                                       "--dry-run"})),
+    # The study's PROMPT READING (issue #6): how its prompts go through the
+    # model on the Python engine. A verb rather than a `set-protocol` field
+    # for the reasons above: the flags choose between two shapes that take
+    # different numbers, and the echo says in words what the engine will do.
+    # Same verb, same flags, same result keys on the Mac.
+    VerbSpec("experiment", "set-prompt-reading", positional="<name>",
+             purpose="Declare how the Python engine reads this study's "
+                     "prompts: --single-pass reads every prompt in one pass; "
+                     "--chunk-tokens N --above-tokens M reads a prompt "
+                     "longer than the larger of the two in chunks of N "
+                     "tokens. The declaration is frozen with the study, and "
+                     "every job a submission starts reads its prompts this "
+                     "way. --clear removes it, and the engine's device "
+                     "default applies again.",
+             value_flags=frozenset({"--chunk-tokens", "--above-tokens"}),
+             boolean_flags=frozenset({"--single-pass", "--clear",
+                                      "--dry-run"})),
     # The EVALUATION SAMPLING DESIGN (review round 12, finding 4). A verb for
     # the same reason as the two above: not a field assignment. It takes the
     # design a power computation produced — a per-condition size and the seed
@@ -783,6 +800,8 @@ VERB_METAVARS: dict = {
     "experiment set-jlens-readout --max-observations": "<n>",
     "experiment set-jlens-readout --max-trace-bytes": "<bytes>",
     "experiment set-jlens-readout --max-full-vocab-projections": "<n>",
+    "experiment set-prompt-reading --chunk-tokens": "<n>",
+    "experiment set-prompt-reading --above-tokens": "<m>",
 }
 
 
@@ -1483,6 +1502,35 @@ def _set_jlens_readout(invocation: Invocation, name: str,
         })
 
 
+def _set_prompt_reading(invocation: Invocation, name: str) -> CLIResult:
+    """``experiment set-prompt-reading``. The owner is
+    ``experiment.prompt_reading``; this is the flag translation and the echo.
+    Swift twin: the ``set-prompt-reading`` case of ``ExperimentCLIRunner``
+    (``PromptReading.run``), with the same flat result keys."""
+    from .experiment import experiment_store as store
+    from .experiment import prompt_reading
+
+    dry_run = invocation.has("--dry-run")
+    try:
+        rule = prompt_reading.rule_from_flags(
+            single_pass=invocation.has("--single-pass"),
+            chunk_tokens=invocation.one("--chunk-tokens"),
+            above_tokens=invocation.one("--above-tokens"),
+            clear=invocation.has("--clear"), name=name)
+    except store.MeasurementDeclarationError as exc:
+        raise ClientRefusal(
+            code=USAGE_CODE, state="blocked", reason=str(exc),
+            repair_action=exc.repair_action) from exc
+    _document, previous, written = prompt_reading.declare(
+        name, rule, dry_run=dry_run)
+    line = prompt_reading.echo(name, rule, previous=previous, dry_run=dry_run)
+    print(line)
+    return CLIResult(
+        message=line, changed=written,
+        payload=prompt_reading.result_payload(name, rule, previous=previous,
+                                              written=written))
+
+
 def _experiment(invocation: Invocation) -> CLIResult:
     """The study-authoring verbs. Every call is the one the matching route in
     ``api/routes.py`` makes; every payload key twins the Mac verb's."""
@@ -1995,6 +2043,9 @@ def _experiment(invocation: Invocation) -> CLIResult:
     if verb == "set-jlens-readout":
         _require(args, 2, spec)
         return _set_jlens_readout(invocation, name, args[1])
+
+    if verb == "set-prompt-reading":
+        return _set_prompt_reading(invocation, name)
 
     if verb in ("set-parser", "set-instrument-scope"):
         # Both take exactly one value positional, and both accept `""` as the
@@ -4475,8 +4526,12 @@ def _run(invocation: Invocation) -> CLIResult:
     # A study whose seeds an engine from before issue #3 would choose
     # differently: refused at the capability stage when the runner does not
     # advertise the fix.
-    from .experiment import sampling
+    from .experiment import prompt_reading, sampling
     seed_rule_changed = sampling.submission_needs_declared_seed_policy(
+        manifest, study_verb)
+    # A declared prompt reading an older engine would ignore (issue #6):
+    # refused at the same stage, for the same reason.
+    reading_declared = prompt_reading.submission_needs_capability(
         manifest, study_verb)
     try:
         return _run_machine(
@@ -4487,7 +4542,8 @@ def _run(invocation: Invocation) -> CLIResult:
             wait_deadline=wait_deadline, request_timeout=request_timeout,
             max_bytes=max_bytes, evidence_out=evidence_out,
             started_at=started_at, runner_api=runner_api, bundles=bundles,
-            seed_rule_changed=seed_rule_changed)
+            seed_rule_changed=seed_rule_changed,
+            reading_declared=reading_declared)
     except ClientRefusal:
         raise
     except Exception as exc:   # noqa: BLE001 — every throw keeps its TYPE and
@@ -4515,7 +4571,8 @@ def _run_machine(invocation: Invocation, *, stages: dict, common: dict,
                  request_timeout: float, max_bytes: int | None,
                  evidence_out: str | None, started_at: float,
                  runner_api, bundles,
-                 seed_rule_changed: bool = False) -> CLIResult:
+                 seed_rule_changed: bool = False,
+                 reading_declared: bool = False) -> CLIResult:
     """Stages 2–9. Split from :func:`_run` only so the stage-table decoration
     above has one place to sit."""
     import time
@@ -4555,7 +4612,8 @@ def _run_machine(invocation: Invocation, *, stages: dict, common: dict,
             wait_deadline=wait_deadline, max_bytes=max_bytes,
             evidence_out=evidence_out, started_at=started_at,
             workspace=workspace, runner_api=runner_api, bundles=bundles,
-            time=time, seed_rule_changed=seed_rule_changed)
+            time=time, seed_rule_changed=seed_rule_changed,
+            reading_declared=reading_declared)
     except runner_api.RunnerError as exc:
         # Same translation `_runner` makes, plus the stage table: the authoring
         # paths still never import this module to build a refusal document.
@@ -4574,7 +4632,8 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
               waiting: bool, wait_deadline: float, max_bytes: int | None,
               evidence_out: str | None, started_at: float, workspace: str,
               runner_api, bundles, time,
-              seed_rule_changed: bool = False) -> CLIResult:
+              seed_rule_changed: bool = False,
+              reading_declared: bool = False) -> CLIResult:
     """Stages 3–9: everything that touches the wire or the workspace."""
 
     # ---- stage 3: what is this runner, and can it do this? -----------------
@@ -4605,6 +4664,17 @@ def _run_wire(client, invocation: Invocation, *, stages: dict, common: dict,
             stages, "capabilities", code=sampling.SEED_POLICY_UNSUPPORTED_CODE,
             reason=sampling.outdated_engine_reason(client.base_url),
             repair=sampling.outdated_engine_repair(), common=common,
+            facts={"runnerOffers": {
+                "engineVersion": identity.get("engineVersion")}})
+    from .experiment import prompt_reading
+    if reading_declared and not prompt_reading.remote_honors(capabilities):
+        # An older engine would ignore the study's promptReading and read its
+        # prompts its own way. Swift twin:
+        # `SubstrateRouting.promptReadingSubmissionRefusal`.
+        raise _die(
+            stages, "capabilities", code=prompt_reading.UNSUPPORTED_CODE,
+            reason=prompt_reading.outdated_engine_reason(client.base_url),
+            repair=prompt_reading.outdated_engine_repair(), common=common,
             facts={"runnerOffers": {
                 "engineVersion": identity.get("engineVersion")}})
     runner_facts = {"url": client.base_url,

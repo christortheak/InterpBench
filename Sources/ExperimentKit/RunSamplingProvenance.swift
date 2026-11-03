@@ -21,7 +21,7 @@ enum RunSamplingProvenance {
             "dependencies": SamplingDependencies.pins,
             "os": ProcessInfo.processInfo.operatingSystemVersionString,
             "gpu": MTLCreateSystemDefaultDevice()?.name ?? "unavailable",
-            "prefillStepSize": 512, "topP": 1.0, "topK": 0, "minP": 0.0,
+            "prefillStepSize": PromptReading.mlxPrefillStepSize, "topP": 1.0, "topK": 0, "minP": 0.0,
             "qualification": "Configuration provenance; not a repeatability certificate."
         ]
         let url = directory.appending(component: "sampling-provenance.json")

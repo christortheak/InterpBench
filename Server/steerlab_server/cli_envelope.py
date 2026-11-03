@@ -755,6 +755,11 @@ MAC_AUTHORITY_VERBS: dict = {
                              "--lens-model <model-id> --fitted-layers <l,…> "
                              "--layers <l,…> [--top-k <k>] "
                              "[--watchlist <token-id,…>]",
+        # The study's PROMPT READING (issue #6). This engine honours the
+        # declaration at run start and never writes one.
+        "set-prompt-reading": "steerlab-cli experiment set-prompt-reading "
+                              "<name> --single-pass | --chunk-tokens <n> "
+                              "--above-tokens <m> | --clear",
         "set-sweep-selection": "steerlab-cli experiment set-sweep-selection "
                                "<name> --objective <metric>",
         "set-sweep-grid": "steerlab-cli experiment set-sweep-grid <name> "

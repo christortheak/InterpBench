@@ -47,6 +47,7 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         case reasoningStyleTaxonomyHash
         case probeMeasurements
         case jlensReadout
+        case promptReading
         case recordTokenIDs
         case saeCandidates
         case maxSAEMixtureFeatures
@@ -1315,6 +1316,18 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
     /// than a mirrored struct so the server can extend the block without this
     /// engine needing to learn each new key.
     public var jlensReadout: JSONValue?
+    /// How the study's prompts go through the model on the Python engine
+    /// (cross-engine contract key "promptReading"; issue #6):
+    /// `{"mode": "singlePass"}` or `{"mode": "chunked", "chunkTokens": N,
+    /// "aboveTokens": M}`. Written by `experiment set-prompt-reading` on
+    /// either client; content-hashed like every key, so it freezes with the
+    /// study. Kept as the JSON it is (integers exact) so a hand-edited value
+    /// outside the contract is a `verify` violation on both engines rather
+    /// than a decode failure here (`PromptReading.violations`). This engine
+    /// reads prompts in its own native steps and only advises that the
+    /// declaration applies to the Python engine. nil (absent or null) = no
+    /// declaration, which keeps every older manifest's content hash.
+    public var promptReading: ExactJSONValue?
     /// Optional study-owned probe settings; authored through the shared Python
     /// owner and executed on Python Compute. Nil preserves historical encoding.
     public var probeMeasurements: JSONValue?
@@ -1889,6 +1902,8 @@ public struct ExperimentManifest: Codable, Sendable, Equatable {
         // Carried verbatim; this engine never authors a J-lens block (see the property).
         jlensReadout = try container.decodeIfPresent(
             JSONValue.self, forKey: .jlensReadout)
+        promptReading = try container.decodeIfPresent(
+            ExactJSONValue.self, forKey: .promptReading)
         recordTokenIDs = try container.decodeIfPresent(
             Bool.self, forKey: .recordTokenIDs) ?? false
         // The SAE program's manifest surface: authored on the server, carried

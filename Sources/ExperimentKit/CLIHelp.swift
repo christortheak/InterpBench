@@ -180,6 +180,8 @@ public enum CLIFlagVocabulary {
         "experiment set-jlens-readout --max-observations": "<n>",
         "experiment set-jlens-readout --max-trace-bytes": "<bytes>",
         "experiment set-jlens-readout --max-full-vocab-projections": "<n>",
+        "experiment set-prompt-reading --chunk-tokens": "<n>",
+        "experiment set-prompt-reading --above-tokens": "<m>",
     ]
 
     /// One line per flag. Imperative, and about the effect rather than the
@@ -482,6 +484,19 @@ public enum CLIFlagVocabulary {
             + "the run can be replayed exactly.",
         "experiment set-jlens-readout --dry-run":
             "Check, pin, and price the readout, and write nothing.",
+        // The prompt reading (issue #6): read by the Python engine.
+        "experiment set-prompt-reading --single-pass":
+            "Read every prompt in one pass.",
+        "experiment set-prompt-reading --chunk-tokens":
+            "Read a long prompt in chunks of this many tokens (1 or more). "
+            + "Needs --above-tokens.",
+        "experiment set-prompt-reading --above-tokens":
+            "Chunk only prompts longer than this many tokens (0 or more), and "
+            + "never a prompt shorter than one chunk.",
+        "experiment set-prompt-reading --clear":
+            "Remove the declaration; the engine's device default applies again.",
+        "experiment set-prompt-reading --dry-run":
+            "Check the reading and say what would be declared, and write nothing.",
         // A compiled panel binds the STUDY's model and sampling settings, so
         // these three default from the target manifest and, when given,
         // overwrite it — the manifest stays the one place they are decided.

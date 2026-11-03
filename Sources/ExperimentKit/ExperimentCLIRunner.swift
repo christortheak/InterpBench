@@ -5419,6 +5419,12 @@ public struct ExperimentCLIRunner: Sendable {
             // from them is computed exactly as the Python client computes it.
             return try JLensReadoutAuthoring.run(args, sink: sink)
 
+        case "set-prompt-reading":
+            // How the PYTHON engine reads this study's prompts (issue #6).
+            // Authored and frozen here exactly as on the Python client; this
+            // engine reads in its own native steps and advises at run start.
+            return try PromptReading.run(args, sink: sink)
+
         case "set-instrument-scope":
             // WHICH ROWS the option-consuming instruments read. The run-start
             // responseFormat gate refuses a mixed json+label prompt file the

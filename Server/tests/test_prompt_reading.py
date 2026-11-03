@@ -139,15 +139,22 @@ def test_prefill_chunk_size_follows_the_runs_reading_then_the_plan():
 
 # --- strict validation ----------------------------------------------------------
 
+# The sentences are the one validator's (``prompt_reading.violations``), which
+# the cross-engine contract (Tests/Fixtures/cross-engine/prompt-reading.json)
+# and the Swift twin pin word for word.
 @pytest.mark.parametrize("rule,needle", [
-    ("singlePass", "must be a JSON object"),
-    ({"mode": "fast"}, "the mode is"),
-    ({"mode": "singlePass", "chunkTokens": 4096}, "unknown key(s) chunkTokens"),
-    ({"mode": "chunked", "chunkTokens": 4096}, "aboveTokens None"),
-    ({"mode": "chunked", "chunkTokens": 0, "aboveTokens": 1}, "at least 1"),
-    ({"mode": "chunked", "chunkTokens": True, "aboveTokens": 1}, "chunkTokens True"),
+    ("singlePass", "promptReading must be an object"),
+    ({"mode": "fast"}, "mode must be singlePass or chunked"),
+    ({"mode": "singlePass", "chunkTokens": 4096},
+     "mode singlePass takes no chunkTokens or aboveTokens"),
+    ({"mode": "chunked", "chunkTokens": 4096}, "mode chunked needs aboveTokens"),
+    ({"mode": "chunked", "chunkTokens": 0, "aboveTokens": 1},
+     "chunkTokens must be a whole number from 1 to 100,000,000"),
+    ({"mode": "chunked", "chunkTokens": True, "aboveTokens": 1},
+     "chunkTokens must be a whole number from 1"),
     ({"mode": "chunked", "chunkTokens": 4096.0, "aboveTokens": 1}, "whole number"),
-    ({"mode": "chunked", "chunkTokens": 64, "aboveTokens": -1}, "at least 0"),
+    ({"mode": "chunked", "chunkTokens": 64, "aboveTokens": -1},
+     "aboveTokens must be a whole number from 0"),
     ({**CUDA_DEFAULT, "chunk": 1}, "unknown key(s) chunk"),
 ])
 def test_a_rule_the_engine_would_have_to_guess_at_is_refused(rule, needle):
@@ -174,7 +181,9 @@ def test_a_rule_the_engine_would_have_to_guess_at_is_refused(rule, needle):
     ({"schemaVersion": 1, "source": "submission", "mode": "singlePass",
       "basis": "A100"}, "basis must be a JSON object"),
     ({"schemaVersion": 1, "source": "submission", "mode": "chunked",
-      "chunkTokens": -4, "aboveTokens": 0}, "at least 1"),
+      "chunkTokens": -4, "aboveTokens": 0},
+     "the prompt-reading plan: promptReading chunkTokens must be a whole "
+     "number from 1"),
 ])
 def test_a_malformed_plan_is_refused_in_plain_words(plan, needle):
     with pytest.raises(PR.PromptReadingError) as refusal:

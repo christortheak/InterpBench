@@ -793,6 +793,22 @@ public enum ExperimentCLIParser {
                 "--tokenizer-hash", "--max-armed-layers", "--max-observations",
                 "--max-trace-bytes", "--max-full-vocab-projections",
             ]),
+        // The study's PROMPT READING (issue #6): how the PYTHON engine reads
+        // its prompts. This engine reads in its own native steps and only
+        // advises, but it authors and freezes the declaration exactly as the
+        // Python client does (`PromptReading`), with the same flags.
+        .init(
+            namespace: "experiment", verb: "set-prompt-reading",
+            positional: "<name>",
+            purpose: "Declare how the Python engine reads this study's "
+                + "prompts: --single-pass reads every prompt in one pass; "
+                + "--chunk-tokens N --above-tokens M reads a prompt longer "
+                + "than the larger of the two in chunks of N tokens. The "
+                + "declaration is frozen with the study, and every job a "
+                + "submission starts reads its prompts this way. --clear "
+                + "removes it, and the engine's device default applies again.",
+            booleanFlags: ["--single-pass", "--clear", "--dry-run"],
+            valueFlags: ["--chunk-tokens", "--above-tokens"]),
         // The EVALUATION SAMPLING DESIGN (review round 12, finding 4). A verb
         // for the same reason as the two above: not a field assignment. It
         // takes the design a power computation produced — a per-condition

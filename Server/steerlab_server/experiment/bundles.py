@@ -1789,12 +1789,6 @@ def _diagnostic_files(record_path: str | None) -> list[tuple[str, str]]:
     return found
 
 
-#: The verbs that generate the study's own text, so a submission's
-#: prompt-reading plan applies to them: a measured run, a sweep, and a
-#: pipeline (whose run and sweep stages these are).
-PROMPT_READING_VERBS = ("run", "sweep", "pipeline")
-
-
 def execute_run_bundle(bundle_path: str, *, verb: str, target_root: str | None = None,
                        dtype: str = "auto", device: str | None = None,
                        prompts_path: str | None = None, source_path: str | None = None,
@@ -1901,7 +1895,9 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
             prompt_reading_plan = prompt_reading.parse_plan(prompt_reading_plan)
         except prompt_reading.PromptReadingError as exc:
             raise BundleError(f"{exc} — {exc.repair_action}") from exc
-        if verb not in PROMPT_READING_VERBS:
+        # The verbs that generate the study's own text (one definition, read
+        # by the submission that renders the plan too).
+        if verb not in prompt_reading.READING_VERBS:
             raise BundleError(
                 "--prompt-reading-plan applies to the 'run', 'sweep', and "
                 f"'pipeline' verbs only (got {verb!r}) — it says how the "

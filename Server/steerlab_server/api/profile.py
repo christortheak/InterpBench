@@ -215,6 +215,11 @@ def _auto_resubmit_default_limit() -> int:
     return DEFAULT_AUTO_RESUBMIT_LIMIT
 
 
+def _prompt_reading_description() -> dict[str, Any]:
+    from ..experiment import prompt_reading
+    return prompt_reading.engine_description()
+
+
 def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
     profile = ServerProfile.from_env()
     role = server_role(profile)
@@ -297,6 +302,11 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
             "routes": ["/api/readers", "/api/reader/score", "/api/reader/fit"],
             "outcomeInstrument": "repeReaderScore",
         },
+        # How this engine reads a long prompt on each device, in plain words,
+        # and that it never splits a model across GPUs (issue #6, point 3), so
+        # a client can tell before submitting whether a long-context study
+        # can run here.
+        "longPromptReading": _prompt_reading_description(),
         "stochasticGeneration": {
             "temperature": True,
             "seedParity": "best-effort; exact parity is not guaranteed across engines",
@@ -406,6 +416,12 @@ def capability_snapshot(registry: Any | None = None) -> dict[str, Any]:
             # shape to servers WITHOUT this flag, which would run it the old
             # way (`sampling.declared_policy_changes_seeds`).
             "declaredSeedPolicy": True,
+            # A study's promptReading declaration, and a submission's
+            # --prompt-reading-plan, decide how its prompts go through the
+            # model (issue #6). Clients refuse to send a study that declares
+            # one to servers WITHOUT this flag, which would read its prompts
+            # their own way (`prompt_reading.submission_needs_capability`).
+            "promptReading": True,
             "httpTransfer": profile.transfer_method in (None, "", "http"),
             "externalTransferRequired": (
                 profile.transfer_method not in (None, "", "http")
