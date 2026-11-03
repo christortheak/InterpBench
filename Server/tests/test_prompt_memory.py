@@ -257,3 +257,89 @@ def test_the_rule_chunks_above_the_larger_of_its_two_numbers(tokens, expected):
     assert pr.chunk_size(pr.CUDA_DEFAULT, tokens) == expected
     assert pr.chunk_size({"mode": "chunked", "chunkTokens": 9000,
                           "aboveTokens": 0}, 8_999) is None
+
+
+# --- a shorter prompt read in one pass can be the peak (review, item 2) ----------
+
+def test_the_longest_single_pass_the_rule_allows_is_priced_too():
+    # Declared: chunks of 4,096 above 100,000 tokens; the longest prompt is
+    # 150,000 tokens (chunked), but a 100,000-token prompt would be read in
+    # ONE pass. Hand arithmetic:
+    #   single pass of 100,000: 4 × 100,000 × 5,120 × 2 + 10 × 100,000 × 48
+    #     × 128 × 4 = 28,672,000,000 of working memory; peak 55,566,139,392
+    #     + 100,000 × 65,536 + 153,944,064 + 28,672,000,000 = 90,945,683,456,
+    #     + 0.5 GiB = 91,482,554,368 (85.2 GiB)
+    #   the chunked 150,000-token pass alone: 72,516,567,040 (67.5 GiB)
+    rule = {"mode": "chunked", "chunkTokens": 4096, "aboveTokens": 100_000}
+    priced = pm.estimate(HYBRID, weights_bytes=WEIGHTS, prompt_tokens=150_000,
+                         generation_tokens=8_192, rule=rule)
+    assert priced["singlePassBelowThreshold"]["promptTokens"] == 100_000
+    assert priced["singlePassBelowThreshold"]["peakBytes"] == 90_945_683_456
+    assert priced["peakFrom"] == "singlePassBelowThreshold"
+    assert priced["estimatedBytes"] == 91_482_554_368
+    assert priced["certainBytes"] == 66_087_354_368
+    assert pm.fit(priced, gpu_type="A100",
+                  vram_table={"A100": 80})["memoryFit"] == "mayNotFit"
+
+
+def test_the_default_readings_short_pass_does_not_move_the_handoff_case():
+    # Under the CUDA default the longest single pass is 8,192 tokens, far
+    # below the chunked 217,230-token pass: the estimate is unchanged.
+    priced = pm.estimate(HYBRID, weights_bytes=WEIGHTS, prompt_tokens=217_230,
+                         generation_tokens=8_192, rule=pr.CUDA_DEFAULT)
+    assert "peakFrom" not in priced
+    assert priced["estimatedBytes"] == 79_676_293_120
+
+
+# --- refuse only on what the configuration states (review, item 4) ---------------
+
+DENSE = {"num_hidden_layers": 4, "num_key_value_heads": 2,
+         "num_attention_heads": 4, "hidden_size": 256}
+
+
+def test_a_dense_model_without_layer_types_still_refuses_over_the_card():
+    priced = pm.estimate(DENSE, weights_bytes=2 * GiB, prompt_tokens=1_000,
+                         generation_tokens=100, rule=None)
+    assert priced["cache"]["assumptions"] == []
+    assert pm.fit(priced, gpu_type="S", vram_table={"S": 1})["memoryFit"] == "exceeds"
+
+
+@pytest.mark.parametrize("hint,assumption", [
+    ({"hybrid_override_pattern": "M-M*-M"}, "carries hybrid settings"),
+    ({"layer_types": ["full_attention", "hybrid", "full_attention",
+                      "full_attention"]}, "are not ones this check knows"),
+    ({"layer_types": ["full_attention", "linear_attention", "full_attention",
+                      "full_attention"]}, "stated 8 MiB"),
+])
+def test_an_over_price_resting_on_an_assumption_is_advice(hint, assumption):
+    priced = pm.estimate({**DENSE, **hint}, weights_bytes=2 * GiB,
+                         prompt_tokens=1_000, generation_tokens=100, rule=None)
+    assert any(assumption in a for a in priced["cache"]["assumptions"])
+    verdict = pm.fit(priced, gpu_type="S", vram_table={"S": 1})
+    assert verdict["memoryFit"] == "mayNotFit"
+    assert verdict["certainByAssumption"] is True
+
+
+def test_a_jamba_period_and_offset_are_priced_layer_by_layer():
+    # 8 layers, an attention layer where i % 4 == 1 (layers 1 and 5), the
+    # other 6 Mamba layers at the stated 8 MiB. At 1,000 tokens: 2 × 2 × 8
+    # heads × 128 dims × 2 bytes × 1,000 + 6 × 8 MiB = 58,523,648.
+    config = {"num_hidden_layers": 8, "num_key_value_heads": 8,
+              "num_attention_heads": 32, "head_dim": 128,
+              "attn_layer_period": 4, "attn_layer_offset": 1}
+    priced = pm.cache_bytes(config, 1_000)
+    assert priced["layerTypesBasis"] == "attentionLayerPeriod"
+    assert priced["byLayerType"]["fullAttention"]["layers"] == 2
+    assert priced["bytes"] == 58_523_648
+
+
+def test_a_layers_block_type_list_is_read():
+    config = {**DENSE, "layers_block_type": ["mamba", "attention", "mamba",
+                                             "attention"],
+              "linear_num_value_heads": 8, "linear_key_head_dim": 64,
+              "linear_value_head_dim": 64}
+    priced = pm.cache_bytes(config, 1_000)
+    assert priced["layerTypesBasis"] == "layersBlockType"
+    assert priced["byLayerType"]["fullAttention"]["layers"] == 2
+    assert priced["byLayerType"]["linearAttention"]["layers"] == 2
+    assert priced["assumptions"] == []

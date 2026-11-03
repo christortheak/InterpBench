@@ -346,6 +346,21 @@ def _config(site, config):
     (snap / "config.json").write_text(json.dumps(config), encoding="utf-8")
 
 
+def test_a_hybrid_priced_by_assumption_is_advised_not_refused(site):
+    # The same model, its pattern stated under a key this check does not
+    # read layer by layer: every layer is priced as full attention, so the
+    # weights and cache come to ~106.8 GiB, over 80 GB — but only by
+    # assumption, so the check advises and says why.
+    hinted = {k: v for k, v in CONFIG.items() if k != "full_attention_interval"}
+    _config(site, {**hinted, "hybrid_override_pattern": "M-M-M*-" * 9})
+    memory = _memory(_submit(site))
+    assert memory["status"] == "warn"
+    assert memory["data"]["memoryFit"] == "mayNotFit"
+    assert memory["data"]["certainByAssumption"] is True
+    assert "priced by assumption" in memory["message"]
+    assert "hybrid_override_pattern" in memory["message"]
+
+
 def test_a_dense_model_over_the_card_is_still_refused(site):
     # No layer types and no hybrid settings: all-full is the dense model's
     # true cache, so the certain part over the card refuses as before.

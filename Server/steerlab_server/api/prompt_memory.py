@@ -136,23 +136,49 @@ def _int(cfg: dict, key: str) -> int | None:
     return value if type(value) is int and value > 0 else None
 
 
+#: Settings that mark a model as a hybrid (some layers keep no whole-context
+#: cache) in a spelling this check does not read layer by layer. When one is
+#: present and the layer types had to be assumed, the cache is over-priced
+#: by assumption, so an over-card result is advice, not a refusal.
+HYBRID_HINT_KEYS = ("hybrid_override_pattern", "mamba_d_state",
+                    "mamba_expand", "ssm_state_size", "linear_num_value_heads",
+                    "linear_key_head_dim", "attn_layer_indices")
+#: ``layers_block_type`` entries, as transformers' hybrids spell them.
+_BLOCK_TYPES = {"attention": "full_attention", "mamba": "linear_attention",
+                "linear_attention": "linear_attention",
+                "full_attention": "full_attention"}
+
+
 def layer_types(cfg: dict) -> tuple[list[str], str] | None:
     """Each layer's attention type and how it was established, or None when
     the layer count is unknown.
 
-    In order: the config's own ``layer_types``; Gemma 3's
-    ``sliding_window_pattern`` (every p-th layer full, the rest sliding —
-    transformers' rule); a Qwen3.5-style ``full_attention_interval`` (every
-    n-th layer full, the rest linear); otherwise every layer is priced as
-    full attention, which never prices a cache low.
+    In order: the config's own ``layer_types``; a ``layers_block_type`` list
+    (``attention``/``mamba``); Jamba's ``attn_layer_period`` and
+    ``attn_layer_offset`` (layer i keeps a cache when i % period == offset,
+    the rest are Mamba layers); Gemma 3's ``sliding_window_pattern`` (every
+    p-th layer full, the rest sliding — transformers' rule); a Qwen3.5-style
+    ``full_attention_interval`` (every n-th layer full, the rest linear);
+    otherwise every layer is priced as full attention, which never prices a
+    cache low (``assumptions`` in :func:`cache_bytes` says when that rests on
+    an assumption rather than on a dense model).
     """
     layers = _int(cfg, "num_hidden_layers")
     declared = cfg.get("layer_types")
     if isinstance(declared, list) and declared and all(
             isinstance(t, str) for t in declared):
         return list(declared), "declared"
+    blocks = cfg.get("layers_block_type")
+    if isinstance(blocks, list) and blocks and all(
+            isinstance(t, str) for t in blocks):
+        return ([_BLOCK_TYPES.get(t, t) for t in blocks], "layersBlockType")
     if layers is None:
         return None
+    period, offset = cfg.get("attn_layer_period"), cfg.get("attn_layer_offset")
+    if type(period) is int and period > 0 and type(offset) is int \
+            and 0 <= offset < period:
+        return (["full_attention" if i % period == offset else "linear_attention"
+                 for i in range(layers)], "attentionLayerPeriod")
     pattern = _int(cfg, "sliding_window_pattern")
     if pattern and _int(cfg, "sliding_window"):
         return (["sliding_attention" if (i + 1) % pattern else "full_attention"
@@ -222,10 +248,32 @@ def cache_bytes(config: dict | None, context_tokens: int) -> dict | None:
     full = counts["full"] * per_token * context_tokens
     sliding = counts["sliding"] * per_token * min(context_tokens, window or 0)
     linear = counts["linear"] * state
+    # What the price rests on beyond the config's own statements. Each makes
+    # the cache an over-price, never an under-price, and each turns an
+    # over-card result into advice (``fit``): refuse only on what the config
+    # states.
+    assumptions: list[str] = []
+    hints = [key for key in HYBRID_HINT_KEYS if key in cfg]
+    if basis == "assumedFull" and hints:
+        assumptions.append(
+            "the configuration states no per-layer attention types but "
+            f"carries hybrid settings ({', '.join(hints)}), so every layer was "
+            "priced as keeping keys and values for the whole context")
+    if unknown:
+        assumptions.append(
+            f"layer type(s) {', '.join(sorted(set(unknown)))} are not ones this "
+            "check knows, so they were priced as keeping keys and values for "
+            "the whole context")
+    if counts["linear"] and state_basis == "statedConstant":
+        assumptions.append(
+            "the configuration does not give the linear-attention state's "
+            f"size, so each such layer was priced at a stated "
+            f"{LINEAR_STATE_FALLBACK_BYTES // 1024 ** 2} MiB")
     return {
         "bytes": full + sliding + linear,
         "contextTokens": context_tokens,
         "layerTypesBasis": basis,
+        "assumptions": assumptions,
         "perTokenBytes": counts["full"] * per_token,
         "byLayerType": {
             "fullAttention": {"layers": counts["full"], "bytes": full},
@@ -341,6 +389,24 @@ def estimate(config: dict | None, *, weights_bytes: int, prompt_tokens: int,
         return result
     prompt_cache = cache_bytes(config, prompt_tokens)["bytes"]
     prompt_peak = weights_bytes + prompt_cache + work["bytes"]
+    if chunk is not None:
+        # The longest prompt is read in chunks, but a shorter one at or below
+        # the rule's threshold is read in ONE pass, and under a high
+        # aboveTokens that pass can be the peak. The study's other prompts
+        # are not all measured, so the longest single pass the rule allows
+        # (up to the threshold, below the longest prompt) is priced too.
+        threshold = int(prompt_reading.PromptReading.from_rule(
+            rule, source=prompt_reading.ENGINE_DEFAULT).threshold)
+        short = min(prompt_tokens, threshold)
+        short_work = working_bytes(config, short, None)
+        short_peak = (weights_bytes + cache_bytes(config, short)["bytes"]
+                      + short_work["bytes"])
+        result["singlePassBelowThreshold"] = {
+            "promptTokens": short, "peakBytes": short_peak,
+            "workingMemory": short_work}
+        if short_peak > prompt_peak:
+            prompt_peak = short_peak
+            result["peakFrom"] = "singlePassBelowThreshold"
     result.update(
         estimatedBytes=max(certain, prompt_peak) + CUDA_CONTEXT_BYTES,
         estimateBasis="itemized",
@@ -350,7 +416,8 @@ def estimate(config: dict | None, *, weights_bytes: int, prompt_tokens: int,
                  "(weights + cache for the prompt + the prompt pass's working "
                  "memory: mask + residual stream + the largest of the MLP, the "
                  "float32 linear-attention fallback, and attention), plus 0.5 "
-                 "GiB of CUDA context"))
+                 "GiB of CUDA context; under a chunked reading, also the "
+                 "longest single pass the rule allows"))
     return result
 
 
@@ -362,6 +429,12 @@ def fit(estimate_result: dict, *, gpu_type: str | None,
     ``exceeds`` (the certain part alone does not fit: refuse), ``mayNotFit``
     (the certain part fits, the estimate does not: advise), ``fits``,
     ``capacityUnknown`` (no declared size for the type), or ``notChecked``.
+
+    Only what the configuration states can refuse. When the cache price
+    rests on an assumption (``cache.assumptions``: hybrid settings with no
+    layer types, a layer type this check does not know, a stated linear
+    state size), a certain part over the card is ``mayNotFit`` with
+    ``certainByAssumption`` and the reasons, never ``exceeds``.
     """
     certain = estimate_result.get("certainBytes")
     full = estimate_result.get("estimatedBytes")
@@ -384,7 +457,11 @@ def fit(estimate_result: dict, *, gpu_type: str | None,
     if vram is None:
         return {**result, "memoryFit": "capacityUnknown"}
     result["usableBytes"] = int(vram * GiB * USABLE_FRACTION)
+    assumptions = list((estimate_result.get("cache") or {}).get("assumptions") or [])
     if certain > vram * GiB:
+        if assumptions:
+            return {**result, "memoryFit": "mayNotFit",
+                    "certainByAssumption": True, "assumptions": assumptions}
         return {**result, "memoryFit": "exceeds"}
     if full is not None and full > vram * GiB * USABLE_FRACTION:
         return {**result, "memoryFit": "mayNotFit"}
