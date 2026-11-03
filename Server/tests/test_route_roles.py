@@ -148,6 +148,8 @@ _ADAPTER_ROUTES = (
     ("GET", "/api/jobs"),
     ("GET", "/api/jobs/{job_id}"),
     ("GET", "/api/jobs/{job_id}/stream"),
+    ("GET", "/api/jobs/{job_id}/status"),
+    ("GET", "/api/jobs/{job_id}/log-tail"),
     ("POST", "/api/jobs/{job_id}/cancel"),
     ("GET", "/api/bundles/download"),
 )
