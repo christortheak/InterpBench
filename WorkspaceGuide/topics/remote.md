@@ -329,13 +329,59 @@ runner can do before anything is uploaded.
 
 <!-- client: all -->
 
+### Checking on a running job
+
+One call answers "is it waiting, and why? running, and how far along? ended,
+and how?", and returns:
+
+```bash
+{{cli}} {{remote}} status <job-id> {{endpoint}} --json
+{{cli}} {{remote}} logs <job-id> --tail 50 {{endpoint}} --json
+```
+
+**`status`** reads the scheduler's own view of the job, through the site's
+configured scheduler commands, in fixed fields under `result.response`:
+
+- `scheduler`: for a job that waits, the scheduler's `reason` (`Priority`,
+  `Resources`, a limit) and `expectedStartAt`; for a job that runs or ran,
+  `startedAt`, `nodeList`, `elapsed`, `timeLimit`, `walltimeRemainingSeconds`,
+  `endedAt`, and `exitCode`. Times are epoch seconds.
+- `progress`: the records written so far, counted the way a resume counts
+  them (`recordsWritten`, `lastRecordAt`), out of `recordsExpected`. The total
+  is exact for a part of a split run (`recordsExpectedSource: "shardStamp"`)
+  and the submission's planning estimate for a whole run
+  (`"preflightEstimate"`). Say which when you report it.
+- `schedulerOutcome`: set when the scheduler, not the job, decided how it
+  ended or was interrupted (`TIMEOUT`, `OUT_OF_MEMORY`, `PREEMPTED`,
+  `NODE_FAIL`, `CANCELLED`). The job's `status` keeps its usual words (a job
+  that hit its walltime is `failed`), and `deathDetail` is the scheduler's own
+  sentence on how it ended.
+- For a split run, ask about the parent: each part answers under `shards`
+  (the job carrying it now, if it was resumed), and `progress` sums them.
+
+The record's `startedAt` is the scheduler's start time, empty while the job
+waits; `createdAt` is when it was submitted.
+
+**`logs --tail N`** prints the last N lines (at most 1000) of the controller's
+log and of the job's own scheduler output (`slurm-<id>.out` and `.err`), then
+exits; without `--tail` the verb follows the log until the job ends. A file
+that does not exist yet says so.
+
+Both cover only jobs this server submitted, named by their SteerLab job id,
+never the scheduler's number. **There is no reason to `ssh` in and run
+`squeue` or `sacct`.** If a question needs more than these fields, tell the
+researcher what is missing rather than reaching around the instrument. An
+engine older than these reads refuses with `jobStatusUnsupported`: update the
+engine, and meanwhile `{{cli}} {{remote}} jobs` still lists the job.
+
 ### Reconnect and recover remote jobs
 
 <!-- client: mac -->
 
 Retain the submission's endpoint, serving root and job ID. Poll
-`steerlab-cli remote jobs --site <id> --json`; streaming or client timeout
-stops observation, not execution. Use `steerlab-cli remote cancel <job-id>`
+`steerlab-cli remote jobs --site <id> --json`, or `remote status <job-id>`
+for one job (above); streaming or client timeout stops observation, not
+execution. Use `steerlab-cli remote cancel <job-id>`
 when cancellation is intended. `steerlab-cli remote resubmit <job-id>
 [--walltime <hh:mm:ss>] --json` and the app's Resume button continue eligible
 checkpointed or cancelled jobs.
@@ -368,8 +414,8 @@ was submitted.
 <!-- client: python -->
 
 Retain the submission's endpoint, serving root and job ID. Poll
-`steerlab runner jobs <id> --runner <url> --json`; streaming or client timeout
-stops observation, not execution. Use `steerlab runner jobs <id> --cancel`
+`steerlab runner jobs <id> --runner <url> --json`, or `runner status <id>`
+(above); streaming or client timeout stops observation, not execution. Use `steerlab runner jobs <id> --cancel`
 when cancellation is intended. `steerlab runner resubmit <job-id> --runner
 <url> [--walltime <hh:mm:ss>] --json` continues eligible checkpointed or
 cancelled jobs.

@@ -320,7 +320,8 @@ steerlab runner submit --runner <url> \
     --verb run [--executor local|slurm] [--target-root <dir>] [--dry-run] \
     [--source runs/<run>]                     # with --verb analyze or evaluate
 steerlab runner jobs [<job-id>] [--cancel] --runner <url>
-steerlab runner logs <job-id> [--follow] --runner <url>
+steerlab runner status <job-id> --runner <url>
+steerlab runner logs <job-id> [--follow | --tail <n>] --runner <url>
 steerlab runner evidence <job-id> --out <file.tar.gz> --runner <url>
 steerlab bundle import <file.tar.gz> --sha256 <digest>   # the separate step
 ```
@@ -331,7 +332,8 @@ steerlab bundle import <file.tar.gz> --sha256 <digest>   # the separate step
 | `runner upload <bundle>` | `POST /api/bundles/upload` | streams the archive; **refuses** if the runner reports a different sha256 than the client computed. Prints the staged path and the digest — the two things `submit` wants |
 | `runner submit` | `POST /api/bundles/inspect`, then `POST /api/studies/submit-bundle` | `--bundle-sha` is checked against the runner's own inspect of `--bundle-path` **before** anything is submitted. Without `--executor`, `analyze` and `verify` are sent as `local` and every other verb sends none, so the runner's own executor applies. Reports the job id, the runner's identity, and the digest |
 | `runner jobs [<id>]` | `GET /api/jobs`, `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel` | `--cancel` needs an id — this client will not cancel a runner's whole queue |
-| `runner logs <id>` | `GET /api/jobs/{id}` (`logTail`), `GET /api/jobs/{id}/stream` with `--follow` | the default is a **tail** and says so; `--follow` streams until the job is terminal |
+| `runner status <id>` | `GET /api/jobs/{id}/status` | one read that returns: the scheduler's view in fixed fields, records written so far, and how the job ended, as `result.response` — the same document as the Mac's `remote status` (§3.8). Checks `cluster.jobStatus` first: an older runner is `jobStatusUnsupported`/65, an id that is not a job id `usage`/64 |
+| `runner logs <id>` | `GET /api/jobs/{id}` (`logTail`), `GET /api/jobs/{id}/stream` with `--follow`, `GET /api/jobs/{id}/log-tail` with `--tail <n>` | the default is a **tail** and says so; `--follow` streams until the job is terminal; `--tail <n>` (1–1000) returns the last n controller lines and the tails of the job's own scheduler output files. `--tail` and `--follow` together are `usage`/64 |
 | `runner evidence <id> --out <file>` | `GET /api/bundles/download` | downloads to a **unique** temp file beside `--out` (`--temp` overrides), verifies the outer sha256 the job record reported, then commits with a **no-overwrite** primitive — a destination that appears mid-download is a `destinationExists` refusal, never a replacement. An explicit `--temp` path is created **exclusively**: a file already there is a `tempPathExists` refusal, not a truncation. **Does not import** — it prints the exact `steerlab bundle import … --sha256 …` |
 
 The commit is `link` + `unlink`, which cannot overwrite and has no window in
@@ -2480,7 +2482,8 @@ steerlab-cli remote package <experiment> [--site <id>] [--token <token>] [--url 
 steerlab-cli remote upload <bundle> [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote submit-bundle <server-bundle-path> [--bundle <server-path>] [--dry-run] [--executor <local|slurm>] [--gres <spec>] [--parallel <n>] [--reread-choices] [--sample-per-condition <n>] [--sample-seed <hex-or-int>] [--site <id>] [--source <run-dir>] [--token <token>] [--url <server>] --verb <verb> [--walltime <hh:mm:ss>]
 steerlab-cli remote jobs [--site <id>] [--token <token>] [--url <server>]
-steerlab-cli remote logs <job-id> [--site <id>] [--token <token>] [--url <server>]
+steerlab-cli remote status <job-id> [--site <id>] [--token <token>] [--url <server>]
+steerlab-cli remote logs <job-id> [--site <id>] [--tail <value>] [--token <token>] [--url <server>]
 steerlab-cli remote cancel <job-id> [--site <id>] [--token <token>] [--url <server>]
 steerlab-cli remote resubmit <job-id> [--site <id>] [--token <token>] [--url <server>] [--walltime <hh:mm:ss>]
 steerlab-cli remote fetch <artifact-path> [--out <dir>] [--path <server-path>] [--site <id>] [--token <token>] [--url <server>]
@@ -2512,7 +2515,8 @@ steerlab-cli remote chat [--hash <sha256>] [--max-tokens <n>] --prompt <text> [-
 | `remote upload` | Upload a run bundle to the server. |
 | `remote submit-bundle` | Submit an uploaded bundle as a server job. |
 | `remote jobs` | List the server's jobs. |
-| `remote logs` | Stream one job's log. |
+| `remote status` | Report one job's scheduler view, records written so far, and how it ended, then exit; a split run reports each part. |
+| `remote logs` | Stream one job's log; with --tail N, print its last N lines and those of its own scheduler output, then exit. |
 | `remote cancel` | Request cancellation of one job. |
 | `remote resubmit` | Resume a checkpointed or cancelled job: the server re-submits the job's own rendered sbatch script byte-for-byte, optionally under a longer walltime. |
 | `remote fetch` | Download one server artifact without importing it. |
@@ -2562,7 +2566,8 @@ id fails with the stable code `unknownSite`.
 | `upload` | Uploads a bundle. |
 | `submit-bundle` | **`--verb` is required**. Without `--executor`, a verb that loads a model gets the server's own executor (`capabilities.profile.executor`: `slurm` on a cluster, `local` on a workstation), and `analyze` and `verify`, which load none, get `local` (the controller). Until 2026-10-20 the default was always `local`, which ran model verbs inside a cluster controller's CPU allocation. `--executor local` for a model verb on a Slurm server warns on stderr. When the server's executor cannot be read, the verb refuses and says to pass `--executor`. The envelope echoes `result.executorSource`: `flag`, `serverProfile`, `loadsNoModel`, or `fallback` (the server declares none). Empty resource values are dropped. `--parallel <n>` fans a Slurm run out across N GPU jobs — see below. `--sample-per-condition <n> --sample-seed <s>` submit a seeded subsample coding (`--verb evaluate` only, both or neither; §3.5), echoed at `result.samplePerConditionRequested` / `result.sampleSeedRequested`. |
 | `jobs` | Job list as JSON. |
-| `logs` | Streams the job log. |
+| `status` | `GET /api/jobs/{id}/status` (capability `cluster.jobStatus`): one read that returns. `result.response.scheduler` is the scheduler's view in fixed fields, read through the site's configured `sacct`/`squeue` names — for a waiting job its `reason` and `expectedStartAt`; for a running or ended one `startedAt`, `nodeList`, `elapsed`, `timeLimit`, `walltimeRemainingSeconds`, `endedAt`, `exitCode`. `progress` counts records written the way a resume counts them (`recordsWritten`, `lastRecordAt`) out of `recordsExpected`, exact from a shard's stamp (`shardStamp`) or the submission's planning figure (`preflightEstimate`). `schedulerOutcome` names a scheduler-decided ending (`TIMEOUT`, `OUT_OF_MEMORY`, `PREEMPTED`, `NODE_FAIL`, `CANCELLED`, `BOOT_FAIL`, `DEADLINE`) beside the unchanged `status`; `deathDetail` is the scheduler's sentence for a job that ended. A split run's parent answers each part under `shards`. Only jobs in the server's store: an unknown id is `notFound`/66, an id that could name anything but a job is `usage`/64 before any request, and an engine without the read is `jobStatusUnsupported`/65. |
+| `logs` | Streams the job log until the job ends. `--tail N` (1–1000) instead prints the last N controller lines and the tails of the job's own `slurm-<id>.out` and `.err` (each read from at most 256 KiB at the end of the file; a missing file says so) and exits — `GET /api/jobs/{id}/log-tail`, capability `cluster.jobLogTail`, same refusals as `status`. |
 | `cancel` | Prints `cancel requested`. |
 | `fetch` | `--out` defaults to `.`. |
 | `import` | Default `--out .steerlab-downloads`. Verifies the hash, imports into local `runs/`, and runs the model-revision adoption reconciliation. |
