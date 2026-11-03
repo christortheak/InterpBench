@@ -166,16 +166,27 @@ configured scheduler commands, in fixed fields under `result.response`:
   is exact for a part of a split run (`recordsExpectedSource: "shardStamp"`)
   and the submission's planning estimate for a whole run
   (`"preflightEstimate"`). Say which when you report it.
-- `schedulerOutcome`: set when the scheduler, not the job, decided how it
-  ended or was interrupted (`TIMEOUT`, `OUT_OF_MEMORY`, `PREEMPTED`,
-  `NODE_FAIL`, `CANCELLED`). The job's `status` keeps its usual words (a job
-  that hit its walltime is `failed`), and `deathDetail` is the scheduler's own
-  sentence on how it ended.
+- `schedulerOutcome`: the scheduler's own word for an ending, or an
+  interruption, that came from outside the job's code: a time limit
+  (`TIMEOUT`), memory (`OUT_OF_MEMORY`), a preemption (`PREEMPTED`), a node
+  failure (`NODE_FAIL`), or a cancel by a person, SteerLab, or an
+  administrator (`CANCELLED`). `schedulerOutcomeNote` says it in a sentence,
+  and says whether SteerLab asked for a cancel. Report it as "the scheduler
+  recorded …". A preempted job that the scheduler queued again is waiting,
+  not ended. The job's `status` keeps its usual words (a job that hit its
+  time limit is `failed`), and `deathDetail` is the scheduler's own sentence
+  on how a job that ended, ended.
 - For a split run, ask about the parent: each part answers under `shards`
   (the job carrying it now, if it was resumed), and `progress` sums them.
+  The read answers within about 30 seconds: a part whose scheduler did not
+  answer in time says so (`scheduler.timedOut`), so ask again rather than
+  concluding anything from it.
 
-The record's `startedAt` is the scheduler's start time, empty while the job
-waits; `createdAt` is when it was submitted.
+A job's `startedAt` is the scheduler's start time, and stays empty while it
+waits; `createdAt` is when it was submitted. This holds for study runs,
+their parts, and standalone diagnostics. A split run's parent takes the start
+of its first part. A job the scheduler requeued keeps its previous start
+while it waits, and takes the new one when it runs again.
 
 **`logs --tail N`** prints the last N lines (at most 1000) of the controller's
 log and of the job's own scheduler output (`slurm-<id>.out` and `.err`), then
