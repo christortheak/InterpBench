@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 
-import os
 import threading
 from dataclasses import dataclass
 from typing import Callable, Iterator
@@ -20,31 +19,17 @@ import torch
 from ..steering import plan
 from ..steering.injector import VectorInjector
 from ..steering.model_loader import SteeredModel
-from . import prompt_render, truncation_gate
+from . import prompt_reading, prompt_render, truncation_gate
+# How a prompt is read (single pass or chunked), with the per-device
+# defaults and the resolution order, lives in the torch-free
+# ``prompt_reading`` so the shard merge and the clients can read it too. The
+# names stay importable from here, where they always were.
+from .prompt_reading import (  # noqa: F401 - re-exported
+    CUDA_PREFILL_CHUNK_SIZE, CUDA_PREFILL_CHUNK_THRESHOLD, PREFILL_CHUNK_ENV,
+    PREFILL_CHUNK_SIZE, PREFILL_CHUNK_THRESHOLD, PromptReading,
+    resolve_prompt_reading)
 
 CONTEXT_BUDGET_RESERVE = 16  # matches Swift contextBudgetReserve
-
-#: Chunked prefill (MPS only): prompts longer than the threshold prefill in
-#: chunks of this size, leaving the FINAL position for generate(). Why: on
-#: MPS the eager attention transient is quadratic in the pass length
-#: (measured — Server/scripts/memory_growth_repro.py), so a single-pass 30K
-#: prefill is a ~150 GiB transient while 1024-token chunks against the
-#: growing KV cache stay linear (~heads x chunk x N). The Swift/MLX engine
-#: has chunked prefill natively (prefillStepSize); this is the server
-#: growing the same organ.
-PREFILL_CHUNK_SIZE = 1024
-PREFILL_CHUNK_THRESHOLD = 4096
-PREFILL_CHUNK_ENV = "STEERLAB_PREFILL_CHUNK"
-
-#: CUDA chunks only long prompts. Flash attention is linear-memory, but the
-#: rest of a single pass is not: every layer's MLP, and a hybrid model's
-#: linear-attention layers on the float32 torch fallback, hold whole-prompt
-#: transients. A 27B hybrid model ran out of an 80 GB card on an
-#: 82,000-token single pass whose finished cache needed under 6 GiB. Prompts
-#: at or below the threshold take the exact single-pass path they always
-#: took.
-CUDA_PREFILL_CHUNK_SIZE = 4096
-CUDA_PREFILL_CHUNK_THRESHOLD = 8192
 
 
 @dataclass
@@ -212,34 +197,23 @@ def check_context_budget(model: SteeredModel, prompt_tokens: int,
             CONTEXT_BUDGET_RESERVE)
 
 
-def prefill_chunk_size(device: str, prompt_tokens: int) -> int | None:
-    """Chunk size when chunked prefill applies, else None.
+def prefill_chunk_size(device: str, prompt_tokens: int,
+                       reading: PromptReading | None = None) -> int | None:
+    """Chunk size when a prompt of ``prompt_tokens`` is read in chunks, else
+    None (a single pass).
 
-    Pure per-device policy, same shape as ``model_loader.attention_
-    implementation``: MPS chunks prompts over 4,096 tokens and CUDA prompts
-    over 8,192, each at its own chunk size; CPU returns None and takes the
-    exact single-pass path it always took. ``STEERLAB_PREFILL_CHUNK``
-    overrides the chunk size (0 disables chunking entirely).
+    The rule is ``reading`` when given, else the run's own
+    (``prompt_reading.active_reading``, which a study run resolves, records,
+    and generates under), else :func:`resolve_prompt_reading` for this
+    device: the submission's plan, the ``STEERLAB_PREFILL_CHUNK`` override,
+    or the device default. By default MPS chunks prompts over 4,096 tokens
+    at 1,024 and CUDA prompts over 8,192 at 4,096; CPU reads every prompt in
+    a single pass. Prompts at or below the threshold take the exact
+    single-pass path they always took.
     """
-    device = device or ""
-    if device.startswith("mps"):
-        default, threshold = PREFILL_CHUNK_SIZE, PREFILL_CHUNK_THRESHOLD
-    elif device.startswith("cuda"):
-        default, threshold = CUDA_PREFILL_CHUNK_SIZE, CUDA_PREFILL_CHUNK_THRESHOLD
-    else:
-        return None
-    size = default
-    raw = os.environ.get(PREFILL_CHUNK_ENV, "").strip()
-    if raw:
-        try:
-            size = int(raw)
-        except ValueError:
-            size = default
-    if size <= 0:
-        return None
-    if prompt_tokens <= max(threshold, size):
-        return None
-    return size
+    if reading is None:
+        reading = prompt_reading.current_reading(device)
+    return reading.chunk_size(prompt_tokens)
 
 
 @torch.no_grad()

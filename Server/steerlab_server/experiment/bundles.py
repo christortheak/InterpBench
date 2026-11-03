@@ -1789,6 +1789,12 @@ def _diagnostic_files(record_path: str | None) -> list[tuple[str, str]]:
     return found
 
 
+#: The verbs that generate the study's own text, so a submission's
+#: prompt-reading plan applies to them: a measured run, a sweep, and a
+#: pipeline (whose run and sweep stages these are).
+PROMPT_READING_VERBS = ("run", "sweep", "pipeline")
+
+
 def execute_run_bundle(bundle_path: str, *, verb: str, target_root: str | None = None,
                        dtype: str = "auto", device: str | None = None,
                        prompts_path: str | None = None, source_path: str | None = None,
@@ -1800,7 +1806,8 @@ def execute_run_bundle(bundle_path: str, *, verb: str, target_root: str | None =
                        resume_directory: str | None = None,
                        sample_per_condition=None,
                        sample_seed=None,
-                       reread_choices: bool = False) -> dict:
+                       reread_choices: bool = False,
+                       prompt_reading_plan: dict | None = None) -> dict:
     """Import a run bundle, execute one experiment verb, and package evidence.
 
     This is intended as the Slurm child-process entry point. It deliberately
@@ -1837,6 +1844,7 @@ def execute_run_bundle(bundle_path: str, *, verb: str, target_root: str | None =
             sample_per_condition=sample_per_condition,
             sample_seed=sample_seed,
             reread_choices=reread_choices,
+            prompt_reading_plan=prompt_reading_plan,
             captured_logs=captured_lines)
     finally:
         sys.stdout = sys.stdout.wrapped  # type: ignore[union-attr]
@@ -1881,7 +1889,24 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
                               resume_directory: str | None = None,
                               sample_per_condition=None,
                               sample_seed=None,
-                              reread_choices: bool = False) -> dict:
+                              reread_choices: bool = False,
+                              prompt_reading_plan: dict | None = None) -> dict:
+    # The submission's prompt-reading plan (how the study's prompts are read:
+    # a single pass, or chunks that fit the requested card). Validated and
+    # refused for a verb that reads no study prompts BEFORE the bundle is
+    # opened, the rule every flag here follows: never dropped silently.
+    from . import prompt_reading
+    if prompt_reading_plan is not None:
+        try:
+            prompt_reading_plan = prompt_reading.parse_plan(prompt_reading_plan)
+        except prompt_reading.PromptReadingError as exc:
+            raise BundleError(f"{exc} — {exc.repair_action}") from exc
+        if verb not in PROMPT_READING_VERBS:
+            raise BundleError(
+                "--prompt-reading-plan applies to the 'run', 'sweep', and "
+                f"'pipeline' verbs only (got {verb!r}) — it says how the "
+                "study's own prompts are read for generation, and this verb "
+                "generates none of the study's text")
     # A choice re-read is an analysis option and nothing else; refused for
     # any other verb before the bundle is opened, like the subsample below.
     if reread_choices and verb != "analyze":
@@ -2048,6 +2073,11 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
         except OSError as exc:
             result["pointerError"] = f"{type(exc).__name__}: {exc}"
 
+    # The plan is in force for this unit of work only, like the retention
+    # context above; the run resolves it beneath the study's declaration.
+    plan_token = prompt_reading.submission_plan.set(prompt_reading_plan)
+    if prompt_reading_plan is not None:
+        result["promptReadingPlan"] = prompt_reading_plan
     try:
         concept_scope_token = validation_workflow.bundle_concept_scope.set(
             _bundled_concepts(meta))
@@ -2238,6 +2268,7 @@ def _execute_run_bundle_inner(bundle_path: str, *, verb: str,
         raise
     finally:
         run_status.current_run_directory.reset(run_directory_token)
+        prompt_reading.submission_plan.reset(plan_token)
         if concept_scope_token is not None:
             validation_workflow.bundle_concept_scope.reset(concept_scope_token)
         result["finishedAt"] = time.time()

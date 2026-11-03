@@ -1509,7 +1509,7 @@ _BUNDLE_USAGE = (
     "  bundle evidence <run-dir> [--out path]\n"
     "  bundle inspect <bundle.tar.gz>\n"
     "  bundle import <bundle.tar.gz> [--target root] [--overwrite] [--sha256 <outer digest>]\n"
-    "  bundle execute <bundle.tar.gz> --verb <verify|extract|validate|sweep|run|evaluate|analyze|pipeline> [--target root] [--shard k/K] [--resume <run-dir>]\n"
+    "  bundle execute <bundle.tar.gz> --verb <verify|extract|validate|sweep|run|evaluate|analyze|pipeline> [--target root] [--shard k/K] [--resume <run-dir>] [--prompt-reading-plan <json>]\n"
     "  bundle create|submit <bundle-dir> [--gres A100] [--walltime HH:MM:SS] -- <cmd...>\n")
 
 
@@ -1584,7 +1584,27 @@ def _bundle(args: list[str]) -> int:
         # pipeline (whose run STAGE polls the same flag); the other verbs
         # have none, and a handler nothing polls would swallow SIGTERM.
         from .experiment import evaluate_subsample
+        from .experiment import prompt_reading
         from .experiment import resume as resume_mod
+        # `--prompt-reading-plan <json>`: how the submission chose to read
+        # the study's prompts (single pass, or chunked at a size that fits
+        # the requested card). Validated strictly here, before the bundle is
+        # opened: a malformed plan is a usage error (64), never a guess.
+        plan_named = "--prompt-reading-plan" in args
+        plan_text = _flag(args, "--prompt-reading-plan")
+        prompt_reading_plan = None
+        if plan_named:
+            try:
+                if plan_text is None:
+                    raise prompt_reading.PromptReadingError(
+                        "--prompt-reading-plan needs a JSON plan after it",
+                        repair=('pass a plan such as {"schemaVersion": 1, '
+                                '"source": "submission", "mode": "singlePass"}'))
+                prompt_reading_plan = prompt_reading.parse_plan(plan_text)
+            except prompt_reading.PromptReadingError as exc:
+                sys.stderr.write(f"bundle execute: {exc}\n"
+                                 f"  {exc.repair_action}\n")
+                return 64
         flag = (resume_mod.CheckpointFlag().install()
                 if task_verb in ("run", "pipeline") else None)
         try:
@@ -1608,6 +1628,7 @@ def _bundle(args: list[str]) -> int:
                 # `--reread-choices` (analyze only): every stored choice read
                 # again with the current parser, for that analysis only.
                 reread_choices=("--reread-choices" in args),
+                prompt_reading_plan=prompt_reading_plan,
                 # `--resume <run-dir>` continues a PARKED run/sweep/pipeline
                 # through the bundle path (2026-08-23). A relative directory
                 # is resolved against `--target`, so the flag behaves the same

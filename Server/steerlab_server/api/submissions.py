@@ -1194,7 +1194,8 @@ def _bundle_execute_command(bundle_path: str, *, verb: str, target_root: str,
                             sample_per_condition: int | None = None,
                             sample_seed: str | None = None,
                             reread_choices: bool = False,
-                            runtime_requirements=None) -> list[str]:
+                            runtime_requirements=None,
+                            prompt_reading_plan: dict | None = None) -> list[str]:
     python = os.environ.get("STEERLAB_PYTHON") or sys.executable or "python"
     command = [
         python, "-m", "steerlab_server.cli", "bundle", "execute", bundle_path,
@@ -1236,6 +1237,12 @@ def _bundle_execute_command(bundle_path: str, *, verb: str, target_root: str,
         # Encoded only when asked for, the same rule: an ordinary analysis
         # renders the argv it always did.
         command.append("--reread-choices")
+    if prompt_reading_plan is not None:
+        # Encoded only when the submission resolved a plan; the engine records
+        # it as the run's prompt reading (see generate.resolve_prompt_reading).
+        import json
+        command.extend(["--prompt-reading-plan",
+                        json.dumps(prompt_reading_plan, sort_keys=True, separators=(",", ":"))])
     return command
 
 
