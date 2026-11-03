@@ -439,8 +439,9 @@ def for_manifest(manifest, device, *, log=None) -> PromptReading:
 def rendered_token_counts(tokenizer, model_id: str, prompts: list[dict],
                           settings: list[dict]) -> list[list[int]]:
     """Token counts of every task prompt under every arm's render settings
-    (one row per prompt, one column per distinct setting), rendered exactly
-    as the run renders them."""
+    (one row per prompt, one column per distinct setting), rendered by the
+    generation path's own function (``prompt_render.render_for_generation``):
+    a transcript item's whole conversation, not its display text."""
     from . import prompt_render
     distinct: list[dict] = []
     for setting in settings:
@@ -448,15 +449,11 @@ def rendered_token_counts(tokenizer, model_id: str, prompts: list[dict],
             distinct.append(setting)
     rows: list[list[int]] = []
     for prompt in prompts:
-        text = prompt.get("prompt") or prompt.get("text") or ""
         row = []
         for setting in distinct:
-            if not text and prompt.get("transcript"):
-                rendered = prompt_render.render_transcript(
-                    tokenizer, prompt["transcript"], model_id=model_id, **setting)
-            else:
-                rendered = prompt_render.render(tokenizer, text,
-                                                model_id=model_id, **setting)
+            rendered = prompt_render.render_for_generation(
+                tokenizer, prompt.get("prompt") or "", model_id=model_id,
+                transcript=prompt.get("transcript") or None, **setting)
             row.append(int(rendered.prompt_token_count))
         rows.append(row)
     return rows

@@ -390,18 +390,11 @@ def stream_generate(model: SteeredModel, prompt: str, *, model_id: str | None = 
     a caller that does not pass them generates exactly as before.
     """
     mid = model_id or model.model_id
-    if transcript is not None:
-        rendered = prompt_render.render_transcript(
-            model.tokenizer, transcript, model_id=mid, prompt_mode=prompt_mode,
-            system_prompt=system_prompt,
-            qwen_thinking_enabled=qwen_thinking_enabled,
-            reasoning_effort=reasoning_effort)
-    else:
-        rendered = prompt_render.render(
-            model.tokenizer, prompt, model_id=mid, prompt_mode=prompt_mode,
-            system_prompt=system_prompt,
-            qwen_thinking_enabled=qwen_thinking_enabled,
-            reasoning_effort=reasoning_effort)
+    rendered = prompt_render.render_for_generation(
+        model.tokenizer, prompt, model_id=mid, transcript=transcript,
+        prompt_mode=prompt_mode, system_prompt=system_prompt,
+        qwen_thinking_enabled=qwen_thinking_enabled,
+        reasoning_effort=reasoning_effort)
     yield from _stream_rendered(
         model, rendered, max_tokens=max_tokens, temperature=temperature,
         injections=injections, latent_edits=latent_edits,
