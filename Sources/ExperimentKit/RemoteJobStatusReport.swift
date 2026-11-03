@@ -322,10 +322,37 @@ public enum RemoteJobStatusText {
         }
     }
 
+    /// The record's statuses the scheduler's live view can be ahead of.
+    private static let waitingStatuses: Set<String> = ["queued", "submitted"]
+    private static let endedSchedulerStates: Set<String> = [
+        "succeeded", "failed", "cancelled", "checkpointed",
+    ]
+
+    /// The scheduler's raw state when it is ahead of SteerLab's record. The
+    /// record moves only when the controller checks the scheduler, while a
+    /// status read asks the scheduler directly, so for up to one check the
+    /// record can still say `submitted` of a job the scheduler runs, or
+    /// `running` of one it has ended (seen live 2026-11-03). Nil when they
+    /// agree, when the record has already ended (its word is final), or when
+    /// the scheduler did not answer.
+    public static func schedulerAhead(of report: RemoteJobStatusReport) -> String? {
+        guard let status = report.status, let view = report.scheduler,
+            view.queryOk != false, let raw = view.rawState, let state = view.state
+        else { return nil }
+        let started = waitingStatuses.contains(status) && state == "running"
+        let ended = (waitingStatuses.contains(status) || status == "running")
+            && endedSchedulerStates.contains(state)
+        return started || ended ? raw : nil
+    }
+
     /// The one-sentence envelope message for a status report.
     public static func message(for report: RemoteJobStatusReport) -> String {
         let id = report.jobId ?? "?"
         var text = "job \(id) is \(report.status ?? "unknown")"
+        if let raw = schedulerAhead(of: report) {
+            text += " (the scheduler already reports \(raw): SteerLab's record "
+                + "catches up on the controller's next check)"
+        }
         if let outcome = report.schedulerOutcome {
             text += " (the scheduler recorded \(outcome))"
         }
@@ -400,6 +427,10 @@ public enum RemoteJobStatusText {
         var lines: [String] = []
         if let view = report.scheduler {
             lines.append(indent + "scheduler: " + schedulerPhrase(view, timeZone: timeZone))
+        }
+        if schedulerAhead(of: report) != nil, let status = report.status {
+            lines.append(indent + "SteerLab's record still says \(status): it "
+                + "catches up on the controller's next check.")
         }
         if let outcome = report.schedulerOutcome {
             // The server's sentence names a cancel SteerLab asked for and

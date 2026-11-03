@@ -102,6 +102,56 @@ import Testing
             + "written (the total is the submission's planning estimate)")
     }
 
+    /// Seen live 2026-11-03: the scheduler said RUNNING one controller check
+    /// before SteerLab's record did, and the message said only `submitted`.
+    @Test func aRecordBehindTheSchedulerSaysWhatTheSchedulerReports() async throws {
+        var started = Self.pendingStatus
+        started["scheduler"] = [
+            "queryOk": true, "rawState": "RUNNING", "state": "running",
+            "nodeList": "n7", "startedAt": 1_700_000_500.0, "elapsed": "00:00:58",
+            "timeLimit": "01:30:00",
+        ] as [String: Any]
+        let outcome = try await run(
+            ["status", "a1b2c3d4e5f6"],
+            routes: ["/api/jobs/a1b2c3d4e5f6/status": (200, started)])
+        #expect(outcome.envelope.message == "job a1b2c3d4e5f6 is submitted (the scheduler "
+            + "already reports RUNNING: SteerLab's record catches up on the controller's "
+            + "next check); 3 of 50 records written (the total is the submission's "
+            + "planning estimate)")
+        #expect(outcome.stdout.contains(
+            "  SteerLab's record still says submitted: it catches up on the controller's "
+                + "next check."))
+
+        var finished = started
+        finished["status"] = "running"
+        finished["scheduler"] = [
+            "queryOk": true, "rawState": "COMPLETED", "state": "succeeded",
+            "endedAt": 1_700_001_100.0, "exitCode": "0:0",
+        ] as [String: Any]
+        let ended = try await run(
+            ["status", "a1b2c3d4e5f6"],
+            routes: ["/api/jobs/a1b2c3d4e5f6/status": (200, finished)])
+        #expect(ended.envelope.message.hasPrefix(
+            "job a1b2c3d4e5f6 is running (the scheduler already reports COMPLETED:"))
+
+        // Agreement, an ended record, and a scheduler that did not answer
+        // add nothing.
+        for (status, view) in [
+            ("running", ["queryOk": true, "rawState": "RUNNING", "state": "running"]),
+            ("failed", ["queryOk": true, "rawState": "COMPLETED", "state": "succeeded"]),
+            ("submitted", ["queryOk": false, "rawState": "RUNNING", "state": "running"]),
+        ] as [(String, [String: Any])] {
+            var document = Self.pendingStatus
+            document["status"] = status
+            document["scheduler"] = view
+            let quiet = try await run(
+                ["status", "a1b2c3d4e5f6"],
+                routes: ["/api/jobs/a1b2c3d4e5f6/status": (200, document)])
+            #expect(!quiet.envelope.message.contains("already reports"), "\(status)")
+            #expect(!quiet.stdout.contains("SteerLab's record still says"), "\(status)")
+        }
+    }
+
     @Test func theEnvelopeCarriesTheServersDocumentAsItArrived() async throws {
         let outcome = try await run(
             ["status", "a1b2c3d4e5f6", "--json"],

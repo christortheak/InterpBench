@@ -142,3 +142,40 @@ def test_the_summary_says_what_the_scheduler_recorded():
         document)
     assert not any("ended by the scheduler" in line
                    for line in job_reads.status_lines(document))
+
+
+def test_a_record_behind_the_scheduler_says_what_the_scheduler_reports():
+    # Seen live 2026-11-03: the scheduler said RUNNING one controller check
+    # before SteerLab's record did, and the message said only "submitted".
+    from steerlab_server.client import job_reads
+    document = {
+        "jobId": "j2", "status": "submitted", "executorJobID": "6301",
+        "scheduler": {"queryOk": True, "rawState": "RUNNING",
+                      "state": "running", "nodeList": "n7"},
+        "progress": {"recordsWritten": None}, "notes": [],
+    }
+    assert job_reads.status_message(document) == (
+        "job j2 is submitted (the scheduler already reports RUNNING: "
+        "SteerLab's record catches up on the controller's next check)")
+    assert ("  SteerLab's record still says submitted: it catches up on the "
+            "controller's next check.") in job_reads.status_lines(document)
+
+    document["status"] = "running"
+    document["scheduler"] = {"queryOk": True, "rawState": "COMPLETED",
+                             "state": "succeeded"}
+    assert job_reads.scheduler_ahead(document) == "COMPLETED"
+
+    # Agreement, an ended record, and a scheduler that did not answer add
+    # nothing.
+    for status, view in (
+            ("running", {"queryOk": True, "rawState": "RUNNING",
+                         "state": "running"}),
+            ("failed", {"queryOk": True, "rawState": "COMPLETED",
+                        "state": "succeeded"}),
+            ("submitted", {"queryOk": False, "rawState": "RUNNING",
+                           "state": "running"})):
+        quiet = {**document, "status": status, "scheduler": view}
+        assert job_reads.scheduler_ahead(quiet) is None, status
+        assert "already reports" not in job_reads.status_message(quiet)
+        assert not any("record still says" in line
+                       for line in job_reads.status_lines(quiet))
